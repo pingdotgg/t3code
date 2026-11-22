@@ -59,6 +59,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent as ReactKeyboardEvent,
+  type RefObject,
 } from "react";
 
 import { isBrowserPreviewFile, openFileInPreview } from "~/browser/openFileInPreview";
@@ -102,7 +103,11 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
-import { LARGE_MARKDOWN_RENDER_MAX_BYTES } from "@t3tools/shared/markdownChunks";
+import { ChunkedMarkdown, splitMarkdownForPreview } from "./ChunkedMarkdown";
+import {
+  CHUNKED_MARKDOWN_MIN_CHARS,
+  LARGE_MARKDOWN_RENDER_MAX_BYTES,
+} from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -1219,7 +1224,29 @@ function RenderedMarkdownSurface({
 }) {
   const saveTarget = { environmentId, cwd, relativePath };
   useFileSaveSession(saveTarget, onPendingChange);
+  const onTaskListChange = readOnly
+    ? undefined
+    : ({ markerOffset, checked }: { readonly markerOffset: number; readonly checked: boolean }) => {
+        const currentContents =
+          getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ?? contents;
+        const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
+        if (nextContents === currentContents) return;
+        setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+        changeFileSaveSession(saveTarget, nextContents);
+      };
 
+  if (contents.length > CHUNKED_MARKDOWN_MIN_CHARS)
+    return (
+      <ChunkedMarkdown
+        file={splitMarkdownForPreview(contents)}
+        cwd={cwd}
+        relativePath={relativePath}
+        threadRef={threadRef}
+        workspaceMutationId={workspaceMutationId}
+        onKeyDown={selectRenderedContentOnSelectAll}
+        onTaskListChange={onTaskListChange}
+      />
+    );
   return (
     <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
       <FileMarkdownPreview
@@ -1228,19 +1255,7 @@ function RenderedMarkdownSurface({
         relativePath={relativePath}
         threadRef={threadRef}
         workspaceMutationId={workspaceMutationId}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                changeFileSaveSession(saveTarget, nextContents);
-              }
-        }
+        onTaskListChange={onTaskListChange}
       />
     </ScrollArea>
   );
@@ -1445,6 +1460,16 @@ export default function FilePreviewPanel({
     file.data.contents.length > 0
       ? file.data.contents
       : null;
+  const showsLargeText =
+    previewPath !== null &&
+    attachment === undefined &&
+    !isMedia &&
+    !renderBrowserFile &&
+    !isDocument &&
+    !draft &&
+    !renderMermaid &&
+    file.data?.truncated === true;
+  const copyLargeText = useRef<(() => Promise<string>) | null>(null);
   const { copyToClipboard, isCopied } = useCopyToClipboard({
     target: namedClipboardTarget(previewPath ?? ""),
     onError: (error) =>
@@ -1686,6 +1711,15 @@ export default function FilePreviewPanel({
               {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
             </FileSurfaceAction>
           ) : null}
+          {showsLargeText && absolutePath && relativePath ? (
+            <LargeFileActions
+              environmentId={environmentId}
+              threadRef={threadRef}
+              absolutePath={absolutePath}
+              name={relativePath}
+              copyContents={copyLargeText}
+            />
+          ) : null}
           {canOpenInBrowser ? (
             <FileSurfaceAction
               label={gt("Open file in preview browser")}
@@ -1795,12 +1829,7 @@ export default function FilePreviewPanel({
               title={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
-          ) : relativePath &&
-            absolutePath &&
-            file.data?.truncated &&
-            !isDocument &&
-            !draft &&
-            !renderMermaid ? (
+          ) : relativePath && absolutePath && showsLargeText ? (
             <WorkspaceLargeTextPreview
               key={`${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
               environmentId={environmentId}
@@ -1809,6 +1838,7 @@ export default function FilePreviewPanel({
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
               markdownCwd={renderMarkdown ? cwd : null}
+              copyContents={copyLargeText}
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
@@ -1961,6 +1991,81 @@ export default function FilePreviewPanel({
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
 const LargeMarkdownViewer = lazy(() => import("./LargeMarkdownViewer"));
+
+function largeFileResource(threadRef: ScopedThreadRef, absolutePath: string) {
+  return {
+    _tag: "media-file",
+    threadId: threadRef.threadId,
+    path: absolutePath,
+    disposition: "attachment",
+  } as const;
+}
+
+/** Copy and save for a file past the 1 MB preview, which the panel holds only in its viewer. */
+function LargeFileActions(props: {
+  environmentId: EnvironmentId;
+  threadRef: ScopedThreadRef;
+  absolutePath: string;
+  name: string;
+  copyContents: RefObject<(() => Promise<string>) | null>;
+}) {
+  const gt = useGT();
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    target: namedClipboardTarget(props.name),
+  });
+  const [saving, setSaving] = useState(false);
+  const refreshAssetUrl = useAssetUrlRefresh(
+    props.environmentId,
+    largeFileResource(props.threadRef, props.absolutePath),
+  );
+  const showError = (cause: unknown) => {
+    toastManager.add({
+      type: "error",
+      title: gt("Could not read file"),
+      description: thrownErrorMessage(cause, m) ?? gt("Try again."),
+    });
+  };
+  return (
+    <>
+      <FileSurfaceAction
+        label={isCopied ? gt("Copied") : gt("Copy contents")}
+        onPress={() => {
+          const copy = props.copyContents.current;
+          if (!copy) return;
+          void copy()
+            .then((text) => copyToClipboard(text, undefined))
+            .catch(showError);
+        }}
+      >
+        {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
+      </FileSurfaceAction>
+      <FileSurfaceAction
+        label={saving ? gt("Preparing file…") : gt("Save file")}
+        disabled={saving}
+        onPress={() => {
+          setSaving(true);
+          void (async () => {
+            const url = await refreshAssetUrl();
+            if (!url) throw new Error(gt("Reconnect to the environment and try again."));
+            const response = await fetch(url);
+            if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
+            const downloadUrl = URL.createObjectURL(await response.blob());
+            setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
+            const anchor = document.createElement("a");
+            anchor.href = downloadUrl;
+            anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
+            anchor.click();
+          })()
+            .catch(showError)
+            .finally(() => setSaving(false));
+        }}
+      >
+        <DownloadIcon className="size-3.5" />
+      </FileSurfaceAction>
+    </>
+  );
+}
+
 export function WorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
@@ -1969,23 +2074,14 @@ export function WorkspaceLargeTextPreview(props: {
   delimiter: "," | "\t" | null;
   /** Renders the file as Markdown resolving links against this workspace; null shows source. */
   markdownCwd: string | null;
+  copyContents: RefObject<(() => Promise<string>) | null>;
   workspaceMutationId: string | null;
   revealLine: number | null;
   revealRequestId: number;
   wordWrap: boolean;
 }) {
-  const resource = {
-    _tag: "media-file",
-    threadId: props.threadRef.threadId,
-    path: props.absolutePath,
-    disposition: "attachment",
-  } as const;
+  const resource = largeFileResource(props.threadRef, props.absolutePath);
   const gt = useGT();
-  const copyContents = useRef<(() => Promise<string>) | null>(null);
-  const { copyToClipboard, isCopied } = useCopyToClipboard({
-    target: namedClipboardTarget(props.name),
-  });
-  const [saving, setSaving] = useState(false);
   const [revision, setRevision] = useState(0);
   const showError = (cause: unknown) => {
     toastManager.add({
@@ -2021,95 +2117,39 @@ export function WorkspaceLargeTextPreview(props: {
         }}
       />
     );
-  if (assetUrl._tag !== "Success" || loaded === null)
-    return (
-      <div className="p-6 text-xs text-muted-foreground">
-        <T>Loading…</T>
-      </div>
-    );
+  if (assetUrl._tag !== "Success" || loaded === null) return <FileSurfaceLoading />;
   const src = `${loaded.url}${loaded.url.includes("?") ? "&" : "?"}revision=${encodeURIComponent(loaded.revision)}`;
+  const retry = () => {
+    void refreshAssetUrl()
+      .then(() => setRevision((value) => value + 1))
+      .catch(showError);
+  };
   return (
-    <>
-      <div className={FILE_SURFACE_SUBHEADER_CLASS}>
-        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-          <T>Full file</T>
-        </span>
-        <FileSurfaceAction
-          label={isCopied ? gt("Copied") : gt("Copy contents")}
-          onPress={() => {
-            const copy = copyContents.current;
-            if (!copy) return;
-            void copy()
-              .then((text) => copyToClipboard(text, undefined))
-              .catch(showError);
-          }}
-        >
-          {isCopied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
-        </FileSurfaceAction>
-        <FileSurfaceAction
-          label={saving ? gt("Preparing file…") : gt("Save file")}
-          disabled={saving}
-          onPress={() => {
-            setSaving(true);
-            void (async () => {
-              const url = await refreshAssetUrl();
-              if (!url) throw new Error(gt("Reconnect to the environment and try again."));
-              const response = await fetch(url);
-              if (!response.ok) throw new Error(gt("The file could not be loaded. Try again."));
-              const downloadUrl = URL.createObjectURL(await response.blob());
-              setTimeout(() => URL.revokeObjectURL(downloadUrl), 30_000);
-              const anchor = document.createElement("a");
-              anchor.href = downloadUrl;
-              anchor.download = props.name.split(/[\\/]/).at(-1) || props.name;
-              anchor.click();
-            })()
-              .catch(showError)
-              .finally(() => setSaving(false));
-          }}
-        >
-          <DownloadIcon className="size-3.5" />
-        </FileSurfaceAction>
-      </div>
-      <Suspense
-        fallback={
-          <div className="p-6 text-xs text-muted-foreground">
-            <T>Loading…</T>
-          </div>
-        }
-      >
-        {props.markdownCwd !== null ? (
-          <LargeMarkdownViewer
-            key={`${src}:${revision}`}
-            src={src}
-            cwd={props.markdownCwd}
-            relativePath={props.name}
-            threadRef={props.threadRef}
-            workspaceMutationId={props.workspaceMutationId}
-            copyContents={copyContents}
-            onRetry={() => {
-              void refreshAssetUrl()
-                .then(() => setRevision((value) => value + 1))
-                .catch(showError);
-            }}
-          />
-        ) : (
-          <LargeTextViewer
-            key={`${src}:${revision}`}
-            name={props.name}
-            copyContents={copyContents}
-            onRetry={() => {
-              void refreshAssetUrl()
-                .then(() => setRevision((value) => value + 1))
-                .catch(showError);
-            }}
-            src={src}
-            delimiter={props.delimiter}
-            revealLine={props.revealLine}
-            revealRequestId={props.revealRequestId}
-            wordWrap={props.wordWrap}
-          />
-        )}
-      </Suspense>
-    </>
+    <Suspense fallback={<FileSurfaceLoading />}>
+      {props.markdownCwd !== null ? (
+        <LargeMarkdownViewer
+          key={`${src}:${revision}`}
+          src={src}
+          cwd={props.markdownCwd}
+          relativePath={props.name}
+          threadRef={props.threadRef}
+          workspaceMutationId={props.workspaceMutationId}
+          copyContents={props.copyContents}
+          onRetry={retry}
+        />
+      ) : (
+        <LargeTextViewer
+          key={`${src}:${revision}`}
+          name={props.name}
+          copyContents={props.copyContents}
+          onRetry={retry}
+          src={src}
+          delimiter={props.delimiter}
+          revealLine={props.revealLine}
+          revealRequestId={props.revealRequestId}
+          wordWrap={props.wordWrap}
+        />
+      )}
+    </Suspense>
   );
 }

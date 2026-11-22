@@ -29,6 +29,36 @@ function firstScreen(text: string, delimiter: "," | "\t" | null, complete: boole
   return rows.slice(0, PREVIEW_PAGE_ROWS * 2);
 }
 
+type Meta = Extract<TextPreviewResult, { type: "meta" }>;
+
+function firstScreenState(text: string, delimiter: "," | "\t" | null, complete: boolean) {
+  const rows = firstScreen(text, delimiter, complete);
+  if (!rows.length) return null;
+  return {
+    pages: new Map(
+      [0, PREVIEW_PAGE_ROWS]
+        .filter((start) => start < rows.length)
+        .map((start) => [start / PREVIEW_PAGE_ROWS, rows.slice(start, start + PREVIEW_PAGE_ROWS)]),
+    ),
+    meta: {
+      type: "meta",
+      count: rows.length,
+      columns: rows.reduce((max, row) => Math.max(max, row.length), 1),
+      complete: false,
+    } satisfies Meta as Meta,
+  };
+}
+
+// Reopening a recent file paints its first screen at once while the worker indexes it again.
+const recentFirstScreens = new Map<string, { text: string; complete: boolean }>();
+
+function rememberFirstScreen(src: string, text: string, complete: boolean) {
+  recentFirstScreens.delete(src);
+  recentFirstScreens.set(src, { text, complete });
+  if (recentFirstScreens.size > 32)
+    recentFirstScreens.delete(recentFirstScreens.keys().next().value!);
+}
+
 export default function LargeTextViewer(props: {
   readonly name: string;
   readonly src?: string;
@@ -44,8 +74,12 @@ export default function LargeTextViewer(props: {
 }) {
   const gt = useGT();
   const messages = useMessages();
-  const [meta, setMeta] = useState<Extract<TextPreviewResult, { type: "meta" }> | null>(null);
-  const [pages, setPages] = useState(new Map<number, string[][]>());
+  const [initial] = useState(() => {
+    const cached = props.src === undefined ? undefined : recentFirstScreens.get(props.src);
+    return cached ? firstScreenState(cached.text, props.delimiter, cached.complete) : null;
+  });
+  const [meta, setMeta] = useState<Meta | null>(initial?.meta ?? null);
+  const [pages, setPages] = useState(initial?.pages ?? new Map<number, string[][]>());
   const [error, setError] = useState<string | null>(null);
   const worker = useRef<Worker | null>(null);
   const copyPending = useRef<{
@@ -66,25 +100,11 @@ export default function LargeTextViewer(props: {
     let prefetched = false;
     const paintFirstScreen = (text: string, complete: boolean) => {
       if (indexed || controller.signal.aborted) return;
-      const rows = firstScreen(text, props.delimiter, complete);
-      if (!rows.length) return;
+      const screen = firstScreenState(text, props.delimiter, complete);
+      if (!screen) return;
       prefetched = true;
-      setPages(
-        new Map(
-          [0, PREVIEW_PAGE_ROWS]
-            .filter((start) => start < rows.length)
-            .map((start) => [
-              start / PREVIEW_PAGE_ROWS,
-              rows.slice(start, start + PREVIEW_PAGE_ROWS),
-            ]),
-        ),
-      );
-      setMeta({
-        type: "meta",
-        count: rows.length,
-        columns: rows.reduce((max, row) => Math.max(max, row.length), 1),
-        complete: false,
-      });
+      setPages(screen.pages);
+      setMeta(screen.meta);
     };
     const startWorker = () => {
       if (controller.signal.aborted) return;
@@ -104,9 +124,14 @@ export default function LargeTextViewer(props: {
         } else if (result.type === "meta") {
           indexed = true;
           if (prefetched) {
-            setPages(new Map());
-            pending.current.clear();
+            // Keeps the painted first screen until the worker's own pages replace it.
             prefetched = false;
+            pending.current.clear();
+            for (const index of [0, 1]) {
+              if (index * PREVIEW_PAGE_ROWS >= result.count) break;
+              pending.current.add(index);
+              engine.postMessage({ type: "page", index }, []);
+            }
           }
           setMeta(result);
         } else if (result.type === "page") {
@@ -152,8 +177,12 @@ export default function LargeTextViewer(props: {
     };
     // Only this bounded prefix is parsed on the main thread. Indexing the full
     // file and fetching later pages remain in the worker.
+    const cached = props.src === undefined ? undefined : recentFirstScreens.get(props.src);
     if (props.sizeBytes === 0) {
       startWorker();
+    } else if (cached) {
+      paintFirstScreen(cached.text, cached.complete);
+      scheduleWorker();
     } else if (props.text !== undefined) {
       paintFirstScreen(
         props.text.slice(0, FIRST_SCREEN_BYTES),
@@ -161,7 +190,8 @@ export default function LargeTextViewer(props: {
       );
       scheduleWorker();
     } else if (props.src) {
-      void fetch(props.src, {
+      const src = props.src;
+      void fetch(src, {
         headers: { Range: `bytes=0-${FIRST_SCREEN_BYTES - 1}` },
         cache: "no-store",
         signal: controller.signal,
@@ -176,7 +206,9 @@ export default function LargeTextViewer(props: {
             return;
           }
           const total = Number(response.headers.get("content-range")?.split("/")[1]);
-          paintFirstScreen(await response.text(), total <= FIRST_SCREEN_BYTES);
+          const text = await response.text();
+          rememberFirstScreen(src, text, total <= FIRST_SCREEN_BYTES);
+          paintFirstScreen(text, total <= FIRST_SCREEN_BYTES);
         })
         .catch(() => {
           // The worker reports authorization, network and format failures.

@@ -1,6 +1,9 @@
 // Rendered markdown files above this stay in the virtualized source viewer.
 export const LARGE_MARKDOWN_RENDER_MAX_BYTES = 32 * 1024 * 1024;
-const CHUNK_TARGET_CHARS = 16 * 1024;
+// About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
+const CHUNK_TARGET_CHARS = 4 * 1024;
+// Past two chunks, rendered previews split the document and parse it lazily.
+export const CHUNKED_MARKDOWN_MIN_CHARS = 2 * CHUNK_TARGET_CHARS;
 // A chunk past this (one huge fence or HTML block) is too slow to parse at once; show source.
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.

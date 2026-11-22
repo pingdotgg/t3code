@@ -1,4 +1,5 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
+import { CHUNKED_MARKDOWN_MIN_CHARS } from "@t3tools/shared/markdownChunks";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
@@ -255,7 +256,6 @@ function FileContent(props: {
   readonly initialLine: number | null;
   readonly truncated: boolean;
   /** Renders Markdown in lazily parsed chunks; set for files past the 1 MB preview. */
-  readonly chunkMarkdown: boolean;
   readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
@@ -350,7 +350,7 @@ function FileContent(props: {
           markdown={props.fileContents}
           relativePath={props.relativePath}
           threadId={props.threadId}
-          chunked={props.chunkMarkdown}
+          chunked={props.fileContents.length > CHUNKED_MARKDOWN_MIN_CHARS}
           onRefresh={props.onRefresh}
         />
       ) : (
@@ -1110,7 +1110,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileTruncated}
-          chunkMarkdown={fileData?.truncated ?? false}
           selectable={selectingText}
           onRefresh={() => {
             setFileRefreshCount((count) => count + 1);

@@ -585,6 +585,7 @@ describe("large text preview recovery", () => {
           name="large.txt"
           delimiter={null}
           markdownCwd={null}
+          copyContents={{ current: null }}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
