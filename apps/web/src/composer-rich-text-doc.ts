@@ -53,6 +53,7 @@ import {
 } from "~/composer-rich-text";
 import { collectInlineContextIds } from "~/lib/composerContextReferences";
 import { composerMathRanges } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "~/markdown/wordsHast";
 
 export type SkillMeta = { label: string; description: string | null };
 
@@ -934,7 +935,7 @@ export function buildTiptapContent(
   const atomSources: string[] = [];
   const literal = value.slice(0, options?.literalLength ?? 0);
   const remainder = value.slice(literal.length);
-  const formulas = composerMathRanges(remainder);
+  const formulas = composerMathRanges(remainder, markdownMathRanges);
   let offset = 0;
   const chunks: Array<{ text: string } | { source: string }> = [];
   for (const formula of formulas) {
@@ -1090,11 +1091,21 @@ export function buildTiptapContent(
       openQuote.content.push(entry.quote.inline);
       continue;
     }
-    // The serializer separates a quote from the prose after it with one blank line; it is not an empty paragraph.
-    const quoteSeparator =
-      openQuote !== null && isProseLine(entry, true) && isProseLine(entries[entryIndex + 1], false);
+    // The serializer separates a quote or list from the prose after it with one blank line; it is not an empty paragraph.
+    // After a list it precedes any empty paragraphs the user left, so those survive.
+    let proseIndex = entryIndex + 1;
+    if (openQuote === null && rootLists.length > 0 && isProseLine(entry, true)) {
+      while (isProseLine(entries[proseIndex], true)) proseIndex += 1;
+    }
+    const blockSeparator =
+      (openQuote !== null || rootLists.length > 0) &&
+      isProseLine(entry, true) &&
+      isProseLine(entries[proseIndex], false);
     flushQuote();
-    if (quoteSeparator) continue;
+    if (blockSeparator) {
+      flushLists();
+      continue;
+    }
     if ("code" in entry) {
       flushLists();
       blocks.push(entry.code);
@@ -1234,14 +1245,35 @@ function pushBreakRun(acc: RichAccumulator, position?: number): void {
   acc.md += 1;
 }
 
-// Separate prose from quotes to avoid lazy continuation; an empty paragraph already separates them.
-function needsBlankLineAfterQuote(previous: ProseMirrorNode, block: ProseMirrorNode): boolean {
+function horizontalRuleSource(block: ProseMirrorNode): string {
+  const source = (block.attrs as Record<string, unknown>).source;
+  return typeof source === "string" && source ? source : "---";
+}
+
+// A blank line keeps prose out of a quote or list (lazy continuation) and a dash rule from
+// underlining the line above into a setext heading; an empty paragraph already separates them.
+function needsBlankLineBetween(blocks: readonly ProseMirrorNode[], index: number): boolean {
+  const previous = blocks[index - 1]!;
+  const block = blocks[index]!;
+  const isEmptyParagraph = (node: ProseMirrorNode | undefined) =>
+    node?.type.name === "paragraph" && node.content.size === 0;
+  if (LIST_NODE_NAMES.has(previous.type.name)) {
+    let next = index;
+    while (isEmptyParagraph(blocks[next])) next += 1;
+    return blocks[next]?.type.name === "paragraph";
+  }
+  if (previous.type.name === "blockquote") {
+    return block.type.name === "paragraph" && block.content.size > 0;
+  }
   return (
-    previous.type.name === "blockquote" && block.type.name === "paragraph" && block.content.size > 0
+    block.type.name === "horizontalRule" &&
+    previous.type.name === "paragraph" &&
+    previous.content.size > 0 &&
+    /^-+[ \t]*\r?$/.test(horizontalRuleSource(block))
   );
 }
 
-// Blank-line runs own no document characters; offsets clamp to the paragraph start.
+// Blank-line runs own no document characters; offsets clamp to the start of the next block.
 function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   acc.runs.push({
     kind: "prefix",
@@ -1255,6 +1287,27 @@ function pushBlankLineRun(acc: RichAccumulator, pmPos: number): void {
   });
   acc.value += "\n";
   acc.md += 1;
+}
+
+// Moves an offset into a parsed `value` past the blank lines its serialization inserted,
+// treating other differences (`__` written as `**`) as same-length rewrites. When the two
+// strings do not align that way end to end, the offset is returned unmapped.
+export function serializedMarkdownOffset(
+  value: string,
+  serialized: string,
+  offset: number,
+): number {
+  if (value === serialized) return offset;
+  let index = 0;
+  let mapped = 0;
+  let target = -1;
+  while (index < value.length && mapped < serialized.length) {
+    if (index === offset && target < 0) target = mapped;
+    if (value[index] === serialized[mapped] || serialized[mapped] !== "\n") index += 1;
+    mapped += 1;
+  }
+  if (index !== value.length || mapped !== serialized.length) return offset;
+  return target < 0 ? mapped + (offset - index) : target;
 }
 
 function appendInlineRuns(
@@ -1685,7 +1738,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
   let pmBlockStart = 0;
   blocks.forEach((block, blockIndex) => {
     if (blockIndex > 0 && !isTrailingLineAfterRule(doc, blockIndex)) pushBreakRun(acc);
-    if (blockIndex > 0 && needsBlankLineAfterQuote(blocks[blockIndex - 1]!, block)) {
+    if (blockIndex > 0 && needsBlankLineBetween(blocks, blockIndex)) {
       pushBlankLineRun(acc, pmBlockStart + 1);
     }
     if (LIST_NODE_NAMES.has(block.type.name)) {
@@ -1713,8 +1766,7 @@ function serializeDoc(doc: ProseMirrorNode): RichDocMap {
       acc.md += prefix.length;
       appendInlineRuns(block, pmBlockStart + 1, acc);
     } else if (block.type.name === "horizontalRule") {
-      const attrs = block.attrs as Record<string, unknown>;
-      const source = typeof attrs.source === "string" && attrs.source ? attrs.source : "---";
+      const source = horizontalRuleSource(block);
       acc.runs.push({
         kind: "prefix",
         flatStart: acc.flat,

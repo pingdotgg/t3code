@@ -84,7 +84,7 @@ describe("HttpStaticServer conditional requests", () => {
         fileResponse: () =>
           Effect.succeed(
             HttpServerResponse.text("0123456789").pipe(
-              HttpServerResponse.setHeader("ETag", "\"v1\""),
+              HttpServerResponse.setHeader("ETag", "\"v1,part\""),
               HttpServerResponse.setHeader("Last-Modified", lastModified)
             )
           ),
@@ -100,14 +100,16 @@ describe("HttpStaticServer conditional requests", () => {
       const earlier = "Sat, 05 Nov 1994 10:00:00 GMT"
       for (
         const [headers, status] of [
-          [{ "If-Match": "\"stale\"", "If-None-Match": "\"v1\"", Range: "bytes=2-5" }, 412],
-          [{ "If-Match": "W/\"v1\"" }, 412],
-          [{ "If-Match": "w/\"v1\"" }, 412],
-          [{ "If-Match": "\"other\", \"v1\"", "If-None-Match": "\"v1\"" }, 304],
-          [{ "If-Unmodified-Since": earlier, "If-None-Match": "\"v1\"", Range: "bytes=2-5" }, 412],
+          [{ "If-Match": "\"stale\"", "If-None-Match": "\"v1,part\"", Range: "bytes=2-5" }, 412],
+          [{ "If-Match": "W/\"v1,part\"" }, 412],
+          [{ "If-Match": "w/\"v1,part\"" }, 412],
+          [{ "If-Match": "\"other\", \"v1,part\"", "If-None-Match": "\"v1,part\"" }, 304],
+          [{ "If-Unmodified-Since": earlier, "If-None-Match": "\"v1,part\"", Range: "bytes=2-5" }, 412],
+          [{ "If-None-Match": "\"stale\", W/\"v1,part\"" }, 304],
+          [{ "If-None-Match": "\"v1\", \"part\"" }, 200],
           [{ "If-Unmodified-Since": lastModified }, 200],
           [{ "If-Unmodified-Since": "invalid" }, 200],
-          [{ "If-Match": "\"v1\"", "If-Unmodified-Since": earlier }, 200]
+          [{ "If-Match": "\"v1,part\"", "If-Unmodified-Since": earlier }, 200]
         ] as const
       ) {
         const response = yield* Effect.promise(() => handler(new Request("http://localhost/file.txt", { headers })))

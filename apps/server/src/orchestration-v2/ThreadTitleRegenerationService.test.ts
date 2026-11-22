@@ -88,6 +88,7 @@ function makeHarness(
               faviconPath: null,
               projectIcon: null,
               scripts: [],
+              trackedFolders: [],
               pinnedAt: null,
               archivedAt: null,
               createdAt: "2026-06-20T00:00:00.000Z",
@@ -342,9 +343,19 @@ describe("ThreadTitleRegenerationService", () => {
         const threads = yield* ThreadManagement.ThreadManagementService;
         const outbox = yield* EffectOutbox.EffectOutboxV2;
         // An MCP launch names the thread, or leaves a placeholder, and sends no message.
-        for (const [key, title, expectedTitle, generates] of [
-          ["preset", "[API] #4821 — retry webhook deliveries after a timeout", undefined, false],
-          ["placeholder", placeholderThreadTitle("Parent", 0), seed, true],
+        for (const [key, title, titleRenamed, compactFirst, expectedTitle, generates] of [
+          [
+            "preset",
+            "[API] #4821 - retry webhook deliveries after a timeout",
+            false,
+            false,
+            undefined,
+            false,
+          ],
+          ["placeholder", placeholderThreadTitle("Parent", 0), false, false, seed, true],
+          ["named like a placeholder", "Release thread 2", true, false, undefined, false],
+          ["named, then compacted", "Release notes", true, true, undefined, false],
+          ["draft titled by its /compact", "/compact", false, true, seed, true],
         ] as const) {
           const threadId = ThreadId.make(`thread:title:${key}`);
           yield* threads.dispatch({
@@ -353,6 +364,7 @@ describe("ThreadTitleRegenerationService", () => {
             threadId,
             projectId,
             title,
+            ...(titleRenamed ? { titleRenamed } : {}),
             modelSelection,
             runtimeMode: "full-access",
             interactionMode: "default",
@@ -361,6 +373,21 @@ describe("ThreadTitleRegenerationService", () => {
             createdBy: "agent",
             creationSource: "mcp",
           });
+          if (compactFirst) {
+            yield* threads.dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`command:title:${key}:compact`),
+              threadId,
+              messageId: MessageId.make(`command:title:${key}:compact:message`),
+              text: "/compact",
+              titleSeed: "/compact",
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "defer_start" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+          }
           const requestId = CommandId.make(`command:title:${key}:message`);
           yield* threads.dispatch({
             type: "message.dispatch",
@@ -378,6 +405,85 @@ describe("ThreadTitleRegenerationService", () => {
 
           const settled = yield* threads.getThreadProjection(threadId);
           assert.equal(settled.thread.title, expectedTitle ?? title, key);
+          assert.equal(
+            (yield* outbox.listByCommandId(requestId)).some(
+              (effect) => effect.request.type === "thread-title.generate",
+            ),
+            generates,
+            key,
+          );
+        }
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+
+  it.effect("keeps a fork's own rename when its first message arrives", () =>
+    Effect.gen(function* () {
+      const seed = "Try SQLite instead";
+      const harness = makeHarness();
+      yield* Effect.gen(function* () {
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const titleRegeneration = yield* ThreadTitleRegeneration.ThreadTitleRegenerationService;
+        const outbox = yield* EffectOutbox.EffectOutboxV2;
+        const prefix = "thread:title:renamed-fork";
+        const { sourceThreadId, forkRunId, forkThreadId } = yield* forkSeededSource(prefix);
+        const rename = (key: string, threadId: ThreadId, title: string) =>
+          threads.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`${prefix}:${key}:rename`),
+            threadId,
+            title,
+          });
+        const fork = (key: string) =>
+          Effect.gen(function* () {
+            const targetThreadId = ThreadId.make(`${prefix}:${key}`);
+            yield* threads.dispatch({
+              type: "thread.fork",
+              commandId: CommandId.make(`${prefix}:${key}:fork`),
+              sourceThreadId,
+              targetThreadId,
+              sourcePoint: { type: "run", runId: forkRunId },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            return targetThreadId;
+          });
+        yield* rename("renamed", forkThreadId, "Storage migration notes");
+        yield* rename("source", sourceThreadId, "Renamed source");
+        const forkOfRenamedSource = yield* fork("fork-of-renamed-source");
+        const regenerated = yield* fork("regenerated");
+        yield* rename("regenerated", regenerated, "Scratch name");
+        yield* titleRegeneration.execute({
+          threadId: regenerated,
+          requestId: yield* armRegeneration({
+            command: `${prefix}:regenerated:regenerate`,
+            threadId: regenerated,
+          }),
+          kind: { type: "regenerate" },
+        });
+
+        for (const [key, threadId, expectedTitle, generates] of [
+          ["renamed", forkThreadId, "Storage migration notes", false],
+          ["fork of a renamed source", forkOfRenamedSource, seed, true],
+          ["renamed, then regenerated", regenerated, seed, true],
+        ] as const) {
+          const requestId = CommandId.make(`${prefix}:${key}:message`);
+          yield* threads.dispatch({
+            type: "message.dispatch",
+            commandId: requestId,
+            threadId,
+            messageId: MessageId.make(`${prefix}:${key}:message:message`),
+            text: seed,
+            titleSeed: seed,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+
+          const settled = yield* threads.getThreadProjection(threadId);
+          assert.equal(settled.thread.title, expectedTitle, key);
           assert.equal(
             (yield* outbox.listByCommandId(requestId)).some(
               (effect) => effect.request.type === "thread-title.generate",
