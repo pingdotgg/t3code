@@ -19,6 +19,7 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import { m } from "../i18n/messages.ts";
+import * as PermissionPrompt from "../permissions/PermissionPrompt.ts";
 
 const PREVIEW_PARTITION_PREFIX = "persist:t3code-preview-";
 /** Ephemeral partitions omit persist: but retain a product prefix so the webview gate recognizes them. */
@@ -39,37 +40,8 @@ const ALLOWED_PREVIEW_PERMISSIONS: ReadonlySet<string> = new Set([
   // Deny notifications: pages could impersonate T3 Code; app notifications use the default session.
 ]);
 
-const NEVER_EXTERNAL_PROTOCOLS: ReadonlySet<string> = new Set([
-  "about:",
-  "blob:",
-  "chrome:",
-  "data:",
-  "devtools:",
-  "file:",
-  "filesystem:",
-  "http:",
-  "https:",
-  "javascript:",
-  "view-source:",
-]);
-
-const externalProtocolPromptUrl = (rawUrl: string | undefined): string | null => {
-  if (!rawUrl) return null;
-  try {
-    const url = new URL(rawUrl);
-    return NEVER_EXTERNAL_PROTOCOLS.has(url.protocol) ? null : url.href;
-  } catch {
-    return null;
-  }
-};
-
 // Teams sends Electron User-Agents to an error page before sign-in. Electron allows one listener per session.
 const TEAMS_URL_PATTERNS = ["https://teams.cloud.microsoft/*", "https://teams.microsoft.com/*"];
-
-const MAX_PROMPT_URL_LENGTH = 300;
-
-const truncateForPrompt = (text: string): string =>
-  text.length > MAX_PROMPT_URL_LENGTH ? `${text.slice(0, MAX_PROMPT_URL_LENGTH)}…` : text;
 
 const permissionOrigin = (rawUrl: string | undefined): string | null => {
   if (!rawUrl) return null;
@@ -266,76 +238,17 @@ export const make = Effect.gen(function* BrowserSessionMake() {
   const path = yield* Path.Path;
   const platform = yield* HostProcess.Platform;
   const runFork = Effect.runForkWith(yield* Effect.context<never>());
-  // One prompt at a time, so a page cannot stack dialogs by looping a deep link.
-  let permissionPromptOpen = false;
-  /** Settles with `undefined` when the user gave no answer: another prompt was open or the dialog failed. */
-  const promptPermission = (
-    requester: WebContents | null,
-    prompt: {
-      readonly buttons: readonly [allow: string, deny: string];
-      readonly message: string;
-      readonly detail?: string;
-    },
-    callback: (answer: boolean | undefined) => void,
+  const permissionPrompt = yield* PermissionPrompt.PermissionPrompt;
+  // Electron waits on the callback, so it must settle even when the prompt is interrupted.
+  const settlePrompt = <A>(
+    prompt: Effect.Effect<A>,
+    callback: (answer: A | undefined) => void,
   ): void => {
-    if (permissionPromptOpen) {
-      callback(undefined);
-      return;
-    }
-    permissionPromptOpen = true;
-    const settle = (answer: boolean | undefined) =>
-      Effect.sync(() => {
-        permissionPromptOpen = false;
-        callback(answer);
-      });
     runFork(
-      electronDialog
-        .showMessageBox(
-          {
-            type: "question",
-            buttons: [...prompt.buttons],
-            // Default to deny so an Enter typed into the page cannot accept a prompt it raised.
-            defaultId: 1,
-            cancelId: 1,
-            message: prompt.message,
-            ...(prompt.detail === undefined ? {} : { detail: prompt.detail }),
-          },
-          platform === "win32" ? undefined : previewHostWindow(requester),
-        )
-        .pipe(
-          Effect.map(({ response }): boolean | undefined => response === 0),
-          Effect.orElseSucceed(() => undefined),
-          Effect.flatMap(settle),
-          Effect.onInterrupt(() => settle(undefined)),
-        ),
-    );
-  };
-  /** Electron launches external protocols after granting openExternal; untrusted pages require confirmation. */
-  const confirmOpenExternal = (
-    requester: WebContents | null,
-    rawUrl: string | undefined,
-    callback: (granted: boolean) => void,
-  ): void => {
-    const url = externalProtocolPromptUrl(rawUrl);
-    if (url === null) {
-      callback(false);
-      return;
-    }
-    promptPermission(
-      requester,
-      {
-        buttons: [
-          m(msg("Open", { $context: "button, opens a link in another app" })),
-          m(msg("Cancel")),
-        ],
-        message: m(msg("Open this {protocol} link?"), {
-          protocol: new URL(url).protocol.slice(0, -1),
-        }),
-        detail: m(msg("A page in the browser wants to open another application:\n\n{url}"), {
-          url: truncateForPrompt(url),
-        }),
-      },
-      (answer) => callback(answer === true),
+      prompt.pipe(
+        Effect.flatMap((answer) => Effect.sync(() => callback(answer))),
+        Effect.onInterrupt(() => Effect.sync(() => callback(undefined))),
+      ),
     );
   };
 
@@ -629,9 +542,8 @@ export const make = Effect.gen(function* BrowserSessionMake() {
               callback(remembered);
               return;
             }
-            promptPermission(
-              requester,
-              {
+            settlePrompt(
+              permissionPrompt.ask(previewHostWindow(requester), {
                 buttons: [
                   m(msg("Allow", { $context: "button, grants a site permission" })),
                   m(msg("Block", { $context: "button, denies a site permission" })),
@@ -639,12 +551,12 @@ export const make = Effect.gen(function* BrowserSessionMake() {
                 message:
                   permission === "geolocation"
                     ? m(msg("{origin} wants to know your location"), {
-                        origin: truncateForPrompt(origin),
+                        origin: PermissionPrompt.truncateForPrompt(origin),
                       })
                     : m(msg("{origin} wants to see text and images copied to the clipboard"), {
-                        origin: truncateForPrompt(origin),
+                        origin: PermissionPrompt.truncateForPrompt(origin),
                       }),
-              },
+              }),
               (answer) => {
                 if (answer !== undefined) decisions.set(origin, answer);
                 callback(answer === true);
@@ -655,10 +567,13 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           browserSession.setPermissionRequestHandler(
             (webContents, permission, callback, details) => {
               if (permission === "openExternal") {
-                confirmOpenExternal(
-                  webContents,
-                  "externalURL" in details ? details.externalURL : undefined,
-                  callback,
+                // Electron launches the app link itself once this grants it.
+                settlePrompt(
+                  permissionPrompt.confirmAppLink(
+                    previewHostWindow(webContents),
+                    "externalURL" in details ? details.externalURL : undefined,
+                  ),
+                  (granted) => callback(granted === true),
                 );
                 return;
               }

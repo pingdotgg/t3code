@@ -29,6 +29,7 @@ import type {
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { matchesKeybindingShortcut } from "@t3tools/shared/keybindings";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
+import { parseThreadAppLink } from "@t3tools/shared/threadLinks";
 import {
   BrowserWindow,
   ClipboardItem,
@@ -490,13 +491,14 @@ const POPUP_WINDOW_OPTIONS = {
 
 /**
  * OAuth needs a surviving popup opener. `blob:`, app links (behind the session's `openExternal`
- * prompt) and form POSTs stay in place.
+ * prompt) and form POSTs stay in place. Thread links belong to T3 Code itself, which no OS knows.
  */
 export const previewWindowOpenAction = (details: {
   readonly url: string;
   readonly disposition: Electron.HandlerDetails["disposition"];
   readonly postBody?: Electron.PostBody;
-}): "popup" | "new-tab" | "navigate" | "deny" => {
+}): "popup" | "new-tab" | "navigate" | "open-in-app" | "deny" => {
+  if (parseThreadAppLink(details.url) !== null) return "open-in-app";
   const protocol = URL.parse(details.url)?.protocol;
   // MSAL redirects on a denied blank popup; navigating the tab would destroy that fallback.
   if (protocol === undefined || IN_PLACE_DENIED_PROTOCOLS.has(protocol)) return "deny";
@@ -1275,6 +1277,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }
         }),
       );
+    const willFrameNavigate = (event: { url: string; preventDefault: () => void }) => {
+      if (parseThreadAppLink(event.url) === null) return;
+      event.preventDefault();
+      runFork(emitOpenLink({ tabId, url: event.url, background: false }));
+    };
     const navigationStarted = (
       event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
     ) => {
@@ -1638,6 +1645,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
         cancelFaviconCapture();
+        wc.off("will-frame-navigate", willFrameNavigate);
         wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
         wc.off("did-navigate-in-page", syncInPageNavigation);
@@ -1661,6 +1669,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
         wc.setIgnoreMenuShortcuts(true);
+        wc.on("will-frame-navigate", willFrameNavigate);
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);
@@ -1682,6 +1691,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
           }
           if (action === "deny") return { action: "deny" };
+          if (action === "open-in-app") {
+            runFork(emitOpenLink({ tabId, url: details.url, background: false }));
+            return { action: "deny" };
+          }
           if (action === "new-tab") {
             runFork(
               emitOpenLink({

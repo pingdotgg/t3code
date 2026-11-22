@@ -5,6 +5,7 @@ import {
   remoteSchemeForEditor,
   type SystemSettingsPane,
 } from "@t3tools/contracts";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -71,6 +72,8 @@ export class ElectronShell extends Context.Service<
   ElectronShell,
   {
     readonly openExternal: (rawUrl: unknown) => Effect.Effect<boolean>;
+    /** Opens any app link without asking; callers confirm with the user first. */
+    readonly openAppLink: (url: string) => Effect.Effect<boolean>;
     readonly openSystemSettings: (pane: SystemSettingsPane) => Effect.Effect<boolean>;
     readonly copyText: (text: string) => Effect.Effect<void>;
   }
@@ -89,6 +92,17 @@ export const make = ElectronShell.of({
           ),
         ),
     });
+  }),
+  openAppLink: Effect.fn("ElectronShell.openAppLink")(function (rawUrl) {
+    const url = appLinkUrl(rawUrl);
+    return url === null
+      ? Effect.succeed(false)
+      : Effect.promise(() =>
+          Electron.shell.openExternal(url).then(
+            () => true,
+            () => false,
+          ),
+        );
   }),
   openSystemSettings: Effect.fn("ElectronShell.openSystemSettings")(function (pane) {
     return Effect.promise(() =>

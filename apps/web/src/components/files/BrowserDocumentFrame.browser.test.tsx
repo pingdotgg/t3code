@@ -11,6 +11,12 @@ import { render } from "../../../test/render";
 
 import { BrowserDocumentFrame, HtmlRenderDocument } from "./BrowserDocumentFrame";
 
+const { openAppLink } = vi.hoisted(() => ({ openAppLink: vi.fn() }));
+vi.mock(import("~/localApi"), async (importOriginal) => ({
+  ...(await importOriginal()),
+  readLocalApi: () => ({ shell: { openAppLink } }) as never,
+}));
+
 const sizeChanged = (height: number) => ({
   jsonrpc: "2.0",
   method: "ui/notifications/size-changed",
@@ -38,6 +44,29 @@ describe("HtmlRenderDocument", () => {
     window.postMessage(sizeChanged(999), "*");
     await delivered;
     expect(onContentHeight).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens a thread link in the app and hands other app links to the OS", async () => {
+    openAppLink.mockReset().mockResolvedValue(undefined);
+    const html = injectHtmlRenderBootstrap(
+      `<!doctype html><html><body>
+        <a href="t3-thread://v2/env-1/thread-1">Thread</a>
+        <a href="obsidian://open?vault=vault&amp;file=Note" target="_blank">Note</a>
+      </body></html>`,
+    );
+    const src = URL.createObjectURL(new Blob([html], { type: "text/html" }));
+    using _url = { [Symbol.dispose]: () => URL.revokeObjectURL(src) };
+    await using screen = await render(<HtmlRenderDocument src={src} title="Links" />);
+    const frame = page.frameLocator(screen.getByTitle("Links"));
+
+    await frame.getByRole("link", { name: "Note" }).click();
+    await vi.waitFor(() =>
+      expect(openAppLink).toHaveBeenCalledWith("obsidian://open?vault=vault&file=Note"),
+    );
+
+    await frame.getByRole("link", { name: "Thread" }).click();
+    await vi.waitFor(() => expect(screen.router?.state.location.pathname).toBe("/env-1/thread-1"));
+    expect(openAppLink).toHaveBeenCalledTimes(1);
   });
 
   it("opens a clicked image with the other images of its block in the viewer", async () => {

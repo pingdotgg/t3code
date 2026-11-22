@@ -85,6 +85,11 @@ export function parseThreadLinkHref(href: string): ThreadLink | null {
   return environmentId === null || threadId === null ? null : { environmentId, threadId };
 }
 
+/** A `t3-thread:` link, which only T3 Code opens. A hosted thread link is an ordinary web page. */
+export function parseThreadAppLink(href: string): ThreadLink | null {
+  return href.startsWith(`${THREAD_LINK_PROTOCOL}:`) ? parseThreadLinkHref(href) : null;
+}
+
 function percentDecodedThreadLinkId(threadId: ThreadId): ThreadId | null {
   try {
     const decoded = decodeURIComponent(threadId);

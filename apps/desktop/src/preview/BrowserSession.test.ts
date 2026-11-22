@@ -53,6 +53,7 @@ vi.mock("electron", () => ({
 
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
+import * as PermissionPrompt from "../permissions/PermissionPrompt.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 
 const { showMessageBox, showErrorBox } = vi.hoisted(() => ({
@@ -75,6 +76,7 @@ const layerDialog = Layer.succeed(ElectronDialog.ElectronDialog, {
   showErrorBox: (title, content) => Effect.sync(() => showErrorBox(title, content)),
 });
 const layer = BrowserSession.layer.pipe(
+  Layer.provide(PermissionPrompt.layer),
   Layer.provide(
     Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, layerDialog, ElectronApp.layer),
   ),

@@ -80,7 +80,7 @@ describe("injectHtmlRenderBootstrap", () => {
 });
 
 describe("readHtmlRenderLinkRequest", () => {
-  it("accepts only http(s) URLs in an MCP Apps ui/open-link request", () => {
+  it("accepts web and app links in an MCP Apps ui/open-link request", () => {
     const link = (url: unknown, modifiers = {}) => ({
       jsonrpc: "2.0",
       id: 1,
@@ -90,12 +90,27 @@ describe("readHtmlRenderLinkRequest", () => {
     expect(readHtmlRenderLinkRequest(link("https://example.com/a"))).toEqual({
       id: 1,
       url: "https://example.com/a",
+      target: "web",
       metaKey: false,
       ctrlKey: false,
     });
     expect(
       readHtmlRenderLinkRequest(link("https://example.com/a", { metaKey: true, ctrlKey: "yes" })),
-    ).toEqual({ id: 1, url: "https://example.com/a", metaKey: true, ctrlKey: false });
+    ).toEqual({
+      id: 1,
+      url: "https://example.com/a",
+      target: "web",
+      metaKey: true,
+      ctrlKey: false,
+    });
+    expect(readHtmlRenderLinkRequest(link("obsidian://open?vault=v&file=N"))).toMatchObject({
+      url: "obsidian://open?vault=v&file=N",
+      target: "app",
+    });
+    expect(readHtmlRenderLinkRequest(link("t3-thread://v2/env/thread"))).toMatchObject({
+      url: "t3-thread://v2/env/thread",
+      target: "app",
+    });
     expect(readHtmlRenderLinkRequest(link("javascript:alert(1)"))).toBeUndefined();
     expect(readHtmlRenderLinkRequest(link("file:///etc/passwd"))).toBeUndefined();
     expect(

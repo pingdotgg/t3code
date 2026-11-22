@@ -69,6 +69,7 @@ import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 import * as DesktopWslEnvironment from "../wsl/DesktopWslEnvironment.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as ElectronShell from "../electron/ElectronShell.ts";
+import * as PermissionPrompt from "../permissions/PermissionPrompt.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
@@ -231,6 +232,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
           Layer.mock(DesktopWslEnvironment.DesktopWslEnvironment, {}),
           Layer.mock(ElectronMenu.ElectronMenu, {}),
           Layer.mock(ElectronShell.ElectronShell, {}),
+          Layer.mock(PermissionPrompt.PermissionPrompt, {}),
           Layer.mock(ElectronTheme.ElectronTheme, {}),
           Layer.mock(ElectronWindow.ElectronWindow, {}),
           Layer.mock(MacPermissions.MacPermissions, {}),

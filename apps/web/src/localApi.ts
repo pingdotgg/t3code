@@ -38,6 +38,16 @@ export function createLocalApi(): LocalApi {
         if (!isWebUrl(url)) throw new Error(m(msg("Unable to open link.")));
         window.open(url, "_blank", "noopener,noreferrer");
       },
+      openAppLink: async (url) => {
+        if (window.desktopBridge) {
+          if ((await window.desktopBridge.openAppLink(url)) === "unavailable") {
+            throw new Error(m(msg("Unable to open link.")));
+          }
+          return;
+        }
+        // The browser asks the user before it hands the link to the app.
+        window.open(url, "_blank", "noopener,noreferrer");
+      },
       openSystemSettings: async (pane) => {
         if (!window.desktopBridge) {
           throw new Error(m(msg("Unable to open System Settings.")));

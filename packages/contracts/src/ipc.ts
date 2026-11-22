@@ -1085,6 +1085,13 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
+export const DesktopAppLinkOpenResultSchema = Schema.Literals([
+  "opened",
+  "cancelled",
+  "unavailable",
+]);
+export type DesktopAppLinkOpenResult = typeof DesktopAppLinkOpenResultSchema.Type;
+
 /** `value` is the resolved locale from `prepare` and the transcript from `transcribe`. */
 export const DesktopAppleSpeechResultSchema = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(true), value: Schema.String }),
@@ -1202,6 +1209,8 @@ export interface DesktopBridge {
   cancelProviderAuthCallback: (authorizationUrl: string) => Promise<void>;
   startFileDrag: (input: { environmentId: EnvironmentId; path: string }) => Promise<boolean>;
   openExternal: (url: string) => Promise<boolean>;
+  /** Asks the user, then hands an app link such as `obsidian:` to the OS. */
+  openAppLink: (url: string) => Promise<DesktopAppLinkOpenResult>;
   /** Reads http(s) media in the main process, outside renderer CORS and CSP; null on network failure. */
   readMedia: (url: string) => Promise<DesktopMediaRead | null>;
   openSystemSettings: (pane: SystemSettingsPane) => Promise<boolean>;
@@ -1433,6 +1442,8 @@ export interface LocalApi {
   };
   shell: {
     openExternal: (url: string) => Promise<void>;
+    /** Opens an app link such as `obsidian:` after the user confirms; resolves when they decline. */
+    openAppLink: (url: string) => Promise<void>;
     openSystemSettings: (pane: SystemSettingsPane) => Promise<void>;
   };
   contextMenu: {

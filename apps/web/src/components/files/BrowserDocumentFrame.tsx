@@ -11,6 +11,7 @@ import {
   filePreviewRestoreScrollMessage,
   isFilePreviewScrollRestored,
   readFilePreviewScroll,
+  type HtmlRenderLinkRequest,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
   HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
@@ -46,6 +47,7 @@ import { ExpandedImageDialog } from "~/components/chat/ExpandedImageDialog";
 import type { ExpandedImagePreview } from "~/components/chat/ExpandedImagePreview";
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
 import { shortcutConflictKey } from "~/keybindings";
+import { useOpenAppLink } from "~/lib/openAppLink";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { readLocalApi } from "~/localApi";
 import { cn } from "~/lib/utils";
@@ -376,7 +378,14 @@ export function HtmlRenderDocument(props: {
   );
   const openChangeRequestLink = useOpenChangeRequestLink(props.threadRef);
   const openLink = useOpenLink(props.threadRef);
-  const open = useEffectEvent((url: string, modifiers: { metaKey: boolean; ctrlKey: boolean }) => {
+  const openAppLink = useOpenAppLink(props.threadRef?.environmentId ?? null);
+  const open = useEffectEvent((link: HtmlRenderLinkRequest) => {
+    const { url } = link;
+    const modifiers = { metaKey: link.metaKey, ctrlKey: link.ctrlKey };
+    if (link.target === "app") {
+      void openAppLink(url).catch((cause: unknown) => console.error(cause));
+      return;
+    }
     if (modifiers.metaKey || modifiers.ctrlKey) {
       void readLocalApi()
         ?.shell.openExternal(url)
@@ -415,7 +424,7 @@ export function HtmlRenderDocument(props: {
     if (document.activeElement !== frame || navigator.userActivation?.isActive === false) return;
     const linkRequest = readHtmlRenderLinkRequest(event.data);
     if (linkRequest !== undefined) {
-      open(linkRequest.url, linkRequest);
+      open(linkRequest);
       frame.contentWindow?.postMessage(htmlRenderResult(linkRequest.id), "*");
       return;
     }

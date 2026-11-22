@@ -3,6 +3,7 @@ import {
   ContextMenuSource,
   DesktopAppBrandingSchema,
   DesktopEnvironmentBootstrapSchema,
+  DesktopAppLinkOpenResultSchema,
   DesktopMediaReadSchema,
   DesktopThemeSchema,
   EDITORS,
@@ -17,7 +18,9 @@ import {
 } from "@t3tools/contracts";
 import { PROJECT_FAVICON_EXTENSIONS } from "@t3tools/shared/projectFavicon";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { THREAD_LINK_PROTOCOL } from "@t3tools/shared/threadLinks";
 import { isRelayTracingEnabled } from "@t3tools/shared/otelEnvironment";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -46,6 +49,7 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import { msg } from "gt-i18n";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import * as PermissionPrompt from "../../permissions/PermissionPrompt.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import { m } from "../../i18n/messages.ts";
 import * as IpcChannels from "../channels.ts";
@@ -365,6 +369,24 @@ export const openExternal = DesktopIpc.makeIpcMethod({
   handler: Effect.fn("desktop.ipc.window.openExternal")(function* (url) {
     const shell = yield* ElectronShell.ElectronShell;
     return yield* shell.openExternal(url);
+  }),
+});
+
+/** The renderer has already taken in-app thread links; anything else asks before an app opens. */
+export const openAppLink = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.OPEN_APP_LINK_CHANNEL,
+  payload: Schema.String,
+  result: DesktopAppLinkOpenResultSchema,
+  handler: Effect.fn("desktop.ipc.window.openAppLink")(function* (rawUrl) {
+    const url = appLinkUrl(rawUrl);
+    if (url === null || url.startsWith(`${THREAD_LINK_PROTOCOL}:`)) return "unavailable" as const;
+    const owner = yield* (yield* ElectronWindow.ElectronWindow).currentMainOrFirst;
+    const prompt = yield* PermissionPrompt.PermissionPrompt;
+    if (!(yield* prompt.confirmAppLink(Option.getOrUndefined(owner), url))) {
+      return "cancelled" as const;
+    }
+    const shell = yield* ElectronShell.ElectronShell;
+    return (yield* shell.openAppLink(url)) ? ("opened" as const) : ("unavailable" as const);
   }),
 });
 

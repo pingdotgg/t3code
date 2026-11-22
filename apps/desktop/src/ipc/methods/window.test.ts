@@ -33,12 +33,15 @@ import * as DesktopShellEnvironment from "../../shell/DesktopShellEnvironment.ts
 import * as DesktopManagedPolicy from "../../app/DesktopManagedPolicy.ts";
 import * as DesktopWslEnvironment from "../../wsl/DesktopWslEnvironment.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
+import * as ElectronShell from "../../electron/ElectronShell.ts";
+import * as PermissionPrompt from "../../permissions/PermissionPrompt.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
   getLocalEnvironmentBootstraps,
   installRelayTelemetryEnabled,
+  openAppLink,
   pickProjectFavicon,
   probeRemoteEditors,
   readMedia,
@@ -357,6 +360,39 @@ describe("readMedia", () => {
         mimeType: "",
         data: new Uint8Array(),
       });
+    }),
+  );
+});
+
+describe("openAppLink", () => {
+  it.effect("hands an app link to the OS only after the user confirms it", () =>
+    Effect.gen(function* () {
+      const confirmations: Array<boolean> = [true, false];
+      const confirmAppLink = vi.fn((_owner: unknown, _url: string | undefined) =>
+        Effect.sync(() => confirmations.shift() ?? false),
+      );
+      const opened: Array<string> = [];
+      const open = (url: string) =>
+        openAppLink.handler(url, { sender: { id: 1 } }).pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.mock(ElectronWindow.ElectronWindow)({ currentMainOrFirst: Effect.succeedNone }),
+              Layer.mock(PermissionPrompt.PermissionPrompt)({ confirmAppLink }),
+              Layer.mock(ElectronShell.ElectronShell)({
+                openAppLink: (url) => Effect.sync(() => opened.push(url)).pipe(Effect.as(true)),
+              }),
+            ),
+          ),
+        );
+
+      assert.strictEqual(yield* open("obsidian://open?vault=v&file=A"), "opened");
+      assert.strictEqual(yield* open("obsidian://open?vault=v&file=B"), "cancelled");
+      assert.deepEqual(opened, ["obsidian://open?vault=v&file=A"]);
+      // Web pages and in-app thread links are never the OS's to open, so nothing is asked.
+      for (const url of ["https://example.com", "javascript:alert(1)", "t3-thread://v2/e/t"]) {
+        assert.strictEqual(yield* open(url), "unavailable", url);
+      }
+      assert.strictEqual(confirmAppLink.mock.calls.length, 2);
     }),
   );
 });

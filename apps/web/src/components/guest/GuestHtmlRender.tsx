@@ -66,7 +66,7 @@ export function GuestHtmlRender({
       // Only while the reader is using this frame, so a page cannot open links on its own.
       const link = readHtmlRenderLinkRequest(event.data);
       if (
-        link === undefined ||
+        link?.target !== "web" ||
         document.activeElement !== frame ||
         navigator.userActivation?.isActive === false
       ) {

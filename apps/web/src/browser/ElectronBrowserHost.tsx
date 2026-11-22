@@ -7,12 +7,15 @@ import {
   FILL_PREVIEW_VIEWPORT,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { parseThreadAppLink } from "@t3tools/shared/threadLinks";
 import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { type ComponentProps, useState } from "react";
 
 import { primaryEnvironmentIdAtom } from "~/state/primaryEnvironment";
 
 import { isElectron } from "~/env";
+import { openAppLink } from "~/lib/openAppLink";
+import type { AppRouter } from "~/router";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { useDesktopHostedPreviewSessions } from "~/components/preview/usePreviewSession";
 import {
@@ -95,12 +98,24 @@ function startAnnotationThemeSync(preview: DesktopPreviewBridge): () => void {
   };
 }
 
-function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEvent): void {
+function openLinkFromPreview(
+  router: AppRouter,
+  { tabId, url, background }: DesktopPreviewOpenLinkEvent,
+): void {
   const source = hostedBrowserSessions(
     readActivePreviewSessions(),
     appAtomRegistry.get(primaryEnvironmentIdAtom),
   ).find((session) => session.runtimeTabId === tabId);
   if (!source) return;
+  if (parseThreadAppLink(url) !== null) {
+    void openAppLink({
+      url,
+      environmentId: source.threadRef.environmentId,
+      openThread: ({ environmentId, threadId }) =>
+        router.navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } }),
+    }).catch((cause: unknown) => console.error(cause));
+    return;
+  }
   void openUrlInPreview({
     threadRef: source.threadRef,
     url,
@@ -111,7 +126,7 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
 }
 
 /** App-lifetime listeners for the desktop preview bridge: annotation theme, agent pointer, links. */
-export function startElectronBrowserHost(): () => void {
+export function startElectronBrowserHost(router: AppRouter): () => void {
   const preview = window.desktopBridge?.preview;
   if (!preview) return () => {};
   const disposers = [
@@ -119,7 +134,7 @@ export function startElectronBrowserHost(): () => void {
     preview.onPointerEvent((event) => {
       useBrowserPointerStore.getState().apply(event);
     }),
-    preview.onOpenLink(openLinkInPreview),
+    preview.onOpenLink((event) => openLinkFromPreview(router, event)),
     preview.onTunnelAccessRequest(({ requestId, environmentId }) => {
       void readPreviewTunnelUrl(environmentId).then((url) =>
         preview.resolveTunnelAccess(requestId, url),

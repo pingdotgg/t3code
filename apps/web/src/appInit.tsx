@@ -280,7 +280,7 @@ export function startAppServices(): AppRouter {
   startDefaultThemeAdoption();
   startModelPreferencesMigration();
   startAgentOpenedPreviews();
-  if (isElectron) startElectronBrowserHost();
+  if (isElectron) startElectronBrowserHost(router);
   startPreviewTitleRecording();
   startBrowserProfileReporting();
   installChatRouteCommands(router);
