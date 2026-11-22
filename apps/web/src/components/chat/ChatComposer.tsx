@@ -2973,7 +2973,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (attachmentPasteMode === "both") {
       event.preventDefault();
       event.stopPropagation();
-      if (!foldPastedText(plainText, bypassAutoAttachment)) insertComposerText(plainText, "cursor");
+      if (!foldPastedText(plainText, bypassAutoAttachment)) {
+        const selection = composerEditorRef.current?.readSelectionRange();
+        const cursor = readComposerSnapshot().expandedCursor;
+        applyPromptReplacement(selection?.start ?? cursor, selection?.end ?? cursor, plainText);
+      }
       void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
       return;
     }
