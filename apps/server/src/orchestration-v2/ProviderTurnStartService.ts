@@ -1225,14 +1225,25 @@ export const layer: Layer.Layer<
                   }),
                 ];
           // History delivery (inline or injected) is text only, so missed images ride on prompts
-          // until a later run's is accepted. Compaction and /goal starts carry none. A missed run's
-          // own accepted attempt predates its unsent steering input, so it does not count.
+          // until a later run's is accepted or rejected. Compaction and /goal starts carry none. A
+          // missed run's own accepted attempt predates its unsent steering input, so it does not count.
           const runsById = new Map(projection.runs.map((source) => [source.id, source]));
           const messagesById = new Map(projection.messages.map((message) => [message.id, message]));
+          const rejectedPromptRunIds = missedHistory.flatMap((item) =>
+            item.type === "error" &&
+            item.runId !== null &&
+            item.failure.code === RunExecutionService.PROVIDER_PROMPT_REJECTED_FAILURE_CODE
+              ? [item.runId]
+              : [],
+          );
           let lastPromptOrdinal = 0;
-          for (const attempt of acceptedAttempts) {
-            if (missedRunIds.has(attempt.runId)) continue;
-            const source = runsById.get(attempt.runId);
+          for (const runId of [
+            ...acceptedAttempts.flatMap((attempt) =>
+              missedRunIds.has(attempt.runId) ? [] : [attempt.runId],
+            ),
+            ...rejectedPromptRunIds,
+          ]) {
+            const source = runsById.get(runId);
             if (source === undefined) continue;
             const message = messagesById.get(source.userMessageId);
             if (
