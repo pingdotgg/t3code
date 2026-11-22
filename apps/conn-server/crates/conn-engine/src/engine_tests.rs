@@ -3630,8 +3630,7 @@ async fn a_provider_switch_hands_the_history_to_the_new_provider() {
         .as_array()
         .unwrap()
         .iter()
-        .filter(|t| t["type"] == "provider_handoff")
-        .next_back()
+        .rfind(|t| t["type"] == "provider_handoff")
         .unwrap();
     assert_eq!(transfer["basePoint"]["runId"], "run:t1:1");
     assert_eq!(transfer["resolution"]["strategy"], "delta_context");

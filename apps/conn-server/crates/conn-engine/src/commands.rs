@@ -484,28 +484,27 @@ pub(crate) fn message_dispatch(tx: &mut Tx<'_>, command: Value) -> Outcome {
     let cid = Some(c.command_id.as_str());
     // A run on another instance than the conversation's carries its history there. A queued
     // run decides when it starts (`start_next_queued`).
-    let switch = match crate::provider_handoff::conversation_instance(
-        tx,
-        &thread,
-        c.notification.is_some(),
-    )? {
-        Some(from) if !fresh && !queued && from != model["instanceId"] => {
-            crate::provider_handoff::prepare(
-                tx,
-                &thread,
-                &crate::provider_handoff::Place {
-                    thread_id: &c.thread_id,
-                    run_id: &run_id,
-                    root_node_id: &root,
-                    ordinal,
-                    model_selection: &model,
-                    created_by: &json!(c.created_by),
-                    requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
-                    queued: false,
-                    now: &now,
-                },
-            )?
-        }
+    let from = if fresh || queued {
+        None
+    } else {
+        crate::provider_handoff::conversation_instance(tx, &thread, c.notification.is_some())?
+    };
+    let switch = match from {
+        Some(from) if from != model["instanceId"] => crate::provider_handoff::prepare(
+            tx,
+            &thread,
+            &crate::provider_handoff::Place {
+                thread_id: &c.thread_id,
+                run_id: &run_id,
+                root_node_id: &root,
+                ordinal,
+                model_selection: &model,
+                created_by: &json!(c.created_by),
+                requires_full: !crate::merge_back::pending(tx, &c.thread_id)?.is_empty(),
+                queued: false,
+                now: &now,
+            },
+        )?,
         _ => None,
     };
     if let Some(switch) = &switch {
