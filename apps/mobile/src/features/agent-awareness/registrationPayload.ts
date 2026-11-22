@@ -4,7 +4,11 @@ import type { Preferences } from "../../persistence/mobile-preferences";
 import { supportsAgentAwarenessPush } from "./capabilities";
 
 // Development builds use sandbox APNs; distribution builds use production APNs.
-export function resolveApsEnvironment(appVariant: unknown): "sandbox" | "production" {
+export function resolveApsEnvironment(
+  appVariant: unknown,
+  override?: unknown,
+): "sandbox" | "production" {
+  if (override === "production") return "production";
   return appVariant === "development" ? "sandbox" : "production";
 }
 

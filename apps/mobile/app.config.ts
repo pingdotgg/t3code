@@ -24,6 +24,9 @@ const easProjectId =
     ? "04e224f1-4ce4-47f6-bcf6-f5cbbc760bb4"
     : "d763fcb8-d37c-41ea-a773-b54a0ab4a454");
 const updateChannel = repoEnv.T3CODE_MOBILE_UPDATE_CHANNEL?.trim();
+// TestFlight builds register production APNs tokens; every other build keeps its variant's default.
+const apsEnvironment =
+  repoEnv.T3CODE_MOBILE_APS_ENVIRONMENT === "production" ? "production" : undefined;
 const updatesEnabled = repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0";
 const IOS_BUNDLE_IDENTIFIER_PATTERN = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
 
@@ -388,7 +391,10 @@ const config: ExpoConfig = {
       {
         icon: variant.assets.androidNotificationIcon,
         color: variant.assets.androidNotificationColor,
-        mode: APP_VARIANT === "development" ? "development" : "production",
+        mode:
+          APP_VARIANT === "development" && apsEnvironment !== "production"
+            ? "development"
+            : "production",
       },
     ],
     // Gate Clerk here: withoutIosPersonalTeamCapabilities runs too early to strip its entitlement.
@@ -492,6 +498,7 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
+    apsEnvironment,
     secretsFeatureEnabled: ["1", "true"].includes(
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),

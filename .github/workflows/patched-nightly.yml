@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "23 20 * * *"
   workflow_dispatch:
+    inputs:
+      force_testflight:
+        description: "Build and upload to TestFlight even if the native fingerprint is unchanged"
+        type: boolean
+        default: false
   # Kept so the "Prepare latest upstream nightly" check still reports on PRs; nothing is built from one.
   pull_request:
     branches: [main]
@@ -643,3 +648,173 @@ jobs:
             --platform ios \
             --message "Patched nightly $RELEASE_TAG" \
             --non-interactive
+
+      # TestFlight builds register production APNs tokens, so they follow their own channel whose
+      # manifest carries that setting. Sandbox-signed dev builds stay on `nightly`.
+      - name: Publish TestFlight channel OTA update
+        working-directory: apps/mobile
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+          T3CODE_MOBILE_UPDATE_CHANNEL: testflight
+          T3CODE_MOBILE_APS_ENVIRONMENT: production
+        run: |
+          eas channel:create testflight --non-interactive || true
+          eas update \
+            --branch testflight \
+            --platform ios \
+            --message "Patched nightly $RELEASE_TAG" \
+            --non-interactive
+
+  # Native code changes rarely, so TestFlight rebuilds only when the iOS native fingerprint
+  # changes or the newest build nears TestFlight's 90-day expiry; JS changes ship through OTA.
+  mobile_native_check:
+    name: Check whether TestFlight needs a build
+    needs: [resolve, mobile_ota]
+    if: needs.resolve.outputs.should_build == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      build: ${{ steps.decide.outputs.build }}
+      key: ${{ steps.decide.outputs.key }}
+    env:
+      APP_VARIANT: development
+      T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER: com.louisefindlay23.t3code
+      T3CODE_MOBILE_UPDATE_CHANNEL: testflight
+      T3CODE_MOBILE_APS_ENVIRONMENT: production
+    steps:
+      - name: Check out prepared patched nightly source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      - name: Load official upstream T3 Connect settings
+        run: cp .env.example .env
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - id: decide
+        name: Compare native fingerprint with the last TestFlight build
+        working-directory: apps/mobile
+        shell: bash
+        env:
+          FORCE: ${{ inputs.force_testflight || 'false' }}
+        run: |
+          set -euo pipefail
+          hash="$(pnpm exec fingerprint fingerprint:generate --platform ios | sed -n '/^{/,$p' | jq -er '.hash')"
+          # The runtime version is the app version, so a bump strands OTAs just like native changes.
+          version="$(pnpm exec expo config --json | jq -er '.version')"
+          key="${hash:0:12}-$version"
+          tag="testflight/$key"
+          last="$(git for-each-ref --sort=-creatordate --count=1 --format='%(creatordate:unix)' 'refs/tags/testflight/*')"
+          age_days=$(( (  $(date +%s) - ${last:-0} ) / 86400 ))
+          build=false
+          if [ "$FORCE" = "true" ]; then build=true; reason="forced"
+          elif ! git show-ref --verify --quiet "refs/tags/$tag"; then build=true; reason="native fingerprint $key has no TestFlight build"
+          elif [ "$age_days" -ge 60 ]; then build=true; reason="last TestFlight build is $age_days days old (expires at 90)"
+          else reason="fingerprint $key already on TestFlight ($age_days days old)"; fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "TestFlight build: $build ($reason)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  mobile_testflight:
+    name: Build and upload TestFlight
+    needs: [resolve, mobile_native_check]
+    if: needs.mobile_native_check.outputs.build == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    env:
+      APP_VARIANT: development
+      T3CODE_MOBILE_IOS_BUNDLE_IDENTIFIER: com.louisefindlay23.t3code
+      T3CODE_MOBILE_UPDATE_CHANNEL: testflight
+      T3CODE_MOBILE_APS_ENVIRONMENT: production
+      TEAM_ID: 977GLV4RS3
+    steps:
+      - name: Check out prepared patched nightly source
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: refs/tags/${{ needs.resolve.outputs.release_tag }}
+
+      - name: Load official upstream T3 Connect settings
+        run: cp .env.example .env
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/mobile...
+
+      - name: Expose pnpm
+        run: |
+          pnpm_version="$(node --print "require('./package.json').packageManager.split('@').pop()")"
+          echo "$HOME/.vite-plus/package_manager/pnpm/$pnpm_version/pnpm/bin" >> "$GITHUB_PATH"
+
+      - name: Generate the native iOS project
+        working-directory: apps/mobile
+        run: pnpm exec expo prebuild --platform ios --no-install
+
+      # Apple's cloud signing creates and renews the distribution certificate and profiles from
+      # the App Store Connect API key, so no .p12 or profile is stored.
+      - name: Archive, export and upload to TestFlight
+        working-directory: apps/mobile/ios
+        env:
+          APPLE_API_KEY: ${{ secrets.ASC_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ASC_API_ISSUER }}
+        run: |
+          set -euo pipefail
+          for name in APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER; do
+            [ -n "${!name}" ] || { echo "$name is not set" >&2; exit 1; }
+          done
+          key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
+          (umask 077; printf '%s' "$APPLE_API_KEY" > "$key_path")
+          auth=(-allowProvisioningUpdates -authenticationKeyPath "$key_path" \
+            -authenticationKeyID "$APPLE_API_KEY_ID" -authenticationKeyIssuerID "$APPLE_API_ISSUER")
+          workspace="$(/bin/ls -d *.xcworkspace | head -n1)"
+          scheme="${workspace%.xcworkspace}"
+          xcodebuild archive -workspace "$workspace" -scheme "$scheme" -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            DEVELOPMENT_TEAM="$TEAM_ID" CURRENT_PROJECT_VERSION="${{ github.run_number }}" "${auth[@]}"
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+            <key>signingStyle</key><string>automatic</string>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/app.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" -exportPath "$RUNNER_TEMP/export" "${auth[@]}"
+          rm -f "$key_path"
+
+      # The tag means "delivered", so it follows the upload.
+      - name: Record the TestFlight build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          KEY: ${{ needs.mobile_native_check.outputs.key }}
+        run: |
+          git tag -f -a "testflight/$KEY" -m "TestFlight build for ${{ needs.resolve.outputs.release_tag }}"
+          git push -f origin "refs/tags/testflight/$KEY"
+          echo "Uploaded to TestFlight and recorded testflight/$KEY" >> "$GITHUB_STEP_SUMMARY"

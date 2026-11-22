@@ -761,7 +761,12 @@ const registerDevice = Effect.fn("remoteRegistration.registerDevice")(function* 
     appVersion: Constants.expoConfig?.version,
     ...(bundleId ? { bundleId } : {}),
     ...(Platform.OS === "ios"
-      ? { apsEnvironment: resolveApsEnvironment(Constants.expoConfig?.extra?.appVariant) }
+      ? {
+          apsEnvironment: resolveApsEnvironment(
+            Constants.expoConfig?.extra?.appVariant,
+            Constants.expoConfig?.extra?.apsEnvironment,
+          ),
+        }
       : {}),
     ...(pushTokenRegistration.pushToken ? { pushToken: pushTokenRegistration.pushToken } : {}),
     notificationsEnabled: pushTokenRegistration.notificationsEnabled,
