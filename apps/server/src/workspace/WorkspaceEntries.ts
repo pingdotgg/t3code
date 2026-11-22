@@ -157,12 +157,30 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
 
 // A link to an unresponsive network share must not hold up the local entries beside it.
 const SYMLINK_TARGET_STAT_TIMEOUT = Duration.seconds(1);
+// A timed-out stat cannot be cancelled and keeps a libuv worker (4 by default) busy,
+// so cap target stats in flight to leave most of the pool to other fs work.
+const MAX_PENDING_SYMLINK_TARGET_STATS = 2;
 
 /** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const workspacePaths = yield* WorkspacePaths.WorkspacePaths;
   const workspaceSearchIndexes = yield* WorkspaceSearchIndex.WorkspaceSearchIndexMap;
+  let pendingSymlinkTargetStats = 0;
+  const statSymlinkTarget = (candidate: { readonly name: string; readonly fullPath: string }) => {
+    if (pendingSymlinkTargetStats >= MAX_PENDING_SYMLINK_TARGET_STATS) {
+      return Promise.resolve(null);
+    }
+    pendingSymlinkTargetStats++;
+    return NodeFSP.stat(candidate.fullPath)
+      .then(
+        (stats) => (stats.isDirectory() ? candidate : null),
+        () => null,
+      )
+      .finally(() => {
+        pendingSymlinkTargetStats--;
+      });
+  };
   const vcsProcess = yield* VcsProcess.VcsProcess;
 
   const normalizeWorkspaceRoot = Effect.fn("WorkspaceEntries.normalizeWorkspaceRoot")(function* (
@@ -275,13 +293,11 @@ export const make = Effect.gen(function* () {
         const resolvedSymlinks = yield* Effect.forEach(
           symlinkCandidates,
           (candidate) =>
-            Effect.promise(() =>
-              NodeFSP.stat(candidate.fullPath).then(
-                (stats) => (stats.isDirectory() ? candidate : null),
-                () => null,
-              ),
-            ).pipe(Effect.timeoutOption(SYMLINK_TARGET_STAT_TIMEOUT), Effect.map(Option.getOrNull)),
-          { concurrency: 16 },
+            Effect.promise(() => statSymlinkTarget(candidate)).pipe(
+              Effect.timeoutOption(SYMLINK_TARGET_STAT_TIMEOUT),
+              Effect.map(Option.getOrNull),
+            ),
+          { concurrency: MAX_PENDING_SYMLINK_TARGET_STATS },
         );
         for (const candidate of resolvedSymlinks) {
           if (candidate !== null) entries.push(candidate);
