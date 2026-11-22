@@ -471,11 +471,7 @@ export const layer: Layer.Layer<
           switch (input.event.type) {
             case "app_thread.created": {
               const offered = input.event.appThread;
-              const existing = yield* projections.getThread(offered.id).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
+              const existing = yield* projections.findThread(offered.id);
               if (
                 existing !== null &&
                 (input.event.createOnly === true ||
@@ -531,6 +527,37 @@ export const layer: Layer.Layer<
                           modelSelection: offered.modelSelection,
                           updatedAt: now,
                         },
+                  occurredAt: now,
+                }),
+              ];
+            }
+            case "thread_model_selection.updated": {
+              const { instanceId, changes } = input.event;
+              const thread = yield* projections.getThread(input.event.threadId).pipe(
+                Effect.catchTags({
+                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
+                }),
+              );
+              const current = thread?.modelSelection;
+              if (thread === null || current?.instanceId !== instanceId || !current.options) {
+                return [];
+              }
+              let changed = false;
+              const options = current.options.map((option) => {
+                const change = changes.find(
+                  (candidate) => candidate.id === option.id && candidate.from === option.value,
+                );
+                if (change === undefined) return option;
+                changed = true;
+                return { ...option, value: change.to };
+              });
+              if (!changed) return [];
+              const now = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "thread.model-selection-updated",
+                  threadId: thread.id,
+                  payload: { ...thread, modelSelection: { ...current, options }, updatedAt: now },
                   occurredAt: now,
                 }),
               ];
@@ -690,9 +717,10 @@ export const layer: Layer.Layer<
             }
             case "background_work.updated":
               return [];
+            case "background_work.lost":
             case "command_output.delta":
             case "prompt_suggestion.updated":
-              // The session manager serves these to clients before ingestion.
+              // The session manager handles these before ingestion.
               return [];
             case "turn.terminal":
               const dismissed = yield* dismissNativeUserInputs(
@@ -925,6 +953,9 @@ export const layer: Layer.Layer<
               // A subagent thread's creation also holds its parent, parent first as a thread delete
               // locks them, so the delete either finds the child or the child sees it deleted.
               (effect) => {
+                if (input.event.type === "thread_model_selection.updated") {
+                  return threadCommands.withLock(input.event.threadId, effect);
+                }
                 if (input.event.type !== "app_thread.created") return effect;
                 const { id, lineage } = input.event.appThread;
                 const locked = threadCommands.withLock(id, effect);

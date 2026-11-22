@@ -1,6 +1,7 @@
-import { describe, it } from "@effect/vitest"
+import { assert, describe, it } from "@effect/vitest"
 import { assertFalse, assertTrue, deepStrictEqual, strictEqual } from "@effect/vitest/utils"
 import { Array as Arr, Order, pipe } from "effect"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 describe("Order", () => {
   it("Struct", () => {
@@ -8,6 +9,19 @@ describe("Order", () => {
     strictEqual(O({ a: "a", b: "b" }, { a: "a", b: "c" }), -1)
     strictEqual(O({ a: "a", b: "b" }, { a: "a", b: "b" }), 0)
     strictEqual(O({ a: "a", b: "c" }, { a: "a", b: "b" }), 1)
+  })
+
+  it("Struct discovers only enumerable own fields and compares symbols after strings", () => {
+    const rank = Symbol("rank")
+    const O = Order.Struct(withIgnoredProperties({ [rank]: Order.Number, name: Order.String }))
+    const first = Object.defineProperties({ name: "a", [rank]: 2 }, {
+      name: { enumerable: false },
+      [rank]: { enumerable: false }
+    })
+    const second = { name: "a", [rank]: 1 }
+
+    assert.strictEqual(O(first, second), 1)
+    assert.strictEqual(O(first, { name: "b", [rank]: 1 }), -1)
   })
 
   it("Tuple", () => {

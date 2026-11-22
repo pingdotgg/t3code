@@ -25,6 +25,7 @@ github:chuks-qua
 -github:coygeek Filed over 270 automated issues, about 50 a day at peak, far past what maintainers can triage
 github:cursoragent
 github:D3OXY
+github:danshapiro
 github:dbalders
 github:eggfriedrice24
 github:esthor

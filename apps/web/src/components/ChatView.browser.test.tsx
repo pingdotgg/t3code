@@ -17,6 +17,7 @@ import {
   mergeWithDefaultKeybindings,
 } from "@t3tools/shared/keybindings";
 import type * as Context from "effect/Context";
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import { expect, it, vi } from "vite-plus/test";
 import { cdp, page, userEvent } from "vite-plus/test/browser";
@@ -89,6 +90,8 @@ function acceptAttachmentUploads(): Disposable {
 const insertText = (text: string) => cdp().send("Input.insertText", { text });
 
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
+class LaunchRefused extends Schema.TaggedError<LaunchRefused>()("LaunchRefused", {}) {}
+
 function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   let release = () => {};
   const held = new Promise<void>((resolve) => {
@@ -110,6 +113,19 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
     import("effect/Layer"),
   ]);
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
+});
+
+// Null runs the real compression; a test sets it to hold an image in preparation.
+const compression = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+vi.mock(import("~/lib/imageCompression"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    prepareImageForAttachment: async (...args) => {
+      await compression.gate;
+      return actual.prepareImageForAttachment(...args);
+    },
+  };
 });
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
@@ -139,15 +155,30 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     displayKey: issueRef.key,
     title: "Add keyboard support",
   };
-  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const completed = {
+    ...issue,
+    key: "WEB-124",
+    displayKey: "WEB-124",
+    url: "https://linear.app/example/issue/WEB-124/keep-tabs-visible",
+    title: "Keep tabs visible",
+  };
+  const grouped = threadWithHistory("issue-grouped", 1);
+  using _environment = installFakeEnvironment([
+    first,
+    { ...linked, issues: [issue] },
+    { ...grouped, issues: [completed, issue] },
+  ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
   using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
-    expect(input).toEqual(issueRef);
+    const isCompleted = input.key === completed.key;
+    expect(input).toEqual({ ...issueRef, key: isCompleted ? completed.key : issue.key });
     return Effect.succeed({
-      ...issue,
-      title: liveTitle,
+      ...(isCompleted ? completed : issue),
+      title: isCompleted ? completed.title : liveTitle,
       author: { login: "sam", name: null, avatarUrl: null },
-      state: { category: "open", name: "Open" },
+      state: isCompleted
+        ? { category: "closed", closeReason: "completed", name: "Done" }
+        : { category: "open", name: "Open" },
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
@@ -202,6 +233,10 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   });
   await expect.element(badge).toBeVisible();
   expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
+  await vi.waitFor(() =>
+    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/),
+  );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
@@ -374,7 +409,7 @@ it("a new draft does not load its reserved thread before the server lists it", a
   expect(threadRequests).toEqual([]);
 });
 
-it("an interrupted image-only first send of a new thread says it may not have been sent", async () => {
+it("a failed image-only first send of a new thread keeps the new draft", async () => {
   using _environment = installFakeEnvironment([]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
@@ -386,8 +421,11 @@ it("an interrupted image-only first send of a new thread says it may not have be
     .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
       threadId: ThreadId.make("thread-image-only-interrupted"),
     });
-  // A dropped connection interrupts a new thread's launch, which is not resent.
-  using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+  // A refusal fails at once; an interrupted launch would wait for a reconnect and be resent.
+  using launch = holdRpc(
+    ORCHESTRATION_V2_WS_METHODS.launchThread,
+    Effect.fail(new LaunchRefused()),
+  );
   const router = getRouter(createMemoryHistory({ initialEntries: [`/draft/${draftId}`] }));
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
@@ -413,11 +451,101 @@ it("an interrupted image-only first send of a new thread says it may not have be
   await expect.element(editor).toHaveTextContent("next draft");
   launch.release();
 
-  await expect.element(page.getByText("Message may not have been sent")).toBeVisible();
+  await expect.element(page.getByText("Message not sent")).toBeVisible();
   await expect.element(editor).toHaveTextContent("next draft");
   // With no text there is nothing to copy.
   expect(page.getByText("Copy message", { exact: true }).query()).toBeNull();
 });
+
+it.each(["new", "existing"] as const)(
+  "Enter while an image compresses shows a cancellable banner, cancels on edit or Esc, and still sends after leaving a %s thread",
+  async (kind) => {
+    const thread = threadWithHistory(`upload-wait-${kind}`, 1);
+    const other = threadWithHistory(`upload-wait-other-${kind}`, 1);
+    using _environment = installFakeEnvironment(kind === "existing" ? [thread, other] : [other], {
+      acceptCommands: true,
+    });
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const draftId = DraftId.make(`draft-upload-wait-${kind}`);
+    if (kind === "new") {
+      useComposerDraftStore
+        .getState()
+        .setProjectDraftThreadId(scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID), draftId, {
+          threadId: thread.id,
+        });
+    }
+    using launch = holdRpc(ORCHESTRATION_V2_WS_METHODS.launchThread, Effect.interrupt);
+    const router = getRouter(
+      createMemoryHistory({
+        initialEntries: [kind === "new" ? `/draft/${draftId}` : `/${ENVIRONMENT_ID}/${thread.id}`],
+      }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    const compressed = Promise.withResolvers<void>();
+    compression.gate = compressed.promise;
+    using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+    using _uploads = acceptAttachmentUploads();
+    const editor = page.getByTestId("composer-editor");
+    await expect.element(editor).toBeVisible();
+    await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
+
+    await userEvent.click(editor);
+    const clipboardData = new DataTransfer();
+    clipboardData.items.add(new File([PNG], "shot.png", { type: "image/png" }));
+    editor
+      .element()
+      .dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
+      );
+
+    // Enter arms the send and shows the banner plus a disabled spinner button.
+    await userEvent.keyboard("check image{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    const waitingButton = page.getByRole("button", { name: "Sending when ready", exact: true });
+    await expect.element(waitingButton).toBeDisabled();
+    await expect.element(waitingButton).toHaveAttribute("aria-busy", "true");
+
+    // Typing disarms the queued send and keeps the edit.
+    await userEvent.keyboard(" now");
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
+    await expect.element(editor).toHaveTextContent("check image now");
+
+    // Enter arms again; Esc cancels cleanly.
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
+
+    // Enter arms again; leaving the thread still sends once the image is ready.
+    await userEvent.keyboard("{Enter}");
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
+    await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
+    await expect.element(page.getByText(`Answer 0 for upload-wait-other-${kind}.`)).toBeVisible();
+
+    compressed.resolve();
+    await vi.waitFor(() => {
+      if (kind === "new") {
+        expect(launch.calls).toHaveLength(1);
+      } else {
+        expect(dispatchedCommands()).toContainEqual(
+          expect.objectContaining({
+            type: "message.dispatch",
+            threadId: thread.id,
+            attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+          }),
+        );
+      }
+    });
+    launch.release();
+  },
+);
 
 it("opens the thread actions menu for an older settled thread the shell leaves out", async () => {
   const thread = { ...threadWithHistory("older-settled", 1), olderSettled: true as const };
@@ -755,8 +883,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+  useRightPanelStore.getState().openThread(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -784,6 +912,42 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
+});
+
+it("a subagent tab shows its read-only bar under no header of its own", async () => {
+  const parent = threadWithHistory("subagent-parent", 1);
+  const subagent = {
+    ...threadWithHistory("subagent-child", 1),
+    providerSubagentOf: parent.id,
+    olderSettled: true as const,
+  };
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, subagent]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openThread(parentRef, subagent.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const pane = screen.getByTestId("side-thread-pane");
+  // No header of its own: the tab names it, and only a side chat has actions to put in one.
+  await expect.element(pane.getByRole("heading", { name: subagent.title })).not.toBeInTheDocument();
+  await expect.element(pane.getByText("Runs on its own")).toBeVisible();
+  await expect.element(pane.getByRole("button", { name: "Add to chat" })).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${subagent.title}`, exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
+    .toBeVisible();
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {

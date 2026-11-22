@@ -57,6 +57,7 @@ import { useLinkedEnvironments } from "../../state/peerLinks";
 import { useEnvironmentScopeDenied } from "../../state/session";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
+import { SymbolView } from "../../components/ui/AppSymbol";
 import { AppText as Text } from "../../components/ui/AppText";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import {
@@ -400,6 +401,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       props.serverConfig?.providers ?? [],
       props.serverConfig?.usageLimitSources ?? [],
       Date.now(),
+      currentModelSelection.model,
     );
     onShowUsageLimits(report);
     if (!report) {
@@ -804,6 +806,22 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
             onDismiss={voiceInput.cancel}
           />
           {isExpanded ? editingAttachments : null}
+          {attachmentBlockReason !== null ? (
+            <View className="flex-row items-center gap-1.5 px-4 py-1.5">
+              <SymbolView
+                name="exclamationmark.triangle"
+                size={13}
+                tintColorClassName="accent-warning-foreground"
+                type="monochrome"
+              />
+              <Text
+                accessibilityRole="alert"
+                className="min-w-0 flex-1 text-xs text-warning-foreground"
+              >
+                {attachmentBlockReason}
+              </Text>
+            </View>
+          ) : null}
           <View
             onLayout={(event) => {
               compactEditor.onRowLayout(event);
@@ -842,7 +860,10 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
               <Animated.View
                 style={[
                   compactEditor.editorStyle,
-                  showsCompactDictation ? { display: "none" } : undefined,
+                  // iOS destroys a view under display: none; the editor would lose its focus and caret.
+                  Platform.OS === "android" && showsCompactDictation
+                    ? { display: "none" }
+                    : undefined,
                 ]}
               >
                 <ComposerEditor

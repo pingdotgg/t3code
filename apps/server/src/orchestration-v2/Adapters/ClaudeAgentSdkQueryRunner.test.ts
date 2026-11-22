@@ -870,6 +870,8 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("Claude CLI pro
 
       const unknown = yield* startupFailureMessage("token=sk-private-123");
       assert.notInclude(unknown, "sk-private-123");
+      // The exit status carries no private text and tells the user the CLI itself died.
+      assert.include(unknown, "Claude Code process exited with code 1");
 
       const missingConversation = yield* startupFailureMessage(
         "No conversation found with session ID: sk-private-123",
