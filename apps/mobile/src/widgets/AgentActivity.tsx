@@ -57,6 +57,7 @@ export interface AgentActivityText {
   readonly approval: string;
   readonly input: string;
   readonly noActiveAgents: string;
+  readonly newThread: string;
   readonly activeAgents: Readonly<Record<string, string>>;
   readonly active: Readonly<Record<string, string>>;
   readonly needAttention: Readonly<Record<string, string>>;

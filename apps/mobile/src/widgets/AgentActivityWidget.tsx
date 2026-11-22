@@ -40,6 +40,7 @@ export function AgentActivityWidget(
     environment.widgetRenderingMode === "vibrant" ||
     environment.isLuminanceReduced === true;
   const isLightScheme = environment.colorScheme === "light";
+  const newThreadLabel = text?.newThread ?? "New thread";
 
   type Foreground = Parameters<typeof foregroundStyle>[0];
   const primaryForeground = { type: "hierarchical", style: "primary" } as const;
@@ -211,7 +212,7 @@ export function AgentActivityWidget(
                   lineLimit(1),
                 ]}
               >
-                New thread
+                {newThreadLabel}
               </Text>
             </HStack>
           </Link>
