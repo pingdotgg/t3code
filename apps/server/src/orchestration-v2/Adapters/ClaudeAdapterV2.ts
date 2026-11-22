@@ -233,6 +233,7 @@ import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
   PROVIDER_RETRY_BUDGET_MS,
+  sleepWhileAwake,
   providerProcessExitGuidance,
 } from "@t3tools/provider-core/server/failure";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
@@ -10977,8 +10978,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             ) {
               const since = yield* DateTime.now;
               context.unansweredRequestSince = since;
-              yield* failUnansweredRequest(context, since).pipe(
-                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+              yield* sleepWhileAwake(PROVIDER_RETRY_BUDGET_MS).pipe(
+                Effect.andThen(failUnansweredRequest(context, since)),
                 Effect.forkIn(sessionScope),
               );
             } else if (
@@ -11483,8 +11484,8 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               }),
             });
             if (previous === undefined) {
-              yield* failExpiredProviderRetry(context, state.startedAt).pipe(
-                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+              yield* sleepWhileAwake(PROVIDER_RETRY_BUDGET_MS).pipe(
+                Effect.andThen(failExpiredProviderRetry(context, state.startedAt)),
                 Effect.forkIn(sessionScope),
               );
             }

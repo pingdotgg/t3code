@@ -10,8 +10,10 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
+import * as Effect from "effect/Effect";
 
 import * as IdAllocator from "./IdAllocator.ts";
 import type { ProviderAdapterFailureReason } from "./ProviderAdapter.ts";
@@ -374,6 +376,27 @@ export function makeProviderFailureTurnItem(input: {
  * can take many minutes per attempt, so counting attempts alone never ends them.
  */
 export const PROVIDER_RETRY_BUDGET_MS = 10 * 60 * 1000;
+
+const AWAKE_TICK_MS = 30_000;
+const SUSPENDED_TICK_OVERRUN_MS = 15_000;
+
+/**
+ * Waits until `millis` of time the server could run has passed. A tick that overran
+ * by far was spent suspended (system sleep), so it counts for nothing and the wait
+ * gets a full tick after a wake to read output that piled up while asleep.
+ */
+export const sleepWhileAwake = Effect.fn("ProviderFailure.sleepWhileAwake")(function* (
+  millis: number,
+) {
+  let awake = 0;
+  while (awake < millis) {
+    const tick = Math.min(AWAKE_TICK_MS, millis - awake);
+    const before = yield* Clock.currentTimeMillis;
+    yield* Effect.sleep(tick);
+    const elapsed = (yield* Clock.currentTimeMillis) - before;
+    if (elapsed <= tick + SUSPENDED_TICK_OVERRUN_MS) awake += tick;
+  }
+});
 
 export function makeProviderRetryTurnItem(input: {
   readonly driver: ProviderDriverKind;

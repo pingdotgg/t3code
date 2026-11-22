@@ -11,8 +11,11 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as TestClock from "effect/testing/TestClock";
 
 import {
   knownProviderFailureMessage,
@@ -21,6 +24,7 @@ import {
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   ContextHandoffBudgetError,
   ContextHandoffBackgroundWorkError,
+  sleepWhileAwake,
 } from "./failure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -367,4 +371,30 @@ it.effect("keys terminal failure items by provider turn across retries and fallb
     assert.equal(firstAttempt.id, ingestorFallback.id);
     assert.equal(firstAttempt.ordinal, 101);
   }).pipe(Effect.provide(IdAllocator.layer)),
+);
+
+// regression: #40762 a stall timer counted macOS sleep as provider silence and fired on wake
+it.effect("does not count time the host spent suspended toward a stall deadline", () =>
+  TestClock.testClockWith((testClock) =>
+    Effect.gen(function* () {
+      let suspendedMillis = 0;
+      const wallClock: Clock.Clock = {
+        ...testClock,
+        currentTimeMillisUnsafe: () => testClock.currentTimeMillisUnsafe() + suspendedMillis,
+        currentTimeMillis: Effect.sync(() => testClock.currentTimeMillisUnsafe() + suspendedMillis),
+      };
+      const done = yield* Deferred.make<void>();
+      yield* sleepWhileAwake(60_000).pipe(
+        Effect.andThen(Deferred.succeed(done, undefined)),
+        Effect.provideService(Clock.Clock, wallClock),
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* TestClock.adjust(20_000);
+      suspendedMillis = 60 * 60_000;
+      yield* TestClock.adjust(69_000);
+      assert.isFalse(yield* Deferred.isDone(done), "the wait ended at the first wake");
+      yield* TestClock.adjust(1_000);
+      assert.isTrue(yield* Deferred.isDone(done));
+    }),
+  ),
 );
