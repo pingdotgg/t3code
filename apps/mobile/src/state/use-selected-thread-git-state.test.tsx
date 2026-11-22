@@ -203,4 +203,26 @@ describe("thread Git result banners", () => {
       dismiss(otherThread);
     }
   });
+
+  it("keeps results separate when environment and thread IDs contain colons", () => {
+    const first = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("old:task") };
+    const second = {
+      environmentId: EnvironmentId.make("env:old"),
+      threadId: ThreadId.make("task"),
+    };
+    try {
+      using banner = mountGitBanner();
+      showGitActionResult({ ...pulled, threadRef: first });
+      banner.select(second);
+      expect(banner.text).toBe("");
+      act(() => showGitActionResult({ ...rejected, threadRef: second }));
+      expect(banner.text).toBe(rejected.title);
+      act(() => dismiss(second));
+      banner.select(first);
+      expect(banner.text).toBe(pulled.title);
+    } finally {
+      dismiss(first);
+      dismiss(second);
+    }
+  });
 });

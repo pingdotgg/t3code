@@ -12,7 +12,6 @@ import { msg, useMessages } from "gt-react-native";
 import { useSyncExternalStore } from "react";
 
 import type { MessageResolver } from "../i18n/messages";
-import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
 import { vcsActionManager } from "./vcs";
 
@@ -54,6 +53,10 @@ const gitActionResultsAtom = Atom.make<ReadonlyMap<string, PendingGitActionResul
   Atom.withLabel("mobile:git-action-results"),
 );
 
+function gitActionResultKey({ environmentId, threadId }: ScopedThreadRef): string {
+  return JSON.stringify([environmentId, threadId]);
+}
+
 export function showGitActionResult({
   threadRef,
   ...notification
@@ -64,7 +67,7 @@ export function showGitActionResult({
       ? Haptics.NotificationFeedbackType.Success
       : Haptics.NotificationFeedbackType.Error,
   ).catch(() => undefined);
-  const key = scopedThreadKey(threadRef.environmentId, threadRef.threadId);
+  const key = gitActionResultKey(threadRef);
   const results = new Map(appAtomRegistry.get(gitActionResultsAtom));
   const previous = results.get(key);
   if (previous !== undefined) clearTimeout(previous.timer);
@@ -77,7 +80,7 @@ export function showGitActionResult({
 
 export function dismissGitActionResult(threadRef: ScopedThreadRef | null): void {
   if (threadRef === null) return;
-  const key = scopedThreadKey(threadRef.environmentId, threadRef.threadId);
+  const key = gitActionResultKey(threadRef);
   const results = appAtomRegistry.get(gitActionResultsAtom);
   const entry = results.get(key);
   if (entry === undefined) return;
@@ -134,8 +137,7 @@ export function useGitActionProgress(
     cwd: repositoryCwd,
   });
   const actionState = repositoryState.isRunning ? repositoryState : threadFolderState;
-  const resultKey =
-    threadRef === null ? null : scopedThreadKey(threadRef.environmentId, threadRef.threadId);
+  const resultKey = threadRef === null ? null : gitActionResultKey(threadRef);
   const result = useAtomValue(gitActionResultsAtom, (results) =>
     resultKey === null ? undefined : results.get(resultKey)?.notification,
   );
