@@ -2,13 +2,15 @@ import {
   createProjectFaviconImageLoader,
   PROJECT_FAVICON_MAX_DATA_URL_LENGTH,
 } from "@t3tools/client-runtime/project-favicon-cache";
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const native = vi.hoisted(() => ({
+  uuid: vi.fn(() => "ab74bbb8-c8aa-4b3a-a2d1-91cfb7688a85"),
   load: vi.fn(
     async (
-      _source: string | { uri?: string },
+      _source: string | { uri?: string; cacheKey?: string },
       options: { maxWidth: number; maxHeight: number },
     ) => ({
       width: options.maxWidth,
@@ -29,7 +31,10 @@ vi.mock("expo-image", () => ({
   },
 }));
 vi.mock("expo-crypto", () => ({
-  randomUUID: () => "ab74bbb8-c8aa-4b3a-a2d1-91cfb7688a85",
+  randomUUID: native.uuid,
+  CryptoDigestAlgorithm: { SHA256: "sha256" },
+  digest: async (algorithm: string, bytes: Uint8Array) =>
+    Uint8Array.from(NodeCrypto.createHash(algorithm).update(bytes).digest()).buffer,
 }));
 vi.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
@@ -111,6 +116,22 @@ describe("mobile project icon thumbnails", () => {
     expect(native.remove).toHaveBeenCalledTimes(3);
     for (const call of native.load.mock.results)
       expect((await call.value).release).toHaveBeenCalledOnce();
+  });
+
+  it("gives the native cache the same key for the same bytes across thumbnail requests", async () => {
+    native.uuid.mockReturnValueOnce("f2ba85a6-b79f-4acb-8ba5-df7322ba2f16");
+    const signal = new AbortController().signal;
+    await downscaleProjectFavicon(image, signal);
+    await downscaleProjectFavicon(image, signal);
+    await downscaleProjectFavicon({ ...image, bytes: Uint8Array.from([137, 80, 78, 72]) }, signal);
+
+    const [first, repeated, changed] = native.load.mock.calls.map(([source]) => source);
+    expect(first).toMatchObject({ uri: expect.any(String), cacheKey: expect.any(String) });
+    if (typeof first !== "object") throw new Error("Expected an image source with a cache key");
+    expect(repeated).toMatchObject({ cacheKey: first.cacheKey });
+    expect(repeated).not.toMatchObject({ uri: first.uri });
+    expect(changed).toMatchObject({ cacheKey: expect.any(String) });
+    expect(changed).not.toMatchObject({ cacheKey: first.cacheKey });
   });
 
   it("releases a decoded image when its request was canceled", async () => {

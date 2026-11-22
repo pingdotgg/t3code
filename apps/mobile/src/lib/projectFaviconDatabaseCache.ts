@@ -6,9 +6,9 @@ import {
   type ProjectFaviconEntry,
 } from "@t3tools/client-runtime/project-favicon-cache";
 import * as Effect from "effect/Effect";
+import * as Hex from "effect/encoding/Hex";
 
 import * as MobileDatabase from "../persistence/mobile-database";
-import { uuidv4 } from "./uuid";
 
 const CACHE_KIND = "project-favicon";
 const CACHE_SCHEMA_VERSION = 1;
@@ -31,19 +31,25 @@ export async function downscaleProjectFavicon(
   image: { readonly bytes: Uint8Array<ArrayBuffer> },
   signal: AbortSignal,
 ) {
-  const [{ Image }, { File, Paths }] = await Promise.all([
+  const [{ Image }, { File, Paths }, Crypto] = await Promise.all([
     import("expo-image"),
     import("expo-file-system"),
+    import("expo-crypto"),
   ]);
   signal.throwIfAborted();
-  const requestId = uuidv4();
+  // iOS caches the original bytes under this key, regardless of the temporary file name.
+  const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, image.bytes);
+  const sourceCacheKey = `t3-favicon-source:${Hex.encode(new Uint8Array(digest))}`;
+  signal.throwIfAborted();
+  const requestId = Crypto.randomUUID();
   const source = new File(Paths.cache, `t3-favicon-source-${requestId}`);
+  const sourceImage = { uri: source.uri, cacheKey: sourceCacheKey };
   source.create();
   try {
     await source.write(image.bytes);
     for (const size of [PROJECT_FAVICON_THUMBNAIL_SIZE, PROJECT_FAVICON_THUMBNAIL_SIZE / 2]) {
       signal.throwIfAborted();
-      const decoded = await Image.loadAsync(source.uri, { maxWidth: size, maxHeight: size });
+      const decoded = await Image.loadAsync(sourceImage, { maxWidth: size, maxHeight: size });
       try {
         signal.throwIfAborted();
         if (decoded.width > size || decoded.height > size) {
