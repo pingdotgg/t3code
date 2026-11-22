@@ -7,7 +7,6 @@ import {
 } from "@t3tools/client-runtime/project-favicon-cache";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
-import { Platform } from "react-native";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 
@@ -34,10 +33,11 @@ export async function downscaleProjectFavicon(
   image: { readonly bytes: Uint8Array<ArrayBuffer> },
   signal: AbortSignal,
 ) {
-  const [{ Image }, { File, Paths }, Crypto] = await Promise.all([
+  const [{ Image }, { File, Paths }, Crypto, { Platform }] = await Promise.all([
     import("expo-image"),
     import("expo-file-system"),
     import("expo-crypto"),
+    import("react-native"),
   ]);
   signal.throwIfAborted();
   const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, image.bytes);
