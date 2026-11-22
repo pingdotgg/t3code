@@ -433,6 +433,7 @@ export interface AcpAdapterV2Flavor {
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
+    options?: { readonly includeCatalog?: boolean },
   ) => Effect.Effect<void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
@@ -2283,6 +2284,36 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
+        // Track the model catalog last published for the active session so mid-session
+        // option updates do not re-advertise a frozen catalog over a newer periodic probe.
+        const lastPublishedCatalogKey = yield* Ref.make<string | null>(null);
+        const sessionCatalogKey = (
+          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+          modelState: EffectAcpSchema.SessionModelState | null | undefined,
+        ): string => {
+          const modelOption = findModelConfigOption(configOptions);
+          if (modelOption?.type === "select") {
+            return `select:${flattenSelectChoices(modelOption.options)
+              .map((choice) => choice.value)
+              .join("\0")}`;
+          }
+          return `models:${(modelState?.availableModels ?? []).map((model) => model.modelId).join("\0")}`;
+        };
+        const publishSessionConfiguration = Effect.fnUntraced(function* (
+          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+          modeState: AcpSessionModeState | undefined,
+          modelState: EffectAcpSchema.SessionModelState | null | undefined,
+        ) {
+          if (flavor.onSessionConfigurationUpdate === undefined) return;
+          const catalogKey = sessionCatalogKey(configOptions, modelState);
+          const includeCatalog = yield* Ref.modify(lastPublishedCatalogKey, (previous) => [
+            previous !== catalogKey,
+            catalogKey,
+          ]);
+          yield* flavor.onSessionConfigurationUpdate(configOptions, modeState, modelState, {
+            includeCatalog,
+          });
+        });
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {
@@ -2301,6 +2332,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
+          yield* Ref.set(lastPublishedCatalogKey, null);
           yield* Ref.set(activeSessionSetup, setup);
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
@@ -7083,12 +7115,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 notification.update.sessionUpdate === "config_option_update" ||
                 notification.update.sessionUpdate === "current_mode_update"
               ) {
-                yield* (
-                  flavor.onSessionConfigurationUpdate?.(
-                    yield* runtime.getConfigOptions,
-                    yield* runtime.getModeState,
-                    (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-                  ) ?? Effect.void
+                yield* publishSessionConfiguration(
+                  yield* runtime.getConfigOptions,
+                  yield* runtime.getModeState,
+                  (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
                 );
               }
               const normalized = flavor.normalizeSessionUpdate?.(notification) ?? notification;
@@ -7204,6 +7234,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (current === null || current.sessionId !== result.sessionId) {
             return;
           }
+          yield* Ref.set(lastPublishedCatalogKey, null);
           yield* Ref.set(activeSessionSetup, result);
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
@@ -7219,12 +7250,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             nativeBuildConfigurationBySessionId.delete(result.sessionId);
           }
           yield* refreshModelSwitchCapability;
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* targetRuntime.getConfigOptions,
-              yield* targetRuntime.getModeState,
-              result.sessionSetupResult.models,
-            ) ?? Effect.void
+          yield* publishSessionConfiguration(
+            yield* targetRuntime.getConfigOptions,
+            yield* targetRuntime.getModeState,
+            result.sessionSetupResult.models,
           );
         });
 
@@ -8358,12 +8387,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }
           yield* validateModelSelection(modelSelection);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
-          yield* (
-            flavor.onSessionConfigurationUpdate?.(
-              yield* runtime.getConfigOptions,
-              yield* runtime.getModeState,
-              (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
-            ) ?? Effect.void
+          yield* publishSessionConfiguration(
+            yield* runtime.getConfigOptions,
+            yield* runtime.getModeState,
+            (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models,
           );
         });
 
@@ -9029,6 +9056,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* restartAcpRuntime(threadId);
           yield* Ref.set(runtimeRestartRequired, false);
           yield* Ref.set(activeSessionId, null);
+          yield* Ref.set(lastPublishedCatalogKey, null);
           yield* Ref.set(activeSessionSetup, null);
           yield* Ref.set(activeSelection, null);
           yield* Ref.set(activeInteractionMode, null);

@@ -219,7 +219,9 @@ export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
+  options?: { readonly includeCatalog?: boolean },
 ): AcpRegistryLiveConfiguration {
+  const includeCatalog = options?.includeCatalog !== false;
   const modelOption = findModelConfigOption(configOptions);
   const currentModelId =
     modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
@@ -242,7 +244,7 @@ export function normalizeAcpRegistryLiveConfiguration(
   const effortOption =
     configOptions.find((option) => option.category === "thought_level") ??
     configOptions.find(isAcpThoughtLevelOption);
-  const models = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+  const advertisedModels = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
     const reasoningEffort = advertisedReasoningEffort(
       effortOption,
       modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
@@ -256,15 +258,15 @@ export function normalizeAcpRegistryLiveConfiguration(
       .map((option) => option.id),
   );
   return {
-    models,
-    currentModelId: models.some((model) => model.id === boundedCurrentModelId)
+    models: includeCatalog ? advertisedModels : [],
+    currentModelId: advertisedModels.some((model) => model.id === boundedCurrentModelId)
       ? boundedCurrentModelId
       : null,
     configOptions: descriptors,
     modelOptionIds: descriptors
       .filter((descriptor) => modelOptionIds.has(descriptor.id))
       .map((descriptor) => descriptor.id),
-    modelsFromModelSelect: modelOption !== undefined,
+    modelsFromModelSelect: includeCatalog && modelOption !== undefined,
   };
 }
 

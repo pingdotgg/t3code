@@ -5153,7 +5153,10 @@ describe("AcpAdapterV2", () => {
       const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
       const adoptionHandled = yield* Deferred.make<void>();
       const adopted = yield* Deferred.make<void>();
-      const publishedConfigurations: Array<ReadonlyArray<EffectAcpSchema.SessionConfigOption>> = [];
+      const publishedConfigurations: Array<{
+        readonly configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>;
+        readonly includeCatalog: boolean | undefined;
+      }> = [];
       let publications = 0;
       let acpRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"] | undefined;
       const instanceId = ProviderInstanceId.make("acp-test-late-session-load-selection");
@@ -5169,9 +5172,16 @@ describe("AcpAdapterV2", () => {
               : Effect.void,
           // Holds openSession's own publication until the adapter has seen the
           // late response, so adoption overlaps session configuration.
-          onSessionConfigurationUpdate: (configOptions) =>
+          onSessionConfigurationUpdate: (configOptions, _modeState, _modelState, updateOptions) =>
             (publications++ === 0 ? Deferred.await(adoptionHandled) : Effect.void).pipe(
-              Effect.andThen(Effect.sync(() => publishedConfigurations.push(configOptions))),
+              Effect.andThen(
+                Effect.sync(() =>
+                  publishedConfigurations.push({
+                    configOptions,
+                    includeCatalog: updateOptions?.includeCatalog,
+                  }),
+                ),
+              ),
               Effect.andThen(
                 configOptions.some((option) => option.category === "model")
                   ? Deferred.succeed(adopted, undefined)
@@ -5241,8 +5251,19 @@ describe("AcpAdapterV2", () => {
         "the selected model was only applied to the provisional setup, which offered no model",
       );
       assert.isTrue(
-        publishedConfigurations.at(-1)?.some((option) => option.category === "model"),
+        publishedConfigurations.at(-1)?.configOptions.some((option) => option.category === "model"),
         "the provisional catalog was published over the late session/load one",
+      );
+      const modelPublications = publishedConfigurations.filter((entry) =>
+        entry.configOptions.some((option) => option.category === "model"),
+      );
+      assert.isTrue(
+        modelPublications[0]?.includeCatalog,
+        "adoption must publish the newly observed session catalog",
+      );
+      assert.isFalse(
+        modelPublications.at(-1)?.includeCatalog,
+        "subsequent turn reconfiguration with an unchanged catalog must not re-advertise it",
       );
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );

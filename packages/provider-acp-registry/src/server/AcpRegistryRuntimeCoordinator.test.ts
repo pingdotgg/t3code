@@ -310,6 +310,11 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const afterClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(Option.isNone(afterClear.configuration)).toBe(true);
         expect(afterClear.clearedThroughRevision).toBe(second.revision);
+
+        // Publications on another instance must not advance this instance's revision or watermark.
+        const otherInstanceId = ProviderInstanceId.make("acpRegistry_kimi");
+        yield* coordinator.publishLiveConfiguration(otherInstanceId, configFor("kimi-v1"));
+        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual(afterClear);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

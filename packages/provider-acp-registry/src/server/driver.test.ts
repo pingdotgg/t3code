@@ -934,6 +934,45 @@ describe("acpRegistryEnrichmentCache", () => {
     });
     expect(provisionalUpdate).toBe(explicitSingletonCache);
     expect(provisionalUpdate.entry?.provider.models.map((m) => m.slug)).toEqual(["gmodel"]);
+
+    const optionsOnly = normalizeAcpRegistryLiveConfiguration(
+      [
+        {
+          id: "effort",
+          name: "Effort",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [{ value: "high", name: "High" }],
+        },
+      ],
+      undefined,
+      {
+        currentModelId: "auto",
+        availableModels: [
+          { modelId: "auto", name: "Auto" },
+          { modelId: "qmodel", name: "Qwen" },
+        ],
+      },
+      { includeCatalog: false },
+    );
+    expect(optionsOnly.models).toEqual([]);
+    expect(optionsOnly.currentModelId).toBe("auto");
+    expect(optionsOnly.modelsFromModelSelect).toBe(false);
+    expect(optionsOnly.modelOptionIds).toEqual(["effort"]);
+    const afterOptionsOnly = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: optionsOnly,
+      customModels: [],
+      now: 2_000,
+    });
+    expect(afterOptionsOnly.generation).toBe(1);
+    expect(afterOptionsOnly.entry?.expiresAt).toBe(1_000);
+    expect(
+      afterOptionsOnly.entry?.provider.models
+        .find((m) => m.slug === "auto")
+        ?.capabilities?.optionDescriptors?.map((option) => option.id),
+    ).toEqual(["effort"]);
   });
 
   it("updates the cache and promotes the expiry when live configuration discovers a catalog", () => {
@@ -955,8 +994,22 @@ describe("acpRegistryEnrichmentCache", () => {
     expect(updated.generation).toBe(2);
   });
 
-  it("advances the cache epoch when a live update arrives before any probe lands", () => {
+  it("advances the cache epoch when a live catalog arrives before any probe lands", () => {
     const cache = { generation: 4, entry: null };
+
+    expect(
+      updateAcpRegistryEnrichmentCache({
+        cache,
+        configuration: {
+          models: [],
+          currentModelId: "auto",
+          configOptions: [],
+          modelsFromModelSelect: false,
+        },
+        customModels: [],
+        now: 5_000,
+      }),
+    ).toBe(cache);
 
     const updated = updateAcpRegistryEnrichmentCache({
       cache,
@@ -1483,7 +1536,11 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Option.getOrThrow(yield* Fiber.join(initial)).models.map((model) => model.slug),
         ).toEqual(["old-model", "other-model"]);
 
-        const sessionWithEffort = (currentModelId: string) =>
+        const sessionWithOptions = (
+          currentModelId: string,
+          effortValue: "low" | "high" = "high",
+          options?: { readonly includeCatalog?: boolean; readonly includeLegacy?: boolean },
+        ) =>
           normalizeAcpRegistryLiveConfiguration(
             [
               {
@@ -1491,12 +1548,24 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
                 name: "Effort",
                 category: "thought_level",
                 type: "select",
-                currentValue: "high",
+                currentValue: effortValue,
                 options: [
                   { value: "low", name: "Low" },
                   { value: "high", name: "High" },
                 ],
               },
+              ...(options?.includeLegacy === true
+                ? [
+                    {
+                      id: "legacy",
+                      name: "Legacy",
+                      category: "other" as const,
+                      type: "select" as const,
+                      currentValue: "on",
+                      options: [{ value: "on", name: "On" }],
+                    },
+                  ]
+                : []),
             ],
             undefined,
             {
@@ -1506,6 +1575,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
                 { modelId: "other-model", name: "other-model" },
               ],
             },
+            options?.includeCatalog === undefined
+              ? undefined
+              : { includeCatalog: options.includeCatalog },
           );
         const learnedEffort = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
@@ -1524,15 +1596,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* coordinator.publishLiveConfiguration(
           identity.instanceId,
-          sessionWithEffort("other-model"),
+          sessionWithOptions("other-model", "high", { includeLegacy: true }),
         );
         yield* coordinator.publishLiveConfiguration(
           identity.instanceId,
-          sessionWithEffort("old-model"),
+          sessionWithOptions("old-model", "high", { includeLegacy: true }),
         );
         yield* Fiber.join(learnedEffort);
 
-        // Upstream adds a model and explicitly disables reasoning on other-model; TTL expires without manual invalidation.
+        // Upstream adds a model, removes the shared legacy option, and disables reasoning on other-model.
         yield* fileSystem.writeFileString(
           modelsPath,
           JSON.stringify([
@@ -1567,6 +1639,32 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((model) => model.slug === "other-model")
             ?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
         ).toEqual([]);
+        expect(
+          updated.models
+            .find((model) => model.slug === "new-model")
+            ?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
+        ).toEqual(["effort"]);
+
+        // A mid-session option update from a long-lived session (includeCatalog: false) must keep
+        // the newly probed models intact while updating the active model's learned options.
+        const effortUpdated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((model) => model.slug === "old-model")
+                ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort")
+                ?.currentValue === "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          sessionWithOptions("old-model", "low", { includeCatalog: false }),
+        );
+        expect(
+          Option.getOrThrow(yield* Fiber.join(effortUpdated)).models.map((model) => model.slug),
+        ).toEqual(["new-model", "old-model", "other-model"]);
 
         // Subsequent cached refresh must keep the cached catalog instead of re-probing or reverting to old session state.
         yield* fileSystem.writeFileString(
@@ -1579,6 +1677,80 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         expect(
           Option.getOrThrow(yield* Fiber.join(nextCached)).models.map((model) => model.slug),
+        ).toEqual(["new-model", "old-model", "other-model"]);
+
+        // When a later post-TTL probe runs directly on old-model without effort, learned effort is dropped.
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "new-model"]));
+        yield* TestClock.adjust("16 minutes");
+        const droppedOnCurrent = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const currentObserved = Option.getOrThrow(yield* Fiber.join(droppedOnCurrent));
+        expect(currentObserved.models.map((model) => model.slug)).toEqual([
+          "old-model",
+          "new-model",
+        ]);
+        expect(
+          currentObserved.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
+        ).toEqual([]);
+      }),
+  );
+
+  it.effect(
+    "retains accepted models across provisional probes, transient errors, and foreground startup, and drops them on sign-out or invalidation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "acp-driver-retention-",
+        });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["new-model", "old-model", "other-model"]),
+        );
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              }),
+          }),
+        );
+
+        const waitForEnriched = () =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+            Stream.runHead,
+          );
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        expect(
+          Option.getOrThrow(yield* Fiber.join(initial)).models.map((model) => model.slug),
         ).toEqual(["new-model", "old-model", "other-model"]);
 
         // Once the live entry has been cleared, a later provisional post-TTL probe—even after an
@@ -1652,8 +1824,22 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Option.getOrThrow(yield* Fiber.join(recovered)).models.map((model) => model.slug),
         ).toEqual(["new-model", "old-model", "other-model", "settled-model"]);
 
-        // Readiness must keep the last accepted catalog when enrichment is skipped during foreground startup,
-        // and drop that fallback once caches are invalidated.
+        // An unauthenticated post-TTL probe must clear accepted models so subsequent readiness
+        // refreshes do not flip between the signed-in catalog and default.
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify({ fail: "Sign in required", code: -32000 }),
+        );
+        yield* TestClock.adjust("16 minutes");
+        const signedOutProbe = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.auth.status === "unauthenticated"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const signedOut = Option.getOrThrow(yield* Fiber.join(signedOutProbe));
+        expect(signedOut.models.map((model) => model.slug)).toEqual(["default"]);
+
         const startupEntered = yield* Deferred.make<void>();
         const releaseStartup = yield* Deferred.make<void>();
         const startup = yield* coordinator
@@ -1665,6 +1851,36 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           )
           .pipe(Effect.forkScoped({ startImmediately: true }));
         yield* Deferred.await(startupEntered);
+
+        yield* instance.snapshot.refresh;
+        expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
+          "default",
+        ]);
+        yield* Deferred.succeed(releaseStartup, undefined);
+        yield* Fiber.join(startup);
+
+        // Re-populate the catalog, then verify foreground startup keeps it and invalidation clears it.
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["new-model", "old-model", "other-model", "settled-model"]),
+        );
+        const restored = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(restored);
+
+        const startupEntered2 = yield* Deferred.make<void>();
+        const releaseStartup2 = yield* Deferred.make<void>();
+        const startup2 = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(startupEntered2, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStartup2)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(startupEntered2);
 
         yield* instance.snapshot.refresh;
         expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
@@ -1680,8 +1896,34 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "default",
         ]);
 
-        yield* Deferred.succeed(releaseStartup, undefined);
-        yield* Fiber.join(startup);
+        yield* Deferred.succeed(releaseStartup2, undefined);
+        yield* Fiber.join(startup2);
+
+        const restoredForAuthInvalidate = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(restoredForAuthInvalidate);
+
+        const startupEntered3 = yield* Deferred.make<void>();
+        const releaseStartup3 = yield* Deferred.make<void>();
+        const startup3 = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(startupEntered3, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStartup3)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(startupEntered3);
+
+        yield* instance.auth?.invalidate ?? Effect.void;
+        expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
+          "default",
+        ]);
+
+        yield* Deferred.succeed(releaseStartup3, undefined);
+        yield* Fiber.join(startup3);
       }),
   );
 
@@ -1879,7 +2121,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const releaseNewerCallback = yield* Deferred.make<void>();
         const newerCallbackDone = yield* Deferred.make<void>();
         const secondWatcherSubscribed = yield* Deferred.make<void>();
-        let postTtlLiveReads = 0;
+        let checkProviderInspected = false;
+        let skipNextLiveRead = false;
         let armed = false;
         let trackNextWatcher = false;
 
@@ -1889,9 +2132,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             getLiveConfigurationWithRevision: (instanceId) =>
               Effect.gen(function* () {
                 if (armed) {
-                  postTtlLiveReads += 1;
-                  // 1st read is checkProvider; 2nd read is enrichProviderCached capturing probeStartLiveRevision.
-                  if (postTtlLiveReads === 2) {
+                  if (skipNextLiveRead) {
+                    skipNextLiveRead = false;
+                  } else {
                     armed = false;
                     yield* Deferred.await(allowProbe);
                   }
@@ -1927,6 +2170,12 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
               }),
           };
 
+        const readyInspection = {
+          status: "ready" as const,
+          agentId: "test-agent",
+          version: "1.0.0",
+          distribution: "npx" as const,
+        };
         const instance = yield* AcpRegistryDriver.create({
           instanceId: identity.instanceId,
           displayName: identity.displayName,
@@ -1939,12 +2188,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             gatedCoordinator,
           ),
           Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
-            ...catalogWithInspection({
-              status: "ready",
-              agentId: "test-agent",
-              version: "1.0.0",
-              distribution: "npx",
-            }),
+            ...catalogWithInspection(readyInspection),
+            inspect: () =>
+              Effect.sync(() => {
+                if (armed && !checkProviderInspected) {
+                  checkProviderInspected = true;
+                  skipNextLiveRead = true;
+                }
+                return readyInspection;
+              }),
             resolve: () =>
               Effect.succeed({
                 distribution: "npx" as const,
