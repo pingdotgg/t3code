@@ -1,4 +1,5 @@
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type {
   ProviderApprovalDecision,
   ResponseContextRecord,
@@ -24,7 +25,7 @@ import { type LegendListRef } from "@legendapp/list/react";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import type { PendingApproval } from "../../session-logic";
 import { type ChatFileAttachment } from "../../types";
-import { ExpandedImagePreview } from "./ExpandedImagePreview";
+import { type ExpandedImageItem, ExpandedImagePreview } from "./ExpandedImagePreview";
 import { type AssistantCitationTarget } from "./AssistantCitationSource";
 import { type MessagesTimelineRow, type WorkGroupScrollAnchor } from "./MessagesTimeline.logic";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -37,7 +38,8 @@ import { type HandoffTimelineRun } from "./V2LifecycleRow";
  */
 export interface TurnItemSource {
   readonly detail: TurnItemDetailSource;
-  readonly commandOutput: (target: {
+  /** Unset where output does not stream: a command row then shows the output its detail holds. */
+  readonly commandOutput?: (target: {
     readonly threadId: ThreadId;
     readonly itemId: TurnItemId;
   }) => Atom.Atom<AsyncResult.AsyncResult<CommandOutputView, unknown>>;
@@ -84,6 +86,8 @@ export interface TimelineRowSharedState {
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
+    /** How the click asked to open a subagent or side chat; a plain click when absent. */
+    intent?: SideThreadOpenIntent,
   ) => void;
   workflowOpening: WorkflowOpening | null;
   /** Absent hides "Fork from this response", as in the guest view. */
@@ -127,8 +131,15 @@ export interface WorkGroupViewState {
   expandedEntries: Set<string>;
 }
 
+/** One image the group's agent viewed; `item` is null until its URL resolves. */
+export interface WorkGroupViewedImage {
+  readonly path: string;
+  readonly item: ExpandedImageItem | null;
+}
+
 export const WorkGroupViewCtx = createContext<{
   state: WorkGroupViewState;
+  viewedImages: ReadonlyArray<WorkGroupViewedImage>;
   onToggleEntry: (collapsed: boolean, entryId: string) => void;
   onContentReady?: ((entryId: string) => void) | undefined;
 } | null>(null);
