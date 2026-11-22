@@ -720,22 +720,32 @@ function readableBody(raw: string): string | null {
  */
 function visibleTextFirst(body: string): string {
   if (body.length <= FINDING_BODY_MAX_LENGTH) return body;
+  const lines = body.split("\n");
+  const lineStarts: number[] = [];
+  let offset = 0;
+  for (const line of lines) {
+    lineStarts.push(offset);
+    offset += line.length + 1;
+  }
   const codeLines = new Set<number>();
-  const visit = (node: MdastNodes) => {
-    if (node.type === "code" && node.position !== undefined) {
-      for (let line = node.position.start.line; line <= node.position.end.line; line += 1) {
-        codeLines.add(line);
-      }
+  const visit = (node: Nodes) => {
+    // Words' source positions carry offsets only; their line numbers are not source lines.
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (node.type === "element" && node.tagName === "pre" && start != null && end != null) {
+      lineStarts.forEach((lineStart, index) => {
+        if (lineStart < end && lineStart + lines[index]!.length >= start) codeLines.add(index);
+      });
     }
     if ("children" in node) for (const child of node.children) visit(child);
   };
-  visit(fromMarkdown(body));
+  visit(markdownTree(body, { skipHtml: true }));
   const shown: string[] = [];
   const folded: string[] = [];
   // Whether each open section starts collapsed; `<details open>` reads as visible text.
   const sections: boolean[] = [];
-  for (const [index, line] of body.split("\n").entries()) {
-    const inCode = codeLines.has(index + 1);
+  for (const [index, line] of lines.entries()) {
+    const inCode = codeLines.has(index);
     // Only a line that starts as a details block opens sections; a tag named in prose does not.
     const opens = !inCode && /^\s*<details(?=[\s>])/iu.test(line);
     let from = 0;
@@ -1398,6 +1408,7 @@ export function buildPullRequestCommentContext(
     return {
       id: `pr-comment:${pullRequest.url}:comment:${comment.id}`,
       sectionId: `pull-request:${pullRequestNumber}`,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- context title sent to the agent
       sectionTitle: `PR #${pullRequestNumber} conversation`,
       // The chip wears `filePath rangeLabel`: the file a remark names, or who wrote one that names none.
       filePath: comment.path ?? `@${author}`,
