@@ -1314,12 +1314,13 @@ private class DiffCanvasView(context: Context) : View(context) {
     }
     val selected = selectedRowIds.contains(row.id)
     if (selected) {
+      // Source files hide the change bar (width 0); the selection marker still needs to show.
       fill(
         canvas,
         withAlpha(theme.hunkText, 242),
         0f,
         top.toFloat(),
-        style.changeBarWidthPx,
+        maxOf(style.changeBarWidthPx, 4f * density),
         bottom.toFloat()
       )
     }

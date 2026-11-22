@@ -196,11 +196,18 @@ it.layer(layerTest)("ProjectFaviconResolverLive", (it) => {
         const cwd = yield* makeTempDir;
         yield* writeTextFile(cwd, "index.html", '<link rel="icon" href="/brand/logo.svg">');
         yield* writeTextFile(cwd, "public/brand/logo.svg", "<svg>brand</svg>");
+        yield* writeTextFile(cwd, "web/favicon.png", "flutter");
 
         const resolved = yield* resolver.resolvePath(cwd);
 
         expect(resolved).not.toBeNull();
         expect(resolved).toBe((yield* Path.Path).join(cwd, "public", "brand", "logo.svg"));
+
+        const flutterCwd = yield* makeTempDir;
+        yield* writeTextFile(flutterCwd, "web/favicon.png", "flutter");
+        expect(yield* resolver.resolvePath(flutterCwd)).toBe(
+          (yield* Path.Path).join(flutterCwd, "web", "favicon.png"),
+        );
 
         const paddedCwd = yield* makeTempDir;
         yield* writeTextFile(

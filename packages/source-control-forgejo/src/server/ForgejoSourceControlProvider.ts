@@ -19,6 +19,10 @@ import {
   type SourceControlCliDiscoverySpec,
   type SourceControlManagedCliDiscoverySpec,
 } from "@t3tools/source-control-core/server/discovery";
+import {
+  parseGitRemoteHost,
+  unknownRemoteProvider,
+} from "@t3tools/source-control-core/shared/definition";
 import { ForgejoPullRequestSchema, toForgejoChangeRequest } from "./forgejoPullRequests.ts";
 
 const isForgejoCliError = Schema.is(ForgejoCli.ForgejoCliError);
@@ -217,8 +221,10 @@ const refineRepositoryIdentity: NonNullable<
   resolveContext,
 }) {
   const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
+  const remoteHost = parseGitRemoteHost(identity.locator.remoteUrl);
   if (
     !remote ||
+    !remoteHost ||
     !identity.rootPath ||
     (identity.provider !== undefined &&
       identity.provider !== "unknown" &&
@@ -228,7 +234,7 @@ const refineRepositoryIdentity: NonNullable<
   const context = yield* resolveContext({
     cwd: identity.rootPath,
     context: {
-      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
+      provider: unknownRemoteProvider(remoteHost),
       remoteName: identity.locator.remoteName,
       remoteUrl: identity.locator.remoteUrl,
     },
@@ -255,13 +261,11 @@ const resolveRemoteWebHost: NonNullable<
   context,
   resolveContext,
 }) {
-  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh) return null;
+  const remoteHost = parseGitRemoteHost(context.remoteUrl);
+  if (!ForgejoCli.parseForgejoRemote(context.remoteUrl)?.ssh || !remoteHost) return null;
   const resolved = yield* resolveContext({
     cwd,
-    context: {
-      ...context,
-      provider: { kind: SourceControlProviderKind.make("unknown"), name: "Unknown", baseUrl: "" },
-    },
+    context: { ...context, provider: unknownRemoteProvider(remoteHost) },
   });
   return resolved?.provider.kind === "forgejo"
     ? new URL(resolved.provider.baseUrl).host.toLowerCase()
