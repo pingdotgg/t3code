@@ -164,7 +164,7 @@ it.effect("names a fork merge request's source project from real glab list outpu
       state: "open",
       limit: 20,
     });
-    // GitManager drops a cross-repository MR whose head project is unnamed (GitManager.ts:488).
+    // GitManager drops a cross-repository MR whose head project is unnamed.
     expect(changeRequests).toMatchObject([
       {
         number: 1,
