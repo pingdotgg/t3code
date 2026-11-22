@@ -1624,13 +1624,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
     );
+    let initialLiveSessionResetRevision = 0;
     if (Option.isSome(runtimeCoordinator)) {
       yield* runtimeCoordinator.value.clearAvailableCommands(instanceId);
-      yield* runtimeCoordinator.value.clearLiveConfiguration(instanceId);
+      initialLiveSessionResetRevision =
+        yield* runtimeCoordinator.value.clearLiveConfiguration(instanceId);
       yield* Effect.addFinalizer(() =>
         runtimeCoordinator.value
           .clearAvailableCommands(instanceId)
-          .pipe(Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId))),
+          .pipe(
+            Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId)),
+            Effect.asVoid,
+          ),
       );
     }
     const random = yield* SecureRandom.SecureRandom;
@@ -1697,11 +1702,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Tracks the coordinator revision through which live state was explicitly reset (instance
     // creation, sign-out, or full cache clear), excluding invalidateCaches which preserves
     // coordinator state.
-    const liveSessionResetRevision = yield* Ref.make(
-      Option.isSome(runtimeCoordinator)
-        ? yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(instanceId)
-        : 0,
-    );
+    const liveSessionResetRevision = yield* Ref.make(initialLiveSessionResetRevision);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
     const lastAppliedLiveRevision = yield* Ref.make(0);
@@ -2215,7 +2216,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     cappedTailIsOverflow: probedCappedTailIsOverflow,
                   };
                   // A fresh non-provisional probe supersedes any live session catalog observed before it started.
-                  const cleared = probeSupersedesLiveCatalog
+                  const clearedThrough = probeSupersedesLiveCatalog
                     ? Option.isSome(runtimeCoordinator)
                       ? yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
                           instanceId,
@@ -2225,9 +2226,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               retainAcpRegistryLiveOptionsAfterProbe(live, probeOptionSchema),
                           },
                         )
-                      : true
-                    : false;
-                  if (probeSupersedesLiveCatalog && !cleared) return;
+                      : Option.some(0)
+                    : Option.none<number>();
+                  if (probeSupersedesLiveCatalog && Option.isNone(clearedThrough)) return;
                   if (effectiveConfig.source === "local") {
                     yield* Ref.set(reportedLocalVersion, provider.version);
                   }
@@ -2239,7 +2240,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         currentModelId: probedCurrentModelId,
                         reasoningDisabledModelSlugs,
                       });
-                      const nextLearned = cleared
+                      const nextLearned = Option.isSome(clearedThrough)
                         ? updateAcpRegistryLearnedModelsFromProbe(learned, provider.models, {
                             currentModelId: probedCurrentModelId,
                             modelOptionIds: probedModelOptionIds,
@@ -2250,15 +2251,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     });
                     resolved = models === provider.models ? provider : { ...provider, models };
                   }
-                  let clearedThroughRevision = 0;
-                  if (cleared) {
-                    clearedThroughRevision = Option.isSome(runtimeCoordinator)
-                      ? yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
-                          instanceId,
-                        )
-                      : 0;
+                  if (Option.isSome(clearedThrough)) {
                     const supersededLiveSession =
-                      clearedThroughRevision > (yield* Ref.get(liveSessionResetRevision));
+                      clearedThrough.value > (yield* Ref.get(liveSessionResetRevision));
                     yield* resetAppliedLiveRevisions;
                     yield* Ref.set(acceptedCatalog, {
                       models: resolved.models,
@@ -2270,9 +2265,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     });
                   }
                   const published = yield* withLiveRuntimeState(resolved);
-                  if (cleared) {
+                  if (Option.isSome(clearedThrough)) {
                     yield* Ref.update(lastAppliedLiveRevision, (prev) =>
-                      Math.max(prev, clearedThroughRevision),
+                      Math.max(prev, clearedThrough.value),
                     );
                   }
                   const completedAt = yield* Clock.currentTimeMillis;
@@ -2295,22 +2290,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     ? yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(instanceId, {
                         catalogRevision: probeStartCatalogRevision,
                       })
-                    : true;
-                  if (!clearedForSignOut) return;
+                    : Option.some(0);
+                  if (Option.isNone(clearedForSignOut)) return;
                   yield* Ref.set(enrichmentCache, {
                     generation: current.generation + 1,
                     entry: null,
                   });
                   yield* clearLearnedModels;
                   yield* clearAcceptedCatalog;
-                  if (Option.isSome(runtimeCoordinator)) {
-                    yield* Ref.set(
-                      liveSessionResetRevision,
-                      yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
-                        instanceId,
-                      ),
-                    );
-                  }
+                  yield* Ref.set(liveSessionResetRevision, clearedForSignOut.value);
                   yield* resetAppliedLiveRevisions;
                 }
                 const preserveTransientFailure =
@@ -2472,16 +2460,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Option.isSome(runtimeCoordinator)
                 ? (options?.clearLiveConfiguration === false
                     ? Effect.void
-                    : runtimeCoordinator.value.clearLiveConfiguration(instanceId).pipe(
-                        Effect.andThen(
-                          runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
-                            instanceId,
+                    : runtimeCoordinator.value
+                        .clearLiveConfiguration(instanceId)
+                        .pipe(
+                          Effect.flatMap((clearedThrough) =>
+                            Ref.set(liveSessionResetRevision, clearedThrough),
                           ),
-                        ),
-                        Effect.flatMap((clearedThrough) =>
-                          Ref.set(liveSessionResetRevision, clearedThrough),
-                        ),
-                      )
+                        )
                   ).pipe(
                     Effect.andThen(
                       options?.clearCommands === true

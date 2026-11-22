@@ -461,6 +461,8 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: true,
         });
 
+        expect(yield* coordinator.clearLiveConfiguration(instanceId)).toBe(0);
+
         yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
         const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
@@ -470,7 +472,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
             catalogRevision: first.catalogRevision,
           }),
-        ).toBe(false);
+        ).toEqual(Option.none());
         expect(
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).clearedThroughRevision,
         ).toBe(0);
@@ -548,7 +550,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
               return Option.some({ ...live, partialOptions: true });
             },
           }),
-        ).toBe(true);
+        ).toEqual(Option.some(optionsSnap.revision));
         // Every candidate passed to retain has catalog models and provenance stripped.
         expect(seenRetainInputs).toEqual([
           ["model-v3", 0, false],
@@ -595,7 +597,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
             catalogRevision: third.catalogRevision,
           }),
-        ).toBe(true);
+        ).toEqual(Option.some(optionsSnap.revision));
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: third.catalogRevision,
+          }),
+        ).toEqual(Option.some(optionsSnap.revision));
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...optionsSnap,
           catalog: Option.none(),
@@ -631,10 +638,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         // Clear retention caps pendingOptions at 256 even when catalog options plus 256
         // per-model updates are all retained (evicting the oldest entry, catalog-model).
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: catalogForCap.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: catalogForCap.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const clearedCap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(clearedCap.pendingOptions).toHaveLength(256);
@@ -645,13 +654,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         // preserveDefault, getLiveConfiguration returns none so Copilot does not read an
         // earlier model's effort.
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: catalogForCap.catalogRevision,
-            retain: (live) =>
-              live.currentModelId === "m256"
-                ? Option.none()
-                : Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: catalogForCap.catalogRevision,
+              retain: (live) =>
+                live.currentModelId === "m256"
+                  ? Option.none()
+                  : Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const clearedEarlierOnly = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(clearedEarlierOnly.configuration).toEqual(Option.none());
@@ -690,10 +701,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: advertisedCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: advertisedCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterAdvClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(afterAdvClear.pendingOptions).toEqual([
@@ -725,13 +738,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         // If retain strips advertisedReasoning (e.g. probe disabled reasoning for model-c)
         // and model-b has no model-specific options, the earlier entry is dropped.
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: advertisedCatalog.catalogRevision,
-            retain: (live) => {
-              const { advertisedReasoning: _dropped, ...rest } = live;
-              return Option.some({ ...rest, partialOptions: true });
-            },
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: advertisedCatalog.catalogRevision,
+              retain: (live) => {
+                const { advertisedReasoning: _dropped, ...rest } = live;
+                return Option.some({ ...rest, partialOptions: true });
+              },
+            }),
+          ),
         ).toBe(true);
         const afterDisabledClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(afterDisabledClear.pendingOptions).toHaveLength(1);
@@ -753,10 +768,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         });
         const reasoningCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: reasoningCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: reasoningCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterCatalogReasoningClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -798,10 +815,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: sameModelCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: sameModelCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterSameModelClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(afterSameModelClear.pendingOptions).toHaveLength(2);
@@ -857,10 +876,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: crossModelCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: crossModelCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterCrossModelClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -882,10 +903,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: crossModelCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: crossModelCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterSecondCrossClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -1014,10 +1037,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: replacedCrossCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: replacedCrossCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterReplacedCrossClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -1046,13 +1071,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         // A follow-up clear whose retain drops only the orphaned reasoning entry must update
         // stored state rather than short-circuiting as a no-op.
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: replacedCrossCatalog.catalogRevision,
-            retain: (live) =>
-              live.currentModelId === null
-                ? Option.none()
-                : Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: replacedCrossCatalog.catalogRevision,
+              retain: (live) =>
+                live.currentModelId === null
+                  ? Option.none()
+                  : Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         expect(
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions.some(
@@ -1091,10 +1118,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         expect(protoOrphanBeforeClear?.["__proto__"]).toEqual(lowEffort);
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: replacedCrossCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: replacedCrossCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const protoOrphanAfterClear = (yield* coordinator.getLiveConfigurationWithRevision(
           instanceId,
@@ -1163,10 +1192,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           ),
         ).toBe(true);
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: capCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: capCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterCapClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
@@ -1234,14 +1265,16 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           ),
         ).toBe(false);
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: dropReasoningCatalog.catalogRevision,
-            retain: (live) =>
-              live.currentModelId === "model-churn" ||
-              (live.currentModelId === "model-b" && live.configOptions.length === 0)
-                ? Option.none()
-                : Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: dropReasoningCatalog.catalogRevision,
+              retain: (live) =>
+                live.currentModelId === "model-churn" ||
+                (live.currentModelId === "model-b" && live.configOptions.length === 0)
+                  ? Option.none()
+                  : Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         expect(
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions,
@@ -1279,10 +1312,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: dropReasoningCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: dropReasoningCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterSelfSupersedeClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -1325,10 +1360,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: dropReasoningCatalog.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: dropReasoningCatalog.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterCrossSupersedeClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
@@ -1343,8 +1380,15 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toEqual([[modelYReasoningSnap.revision, null, "low"]]);
 
         // Case 6: Full clearLiveConfiguration and a fresh catalog publish both reset tracked
-        // reasoningByModel and catalogReasoningSupersededSlugs.
-        yield* coordinator.clearLiveConfiguration(instanceId);
+        // reasoningByModel and catalogReasoningSupersededSlugs, and clearLiveConfiguration returns
+        // the resulting cleared-through watermark.
+        const beforeFullClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(yield* coordinator.clearLiveConfiguration(instanceId)).toBe(
+          beforeFullClear.revision,
+        );
+        expect(yield* coordinator.clearLiveConfiguration(instanceId)).toBe(
+          beforeFullClear.revision,
+        );
         expect(
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions,
         ).toEqual([]);
@@ -1384,10 +1428,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const freshCatalogAfterSupersede =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: freshCatalogAfterSupersede.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: freshCatalogAfterSupersede.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         expect(
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions.map(
@@ -1441,10 +1487,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           cappedLastModel: ordinaryTailModel,
         });
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: freshCatalogAfterSupersede.catalogRevision,
-            retain: (live) => Option.some({ ...live, partialOptions: true }),
-          }),
+          Option.isSome(
+            yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+              catalogRevision: freshCatalogAfterSupersede.catalogRevision,
+              retain: (live) => Option.some({ ...live, partialOptions: true }),
+            }),
+          ),
         ).toBe(true);
         const afterOverflowClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(

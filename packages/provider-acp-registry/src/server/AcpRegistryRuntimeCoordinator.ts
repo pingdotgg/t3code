@@ -250,7 +250,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
       instanceId: ProviderInstanceId,
       onUpdate: (commands: AcpRegistryAvailableCommands) => Effect.Effect<void>,
     ) => Effect.Effect<void>;
-    readonly clearLiveConfiguration: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
+    readonly clearLiveConfiguration: (instanceId: ProviderInstanceId) => Effect.Effect<number>;
     readonly clearLiveConfigurationIfRevision: (
       instanceId: ProviderInstanceId,
       options: {
@@ -259,7 +259,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
           configuration: AcpRegistryLiveConfiguration,
         ) => Option.Option<AcpRegistryLiveConfiguration>;
       },
-    ) => Effect.Effect<boolean>;
+    ) => Effect.Effect<Option.Option<number>>;
     readonly publishLiveConfiguration: (
       instanceId: ProviderInstanceId,
       configuration: AcpRegistryLiveConfiguration,
@@ -410,9 +410,9 @@ const make = Effect.gen(function* () {
 
   const clearLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfiguration"] =
     (instanceId) =>
-      Ref.update(liveConfigurations, (state) => {
+      Ref.modify(liveConfigurations, (state) => {
         const current = state.get(instanceId);
-        if (current === undefined) return state;
+        if (current === undefined) return [0, state] as const;
         const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
         if (
           current.catalog === null &&
@@ -422,7 +422,7 @@ const make = Effect.gen(function* () {
           current.catalogReasoningSupersededSlugs.size === 0 &&
           nextCleared === current.clearedThroughRevision
         ) {
-          return state;
+          return [nextCleared, state] as const;
         }
         const next = new Map(state);
         next.set(instanceId, {
@@ -434,7 +434,7 @@ const make = Effect.gen(function* () {
           catalogReasoningSupersededSlugs: EMPTY_SLUG_SET,
           clearedThroughRevision: nextCleared,
         });
-        return next;
+        return [nextCleared, next] as const;
       });
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
@@ -443,7 +443,7 @@ const make = Effect.gen(function* () {
         return yield* Ref.modify(liveConfigurations, (state) => {
           const current = state.get(instanceId) ?? EMPTY_STORED_LIVE_CONFIGURATION;
           if (current.catalogRevision !== options.catalogRevision) {
-            return [false, state] as const;
+            return [Option.none(), state] as const;
           }
           // Every revision through current.revision is either cleared or reconciled by retain.
           const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
@@ -656,7 +656,7 @@ const make = Effect.gen(function* () {
             ) &&
             nextCleared === current.clearedThroughRevision
           ) {
-            return [true, state] as const;
+            return [Option.some(nextCleared), state] as const;
           }
           const next = new Map(state);
           next.set(instanceId, {
@@ -668,7 +668,7 @@ const make = Effect.gen(function* () {
             catalogReasoningSupersededSlugs: EMPTY_SLUG_SET,
             clearedThroughRevision: nextCleared,
           });
-          return [true, next] as const;
+          return [Option.some(nextCleared), next] as const;
         });
       },
     );
