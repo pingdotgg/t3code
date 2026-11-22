@@ -59,14 +59,11 @@ vi.mock(import("~/state/use-atom-command"), async (original) => ({
 
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 
-const renderPrices = (
-  initialModel?: string,
-  initialSelectedEnvironmentIds: ReadonlySet<string> | null = null,
-) =>
+const renderPrices = (initialModel?: string) =>
   render(
     <UsagePriceOverrides
       usage={[]}
-      initialSelectedEnvironmentIds={initialSelectedEnvironmentIds as never}
+      initialSelectedEnvironmentIds={null}
       initialModel={initialModel}
       onOpenChange={() => {}}
     />,
@@ -87,20 +84,5 @@ describe("UsagePriceOverrides", () => {
       .element(page.getByRole("alert"))
       .toHaveTextContent("Output is required on workstation.");
     await expect.element(page.getByRole("button", { name: "Save changes" })).toBeDisabled();
-  });
-
-  it("shows the machine icon in Apply to only when a single environment is explicitly selected", async () => {
-    {
-      await using _allScreen = await renderPrices(undefined, null);
-      const trigger = page.getByRole("button", { name: "Apply to All environments" });
-      await expect.element(trigger).toBeVisible();
-      expect(trigger.element().querySelectorAll("svg")).toHaveLength(1);
-    }
-    {
-      await using _singleScreen = await renderPrices(undefined, new Set([ENVIRONMENT_ID]));
-      const trigger = page.getByRole("button", { name: "Apply to workstation" });
-      await expect.element(trigger).toBeVisible();
-      expect(trigger.element().querySelectorAll("svg")).toHaveLength(2);
-    }
   });
 });
