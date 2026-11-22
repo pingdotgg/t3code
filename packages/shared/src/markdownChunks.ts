@@ -56,7 +56,8 @@ const FRONTMATTER_MAX_LINES = 1000;
 
 // A one-line link reference definition; footnotes are left alone so each piece does not grow
 // a footnote section.
-const LINK_DEFINITION = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*\S/;
+const LINK_DEFINITION =
+  /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*(?:<[^<>\n]*>|[^\s<]\S*)(?:[ \t]+(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\((?:[^()\\]|\\.)*\)))?[ \t]*\r?$/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
@@ -80,6 +81,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
   let afterDefinition = false;
+  let afterHeading = false;
   let definitionChars = 0;
   const flush = () => {
     chunks.push({ text: lines.join("\n"), lines: lines.length });
@@ -99,9 +101,10 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
       if (cut) flush();
       closes = blockCloser(line);
-      // A definition cannot interrupt a paragraph, so it follows a blank line or another one.
+      // A definition cannot interrupt a paragraph, so it follows a blank line, a heading or
+      // another definition.
       const definition: boolean =
-        (first || afterBlankLine || afterDefinition) && LINK_DEFINITION.test(line);
+        (first || afterBlankLine || afterDefinition || afterHeading) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());
@@ -112,6 +115,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     lines.push(line);
     chars += line.length + 1;
     afterBlankLine = line.trim() === "";
+    afterHeading = closes === null && ATX_HEADING.test(line);
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };

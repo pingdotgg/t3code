@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-import { RENDERED_MAX_LINES } from "./largeTextProtocol";
+import { FULL_TEXT_MAX_BYTES, RENDERED_MAX_LINES } from "./largeTextProtocol";
 
 // A slow download swaps in what has arrived this often, so the reader is not left at 1 MB.
 const SWAP_INTERVAL_MS = 1000;
@@ -15,7 +15,7 @@ function countNewlines(text: string): number {
 
 /**
  * Streams the rest of the file after the bytes already read, handing over the text so far at
- * most once per interval. Resolves the whole text, or "too-tall" past the line cap.
+ * most once per interval. Resolves the whole text, or "too-large" past the line cap.
  */
 export async function downloadRest(input: {
   readonly src: string;
@@ -23,7 +23,7 @@ export async function downloadRest(input: {
   readonly sizeBytes: number;
   readonly signal: AbortSignal;
   readonly onProgress: (text: string) => void;
-}): Promise<string | "too-tall"> {
+}): Promise<string | "too-large"> {
   // The server decodes the first megabyte strictly and drops a character the cut split, so the
   // preview's UTF-8 length is exactly where the rest begins.
   const offset = new TextEncoder().encode(input.preview).length;
@@ -41,7 +41,19 @@ export async function downloadRest(input: {
     text = "";
   }
   if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  // A file that grew since the preview was read must still stay within the main-thread ceiling.
+  let bytes = text === "" ? 0 : offset;
+  const reader = response.body
+    .pipeThrough(
+      new TransformStream<Uint8Array, Uint8Array>({
+        transform(chunk, controller) {
+          bytes += chunk.byteLength;
+          controller.enqueue(chunk);
+        },
+      }),
+    )
+    .pipeThrough(new TextDecoderStream())
+    .getReader();
   let lines = countNewlines(text) + 1;
   let lastSwap = performance.now();
   for (;;) {
@@ -49,9 +61,9 @@ export async function downloadRest(input: {
     if (done) return text;
     text += value;
     lines += countNewlines(value);
-    if (lines > RENDERED_MAX_LINES) {
+    if (lines > RENDERED_MAX_LINES || bytes > FULL_TEXT_MAX_BYTES) {
       await reader.cancel();
-      return "too-tall";
+      return "too-large";
     }
     if (performance.now() - lastSwap > SWAP_INTERVAL_MS) {
       lastSwap = performance.now();
@@ -63,7 +75,7 @@ export async function downloadRest(input: {
 
 export type FullFileText =
   | { readonly text: string; readonly done: boolean }
-  | "too-tall"
+  | "too-large"
   | "failed";
 
 // Switching back to a recently opened file reuses its text instead of downloading it again.
@@ -106,8 +118,8 @@ export function useFullFileText(input: {
       onProgress: (text) => setState({ src, file: { text, done: false } }),
     })
       .then((result) => {
-        if (result !== "too-tall") rememberFile(src, result);
-        setState({ src, file: result === "too-tall" ? result : { text: result, done: true } });
+        if (result !== "too-large") rememberFile(src, result);
+        setState({ src, file: result === "too-large" ? result : { text: result, done: true } });
       })
       .catch(() => {
         if (!controller.signal.aborted) setState({ src, file: "failed" });

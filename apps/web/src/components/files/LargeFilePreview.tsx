@@ -53,7 +53,11 @@ function estimatedLines(preview: string, sizeBytes: number): number {
 // Reopening a recent file reuses its pieces; splitting 12 MB again blocks for about half a second.
 const recentSplits = new Map<string, SplitMarkdown>();
 
+// The cache keeps each text and its pieces alive, so only files this small are kept.
+const RECENT_SPLIT_MAX_CHARS = 16 * 1024 * 1024;
+
 function splitFinishedMarkdown(text: string): SplitMarkdown {
+  if (text.length > RECENT_SPLIT_MAX_CHARS) return splitMarkdown(text);
   const cached = recentSplits.get(text);
   if (cached) return cached;
   const split = splitMarkdown(text);
@@ -66,7 +70,7 @@ function FullTextPreview(props: Parameters<typeof LargeFilePreview>[0]) {
   const file = useFullFileText(props);
   // Deciding from the full text would highlight the preview, then drop it once the file arrives.
   const highlight = estimatedLines(props.preview, props.sizeBytes) <= HIGHLIGHT_MAX_LINES;
-  if (file === "too-tall" || file === "failed") return <PlainViewer {...props} />;
+  if (file === "too-large" || file === "failed") return <PlainViewer {...props} />;
   return (
     <>
       <CopyText copyContents={props.copyContents} text={file.done ? file.text : null} />

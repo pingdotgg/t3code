@@ -113,9 +113,14 @@ describe("splitMarkdown", () => {
       "[site]: https://example.com",
       "[b]: https://example.com/badge.svg 'Badge'",
       "[^note]: a footnote",
+      "",
+      '[x]: /url "title" is paragraph text',
+      "",
+      "# Heading",
+      "[h]: /after-heading",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'",
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading",
     );
   });
 });
