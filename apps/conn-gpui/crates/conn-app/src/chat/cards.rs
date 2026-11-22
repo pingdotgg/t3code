@@ -2124,7 +2124,7 @@ impl ChatView {
     }
 
     /// Conn `Button` default (primary) at `size="sm"`.
-    fn primary_button(
+    pub(super) fn primary_button(
         &self,
         key: &str,
         label: &str,
@@ -2152,7 +2152,7 @@ impl ChatView {
     }
 
     /// Conn `Button variant="ghost-muted" size="xs"`.
-    fn ghost_button(
+    pub(super) fn ghost_button(
         &self,
         key: &str,
         label: &str,
@@ -2183,7 +2183,11 @@ impl ChatView {
     }
 
     /// Conn `Button variant="outline" size="sm"`.
-    fn outline_button(&self, key: &str, label: &str) -> gpui_kit::Stateful<gpui_kit::Div> {
+    pub(super) fn outline_button(
+        &self,
+        key: &str,
+        label: &str,
+    ) -> gpui_kit::Stateful<gpui_kit::Div> {
         let hover_bg = hsla(self.tokens.shell_highlight);
         div()
             .id(SharedString::from(key.to_owned()))

@@ -1,6 +1,8 @@
 //! Conn chat card view: messages timeline, collapsible thinking/tool rows,
 //! working indicator, empty state, and bottom composer.
 
+mod approval_card;
+mod approval_state;
 mod cache;
 mod cards;
 mod color;
@@ -1595,7 +1597,7 @@ impl ChatView {
             VirtualItem::Card { row_idx } => self.render_card(&rows[*row_idx].entry, cx),
             VirtualItem::Approval { row_idx } => {
                 if let TimelineEntry::Approval { id, title, detail } = &rows[*row_idx].entry {
-                    self.render_approval_row(id, title, detail.as_deref(), cx)
+                    self.render_approval_card(id, title, detail.as_deref(), cx)
                 } else {
                     div().into_any_element()
                 }
@@ -2771,141 +2773,6 @@ impl ChatView {
             );
         }
         container.into_any_element()
-    }
-
-    /// Renders Conn's `TimelinePendingApprovalRow`: a `WorkLogRow` with monospace command/title,
-    /// muted detail, warning `"Waiting for approval"` status, and inline Approve / Decline actions.
-    fn render_approval_row(
-        &self,
-        id: &str,
-        title: &str,
-        detail: Option<&str>,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let mut meta = div()
-            .ml(px(30.0))
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .pb(px(4.0))
-            .text_size(px(12.0))
-            .line_height(px(16.0));
-
-        if let Some(detail_text) = detail.filter(|d| !d.trim().is_empty()) {
-            meta = meta.child(
-                div()
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .child(detail_text.to_owned()),
-            );
-        }
-
-        let actions = div()
-            .flex()
-            .flex_row()
-            .flex_wrap()
-            .items_center()
-            .gap_x(px(8.0))
-            .gap_y(px(4.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .text_color(hsla(self.tokens.warning))
-                    .child(icons::icon(icons::SHIELD, 12.0, hsla(self.tokens.warning)))
-                    .child("Waiting for approval"),
-            )
-            .child(
-                div()
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .child("·"),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("approve-{id}")))
-                    .cursor_pointer()
-                    .font_weight(FontWeight::MEDIUM)
-                    .text_color(hsla(self.tokens.foreground))
-                    .hover(|s| s.underline())
-                    .on_click({
-                        let entry_id = id.to_owned();
-                        cx.listener(move |_, _, _, cx| {
-                            cx.emit(ChatEvent::Approval {
-                                entry_id: entry_id.clone(),
-                                decision: "accept".to_owned(),
-                            });
-                        })
-                    })
-                    .child("Approve"),
-            )
-            .child(
-                div()
-                    .id(SharedString::from(format!("deny-{id}")))
-                    .cursor_pointer()
-                    .text_color(hsla(self.tokens.muted_foreground))
-                    .hover(|s| s.text_color(hsla(self.tokens.foreground)).underline())
-                    .on_click({
-                        let entry_id = id.to_owned();
-                        cx.listener(move |_, _, _, cx| {
-                            cx.emit(ChatEvent::Approval {
-                                entry_id: entry_id.clone(),
-                                decision: "decline".to_owned(),
-                            });
-                        })
-                    })
-                    .child("Decline"),
-            );
-
-        meta = meta.child(actions);
-
-        div()
-            .w_full()
-            .min_w_0()
-            .pb(px(8.0))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .min_w_0()
-                    .px(px(2.0))
-                    .py(px(2.0))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_start()
-                            .gap(px(6.0))
-                            .min_h(px(24.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .justify_center()
-                                    .size(px(24.0))
-                                    .flex_none()
-                                    .child(icons::icon(
-                                        icons::SHIELD_WARNING,
-                                        16.0,
-                                        muted_icon(&self.tokens),
-                                    )),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .pt(px(2.0))
-                                    .font_family(MONO_FONT_FAMILY)
-                                    .text_size(px(12.0))
-                                    .line_height(px(20.0))
-                                    .text_color(hsla(self.tokens.foreground))
-                                    .child(title.to_owned()),
-                            ),
-                    )
-                    .child(meta),
-            )
-            .into_any_element()
     }
 
     fn render_notice_row(&self, text: &str, is_error: bool) -> AnyElement {

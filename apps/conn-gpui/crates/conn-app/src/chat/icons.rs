@@ -17,7 +17,6 @@ pub(super) const TOOL: &str = "superhero/tool.svg";
 pub(super) const ROBOT: &str = "superhero/agent.svg";
 pub(super) const LIST_CHECKS: &str = "superhero/checklist.svg";
 pub(super) const THREAD: &str = "superhero/thread.svg";
-pub(super) const SHIELD: &str = "superhero/shield.svg";
 pub(super) const SHIELD_WARNING: &str = "superhero/needs-approval.svg";
 pub(super) const ERROR_CIRCLE: &str = "superhero/error-circle.svg";
 pub(super) const INFO: &str = "superhero/info.svg";
