@@ -1,9 +1,15 @@
-import type { RelayAgentActivityAggregateState } from "@t3tools/contracts/relay";
+import type {
+  RelayAgentActivityAggregateState,
+  RelayAgentActivityState,
+  RelayAgentAwarenessPreferences,
+} from "@t3tools/contracts/relay";
 import {
   activityPhasePriority,
+  statusForPhase,
   TERMINAL_AGENT_ACTIVITY_DISPLAY_TTL_MS,
 } from "./agentActivityAggregate.ts";
-import { agentActivityExpiresAt } from "./agentActivityPayloads.ts";
+import { shouldAlertForActivity } from "./agentActivityAlerts.ts";
+import { agentActivityExpiresAt, notificationForActivity } from "./agentActivityPayloads.ts";
 
 export function androidActivityData(aggregate: RelayAgentActivityAggregateState | null) {
   const rows = [...(aggregate?.activities ?? [])].sort(
@@ -79,4 +85,20 @@ export function fitFcmData(input: Readonly<Record<string, string>>): Record<stri
     data[key] = parts.join("\t");
   }
   return data;
+}
+
+export function androidAlertForState(
+  state: RelayAgentActivityState,
+  preferences: RelayAgentAwarenessPreferences,
+  nowMs: number,
+) {
+  if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
+  const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
+  return {
+    alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
+    alert_group: JSON.stringify([state.environmentId, state.threadId]),
+    alert_title: notification.title,
+    alert_body: notification.body,
+    alert_path: notification.deepLink,
+  };
 }

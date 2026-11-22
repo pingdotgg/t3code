@@ -22,14 +22,13 @@ import * as AgentActivityRows from "./AgentActivityRows.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
-import { makeAggregateState, statusForPhase } from "./agentActivityAggregate.ts";
+import { androidActivityData, androidAlertForState, fitFcmData } from "./fcmPayloads.ts";
+import { makeAggregateState } from "./agentActivityAggregate.ts";
 import { isExpiredAgentActivityState, notificationForActivity } from "./agentActivityPayloads.ts";
 import {
   alertForActivityRows,
   attentionTransitionRows,
   terminalTransitionRows,
-  shouldAlertForActivity,
 } from "./agentActivityAlerts.ts";
 
 export const FcmDeliveryJob = Schema.Struct({
@@ -56,22 +55,6 @@ export class FcmDeliveryError extends Schema.TaggedError<FcmDeliveryError>()("Fc
   override get message() {
     return `Failed to ${this.operation} Android notification delivery.`;
   }
-}
-
-export function androidAlertForState(
-  state: RelayAgentActivityState,
-  preferences: RelayAgentAwarenessPreferences,
-  nowMs: number,
-) {
-  if (!shouldAlertForActivity({ ...state, preferences, nowMs })) return null;
-  const notification = notificationForActivity({ ...state, status: statusForPhase(state.phase) });
-  return {
-    alert_id: JSON.stringify([state.environmentId, state.threadId, state.phase, state.updatedAt]),
-    alert_group: JSON.stringify([state.environmentId, state.threadId]),
-    alert_title: notification.title,
-    alert_body: notification.body,
-    alert_path: notification.deepLink,
-  };
 }
 
 export function androidAlertForAggregate(input: {

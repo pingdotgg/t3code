@@ -19,7 +19,7 @@ import * as LiveActivities from "./LiveActivities.ts";
 import * as FcmDeliveryQueueSender from "./FcmDeliveryQueueSender.ts";
 import * as FcmClient from "./FcmClient.ts";
 import * as FcmDeliveries from "./FcmDeliveries.ts";
-import { androidActivityData, fitFcmData } from "./fcmPayloads.ts";
+import { androidActivityData, androidAlertForState, fitFcmData } from "./fcmPayloads.ts";
 import { makeAggregateState } from "./agentActivityAggregate.ts";
 
 const aggregateFor = (states: ReadonlyArray<RelayAgentActivityState>) =>
@@ -412,7 +412,7 @@ describe("Android delivery routing", () => {
   });
 
   it("keeps notification groups distinct when identifiers contain slashes", () => {
-    const left = FcmDeliveries.androidAlertForState(
+    const left = androidAlertForState(
       {
         ...state,
         environmentId: EnvironmentId.make("a/b"),
@@ -422,7 +422,7 @@ describe("Android delivery routing", () => {
       preferences,
       0,
     );
-    const right = FcmDeliveries.androidAlertForState(
+    const right = androidAlertForState(
       {
         ...state,
         environmentId: EnvironmentId.make("a"),
