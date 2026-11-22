@@ -251,7 +251,7 @@ jobs:
     name: Android preview client
     needs: android
     if: needs.android.outputs.build == 'true'
-    runs-on: [self-hosted, large-compute]
+    runs-on: [self-hosted, large]
     timeout-minutes: 60
     concurrency:
       # One build per fingerprint; a second PR with the same one finds the tag.

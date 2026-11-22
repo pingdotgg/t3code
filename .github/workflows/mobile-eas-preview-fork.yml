@@ -227,7 +227,7 @@ jobs:
     name: Android preview client
     needs: preview
     if: needs.preview.outputs.build == 'true'
-    runs-on: [self-hosted, large-compute]
+    runs-on: [self-hosted, large]
     timeout-minutes: 60
     permissions:
       contents: read

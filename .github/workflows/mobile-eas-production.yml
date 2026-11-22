@@ -461,7 +461,7 @@ jobs:
     needs: production
     # Skipped when the production job failed: no store build after a failed OTA.
     if: needs.production.outputs.android_build == 'true'
-    runs-on: [self-hosted, large-compute]
+    runs-on: [self-hosted, large]
     timeout-minutes: 60
     concurrency:
       group: mobile-android-store-build

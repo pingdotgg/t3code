@@ -235,7 +235,7 @@ jobs:
     name: Release quality checks
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: [self-hosted, small]
+    runs-on: [self-hosted, medium]
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -267,7 +267,7 @@ jobs:
     name: Release tests
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: [self-hosted, small]
+    runs-on: [self-hosted, medium]
     timeout-minutes: 10
     steps:
       - name: Checkout
@@ -302,7 +302,7 @@ jobs:
     name: Release web tests ${{ matrix.shard }}
     needs: [preflight]
     if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' }}
-    runs-on: [self-hosted, small]
+    runs-on: [self-hosted, medium]
     timeout-minutes: 10
     strategy:
       fail-fast: false

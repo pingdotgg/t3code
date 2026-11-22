@@ -60,7 +60,7 @@ jobs:
   android:
     name: Android ${{ matrix.abi }}
     if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
-    runs-on: [self-hosted, large-compute]
+    runs-on: [self-hosted, large]
     timeout-minutes: 45
     strategy:
       fail-fast: false
