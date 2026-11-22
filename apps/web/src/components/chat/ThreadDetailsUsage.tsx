@@ -249,46 +249,41 @@ export function ThreadDetailsContext({
             ) : null}
           </span>
         </div>
-        {/* Undoes the usage grid's ps-3 pe-2 (ThreadDetailsPanel) so the breakdown spans the card. */}
-        <CollapsiblePanel className="col-span-full -ms-3 -me-2">
-          <div className="px-0.5 pb-0.5">
-            <div className="surface-composer rounded-lg p-0.5">
-              <dl className="text-meta">
-                {contextWindowSegments(usage, m).map((segment) => (
-                  <div
-                    key={segment.label}
-                    className="flex h-8 items-center justify-between gap-2 px-2.5"
-                  >
-                    <dt className="flex min-w-0 items-center gap-2">
-                      <span
-                        aria-hidden
-                        className={cn("size-2 shrink-0 rounded-xs", segment.color)}
-                      />
-                      {segment.label}
-                    </dt>
-                    <dd className="text-caption tabular-nums text-muted-foreground">
-                      {segment.tokens.toLocaleString(locale)}
-                    </dd>
-                  </div>
-                ))}
-                <div className="flex min-h-8 items-center justify-between gap-2 px-2.5">
-                  <dt>
-                    {maxTokens !== null
-                      ? gt("Used / max", { $context: "context window tokens" })
-                      : gt("Used", { $context: "context window tokens" })}
-                  </dt>
-                  <dd className="text-caption tabular-nums text-muted-foreground">
-                    {maxTokens !== null
-                      ? gt("{used} / {max}", {
-                          used: usage.usedTokens.toLocaleString(locale),
-                          max: maxTokens.toLocaleString(locale),
-                        })
-                      : usage.usedTokens.toLocaleString(locale)}
-                  </dd>
-                </div>
-              </dl>
+        <CollapsiblePanel className="col-span-full">
+          {/* Matches the usage grid's 1rem icon track + gap-x-1.5 without widening its label track. */}
+          <dl className="text-meta">
+            {contextWindowSegments(usage, m).map((segment) => (
+              <div key={segment.label} className="flex h-8 items-center justify-between gap-2">
+                <dt className="flex min-w-0 items-center gap-1.5">
+                  <span className="flex size-4 shrink-0 items-center justify-center">
+                    <span aria-hidden className={cn("size-2 rounded-xs", segment.color)} />
+                  </span>
+                  <span className="truncate">{segment.label}</span>
+                </dt>
+                <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                  {segment.tokens.toLocaleString(locale)}
+                </dd>
+              </div>
+            ))}
+            <div className="flex min-h-8 items-center justify-between gap-2">
+              <dt className="flex min-w-0 items-center gap-1.5">
+                <span aria-hidden className="size-4 shrink-0" />
+                <span className="truncate">
+                  {maxTokens !== null
+                    ? gt("Used / max", { $context: "context window tokens" })
+                    : gt("Used", { $context: "context window tokens" })}
+                </span>
+              </dt>
+              <dd className="shrink-0 text-caption tabular-nums text-muted-foreground">
+                {maxTokens !== null
+                  ? gt("{used} / {max}", {
+                      used: usage.usedTokens.toLocaleString(locale),
+                      max: maxTokens.toLocaleString(locale),
+                    })
+                  : usage.usedTokens.toLocaleString(locale)}
+              </dd>
             </div>
-          </div>
+          </dl>
         </CollapsiblePanel>
       </Collapsible>
     </ThreadDetailsSection>
