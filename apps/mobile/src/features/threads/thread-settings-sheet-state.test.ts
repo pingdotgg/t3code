@@ -11,7 +11,14 @@ import {
   rememberModelOptions,
   withRememberedModelOptions,
 } from "../../state/use-model-option-memory";
-import { canCommitPendingModel, pendingModelAfterPress } from "./thread-settings-sheet-state";
+import {
+  canCommitPendingModel,
+  pendingModelAfterPress,
+  providerSectionIsCollapsed,
+  providerSectionPreferenceKey,
+  savedProviderSectionCollapsed,
+  toggleProviderSection,
+} from "./thread-settings-sheet-state";
 
 function modelOption(
   model: string,
@@ -157,5 +164,72 @@ describe("thread settings sheet state", () => {
         },
       ]),
     ).toBe(false);
+  });
+
+  it("reopens provider sections the way the user last left them", () => {
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: true,
+        savedCollapsed: undefined,
+        isNarrowed: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: false,
+        savedCollapsed: undefined,
+        isNarrowed: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: true,
+        savedCollapsed: true,
+        isNarrowed: false,
+      }),
+    ).toBe(true);
+    expect(
+      providerSectionIsCollapsed({
+        defaultExpanded: false,
+        savedCollapsed: false,
+        isNarrowed: false,
+      }),
+    ).toBe(false);
+    expect(
+      providerSectionIsCollapsed({ defaultExpanded: true, savedCollapsed: true, isNarrowed: true }),
+    ).toBe(false);
+  });
+
+  it("keeps saved provider sections apart per environment", () => {
+    const stored = { [providerSectionPreferenceKey("work", "codex")]: true };
+    const saved = (environmentId: string, sectionKey: string) =>
+      savedProviderSectionCollapsed({ sessionChoices: {}, stored, environmentId, sectionKey });
+
+    expect(saved("work", "codex")).toBe(true);
+    expect(saved("home", "codex")).toBeUndefined();
+    expect(saved("work", "constructor")).toBeUndefined();
+  });
+
+  it("toggles twice when both taps land before the header re-renders", () => {
+    const key = providerSectionPreferenceKey("work", "codex");
+    const first = toggleProviderSection({}, key, false);
+    const second = toggleProviderSection(first.sessionChoices, key, false);
+
+    expect(first.collapsed).toBe(true);
+    expect(second.collapsed).toBe(false);
+  });
+
+  it("keeps a tap for the open sheet when saving it failed", () => {
+    const key = providerSectionPreferenceKey("work", "codex");
+    const { sessionChoices } = toggleProviderSection({}, key, false);
+
+    expect(
+      savedProviderSectionCollapsed({
+        sessionChoices,
+        stored: { [key]: false },
+        environmentId: "work",
+        sectionKey: "codex",
+      }),
+    ).toBe(true);
   });
 });

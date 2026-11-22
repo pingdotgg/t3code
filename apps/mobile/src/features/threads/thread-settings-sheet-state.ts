@@ -63,13 +63,50 @@ export function canCommitPendingModel(
   );
 }
 
+/** Instance ids repeat across environments, so each environment keeps its own sections. */
+export function providerSectionPreferenceKey(
+  environmentId: string | null | undefined,
+  sectionKey: string,
+): string {
+  return JSON.stringify([environmentId ?? null, sectionKey]);
+}
+
+function ownSectionState(
+  sections: Readonly<Record<string, boolean>>,
+  key: string,
+): boolean | undefined {
+  return Object.hasOwn(sections, key) ? sections[key] : undefined;
+}
+
+/** This sheet session's choices win over stored ones, so a failed save never undoes a tap. */
+export function savedProviderSectionCollapsed(input: {
+  readonly sessionChoices: Readonly<Record<string, boolean>>;
+  readonly stored: Readonly<Record<string, boolean>>;
+  readonly environmentId: string | null | undefined;
+  readonly sectionKey: string;
+}): boolean | undefined {
+  const key = providerSectionPreferenceKey(input.environmentId, input.sectionKey);
+  return ownSectionState(input.sessionChoices, key) ?? ownSectionState(input.stored, key);
+}
+
+/** Toggles from this session's latest choice, which taps see before React re-renders. */
+export function toggleProviderSection(
+  sessionChoices: Readonly<Record<string, boolean>>,
+  preferenceKey: string,
+  displayedCollapsed: boolean,
+): { readonly sessionChoices: Readonly<Record<string, boolean>>; readonly collapsed: boolean } {
+  const collapsed = !(ownSectionState(sessionChoices, preferenceKey) ?? displayedCollapsed);
+  return { sessionChoices: { ...sessionChoices, [preferenceKey]: collapsed }, collapsed };
+}
+
 export function providerSectionIsCollapsed(input: {
   readonly defaultExpanded: boolean;
-  readonly hasExpansionOverride: boolean;
+  /** The state the user last chose for this section, if any; it outlives the sheet. */
+  readonly savedCollapsed: boolean | undefined;
   readonly isNarrowed: boolean;
 }): boolean {
   if (input.isNarrowed) {
     return false;
   }
-  return input.defaultExpanded ? input.hasExpansionOverride : !input.hasExpansionOverride;
+  return input.savedCollapsed ?? !input.defaultExpanded;
 }
