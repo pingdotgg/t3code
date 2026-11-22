@@ -44,6 +44,31 @@ it.effect("failed installation cleans staging and exposes only a safe failure me
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+it.effect("an install held back by npm's release-age policy names the policy", () =>
+  Effect.gen(function* () {
+    const baseDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
+      prefix: "t3-device-install-",
+    });
+    const error = yield* ensureDeviceHub(baseDir).pipe(
+      Effect.provideService(ProcessRunner.ProcessRunner, {
+        run: () =>
+          Effect.succeed({
+            code: ChildProcessSpawner.ExitCode(1),
+            stdout: "",
+            stderr: `npm error code ETARGET\nnpm error notarget No matching version found for expo-device-hub@${DEVICE_HUB_VERSION} with a date before 20/11/2026, 10:56:49 am.\n`,
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      }),
+      Effect.flip,
+    );
+    expect(error.message).toContain("min-release-age");
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect("inventory reports only completed versions without installing the required version", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
