@@ -64,11 +64,9 @@ export function resolvePendingUserInputAnswer(
 ): PendingUserInputAnswer | null {
   if (draft?.attachmentsBlocked) return null;
   const customAnswer =
-    question.allowCustomAnswer === false
-      ? null
-      : question.initialAnswer !== undefined
-        ? (draft?.customAnswer ?? null)
-        : normalizeDraftAnswer(draft?.customAnswer);
+    question.initialAnswer !== undefined
+      ? (draft?.customAnswer ?? null)
+      : normalizeDraftAnswer(draft?.customAnswer);
   if (customAnswer !== null && customAnswer.length > 0) {
     return customAnswer;
   }
@@ -95,10 +93,6 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
-  if (question.allowCustomAnswer === false) {
-    return draft ?? {};
-  }
-
   const selectedOptionValues =
     question.initialAnswer !== undefined || customAnswer.trim().length > 0
       ? undefined

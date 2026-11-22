@@ -26,6 +26,7 @@ interface PendingUserInputPanelProps {
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onFocusComposer?: () => void;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -39,6 +40,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onToggleOption,
   onAdvance,
   onDismiss,
+  onFocusComposer,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
   const activePrompt = pendingUserInputs[0];
@@ -57,6 +59,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
+      onFocusComposer={onFocusComposer}
     />
   );
 });
@@ -72,6 +75,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption,
   onAdvance,
   onDismiss,
+  onFocusComposer,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -83,6 +87,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
+  onFocusComposer?: () => void;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -90,6 +95,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
   const advance = useStableCallback(onAdvance);
+  const focusComposerStable = useStableCallback(() => {
+    onFocusComposer?.();
+  });
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
     optionValue: string;
@@ -146,7 +154,17 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     }, 200);
   };
 
+  const handleSelectOtherOption = () => {
+    if (disabled || isResponding) return;
+    if (autoAdvanceTimerRef.current !== null) {
+      window.clearTimeout(autoAdvanceTimerRef.current);
+      autoAdvanceTimerRef.current = null;
+    }
+    focusComposerStable();
+  };
+
   const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
+  const selectOtherFromShortcut = useEffectEvent(handleSelectOtherOption);
   const backgroundThread = use(BackgroundThreadContext);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
@@ -170,11 +188,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       const digit = Number.parseInt(event.key, 10);
       if (Number.isNaN(digit) || digit < 1 || digit > 9) return;
       const optionIndex = digit - 1;
-      if (optionIndex >= activeQuestion.options.length) return;
-      const option = activeQuestion.options[optionIndex];
-      if (!option) return;
-      event.preventDefault();
-      selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
+      if (optionIndex < activeQuestion.options.length) {
+        const option = activeQuestion.options[optionIndex];
+        if (!option) return;
+        event.preventDefault();
+        selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
+      } else if (optionIndex === activeQuestion.options.length && activeQuestion.options.length > 0) {
+        event.preventDefault();
+        selectOtherFromShortcut();
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
@@ -343,6 +365,44 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   </div>
                 );
               })}
+              {activeQuestion.options.length > 0 && (
+                <div>
+                  <button
+                    type="button"
+                    aria-pressed={customAnswerActive}
+                    disabled={disabled || isResponding}
+                    onClick={handleSelectOtherOption}
+                    className={cn(
+                      questionTextAlign,
+                      "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
+                      customAnswerActive ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
+                      (disabled || isResponding) && "opacity-50 cursor-not-allowed",
+                      !disabled && !isResponding && "cursor-pointer",
+                    )}
+                  >
+                    <span className="pointer-events-none flex h-5 shrink-0 items-center">
+                      {activeQuestion.multiSelect ? (
+                        <CheckboxMark checked={customAnswerActive} variant="contrast" />
+                      ) : (
+                        <OptionRadio checked={customAnswerActive} />
+                      )}
+                    </span>
+                    <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                      <span className="text-sm font-medium">
+                        Other
+                      </span>
+                      <span className="text-secondary-label text-2xs">
+                        Type a custom response or suggestion in the composer below
+                      </span>
+                    </div>
+                    {activeQuestion.options.length < 9 ? (
+                      <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
+                        <Kbd>{activeQuestion.options.length + 1}</Kbd>
+                      </span>
+                    ) : null}
+                  </button>
+                </div>
+              )}
             </div>
           </ComposerBanner.Body>
         </ComposerBanner.Scroll>

@@ -149,8 +149,7 @@ export function derivePendingUserInputProgress<Q extends UserInputQuestion>(
   const resolvedAnswer = activeQuestion
     ? resolvePendingUserInputAnswer(activeQuestion, activeDraft)
     : null;
-  const customAnswer =
-    activeQuestion?.allowCustomAnswer === false ? "" : (activeDraft?.customAnswer ?? "");
+  const customAnswer = activeDraft?.customAnswer ?? "";
   const answeredQuestionCount = countAnsweredPendingUserInputQuestions(questions, draftAnswers);
   const isLastQuestion =
     questions.length === 0 ? true : normalizedQuestionIndex >= questions.length - 1;

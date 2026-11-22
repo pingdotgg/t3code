@@ -1266,8 +1266,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerSuggestionsVisible = composerMenuOpen;
   const composerSuggestionListVisible = composerSuggestionsVisible && composerMenuItems.length > 0;
   const activePendingUserInput = pendingUserInputs[0] ?? null;
-  const isChoiceOnlyPendingQuestion =
-    activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+  const isChoiceOnlyPendingQuestion = false;
   const showComposerTopDrawer = pendingUserInputs.length > 0;
   const showCollapsedMobilePromptRow = isComposerCollapsedMobile;
   const showComposerAttachAction =
@@ -1866,10 +1865,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       };
     },
   ): boolean => {
-    if (
-      activePendingUserInput &&
-      activePendingProgress?.activeQuestion?.allowCustomAnswer === false
-    ) {
+    if (activePendingUserInput && isComposerApprovalState) {
       return false;
     }
     const currentText = promptRef.current;
@@ -1957,8 +1953,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable !== null ||
     projectSelectionRequired ||
     isComposerApprovalState ||
-    activePendingIsResponding ||
-    activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
+    activePendingIsResponding;
   const speechInput = useEnvironmentSpeechInput({
     environmentId,
     projectId: activeProjectId,
@@ -3704,6 +3699,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
+                    onFocusComposer={scheduleComposerFocus}
                   />
                 ) : null}
               </ComposerBanner.Root>
