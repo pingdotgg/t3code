@@ -11,6 +11,7 @@ import {
   isOrchestrationV2WorkActive,
   type ThreadId,
   type OrchestrationV2DomainEvent,
+  type SidebarAutoSettleReadiness,
   type OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
@@ -230,6 +231,19 @@ export function isSnoozed(
   return !wokeOnError;
 }
 
+/** Same rule as the sidebar's unread dot, so strict readiness holds what still looks unread. */
+function latestReplyUnread(
+  thread: Pick<
+    ProjectionStore.ProjectionSettlementCandidate,
+    "latestRunCompletedAt" | "lastVisitedAt" | "status"
+  >,
+): boolean {
+  if (thread.status === "interrupted" || thread.status === "cancelled") return false;
+  const completedAtMs = toMillis(thread.latestRunCompletedAt);
+  const visitedAtMs = toMillis(thread.lastVisitedAt);
+  return completedAtMs !== null && visitedAtMs !== null && completedAtMs > visitedAtMs;
+}
+
 export function resolveAutoSettlementAt(input: {
   readonly thread: ProjectionStore.ProjectionSettlementCandidate;
   readonly pullRequest: SettlementPullRequest | null;
@@ -237,6 +251,7 @@ export function resolveAutoSettlementAt(input: {
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
   readonly autoSettleKeepPullRequests?: boolean;
+  readonly readiness?: SidebarAutoSettleReadiness;
 }): DateTime.Utc | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -261,6 +276,9 @@ export function resolveAutoSettlementAt(input: {
           };
   }
   if (!isAutoSettlementCandidate(thread, input.nowMs)) return null;
+  if (input.readiness === "strict" && (thread.status === "failed" || latestReplyUnread(thread))) {
+    return null;
+  }
   const activityAtMs = threadActivityAtMs(thread);
   if (pullRequest !== null && pullRequestSettles(thread, pullRequest, input.autoSettleOnMerge)) {
     return DateTime.makeUnsafe(activityAtMs);
@@ -309,12 +327,14 @@ export function autoSettlementSettingsKey(
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
     settings.sidebarAutoSettleKeepPullRequests,
+    settings.sidebarAutoSettleReadiness,
     Object.entries(settings.projectSettingsOverrides)
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
           entry.sidebarAutoSettleAfterDays !== undefined ||
-          entry.sidebarAutoSettleKeepPullRequests !== undefined,
+          entry.sidebarAutoSettleKeepPullRequests !== undefined ||
+          entry.sidebarAutoSettleReadiness !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -324,6 +344,7 @@ export function autoSettlementSettingsKey(
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
         entry.sidebarAutoSettleKeepPullRequests ?? "inherit",
+        entry.sidebarAutoSettleReadiness ?? "inherit",
       ]),
   ]);
 }
@@ -415,6 +436,7 @@ export const make = Effect.gen(function* () {
           autoSettleAfterDays: currentSettings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: currentSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: currentSettings.sidebarAutoSettleKeepPullRequests,
+          readiness: currentSettings.sidebarAutoSettleReadiness,
         });
         if (settledAt === null) return thread;
         // A terminal still running a program keeps its thread open; a later sweep settles it.
@@ -455,6 +477,7 @@ export const make = Effect.gen(function* () {
           autoSettleAfterDays: projectSettings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: projectSettings.sidebarAutoSettleOnMerge,
           autoSettleKeepPullRequests: projectSettings.sidebarAutoSettleKeepPullRequests,
+          readiness: projectSettings.sidebarAutoSettleReadiness,
         });
         return settledAt === null ? Effect.succeed(thread) : settleThread(thread, null);
       },
@@ -550,6 +573,7 @@ export const make = Effect.gen(function* () {
             autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
             autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
             autoSettleKeepPullRequests: settings.sidebarAutoSettleKeepPullRequests,
+            readiness: settings.sidebarAutoSettleReadiness,
           }) !== null
         );
       });

@@ -22,6 +22,7 @@ import {
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
+  type SidebarAutoSettleReadiness,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
   ScreenReaderAnnouncements,
@@ -542,6 +543,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
       ? [gt("Auto-settle merged threads")]
       : []),
+    ...(settings.sidebarAutoSettleReadiness !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleReadiness
+      ? [gt("Ready to settle")]
+      : []),
     ...(settings.autoResumeLimitedThreads !== DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads
       ? [gt("Resume after usage limits")]
       : []),
@@ -726,6 +730,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarAutoSettleReadiness: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleReadiness,
       autoResumeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.autoResumeLimitedThreads,
       snoozeLimitedThreads: DEFAULT_UNIFIED_SETTINGS.snoozeLimitedThreads,
       snoozePresets: DEFAULT_UNIFIED_SETTINGS.snoozePresets,
@@ -1928,6 +1933,10 @@ export function ThreadsSettingsPanel() {
   const environmentId = environment?.environmentId ?? null;
   const hasServerTargets = connectedEnvironments.length > 0;
   const mixedResponseStreamingMode = useScopedSettingsMixed(["responseStreamingMode"]);
+  const mixedSettleReadiness = useScopedSettingsMixed(["sidebarAutoSettleReadiness"]);
+  const supportsSettleReadiness = connectedEnvironments.every(
+    (target) => target.serverConfig?.environment.capabilities.threadSettleReadiness === true,
+  );
   const providersByEnvironment = useEnvironmentProviders();
   const serverProviders =
     (environment?.serverConfig
@@ -2185,6 +2194,72 @@ export function ThreadsSettingsPanel() {
                   }
                   aria-label={gt("Keep threads with a PR")}
                 />
+              }
+            />
+          ) : null}
+          {supportsSettleReadiness ? (
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoSettleReadiness"]}
+              {...setting("auto-settle-readiness")}
+              description={
+                mixedSettleReadiness
+                  ? gt("The selected targets use different readiness rules.")
+                  : settings.sidebarAutoSettleReadiness === "strict"
+                    ? gt(
+                        "Also wait until the latest run did not fail and you have read its reply. Hover a thread to see why it is or is not ready.",
+                      )
+                    : gt(
+                        "Settle once nothing is running, waiting on you, pinned or snoozed. Hover a thread to see why it is or is not ready.",
+                      )
+              }
+              resetAction={
+                settings.sidebarAutoSettleReadiness !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleReadiness ? (
+                  <SettingResetButton
+                    ariaLabel={gt("Reset settle readiness to default")}
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoSettleReadiness:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleReadiness,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Select
+                  value={mixedSettleReadiness ? null : settings.sidebarAutoSettleReadiness}
+                  onValueChange={(value) => {
+                    if (value === "default" || value === "strict") {
+                      updateSettings({ sidebarAutoSettleReadiness: value });
+                    }
+                  }}
+                >
+                  <SelectTrigger
+                    size="sm"
+                    className="w-full sm:w-40"
+                    aria-label={gt("Ready to settle")}
+                  >
+                    <SelectValue>
+                      {(value: SidebarAutoSettleReadiness | null) =>
+                        value === null
+                          ? gt("Mixed")
+                          : value === "strict"
+                            ? gt("Strict")
+                            : gt("Default", { $context: "settle readiness preset" })
+                      }
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="default">
+                      {gt("Default", { $context: "settle readiness preset" })}
+                    </SelectItem>
+                    <SelectItem hideIndicator value="strict">
+                      {gt("Strict")}
+                    </SelectItem>
+                  </SelectPopup>
+                </Select>
               }
             />
           ) : null}

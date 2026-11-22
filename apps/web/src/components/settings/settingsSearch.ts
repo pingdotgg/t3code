@@ -723,6 +723,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "auto-settle-readiness",
+    title: msg("Ready to settle"),
+    to: "/settings/threads",
+    searchTerms: [msg("settle readiness strict failed unread reply hover why auto-settle")],
+    requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
     id: "days-before-auto-settle",
     title: msg("Days of inactivity before auto-settle"),
     to: "/settings/threads",

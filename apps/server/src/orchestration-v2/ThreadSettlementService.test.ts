@@ -395,6 +395,46 @@ describe("resolveAutoSettlementAt", () => {
     ).toEqual(shell().createdAt);
   });
 
+  it("strict readiness holds a merged thread whose latest run failed or whose reply is unread", () => {
+    const thread = shell({
+      latestUserMessageAt: at(-2 * 60 * 60 * 1_000),
+      latestRunId: RunId.make("run-1"),
+      latestRunCompletedAt: at(-30 * 60 * 1_000),
+      lastVisitedAt: at(-10 * 60 * 1_000),
+    });
+    const input = {
+      thread,
+      pullRequest: { state: "merged" as const, mergedAt: DateTime.formatIso(at(-60 * 60 * 1_000)) },
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 7,
+      autoSettleOnMerge: true,
+      readiness: "strict" as const,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toEqual(at(-30 * 60 * 1_000));
+    const failed = { ...thread, status: "failed" as const };
+    const unread = { ...thread, lastVisitedAt: at(-40 * 60 * 1_000) };
+    for (const held of [failed, unread]) {
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({ ...input, thread: held }),
+      ).toBeNull();
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: held,
+          pullRequest: null,
+          nowMs: NOW_MS + 30 * DAY_MS,
+        }),
+      ).toBeNull();
+      expect(
+        ThreadSettlementService.resolveAutoSettlementAt({
+          ...input,
+          thread: held,
+          readiness: "default",
+        }),
+      ).toEqual(at(-30 * 60 * 1_000));
+    }
+  });
+
   it("settles on merge after agent-started runs, but not after the user writes again", () => {
     const woken = shell({
       latestUserMessageAt: at(-30 * 60 * 1_000),

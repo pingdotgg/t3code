@@ -80,6 +80,11 @@ function formatValue(
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
       return resolveEnvModeLabel(value, resolve);
     }
+    if (key === "sidebarAutoSettleReadiness") {
+      return value === "strict"
+        ? resolve(msg("Strict"))
+        : resolve(msg("Default", { $context: "settle readiness preset" }));
+    }
     if (key === "worktreeSubmodules" && value in WORKTREE_SUBMODULES_LABELS) {
       return resolve(WORKTREE_SUBMODULES_LABELS[value as WorktreeSubmodules]);
     }

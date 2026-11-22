@@ -167,6 +167,7 @@ describe("searchSettings", () => {
       "auto-settle-inactive-threads",
       "auto-settle-merged-threads",
       "days-before-auto-settle",
+      "auto-settle-readiness",
       "linked-environments",
     ]);
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
@@ -319,6 +320,7 @@ describe("auto-settlement search availability", () => {
       "auto-settle-merged-threads",
       "days-before-auto-settle",
       "keep-threads-with-pull-requests",
+      "auto-settle-readiness",
     ]);
   });
 
