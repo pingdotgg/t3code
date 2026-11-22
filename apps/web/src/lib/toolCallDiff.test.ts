@@ -180,6 +180,39 @@ describe("toolCallDiff", () => {
         toolCallDiff({ fileName: "a.ts", diffStr, changes: [{ operation, path: "a.ts" }] }).patch,
       ).toBe(diffStr);
     }
+    const multiFile = [
+      'diff --git "a//w/a.ts" "b//w/a.ts"',
+      "--- /dev/null",
+      '+++ "b//w/a.ts"',
+      "@@ -0,0 +1,1 @@",
+      "+export {};",
+      "\\ No newline at end of file",
+      'diff --git "a//w/c.ts" "b//w/d.ts"',
+      '--- "a//w/c.ts"',
+      '+++ "b//w/d.ts"',
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      'diff --git "a//w/e.ts" "b//w/e.ts"',
+      '--- "a//w/e.ts"',
+      "+++ /dev/null",
+      "@@ -1,1 +0,0 @@",
+      "-gone",
+      "",
+    ].join("\n");
+    const multiFilePatch = toolCallDiff({
+      fileName: "/w/a.ts",
+      diffStr: multiFile,
+      changes: [
+        { operation: "add", path: "/w/a.ts" },
+        { operation: "update", path: "/w/d.ts", oldPath: "/w/c.ts" },
+        { operation: "delete", path: "/w/e.ts" },
+      ],
+    }).patch;
+    expect(multiFilePatch).toBe(multiFile);
+    const rendered = getRenderablePatch(multiFilePatch);
+    if (rendered?.kind !== "files") throw new Error("Expected a file diff");
+    expect(rendered.files).toHaveLength(3);
     for (const diffStr of [
       undefined,
       "",
