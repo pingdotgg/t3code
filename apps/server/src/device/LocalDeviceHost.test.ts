@@ -48,7 +48,14 @@ const agentFixture = Effect.fn("agentFixture")(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-agent-start-" });
-  const hub = { running: true, spawnFails: false, cleanup: Effect.void };
+  const hub = {
+    running: true,
+    spawnFails: false,
+    cleanup: Effect.void,
+    cameraHelp: "",
+    cameraProbes: 0,
+    spawnedEnvironments: [] as Array<NodeJS.ProcessEnv | undefined>,
+  };
   const daemonStopRequested = yield* Deferred.make<ReadonlyArray<string>>();
   const stateDir = agentDeviceStateDir(path, path.join(baseDir, "userdata"));
   const daemonHealthy = yield* Ref.make(true);
@@ -74,7 +81,7 @@ const agentFixture = Effect.fn("agentFixture")(function* (
     Effect.provideService(HostProcess.Platform, "darwin"),
     Effect.provideService(
       ChildProcessSpawner.ChildProcessSpawner,
-      ChildProcessSpawner.make(() =>
+      ChildProcessSpawner.make((command) =>
         hub.spawnFails
           ? Effect.fail(
               PlatformError.systemError({
@@ -85,6 +92,17 @@ const agentFixture = Effect.fn("agentFixture")(function* (
               }),
             )
           : Effect.addFinalizer(() => hub.cleanup).pipe(
+              Effect.tap(() =>
+                Effect.sync(() =>
+                  hub.spawnedEnvironments.push(
+                    (
+                      command as unknown as {
+                        readonly options: { readonly env?: NodeJS.ProcessEnv };
+                      }
+                    ).options.env,
+                  ),
+                ),
+              ),
               Effect.as(
                 ChildProcessSpawner.makeHandle({
                   pid: ChildProcessSpawner.ProcessId(123),
@@ -110,7 +128,13 @@ const agentFixture = Effect.fn("agentFixture")(function* (
           ? startup(stateDir)
           : input.args.includes("daemon")
             ? Deferred.succeed(daemonStopRequested, input.args).pipe(Effect.as(processOutput(0)))
-            : Effect.succeed(input.args.includes("-list-avds") ? avdOutput : processOutput(0));
+            : Effect.succeed(
+                input.args.includes("-list-avds")
+                  ? avdOutput
+                  : input.args[0]?.startsWith("-help-camera-")
+                    ? (hub.cameraProbes++, processOutput(0, hub.cameraHelp))
+                    : processOutput(0),
+              );
       },
     }),
     Effect.provideService(
@@ -214,6 +238,45 @@ describe("AgentDevice startup", () => {
         expect(run.env?.PATH?.split(":")[0]).toBe(`${profile}/platform-tools`);
       }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "drops emulated camera overrides once a running hub's emulator supports image files",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const sdk = yield* fs.makeTempDirectoryScoped({ prefix: "t3-device-camera-sdk-" });
+        for (const tool of ["platform-tools/adb", "emulator/emulator"]) {
+          yield* fs.makeDirectory(`${sdk}/${tool.split("/")[0]}`, { recursive: true });
+          yield* fs.writeFileString(`${sdk}/${tool}`, "");
+        }
+        const environment: NodeJS.ProcessEnv = { HOME: sdk, PATH: "", ANDROID_HOME: sdk };
+        const { host, hub } = yield* agentFixture(
+          () => Effect.succeed(processOutput(0)),
+          processOutput(0),
+          undefined,
+          environment,
+        );
+        // ensureReady is the hub's first start; the probe ran with the fixture's empty help.
+        hub.cameraHelp = "emulated none";
+        hub.running = false;
+        yield* host.ensureReady(() => Effect.void);
+        hub.running = true;
+        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe(
+          "-camera-front emulated -camera-back emulated",
+        );
+
+        // A live hub with an unchanged emulator answers without probing it.
+        const probes = hub.cameraProbes;
+        yield* host.ensureReady(() => Effect.void);
+        expect(hub.cameraProbes).toBe(probes);
+
+        // The SDK's emulator is updated to one that renders image files while the hub keeps running.
+        yield* fs.writeFileString(`${sdk}/emulator/emulator`, "updated");
+        hub.cameraHelp = "emulated imagefile:<filename> none";
+        yield* host.ensureReady(() => Effect.void);
+        expect(hub.spawnedEnvironments.at(-1)?.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("reports an incompatible lock immediately and retains it for manual repair", () =>
@@ -546,6 +609,23 @@ describe("Android SDK availability", () => {
         { ANDROID_HOME: "/sdk" },
       );
       expect(reason).toBeNull();
+    }),
+  );
+
+  // regression: #38268 an ANDROID_HOME that is not an SDK must not stop detection
+  it.effect("falls back past an ANDROID_HOME that is not an SDK", () =>
+    Effect.gen(function* () {
+      const complete = [
+        "/parent/sdk/platform-tools/adb",
+        "/parent/sdk/emulator/emulator",
+        "/parent/sdk/cmdline-tools/latest/bin/avdmanager",
+      ];
+      for (const environment of [
+        { ANDROID_HOME: "/parent", ANDROID_SDK_ROOT: "/parent/sdk" },
+        { ANDROID_HOME: "/parent", PATH: "/parent/sdk/platform-tools" },
+      ]) {
+        expect(yield* diagnose(complete, environment)).toBeNull();
+      }
     }),
   );
 
