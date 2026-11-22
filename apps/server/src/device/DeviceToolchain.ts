@@ -37,17 +37,23 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
     tool: Schema.String,
     step: Schema.String,
     exitCode: Schema.optional(Schema.Number),
-    reason: Schema.optional(Schema.Literal("npm_not_found")),
+    reason: Schema.optional(Schema.Literals(["npm_not_found", "npm_release_age"])),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
     if (this.reason === "npm_not_found")
       return "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.";
+    if (this.reason === "npm_release_age")
+      return `Device support needs a release of ${this.tool} that npm's min-release-age or before setting holds back as too new. Retry once that release is older than the setting allows, or relax the setting.`;
     const suffix = this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`;
     return `Installing ${this.tool} failed while ${this.step}${suffix}.`;
   }
 }
+
+// npm reports a pin excluded by min-release-age or `before` as ETARGET "... with a date before <date>".
+const isHeldBackByReleaseAge = (stderr: string) =>
+  stderr.includes("ETARGET") && stderr.includes("with a date before");
 
 interface ToolSpec {
   readonly name: string;
@@ -162,6 +168,7 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
         tool: spec.name,
         step: "running npm install",
         exitCode: Number(result.code),
+        ...(isHeldBackByReleaseAge(result.stderr) ? { reason: "npm_release_age" as const } : {}),
         cause: result,
       });
     }

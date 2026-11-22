@@ -118,7 +118,7 @@ const isToolchainInstallError = Schema.is(DeviceToolchainInstallError);
 
 const actionableHostFailure = (error: DeviceHost.DeviceHostError): string | undefined => {
   if (error.step === "probe") return sshProbeFailureMessage(error);
-  if (isToolchainInstallError(error.cause) && error.cause.reason === "npm_not_found")
+  if (isToolchainInstallError(error.cause) && error.cause.reason !== undefined)
     return error.cause.message;
   return undefined;
 };
@@ -1435,7 +1435,11 @@ export const make = Effect.gen(function* () {
             new DeviceOperationError({
               operation: "update device tool",
               reason:
-                cause.reason === "npm_not_found" ? "package_manager_missing" : "command_failed",
+                cause.reason === "npm_not_found"
+                  ? "package_manager_missing"
+                  : cause.reason === "npm_release_age"
+                    ? "npm_release_age"
+                    : "command_failed",
               // npm's stderr can carry registry credentials; expose only the reason and exit code.
               ...(cause.exitCode !== undefined ? { exitCode: cause.exitCode } : {}),
               cause,

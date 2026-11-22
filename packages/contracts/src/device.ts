@@ -589,6 +589,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       "settings_failed",
       "hub_rejected",
       "package_manager_missing",
+      "npm_release_age",
     ]),
     exitCode: Schema.optional(Schema.Number),
     cause: Schema.Defect(),
@@ -603,6 +604,8 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       hub_rejected: "The device hub could not complete the request.",
       package_manager_missing:
         "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
+      npm_release_age:
+        "npm's min-release-age or before setting holds back the version T3 Code needs as too new. Retry once that release is older than the setting allows, or relax the setting.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }
