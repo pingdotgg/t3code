@@ -32,6 +32,7 @@ export const es: Messages = {
     downloadForAndroid: "Descargar para Android",
     sourceLink: "Roba nuestro código (legalmente)",
     alsoOnPhone: "También en tu teléfono:",
+    alsoOnDesktop: "También en escritorio",
     screenshotAlt: "T3 Code ejecutando subagentes de Claude, Codex, Muse y Gemini en un mismo hilo",
     endorsementsTitle: "Tolerado por más de {users} desarrolladores",
     endorsementsSub: "Algunos hasta tuitearon cosas buenas.",

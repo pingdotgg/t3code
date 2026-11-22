@@ -31,6 +31,7 @@ export const ko: Messages = {
     downloadForAndroid: "Android용 다운로드",
     sourceLink: "코드 훔쳐 가기(합법적으로)",
     alsoOnPhone: "휴대폰에서도:",
+    alsoOnDesktop: "데스크톱에서도",
     screenshotAlt: "하나의 스레드에서 Claude, Codex, Muse, Gemini 서브에이전트를 실행 중인 T3 Code",
     endorsementsTitle: "{users}명이 넘는 개발자가 나쁘지 않다고 합니다",
     endorsementsSub: "몇몇은 트윗까지 했습니다.",

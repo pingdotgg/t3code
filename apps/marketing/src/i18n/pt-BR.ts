@@ -31,6 +31,7 @@ export const ptBR: Messages = {
     downloadForAndroid: "Baixar para Android",
     sourceLink: "Roube nosso código (legalmente)",
     alsoOnPhone: "Também no seu celular:",
+    alsoOnDesktop: "Também no desktop",
     screenshotAlt:
       "T3 Code executando subagentes do Claude, Codex, Muse e Gemini em uma mesma thread",
     endorsementsTitle: "Tolerado por mais de {users} devs",

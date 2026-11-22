@@ -31,6 +31,7 @@ export const fr: Messages = {
     downloadForAndroid: "Télécharger pour Android",
     sourceLink: "Volez notre code (légalement)",
     alsoOnPhone: "Aussi sur votre téléphone :",
+    alsoOnDesktop: "Aussi sur ordinateur",
     screenshotAlt:
       "T3 Code exécutant des sous-agents Claude, Codex, Muse et Gemini dans un même fil",
     endorsementsTitle: "Toléré par plus de {users} devs",
