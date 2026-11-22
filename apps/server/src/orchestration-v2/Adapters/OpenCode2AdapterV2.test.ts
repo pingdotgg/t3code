@@ -2468,6 +2468,28 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ]),
   );
 
+  it.effect("releases a kept subagent above one whose turn failed without a report", () =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...keptChain,
+        event("session.execution.started", { sessionID: GRAND }),
+        event("session.execution.failed", {
+          sessionID: GRAND,
+          error: { type: "unknown", message: "quota" },
+        }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () =>
+          ["Sleep", "Grand"].every((title) => settled(watch.calls.get(title)?.status)) &&
+          watch.state.roster?.length === 0,
+      );
+      assert.equal(watch.calls.get("Grand")?.status, "failed");
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_WAITING" });
+    }),
+  );
+
   it.effect("after a reconnect, settles a chain of kept subagents whose work all ended", () =>
     settledChain([
       ...keptChain,

@@ -2472,6 +2472,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           for (const attached of callsAttachedTo(state)) {
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
+          // No report follows either, so idle subagents above that were waiting on it are released.
+          const caller = state.subagent?.call.state;
+          if (caller !== undefined) yield* releaseQuiet(caller);
         } else if (
           terminal.status === "completed" &&
           turn.startedSteps === 0 &&
