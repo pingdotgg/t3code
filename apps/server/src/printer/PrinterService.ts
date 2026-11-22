@@ -16,6 +16,8 @@ import {
   type PrinterSnapshot,
   type PrinterTestConnectionInput,
   type PrinterTestConnectionResult,
+  printerConfigCredential,
+  printerConfigWebcamUrl,
   requireSettingsSecretLiteral,
   type SettingsSecretValue,
   type ThreadId,
@@ -51,6 +53,7 @@ import {
   PrinterPinnedAddresses,
   PrinterRequestGuard,
 } from "./PrinterUrlGuard.ts";
+import { bambuLanAdapter } from "./adapters/BambuLanAdapter.ts";
 import { homeAssistantBambuAdapter } from "./adapters/HomeAssistantBambuAdapter.ts";
 import { moonrakerAdapter } from "./adapters/MoonrakerAdapter.ts";
 import { octoPrintAdapter } from "./adapters/OctoPrintAdapter.ts";
@@ -61,6 +64,8 @@ function adapterFor(config: PrinterConfig): PrinterAdapter {
   switch (config.kind) {
     case "home-assistant-bambu":
       return homeAssistantBambuAdapter as PrinterAdapter;
+    case "bambu-lan":
+      return bambuLanAdapter as PrinterAdapter;
     case "moonraker":
       return moonrakerAdapter as PrinterAdapter;
     case "octoprint":
@@ -69,7 +74,7 @@ function adapterFor(config: PrinterConfig): PrinterAdapter {
 }
 
 function configSecretField(config: PrinterConfig): SettingsSecretValue {
-  return config.kind === "home-assistant-bambu" ? config.accessToken : config.apiKey;
+  return printerConfigCredential(config);
 }
 
 function placeholderSnapshot(config: PrinterConfig, error?: string): PrinterSnapshot {
@@ -181,6 +186,9 @@ function configTargetSignature(config: PrinterConfig): string {
     const prefix = config.entityPrefix?.trim().replace(/\.$/, "").toLowerCase() ?? "";
     return `${config.kind}|${base}|${prefix}|${config.deviceId?.trim() ?? ""}`;
   }
+  if (config.kind === "bambu-lan") {
+    return `${config.kind}|${base}|${config.serial.trim().toUpperCase()}`;
+  }
   return `${config.kind}|${base}|${normalizedUrlTarget(config.webcamUrl, true)}`;
 }
 
@@ -203,7 +211,10 @@ function validateSafetyGuards(
     );
   }
 
-  if (snapshot.hardware.controlBlocked) {
+  // Bambu firmware accepts the chamber light from any client; adapters say so via canSetLight.
+  const lightAllowedWhileBlocked =
+    action.kind === "setChamberLight" && snapshot.capabilities.canSetLight;
+  if (snapshot.hardware.controlBlocked && !lightAllowedWhileBlocked) {
     return Effect.fail(
       new PrinterSafetyError({
         action: action.kind,
@@ -499,10 +510,15 @@ const make = Effect.gen(function* () {
     if (saved && (raw === SECRET_REDACTED || isReusedSavedReference)) {
       const savedOrigin = originOfUrl(saved.baseUrl);
       const nextOrigin = originOfUrl(config.baseUrl);
+      // Bambu LAN binds the access code to the printer's serial the way webcams bind to origins.
       const savedWebcamOrigin =
-        saved.kind !== "home-assistant-bambu" ? originOfUrl(saved.webcamUrl) : null;
+        saved.kind === "bambu-lan"
+          ? saved.serial.trim().toUpperCase()
+          : originOfUrl(printerConfigWebcamUrl(saved));
       const nextWebcamOrigin =
-        config.kind !== "home-assistant-bambu" ? originOfUrl(config.webcamUrl) : null;
+        config.kind === "bambu-lan"
+          ? config.serial.trim().toUpperCase()
+          : originOfUrl(printerConfigWebcamUrl(config));
       if (
         saved.kind !== config.kind ||
         savedOrigin === null ||

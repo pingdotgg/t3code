@@ -3,6 +3,8 @@ import {
   AuthSettingsWriteScope,
   type EnvironmentId,
   isSecretReference,
+  printerConfigCredential,
+  printerConfigWebcamUrl,
   type PrinterConfig,
   type PrinterId,
   type PrinterKind,
@@ -63,7 +65,19 @@ interface PrinterDraft {
   readonly entityPrefix: string;
   readonly deviceId: string;
   readonly webcamUrl: string;
+  readonly serial: string;
   readonly pollIntervalSeconds: number;
+}
+
+/** Bambu LAN printers are entered as a bare IP or hostname; the config stores it as a URL. */
+function bambuHostFromBaseUrl(baseUrl: string): string {
+  return baseUrl.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+}
+
+function bambuBaseUrlFromHost(host: string): string {
+  const trimmed = host.trim().replace(/\/+$/, "");
+  if (!trimmed) return "";
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
 }
 
 function slugifyPrinterId(label: string): string {
@@ -100,17 +114,18 @@ function secretStateFromExisting(raw: SettingsSecretValue): SecretDraftState {
 }
 
 function draftFromConfig(config: PrinterConfig): PrinterDraft {
-  const rawSecret = config.kind === "home-assistant-bambu" ? config.accessToken : config.apiKey;
+  const rawSecret = printerConfigCredential(config);
   return {
     id: config.id,
     existingId: config.id,
     kind: config.kind,
     label: config.label,
-    baseUrl: config.baseUrl,
+    baseUrl: config.kind === "bambu-lan" ? bambuHostFromBaseUrl(config.baseUrl) : config.baseUrl,
     secret: secretStateFromExisting(rawSecret),
     entityPrefix: config.kind === "home-assistant-bambu" ? (config.entityPrefix ?? "") : "",
     deviceId: config.kind === "home-assistant-bambu" ? (config.deviceId ?? "") : "",
-    webcamUrl: config.kind !== "home-assistant-bambu" ? (config.webcamUrl ?? "") : "",
+    webcamUrl: printerConfigWebcamUrl(config) ?? "",
+    serial: config.kind === "bambu-lan" ? config.serial : "",
     pollIntervalSeconds: config.pollIntervalSeconds,
   };
 }
@@ -126,6 +141,7 @@ function emptyDraft(existing: ReadonlyArray<PrinterConfig>, defaultLabel: string
     entityPrefix: "",
     deviceId: "",
     webcamUrl: "",
+    serial: "",
     pollIntervalSeconds: 4,
   };
 }
@@ -165,6 +181,17 @@ function configFromDraft(
       pollIntervalSeconds,
     };
   }
+  if (draft.kind === "bambu-lan") {
+    return {
+      kind: "bambu-lan",
+      id,
+      label,
+      baseUrl: bambuBaseUrlFromHost(baseUrl),
+      serial: draft.serial.trim(),
+      accessCode: secretValue,
+      pollIntervalSeconds,
+    };
+  }
   if (draft.kind === "moonraker") {
     return {
       kind: "moonraker",
@@ -192,6 +219,8 @@ function PrinterKindLabel({ kind }: { readonly kind: PrinterKind }) {
   switch (kind) {
     case "home-assistant-bambu":
       return <>{gt("Home Assistant (Bambu Lab)")}</>;
+    case "bambu-lan":
+      return <>{gt("Bambu Lab (direct)")}</>;
     case "moonraker":
       return <>{gt("Moonraker (Klipper)")}</>;
     case "octoprint":
@@ -233,8 +262,15 @@ function PrinterEditorForm({
     readonly summary: string;
   } | null>(null);
 
+  const isBambuLan = draft.kind === "bambu-lan";
   const secretLabel =
-    draft.kind === "home-assistant-bambu" ? gt("Home Assistant token") : gt("API key (optional)");
+    draft.kind === "home-assistant-bambu"
+      ? gt("Home Assistant token")
+      : isBambuLan
+        ? gt("Access code")
+        : gt("API key (optional)");
+  const hasRequiredTarget =
+    Boolean(draft.baseUrl.trim()) && (!isBambuLan || Boolean(draft.serial.trim()));
   const savedOriginal =
     initialDraft.secret.kind === "saved" ? initialDraft.secret.original : undefined;
   const isSavedLiteral =
@@ -307,6 +343,7 @@ function PrinterEditorForm({
   const prefixId = `${fieldPrefix}-entity-prefix`;
   const deviceIdField = `${fieldPrefix}-device-id`;
   const webcamId = `${fieldPrefix}-webcam-url`;
+  const serialId = `${fieldPrefix}-serial`;
 
   return (
     <div className="space-y-3 rounded-lg border border-border bg-card p-3">
@@ -331,6 +368,7 @@ function PrinterEditorForm({
                 entityPrefix: "",
                 deviceId: "",
                 webcamUrl: "",
+                serial: "",
               }));
             }}
           >
@@ -340,6 +378,7 @@ function PrinterEditorForm({
               </SelectValue>
             </SelectTrigger>
             <SelectPopup>
+              <SelectItem value="bambu-lan">{gt("Bambu Lab (direct)")}</SelectItem>
               <SelectItem value="home-assistant-bambu">
                 {gt("Home Assistant (Bambu Lab)")}
               </SelectItem>
@@ -372,7 +411,9 @@ function PrinterEditorForm({
           <label htmlFor={baseUrlId} className="text-xs font-medium text-foreground">
             {draft.kind === "home-assistant-bambu"
               ? gt("Home Assistant URL")
-              : gt("Printer host URL")}
+              : isBambuLan
+                ? gt("Printer IP address")
+                : gt("Printer host URL")}
           </label>
           <Input
             id={baseUrlId}
@@ -380,9 +421,11 @@ function PrinterEditorForm({
             placeholder={
               draft.kind === "home-assistant-bambu"
                 ? "http://homeassistant.local:8123"
-                : draft.kind === "moonraker"
-                  ? "http://printer.local:7125"
-                  : "http://octopi.local"
+                : isBambuLan
+                  ? "192.168.1.42"
+                  : draft.kind === "moonraker"
+                    ? "http://printer.local:7125"
+                    : "http://octopi.local"
             }
             onChange={(event) => {
               setTestResult(null);
@@ -405,7 +448,11 @@ function PrinterEditorForm({
               sources={sources}
               configured={isSavedLiteral}
               value={secretInputValue}
-              placeholder={gt("Paste token or select a secret provider")}
+              placeholder={
+                isBambuLan
+                  ? gt("Access code from the printer screen")
+                  : gt("Paste token or select a secret provider")
+              }
               onValidityChange={(valid) => {
                 setSecretValid(valid);
                 setTestResult(null);
@@ -480,6 +527,26 @@ function PrinterEditorForm({
               />
             </div>
           </>
+        ) : isBambuLan ? (
+          <div className="space-y-1 sm:col-span-2">
+            <label htmlFor={serialId} className="text-xs font-medium text-foreground">
+              {gt("Serial number")}
+            </label>
+            <Input
+              id={serialId}
+              value={draft.serial}
+              placeholder="01P00A123456789"
+              onChange={(event) => {
+                setTestResult(null);
+                setDraft((current) => ({ ...current, serial: event.target.value }));
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              {gt(
+                "On the printer, Settings > Network shows the IP address and access code. The serial number is under device info. Controls also need Developer mode on the printer.",
+              )}
+            </p>
+          </div>
         ) : (
           <div className="space-y-1 sm:col-span-2">
             <label htmlFor={webcamId} className="text-xs font-medium text-foreground">
@@ -514,7 +581,7 @@ function PrinterEditorForm({
         <Button
           size="sm"
           variant="outline"
-          disabled={!canTest || testing || !secretValid || !draft.baseUrl.trim()}
+          disabled={!canTest || testing || !secretValid || !hasRequiredTarget}
           onClick={() => void handleTest()}
         >
           {testing ? <Spinner /> : <Wrench className="size-3.5" />}
@@ -528,7 +595,7 @@ function PrinterEditorForm({
           <Button
             size="sm"
             disabled={
-              disabled || saving || !secretValid || !draft.baseUrl.trim() || !draft.label.trim()
+              disabled || saving || !secretValid || !hasRequiredTarget || !draft.label.trim()
             }
             onClick={() => void handleSubmit()}
           >
@@ -714,7 +781,10 @@ function PrinterSettingsContent() {
                     </Badge>
                   </div>
                   <div className="truncate text-xs text-muted-foreground">
-                    <PrinterKindLabel kind={printer.kind} /> · {printer.baseUrl}
+                    <PrinterKindLabel kind={printer.kind} /> ·{" "}
+                    {printer.kind === "bambu-lan"
+                      ? `${bambuHostFromBaseUrl(printer.baseUrl)} · ${printer.serial}`
+                      : printer.baseUrl}
                     {live?.hardware.model ? ` · ${live.hardware.model}` : ""}
                   </div>
                 </div>

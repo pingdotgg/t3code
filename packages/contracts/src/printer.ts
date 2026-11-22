@@ -13,7 +13,12 @@ export const PrinterId = TrimmedNonEmptyString.check(
 );
 export type PrinterId = typeof PrinterId.Type;
 
-export const PrinterKind = Schema.Literals(["home-assistant-bambu", "moonraker", "octoprint"]);
+export const PrinterKind = Schema.Literals([
+  "home-assistant-bambu",
+  "bambu-lan",
+  "moonraker",
+  "octoprint",
+]);
 export type PrinterKind = typeof PrinterKind.Type;
 
 const PrinterBaseUrl = TrimmedNonEmptyString.check(
@@ -67,6 +72,29 @@ export const HomeAssistantBambuPrinterConfig = Schema.Struct({
 });
 export type HomeAssistantBambuPrinterConfig = typeof HomeAssistantBambuPrinterConfig.Type;
 
+/** Bambu Lab serial number as shown on the printer, e.g. 01P00A123456789. */
+const BambuSerial = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(64),
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9-]*$/),
+);
+
+/** A Bambu Lab printer reached directly on the local network over MQTT, without Home Assistant. */
+export const BambuLanPrinterConfig = Schema.Struct({
+  kind: Schema.Literal("bambu-lan"),
+  id: PrinterId,
+  label: TrimmedNonEmptyString,
+  /** Printer address on the local network, e.g. http://192.168.1.42. Only the host is used. */
+  baseUrl: PrinterBaseUrl,
+  serial: BambuSerial,
+  /** LAN access code from the printer's network settings, or a secret reference. */
+  accessCode: SettingsSecretValue.pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("")),
+    Schema.annotateKey({ settingsSecret: true }),
+  ),
+  pollIntervalSeconds: PrinterPollIntervalSeconds,
+});
+export type BambuLanPrinterConfig = typeof BambuLanPrinterConfig.Type;
+
 export const MoonrakerPrinterConfig = Schema.Struct({
   kind: Schema.Literal("moonraker"),
   id: PrinterId,
@@ -103,10 +131,29 @@ export type OctoPrintPrinterConfig = typeof OctoPrintPrinterConfig.Type;
 
 export const PrinterConfig = Schema.Union([
   HomeAssistantBambuPrinterConfig,
+  BambuLanPrinterConfig,
   MoonrakerPrinterConfig,
   OctoPrintPrinterConfig,
 ]);
 export type PrinterConfig = typeof PrinterConfig.Type;
+
+/** The credential each printer kind stores: an access token, access code or API key. */
+export function printerConfigCredential(config: PrinterConfig): SettingsSecretValue {
+  switch (config.kind) {
+    case "home-assistant-bambu":
+      return config.accessToken;
+    case "bambu-lan":
+      return config.accessCode;
+    case "moonraker":
+    case "octoprint":
+      return config.apiKey;
+  }
+}
+
+/** The optional webcam snapshot URL, for kinds that take one. */
+export function printerConfigWebcamUrl(config: PrinterConfig): string | undefined {
+  return config.kind === "moonraker" || config.kind === "octoprint" ? config.webcamUrl : undefined;
+}
 
 const uniquePrinterIds = Schema.makeFilter(
   (printers: ReadonlyArray<{ readonly id: string }>) =>

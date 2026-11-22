@@ -2069,6 +2069,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
         "easDeviceHosts.[].accessToken",
         "simlockDeviceHosts.[].agentToken",
         "printers.[].accessToken",
+        "printers.[].accessCode",
         "printers.[].apiKey",
         "printers.[].apiKey",
         "usageLimitSources.*.managementKey",

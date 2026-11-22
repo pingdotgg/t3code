@@ -5,6 +5,7 @@ import {
   CodexSettings,
   EasDeviceHostConfig,
   HomeAssistantBambuPrinterConfig,
+  BambuLanPrinterConfig,
   MoonrakerPrinterConfig,
   OctoPrintPrinterConfig,
   type PrinterConfig,
@@ -15,6 +16,8 @@ import {
   TextGeneratorConfig,
   UsageLimitSourceConfig,
   isSecretReference,
+  printerConfigCredential,
+  printerConfigWebcamUrl,
   secretSettingsFields,
 } from "@t3tools/contracts";
 import { acpRegistryClient } from "@t3tools/provider-acp-registry/client";
@@ -57,6 +60,7 @@ const easDeviceHostSecretFields = secretSettingsFields(EasDeviceHostConfig);
 const simlockDeviceHostSecretFields = secretSettingsFields(SimlockDeviceHostConfig);
 const printerSecretFieldsByKind = new Map([
   ["home-assistant-bambu", secretSettingsFields(HomeAssistantBambuPrinterConfig)],
+  ["bambu-lan", secretSettingsFields(BambuLanPrinterConfig)],
   ["moonraker", secretSettingsFields(MoonrakerPrinterConfig)],
   ["octoprint", secretSettingsFields(OctoPrintPrinterConfig)],
 ]);
@@ -71,7 +75,10 @@ function printerSecretDestination(printer: PrinterConfig): string {
       return raw.trim();
     }
   };
-  const webcam = printer.kind === "home-assistant-bambu" ? "" : originOf(printer.webcamUrl);
+  const webcam =
+    printer.kind === "bambu-lan"
+      ? printer.serial.trim().toUpperCase()
+      : originOf(printerConfigWebcamUrl(printer));
   return `${printer.kind}|${originOf(printer.baseUrl)}|${webcam}`;
 }
 
@@ -336,13 +343,14 @@ const isKeptSecretValue = (token: SettingsSecretValue, savedToken: SettingsSecre
     token.provider === savedToken.provider &&
     token.reference === savedToken.reference);
 
-const printerWebcamOrigin = (printer: PrinterConfig) =>
-  printer.kind !== "home-assistant-bambu" && printer.webcamUrl
-    ? gatewayOrigin(printer.webcamUrl)
-    : null;
+const printerWebcamOrigin = (printer: PrinterConfig) => {
+  if (printer.kind === "bambu-lan") return printer.serial.trim().toUpperCase();
+  const webcamUrl = printerConfigWebcamUrl(printer);
+  return webcamUrl ? gatewayOrigin(webcamUrl) : null;
+};
 
 const printerCredential = (printer: PrinterConfig): SettingsSecretValue =>
-  printer.kind === "home-assistant-bambu" ? printer.accessToken : printer.apiKey;
+  printerConfigCredential(printer);
 
 /**
  * `next` with a Simlock host's kept token cleared when its gateway moved to another origin: a
