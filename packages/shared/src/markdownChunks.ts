@@ -1,9 +1,5 @@
-// Rendered markdown files above this stay in the virtualized source viewer.
-export const LARGE_MARKDOWN_RENDER_MAX_BYTES = 64 * 1024 * 1024;
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
 const CHUNK_TARGET_CHARS = 4 * 1024;
-// Past two chunks, rendered previews split the document and parse it lazily.
-export const CHUNKED_MARKDOWN_MIN_CHARS = 2 * CHUNK_TARGET_CHARS;
 // A chunk past this (one huge fence or HTML block) is too slow to parse at once; show source.
 export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
@@ -64,28 +60,33 @@ const LINK_DEFINITION = /^ {0,3}\[(?!\^)(?:[^\]\\]|\\.)+\]:[ \t]*\S/;
 // Definitions past this are not repeated into every piece; their parse cost would outweigh links.
 const SHARED_DEFINITIONS_MAX_CHARS = 16 * 1024;
 
+export interface SplitMarkdown {
+  readonly chunks: readonly MarkdownChunk[];
+  readonly definitions: string;
+}
+
 /**
- * Cuts Markdown into pieces of roughly `targetChars` as its text arrives, only at column-0
- * headings or paragraphs that start a new top-level block. Leading frontmatter stays in the
- * first piece. Link definitions are collected so every piece can resolve them; footnotes
- * resolve only inside their own piece, and duplicate heading slugs restart per piece.
+ * Cuts Markdown into pieces of roughly `targetChars`, only at column-0 headings or paragraphs
+ * that start a new top-level block. Leading frontmatter stays in the first piece. Link
+ * definitions are collected so every piece can resolve them; footnotes resolve only inside their
+ * own piece, and duplicate heading slugs restart per piece.
  */
-export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
+export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): SplitMarkdown {
+  const chunks: MarkdownChunk[] = [];
+  const definitions: string[] = [];
   let lines: string[] = [];
-  let partial = "";
   let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
   let afterDefinition = false;
-  const definitions: string[] = [];
   let definitionChars = 0;
-  const flush = (done: MarkdownChunk[]) => {
-    done.push({ text: lines.join("\n"), lines: lines.length });
+  const flush = () => {
+    chunks.push({ text: lines.join("\n"), lines: lines.length });
     lines = [];
     chars = 0;
   };
-  const add = (line: string, done: MarkdownChunk[]) => {
+  for (const line of text.split("\n")) {
     if (closes !== null) {
       if (closes(line)) closes = null;
     } else if (first && FRONTMATTER_OPEN.test(line)) {
@@ -96,10 +97,11 @@ export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
         chars >= targetChars &&
         (ATX_HEADING.test(line) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cut) flush(done);
+      if (cut) flush();
       closes = blockCloser(line);
       // A definition cannot interrupt a paragraph, so it follows a blank line or another one.
-      const definition = (first || afterBlankLine || afterDefinition) && LINK_DEFINITION.test(line);
+      const definition: boolean =
+        (first || afterBlankLine || afterDefinition) && LINK_DEFINITION.test(line);
       afterDefinition = definition;
       if (definition && definitionChars + line.length < SHARED_DEFINITIONS_MAX_CHARS) {
         definitions.push(line.trim());
@@ -110,53 +112,12 @@ export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
     lines.push(line);
     chars += line.length + 1;
     afterBlankLine = line.trim() === "";
-  };
-  return {
-    /** Adds text and returns the pieces it completed. */
-    push(text: string): MarkdownChunk[] {
-      const done: MarkdownChunk[] = [];
-      const parts = (partial + text).split("\n");
-      partial = parts.pop()!;
-      for (const line of parts) add(line, done);
-      return done;
-    },
-    /** Returns the last piece once the text has ended. */
-    end(): MarkdownChunk[] {
-      const done: MarkdownChunk[] = [];
-      add(partial, done);
-      partial = "";
-      flush(done);
-      return done;
-    },
-    /** Link definitions seen so far, to append after each piece's text when rendering it. */
-    definitions(): string {
-      return definitions.join("\n");
-    },
-  };
+  }
+  flush();
+  return { chunks, definitions: definitions.join("\n") };
 }
 
 /** Appends shared link definitions after a piece, leaving its own offsets unchanged. */
 export function withMarkdownDefinitions(text: string, definitions: string): string {
   return definitions ? `${text}\n\n${definitions}` : text;
-}
-
-export interface SplitMarkdown {
-  readonly chunks: readonly MarkdownChunk[];
-  readonly definitions: string;
-}
-
-export function splitMarkdownForPreview(text: string): SplitMarkdown {
-  const splitter = createMarkdownSplitter();
-  return {
-    chunks: [...splitter.push(text), ...splitter.end()],
-    definitions: splitter.definitions(),
-  };
-}
-
-export function splitLargeMarkdown(
-  text: string,
-  targetChars = CHUNK_TARGET_CHARS,
-): MarkdownChunk[] {
-  const splitter = createMarkdownSplitter(targetChars);
-  return [...splitter.push(text), ...splitter.end()];
 }

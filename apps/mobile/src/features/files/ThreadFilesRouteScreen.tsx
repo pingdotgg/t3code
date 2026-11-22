@@ -1,5 +1,4 @@
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
-import { CHUNKED_MARKDOWN_MIN_CHARS } from "@t3tools/shared/markdownChunks";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
 import { environmentSession } from "../../state/session";
@@ -350,7 +349,6 @@ function FileContent(props: {
           markdown={props.fileContents}
           relativePath={props.relativePath}
           threadId={props.threadId}
-          chunked={props.fileContents.length > CHUNKED_MARKDOWN_MIN_CHARS}
           onRefresh={props.onRefresh}
         />
       ) : (

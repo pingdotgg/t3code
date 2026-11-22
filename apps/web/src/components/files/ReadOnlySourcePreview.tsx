@@ -17,6 +17,8 @@ export default function ReadOnlySourcePreview(props: {
   readonly onPostRender?: FileOptions<unknown, undefined>["onPostRender"];
   /** A preview's own wrap toggle; omitted follows the word wrap setting. */
   readonly wordWrap?: boolean;
+  /** Files with more lines than this render without highlighting; omitted keeps Pierre's limit. */
+  readonly tokenizeMaxLength?: number;
 }) {
   const resolvedTheme = useRenderedAppearance();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
@@ -86,6 +88,9 @@ export default function ReadOnlySourcePreview(props: {
               overflow: wordWrap ? "wrap" : "scroll",
               theme: resolveDiffThemeName(resolvedTheme),
               preferredHighlighter: PREFERRED_HIGHLIGHTER,
+              ...(props.tokenizeMaxLength === undefined
+                ? {}
+                : { tokenizeMaxLength: props.tokenizeMaxLength }),
               themeType: resolvedTheme,
               unsafeCSS: FILE_LINK_REVEAL_UNSAFE_CSS,
               onPostRender: drawSelection,

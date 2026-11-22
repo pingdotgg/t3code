@@ -1,15 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  createMarkdownSplitter,
-  splitLargeMarkdown,
-  splitMarkdownForPreview,
-} from "./markdownChunks.ts";
+import { splitMarkdown } from "./markdownChunks.ts";
+
+const splitLargeMarkdown = (text: string, targetChars?: number) =>
+  splitMarkdown(text, targetChars).chunks;
 
 const starts = (text: string) =>
   splitLargeMarkdown(text, 1).map((chunk) => chunk.text.split("\n")[0]);
 
-describe("splitLargeMarkdown", () => {
+describe("splitMarkdown", () => {
   it("cuts only where a new top-level block starts, and keeps every byte", () => {
     const text = [
       "# Title",
@@ -100,21 +99,6 @@ describe("splitLargeMarkdown", () => {
     expect(starts(text)).toEqual(["---", "# Heading"]);
   });
 
-  it("cuts streamed text exactly as it cuts the whole text", () => {
-    const text = Array.from(
-      { length: 40 },
-      (_, index) =>
-        `## Section ${index}\n\nParagraph ${index}\n\n\`\`\`\n# code ${index}\n\n\`\`\`\n`,
-    ).join("\n");
-    const splitter = createMarkdownSplitter(64);
-    const streamed = [];
-    for (let start = 0; start < text.length; start += 7) {
-      streamed.push(...splitter.push(text.slice(start, start + 7)));
-    }
-    streamed.push(...splitter.end());
-    expect(streamed).toEqual(splitLargeMarkdown(text, 64));
-  });
-
   it("collects link definitions outside code so every piece can resolve them", () => {
     const text = [
       "[![badge][b]][site]",
@@ -130,7 +114,7 @@ describe("splitLargeMarkdown", () => {
       "[b]: https://example.com/badge.svg 'Badge'",
       "[^note]: a footnote",
     ].join("\n");
-    expect(splitMarkdownForPreview(text).definitions).toBe(
+    expect(splitMarkdown(text).definitions).toBe(
       "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'",
     );
   });

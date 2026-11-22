@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+
 import { RENDERED_MAX_LINES } from "./largeTextProtocol";
 
 // A slow download swaps in what has arrived this often, so the reader is not left at 1 MB.
@@ -57,4 +59,62 @@ export async function downloadRest(input: {
       input.onProgress(text.slice(0, text.lastIndexOf("\n") + 1));
     }
   }
+}
+
+export type FullFileText =
+  | { readonly text: string; readonly done: boolean }
+  | "too-tall"
+  | "failed";
+
+// Switching back to a recently opened file reuses its text instead of downloading it again.
+const RECENT_FILES = 4;
+const RECENT_FILE_MAX_CHARS = 16 * 1024 * 1024;
+const recentFiles = new Map<string, string>();
+
+function rememberFile(src: string, text: string) {
+  if (text.length > RECENT_FILE_MAX_CHARS) return;
+  recentFiles.delete(src);
+  recentFiles.set(src, text);
+  if (recentFiles.size > RECENT_FILES) recentFiles.delete(recentFiles.keys().next().value!);
+}
+
+/**
+ * The whole text of a file past the 1 MB read: the preview at once, then the full file as it
+ * downloads. A new `src` (the asset URL with its revision) downloads again.
+ */
+export function useFullFileText(input: {
+  readonly src: string;
+  readonly preview: string;
+  readonly sizeBytes: number;
+}): FullFileText {
+  const [state, setState] = useState<{ readonly src: string; readonly file: FullFileText } | null>(
+    () => {
+      const cached = recentFiles.get(input.src);
+      return cached === undefined ? null : { src: input.src, file: { text: cached, done: true } };
+    },
+  );
+  const { src, preview, sizeBytes } = input;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the full-file download and cancels it when the source changes or the preview closes.
+  useEffect(() => {
+    if (recentFiles.has(src)) return;
+    const controller = new AbortController();
+    downloadRest({
+      src,
+      preview,
+      sizeBytes,
+      signal: controller.signal,
+      onProgress: (text) => setState({ src, file: { text, done: false } }),
+    })
+      .then((result) => {
+        if (result !== "too-tall") rememberFile(src, result);
+        setState({ src, file: result === "too-tall" ? result : { text: result, done: true } });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setState({ src, file: "failed" });
+      });
+    return () => controller.abort();
+  }, [src, preview, sizeBytes]);
+  const cached = state?.src === src ? undefined : recentFiles.get(src);
+  if (cached !== undefined) return { text: cached, done: true };
+  return state?.src === src ? state.file : { text: preview, done: false };
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { downloadRest } from "./largeSourceDownload";
+import { downloadRest } from "./fullFileText";
 
 const encoder = new TextEncoder();
 

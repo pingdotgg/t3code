@@ -103,13 +103,8 @@ import FileBrowserPanel from "./FileBrowserPanel";
 import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
-import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
-import {
-  CHUNKED_MARKDOWN_MIN_CHARS,
-  LARGE_MARKDOWN_RENDER_MAX_BYTES,
-  splitMarkdownForPreview,
-} from "@t3tools/shared/markdownChunks";
+import { splitMarkdown } from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -130,8 +125,8 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
-import LargeSourcePreview from "./LargeSourcePreview";
-import { HIGHLIGHTED_SOURCE_MAX_BYTES } from "./largeTextProtocol";
+import LargeFilePreview from "./LargeFilePreview";
+import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -1239,29 +1234,16 @@ function RenderedMarkdownSurface({
         changeFileSaveSession(saveTarget, nextContents);
       };
 
-  if (contents.length > CHUNKED_MARKDOWN_MIN_CHARS)
-    return (
-      <ChunkedMarkdown
-        {...splitMarkdownForPreview(contents)}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        workspaceMutationId={workspaceMutationId}
-        onKeyDown={selectRenderedContentOnSelectAll}
-        onTaskListChange={onTaskListChange}
-      />
-    );
   return (
-    <ScrollArea className="min-h-0 flex-1" onKeyDown={selectRenderedContentOnSelectAll}>
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        workspaceMutationId={workspaceMutationId}
-        onTaskListChange={onTaskListChange}
-      />
-    </ScrollArea>
+    <ChunkedMarkdown
+      {...splitMarkdown(contents)}
+      cwd={cwd}
+      relativePath={relativePath}
+      threadRef={threadRef}
+      workspaceMutationId={workspaceMutationId}
+      onKeyDown={selectRenderedContentOnSelectAll}
+      onTaskListChange={onTaskListChange}
+    />
   );
 }
 
@@ -1414,8 +1396,7 @@ export default function FilePreviewPanel({
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
-  const markdownRenderable =
-    isMarkdown && (file.data?.byteLength ?? 0) <= LARGE_MARKDOWN_RENDER_MAX_BYTES;
+  const markdownRenderable = isMarkdown && (file.data?.byteLength ?? 0) <= FULL_TEXT_MAX_BYTES;
   const renderMarkdown = markdownRenderable && renderMarkdownPreferred && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
@@ -1997,9 +1978,6 @@ export default function FilePreviewPanel({
   );
 }
 
-const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
-const LargeMarkdownViewer = lazy(() => import("./LargeMarkdownViewer"));
-
 // A draft has no thread yet, so its download is scoped to the draft's workspace instead.
 function largeFileResource(
   threadRef: ScopedThreadRef,
@@ -2101,7 +2079,7 @@ export function WorkspaceLargeTextPreview(props: {
   /** The first megabyte already read, shown until the whole file arrives. */
   preview: string;
   sizeBytes: number;
-  onPostRender?: ComponentProps<typeof LargeSourcePreview>["onPostRender"];
+  onPostRender?: ComponentProps<typeof LargeFilePreview>["onPostRender"];
   workspaceMutationId: string | null;
   revealLine: number | null;
   revealRequestId: number;
@@ -2110,7 +2088,6 @@ export function WorkspaceLargeTextPreview(props: {
   const resource = largeFileResource(props.threadRef, props.absolutePath, props.draftCwd);
   const gt = useGT();
   const [revision, setRevision] = useState(0);
-  const [tooTallSrc, setTooTallSrc] = useState<string | null>(null);
   const showError = (cause: unknown) => {
     toastManager.add({
       type: "error",
@@ -2153,49 +2130,22 @@ export function WorkspaceLargeTextPreview(props: {
       .catch(showError);
   };
   return (
-    <Suspense fallback={<FileSurfaceLoading />}>
-      {props.markdownCwd !== null && tooTallSrc !== src ? (
-        <LargeMarkdownViewer
-          key={`${src}:${revision}`}
-          src={src}
-          cwd={props.markdownCwd}
-          relativePath={props.name}
-          threadRef={props.threadRef}
-          workspaceMutationId={props.workspaceMutationId}
-          copyContents={props.copyContents}
-          onRetry={retry}
-          onTooTall={() => setTooTallSrc(src)}
-        />
-      ) : props.delimiter === null &&
-        props.sizeBytes <= HIGHLIGHTED_SOURCE_MAX_BYTES &&
-        // Markdown already found too tall to render is too tall to highlight too.
-        tooTallSrc !== src ? (
-        <LargeSourcePreview
-          key={`${src}:${revision}`}
-          src={src}
-          name={props.name}
-          preview={props.preview}
-          sizeBytes={props.sizeBytes}
-          copyContents={props.copyContents}
-          onRetry={retry}
-          onPostRender={props.onPostRender}
-          revealLine={props.revealLine}
-          revealRequestId={props.revealRequestId}
-          wordWrap={props.wordWrap}
-        />
-      ) : (
-        <LargeTextViewer
-          key={`${src}:${revision}`}
-          name={props.name}
-          copyContents={props.copyContents}
-          onRetry={retry}
-          src={src}
-          delimiter={props.delimiter}
-          revealLine={props.revealLine}
-          revealRequestId={props.revealRequestId}
-          wordWrap={props.wordWrap}
-        />
-      )}
-    </Suspense>
+    <LargeFilePreview
+      key={`${src}:${revision}`}
+      src={src}
+      name={props.name}
+      preview={props.preview}
+      sizeBytes={props.sizeBytes}
+      delimiter={props.delimiter}
+      markdownCwd={props.markdownCwd}
+      threadRef={props.threadRef}
+      workspaceMutationId={props.workspaceMutationId}
+      copyContents={props.copyContents}
+      onRetry={retry}
+      onPostRender={props.onPostRender}
+      revealLine={props.revealLine}
+      revealRequestId={props.revealRequestId}
+      wordWrap={props.wordWrap}
+    />
   );
 }

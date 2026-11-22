@@ -6,11 +6,11 @@ import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
 import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
-import { ScrollView, View } from "react-native";
+import { View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   LARGE_MARKDOWN_CHUNK_MAX_CHARS,
-  splitMarkdownForPreview,
+  splitMarkdown,
   withMarkdownDefinitions,
 } from "@t3tools/shared/markdownChunks";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
@@ -92,8 +92,6 @@ export function FileMarkdownPreview(props: {
   readonly markdown: string;
   readonly relativePath: string;
   readonly threadId: ThreadId | null;
-  /** Splits the file into separately parsed blocks in a virtualized list. */
-  readonly chunked?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const navigation = useNavigation();
@@ -266,57 +264,41 @@ export function FileMarkdownPreview(props: {
   );
   const markdown = maskMarkdownFrontmatter(props.markdown);
 
-  if (props.chunked) {
-    // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
-    const { chunks, definitions } = splitMarkdownForPreview(markdown);
-    if (chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS)) {
-      return (
-        <SourceFileSurface
-          contents={props.markdown}
-          path={props.relativePath}
-          onRefresh={props.onRefresh}
-        />
-      );
-    }
+  // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
+  const { chunks, definitions } = splitMarkdown(markdown);
+  if (chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS)) {
     return (
-      <View className="flex-1 bg-sheet">
-        <LegendList
-          renderScrollComponent={NativeScrollView}
-          contentInsetAdjustmentBehavior="automatic"
-          refreshControl={refreshControl}
-          data={chunks}
-          keyExtractor={(_chunk, index) => String(index)}
-          estimatedItemSize={
-            (styles.nativeTextStyle.lineHeight *
-              chunks.reduce((lines, chunk) => lines + chunk.lines, 0)) /
-            chunks.length
-          }
-          recycleItems={false}
-          contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 18 }}
-          ItemSeparatorComponent={ChunkSeparator}
-          renderItem={({ item }) => (
-            <View className="mx-auto w-full max-w-[760px]">
-              {renderMarkdown(withMarkdownDefinitions(item.text, definitions))}
-            </View>
-          )}
-        />
-        {modals}
-      </View>
+      <SourceFileSurface
+        contents={props.markdown}
+        path={props.relativePath}
+        onRefresh={props.onRefresh}
+      />
     );
   }
-
   return (
-    <ScrollView
-      className="flex-1 bg-sheet"
-      contentInsetAdjustmentBehavior="automatic"
-      contentContainerStyle={{ padding: 18 }}
-      refreshControl={refreshControl}
-    >
-      <View className="mx-auto w-full max-w-[760px]">
-        {renderMarkdown(markdown)}
-        {modals}
-      </View>
-    </ScrollView>
+    <View className="flex-1 bg-sheet">
+      <LegendList
+        renderScrollComponent={NativeScrollView}
+        contentInsetAdjustmentBehavior="automatic"
+        refreshControl={refreshControl}
+        data={chunks}
+        keyExtractor={(_chunk, index) => String(index)}
+        estimatedItemSize={
+          (styles.nativeTextStyle.lineHeight *
+            chunks.reduce((lines, chunk) => lines + chunk.lines, 0)) /
+          chunks.length
+        }
+        recycleItems={false}
+        contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 18 }}
+        ItemSeparatorComponent={ChunkSeparator}
+        renderItem={({ item }) => (
+          <View className="mx-auto w-full max-w-[760px]">
+            {renderMarkdown(withMarkdownDefinitions(item.text, definitions))}
+          </View>
+        )}
+      />
+      {modals}
+    </View>
   );
 }
 

@@ -45,7 +45,9 @@ export function ChunkedMarkdown(props: {
   }
   return (
     <div
-      className="flex min-h-0 flex-1 flex-col"
+      // Clicking the text focuses the preview, so Select All stays inside it.
+      tabIndex={-1}
+      className="flex min-h-0 flex-1 flex-col outline-none"
       onKeyDown={props.onKeyDown}
       onCopy={(event) => {
         // Select All only reaches rendered pieces; copying all of it copies the whole file.
