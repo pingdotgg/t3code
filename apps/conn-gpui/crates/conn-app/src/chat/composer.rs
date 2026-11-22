@@ -67,6 +67,12 @@ pub(super) const COMPOSER_MAX_LINES: usize = 8;
 
 /// Composer card corner radius matching Conn's `rounded-2xl` (`16px`).
 const COMPOSER_RADIUS_PX: f32 = 16.0;
+/// Bottom breathing room below the composer card when the context strip is hidden
+/// (`ChatView.tsx:4067` `sm:h-[1.25rem]`).
+const COMPOSER_BOTTOM_SPACER_PX: f32 = 20.0;
+/// Symmetric vertical margin around the `22px` bottom context strip (`9px` top + `9px` bottom)
+/// so the strip sits visually balanced between the composer card and the bottom of the chat card.
+const CONTEXT_STRIP_VERTICAL_MARGIN_PX: f32 = 9.0;
 /// Maximum width of the model name label in the trigger (`max-w-56` = `224px`).
 const MODEL_LABEL_MAX_WIDTH_PX: f32 = 224.0;
 /// Maximum file mention results requested from `projects.searchEntries`.
@@ -178,6 +184,8 @@ pub(crate) struct Composer {
     thread_branch: Option<String>,
     worktree_active: bool,
     is_draft: bool,
+    /// Mirrors Conn's `settings.persistComposerContextStrip` (`BranchToolbar.logic.ts:72`).
+    persist_context_strip: bool,
     submitting: bool,
     runtime_mode: String,
     /// The user's default permission mode; the footer chip hides while the thread matches it.
@@ -313,6 +321,7 @@ impl Composer {
             thread_branch: None,
             worktree_active: false,
             is_draft: false,
+            persist_context_strip: false,
             submitting: false,
             runtime_mode: "full-access".to_owned(),
             default_runtime_mode: "full-access".to_owned(),
@@ -501,6 +510,14 @@ impl Composer {
                 self.context_meter_open = false;
             }
             self.context_window = usage;
+            cx.notify();
+        }
+    }
+
+    /// Sets whether the branch/worktree context strip stays visible on active (non-draft) threads.
+    pub(crate) fn set_persist_context_strip(&mut self, persist: bool, cx: &mut Context<'_, Self>) {
+        if self.persist_context_strip != persist {
+            self.persist_context_strip = persist;
             cx.notify();
         }
     }
@@ -1320,7 +1337,7 @@ impl Composer {
     }
 
     /// Plan / Build toggle (and `Shift+Tab`).
-    pub(super) fn toggle_interaction_mode(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn toggle_interaction_mode(&mut self, cx: &mut Context<'_, Self>) {
         let next = if self.interaction_mode == "plan" {
             "default"
         } else {
@@ -1973,6 +1990,7 @@ impl Composer {
 
         div()
             .id("composer-context-strip")
+            .test_support()
             .a11y(
                 gpui_kit::Role::Toolbar,
                 "composer.context-strip",
@@ -1984,8 +2002,9 @@ impl Composer {
             .justify_between()
             .gap(px(8.0))
             .w_full()
-            .py(px(9.0))
-            .px(px(6.0))
+            .h(px(22.0))
+            .my(px(CONTEXT_STRIP_VERTICAL_MARGIN_PX))
+            .px(px(8.0))
             .text_size(px(12.0))
             .line_height(px(16.0))
             .text_color(muted)
@@ -2149,8 +2168,8 @@ impl Render for Composer {
                 cx,
             )
         });
-        let mode_toggle =
-            render_interaction_mode_toggle(self.interaction_mode == "plan", &tokens, cx);
+        let mode_toggle = (self.interaction_mode == "plan")
+            .then(|| render_interaction_mode_toggle(true, &tokens, cx));
 
         // Context window meter (only when the thread reports usage).
         let supports_compact = self
@@ -2268,6 +2287,7 @@ impl Render for Composer {
 
         let mut card = div()
             .id("chat-composer-card")
+            .test_support()
             .a11y_group("composer.card", "Message input card")
             .w_full()
             .rounded(px(COMPOSER_RADIUS_PX))
@@ -2469,6 +2489,10 @@ impl Render for Composer {
                         .child(
                             div()
                                 .id(SharedString::from(format!("composer-att-rm-{local_id}")))
+                                .a11y_button(
+                                    SharedString::from(format!("composer.att.rm.{local_id}")),
+                                    "Remove attachment",
+                                )
                                 .flex()
                                 .items_center()
                                 .justify_center()
@@ -2523,7 +2547,7 @@ impl Render for Composer {
                             .min_w_0()
                             .child(model_trigger)
                             .when_some(permissions_chip, |el, chip| el.child(chip))
-                            .child(mode_toggle)
+                            .when_some(mode_toggle, |el, toggle| el.child(toggle))
                             .when_some(context_meter, |el, meter| el.child(meter))
                             .when_some(dictation_badge, |el, badge| el.child(badge))
                             .child(mic_btn)
@@ -2648,8 +2672,16 @@ impl Render for Composer {
                 },
                 |el, surface| el.child(surface),
             )
-            .child(card)
-            .child(self.render_context_strip(&tokens, cx));
+            .child(card);
+        let show_context_strip = self.is_draft || self.persist_context_strip;
+        // Conn `BranchToolbar.logic.ts:shouldShowComposerContextStrip`: shown on drafts and when
+        // `persistComposerContextStrip` is enabled (with symmetric 9px vertical margins); when
+        // hidden on active threads, keep Conn's 20px (`h-[1.25rem]`) bottom spacer below the card.
+        root = if show_context_strip {
+            root.child(self.render_context_strip(&tokens, cx))
+        } else {
+            root.pb(px(COMPOSER_BOTTOM_SPACER_PX))
+        };
 
         if let Some(trigger) = self.active_trigger.clone() {
             let menu = render_command_menu(

@@ -1582,13 +1582,25 @@ impl ChatView {
 
         let (card_fill, card_hover, ring_fill) = match self.tokens.appearance {
             Appearance::Dark => (
-                hsla_alpha(self.tokens.shell_highlight, 0.70),
+                hsla(
+                    self.tokens
+                        .shell_highlight
+                        .with_alpha(self.tokens.shell_highlight.a * 0.70),
+                ),
                 hsla(self.tokens.shell_highlight),
-                hsla(self.tokens.shell_card),
+                hsla(conn_theme::color_mix_srgb(
+                    self.tokens.foreground,
+                    0.056,
+                    self.tokens.shell_card,
+                )),
             ),
             Appearance::Light => (
                 hsla(self.tokens.shell_card),
-                hsla_alpha(self.tokens.shell_card, 0.70),
+                hsla(
+                    self.tokens
+                        .shell_card
+                        .with_alpha(self.tokens.shell_card.a * 0.70),
+                ),
                 hsla(self.tokens.shell_card),
             ),
         };

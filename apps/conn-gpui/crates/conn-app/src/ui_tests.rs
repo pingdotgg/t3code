@@ -646,15 +646,33 @@ fn composer_popups_model_picker_and_plan_mode_render_cleanly(cx: &mut TestAppCon
         window.pointer_down(picker_pt, MouseButton::Left, cx);
         window.pointer_up(picker_pt, MouseButton::Left, cx);
         window.render_frame(cx);
-
+    });
+    cx.run_until_parked();
+    let _ = cx.update_window(window, |_, window, cx| {
         window.press("escape", cx);
         window.render_frame(cx);
-
+    });
+    cx.run_until_parked();
+    let _ = cx.update_window(window, |_, window, cx| {
+        // Default mode hides the Build/Plan chip in the footer (Conn `ComposerControlsBar`);
+        // entering Plan mode surfaces the active Plan badge, and clicking it exits back to default.
+        let chat = app.read(cx).chat_for_test();
+        let composer = chat.read(cx).composer_for_test();
+        composer.update(cx, |c, cx| c.toggle_interaction_mode(cx));
+        window.render_frame(cx);
         let plan_pt = center_by_label_contains(window, cx, "plan mode");
         window.pointer_move(plan_pt, None, cx);
         window.pointer_down(plan_pt, MouseButton::Left, cx);
         window.pointer_up(plan_pt, MouseButton::Left, cx);
         window.render_frame(cx);
+        assert!(
+            !has_label(
+                window,
+                cx,
+                "Plan mode. Click to return to normal build mode"
+            ),
+            "clicking active Plan badge must return to default mode and hide the chip"
+        );
     });
 }
 
@@ -826,4 +844,91 @@ fn composer_attach_file_uploads_via_background_tokio_runtime(cx: &mut TestAppCon
         ready,
         "expected attached PNG to reach ready:att-gpui-test-1 on GPUI executor, got {final_states:?}"
     );
+}
+
+#[gpui_kit::test]
+fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAppContext) {
+    let (window, app) = mount_app(cx);
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_shell(kitchen_sink_shell(), cx);
+            app.set_thread_for_test("thread-selected".to_owned(), kitchen_sink_thread(), cx);
+        });
+    });
+
+    // 1. Active thread with default `persistComposerContextStrip = false`: the composer card must
+    // sit above Conn's 20px (`h-[1.25rem]`, `ChatView.tsx:4067`) bottom spacer + ~4.5px shell
+    // inset/border (never slammed flush against the bottom of the window).
+    const SHELL_BOTTOM_CHROME_PX: f32 = 4.5;
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let card = window.find_by_label("Message input card");
+        let bottom_gap = TEST_WINDOW_HEIGHT - f32::from(card.bounds().bottom());
+        assert!(
+            (23.5..=26.0).contains(&bottom_gap),
+            "composer card must keep 20px bottom breathing room + ~4.5px shell inset (got {bottom_gap:.1}px)"
+        );
+        assert!(
+            window.try_find_by_label("Thread context").is_none(),
+            "context strip stays hidden on active threads while persist_composer_context_strip is false"
+        );
+    });
+
+    // 2. Enabling `persist_composer_context_strip` renders the branch/worktree row below the
+    // composer card with symmetric 9px margins above and below (not stacked on top of the 20px
+    // no-strip spacer).
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_persist_composer_context_strip(true, cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let card = window.find_by_label("Message input card");
+        let strip = window.find_by_label("Thread context");
+        let top_gap = f32::from(strip.bounds().top()) - f32::from(card.bounds().bottom());
+        let bottom_gap =
+            (TEST_WINDOW_HEIGHT - SHELL_BOTTOM_CHROME_PX) - f32::from(strip.bounds().bottom());
+        assert!(
+            (8.0..=10.5).contains(&top_gap),
+            "context strip top margin should be ~9px (got {top_gap:.1}px)"
+        );
+        assert!(
+            (8.0..=10.5).contains(&bottom_gap),
+            "context strip bottom margin should be ~9px without excessive padding (got {bottom_gap:.1}px)"
+        );
+        assert!(
+            (top_gap - bottom_gap).abs() <= 1.5,
+            "context strip vertical margins must be symmetric (top {top_gap:.1}px vs bottom {bottom_gap:.1}px)"
+        );
+    });
+
+    // 3. Even with `persist_composer_context_strip = false`, a new-thread draft always renders the
+    // context strip (workspace/branch + permissions) with the same symmetric 9px margins.
+    cx.update(|cx| {
+        app.update(cx, |app, cx| {
+            app.set_persist_composer_context_strip(false, cx);
+            app.start_new_thread(None, None, cx);
+        });
+    });
+    let _ = cx.update_window(window, |_, window, cx| {
+        window.render_frame(cx);
+        let card = window.find_by_label("Message input card");
+        let strip = window.find_by_label("Thread context");
+        let top_gap = f32::from(strip.bounds().top()) - f32::from(card.bounds().bottom());
+        let bottom_gap =
+            (TEST_WINDOW_HEIGHT - SHELL_BOTTOM_CHROME_PX) - f32::from(strip.bounds().bottom());
+        assert!(
+            (8.0..=10.5).contains(&top_gap),
+            "draft context strip top margin should be ~9px (got {top_gap:.1}px)"
+        );
+        assert!(
+            (8.0..=10.5).contains(&bottom_gap),
+            "draft context strip bottom margin should be ~9px without excessive padding (got {bottom_gap:.1}px)"
+        );
+        assert!(
+            (top_gap - bottom_gap).abs() <= 1.5,
+            "draft context strip vertical margins must be symmetric (top {top_gap:.1}px vs bottom {bottom_gap:.1}px)"
+        );
+    });
 }

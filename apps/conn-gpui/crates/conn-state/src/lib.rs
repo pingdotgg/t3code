@@ -53,8 +53,9 @@ pub use crate::layout::{
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
 pub use crate::thread::{
-    EntryTiming, ItemStatus, RunStatus, RunTiming, SecretRequestStatus, ThreadState, TimelineEntry,
-    TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
+    EntryTiming, ItemStatus, RunStatus, RunTiming, SecretRequestStatus,
+    ThreadContextWindowSnapshot, ThreadState, TimelineEntry, TurnCheckpointSummary, TurnItemStatus,
+    parse_iso8601_epoch_ms, turn_item_detail,
 };
 pub use crate::timeline::{
     LocalDateTime, PLAN_PREVIEW_MAX_LINES, SubagentTone, TurnCheckpointFile, TurnDiffRow,

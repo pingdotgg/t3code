@@ -102,6 +102,7 @@ pub(crate) struct SettingsConnectionInfo {
 pub(crate) enum SettingsEvent {
     ApplyTheme(String),
     ReduceTransparency(bool),
+    PersistComposerContextStrip(bool),
     OrbitSyncNow,
     OrbitBindProfile(i64),
     OrbitCreateProfile(String),
@@ -175,6 +176,7 @@ pub(crate) struct SettingsModal {
     active_page: SettingsPage,
     active_theme_id: String,
     reduce_transparency: bool,
+    persist_composer_context_strip: bool,
     connection: SettingsConnectionInfo,
     orbit: OrbitSettingsInfo,
     themes: Vec<ThemeOption>,
@@ -221,6 +223,7 @@ impl SettingsModal {
         active_theme_id: impl Into<String>,
         tokens: Tokens,
         reduce_transparency: bool,
+        persist_composer_context_strip: bool,
         connection: SettingsConnectionInfo,
         live_connection: Option<Connection>,
         projects: Vec<ScheduledTaskProjectOption>,
@@ -286,6 +289,7 @@ impl SettingsModal {
             active_page: SettingsPage::Appearance,
             active_theme_id: active_theme_id.into(),
             reduce_transparency,
+            persist_composer_context_strip,
             connection,
             orbit,
             themes,
@@ -396,6 +400,14 @@ impl SettingsModal {
     fn toggle_reduce_transparency(&mut self, cx: &mut Context<'_, Self>) {
         self.reduce_transparency = !self.reduce_transparency;
         cx.emit(SettingsEvent::ReduceTransparency(self.reduce_transparency));
+        cx.notify();
+    }
+
+    fn toggle_persist_composer_context_strip(&mut self, cx: &mut Context<'_, Self>) {
+        self.persist_composer_context_strip = !self.persist_composer_context_strip;
+        cx.emit(SettingsEvent::PersistComposerContextStrip(
+            self.persist_composer_context_strip,
+        ));
         cx.notify();
     }
 
@@ -677,14 +689,34 @@ impl SettingsModal {
                 entity.update(cx, |this, cx| this.toggle_reduce_transparency(cx));
             },
         );
-
-        let window_rows = vec![settings_row(
-            "Reduce transparency",
-            Some("Use opaque card surfaces instead of translucent frosted fills."),
-            reduce_switch.into_any_element(),
+        let entity_strip = cx.entity();
+        let context_strip_switch = pill_switch(
+            "conn-settings-persist-composer-context",
+            self.persist_composer_context_strip,
             &self.tokens,
-            &self.geometry,
-        )];
+            move |_window, cx| {
+                entity_strip.update(cx, |this, cx| {
+                    this.toggle_persist_composer_context_strip(cx)
+                });
+            },
+        );
+
+        let window_rows = vec![
+            settings_row(
+                "Reduce transparency",
+                Some("Use opaque card surfaces instead of translucent frosted fills."),
+                reduce_switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+            settings_row(
+                "Keep composer context visible",
+                Some("Keep branch and worktree controls below the composer after a thread starts."),
+                context_strip_switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+        ];
 
         let mut col = div().flex().flex_col().w_full().gap(px(20.0));
         if !orbit_rows.is_empty() {
@@ -736,6 +768,7 @@ impl SettingsModal {
             );
         }
 
+        let mut window_matches: Vec<AnyElement> = Vec::new();
         if "reduce transparency opaque frosted window appearance".contains(needle) {
             let entity = cx.entity();
             let reduce_switch = pill_switch(
@@ -746,20 +779,39 @@ impl SettingsModal {
                     entity.update(cx, |this, cx| this.toggle_reduce_transparency(cx));
                 },
             );
+            window_matches.push(settings_row(
+                "Reduce transparency",
+                Some("Use opaque card surfaces instead of translucent frosted fills."),
+                reduce_switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+        if "keep composer context visible branch worktree strip prompt appearance".contains(needle)
+        {
+            let entity = cx.entity();
+            let context_switch = pill_switch(
+                "conn-settings-search-persist-composer-context-strip",
+                self.persist_composer_context_strip,
+                &self.tokens,
+                move |_window, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.toggle_persist_composer_context_strip(cx)
+                    });
+                },
+            );
+            window_matches.push(settings_row(
+                "Keep composer context visible",
+                Some("Show the branch and worktree strip below the composer on active threads."),
+                context_switch.into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+        if !window_matches.is_empty() {
             sections.push(
-                settings_section(
-                    "Window",
-                    vec![settings_row(
-                        "Reduce transparency",
-                        Some("Use opaque card surfaces instead of translucent frosted fills."),
-                        reduce_switch.into_any_element(),
-                        &self.tokens,
-                        &self.geometry,
-                    )],
-                    &self.tokens,
-                    &self.geometry,
-                )
-                .into_any_element(),
+                settings_section("Window", window_matches, &self.tokens, &self.geometry)
+                    .into_any_element(),
             );
         }
 

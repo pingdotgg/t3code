@@ -153,6 +153,10 @@ def flow_composer_controls_and_image_attach(client: AutomationClient) -> None:
         # Ensure app stayed healthy and no upload error chip appeared.
         err = client.call({"cmd": "query", "label": "there is no reactor running"})
         assert_eq(err["matches"], [], "composer attachment upload hit Tokio runtime panic")
+        # Remove the temporary attachment chip so the composer stays clean after the flow.
+        rm_btn = client.call({"cmd": "query", "label": "Remove attachment"})
+        if rm_btn["matches"]:
+            client.call({"cmd": "click", "label": "Remove attachment"})
     finally:
         tmp_path.unlink(missing_ok=True)
 

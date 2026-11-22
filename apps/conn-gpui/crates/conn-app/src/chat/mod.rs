@@ -445,6 +445,12 @@ impl ChatView {
             .update(cx, |c, cx| c.set_draft_text(text, window, cx));
     }
 
+    /// Toggles keeping the `BranchToolbar` context strip visible below the composer on active threads.
+    pub(crate) fn set_persist_context_strip(&mut self, persist: bool, cx: &mut Context<'_, Self>) {
+        self.composer
+            .update(cx, |c, cx| c.set_persist_context_strip(persist, cx));
+    }
+
     /// Updates empty-state context flags (whether projects exist and whether a live server is
     /// connected).
     pub(crate) fn set_shell_availability(
@@ -534,6 +540,7 @@ impl ChatView {
                 c.set_working(false, cx);
                 c.set_can_resume(false, cx);
                 c.set_plan_follow_up(None, cx);
+                c.set_context_window(None, cx);
                 c.clear_edit_queued_if_missing(&[], cx);
             });
             cx.notify();
@@ -662,10 +669,21 @@ impl ChatView {
         let working = self.working;
         let can_resume = !working && self.interrupted_run_id.is_some();
         let plan_follow_up = latest_actionable_plan_markdown(thread, working);
+        let context_window = thread
+            .context_window()
+            .map(|cw| composer::ContextWindowSnapshot {
+                used_tokens: cw.used_tokens,
+                max_tokens: cw.max_tokens,
+                total_processed_tokens: cw.total_processed_tokens,
+                cost: cw.cost,
+                compacts_automatically: cw.compacts_automatically,
+                auto_compact_threshold: cw.auto_compact_threshold,
+            });
         self.composer.update(cx, |c, cx| {
             c.set_working(working, cx);
             c.set_can_resume(can_resume, cx);
             c.set_plan_follow_up(plan_follow_up, cx);
+            c.set_context_window(context_window, cx);
         });
     }
 
@@ -3428,7 +3446,9 @@ fn latest_actionable_plan_markdown(thread: &ThreadState, working: bool) -> Optio
     let latest_run = thread.latest_run_id();
     for entry in thread.entries.iter().rev() {
         match entry {
-            TimelineEntry::User { .. } | TimelineEntry::QueuedUser { .. } => return None,
+            TimelineEntry::User { .. }
+            | TimelineEntry::QueuedUser { .. }
+            | TimelineEntry::Assistant { .. } => return None,
             TimelineEntry::ProposedPlan {
                 run_id,
                 markdown,

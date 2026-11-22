@@ -119,6 +119,7 @@ pub(crate) struct ConnApp {
     sidebar_filter_menu_open: bool,
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
     reduce_transparency: bool,
+    persist_composer_context_strip: bool,
     server_url: Option<String>,
     server_label: Option<String>,
     /// Monotonic counter incremented on every live server switch so stale event pumps stop cleanly.
@@ -401,6 +402,7 @@ impl ConnApp {
             _sidebar_clock: None,
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
+            persist_composer_context_strip: false,
             server_url,
             server_label,
             connection_gen: 1,
@@ -546,6 +548,7 @@ impl ConnApp {
         let theme_id = self.theme_id.clone();
         let tokens = self.tokens.clone();
         let reduce_transparency = self.reduce_transparency;
+        let persist_composer_context_strip = self.persist_composer_context_strip;
         let live_connection = self.connection.clone();
         let projects = self.scheduled_task_projects();
         let default_model = self.default_scheduled_task_model();
@@ -554,6 +557,7 @@ impl ConnApp {
                 theme_id,
                 tokens,
                 reduce_transparency,
+                persist_composer_context_strip,
                 connection,
                 live_connection,
                 projects,
@@ -578,6 +582,9 @@ impl ConnApp {
                 }
                 SettingsEvent::ReduceTransparency(enabled) => {
                     app.set_reduce_transparency(*enabled, cx);
+                }
+                SettingsEvent::PersistComposerContextStrip(enabled) => {
+                    app.set_persist_composer_context_strip(*enabled, cx);
                 }
                 SettingsEvent::OrbitSyncNow => {
                     app.sync_orbit_profile(true, cx);
@@ -4858,6 +4865,20 @@ impl ConnApp {
     /// --shell-inner-fill: var(--shell-card);`).
     fn set_reduce_transparency(&mut self, enabled: bool, cx: &mut Context<'_, Self>) {
         self.apply_reduce_transparency_choice(enabled, true, cx);
+    }
+
+    pub(crate) fn set_persist_composer_context_strip(
+        &mut self,
+        enabled: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.persist_composer_context_strip == enabled {
+            return;
+        }
+        self.persist_composer_context_strip = enabled;
+        self.chat
+            .update(cx, |chat, cx| chat.set_persist_context_strip(enabled, cx));
+        cx.notify();
     }
 
     fn apply_reduce_transparency_choice(

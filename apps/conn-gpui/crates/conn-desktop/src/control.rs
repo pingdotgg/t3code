@@ -666,7 +666,9 @@ mod tests {
     #[tokio::test]
     async fn control_socket_round_trips_select_workspace_and_errors()
     -> Result<(), Box<dyn std::error::Error>> {
-        let dir = tempfile::tempdir()?;
+        // Bind inside `/tmp` so the socket path always stays well under macOS `SUN_LEN` (104 bytes)
+        // even when `$TMPDIR` points into a long sandbox/session directory.
+        let dir = tempfile::Builder::new().prefix("cgs-").tempdir_in("/tmp")?;
         let socket = ControlSocketAddress {
             address: dir.path().join("test.sock"),
             directory: dir.path().to_path_buf(),

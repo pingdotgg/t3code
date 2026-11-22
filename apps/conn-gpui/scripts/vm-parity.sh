@@ -37,6 +37,11 @@ stop_pid_file() {
   fi
 }
 
+stop_conn_gui() {
+  stop_pid_file "$DEV/conn-gui.pid"
+  stop_pid_file "$DEV/conn-app.pid"
+}
+
 launch_conn_once() {
   mkdir -p "$DEV/electron-userdata"
   open -n "$REF_CONN" \
@@ -51,7 +56,16 @@ launch_conn_once() {
     fi
     sleep 0.25
   done
-  lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN | head -1 > "$DEV/conn-app.pid" || true
+  local server_pid
+  server_pid="$(lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN | head -1 || true)"
+  if [[ -n "$server_pid" ]]; then
+    echo "$server_pid" > "$DEV/conn-app.pid"
+    local gui_pid
+    gui_pid="$(ps -o ppid= -p "$server_pid" 2>/dev/null | tr -d ' ' || true)"
+    if [[ -n "$gui_pid" && "$gui_pid" != "1" ]]; then
+      echo "$gui_pid" > "$DEV/conn-gui.pid"
+    fi
+  fi
 }
 
 issue_bearer() {
@@ -70,7 +84,7 @@ shift || true
 case "$cmd" in
   seed)
     stop_pid_file "$DEV/gpui.pid"
-    stop_pid_file "$DEV/conn-app.pid"
+    stop_conn_gui
     stop_pid_file "$DEV/server.pid"
     rm -rf "$DEV/userdata" "$DEV/state" "$DEV/bearer" "$DEV/automation-port"
     python3 "$ROOT/scripts/seed-parity.py" --dev-dir "$DEV" --state-subdir userdata
@@ -83,7 +97,7 @@ case "$cmd" in
       echo "error: reference Conn.app not found at $REF_CONN" >&2
       exit 1
     fi
-    stop_pid_file "$DEV/conn-app.pid"
+    stop_conn_gui
     mkdir -p "$DEV/userdata"
 
     # If statev2.sqlite does not exist yet, boot Conn.app briefly to run its migrations,
@@ -91,7 +105,7 @@ case "$cmd" in
     if [[ ! -f "$DEV/userdata/statev2.sqlite" ]]; then
       launch_conn_once
       sleep 1
-      stop_pid_file "$DEV/conn-app.pid"
+      stop_conn_gui
       sleep 0.5
     fi
     python3 "$ROOT/scripts/seed-parity.py" --dev-dir "$DEV" --state-subdir userdata --statev2-only
@@ -101,16 +115,16 @@ case "$cmd" in
     issue_bearer
     # Position Conn.app window at 20,41 1440x900 to match Conn GPUI.app pixel-for-pixel.
     osascript -e 'tell application "System Events" to tell process "Conn" to set {position of window 1, size of window 1} to {{20, 41}, {1440, 900}}' 2>/dev/null || true
-    echo "Conn.app started (pid $(cat "$DEV/conn-app.pid" 2>/dev/null || echo unknown)) on :$PORT"
+    echo "Conn.app started (gui $(cat "$DEV/conn-gui.pid" 2>/dev/null || echo unknown), server $(cat "$DEV/conn-app.pid" 2>/dev/null || echo unknown)) on :$PORT"
     ;;
 
   theme)
-    THEME_ID="${1:?theme id required (e.g. dark-ocean, light)}"
+    THEME_ID="${1:?theme id required (e.g. ocean, t3-chat, ember, grove, iris)}"
     "$DEV/bin/t3" theme set --base-dir "$DEV" "$THEME_ID"
     ;;
 
   start-gpui)
-    THEME="${1:-dark-ocean}"
+    THEME="${1:-ocean-dark}"
     stop_pid_file "$DEV/gpui.pid"
     if ! lsof -nP -tiTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
       "$ROOT/scripts/dev-server.sh" start
@@ -120,7 +134,11 @@ case "$cmd" in
     fi
     (cd "$ROOT" && cargo build -p conn-app --features automation ${CARGO_FLAGS:-})
     APP_PATH="$(CONN_DEV_SIGNING_IDENTITY="${CONN_DEV_SIGNING_IDENTITY:--}" "$ROOT/scripts/bundle-app.sh" debug | tail -n 1)"
+    # Resolve symlinks (e.g. shared Cargo `target/`) so LaunchServices never fails
+    # `sandbox_extension_issue_file_to_process` on a symlinked bundle path.
+    APP_PATH="$(cd "$(dirname "$APP_PATH")" && pwd -P)/$(basename "$APP_PATH")"
     rm -f "$DEV/automation-port"
+    : > "$DEV/app.log"
     open -n "$APP_PATH" \
       --env CONN_GPUI_WINDOW=20,41,1440,900 \
       --env CONN_GPUI_SERVER="http://127.0.0.1:$PORT" \
@@ -130,7 +148,17 @@ case "$cmd" in
       --env CONN_GPUI_ORBIT_SYNC=0 \
       --env CONN_GPUI_THEME="$THEME" \
       --stdout "$DEV/app.log" --stderr "$DEV/app.log"
-    for _ in $(seq 1 120); do [[ -s "$DEV/automation-port" ]] && break; sleep 0.1; done
+    for _ in $(seq 1 300); do
+      if [[ -s "$DEV/automation-port" ]]; then
+        break
+      fi
+      LOG_PORT="$(sed -n 's/.*automation: listening on 127\.0\.0\.1:\([0-9][0-9]*\).*/\1/p' "$DEV/app.log" | tail -n 1)"
+      if [[ -n "$LOG_PORT" ]]; then
+        echo "$LOG_PORT" > "$DEV/automation-port"
+        break
+      fi
+      sleep 0.1
+    done
     AUTO_PORT="$(cat "$DEV/automation-port" 2>/dev/null || true)"
     if [[ -n "$AUTO_PORT" ]]; then
       lsof -nP -tiTCP:"$AUTO_PORT" -sTCP:LISTEN | head -1 > "$DEV/gpui.pid"
@@ -143,14 +171,17 @@ case "$cmd" in
     ;;
 
   capture)
-    OWNER="${1:?owner name (Conn or conn-app)}"
+    OWNER="${1:?owner name (Conn or Conn GPUI)}"
     OUT="${2:?output png path}"
+    if [[ "$OWNER" == "conn-app" ]]; then
+      OWNER="Conn GPUI"
+    fi
     "$ROOT/scripts/shot.sh" "$OWNER" "$OUT"
     ;;
 
   stop)
     stop_pid_file "$DEV/gpui.pid"
-    stop_pid_file "$DEV/conn-app.pid"
+    stop_conn_gui
     stop_pid_file "$DEV/server.pid"
     echo "stopped VM parity processes"
     ;;

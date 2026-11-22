@@ -6,7 +6,11 @@ use conn_contract::{
     OrchestrationV2CheckpointStatus as CheckpointStatus,
     OrchestrationV2ConversationMessage as ConversationMessage,
     OrchestrationV2DomainEvent as DomainEvent, OrchestrationV2LinkRequestStatus as LinkStatus,
-    OrchestrationV2PlanStepStatus as PlanStepStatus, OrchestrationV2Run as Run,
+    OrchestrationV2PlanStepStatus as PlanStepStatus,
+    OrchestrationV2ProviderThread as ProviderThread,
+    OrchestrationV2ProviderThreadContextUsage as ProviderThreadContextUsage,
+    OrchestrationV2ProviderTurn as ProviderTurn,
+    OrchestrationV2ProviderTurnTokenUsage as ProviderTurnTokenUsage, OrchestrationV2Run as Run,
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
     OrchestrationV2ThreadStreamItem as ThreadStreamItem, OrchestrationV2TurnItem as TurnItem,
     OrchestrationV2TurnItemApprovalRequest as ApprovalRequestItem,
@@ -246,6 +250,42 @@ struct TrackedRun {
     requested_at: String,
 }
 
+/// Derived context window usage for the active provider thread, matching Conn's
+/// `deriveLatestContextWindowSnapshot` (`packages/client-runtime/src/state/contextWindow.ts`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThreadContextWindowSnapshot {
+    pub used_tokens: f64,
+    pub max_tokens: Option<f64>,
+    pub total_processed_tokens: Option<f64>,
+    pub cost: Option<(f64, String)>,
+    pub compacts_automatically: bool,
+    pub auto_compact_threshold: Option<f64>,
+    pub updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TrackedProviderThread {
+    id: String,
+    context_usage: Option<ProviderThreadContextUsage>,
+    updated_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TrackedProviderTurn {
+    id: String,
+    provider_thread_id: String,
+    token_usage: Option<ProviderTurnTokenUsage>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct TrackedCompaction {
+    id: String,
+    provider_thread_id: Option<String>,
+    after_token_count: i64,
+    before_token_count: Option<i64>,
+    updated_at: String,
+}
+
 /// Conversation message body tracked for live queued-run presentation and edits.
 #[derive(Clone, Debug, PartialEq)]
 struct TrackedMessage {
@@ -283,6 +323,10 @@ pub struct ThreadState {
     pub has_more_history: bool,
     /// True while an on-demand earlier-history page request is in flight.
     pub loading_earlier: bool,
+    active_provider_thread_id: Option<String>,
+    provider_threads: HashMap<String, TrackedProviderThread>,
+    provider_turns: Vec<TrackedProviderTurn>,
+    compactions: Vec<TrackedCompaction>,
     runs: HashMap<String, TrackedRun>,
     messages: HashMap<String, TrackedMessage>,
 }
@@ -384,6 +428,147 @@ impl ThreadState {
             .map(|run| run.id.as_str())
     }
 
+    /// Derives the active provider thread's context window snapshot, matching Conn's
+    /// `latestProviderTurnTokenUsage` + `deriveLatestContextWindowSnapshot`.
+    #[must_use]
+    pub fn context_window(&self) -> Option<ThreadContextWindowSnapshot> {
+        let active_provider_thread = self
+            .active_provider_thread_id
+            .as_deref()
+            .and_then(|id| self.provider_threads.get(id));
+
+        // 1. Newest live `provider_turn.token_usage` on the active provider thread.
+        let mut latest_turn_usage: Option<(&ProviderTurnTokenUsage, Option<i64>)> = None;
+        for turn in &self.provider_turns {
+            let Some(usage) = turn.token_usage.as_ref() else {
+                continue;
+            };
+            if let Some(pt) = active_provider_thread
+                && turn.provider_thread_id != pt.id
+            {
+                continue;
+            }
+            let ts = parse_iso8601_epoch_ms(&usage.updated_at);
+            let is_newer = match latest_turn_usage {
+                None => true,
+                Some((_, prev_ts)) => match (ts, prev_ts) {
+                    (Some(cur), Some(prev)) => cur >= prev,
+                    (Some(_), None) => true,
+                    (None, Some(_)) => false,
+                    (None, None) => true,
+                },
+            };
+            if is_newer {
+                latest_turn_usage = Some((usage, ts));
+            }
+        }
+        if let Some((usage, _)) = latest_turn_usage {
+            return Some(ThreadContextWindowSnapshot {
+                used_tokens: usage.used_tokens.max(0) as f64,
+                max_tokens: usage.max_tokens.flatten().map(|v| v as f64),
+                total_processed_tokens: None,
+                cost: None,
+                compacts_automatically: true,
+                auto_compact_threshold: usage.auto_compact_threshold.map(|v| v as f64),
+                updated_at: usage.updated_at.clone(),
+            });
+        }
+
+        // 2. Active provider thread's persisted `context_usage`.
+        if let Some(pt) = active_provider_thread
+            && let Some(usage) = pt.context_usage.as_ref()
+        {
+            return Some(ThreadContextWindowSnapshot {
+                used_tokens: usage.used_tokens.max(0) as f64,
+                max_tokens: usage.max_tokens.map(|v| v as f64),
+                total_processed_tokens: usage.total_processed_tokens.map(|v| v as f64),
+                cost: usage.cost.as_ref().map(|c| (c.amount, c.currency.clone())),
+                compacts_automatically: usage.compacts_automatically.unwrap_or(false),
+                auto_compact_threshold: usage.auto_compact_threshold.map(|v| v as f64),
+                updated_at: pt.updated_at.clone(),
+            });
+        }
+
+        // 3. Fallback to the latest compaction turn item for the active provider thread.
+        for compaction in self.compactions.iter().rev() {
+            if let Some(pt) = active_provider_thread
+                && let Some(cp_pt) = compaction.provider_thread_id.as_deref()
+                && cp_pt != pt.id
+            {
+                continue;
+            }
+            return Some(ThreadContextWindowSnapshot {
+                used_tokens: compaction.after_token_count as f64,
+                max_tokens: None,
+                total_processed_tokens: compaction.before_token_count.map(|v| v as f64),
+                cost: None,
+                compacts_automatically: true,
+                auto_compact_threshold: None,
+                updated_at: compaction.updated_at.clone(),
+            });
+        }
+
+        None
+    }
+
+    fn record_provider_thread(&mut self, pt: &ProviderThread) -> bool {
+        let next = TrackedProviderThread {
+            id: pt.id.clone(),
+            context_usage: pt.context_usage.clone().flatten(),
+            updated_at: pt.updated_at.clone(),
+        };
+        let changed = self.provider_threads.get(&pt.id) != Some(&next);
+        self.provider_threads.insert(pt.id.clone(), next);
+        changed
+    }
+
+    fn record_provider_turn(&mut self, turn: &ProviderTurn) -> bool {
+        let existing_idx = self.provider_turns.iter().position(|t| t.id == turn.id);
+        let preserved_usage = turn
+            .token_usage
+            .clone()
+            .or_else(|| existing_idx.and_then(|idx| self.provider_turns[idx].token_usage.clone()));
+        let next = TrackedProviderTurn {
+            id: turn.id.clone(),
+            provider_thread_id: turn.provider_thread_id.clone(),
+            token_usage: preserved_usage,
+        };
+        if let Some(idx) = existing_idx {
+            if self.provider_turns[idx] == next {
+                return false;
+            }
+            self.provider_turns[idx] = next;
+        } else {
+            self.provider_turns.push(next);
+        }
+        true
+    }
+
+    fn record_compaction(&mut self, item: &CompactionItem) -> bool {
+        let Some(after) = item.after_token_count.filter(|&v| v >= 0) else {
+            return false;
+        };
+        let next = TrackedCompaction {
+            id: item.id.clone(),
+            provider_thread_id: item.provider_thread_id.clone(),
+            after_token_count: after,
+            before_token_count: item.before_token_count.filter(|&v| v >= 0),
+            updated_at: item
+                .started_at
+                .clone()
+                .unwrap_or_else(|| item.updated_at.clone()),
+        };
+        if let Some(existing) = self.compactions.iter_mut().find(|c| c.id == next.id) {
+            if *existing == next {
+                return false;
+            }
+            *existing = next;
+        } else {
+            self.compactions.push(next);
+        }
+        true
+    }
+
     /// Replaces this thread's timeline from a full [`conn_contract::OrchestrationV2ThreadProjection`]
     /// (from `subscribeThread` snapshots or `orchestration.launchThread` responses).
     pub fn apply_projection(
@@ -393,9 +578,20 @@ impl ThreadState {
     ) {
         self.revision = next_revision();
         self.thread_id = projection.thread.id;
+        self.active_provider_thread_id = projection.thread.active_provider_thread_id;
         if let Some(seq) = sequence {
             self.advance_sequence(seq);
         }
+
+        self.provider_threads.clear();
+        for pt in &projection.provider_threads {
+            self.record_provider_thread(pt);
+        }
+        self.provider_turns.clear();
+        for turn in &projection.provider_turns {
+            self.record_provider_turn(turn);
+        }
+        self.compactions.clear();
 
         self.runs.clear();
         self.run_timings.clear();
@@ -441,6 +637,9 @@ impl ThreadState {
         let mut entry_index: HashMap<String, usize> = HashMap::with_capacity(capacity);
         let mut ingest = |mut item: ProjectionTurnItem| {
             hydrate_deduped_projection_item(&mut item, &message_texts, &subagent_bodies);
+            if let ProjectionTurnItem::Compaction(c) = &item {
+                self.record_compaction(c);
+            }
             if let ProjectionTurnItem::ApprovalRequest(i) = &item {
                 self.approval_requests
                     .insert(i.id.clone(), i.request_id.clone());
@@ -804,6 +1003,10 @@ impl ThreadState {
                     TurnItem::UserMessage(i) => (i.run_id.clone(), Some(i.message_id.clone())),
                     _ => (None, None),
                 };
+                let mut compaction_changed = false;
+                if let TurnItem::Compaction(c) = &ev.payload {
+                    compaction_changed = self.record_compaction(c);
+                }
                 if let TurnItem::ApprovalRequest(i) = &ev.payload {
                     self.approval_requests
                         .insert(i.id.clone(), i.request_id.clone());
@@ -811,7 +1014,7 @@ impl ThreadState {
                 let timing = extract_turn_item_timing(&ev.payload);
                 self.entry_timings.insert(item_id.clone(), timing);
                 if let Some(entry) = map_turn_item(ev.payload) {
-                    let mut changed = false;
+                    let mut changed = compaction_changed;
                     if matches!(entry, TimelineEntry::User { .. }) {
                         let before = self.entries.len();
                         self.entries.retain(|existing| match existing {
@@ -836,10 +1039,22 @@ impl ThreadState {
                     changed |= upsert_entry(&mut self.entries, entry);
                     changed
                 } else {
-                    remove_entry(&mut self.entries, &item_id)
+                    remove_entry(&mut self.entries, &item_id) || compaction_changed
                 }
             }
             DomainEvent::CheckpointCaptured(ev) => self.record_checkpoint(&ev.payload),
+            DomainEvent::ProviderThreadUpdated(ev) => {
+                if self.active_provider_thread_id.is_none()
+                    || matches!(
+                        ev.payload.status,
+                        conn_contract::OrchestrationV2ProviderThreadStatus::Active
+                    )
+                {
+                    self.active_provider_thread_id = Some(ev.payload.id.clone());
+                }
+                self.record_provider_thread(&ev.payload)
+            }
+            DomainEvent::ProviderTurnUpdated(ev) => self.record_provider_turn(&ev.payload),
             // Projection metadata events that do not directly add or alter timeline entries.
             DomainEvent::ThreadCreated(_)
             | DomainEvent::ThreadArchived(_)
@@ -852,8 +1067,6 @@ impl ThreadState {
             | DomainEvent::SubagentUpdated(_)
             | DomainEvent::ProviderSessionAttached(_)
             | DomainEvent::ProviderSessionDetached(_)
-            | DomainEvent::ProviderThreadUpdated(_)
-            | DomainEvent::ProviderTurnUpdated(_)
             | DomainEvent::RuntimeRequestUpdated(_)
             | DomainEvent::PlanUpdated(_)
             | DomainEvent::CheckpointScopeCreated(_)
@@ -1911,6 +2124,117 @@ mod timing_tests {
             state.work_group_duration_ms(&["e3"]),
             Some(12_400),
             "falls back to owning run elapsed duration"
+        );
+    }
+
+    #[test]
+    fn context_window_derives_from_turn_usage_thread_usage_and_compaction() {
+        let mut state = ThreadState::new("t-ctx");
+        assert_eq!(state.context_window(), None, "empty thread has no usage");
+
+        // Active provider thread with persisted context_usage.
+        state.active_provider_thread_id = Some("pt-active".to_owned());
+        state.provider_threads.insert(
+            "pt-active".to_owned(),
+            TrackedProviderThread {
+                id: "pt-active".to_owned(),
+                context_usage: Some(ProviderThreadContextUsage {
+                    used_tokens: 18_000,
+                    total_processed_tokens: Some(45_000),
+                    max_tokens: Some(200_000),
+                    input_tokens: None,
+                    cached_input_tokens: None,
+                    output_tokens: None,
+                    reasoning_output_tokens: None,
+                    last_used_tokens: None,
+                    last_input_tokens: None,
+                    last_cached_input_tokens: None,
+                    last_output_tokens: None,
+                    last_reasoning_output_tokens: None,
+                    tool_uses: None,
+                    duration_ms: None,
+                    compacts_automatically: Some(true),
+                    auto_compact_threshold: Some(160_000),
+                    cost: None,
+                }),
+                updated_at: "2026-11-22T12:00:00.000Z".to_owned(),
+            },
+        );
+        // Retired provider thread's turn usage must be ignored.
+        state.provider_turns.push(TrackedProviderTurn {
+            id: "turn-retired".to_owned(),
+            provider_thread_id: "pt-retired".to_owned(),
+            token_usage: Some(ProviderTurnTokenUsage {
+                used_tokens: 99_000,
+                max_tokens: Some(Some(200_000)),
+                input_tokens: None,
+                cached_input_tokens: None,
+                output_tokens: None,
+                reasoning_output_tokens: None,
+                prompt_cache_ttl_ms: None,
+                auto_compact_threshold: None,
+                prompt_cache_expires_at: None,
+                updated_at: "2026-11-22T12:10:00.000Z".to_owned(),
+            }),
+        });
+        let from_thread = state.context_window();
+        assert_eq!(
+            from_thread.as_ref().map(|s| (s.used_tokens, s.max_tokens)),
+            Some((18_000.0, Some(200_000.0))),
+            "falls back to active provider thread context_usage and ignores retired provider thread"
+        );
+
+        // Live turn usage on active provider thread takes precedence.
+        state.provider_turns.push(TrackedProviderTurn {
+            id: "turn-live".to_owned(),
+            provider_thread_id: "pt-active".to_owned(),
+            token_usage: Some(ProviderTurnTokenUsage {
+                used_tokens: 42_500,
+                max_tokens: Some(Some(200_000)),
+                input_tokens: Some(40_000),
+                cached_input_tokens: None,
+                output_tokens: Some(2_500),
+                reasoning_output_tokens: None,
+                prompt_cache_ttl_ms: None,
+                auto_compact_threshold: Some(150_000),
+                prompt_cache_expires_at: None,
+                updated_at: "2026-11-22T12:05:00.000Z".to_owned(),
+            }),
+        });
+        let from_turn = state.context_window();
+        assert_eq!(
+            from_turn
+                .as_ref()
+                .map(|s| (s.used_tokens, s.max_tokens, s.auto_compact_threshold)),
+            Some((42_500.0, Some(200_000.0), Some(150_000.0))),
+            "live active provider turn token_usage overrides thread context_usage"
+        );
+
+        // Compaction fallback when neither turn nor thread carries usage.
+        let mut compacted = ThreadState::new("t-compact");
+        compacted.active_provider_thread_id = Some("pt-1".to_owned());
+        compacted.provider_threads.insert(
+            "pt-1".to_owned(),
+            TrackedProviderThread {
+                id: "pt-1".to_owned(),
+                context_usage: None,
+                updated_at: "2026-11-22T12:00:00.000Z".to_owned(),
+            },
+        );
+        compacted.compactions.push(TrackedCompaction {
+            id: "cmp-1".to_owned(),
+            provider_thread_id: Some("pt-1".to_owned()),
+            after_token_count: 12_000,
+            before_token_count: Some(140_000),
+            updated_at: "2026-11-22T12:02:00.000Z".to_owned(),
+        });
+        let from_compaction = compacted.context_window();
+        assert_eq!(
+            from_compaction
+                .as_ref()
+                .map(|s| (s.used_tokens, s.total_processed_tokens)),
+            Some((12_000.0, Some(140_000.0))),
+            "compaction after_token_count serves as fallback context window usage"
         );
     }
 }
