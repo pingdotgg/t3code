@@ -4,8 +4,6 @@
  * This revision is expressed as a frozen delta from the exact 2024-11-05
  * schemas. Transport envelopes (including JSON-RPC batches) are owned by the
  * transport codec rather than Effect RPC payload schemas.
- *
- * @internal
  */
 import * as Rpc from "../../../rpc/Rpc.ts"
 import * as RpcGroup from "../../../rpc/RpcGroup.ts"

@@ -37,6 +37,12 @@ export * as Command from "./Command.ts"
 
 /**
  * @stability unstable
+ * @since 4.1.3
+ */
+export * as CommandSpec from "./CommandSpec.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Completions from "./Completions.ts"
