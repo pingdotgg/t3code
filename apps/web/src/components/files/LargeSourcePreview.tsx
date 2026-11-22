@@ -3,7 +3,7 @@ import { useGT } from "gt-react";
 import { lazy, Suspense, useEffect, useImperativeHandle, useState, type RefObject } from "react";
 
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
-import { RENDERED_MAX_LINES } from "./largeTextProtocol";
+import { downloadRest } from "./largeSourceDownload";
 import SourceFilePreview from "./ReadOnlySourcePreview";
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
@@ -20,14 +20,6 @@ function rememberFile(src: string, text: string) {
   if (recentFiles.size > RECENT_FILES) recentFiles.delete(recentFiles.keys().next().value!);
 }
 
-function countLines(text: string): number {
-  let lines = 1;
-  for (let index = text.indexOf("\n"); index !== -1; index = text.indexOf("\n", index + 1)) {
-    lines += 1;
-  }
-  return lines;
-}
-
 /**
  * Shows a file past the 1 MB read with syntax highlighting, starting from the prefix already
  * read; files too tall for the browser to lay out stay in the plain virtualized viewer.
@@ -37,6 +29,7 @@ export default function LargeSourcePreview(props: {
   readonly name: string;
   /** The first megabyte, shown until the whole file arrives. */
   readonly preview: string;
+  readonly sizeBytes: number;
   readonly copyContents: RefObject<(() => Promise<string>) | null>;
   readonly onRetry: () => void;
   readonly onPostRender?: FileOptions<unknown, undefined>["onPostRender"];
@@ -45,41 +38,47 @@ export default function LargeSourcePreview(props: {
   readonly wordWrap: boolean;
 }) {
   const gt = useGT();
-  const [text, setText] = useState<string | "too-tall" | "failed" | null>(
-    () => recentFiles.get(props.src) ?? null,
-  );
+  const [file, setFile] = useState<
+    { readonly text: string; readonly done: boolean } | "too-tall" | "failed" | null
+  >(() => {
+    const cached = recentFiles.get(props.src);
+    return cached === undefined ? null : { text: cached, done: true };
+  });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the full-file download and cancels it when the source changes or the preview closes.
   useEffect(() => {
     if (recentFiles.has(props.src)) return;
     const controller = new AbortController();
-    fetch(props.src, { cache: "no-store", signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return response.text();
-      })
-      .then((full) => {
-        if (countLines(full) > RENDERED_MAX_LINES) {
-          setText("too-tall");
+    downloadRest({
+      src: props.src,
+      preview: props.preview,
+      sizeBytes: props.sizeBytes,
+      signal: controller.signal,
+      onProgress: (text) => setFile({ text, done: false }),
+    })
+      .then((result) => {
+        if (result === "too-tall") {
+          setFile("too-tall");
           return;
         }
-        rememberFile(props.src, full);
-        setText(full);
+        rememberFile(props.src, result);
+        setFile({ text: result, done: true });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setText("failed");
+        if (!controller.signal.aborted) setFile("failed");
       });
     return () => controller.abort();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- The preview and size belong to this source; a new revision gets a new source.
   }, [props.src]);
   useImperativeHandle(
     props.copyContents,
     () => () =>
-      typeof text === "string" && text !== "too-tall" && text !== "failed"
-        ? Promise.resolve(text)
+      typeof file === "object" && file?.done
+        ? Promise.resolve(file.text)
         : Promise.reject(new Error(gt("The file is still loading. Try again in a moment."))),
-    [text, gt],
+    [file, gt],
   );
 
-  if (text === "too-tall" || text === "failed")
+  if (file === "too-tall" || file === "failed")
     return (
       <Suspense fallback={<FileSurfaceLoading />}>
         <LargeTextViewer
@@ -97,7 +96,7 @@ export default function LargeSourcePreview(props: {
   return (
     <SourceFilePreview
       name={props.name}
-      text={text ?? props.preview}
+      text={file?.text ?? props.preview}
       onPostRender={props.onPostRender}
       wordWrap={props.wordWrap}
     />

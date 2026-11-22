@@ -2175,6 +2175,7 @@ export function WorkspaceLargeTextPreview(props: {
           src={src}
           name={props.name}
           preview={props.preview}
+          sizeBytes={props.sizeBytes}
           copyContents={props.copyContents}
           onRetry={retry}
           onPostRender={props.onPostRender}
