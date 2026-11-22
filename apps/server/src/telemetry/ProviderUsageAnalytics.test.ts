@@ -52,13 +52,9 @@ const providers = [
     { slug: "claude-haiku-4-5" },
     { slug: "claude-opus-6" },
   ]),
+  // Claude marks a custom endpoint by its auth type, even when the URL did not parse.
   provider("claudeAgent", [{ slug: "claude-ops-internal" }], {
     instanceId: "claudeAgent-custom",
-    auth: { type: "customEndpoint", endpoint: "https://claude-proxy.example.com" },
-  }),
-  // A custom endpoint that did not parse still carries its type marker.
-  provider("claudeAgent", [{ slug: "claude-ops-unparseable" }], {
-    instanceId: "claudeAgent-unparseable",
     auth: { type: "customEndpoint" },
   }),
   provider("opencode", [{ slug: "ollama/acme-internal" }]),
@@ -368,7 +364,6 @@ describe("provider usage reporting", () => {
     // A custom endpoint's catalog is user-defined and never vouches.
     expect(label("acme-azure-deployment")).toBeUndefined();
     expect(label("claude-ops-internal")).toBeUndefined();
-    expect(label("claude-ops-unparseable")).toBeUndefined();
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {

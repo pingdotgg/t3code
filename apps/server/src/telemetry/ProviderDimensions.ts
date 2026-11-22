@@ -7,24 +7,21 @@ import type {
 import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
 
 /**
- * Drivers whose model catalogs the vendor publishes. Other drivers (OpenCode,
- * Pi, ACP agents) list models from the user's own configuration, such as local
- * Ollama tags, so their model names stay out of analytics.
+ * Drivers whose model catalogs are published by the vendor. Other drivers
+ * (OpenCode, Pi, ACP agents) list models from the user's own configuration,
+ * such as local Ollama tags, so their model names stay out of analytics.
  */
 const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
-  "antigravity",
-  "claudeAgent",
   "codex",
+  "claudeAgent",
   "cursor",
   "grok",
+  "antigravity",
 ]);
 
-/**
- * Whether a provider's model list is the vendor's published catalog. Codex and
- * Claude list whatever their configured endpoint serves, so a custom endpoint
- * (`auth.endpoint`, or Claude's `customEndpoint` auth type) marks a
- * user-defined list that never vouches.
- */
+// Codex and Claude list whatever their configured endpoint serves, so a custom
+// endpoint (`auth.endpoint`, or Claude's `customEndpoint` auth type) marks a
+// user-defined list that never vouches.
 const vendorCatalogVouches = (provider: ServerProvider): boolean =>
   VENDOR_CATALOG_DRIVERS.has(provider.driver) &&
   provider.auth.endpoint === undefined &&
