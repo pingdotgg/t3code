@@ -146,13 +146,25 @@ export function modalRoute(options: ModalRouteOptions = {}): AppScreenOptions {
 }
 
 /** Full-screen media (a device stream, a browser, an app) with no bar and no dismiss gesture. */
-export function immersiveRoute(options: { readonly hideSystemBars?: boolean } = {}) {
+export function immersiveRoute(
+  options: {
+    readonly hideSystemBars?: boolean;
+    /**
+     * Like Safari, the Duo puts its status in a top bar instead of a vertical rail, so the page
+     * spans the full width. Where the rail stays, the screen spans it and insets its content.
+     */
+    readonly fullWidth?: boolean;
+  } = {},
+) {
   return {
     presentation: "fullScreenModal",
     headerShown: false,
     gestureEnabled: false,
+    ...(options.fullWidth
+      ? { sheetPrefersHorizontalBars: true, nativeContentInsetHorizontally: false }
+      : undefined),
     ...(options.hideSystemBars
-      ? { autoHideHomeIndicator: true, navigationBarHidden: true }
+      ? { autoHideHomeIndicator: true, navigationBarHidden: true, statusBarHidden: true }
       : undefined),
   } satisfies AppScreenOptions;
 }

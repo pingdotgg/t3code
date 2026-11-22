@@ -1,3 +1,4 @@
+import { assert, describe, it } from "@effect/vitest"
 import {
   assertFalse,
   assertNone,
@@ -8,7 +9,7 @@ import {
   throws
 } from "@effect/vitest/utils"
 import { Chunk, Equal, Equivalence, Hash, Number, Number as Num, Option, pipe, Result, String as Str } from "effect"
-import { describe, it } from "vitest"
+import { withIgnoredProperties } from "./utils/structFields.ts"
 
 const gt2 = (n: number): boolean => n > 2
 
@@ -457,6 +458,19 @@ describe("Option", () => {
   })
 
   describe("all", () => {
+    it("collects enumerable own symbol fields and propagates their None", () => {
+      const key = Symbol("key")
+
+      assert.deepStrictEqual(
+        Option.all(withIgnoredProperties({ a: Option.some(1), [key]: Option.some(2) })),
+        Option.some({ a: 1, [key]: 2 })
+      )
+      assert.deepStrictEqual(
+        Option.all(withIgnoredProperties({ a: Option.some(1), [key]: Option.none() })),
+        Option.none()
+      )
+    })
+
     it("tuple", () => {
       assertSome(Option.all([]), [])
       assertSome(Option.all([Option.some(1), Option.some("hello")]), [1, "hello"])
