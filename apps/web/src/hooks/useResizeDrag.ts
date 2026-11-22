@@ -31,8 +31,138 @@ interface ActiveDrag<T extends HTMLElement> {
   onBlur: () => void;
 }
 
+/** How far past the scrollbar a handle over its thumb still grabs it; beyond that it resizes. */
+const THUMB_GRAB_OVERHANG_PX = 2;
+/** Covers the thumb's rounded ends and Chromium's rounding of its position, so its ends grab it. */
+const THUMB_GRAB_END_SLACK_PX = 4;
+/** Chromium draws a styled thumb at least this long, however long the content. */
+const MIN_THUMB_LENGTH_PX = 17;
+
+interface ScrollbarThumb {
+  scroller: Element;
+  scrollPerPixel: number;
+}
+
+interface ThumbDrag<T extends HTMLElement> {
+  thumb: ScrollbarThumb;
+  target: T;
+  pointerId: number;
+  startY: number;
+  startScrollTop: number;
+}
+
+function scrollbarThumbAt(element: Element, x: number, y: number): ScrollbarThumb | null {
+  const scrollRange = element.scrollHeight - element.clientHeight;
+  if (scrollRange <= 0) return null;
+  const rect = element.getBoundingClientRect();
+  const style = getComputedStyle(element);
+  if (style.overflowY !== "auto" && style.overflowY !== "scroll") return null;
+  const gutterLeft = rect.left + element.clientLeft + element.clientWidth;
+  const right = rect.right - Number.parseFloat(style.borderRightWidth);
+  if (x < gutterLeft || x >= right) return null;
+  const trackLength = element.clientHeight;
+  const thumbLength = Math.max(
+    (trackLength * element.clientHeight) / element.scrollHeight,
+    MIN_THUMB_LENGTH_PX,
+  );
+  if (thumbLength >= trackLength) return null;
+  const thumbTop =
+    rect.top + element.clientTop + ((trackLength - thumbLength) * element.scrollTop) / scrollRange;
+  if (
+    y < thumbTop - THUMB_GRAB_END_SLACK_PX ||
+    y >= thumbTop + thumbLength + THUMB_GRAB_END_SLACK_PX
+  ) {
+    return null;
+  }
+  return { scroller: element, scrollPerPixel: scrollRange / (trackLength - thumbLength) };
+}
+
+/**
+ * Handles straddle pane edges and cover part of the neighbouring scrollbar. Next to its thumb the
+ * handle grabs the thumb instead, which also widens the thumb's grab area a little.
+ */
+function scrollbarThumbBeside(handle: HTMLElement, x: number, y: number): ScrollbarThumb | null {
+  for (const probeX of [x, x - THUMB_GRAB_OVERHANG_PX]) {
+    for (const element of document.elementsFromPoint(probeX, y)) {
+      if (handle.contains(element)) continue;
+      const thumb = scrollbarThumbAt(element, probeX, y);
+      if (thumb) return thumb;
+    }
+  }
+  return null;
+}
+
 function createResizeDrag<T extends HTMLElement>() {
   let drag: ActiveDrag<T> | null = null;
+  let thumbDrag: ThumbDrag<T> | null = null;
+  let hover: { handle: T; thumbScroller: Element | null } | null = null;
+
+  const clearHover = () => {
+    const active = hover;
+    if (!active) return;
+    hover = null;
+    active.handle.removeEventListener("pointerleave", clearHover);
+    delete active.handle.dataset.hoverZone;
+    active.thumbScroller?.removeAttribute("data-scrollbar-thumb-hover");
+  };
+
+  // Handles style their resize cursor from `data-hover-zone="resize"` instead of plain hover, so
+  // the resize cursor never flashes over a thumb. Over one, the handle lends the thumb its hover
+  // colour, since it covers the thumb's own hover.
+  const setHover = (handle: T, thumbScroller: Element | null) => {
+    if (hover?.handle === handle && hover.thumbScroller === thumbScroller) return;
+    clearHover();
+    hover = { handle, thumbScroller };
+    handle.dataset.hoverZone = thumbScroller ? "scrollbar-thumb" : "resize";
+    thumbScroller?.setAttribute("data-scrollbar-thumb-hover", "");
+    handle.addEventListener("pointerleave", clearHover);
+  };
+
+  const finishThumbDrag = () => {
+    const active = thumbDrag;
+    if (!active) return;
+    window.removeEventListener("blur", finishThumbDrag);
+    // Release can synchronously dispatch lostpointercapture.
+    thumbDrag = null;
+    try {
+      if (active.target.hasPointerCapture(active.pointerId)) {
+        active.target.releasePointerCapture(active.pointerId);
+      }
+    } catch {}
+    document.body.style.removeProperty("user-select");
+  };
+
+  const beginThumbDrag = (event: PointerEvent<T>, thumb: ScrollbarThumb) => {
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    // A press on the thumb reaches the scroller, which the chat timeline reads as the user taking
+    // over its scroll. The handle took this press, so pass it on.
+    thumb.scroller.dispatchEvent(
+      new PointerEvent("pointerdown", {
+        pointerId: event.pointerId,
+        pointerType: event.pointerType,
+        button: event.button,
+        buttons: event.buttons,
+        clientX: event.clientX,
+        clientY: event.clientY,
+      }),
+    );
+    // Releasing outside the window can skip pointerup.
+    window.addEventListener("blur", finishThumbDrag);
+    thumbDrag = {
+      thumb,
+      target: event.currentTarget,
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startScrollTop: thumb.scroller.scrollTop,
+    };
+    document.body.style.userSelect = "none";
+  };
 
   const flush = () => {
     const active = drag;
@@ -64,6 +194,11 @@ function createResizeDrag<T extends HTMLElement>() {
   };
 
   const end = (event: PointerEvent<T>, usePosition: boolean) => {
+    if (thumbDrag?.pointerId === event.pointerId) {
+      event.preventDefault();
+      finishThumbDrag();
+      return;
+    }
     const active = drag;
     if (!active || active.pointerId !== event.pointerId) return;
     event.preventDefault();
@@ -72,7 +207,14 @@ function createResizeDrag<T extends HTMLElement>() {
   };
 
   return {
-    ref: (node: T | null) => (node === null ? undefined : () => finish(false)),
+    ref: (node: T | null) =>
+      node === null
+        ? undefined
+        : () => {
+            finish(false);
+            finishThumbDrag();
+            clearHover();
+          },
     cancel: () => finish(false),
     refresh(bounds?: ResizeBounds) {
       if (!drag) return;
@@ -80,7 +222,11 @@ function createResizeDrag<T extends HTMLElement>() {
       flush();
     },
     begin(event: PointerEvent<T>, start: (event: PointerEvent<T>) => ResizeSession | null) {
-      if (event.button !== 0 || drag) return;
+      if (event.button !== 0 || drag || thumbDrag) return;
+      if (event.pointerType !== "touch") {
+        const thumb = scrollbarThumbBeside(event.currentTarget, event.clientX, event.clientY);
+        if (thumb) return beginThumbDrag(event, thumb);
+      }
       const session = start(event);
       if (!session) return;
       try {
@@ -109,7 +255,23 @@ function createResizeDrag<T extends HTMLElement>() {
       document.body.style.userSelect = "none";
     },
     onPointerMove(event: PointerEvent<T>) {
+      const scrolling = thumbDrag;
+      if (scrolling) {
+        if (scrolling.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        scrolling.thumb.scroller.scrollTop =
+          scrolling.startScrollTop +
+          (event.clientY - scrolling.startY) * scrolling.thumb.scrollPerPixel;
+        return;
+      }
       const active = drag;
+      if (!active && event.pointerType !== "touch") {
+        const handle = event.currentTarget;
+        setHover(
+          handle,
+          scrollbarThumbBeside(handle, event.clientX, event.clientY)?.scroller ?? null,
+        );
+      }
       if (!active || active.pointerId !== event.pointerId) return;
       event.preventDefault();
       active.pendingX = event.clientX;
