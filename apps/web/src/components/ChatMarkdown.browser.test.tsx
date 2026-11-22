@@ -2,9 +2,8 @@ import { MISSING_FILE_ACCESS_MESSAGE } from "@t3tools/client-runtime/state/asset
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { type ReactElement } from "react";
-import remarkGfm from "remark-gfm";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { commands, page, userEvent } from "vite-plus/test/browser";
 
 import { act, render } from "../../test/render";
 import "../index.css";
@@ -15,11 +14,8 @@ import {
   selectActiveRightPanelSurface,
   useRightPanelStore,
 } from "../rightPanelStore";
-import {
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-  remarkEnableOrderedListNumbers,
-} from "@t3tools/shared/markdownPipeline";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import type { MarkdownExtensions } from "../markdown/wordsHast";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { HostImageUrlContext } from "./chat/hostImageUrl";
 import { getSyntaxHighlighterPromise } from "~/lib/syntaxHighlighting";
 
@@ -28,14 +24,14 @@ const { workspaceSearch, filesystemMetadata } = vi.hoisted(() => ({
   filesystemMetadata: vi.fn(),
 }));
 const parsedSources = vi.hoisted(() => [] as string[]);
-vi.mock(import("mdast-util-from-markdown"), async (original) => {
+vi.mock(import("../markdown/wordsHast"), async (original) => {
   const actual = await original();
   return {
     ...actual,
-    fromMarkdown: ((source: string, ...rest: never[]) => {
-      parsedSources.push(String(source));
-      return (actual.fromMarkdown as (...args: unknown[]) => unknown)(source, ...rest);
-    }) as typeof actual.fromMarkdown,
+    wordsHast: (source, options) => {
+      parsedSources.push(source);
+      return actual.wordsHast(source, options);
+    },
   };
 });
 
@@ -188,7 +184,7 @@ function buttonsLabelled(container: HTMLElement, label: string) {
   );
 }
 
-const SOURCE_NUMBER_PLUGINS = [remarkEnableOrderedListNumbers];
+const USER_MESSAGE = { userMessage: true };
 
 it("keeps decimal markers in nested user lists while documents keep their counter styles", async () => {
   setup();
@@ -201,7 +197,7 @@ it("keeps decimal markers in nested user lists while documents keep their counte
           cwd={undefined}
           text={text}
           className="user-message-markdown"
-          extraRemarkPlugins={SOURCE_NUMBER_PLUGINS}
+          extensions={USER_MESSAGE}
         />
       </section>
       <section>
@@ -312,36 +308,24 @@ it("reuses the parse of a streaming reply's finished blocks when it remounts", a
   expect(parsedSources.filter((source) => source.includes("Finished block"))).toHaveLength(1);
 });
 
-it("reuses the parse of a remounted message that has stable extra plugins", async () => {
+it("reuses the parse of a remounted message that has stable extensions", async () => {
   setup();
-  const parsed = vi.fn();
-  const countingPlugins = [() => () => void parsed()];
-  const message = (
-    <ChatMarkdown cwd="/tmp/project" text="Cached text" extraRemarkPlugins={countingPlugins} />
-  );
+  const extensions = { userMessage: true };
+  const message = <ChatMarkdown cwd="/tmp/project" text="Cached text" extensions={extensions} />;
   {
     await using first = await render(
-      <ChatMarkdown
-        cwd="/tmp/project"
-        text="Cached text"
-        extraRemarkPlugins={countingPlugins}
-        isStreaming
-      />,
+      <ChatMarkdown cwd="/tmp/project" text="Cached text" extensions={extensions} isStreaming />,
     );
     await first.rerender(message);
   }
   await using screen = await render(message);
   await expect.element(screen.getByText("Cached text")).toBeVisible();
-  expect(parsed).toHaveBeenCalledTimes(1);
-  const changed = vi.fn();
+  const parses = () => parsedSources.filter((source) => source === "Cached text").length;
+  expect(parses()).toBe(1);
   await screen.rerender(
-    <ChatMarkdown
-      cwd="/tmp/project"
-      text="Cached text"
-      extraRemarkPlugins={[() => () => void changed()]}
-    />,
+    <ChatMarkdown cwd="/tmp/project" text="Cached text" extensions={{ userMessage: true }} />,
   );
-  expect(changed).toHaveBeenCalledTimes(1);
+  expect(parses()).toBe(2);
 });
 
 it("highlights a code block's own source when an earlier block of the same length was cached", async () => {
@@ -396,6 +380,45 @@ describe("ChatMarkdown external link labels", () => {
       while (walker.nextNode()) textNodes.push(walker.currentNode.nodeValue ?? "");
       expect(textNodes.filter((node) => /\p{Surrogate}/u.test(node))).toEqual([]);
     });
+  });
+});
+
+describe("ChatMarkdown link tooltips", () => {
+  it("shows each link's address on one shared tooltip as the pointer moves between links", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text="[First](https://example.com/a) and [Second](https://example.org/b)"
+      />,
+    );
+    await userEvent.hover(screen.getByRole("link", { name: /First/ }));
+    await expect.element(page.getByText("https://example.com/a")).toBeVisible();
+    await userEvent.hover(screen.getByRole("link", { name: /Second/ }));
+    await expect.element(page.getByText("https://example.org/b")).toBeVisible();
+    expect(document.querySelectorAll('[data-slot="tooltip-popup"]')).toHaveLength(1);
+  });
+});
+
+describe("ChatMarkdown details", () => {
+  it("opens collapsed details by click, and by keyboard without losing focus", async () => {
+    setup();
+    await using screen = await render(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={
+          "<details><summary>First</summary>\n\nHidden one\n\n</details>\n\n<details><summary>Second</summary>\n\nHidden two\n\n</details>"
+        }
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "First" }));
+    await expect.element(screen.getByText("Hidden one")).toBeVisible();
+    await userEvent.tab();
+    const second = screen.getByRole("button", { name: "Second" });
+    await expect.element(second).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    await expect.element(screen.getByText("Hidden two")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Second" })).toHaveFocus();
   });
 });
 
@@ -802,12 +825,12 @@ describe("ChatMarkdown copy", () => {
     "copies and selects user lines the same whether their typed indentation shows: $text",
     async (copy) => {
       setup();
-      const copied = async (extraRemarkPlugins: typeof CHAT_USER_MARKDOWN_REMARK_PLUGINS) => {
+      const copied = async (extensions: MarkdownExtensions) => {
         await using screen = await renderText(copy.text, {
           className: "user-message-markdown",
           lineBreaks: true,
           parseRawHtml: false,
-          extraRemarkPlugins,
+          extensions,
         });
         const range = document.createRange();
         range.selectNodeContents(screen.container);
@@ -824,9 +847,9 @@ describe("ChatMarkdown copy", () => {
         // A drag or anything else that reads the selection gets its text, not the copy payload.
         return { payload: chatMarkdownClipboardPayload(selection), selected: selection.toString() };
       };
-      const shown = await copied(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+      const shown = await copied({ userMessage: true, leadingWhitespace: true });
       // The user pipeline as it was before typed indentation was shown.
-      expect(shown).toEqual(await copied([[remarkGfm, { singleTilde: false }]]));
+      expect(shown).toEqual(await copied({ userMessage: true }));
     },
   );
 
@@ -885,7 +908,7 @@ describe("ChatMarkdown copy", () => {
       setup();
       await using screen = await renderText(
         source,
-        userMessage ? { extraRemarkPlugins: SOURCE_NUMBER_PLUGINS } : {},
+        userMessage ? { extensions: USER_MESSAGE } : {},
       );
       const itemText = (shown: string) =>
         [...screen.container.querySelectorAll("li")]
@@ -1039,6 +1062,22 @@ describe("ChatMarkdown copy", () => {
 });
 
 describe("ChatMarkdown file chip tooltips", () => {
+  it("stays open while the pointer selects the path, then closes when it leaves", async () => {
+    setup();
+    await using screen = await renderText("[notes](/tmp/project/docs/notes.md)");
+    await userEvent.hover(screen.container.querySelector(".chat-markdown-file-link")!);
+    const path = page.getByText("/tmp/project/docs/notes.md");
+    await expect.element(path).toBeVisible();
+
+    // Forced so the pointer lands on the popup even when it ignores pointer events.
+    await userEvent.tripleClick(path, { force: true });
+    expect(window.getSelection()?.toString().trim()).toBe("/tmp/project/docs/notes.md");
+    await expect.element(path).toBeVisible();
+
+    await commands.resetPointer();
+    await expect.element(path).not.toBeInTheDocument();
+  });
+
   it("wraps a long path so its file name stays inside the tooltip", async () => {
     setup();
     const path =

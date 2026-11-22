@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type CSSProperties,
+  type MouseEvent,
   type ReactNode,
 } from "react";
 import { TextLayer, type PDFDocumentProxy } from "pdfjs-dist";
@@ -42,6 +43,21 @@ type PdfPosition = PdfViewState & { width: number; ratios: readonly number[] };
 // Thread switches unmount the preview; retain only the most recent documents.
 const positions = new Map<string, PdfPosition>();
 
+type PdfLink = { box: readonly [number, number, number, number] } & (
+  | { url: string }
+  | { page: number }
+);
+
+// Resolves a link annotation's destination, named or explicit, to a page index.
+async function pdfLinkPage(pdf: PDFDocumentProxy, dest: unknown): Promise<number | null> {
+  const explicit: unknown = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
+  if (!Array.isArray(explicit)) return null;
+  const [ref] = explicit as unknown[];
+  if (Number.isInteger(ref)) return ref as number;
+  if (typeof ref !== "object" || ref === null) return null;
+  return pdf.getPageIndex(ref as Parameters<PDFDocumentProxy["getPageIndex"]>[0]);
+}
+
 export type PdfViewState = {
   page: number;
   offset: number;
@@ -56,8 +72,11 @@ function PdfPage(props: {
   query: string;
   onSize: (index: number, ratio: number) => void;
   onError: (error: string) => void;
+  onPageLink: (index: number) => void;
+  onOpenLink: ((url: string, event: MouseEvent) => void) | undefined;
 }) {
   const gt = useGT();
+  const [links, setLinks] = useState<readonly PdfLink[]>([]);
   const canvas = useRef<HTMLCanvasElement>(null);
   const text = useRef<HTMLDivElement>(null);
   const painted = useRef<PDFDocumentProxy>(null);
@@ -112,7 +131,31 @@ function PdfPage(props: {
         buffer.width = 0;
         painted.current = pdf;
       });
-      await Promise.all([shown, layer.render()]);
+      const linked = page.getAnnotations({ intent: "display" }).then(async (annotations) => {
+        const found: PdfLink[] = [];
+        for (const annotation of annotations) {
+          if (annotation.subtype !== "Link") continue;
+          const [x1, y1] = viewport.convertToViewportPoint(annotation.rect[0], annotation.rect[1]);
+          const [x2, y2] = viewport.convertToViewportPoint(annotation.rect[2], annotation.rect[3]);
+          const box = [
+            Math.min(x1, x2) / viewport.width,
+            Math.min(y1, y2) / viewport.height,
+            Math.abs(x2 - x1) / viewport.width,
+            Math.abs(y2 - y1) / viewport.height,
+          ] as const;
+          if (typeof annotation.url === "string" && /^https?:\/\//i.test(annotation.url)) {
+            found.push({ box, url: annotation.url });
+            continue;
+          }
+          const target = await pdfLinkPage(pdf, annotation.dest).catch(() => null);
+          if (target !== null && target >= 0 && target < pdf.numPages)
+            found.push({ box, page: target });
+        }
+        if (!cancelled) setLinks(found);
+      });
+      // A page whose annotations cannot be read still renders, without links.
+      const linkedOrNone = linked.catch(() => undefined);
+      await Promise.all([shown, layer.render(), linkedOrNone]);
     })().catch((cause: unknown) => {
       if (!cancelled)
         onError(thrownErrorMessage(cause, m) ?? m(msg("This PDF page could not render.")));
@@ -151,6 +194,48 @@ function PdfPage(props: {
         className="block h-full w-full"
       />
       <div ref={text} data-pdf-text-layer />
+      {links.length ? (
+        <div className="pointer-events-none absolute inset-0">
+          {links.map((link) => {
+            const [left, top, width, height] = link.box;
+            const key = `${link.box.join()}:${"url" in link ? link.url : link.page}`;
+            const style = {
+              left: `${left * 100}%`,
+              top: `${top * 100}%`,
+              width: `${width * 100}%`,
+              height: `${height * 100}%`,
+            };
+            return "url" in link ? (
+              <a
+                key={key}
+                href={link.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={link.url}
+                className="pointer-events-auto absolute"
+                style={style}
+                onClick={(event) => {
+                  if (!props.onOpenLink) return;
+                  event.preventDefault();
+                  props.onOpenLink(link.url, event);
+                }}
+              />
+            ) : (
+              <a
+                key={key}
+                href={`#page=${link.page + 1}`}
+                aria-label={gt("Page {number}", { number: String(link.page + 1) })}
+                className="pointer-events-auto absolute"
+                style={style}
+                onClick={(event) => {
+                  event.preventDefault();
+                  props.onPageLink(link.page);
+                }}
+              />
+            );
+          })}
+        </div>
+      ) : null}
     </>
   );
 }
@@ -161,6 +246,7 @@ export default function PdfViewer(props: {
   positionKey?: string;
   initialView?: PdfViewState;
   onViewChange?: (view: PdfViewState) => void;
+  onOpenLink?: (url: string, event: MouseEvent) => void;
   actions?: ReactNode;
 }) {
   const gt = useGT();
@@ -527,6 +613,8 @@ export default function PdfViewer(props: {
                   query={query}
                   onSize={onSize}
                   onError={setError}
+                  onPageLink={showPage}
+                  onOpenLink={props.onOpenLink}
                 />
               </div>
             ))}

@@ -34,7 +34,7 @@ import * as Queue from "effect/Queue"
 import * as References from "effect/References"
 import * as Schema from "effect/Schema"
 import * as Scope from "effect/Scope"
-import type * as Socket from "effect/socket/Socket"
+import * as Socket from "effect/socket/Socket"
 import * as Stream from "effect/Stream"
 import * as Tracer from "effect/Tracer"
 import * as Http from "node:http"
@@ -535,6 +535,34 @@ describe("DenoHttpServer", () => {
       assert.strictEqual(statusLine.split(" ")[1], "501")
       assert.strictEqual(calls, 0)
     }).pipe(Effect.provide(DenoHttpServer.layerTest)))
+
+  it.effect("answers 503 while no app is served", () =>
+    Effect.gen(function*() {
+      const server = yield* DenoHttpServer.make({
+        hostname: "127.0.0.1",
+        port: 0,
+        disablePreemptiveShutdown: true,
+        onListen: () => {}
+      })
+      const serveScope = yield* Scope.fork(yield* Effect.scope)
+      const url = `http://127.0.0.1:${(server.address as NetAddress.InetAddress).port}`
+      const get = Effect.promise(async () => {
+        const response = await fetch(url, { headers: { connection: "close" } })
+        return { response, body: await response.text() }
+      })
+      const assertUnavailable = Effect.gen(function*() {
+        const { response } = yield* get
+        assert.strictEqual(response.status, 503)
+        assert.strictEqual(response.headers.get("cache-control"), "no-store")
+        assert.strictEqual(response.headers.get("retry-after"), "1")
+      })
+
+      yield* assertUnavailable
+      yield* server.serve(Effect.succeed(HttpServerResponse.text("served"))).pipe(Scope.provide(serveScope))
+      assert.strictEqual((yield* get).body, "served")
+      yield* Scope.close(serveScope, Exit.void)
+      yield* assertUnavailable
+    }))
 
   it.effect("file", () =>
     Effect.gen(function*() {
@@ -1141,6 +1169,95 @@ describe("DenoHttpServer", () => {
       assert.deepStrictEqual(messages, ["first", "second"])
     }).pipe(Effect.provide(DenoHttpServer.layerTest)))
 
+  it.live("replays WebSocket frames that arrive before a reader when the client closes first", () =>
+    Effect.gen(function*() {
+      const clientClosed = yield* Deferred.make<void>()
+      const checked = yield* Deferred.make<void, unknown>()
+      yield* serveWebSocket((socket) =>
+        Deferred.complete(
+          checked,
+          Effect.gen(function*() {
+            yield* Deferred.await(clientClosed)
+            const { frames, reason } = yield* readUntilFailure(yield* socket.reader)
+            assert.deepStrictEqual(frames, ["first", "second"])
+            assert.deepStrictEqual(reason, new Socket.SocketCloseError({ code: 1000, closeReason: "done" }))
+          })
+        )
+      )
+      const server = yield* HttpServer.HttpServer
+      const port = (server.address as NetAddress.InetAddress).port
+      const ws = yield* openWebSocket(`ws://127.0.0.1:${port}/`)
+      ws.addEventListener("close", () => Deferred.doneUnsafe(clientClosed, Effect.void))
+      ws.send("first")
+      ws.send("second")
+      ws.close(1000, "done")
+      yield* Deferred.await(checked)
+    }).pipe(Effect.timeout("5 seconds"), Effect.provide(DenoHttpServer.layerTest)))
+
+  for (
+    const { highWaterMark, name, retained, sent } of [
+      // a pull waiting during the replay must not free room for a rejected frame
+      { name: "byte frames", highWaterMark: 2, sent: ["a", "b", "c", "d"], retained: ["a", "b", "c"] },
+      // "€" is 3 bytes and takes the queue above the mark, so "b" and "c" are dropped
+      {
+        name: "a multibyte frame crossing the mark",
+        highWaterMark: 3,
+        sent: ["a", "€", "b", "c"],
+        retained: ["a", "€"]
+      }
+    ]
+  ) {
+    for (const phase of ["before reader startup", "with an active reader"] as const) {
+      it.live(`bounds inbound WebSocket bytes ${phase}: ${name}`, () =>
+        Effect.gen(function*() {
+          const clientClosed = yield* Deferred.make<void>()
+          const checked = yield* Deferred.make<void, unknown>()
+          const server = yield* DenoHttpServer.make({
+            hostname: "127.0.0.1",
+            port: 0,
+            onListen: () => {},
+            websocket: { highWaterMark }
+          })
+          yield* server.serve(Effect.gen(function*() {
+            const request = yield* HttpServerRequest.HttpServerRequest
+            const socket = yield* request.upgrade
+            yield* Deferred.complete(
+              checked,
+              Effect.gen(function*() {
+                const activeReader = phase === "with an active reader" ? yield* socket.reader : undefined
+                if (activeReader !== undefined) yield* (yield* socket.writer).write("ready")
+                yield* Deferred.await(clientClosed)
+                const { frames, reason } = yield* readUntilFailure(activeReader ?? (yield* socket.reader))
+                assert.deepStrictEqual(frames, retained)
+                assert(reason._tag === "SocketReadError")
+                assert.strictEqual(
+                  String(reason.cause),
+                  `Error: Socket highWaterMark of ${highWaterMark} bytes exceeded`
+                )
+              })
+            )
+            return HttpServerResponse.empty()
+          }))
+          const port = (server.address as NetAddress.InetAddress).port
+          const ws = yield* Effect.acquireRelease(
+            Effect.sync(() => new WebSocket(`ws://127.0.0.1:${port}/`)),
+            (ws) => Effect.sync(() => ws.close())
+          )
+          ws.addEventListener(phase === "with an active reader" ? "message" : "open", () => {
+            for (const frame of sent) ws.send(frame)
+          }, { once: true })
+          // Deno does not report a stable close code while the client is still sending
+          yield* Effect.callback<void>((resume) => {
+            ws.addEventListener("close", () => resume(Effect.void), { once: true })
+          }).pipe(
+            Effect.timeout("1 second"),
+            Effect.ensuring(Deferred.succeed(clientClosed, undefined))
+          )
+          yield* Deferred.await(checked)
+        }).pipe(Effect.timeout("5 seconds")))
+    }
+  }
+
   it.effect("delivers binary WebSocket frames as Uint8Array", () =>
     Effect.gen(function*() {
       const received = yield* Queue.unbounded<Uint8Array>()
@@ -1181,6 +1298,12 @@ const echoWebSocket = (socket: Socket.Socket) =>
     Effect.catchReason("SocketError", "SocketCloseError", () => Effect.void),
     Effect.orDie
   )
+
+const readUntilFailure = Effect.fnUntraced(function*(reader: Socket.Reader) {
+  const frames: Array<string | Uint8Array> = []
+  const error = yield* Effect.flip(Effect.forever(Effect.map(reader.pull, (chunk) => frames.push(...chunk))))
+  return { frames, reason: error.reason }
+})
 
 const serveWebSocket = (
   run: (socket: Socket.Socket) => Effect.Effect<void, Socket.SocketError, Scope.Scope>

@@ -104,6 +104,57 @@ describe("Scheduler", () => {
       assert.strictEqual(calls, 0)
     }))
 
+  it("automatic dispatch failures terminate the fiber with a defect", () => {
+    const defect = new Error("dispatch failed")
+    const tasks: Array<() => void> = []
+    let attempts = 0
+    const scheduler: Scheduler.Scheduler = {
+      executionMode: "async",
+      shouldYield: (fiber) => fiber.currentOpCount >= 2,
+      makeDispatcher: () => ({
+        scheduleTask: (task) => {
+          // Bound failures so a runtime that retries dispatch cannot spin forever.
+          if (++attempts <= 5) throw defect
+          tasks.push(task)
+        },
+        flush() {}
+      })
+    }
+    const fiber = Effect.runFork(
+      Effect.forEach([1, 2, 3], Effect.succeed, { concurrency: "unbounded" }),
+      { scheduler }
+    )
+
+    assert.deepStrictEqual(fiber.pollUnsafe(), Exit.die(defect))
+  })
+
+  for (const budget of [1, 2, 3]) {
+    it(`concurrent forEach completes with MaxOpsBeforeYield ${budget}`, () => {
+      const tasks: Array<() => void> = []
+      const scheduler = new Scheduler.MixedScheduler("async", (task) => {
+        let cancelled = false
+        tasks.push(() => {
+          if (!cancelled) task()
+        })
+        return () => {
+          cancelled = true
+        }
+      })
+      const fiber = Effect.runFork(
+        Effect.forEach([1, 2, 3], Effect.succeed, { concurrency: "unbounded" }).pipe(
+          Effect.provideService(Scheduler.MaxOpsBeforeYield, budget)
+        ),
+        { scheduler }
+      )
+
+      // Bound dispatches so a yielding livelock fails instead of hanging the test.
+      for (let i = 0; i < 1000 && tasks.length > 0; i++) {
+        tasks.shift()!()
+      }
+      assert.deepStrictEqual(fiber.pollUnsafe(), Exit.succeed([1, 2, 3]))
+    })
+  }
+
   it.effect("inlined map steps count against MaxOpsBeforeYield", () =>
     Effect.gen(function*() {
       const order: Array<string> = []

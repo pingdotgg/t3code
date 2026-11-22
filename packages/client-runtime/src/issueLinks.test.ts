@@ -8,7 +8,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { resolveIssueLinkTarget } from "./issueLinks.ts";
 
-const project = (id: string, repository: string) =>
+const project = (id: string, repository: string, origin?: string) =>
   ({
     id: ProjectId.make(id),
     environmentId: EnvironmentId.make("env"),
@@ -18,6 +18,7 @@ const project = (id: string, repository: string) =>
       displayName: repository,
       owner: repository.split("/")[0],
       name: repository.split("/")[1],
+      ...(origin ? { origin: { canonicalKey: `github.com/${origin}`, displayName: origin } } : {}),
     },
   }) as never;
 
@@ -38,6 +39,25 @@ describe("resolveIssueLinkTarget", () => {
   ])("$name", ({ url, expected }) => {
     const target = resolveIssueLinkTarget({ url, projects });
     expect(target?.ref).toMatchObject({ tracker: "github", host: "github.com", ...expected });
+  });
+
+  it("reads a fork's own issue through the fork, not as a borrowed repository", () => {
+    const target = resolveIssueLinkTarget({
+      url: "https://github.com/me/web/issues/3",
+      projects: [project("p1", "acme/api"), project("fork", "acme/web", "me/web")],
+    });
+    expect(target?.ref).toMatchObject({ projectId: "fork", scope: "me/web", key: "3" });
+  });
+
+  it("uses the current repository identity after a project changes repositories", () => {
+    const url = "https://github.com/acme/api/issues/7";
+    const original = project("p1", "acme/api");
+    const replacement = project("p1", "acme/mobile");
+    const lender = project("p3", "acme/web");
+    expect(resolveIssueLinkTarget({ url, projects: [lender, original] })?.ref.projectId).toBe("p1");
+    expect(resolveIssueLinkTarget({ url, projects: [lender, replacement] })?.ref.projectId).toBe(
+      "p3",
+    );
   });
 
   it("prefers the project bound to the link's own port over one on the bare hostname", () => {
@@ -88,7 +108,11 @@ describe("resolveIssueLinkTarget", () => {
       ],
       bindings: {
         [ProjectId.make("p1")]: { tracker: IssueTrackerKind.make("linear"), scope: "API" },
-        [ProjectId.make("p2")]: { tracker: IssueTrackerKind.make("linear"), scope: "WEB" },
+        [ProjectId.make("p2")]: {
+          tracker: IssueTrackerKind.make("linear"),
+          scope: "WEB",
+          additionalScopes: ["DOCS"],
+        },
       },
     };
     const resolve = (url: string) => resolveIssueLinkTarget({ url, projects, trackers });
@@ -98,6 +122,10 @@ describe("resolveIssueLinkTarget", () => {
       host: "linear.app",
       scope: "WEB",
       key: "WEB-17",
+    });
+    expect(resolve("https://linear.app/acme/issue/DOCS-4")?.ref).toMatchObject({
+      projectId: "p2",
+      scope: "DOCS",
     });
     expect(resolve("https://linear.app/acme/issue/OPS-3")?.ref).toMatchObject({
       projectId: "p1",
