@@ -88,14 +88,13 @@ export async function connectLinkedEnvironment(options: {
   const pairing = await options.requestPairing();
   if (pairing === null) return { type: "manual", label: options.label, host: null };
   const { label, urls } = pairing;
-  // Start all probes together, but only wait through the first reachable address in preference order.
-  const probes = urls.map(async (url) => {
-    try {
-      return (await options.reaches(url)) ? url : null;
-    } catch {
-      return null;
-    }
-  });
+  // Asked together, taken in the linking environment's order of preference.
+  const probes = urls.map((url) =>
+    options.reaches(url).then(
+      (reached) => (reached ? url : null),
+      () => null,
+    ),
+  );
   let host: string | null = null;
   for (const probe of probes) {
     host = await probe;
