@@ -93,6 +93,8 @@ export interface CollapsedSplitColumn {
   readonly leaving: string | null;
   /** Back reveals another screen; a full-screen presentation covers the detail without one. */
   readonly revealed?: boolean;
+  /** The column UIKit has begun animating onto screen, cleared once `didAppear` confirms it. */
+  readonly entering?: "primary" | "secondary" | null;
 }
 
 /**
@@ -124,8 +126,14 @@ export function collapsedSplitTransition(
       };
     case "willAppear":
       // A cancelled swipe, or an expansion that keeps the detail on screen.
-      if (column.leaving === event.key) return { column: { ...column, leaving: null }, pop: null };
-      return { column: column.leaving ? { ...column, revealed: true } : column, pop: null };
+      if (column.leaving === event.key) {
+        return { column: { ...column, leaving: null, entering: null }, pop: null };
+      }
+      if (column.leaving) return { column: { ...column, revealed: true }, pop: null };
+      return {
+        column: { ...column, entering: event.key === primaryKey ? "primary" : "secondary" },
+        pop: null,
+      };
     case "didDisappear":
       return {
         column:
@@ -134,7 +142,11 @@ export function collapsedSplitTransition(
       };
     case "didAppear":
       return {
-        column: { visible: event.key === primaryKey ? "primary" : "secondary", leaving: null },
+        column: {
+          visible: event.key === primaryKey ? "primary" : "secondary",
+          leaving: null,
+          entering: null,
+        },
         pop:
           event.key === primaryKey && column.leaving
             ? nativeStackPopAction(state, column.leaving, primaryKey)

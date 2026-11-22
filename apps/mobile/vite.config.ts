@@ -44,6 +44,7 @@ const reactTests = [
   "src/components/ComposerEditor.ios.test.tsx",
   "src/native/V5StackHeader.ios.test.tsx",
   "src/native/createV5StackNavigator.ios.test.tsx",
+  "src/features/layout/createWorkspaceStackNavigator.ios.test.tsx",
   "src/native/useRetryingImageSource.test.tsx",
   "src/state/queries.debounce.test.tsx",
   "src/state/use-selected-thread-git-state.test.tsx",
