@@ -156,7 +156,9 @@ function makeService(input: {
   readonly projects: ReadonlyArray<OrchestrationProjectShell>;
   readonly trackers: ReadonlyArray<IssueTrackerApi>;
   readonly bindings?: Record<string, IssueTrackerProjectBinding>;
-  readonly readBindings?: IssueTrackerBindings.IssueTrackerBindingsRepository["Service"]["list"];
+  readonly readBindings?: ReturnType<
+    IssueTrackerBindings.IssueTrackerBindingsRepository["Service"]["list"]
+  >;
 }) {
   return IssueService.IssueService.pipe(
     Effect.provide(
@@ -164,7 +166,7 @@ function makeService(input: {
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(IssueTrackerBindings.IssueTrackerBindingsRepository)({
-              list:
+              list: () =>
                 input.readBindings ??
                 Effect.succeed(
                   new Map(
@@ -699,7 +701,12 @@ describe("IssueService with a standalone tracker", () => {
         writable: false,
       });
       expect((yield* bound.projectScope("web" as ProjectId)).scope).toBe("ENG");
-      expect((yield* bound.projectScope("web" as ProjectId, "ops-12")).scope).toBe("OPS");
+      expect((yield* bound.projectScope("web" as ProjectId, { key: "ops-12" })).scope).toBe("OPS");
+      expect(yield* bound.projectScope("web" as ProjectId, { scope: "ACME/Web" })).toMatchObject({
+        tracker: GITHUB,
+        host: "github.com",
+        scope: "acme/web",
+      });
       expect(
         yield* bound.detail({
           projectId: "web" as ProjectId,

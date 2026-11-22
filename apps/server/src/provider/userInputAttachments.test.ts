@@ -344,6 +344,17 @@ describe("question answer paths", () => {
       String.raw`{\rtf1\mac\ansicpg10000 Caf\'8e Cr\'8fme}`,
       "Café Crème",
     ],
+    [
+      "font character set",
+      String.raw`{\rtf1\ansi\ansicpg1252\deff1{\fonttbl\f0\fnil\fcharset178 GeezaPro;\f1\fnil\fcharset0 LucidaGrande;}
+\f0 \'e3\'e1\'c7\'cd\'d9\'c9\f1 : caf\'e9, \f0\plain\'c7a}`,
+      "ملاحظة: café, Ça",
+    ],
+    [
+      "font character set outside the font table",
+      String.raw`{\rtf1\ansi{\fonttbl{\f0\fcharset178 A;}{\f0\fcharset0 B;}{\f1\fcharset0 C;}{\f2\fcharset178 D;}{\f2 E;}}{\stylesheet{\s0\f1\fcharset178 N;}}\f0 \'e3\f1\'e3\f2\'e3}`,
+      "ããã",
+    ],
     ["destination symbol", String.raw`{\rtf1\ansi\u945\*Z}`, "αZ"],
     ["multiple units", String.raw`{\rtf1\ansi\uc4\u945?\tab\'3f\~Z}`, "αZ"],
     ["binary unit", String.raw`{\rtf1\ansi\u945\bin3 abcZ}`, "αZ"],
@@ -574,6 +585,28 @@ describe("question answer paths", () => {
           expected: ["Readable despite embedded media"],
           absent: ["[Extracted text truncated"],
         },
+        ...["/word/../word/document2.xml", "word/document2.xml"].map((target) => ({
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "_rels/.rels": `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+            "word/document.xml": "<document><p>Stale draft</p></document>",
+            "word/document2.xml": "<document><p>Launch moves to 3 March.</p></document>",
+          },
+          expected: ["Launch moves to 3 March."],
+          absent: ["Stale draft", "[Skipped document part"],
+        })),
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "_rels/.rels":
+              '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/WORD/DOCUMENT.XML"/></Relationships>',
+            "word/document.xml": "<document><p>Launch moves to 3 March.</p></document>",
+          },
+          expected: ["Launch moves to 3 March."],
+          absent: ["[Skipped document part"],
+        },
         ...[false, true].map((deep) => ({
           ext: "docx",
           bounded: true,
@@ -756,9 +789,9 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p></w:body></w:document>',
+              '<w:document xmlns:w="urn:w" xmlns:mc="urn:mc"><w:body><w:p><w:r><w:t>Body</w:t></w:r></w:p><w:p><w:r><mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wps:wsp><wps:txbx><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></wps:txbx></wps:wsp></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent><w:p><w:r><w:t>Callout box</w:t></w:r></w:p><w:p><w:r><w:t>Second line</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r></w:p></w:body></w:document>',
           },
-          expected: ["Body\nCallout box"],
+          expected: ["Body\nCallout box\nSecond line"],
           occurrences: { text: "Callout box", count: 1 },
         },
         {
@@ -775,11 +808,12 @@ describe("question answer paths", () => {
           bounded: true,
           parts: {
             "word/document.xml":
-              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
+              '<w:document xmlns:w="urn:w"><w:body><w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr><w:r><w:t>Report &amp; totals</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>North</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>12</w:t></w:r></w:p><w:p><w:r><w:t>34</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:sdt><w:sdtPr><w:alias w:val="Title"/></w:sdtPr><w:sdtContent><w:tc><w:p><w:r><w:t>Annual report</w:t></w:r></w:p></w:tc></w:sdtContent></w:sdt><w:tc><w:p><w:r><w:t>Draft</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>Before</w:t></w:r></w:p><w:tbl><w:tr><w:tc><w:p><w:r><w:t>Inner</w:t></w:r></w:p></w:tc></w:tr></w:tbl><w:p><w:r><w:t>After</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Neighbor</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:noBreakHyphen/></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>',
           },
           expected: [
             "## Report & totals",
             "North\t12 34",
+            "Annual report\tDraft",
             "Before Inner After\tNeighbor\t\u2011\n\u2011",
           ],
         },
@@ -977,7 +1011,7 @@ describe("question answer paths", () => {
             "ppt/slides/_rels/slide1.xml.rels":
               '<Relationships><Relationship Type="http://purl.oclc.org/ooxml/officeDocument/relationships/notesSlide" Target="/ppt/notesSlides/notes3.xml"/></Relationships>',
             "ppt/notesSlides/notes7.xml":
-              "<p:notes><a:p><a:r><a:t>evacuation code ORCHID-81</a:t></a:r></a:p></p:notes>",
+              '<p:notes><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>evacuation code ORCHID-81</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="hdr" sz="quarter"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Harbor briefing</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="dt" idx="1"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:fld type="datetime1"><a:t>11/21/2026</a:t></a:fld></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="ftr" sz="quarter" idx="4"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>Crew only</a:t></a:r></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum" sz="quarter" idx="5"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:fld type="slidenum"><a:t>57</a:t></a:fld></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>',
             "ppt/notesSlides/notes3.xml":
               "<p:notes><a:p><a:r><a:t>Board at gate 4</a:t></a:r></a:p></p:notes>",
             "ppt/notesSlides/ignored.xml": "<p:notes><a:p>Unrelated notes</a:p></p:notes>",
@@ -989,7 +1023,32 @@ describe("question answer paths", () => {
             "Departure\nNotes:\nBoard at gate 4",
           ],
           occurrences: { text: "## Slide ", count: 2 },
-          absent: ["Unrelated notes", "[Skipped document part", "[Extracted text truncated"],
+          absent: [
+            "Unrelated notes",
+            "Harbor briefing",
+            "11/21/2026",
+            "Crew only",
+            "57",
+            "[Skipped document part",
+            "[Extracted text truncated",
+          ],
+        },
+        {
+          ext: "pptx",
+          bounded: true,
+          parts: {
+            "ppt/presentation.xml":
+              '<presentation><sldIdLst><sldId r:id="a"/></sldIdLst></presentation>',
+            "ppt/_rels/presentation.xml.rels":
+              '<Relationships><Relationship Id="a" Target="slides/a.xml"/></Relationships>',
+            "ppt/slides/a.xml": "<slide><p>Slide text</p></slide>",
+            "ppt/slides/_rels/a.xml.rels":
+              '<Relationships><Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/notesSlide" Target="../notesSlides/empty.xml"/></Relationships>',
+            "ppt/notesSlides/empty.xml":
+              '<p:notes><p:cSld><p:spTree><p:sp><p:nvSpPr><p:nvPr><p:ph type="sldImg"/></p:nvPr></p:nvSpPr></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:endParaRPr/></a:p></p:txBody></p:sp><p:sp><p:nvSpPr><p:nvPr><p:ph type="sldNum" idx="5"/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:fld type="slidenum"><a:t>57</a:t></a:fld></a:p></p:txBody></p:sp></p:spTree></p:cSld></p:notes>',
+          },
+          expected: ["Slide text"],
+          absent: ["Notes:", "57"],
         },
         ...[false, true].map((missing) => ({
           ext: "pptx",
@@ -1036,10 +1095,25 @@ describe("question answer paths", () => {
           ext: "odt",
           parts: {
             "content.xml":
-              '<office:document><text:h text:outline-level="2">\n  Orchard\n</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates <text:span>\n\t  shipped</text:span>   today<text:tab/>Dock<text:line-break/>Gate\u00a0B </text:p><text:p>Second</text:p><text:p>A<text:span><text:script>console.log(1);\n</text:script></text:span> B</text:p></office:document>',
+              '<office:document><text:h text:outline-level="2">\n  Orchard\n</text:h><text:p>19<text:s text:c="3"/>violet<text:s/>crates <text:span>\n\t  shipped</text:span>   today<text:tab/>Dock<text:line-break/>Gate\u00a0B </text:p><text:p>Second</text:p><text:p>A<text:span><text:script>console.log(1);\n</text:script></text:span> B</text:p>' +
+              [
+                "table-of-content",
+                "illustration-index",
+                "table-index",
+                "object-index",
+                "user-index",
+                "alphabetical-index",
+                "bibliography",
+              ]
+                .map(
+                  (name) =>
+                    `<text:${name}><text:${name}-source><text:index-title-template>Contents</text:index-title-template><text:${name}-entry-template><text:index-entry-span>: </text:index-entry-span></text:${name}-entry-template></text:${name}-source><text:index-body><text:index-title><text:p>Contents</text:p></text:index-title><text:p>Orchard 1</text:p></text:index-body></text:${name}>`,
+                )
+                .join("") +
+              "</office:document>",
           },
           expected: [
-            "## Orchard\n19   violet crates shipped today\tDock\nGate\u00a0B\nSecond\nA B",
+            `## Orchard\n19   violet crates shipped today\tDock\nGate\u00a0B\nSecond\nA B${"\nContents\nOrchard 1".repeat(7)}`,
           ],
         },
         {
@@ -1087,9 +1161,20 @@ describe("question answer paths", () => {
           ext: "odp",
           parts: {
             "content.xml":
-              "<office:document><draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame></draw:page><draw:page><text:p>Second</text:p></draw:page></office:document>",
+              "<office:document>" +
+              "<draw:page><draw:frame><draw:text-box><text:p>\n  First\n\t  slide </text:p></draw:text-box></draw:frame>" +
+              "<svg:title>Overview</svg:title>" +
+              "<presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>" +
+              "<draw:page><text:p>Second</text:p><presentation:notes><draw:g><draw:page-thumbnail>" +
+              "<svg:title>Slide preview</svg:title><svg:desc>Thumbnail metadata</svg:desc>" +
+              "</draw:page-thumbnail></draw:g></presentation:notes></draw:page>" +
+              "<draw:page><text:p>Third</text:p><presentation:notes><draw:frame><draw:text-box>" +
+              '<table:table><table:table-column/><table:table-row><table:table-cell office:value-type="float" office:value="42"/></table:table-row></table:table>' +
+              "</draw:text-box></draw:frame></presentation:notes></draw:page></office:document>",
           },
-          expected: ["## Slide 1\nFirst slide\n\n## Slide 2\nSecond"],
+          expected: [
+            "## Slide 1\nFirst slide\nOverview\nNotes:\nSpeaker only\n\n## Slide 2\nSecond\n\n## Slide 3\nThird\n\nNotes:\n42",
+          ],
         },
         {
           ext: "ods",
