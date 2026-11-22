@@ -386,6 +386,7 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly modelsFromModelSelect?: boolean;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -635,6 +636,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
+      modelsFromModelSelect: result.liveConfiguration.modelsFromModelSelect === true,
     };
   },
 );

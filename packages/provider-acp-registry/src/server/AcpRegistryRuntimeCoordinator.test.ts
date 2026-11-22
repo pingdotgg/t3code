@@ -257,4 +257,54 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
+
+  it.effect(
+    "tracks live configuration revisions so stale snapshots are neither replayed nor able to clear newer ones",
+    () =>
+      Effect.gen(function* () {
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acpRegistry_devin");
+        const configFor = (id: string) => ({
+          models: [{ id, name: id, description: null }],
+          currentModelId: id,
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
+        const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(first.revision).toBeGreaterThan(0);
+
+        // Watching past the already-observed revision skips the stale replay, then delivers newer updates.
+        const received: Array<string | null> = [];
+        const secondSeen = yield* Deferred.make<void>();
+        const watcher = yield* coordinator
+          .watchLiveConfiguration(
+            instanceId,
+            (configuration) =>
+              Effect.sync(() => {
+                received.push(configuration.currentModelId);
+              }).pipe(Effect.andThen(Deferred.succeed(secondSeen, undefined)), Effect.asVoid),
+            { afterRevision: first.revision },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
+        yield* Deferred.await(secondSeen);
+        yield* Fiber.interrupt(watcher);
+        expect(received).toEqual(["model-v2"]);
+
+        // An outdated revision cannot clear a newer live configuration.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, first.revision),
+        ).toBe(false);
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
+
+        const second = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, second.revision),
+        ).toBe(true);
+        expect(Option.isNone(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
+      }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
 });
