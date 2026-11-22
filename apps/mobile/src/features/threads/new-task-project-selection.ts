@@ -78,6 +78,38 @@ export function filterProjectScopes(
   );
 }
 
+/** Machines a No project draft can run on, plus connected ones that say why they can't. */
+export function newTaskScratchEnvironmentOptions(
+  environments: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly environmentLabel: string;
+    readonly connectionState: EnvironmentConnectionPhase;
+  }>,
+  serverConfigs: ReadonlyMap<
+    EnvironmentId,
+    Pick<ServerConfig, "scratchWorkspaceRoot" | "scratchUnavailableReason">
+  >,
+): Array<{
+  readonly environmentId: EnvironmentId;
+  readonly environmentLabel: string;
+  readonly unavailableReason?: string;
+}> {
+  return environments.flatMap((environment) => {
+    const serverConfig = serverConfigs.get(environment.environmentId);
+    const option = {
+      environmentId: environment.environmentId,
+      environmentLabel: environment.environmentLabel,
+    };
+    if (availableScratchWorkspaceRoot(environment.connectionState, serverConfig) !== null) {
+      return [option];
+    }
+    const unavailableReason = serverConfig?.scratchUnavailableReason;
+    return environment.connectionState === "connected" && unavailableReason !== undefined
+      ? [{ ...option, unavailableReason }]
+      : [];
+  });
+}
+
 // Cached configuration reserves the row; connection readiness only gates activation.
 export function resolveNewTaskScratchOption(input: {
   readonly environments: ReadonlyArray<{

@@ -74,7 +74,6 @@ import {
   useRemoteConnectionStatus,
   useSavedRemoteConnections,
 } from "../../state/use-remote-environment-registry";
-import { availableScratchWorkspaceRoot } from "@t3tools/client-runtime/operations/projects";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -92,7 +91,11 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { isSameRepository, resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  isSameRepository,
+  newTaskScratchEnvironmentOptions,
+  resolveEnvironmentProjectMatch,
+} from "./new-task-project-selection";
 import { useNewTaskProjectDefaults } from "./use-new-task-project-defaults";
 import { resolveNewThreadRuntimeMode } from "./thread-settings-options";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
@@ -177,6 +180,8 @@ type NewTaskFlowContextValue = {
   readonly environments: ReadonlyArray<{
     readonly environmentId: EnvironmentId;
     readonly environmentLabel: string;
+    /** Listed so the user can see why it can't be picked. */
+    readonly unavailableReason?: string;
   }>;
   readonly selectedProject: EnvironmentProject | null;
   /** The machines the selected project's environment links to, whose threads it can read. */
@@ -638,6 +643,10 @@ export function NewTaskFlowProvider(
       selectEnvironment(environmentId);
       return true;
     }
+    const target = scratchEnvironments.find(
+      (environment) => environment.environmentId === environmentId,
+    );
+    if (target?.unavailableReason !== undefined) return false;
     const request = {};
     latestSwitchRef.current = request;
     setSwitchingToEnvironmentId(environmentId);
@@ -852,12 +861,9 @@ export function NewTaskFlowProvider(
     };
   };
 
-  const scratchEnvironments = connectedEnvironments.filter(
-    (environment) =>
-      availableScratchWorkspaceRoot(
-        environment.connectionState,
-        serverConfigs.get(environment.environmentId),
-      ) !== null,
+  const scratchEnvironments = newTaskScratchEnvironmentOptions(
+    connectedEnvironments,
+    serverConfigs,
   );
 
   const selectedRepositoryKey = selectedProject?.repositoryIdentity
@@ -867,12 +873,7 @@ export function NewTaskFlowProvider(
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
   const environments = (() => {
-    if (isScratchDraft) {
-      return scratchEnvironments.map((environment) => ({
-        environmentId: environment.environmentId,
-        environmentLabel: environment.environmentLabel,
-      }));
-    }
+    if (isScratchDraft) return scratchEnvironments;
     const seen = new Set<EnvironmentId>();
     const result: Array<{
       readonly environmentId: EnvironmentId;

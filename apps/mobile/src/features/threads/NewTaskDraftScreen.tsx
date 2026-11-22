@@ -372,7 +372,10 @@ export function NewTaskDraftScreen(props: {
   const { environments, selectedEnvironmentId, switchEnvironment, switchingToEnvironmentId } = flow;
   const cycleEnvironment = () => {
     if (isComposerInteractionLocked) return true;
-    const next = nextEnvironmentId(environments, switchingToEnvironmentId ?? selectedEnvironmentId);
+    const next = nextEnvironmentId(
+      environments.filter((environment) => environment.unavailableReason === undefined),
+      switchingToEnvironmentId ?? selectedEnvironmentId,
+    );
     if (next !== null) void switchEnvironment(next);
     return true;
   };

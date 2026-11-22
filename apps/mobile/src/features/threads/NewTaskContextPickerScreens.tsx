@@ -61,6 +61,7 @@ function EnvironmentPickerRow(props: {
   title: string;
   selected: boolean;
   disabled: boolean;
+  unavailableReason: string | undefined;
   isLast: boolean;
   onPress: () => void;
 }) {
@@ -72,6 +73,7 @@ function EnvironmentPickerRow(props: {
   const { onReconnectEnvironment } = useRemoteConnections();
   const connection = presentation?.connection;
   const status =
+    props.unavailableReason ??
     diagnosis?.headline ??
     (connection ? environmentStatusText({ ...connection, error: null }, messages) : gt("Offline"));
   return (
@@ -80,8 +82,11 @@ function EnvironmentPickerRow(props: {
         <Pressable
           accessibilityRole="radio"
           accessibilityLabel={`${props.title}, ${status}`}
-          accessibilityState={{ checked: props.selected }}
-          disabled={props.disabled}
+          accessibilityState={{
+            checked: props.selected,
+            disabled: props.disabled || props.unavailableReason !== undefined,
+          }}
+          disabled={props.disabled || props.unavailableReason !== undefined}
           onPress={props.onPress}
           className="min-h-16 flex-1 flex-row items-center gap-3 px-4 py-3 active:bg-subtle"
         >
@@ -96,7 +101,10 @@ function EnvironmentPickerRow(props: {
             </Text>
             <View className="flex-row items-center gap-1.5">
               <ConnectionStatusDot state={connection?.phase ?? "offline"} pulse={false} size={6} />
-              <Text className="shrink text-xs text-foreground-muted" numberOfLines={2}>
+              <Text
+                className="shrink text-xs text-foreground-muted"
+                numberOfLines={props.unavailableReason === undefined ? 2 : undefined}
+              >
                 {status}
               </Text>
             </View>
@@ -213,6 +221,7 @@ export function NewTaskEnvironmentPickerRouteScreen() {
                 environmentId={environment.environmentId}
                 isLast={index === flow.environments.length - 1}
                 disabled={flow.switchingToEnvironmentId !== null}
+                unavailableReason={environment.unavailableReason}
                 onPress={() => {
                   void Haptics.selectionAsync();
                   void flow.switchEnvironment(environment.environmentId).then((switched) => {
