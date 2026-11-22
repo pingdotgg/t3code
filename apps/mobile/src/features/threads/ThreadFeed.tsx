@@ -159,7 +159,10 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
-import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import {
+  filePreviewSourceIdentifier,
+  remoteAttachmentImageSource,
+} from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import {
   isFileBackedComposerAttachment,
@@ -617,17 +620,9 @@ function MessageAttachmentImage(props: {
 }) {
   const gt = useGT();
   const withGallery = useFilePreviewGallery();
-  const resource = {
-    _tag: "attachment" as const,
-    attachmentId: props.attachmentId,
-    fileName: props.name,
-    mimeType: props.mimeType,
-  };
-  const sourceIdentifier = filePreviewSourceIdentifier({
-    kind: "image",
-    environmentId: props.environmentId,
-    resource,
-  });
+  const previewSource = remoteAttachmentImageSource(props.environmentId, props.attachmentId, props);
+  const { resource } = previewSource;
+  const sourceIdentifier = filePreviewSourceIdentifier(previewSource);
   const uri = useAssetUrl(props.environmentId, resource);
   const refreshAssetUrl = useRefreshAssetUrl(props.environmentId, resource);
   const retriedImage = useRef(false);
@@ -666,23 +661,7 @@ function MessageAttachmentImage(props: {
         height={props.height}
         accessibilityLabel={gt("Open {name}", { name: props.name })}
         {...handoffProps(handoff)}
-        onPress={() =>
-          props.onPressPreview(
-            withGallery({
-              kind: "image",
-              environmentId: props.environmentId,
-              resource,
-              name: props.name,
-              sourceIdentifier,
-              actionsSource: {
-                name: props.name,
-                mimeType: props.mimeType,
-                environmentId: props.environmentId,
-                resource,
-              },
-            }),
-          )
-        }
+        onPress={() => props.onPressPreview(withGallery({ ...previewSource, sourceIdentifier }))}
         onLoad={(size) => {
           retriedImage.current = false;
           if (handoff)
