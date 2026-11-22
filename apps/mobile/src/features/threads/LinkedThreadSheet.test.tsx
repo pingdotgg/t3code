@@ -79,6 +79,9 @@ import { LinkedThreadSheet } from "./LinkedThreadSheet";
 it("opens web links from read-only agent messages through the system browser", () => {
   const reply = v2MessageRow("reply", 0);
   const sent = v2MessageRow("sent", 1);
+  if (reply.item.type !== "user_message" || sent.item.type !== "user_message") {
+    throw new Error("Expected message fixtures");
+  }
   const visibleTurnItems: OrchestrationV2ProjectedTurnItem[] = [
     {
       ...reply,
