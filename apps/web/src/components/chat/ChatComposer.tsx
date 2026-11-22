@@ -133,8 +133,8 @@ import {
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   isPreviewableComposerVideo,
-  isImageOnlyClipboardHtml,
-  shouldHandleComposerAttachmentPaste,
+  clipboardHtmlImageContent,
+  composerAttachmentPasteMode,
 } from "./composerAttachmentFiles";
 import {
   releaseAttachmentUpload,
@@ -2947,26 +2947,34 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const pastedContext =
       !isLiteralPendingAnswer &&
       (readPastedComposerContext(event.clipboardData)?.records.length ?? 0) > 0;
-    if (
-      folders.length > 0 ||
-      (!pastedContext &&
-        activeThreadId &&
-        files.length > 0 &&
-        shouldHandleComposerAttachmentPaste({
-          files,
-          plainText,
-          bypassAutoAttachment,
-          htmlIsOnlyImage:
-            plainText.length > 0 &&
-            isImageOnlyClipboardHtml(event.clipboardData.getData("text/html")),
-        }))
-    ) {
+    const attachmentPasteMode =
+      !pastedContext && activeThreadId && files.length > 0
+        ? composerAttachmentPasteMode({
+            files,
+            plainText,
+            bypassAutoAttachment,
+            htmlImageContent:
+              plainText.length > 0
+                ? clipboardHtmlImageContent(event.clipboardData.getData("text/html"), plainText)
+                : "none",
+          })
+        : "text";
+    if (folders.length > 0 || attachmentPasteMode === "attachments") {
       event.preventDefault();
       event.stopPropagation();
       if (folders.length > 0) addComposerFoldersStable(folders);
       if (files.length > 0) {
         void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
       }
+      return;
+    }
+    // A chat message copied with its picture keeps both. Its HTML may hold only the <img>, so the
+    // plain text goes in directly instead of through the editor's HTML paste.
+    if (attachmentPasteMode === "both") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (!foldPastedText(plainText, bypassAutoAttachment)) insertComposerText(plainText, "cursor");
+      void addComposerAttachments(files, { skipImageInlineChip: bypassAutoAttachment });
       return;
     }
 

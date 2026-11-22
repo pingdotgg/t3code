@@ -14,7 +14,7 @@ import {
   fileAttachmentCapabilityBlockReason,
   fileAttachmentStagingLimit,
   normalizeComposerImageFileMimeType,
-  shouldHandleComposerAttachmentPaste,
+  composerAttachmentPasteMode,
 } from "./composerAttachmentFiles";
 
 describe("composer attachment files", () => {
@@ -76,9 +76,9 @@ describe("composer attachment files", () => {
   it("claims a captioned DNG paste even when its MIME is generic", () => {
     const file = new File(["raw"], "photo.dng", { type: "application/octet-stream" });
 
-    expect(
-      shouldHandleComposerAttachmentPaste({ files: [file], plainText: "Inspect this original" }),
-    ).toBe(true);
+    expect(composerAttachmentPasteMode({ files: [file], plainText: "Inspect this original" })).toBe(
+      "attachments",
+    );
   });
 
   it("keeps ordinary images on their existing paths", () => {
@@ -107,47 +107,53 @@ describe("composer attachment files", () => {
     const file = new File(["clipboard"], "clipboard.rtf", { type: "application/rtf" });
 
     expect(
-      shouldHandleComposerAttachmentPaste({
+      composerAttachmentPasteMode({
         files: [file],
         plainText: "Copied text",
       }),
-    ).toBe(false);
+    ).toBe("text");
   });
 
   it("claims SVG pastes even when text is present", () => {
     const image = new File(["svg"], "diagram.svg", { type: "image/svg+xml" });
-    expect(
-      shouldHandleComposerAttachmentPaste({ files: [image], plainText: "Image caption" }),
-    ).toBe(true);
+    expect(composerAttachmentPasteMode({ files: [image], plainText: "Image caption" })).toBe(
+      "attachments",
+    );
   });
 
   it("leaves a Word image-and-text clipboard to the text path, with or without Paste as Text", () => {
     const image = new File(["png"], "image.png", { type: "image/png" });
     const input = { files: [image], plainText: "Hello from Word", bypassAutoAttachment: true };
-    expect(shouldHandleComposerAttachmentPaste(input)).toBe(false);
+    expect(composerAttachmentPasteMode(input)).toBe("text");
     // A plain paste of the same Word clipboard keeps the text too.
-    expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
-      false,
-    );
+    expect(composerAttachmentPasteMode({ ...input, bypassAutoAttachment: false })).toBe("text");
     // Firefox's Copy Image adds the image URL as text and only an <img> as HTML; the image attaches.
     expect(
-      shouldHandleComposerAttachmentPaste({
+      composerAttachmentPasteMode({
         files: [image],
         plainText: "https://example.com/image.png",
-        htmlIsOnlyImage: true,
+        htmlImageContent: "image",
       }),
-    ).toBe(true);
+    ).toBe("attachments");
+    // A chat message (QQ, WeChat) holds text beside its <img>: both are kept.
+    expect(
+      composerAttachmentPasteMode({
+        files: [image],
+        plainText: "Hello from QQ, see this screenshot",
+        htmlImageContent: "image-and-text",
+      }),
+    ).toBe("both");
     // Finder adds a copied file's name as text.
-    expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
-      true,
+    expect(composerAttachmentPasteMode({ files: [image], plainText: "image.png" })).toBe(
+      "attachments",
     );
   });
 
   it("preserves text when the clipboard also includes generic image files", () => {
     const image = new File(["tiff"], "photo.tiff", { type: "image/tiff" });
-    expect(
-      shouldHandleComposerAttachmentPaste({ files: [image], plainText: "Image caption" }),
-    ).toBe(false);
+    expect(composerAttachmentPasteMode({ files: [image], plainText: "Image caption" })).toBe(
+      "text",
+    );
   });
 
   it("uses the hard local limit while server config is unknown", () => {

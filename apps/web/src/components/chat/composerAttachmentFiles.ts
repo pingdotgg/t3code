@@ -247,38 +247,58 @@ function isOnlyFileNames(text: string, files: ReadonlyArray<File>): boolean {
     .every((line) => names.has(line));
 }
 
-/** A browser's Copy Image puts only an <img> in text/html; rich text sources put the text there. */
-export function isImageOnlyClipboardHtml(html: string): boolean {
-  if (html.length === 0) return false;
+export type ClipboardHtmlImageContent = "none" | "image" | "image-and-text";
+
+/**
+ * A browser's Copy Image puts only an <img> in text/html and its URL as text; chat apps (QQ,
+ * WeChat) put the message text beside the <img>; rich text sources (Word) put only the text.
+ */
+export function clipboardHtmlImageContent(
+  html: string,
+  plainText: string,
+): ClipboardHtmlImageContent {
+  if (html.length === 0) return "none";
   const body = new DOMParser().parseFromString(html, "text/html").body;
-  return body.querySelector("img") !== null && (body.textContent ?? "").trim().length === 0;
+  const images = Array.from(body.querySelectorAll("img"));
+  if (images.length === 0) return "none";
+  if ((body.textContent ?? "").trim().length > 0) return "image-and-text";
+  const text = plainText.trim();
+  return text.length === 0 ||
+    images.some((image) => image.getAttribute("src") === text || image.alt === text)
+    ? "image"
+    : "image-and-text";
 }
 
-export function shouldHandleComposerAttachmentPaste(input: {
+export type ComposerAttachmentPasteMode = "text" | "attachments" | "both";
+
+export function composerAttachmentPasteMode(input: {
   readonly files: ReadonlyArray<File>;
   readonly plainText: string;
   readonly bypassAutoAttachment?: boolean;
-  readonly htmlIsOnlyImage?: boolean;
-}): boolean {
+  readonly htmlImageContent?: ClipboardHtmlImageContent;
+}): ComposerAttachmentPasteMode {
   // Paste as Text keeps the text even when the source also put an image of it on the clipboard.
-  if (input.bypassAutoAttachment && input.plainText.length > 0) return false;
+  if (input.bypassAutoAttachment && input.plainText.length > 0) return "text";
   if (
     input.files.some(
       (file) => isDngFile(file) || isSvgAttachment({ name: file.name, mimeType: file.type }),
     )
   ) {
-    return true;
+    return "attachments";
   }
   const hasImage = input.files.some((file) => {
     const classification = classifyComposerAttachmentFile(file);
     return classification === "image" || classification === "unsupported-image";
   });
   if (input.plainText.length === 0) {
-    return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
+    return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file")
+      ? "attachments"
+      : "text";
   }
-  // Rich text sources (Word, Pages) add a picture of the text. Copy Image adds the image URL as
-  // text beside an <img>, and a Finder copy adds the file names.
-  return (
-    hasImage && (input.htmlIsOnlyImage === true || isOnlyFileNames(input.plainText, input.files))
-  );
+  if (!hasImage) return "text";
+  // Rich text sources (Word, Pages) add a picture of the text, and a Finder copy adds the file names.
+  if (input.htmlImageContent === "image" || isOnlyFileNames(input.plainText, input.files)) {
+    return "attachments";
+  }
+  return input.htmlImageContent === "image-and-text" ? "both" : "text";
 }
