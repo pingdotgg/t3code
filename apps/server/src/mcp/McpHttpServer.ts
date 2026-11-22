@@ -1241,6 +1241,23 @@ const provideRegistrationServices = <Services>() =>
   );
 
 /**
+ * Calls are still answered by the handler, which refuses them; only discovery changes.
+ * A function: layers memoize by identity, so a shared one would keep the first toolkit's names.
+ */
+const hiddenFromReadOnlyClients = () =>
+  McpServer.visibility(
+    Effect.gen(function* () {
+      const hidden = yield* McpToolAccess.ReadOnlyHiddenTools;
+      // Untraced: it runs once per tool on every list request.
+      return Effect.fnUntraced(function* ({ method, target }: McpServer.MiddlewareOptions) {
+        if (method !== "tools/list" || !hidden.has(target)) return true;
+        const scope = yield* Effect.serviceOption(McpInvocationContext.McpInvocationContext);
+        return Option.getOrUndefined(scope)?.client?.access !== "read-only";
+      });
+    }),
+  );
+
+/**
  * Tools declare their handler services as request-level dependencies. Those
  * built with the server are provided here; `McpInvocationContext` is left to
  * the transport, whose auth middleware resolves it per request.
@@ -1262,6 +1279,7 @@ export const toolkitRegistration = <Tools extends Record<string, Tool.Any>, EX, 
       >().layer,
     ),
     Layer.provide(McpServer.McpServer.layer),
+    Layer.provide(hiddenFromReadOnlyClients().layer),
     Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)),
   );
 

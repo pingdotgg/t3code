@@ -154,14 +154,16 @@ export function McpConsent({
   const [requestedAccess, setAccess] = useState<AuthMcpClientAccess | null>(null);
   const [pairingCode, setPairingCode] = useState("");
   const [armed, setArmed] = useState(false);
+  const clientAccess = loaded.status === "ready" ? loaded.details.requestedAccess : undefined;
   const access =
-    requireLevelChoice && requestedAccess === null
+    clientAccess ??
+    (requireLevelChoice && requestedAccess === null
       ? null
       : resolveMcpAccess(
           requestedAccess,
           loaded.status === "ready" ? loaded.details.runtimeModeCeiling : undefined,
           pairingCode.trim().length > 0,
-        );
+        ));
   const [errorMessage, setErrorMessage] = useState("");
   const [pending, setPending] = useState<"approve" | "deny" | null>(null);
 
@@ -260,8 +262,8 @@ export function McpConsent({
     pending === null &&
     access !== null &&
     resolveApprovalDecision({ code: pairingCode, access, details }) !== null;
-  // A code from "Use T3 Code in another app" names its level, so the page does not ask again.
-  const codeAccess = parseMcpApprovalCode(pairingCode)?.access;
+  // A read-only request, or a code from "Use T3 Code in another app", fixes the level.
+  const codeAccess = details.requestedAccess ?? parseMcpApprovalCode(pairingCode)?.access;
   const approveLevel = codeAccess ?? access;
 
   return (
