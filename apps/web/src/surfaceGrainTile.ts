@@ -4,6 +4,7 @@
 const GRAIN_REFERENCE = "var(--surface-grain)";
 
 let grainRules: CSSStyleRule[] | null = null;
+let tileSheet: CSSStyleSheet | null = null;
 let tileScale = 0;
 let wantedKey = "";
 let writtenValue = GRAIN_REFERENCE;
@@ -29,8 +30,10 @@ function findGrainRules() {
   const found: CSSStyleRule[] = [];
   const walk = (rules: CSSRuleList) => {
     for (const rule of rules) {
+      // `.style` turns a rule's declarations into an editable copy, so only candidates read it.
       if (
         rule instanceof CSSStyleRule &&
+        rule.cssText.includes(GRAIN_REFERENCE) &&
         rule.style.getPropertyValue("background-image").trim() === GRAIN_REFERENCE
       ) {
         found.push(rule);
@@ -48,17 +51,46 @@ function findGrainRules() {
   return found;
 }
 
-// The tile goes into the grain rules as a literal url(), not into --surface-grain: Chromium
-// repaints the whole background of an element whose background-image comes through var()
-// every time that element restyles, and a custom property change on <html> restyles them all.
+// The grain rule's selector inside the same layer, media and nesting, so the copy matches where
+// the rule does and wins over it by coming later. Null for a context that cannot be restated.
+function overrideRule(rule: CSSStyleRule, value: string) {
+  const priority = rule.style.getPropertyPriority("background-image") ? " !important" : "";
+  let text = `background-image: ${value}${priority};`;
+  for (let at: CSSRule | null = rule; at !== null; at = at.parentRule) {
+    const prelude =
+      at instanceof CSSStyleRule
+        ? at.selectorText
+        : at instanceof CSSMediaRule
+          ? `@media ${at.media.mediaText}`
+          : at instanceof CSSSupportsRule
+            ? `@supports ${at.conditionText}`
+            : at instanceof CSSLayerBlockRule && at.name !== ""
+              ? `@layer ${at.name}`
+              : null;
+    if (prelude === null) return null;
+    text = `${prelude} { ${text} }`;
+  }
+  return text;
+}
+
+// The tile goes in as a literal url(), not into --surface-grain: Chromium repaints the whole
+// background of an element whose background-image comes through var() every time that element
+// restyles, and a custom property change on <html> restyles them all. It goes into its own sheet:
+// editing the app's sheet makes Chromium copy all of it and rebuild its rule set.
 function writeGrainRules(value: string) {
   if (value === writtenValue) return;
   writtenValue = value;
   grainRules ??= findGrainRules();
-  for (const rule of grainRules) {
-    const priority = rule.style.getPropertyPriority("background-image");
-    rule.style.setProperty("background-image", value, priority);
+  if (!tileSheet) {
+    tileSheet = new CSSStyleSheet();
+    // First among adopted sheets, so a theme's own sheet still overrides the grain.
+    document.adoptedStyleSheets = [tileSheet, ...document.adoptedStyleSheets];
   }
+  tileSheet.replaceSync(
+    value === GRAIN_REFERENCE
+      ? ""
+      : grainRules.flatMap((rule) => overrideRule(rule, value) ?? []).join("\n"),
+  );
 }
 
 function syncGrainTile() {

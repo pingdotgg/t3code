@@ -284,10 +284,10 @@ function markStripOverflow(strip: HTMLElement): void {
     row.toggleAttribute("data-tab-row-overflow", overflow);
   }
   const end = scrollWidth - clientWidth - scrollLeft;
-  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
-  strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
-  strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
-  strip.style.setProperty("--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
+  setPaneLitProperty(strip, "--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
+  setPaneLitProperty(strip, "--strip-overflow-end", `${Math.max(0, end)}px`);
+  setPaneLitProperty(strip, "--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  setPaneLitProperty(strip, "--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
   const entry = stripEntries.get(strip);
   if (!entry) return;
   entry.width = clientWidth;
@@ -402,8 +402,11 @@ function markJoinFoot(entry: PaneStrip, scrollLeft: number): void {
   }
   entry.footNotch = footed ? notch : null;
   if (!footed) return;
-  notch.style.setProperty("--pane-join-foot-x", `${footOffset + left}px`);
-  notch.style.setProperty("--pane-join-foot-w", `${right - left}px`);
+  // Not inherited (index.css): the notch's cut and the foot each take their own.
+  for (const element of [notch, entry.foot]) {
+    setPaneLitProperty(element, "--pane-join-foot-x", `${footOffset + left}px`);
+    setPaneLitProperty(element, "--pane-join-foot-w", `${right - left}px`);
+  }
   if (!notch.hasAttribute("data-pane-join-footed")) notch.setAttribute("data-pane-join-footed", "");
 }
 
@@ -742,7 +745,7 @@ export function LayoutPaneTabStrip({
     element.style.display = "contents";
     return element;
   });
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the pane's persistent strip node in this header's row and place its joined tab after each commit.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the pane's persistent strip node in this header's row.
   useLayoutEffect(() => {
     const slot = slotRef.current;
     if (!slot) return;
@@ -753,14 +756,6 @@ export function LayoutPaneTabStrip({
     }
     attachPaneStrip(entry, slot);
     showStripLayer(layer, strip, true);
-    const place = (motion: number) => {
-      restorePaneStripScroll(entry);
-      const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
-      if (reveal !== null) pendingReveals.delete(strip);
-      placePaneJoin(entry, tabId, motion);
-      if (reveal) scrollWithSlide(entry, strip.scrollLeft + reveal);
-    };
-    holdPaneStrip(entry, place, motionMs);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
     const pane = row?.closest<HTMLElement>("[data-layout-tab-id]") ?? null;
     const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
@@ -786,7 +781,21 @@ export function LayoutPaneTabStrip({
         markPaneJoinedAtStart(pane);
       }
     };
-  }, [entry, holds, layer, motionMs, tabId]);
+  }, [entry, holds, layer]);
+  // A tab press changes only which tab the strip's joined shape goes to, placed in the next frame.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Place the pane strip's joined tab after each commit.
+  useLayoutEffect(() => {
+    if (!holds) return;
+    const { strip } = entry;
+    const place = (motion: number) => {
+      restorePaneStripScroll(entry);
+      const reveal = pendingReveals.has(strip) ? revealPaneTab(strip, tabId) : null;
+      if (reveal !== null) pendingReveals.delete(strip);
+      placePaneJoin(entry, tabId, motion);
+      if (reveal) scrollWithSlide(entry, strip.scrollLeft + reveal);
+    };
+    holdPaneStrip(entry, place, motionMs);
+  }, [entry, holds, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
   useLayoutEffect(
     () => () => {

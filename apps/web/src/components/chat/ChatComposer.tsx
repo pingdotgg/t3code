@@ -3772,7 +3772,8 @@ export function ChatComposer(props: ChatComposerProps) {
       {...threadContextDropTargetProps()}
     >
       {requestCardHost && requestCard ? createPortal(requestCard, requestCardHost) : null}
-      {props.stashHost
+      {/* Each portal host takes React's whole delegated listener set, so an empty badge mounts none. */}
+      {props.stashHost && stashQueue.length > 0
         ? createPortal(
             <ComposerStashBadge
               count={stashQueue.length}
