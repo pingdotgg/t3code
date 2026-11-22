@@ -126,9 +126,10 @@ export default function Spreadsheet(props: {
         aria-label={gt("Sheets")}
         className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border px-2"
         onKeyDown={(event) => {
-          const current = opened.tabs.findIndex(
-            (tab) => tab.index === opened.layout.info.activeSheet,
-          );
+          // Focus moves before the worker confirms the selected sheet.
+          const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+          const current = Array.from(buttons).findIndex((button) => button === event.target);
+          if (current < 0) return;
           const next =
             event.key === "ArrowRight"
               ? (current + 1) % opened.tabs.length
@@ -143,7 +144,7 @@ export default function Spreadsheet(props: {
           event.preventDefault();
           const tab = opened.tabs[next];
           if (tab) show(tab.index);
-          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+          buttons[next]?.focus();
         }}
       >
         {opened.tabs.map((tab) => (
