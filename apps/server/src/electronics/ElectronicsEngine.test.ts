@@ -865,5 +865,35 @@ ${libEntries.join("\n")}
     const spacedModel = parseElectronicsFile("sch/spaced.kicad_sch", spacedValSch);
     const spacedDc = runBuiltinMnaSimulation(spacedModel, { kind: "dc_op", outputNode: "MID" });
     expect(spacedDc.nodeVoltages.find((n) => n.node === "MID")?.voltageV).toBeCloseTo(2.5, 4);
+
+    // Roundrect 2x2mm pad (roundrect_rratio 0.25) with 0.1mm trace starting at (0.96, 0.96)
+    // has ~0.101mm corner clearance -> MUST NOT connect
+    const roundRectGapPcb = `(kicad_pcb
+  (footprint "RR1" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd roundrect (at 0 0) (size 2 2) (roundrect_rratio 0.25) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "RR2" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd roundrect (at 0 0) (size 2 2) (roundrect_rratio 0.25) (layers "F.Cu") (net "SIG"))
+  )
+  (segment (start 0.96 0.96) (end 5 5) (width 0.1) (layer "F.Cu") (net "SIG"))
+)`;
+    const rrGapModel = parseElectronicsFile("pcb/roundrect_gap.kicad_pcb", roundRectGapPcb);
+    expect(traceCircuitPath(rrGapModel, { from: "R1.1", to: "R2.1" }).connected).toBe(false);
+    expect(
+      runBuiltinCircuitValidation(rrGapModel).issues.some((i) => i.code === "unrouted_pcb_net"),
+    ).toBe(true);
+
+    // Schematic with tied ground aliases (GND + VSS) must both validate AND simulate cleanly
+    const tiedGndSch = `${spacedValSch.slice(0, -1)}
+  (label "VSS" (at 20 32 0))
+)`;
+    const tiedGndModel = parseElectronicsFile("sch/tied_gnd.kicad_sch", tiedGndSch);
+    expect(
+      runBuiltinCircuitValidation(tiedGndModel).issues.some((i) => i.code === "power_rail_short"),
+    ).toBe(false);
+    const tiedGndDc = runBuiltinMnaSimulation(tiedGndModel, { kind: "dc_op", outputNode: "MID" });
+    expect(tiedGndDc.nodeVoltages.find((n) => n.node === "MID")?.voltageV).toBeCloseTo(2.5, 4);
   });
 });

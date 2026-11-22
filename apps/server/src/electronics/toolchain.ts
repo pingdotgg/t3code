@@ -426,14 +426,11 @@ export function parseNgspiceBatchOutput(
         continue;
       }
 
-      // Handle `v(out) = 2.500000e+00`, `out = 2.5`
-      const eqMatch =
-        /^\s*(?:v\(([^)]+)\)|([A-Za-z0-9_.:+-]+))\s*=\s*([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
-          line,
-        );
+      // Handle explicit `v(out) = 2.500000e+00` lines anywhere in output
+      const eqMatch = /^\s*v\(([^)]+)\)\s*=\s*([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(line);
       if (eqMatch) {
-        const node = (eqMatch[1] ?? eqMatch[2] ?? "").trim();
-        const val = Number(eqMatch[3]!);
+        const node = eqMatch[1]!.trim();
+        const val = Number(eqMatch[2]!);
         if (
           node.length > 0 &&
           Number.isFinite(val) &&
@@ -446,23 +443,24 @@ export function parseNgspiceBatchOutput(
         continue;
       }
 
-      // Handle tabular `Node   Voltage` rows (including numeric SPICE node names inside the section)
-      const tabMatch = /^\s*([A-Za-z0-9_.:+-]+)\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
-        line,
-      );
-      if (tabMatch) {
-        const node = tabMatch[1]!;
-        const val = Number(tabMatch[2]!);
-        const isPureInteger = /^\d+$/u.test(node);
-        if (
-          Number.isFinite(val) &&
-          !seenNodes.has(node.toLowerCase()) &&
-          !/^(index|temp|tnom)$/iu.test(node) &&
-          (inVoltageSection || !isPureInteger)
-        ) {
-          if (inVoltageSection) readVoltageRowInSection = true;
-          seenNodes.add(node.toLowerCase());
-          nodeVoltages.push({ node, voltageV: Number(val.toPrecision(6)) });
+      // Handle tabular `Node   Voltage` rows STRICTLY inside the `Node Voltage` section so
+      // device summary tables (e.g. `resistance   1000`) are never mistaken for circuit nodes.
+      if (inVoltageSection) {
+        const tabMatch = /^\s*([A-Za-z0-9_.:+-]+)\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
+          line,
+        );
+        if (tabMatch) {
+          const node = tabMatch[1]!;
+          const val = Number(tabMatch[2]!);
+          if (
+            Number.isFinite(val) &&
+            !seenNodes.has(node.toLowerCase()) &&
+            !/^(index|temp|tnom)$/iu.test(node)
+          ) {
+            readVoltageRowInSection = true;
+            seenNodes.add(node.toLowerCase());
+            nodeVoltages.push({ node, voltageV: Number(val.toPrecision(6)) });
+          }
         }
       }
       continue;

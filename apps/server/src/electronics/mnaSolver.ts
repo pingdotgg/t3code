@@ -403,8 +403,15 @@ export function runBuiltinMnaSimulation(
 
   // Format-aware reference node rule: in SPICE decks, only node 0 (normalized to "GND") is ground;
   // arbitrary nodes such as VSS or AVSS remain independent solved nodes.
+  // In schematic/Circuit JSON models, recognize ground nets via parsed net metadata as well as
+  // merged ground-alias net names (e.g. "GND / VSS").
+  const groundNetNames = new Set(model.nets.filter((n) => n.isGround).map((n) => n.name));
   const isRefNode = (name: string): boolean =>
-    model.format === "spice" ? name === "0" || name.toUpperCase() === "GND" : isGroundNetName(name);
+    model.format === "spice"
+      ? name === "0" || name.toUpperCase() === "GND"
+      : groundNetNames.has(name) ||
+        isGroundNetName(name) ||
+        name.split(" / ").some((part) => isGroundNetName(part.trim()));
 
   // Gather non-ground nodes
   const nodeIndex = new Map<string, number>();

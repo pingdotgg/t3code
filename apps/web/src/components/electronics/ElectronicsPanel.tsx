@@ -109,6 +109,9 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   );
 
   const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
+  const [lastPanelOpenedAt, setLastPanelOpenedAt] = useState<string | null>(
+    threadSession?.panelOpenedAt ?? null,
+  );
   const [lastSyncedTraceKey, setLastSyncedTraceKey] = useState<string>("");
   const [traceError, setTraceError] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
@@ -148,42 +151,59 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
     activeContextRef.current.file === file;
 
   if (threadSession && threadSession.updatedAt !== lastSyncedAt) {
+    const isInitialHydration = lastSyncedAt === "" && selectedFile === "";
+    const isExplicitNavigation =
+      threadSession.panelOpenedAt !== undefined &&
+      threadSession.panelOpenedAt !== lastPanelOpenedAt;
     setLastSyncedAt(threadSession.updatedAt);
-    if (threadSession.filePath !== selectedFile) {
-      setSelectedFile(threadSession.filePath);
-      setModel(null);
-      setSelectedNet(null);
-      setSelectedRef(null);
-      setTraceResult(null);
-      setValidationReport(null);
-      setSimResult(null);
-      setSimOutputNode("");
-      setTraceError(null);
-      setValidationError(null);
-      setSimError(null);
-      setTraceRunning(false);
-      setValidationRunning(false);
-      setSimRunning(false);
+    if (isExplicitNavigation) {
+      setLastPanelOpenedAt(threadSession.panelOpenedAt ?? null);
     }
-    setActiveTab(threadSession.activeTab);
-    if (threadSession.selectedNet !== undefined) {
-      setSelectedNet(threadSession.selectedNet);
-    }
-    if (threadSession.lastTrace !== undefined) {
-      const traceKey = `${threadSession.filePath}:${threadSession.lastTrace.from}:${threadSession.lastTrace.to ?? ""}:${threadSession.lastTrace.hops.length}`;
-      setTraceResult(threadSession.lastTrace);
-      if (traceKey !== lastSyncedTraceKey) {
-        setLastSyncedTraceKey(traceKey);
-        setTraceFrom(threadSession.lastTrace.from);
-        setTraceTo(threadSession.lastTrace.to ?? "");
+
+    // Only switch files or tabs on explicit `openPanel` navigation or initial empty hydration.
+    // Result-only broadcasts (e.g. a slow simulation finishing after the user switched files)
+    // apply strictly to the matching file view and never snap the panel back to an older file.
+    if (isExplicitNavigation || isInitialHydration) {
+      if (threadSession.filePath !== selectedFile) {
+        setSelectedFile(threadSession.filePath);
+        setModel(null);
+        setLoadingModel(true);
+        setSelectedNet(null);
+        setSelectedRef(null);
+        setTraceResult(null);
+        setValidationReport(null);
+        setSimResult(null);
+        setSimOutputNode("");
+        setTraceError(null);
+        setValidationError(null);
+        setSimError(null);
+        setTraceRunning(false);
+        setValidationRunning(false);
+        setSimRunning(false);
       }
+      setActiveTab(threadSession.activeTab);
     }
-    if (threadSession.lastValidation !== undefined) {
-      setValidationReport(threadSession.lastValidation);
-    }
-    if (threadSession.lastSimulation !== undefined) {
-      setSimResult(threadSession.lastSimulation);
-      setSimKind(threadSession.lastSimulation.kind);
+
+    if (isExplicitNavigation || isInitialHydration || threadSession.filePath === selectedFile) {
+      if (threadSession.selectedNet !== undefined) {
+        setSelectedNet(threadSession.selectedNet);
+      }
+      if (threadSession.lastTrace !== undefined) {
+        const traceKey = `${threadSession.filePath}:${threadSession.lastTrace.from}:${threadSession.lastTrace.to ?? ""}:${threadSession.lastTrace.hops.length}`;
+        setTraceResult(threadSession.lastTrace);
+        if (traceKey !== lastSyncedTraceKey) {
+          setLastSyncedTraceKey(traceKey);
+          setTraceFrom(threadSession.lastTrace.from);
+          setTraceTo(threadSession.lastTrace.to ?? "");
+        }
+      }
+      if (threadSession.lastValidation !== undefined) {
+        setValidationReport(threadSession.lastValidation);
+      }
+      if (threadSession.lastSimulation !== undefined) {
+        setSimResult(threadSession.lastSimulation);
+        setSimKind(threadSession.lastSimulation.kind);
+      }
     }
   }
 

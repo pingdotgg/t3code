@@ -193,6 +193,7 @@ interface PadGeometry {
   readonly padHeight?: number;
   readonly padRotation?: number;
   readonly padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
+  readonly padRoundRectRatio?: number;
 }
 
 function pointToPadDistance(px: number, py: number, pad: PadGeometry): number {
@@ -217,6 +218,17 @@ function pointToPadDistance(px: number, py: number, pad: PadGeometry): number {
     }
     const span = halfH - r;
     return Math.max(0, pointToSegmentDistance(lx, ly, 0, -span, 0, span) - r);
+  }
+  if (pad.padShape === "roundrect") {
+    const ratio = Math.max(0, Math.min(0.5, pad.padRoundRectRatio ?? 0.25));
+    const cornerRadius = Math.min(halfW, halfH) * 2 * ratio;
+    const innerW = Math.max(0, halfW - cornerRadius);
+    const innerH = Math.max(0, halfH - cornerRadius);
+    return Math.max(
+      0,
+      pointToOrientedBoxDistance(px, py, pad.x, pad.y, innerW, innerH, pad.padRotation ?? 0) -
+        cornerRadius,
+    );
   }
   return pointToOrientedBoxDistance(px, py, pad.x, pad.y, halfW, halfH, pad.padRotation ?? 0);
 }
@@ -259,6 +271,26 @@ function segmentToPadDistance(
     );
     return Math.max(0, spineDist - r);
   }
+  if (pad.padShape === "roundrect") {
+    const ratio = Math.max(0, Math.min(0.5, pad.padRoundRectRatio ?? 0.25));
+    const cornerRadius = Math.min(halfW, halfH) * 2 * ratio;
+    const innerW = Math.max(0, halfW - cornerRadius);
+    const innerH = Math.max(0, halfH - cornerRadius);
+    return Math.max(
+      0,
+      segmentToOrientedBoxDistance(
+        x1,
+        y1,
+        x2,
+        y2,
+        pad.x,
+        pad.y,
+        innerW,
+        innerH,
+        pad.padRotation ?? 0,
+      ) - cornerRadius,
+    );
+  }
   return segmentToOrientedBoxDistance(
     x1,
     y1,
@@ -283,6 +315,7 @@ export interface PcbCopperIslandResult {
     readonly padHeight?: number;
     readonly padRotation?: number;
     readonly padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
+    readonly padRoundRectRatio?: number;
   }>;
   readonly islandCount: number;
   readonly trackCount: number;
@@ -303,6 +336,7 @@ export function computePcbCopperIslands(
     padHeight?: number;
     padRotation?: number;
     padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
+    padRoundRectRatio?: number;
   }> = [];
   for (const comp of model.components) {
     for (const pin of comp.pins) {
@@ -325,6 +359,9 @@ export function computePcbCopperIslands(
           ...(pin.padHeight !== undefined ? { padHeight: pin.padHeight } : {}),
           ...(pin.padRotation !== undefined ? { padRotation: pin.padRotation } : {}),
           ...(pin.padShape !== undefined ? { padShape: pin.padShape } : {}),
+          ...(pin.padRoundRectRatio !== undefined
+            ? { padRoundRectRatio: pin.padRoundRectRatio }
+            : {}),
         });
       }
     }
@@ -375,16 +412,6 @@ export function computePcbCopperIslands(
   const PCB_CELL = 5.0;
   const cellOf = (x: number, y: number) =>
     [Math.floor(x / PCB_CELL), Math.floor(y / PCB_CELL)] as const;
-  const addPointToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
-    const [cx, cy] = cellOf(x, y);
-    const key = `${cx},${cy}`;
-    let bucket = grid.get(key);
-    if (!bucket) {
-      bucket = [];
-      grid.set(key, bucket);
-    }
-    bucket.push(item);
-  };
 
   const padGrid = new Map<string, number[]>();
   const largePads: number[] = [];
@@ -413,8 +440,29 @@ export function computePcbCopperIslands(
     }
   }
   const viaGrid = new Map<string, number[]>();
+  const largeVias: number[] = [];
   for (let v = 0; v < netVias.length; v += 1) {
-    addPointToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
+    const via = netVias[v]!;
+    const viaExtent = Math.max(0.05, via.size / 2);
+    const minCx = Math.floor((via.x - viaExtent) / PCB_CELL);
+    const maxCx = Math.floor((via.x + viaExtent) / PCB_CELL);
+    const minCy = Math.floor((via.y - viaExtent) / PCB_CELL);
+    const maxCy = Math.floor((via.y + viaExtent) / PCB_CELL);
+    if ((maxCx - minCx + 1) * (maxCy - minCy + 1) > 64) {
+      largeVias.push(v);
+    } else {
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        for (let cy = minCy; cy <= maxCy; cy += 1) {
+          const key = `${cx},${cy}`;
+          let bucket = viaGrid.get(key);
+          if (!bucket) {
+            bucket = [];
+            viaGrid.set(key, bucket);
+          }
+          bucket.push(v);
+        }
+      }
+    }
   }
 
   // Direct via-in-pad contact using shape-aware pad geometry and via diameter (including *.Cu through-hole pads)
@@ -478,7 +526,7 @@ export function computePcbCopperIslands(
   for (let t = 0; t < netTracks.length; t += 1) {
     const seg = netTracks[t]!;
     const segWidth = seg.width ?? 0.2;
-    const margin = Math.max(0.5, segWidth / 2);
+    const margin = Math.max(0.5, segWidth / 2) + 0.05;
     const minCx = Math.floor((Math.min(seg.x1, seg.x2) - margin) / PCB_CELL);
     const maxCx = Math.floor((Math.max(seg.x1, seg.x2) + margin) / PCB_CELL);
     const minCy = Math.floor((Math.min(seg.y1, seg.y2) - margin) / PCB_CELL);
@@ -558,6 +606,7 @@ export function computePcbCopperIslands(
       }
       for (const other of layerLarge) testTrack(other);
       for (const p of largePads) testPad(p);
+      for (const v of largeVias) testVia(v);
       for (let cx = minCx; cx <= maxCx; cx += 1) {
         for (let cy = minCy; cy <= maxCy; cy += 1) {
           const cellKey = `${cx},${cy}`;

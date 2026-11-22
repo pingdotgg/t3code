@@ -62,6 +62,7 @@ export const ElectronicsPin = Schema.Struct({
   padShape: Schema.optional(
     Schema.Literals(["circle", "oval", "rect", "roundrect", "trapezoid", "custom"]),
   ),
+  padRoundRectRatio: Schema.optional(Schema.Number),
 });
 export type ElectronicsPin = typeof ElectronicsPin.Type;
 

@@ -97,6 +97,11 @@ describe("ElectronicsToolchain", () => {
     ]);
 
     const tabularOp = [
+      "Resistor: Simple linear resistor",
+      "device                    r1",
+      "model                      R",
+      "resistance              1000",
+      "",
       "Node                                  Voltage",
       "----                                  -------",
       "1                                 5.000000e+00",

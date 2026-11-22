@@ -813,7 +813,17 @@ export const layer = Layer.effect(
         panelOpenedAt: now,
         updatedAt: now,
       });
-      const committed = yield* updateThreadSession(input.threadId, nextSession, startGen);
+      const currentGen = yield* currentCloseGeneration(input.threadId);
+      if (currentGen !== startGen) {
+        return nextSession(undefined);
+      }
+      // Advance generation so older in-flight trace/validate/simulate runs cannot overwrite this explicit openPanel.
+      yield* Ref.update(closeGenRef, (map) => {
+        const next = new Map(map);
+        next.set(input.threadId, currentGen + 1);
+        return next;
+      });
+      const committed = yield* updateThreadSession(input.threadId, nextSession, currentGen + 1);
       return committed ?? nextSession(undefined);
     });
 

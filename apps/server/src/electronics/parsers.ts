@@ -1053,6 +1053,11 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       const padSize = findChild(pad, "size");
       const padW = atomNumber(padSize?.[1]);
       const padH = atomNumber(padSize?.[2]);
+      const rawRoundRectRatio = atomNumber(findChild(pad, "roundrect_rratio")?.[1]);
+      const padRoundRectRatio =
+        rawRoundRectRatio !== undefined && Number.isFinite(rawRoundRectRatio)
+          ? Math.max(0, Math.min(0.5, rawRoundRectRatio))
+          : undefined;
       const wx = Number((fx + pxLocal * cos - pyLocal * sin).toFixed(3));
       const wy = Number((fy + pxLocal * sin + pyLocal * cos).toFixed(3));
 
@@ -1068,6 +1073,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
         ...(padH !== undefined && Number.isFinite(padH) && padH > 0 ? { padHeight: padH } : {}),
         ...(Number.isFinite(padRot) && padRot !== 0 ? { padRotation: padRot } : {}),
         ...(padShape !== undefined ? { padShape } : {}),
+        ...(padRoundRectRatio !== undefined ? { padRoundRectRatio } : {}),
         x: wx,
         y: wy,
       });

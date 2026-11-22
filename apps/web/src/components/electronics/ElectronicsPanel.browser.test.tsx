@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import * as Exit from "effect/Exit";
+import { useSyncExternalStore } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
@@ -182,7 +183,7 @@ const SAMPLE_SIM: ElectronicsSimulationResult = {
   simulatedAt: "2026-11-22T05:00:00.000Z",
 };
 
-const mockState: ElectronicsServiceState = {
+let mockState: ElectronicsServiceState = {
   toolchain: {
     enabled: true,
     allowExternalTools: true,
@@ -193,6 +194,11 @@ const mockState: ElectronicsServiceState = {
   },
   sessions: [],
 };
+const stateListeners = new Set<() => void>();
+function emitMockState(next: ElectronicsServiceState) {
+  mockState = next;
+  for (const listener of stateListeners) listener();
+}
 
 vi.mock("~/state/electronics", () => ({
   electronicsEnvironment: {
@@ -202,12 +208,21 @@ vi.mock("~/state/electronics", () => ({
     validate: "validate",
     simulate: "simulate",
   },
-  useElectronicsState: () => ({
-    state: mockState,
-    loaded: true,
-    error: null,
-    refresh: vi.fn(),
-  }),
+  useElectronicsState: () => {
+    const state = useSyncExternalStore(
+      (listener) => {
+        stateListeners.add(listener);
+        return () => stateListeners.delete(listener);
+      },
+      () => mockState,
+    );
+    return {
+      state,
+      loaded: true,
+      error: null,
+      refresh: vi.fn(),
+    };
+  },
 }));
 
 const simControl: {
@@ -332,10 +347,26 @@ describe("ElectronicsPanel", () => {
     // Run button must immediately be re-enabled (not stuck in Simulating…)
     await expect.element(screen.getByRole("button", { name: /Run Simulation/i })).toBeEnabled();
 
-    // Resolving the stale first simulation must NOT paint its result onto the new file
+    // Resolving the stale first simulation AND publishing a stale session broadcast for file A
+    // must NOT paint file A's result or snap the file selector back from file B to file A
+    emitMockState({
+      ...mockState,
+      sessions: [
+        {
+          threadId: ThreadId.make("thread-1"),
+          filePath: "boards/power.kicad_sch",
+          format: "kicad_sch",
+          activeTab: "simulate",
+          lastSimulation: SAMPLE_SIM,
+          openedAt: "2026-11-22T05:00:00.000Z",
+          updatedAt: "2026-11-22T05:01:00.000Z",
+        },
+      ],
+    });
     resolveDeferredSim(Exit.succeed(SAMPLE_SIM));
     await Promise.resolve();
     await Promise.resolve();
+    await expect.element(screen.getByText("RC Filter Deck")).toBeVisible();
     await expect.element(screen.getByText(/1\.59 kHz/i)).not.toBeInTheDocument();
   });
 });
