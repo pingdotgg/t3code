@@ -119,7 +119,8 @@ function pickStrippedWorkspaceMatch(
 
 /**
  * The absolute path of the one file a chat link names across other project roots, or null when
- * no root has it or roots name different files. Agents cite paths relative to their repo.
+ * no root has it or roots name different files. If several roots match a basename, every
+ * case-insensitive match counts, even if a root cannot pick one on its own.
  * Nested project roots list the same file more than once, which still names one file.
  */
 export function pickProjectLinkMatch(
@@ -130,35 +131,33 @@ export function pickProjectLinkMatch(
   }>,
 ): string | null {
   const target = relativePath.trim();
-  const isBasename = needsWorkspaceBasenameLookup(target);
-  const matches = new Map<string, string>();
-  let rootHits = 0;
-  const addMatch = (path: string) => {
-    // Windows paths that differ only by case stay distinct: a directory can be case-sensitive.
-    const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
-    if (!matches.has(key)) matches.set(key, path);
-  };
-  for (const { root, entries } of searches) {
-    if (isBasename) {
-      const match = pickWorkspaceBasenameMatch(target, entries);
-      if (match === null) continue;
-      rootHits += 1;
-      addMatch(resolveWorkspaceFilePath(match, root));
-    } else {
-      for (const match of workspaceQualifiedPathMatches(target, root, entries)) {
-        addMatch(resolveWorkspaceFilePath(match, root));
-      }
-    }
+  const folded = needsWorkspaceBasenameLookup(target) ? target.toLowerCase() : null;
+  const candidates =
+    folded === null
+      ? searches
+      : searches.flatMap(({ root, entries }) => {
+          const matching = entries.filter(
+            (entry) => entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded,
+          );
+          return matching.length === 0 ? [] : [{ root, entries: matching }];
+        });
+  const [onlySearch] = candidates;
+  if (folded !== null && candidates.length === 1 && onlySearch !== undefined) {
+    const match = pickWorkspaceBasenameMatch(target, onlySearch.entries);
+    return match === null ? null : resolveWorkspaceFilePath(match, onlySearch.root);
   }
-  if (isBasename && rootHits > 1) {
-    // A root's pick, or a root left ambiguous by case, can hide another file elsewhere.
-    const folded = target.toLowerCase();
-    for (const { root, entries } of searches) {
-      for (const entry of entries) {
-        if (entry.kind === "file" && basenameOfPath(entry.path).toLowerCase() === folded) {
-          addMatch(resolveWorkspaceFilePath(entry.path, root));
-        }
-      }
+
+  const matches = new Map<string, string>();
+  for (const { root, entries } of candidates) {
+    const paths =
+      folded === null
+        ? workspaceQualifiedPathMatches(target, root, entries)
+        : entries.map((entry) => entry.path);
+    for (const match of paths) {
+      const path = resolveWorkspaceFilePath(match, root);
+      // Windows paths that differ only by case stay distinct: a directory can be case-sensitive.
+      const key = isWindowsAbsolutePath(path) ? path.replaceAll("/", "\\") : path;
+      if (!matches.has(key)) matches.set(key, path);
     }
   }
   return matches.size === 1 ? ([...matches.values()][0] ?? null) : null;
