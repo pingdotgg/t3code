@@ -13,7 +13,14 @@ import {
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { reviewCommentContextLabel } from "~/lib/composerContextRecords";
+import {
+  formatComposerContextReference,
+  projectComposerContextForProvider,
+} from "@t3tools/shared/composerContextReferences";
+import {
+  reviewCommentContextLabel,
+  reviewCommentContextRecord,
+} from "~/lib/composerContextRecords";
 
 import {
   buildAddSelectionToAgentHandoff,
@@ -50,6 +57,7 @@ import {
   shouldRefreshPullRequestActivity,
   resolveBaseFreshness,
   buildPullRequestTimeline,
+  pullRequestLinkSubject,
   writePullRequestDetailSnapshot,
   readableFailure,
 } from "./pullRequestDetail.logic";
@@ -313,6 +321,66 @@ describe("review verdicts", () => {
 });
 
 describe("pull request timeline", () => {
+  it("names the comment or commit a link points at for its hover card", () => {
+    const pr = "https://github.com/o/r/pull/1";
+    const sha = "a".repeat(40);
+    const activity = {
+      comments: [
+        {
+          ...TIMELINE_SOURCE.comments[0]!,
+          url: `${pr}#issuecomment-5`,
+          body: "<!-- bot -->\n> [!NOTE]\n> **Looks** good, see `run()` ![shot](x.png)",
+        },
+      ],
+      reviewThreads: [
+        {
+          id: "t",
+          path: "a.ts",
+          line: 1,
+          side: "right" as const,
+          isResolved: false,
+          isOutdated: false,
+          comments: [
+            {
+              id: "r1",
+              author: { login: "reviewer", name: null, avatarUrl: null },
+              body: "nit",
+              createdAt: "2026-07-03T00:00:00Z",
+              url: `${pr}#discussion_r1`,
+              reviewUrl: `${pr}#pullrequestreview-9`,
+            },
+          ],
+        },
+      ],
+      commits: [{ oid: sha, messageHeadline: "fix it", committedDate: "2026-07-02T00:00:00Z" }],
+    };
+    expect(pullRequestLinkSubject(`${pr}#issuecomment-5`, activity)).toMatchObject({
+      kind: "comment",
+      excerpt: "Looks good, see run()",
+    });
+    // A review with no text of its own is shown through the comment it posted.
+    expect(pullRequestLinkSubject(`${pr}#pullrequestreview-9`, activity)).toMatchObject({
+      kind: "comment",
+      author: { login: "reviewer" },
+      excerpt: "nit",
+    });
+    expect(pullRequestLinkSubject(`${pr}/commits/${sha}`, activity)).toMatchObject({
+      kind: "commit",
+      commit: { messageHeadline: "fix it" },
+    });
+    for (const url of [pr, `${pr}/files`, `${pr}/checks`, `${pr}#issuecomment-6`]) {
+      expect(pullRequestLinkSubject(url, activity), url).toBeNull();
+    }
+    // An emoji straddling the cut is dropped whole rather than split into a lone surrogate.
+    const long = {
+      ...activity,
+      comments: [{ ...activity.comments[0]!, body: `${"i ".repeat(139)}😀bb` }],
+    };
+    const cut = pullRequestLinkSubject(`${pr}#issuecomment-5`, long);
+    const excerpt = cut && "excerpt" in cut ? cut.excerpt : null;
+    expect(excerpt).toMatch(/^(?:i ?)+…$/u);
+  });
+
   it("orders host timestamps by instant across offsets and fractional seconds", () => {
     const events = buildPullRequestTimeline({
       ...TIMELINE_SOURCE,
@@ -677,6 +745,26 @@ describe("fix findings handoff", () => {
     expect(handoff.prompt).toContain("untrusted data");
   });
 
+  it("claims a prepared checkout only when one was prepared", () => {
+    const fix = (inThisThread: boolean) =>
+      buildFixFindingsHandoff({
+        ...base,
+        reviewThreads: [],
+        comments: [],
+        checks: [failingCheck],
+        commentsTruncated: false,
+        inThisThread,
+      }).prompt;
+    const resolve = (inThisThread: boolean) =>
+      buildResolveConflictsPrompt({ ...base, inThisThread });
+    expect(fix(false)).toContain("prepared checkout");
+    expect(resolve(false)).toContain("checkout prepared");
+    expect(fix(true)).not.toMatch(/prepared/u);
+    expect(resolve(true)).not.toMatch(/prepared/u);
+    expect(fix(true)).toContain("switching to it or checking it out first");
+    expect(resolve(true)).toContain("switch to it or check it out first");
+  });
+
   it("bounds a hostile review body instead of attaching it whole", () => {
     const handoff = buildFixFindingsHandoff({
       ...base,
@@ -946,35 +1034,59 @@ describe("asking about a change rather than working on it", () => {
   });
 
   it("keeps both pull requests when two repositories share a number", () => {
-    const selection = (id: string) => ({
+    const selection = (id: string, line = 12) => ({
       id,
       sectionId: "pull-request:42",
       sectionTitle: "PR #42 review",
       filePath: "apps/web/src/page.tsx",
-      startIndex: 11,
-      endIndex: 17,
-      rangeLabel: "L12-L18",
+      startIndex: line - 1,
+      endIndex: line + 5,
+      rangeLabel: `L${line}-L${line + 6}`,
       text: "",
       diff: "+const answer = 42;",
     });
     const otherUrl = "https://github.com/acme/other/pull/42";
     const first = buildAddSelectionToAgentHandoff({
       ...base,
-      comment: selection("pull-request-selection:t3code:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "why?",
     });
     const second = buildAddSelectionToAgentHandoff({
       ...base,
       url: otherUrl,
-      comment: selection("pull-request-selection:other:page.tsx:12:18"),
+      comment: selection("pull-request-selection:page.tsx:12:18"),
       request: "and here?",
     });
-    const draft = appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second);
+    const third = buildAddSelectionToAgentHandoff({
+      ...base,
+      comment: selection("pull-request-selection:page.tsx:20:26", 20),
+      request: "and this other range in the first pull request?",
+    });
+    const draft = appendHandoff(
+      appendHandoff(appendHandoff({ prompt: "", reviewComments: [] }, first), second),
+      third,
+    );
     expect(draft.reviewComments.map((comment) => comment.pullRequest?.url)).toEqual([
       base.url,
       undefined,
       otherUrl,
       undefined,
+      undefined,
+    ]);
+    expect(
+      draft.reviewComments
+        .filter((comment) => comment.diff !== "")
+        .map((comment) => {
+          const record = reviewCommentContextRecord(comment);
+          return projectComposerContextForProvider({
+            text: formatComposerContextReference(record),
+            records: [record],
+          });
+        }),
+    ).toEqual([
+      expect.stringContaining(base.url),
+      expect.stringContaining(otherUrl),
+      expect.stringContaining(base.url),
     ]);
   });
 
@@ -997,7 +1109,11 @@ describe("asking about a change rather than working on it", () => {
 });
 
 describe("adding a remark to the chat", () => {
-  const pullRequest = { number: 42, url: "https://github.com/pingdotgg/t3code/pull/42" };
+  const pullRequest = {
+    number: 42,
+    url: "https://github.com/pingdotgg/t3code/pull/42",
+    reviewThreads: [],
+  };
   const remark = (id: string, body: string): PullRequestComment => ({
     id,
     kind: "issue-comment",
@@ -1017,6 +1133,112 @@ describe("adding a remark to the chat", () => {
 
     expect(context && reviewCommentContextLabel(context)).toBe("#42 @octocat comment");
     expect(context?.text).toBe("octocat: Why not reuse the existing parser?");
+  });
+
+  it("keeps a review summary longer than a fix finding's bound whole", () => {
+    const summary = `No critical issues. ${"One misplaced doc comment inline. ".repeat(80)}End.`;
+    const context = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark("c1", summary),
+    });
+
+    expect(context?.text).toBe(`octocat: ${summary.trim()}`);
+  });
+
+  it("gives a GitHub review summary its link and the line comments it posted", () => {
+    const url = "https://github.com/pingdotgg/t3code/pull/42";
+    const review: PullRequestComment = {
+      ...remark("r9", "One misplaced doc comment inline."),
+      kind: "review",
+      url: `${url}#pullrequestreview-9`,
+      reviewState: "COMMENTED",
+    };
+    const lineComment = (id: string, reviewUrl: string, body: string) => ({
+      id,
+      author: { login: "octocat", name: null, avatarUrl: null },
+      body,
+      createdAt: "2026-07-03T00:00:00Z",
+      url: `${url}#discussion_${id}`,
+      reviewUrl,
+    });
+    const reviewThreads = [
+      {
+        id: "t1",
+        path: "src/main.rs",
+        line: 12,
+        side: "right" as const,
+        isResolved: false,
+        isOutdated: false,
+        comments: [
+          lineComment("r1", `${url}#pullrequestreview-9`, "This doc comment belongs below."),
+          lineComment("r2", `${url}#pullrequestreview-10`, "Moved."),
+        ],
+      },
+    ];
+
+    expect(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },
+        { kind: "comment", comment: review },
+      )?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "Line comments in this review:\n\noctocat on `src/main.rs` line 12: This doc comment belongs below.",
+      ].join("\n\n"),
+    );
+    expect(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreadsTruncated: false },
+        { kind: "comment", comment: review },
+      )?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "This review posted no line comments.",
+      ].join("\n\n"),
+    );
+    // A failed or partial thread read must not read as a review with no line comments.
+    expect(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreadsTruncated: true },
+        { kind: "comment", comment: review },
+      )?.text,
+    ).toBe(
+      [
+        "octocat: One misplaced doc comment inline.",
+        `Review: ${url}#pullrequestreview-9`,
+        "No line comments from this review were loaded.",
+        "More may exist; see the review link.",
+      ].join("\n\n"),
+    );
+
+    const beforeContext = buildPullRequestCommentContext(
+      {
+        ...pullRequest,
+        reviewThreads: reviewThreads.map((thread) => ({ ...thread, side: "left" as const })),
+        reviewThreadsTruncated: false,
+      },
+      { kind: "comment", comment: review },
+    )!;
+    const beforeRecord = reviewCommentContextRecord(beforeContext);
+    const beforePrompt = projectComposerContextForProvider({
+      text: formatComposerContextReference(beforeRecord),
+      records: [beforeRecord],
+    });
+    expect(beforePrompt).toContain("`src/main.rs` line 12 (before)");
+
+    const sent = reviewCommentContextRecord(
+      buildPullRequestCommentContext(
+        { ...pullRequest, reviewThreads, reviewThreadsTruncated: false },
+        { kind: "comment", comment: { ...review, body: `Summary ${"x".repeat(15_990)}` } },
+      )!,
+    ).text;
+    expect(sent).toContain(`Review: ${url}#pullrequestreview-9`);
+    expect(sent).toContain("This doc comment belongs below.");
+    expect(sent).toContain("more characters of the review summary are omitted");
   });
 
   it("keeps every added remark when a later hand-off lands", () => {
@@ -1058,6 +1280,15 @@ describe("adding a remark to the chat", () => {
     });
 
     expect(context?.text).toBe("octocat: This leaks the token.\n\n```html\n<!-- kept -->\n```");
+    // A stray backtick before the comment opens no code span across the paragraphs.
+    const stray = buildPullRequestCommentContext(pullRequest, {
+      kind: "comment",
+      comment: remark(
+        "c2",
+        "Avoid `foo.\n\n<!-- bot state -->\nSee `bar` and `` a ` <!-- b --> ``.",
+      ),
+    });
+    expect(stray?.text).toBe("octocat: Avoid `foo.\n\nSee `bar` and `` a ` <!-- b --> ``.");
   });
 
   it("keeps comments inside a quoted fence as code", () => {
@@ -1111,7 +1342,7 @@ describe("adding a remark to the chat", () => {
   });
 
   it("keeps remarks from two repositories apart when their host ids match", () => {
-    const other = { number: 42, url: "https://github.com/octocat/fork/pull/42" };
+    const other = { ...pullRequest, url: "https://github.com/octocat/fork/pull/42" };
     const ids = [pullRequest, other].map(
       (target) =>
         buildPullRequestCommentContext(target, { kind: "comment", comment: remark("c1", "why?") })
