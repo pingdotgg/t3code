@@ -1,5 +1,7 @@
 import { thrownErrorMessage } from "../errors/translatable.ts";
 import { MessageId, type ProviderUploadFeedbackResult } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 
 import {
   isAtomCommandInterrupted,
@@ -108,7 +110,12 @@ export async function submitCodexFeedback<E>(
   input.onUpdate({ ...input.submission, status: "uploading" });
   input.clearDraft();
 
-  const result = await input.upload();
+  let result: AtomCommandResult<ProviderUploadFeedbackResult, E>;
+  try {
+    result = await input.upload();
+  } catch (defect) {
+    result = AsyncResult.failure(Cause.die(defect));
+  }
   if (result._tag === "Success") {
     input.onUpdate({
       ...input.submission,

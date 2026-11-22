@@ -80,6 +80,27 @@ describe("submitCodexFeedback", () => {
     expect(codexFeedbackNotice(states.at(-1)!)?.description).toBe("Upload rejected.");
   });
 
+  it("settles an unexpectedly rejected upload as a visible failure", async () => {
+    const states: CodexFeedbackSubmission[] = [];
+    const defect = new Error("Upload rejected.");
+
+    const result = await submitCodexFeedback({
+      submission,
+      clearDraft: () => undefined,
+      onUpdate: (state) => states.push(state),
+      upload: () => Promise.reject(defect),
+    });
+
+    expect(AsyncResult.isFailure(result)).toBe(true);
+    if (!AsyncResult.isFailure(result)) throw new Error("Expected the rejected upload to fail");
+    expect(Cause.squash(result.cause)).toBe(defect);
+    expect(states.at(-1)).toEqual({
+      ...submission,
+      status: "failed",
+      errorMessage: "Upload rejected.",
+    });
+  });
+
   it("marks interruptions without reporting them as upload failures", async () => {
     const states: CodexFeedbackSubmission[] = [];
 
