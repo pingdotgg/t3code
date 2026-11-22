@@ -330,17 +330,21 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
           folders: [],
           extraRoots: [],
         });
-        assert.deepEqual(yield* workspaceFolders.submodules({ projectId, worktreePath: null }), [
-          { name: "lib", path: path.join(workspaceRoot, "vendor", "lib"), isGitRepository: true },
-          {
-            name: "deep",
-            path: path.join(workspaceRoot, "vendor", "lib", "deep"),
-            isGitRepository: true,
-          },
-        ]);
+        const { folders } = yield* workspaceFolders.forThread({ projectId, worktreePath: null });
+        assert.deepEqual(
+          yield* workspaceFolders.submodules({ projectId, worktreePath: null, folders }),
+          [
+            { name: "lib", path: path.join(workspaceRoot, "vendor", "lib"), isGitRepository: true },
+            {
+              name: "deep",
+              path: path.join(workspaceRoot, "vendor", "lib", "deep"),
+              isGitRepository: true,
+            },
+          ],
+        );
         // A worktree reaches its own submodules, named by where the project folder has them.
         assert.deepEqual(
-          yield* workspaceFolders.submodules({ projectId, worktreePath: worktree }),
+          yield* workspaceFolders.submodules({ projectId, worktreePath: worktree, folders: [] }),
           [
             {
               name: "lib",
