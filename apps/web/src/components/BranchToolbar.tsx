@@ -96,7 +96,6 @@ import {
   resolveRestingComposerControlsMinimumWidth,
   resolveRestingComposerControlsNarrowestWidth,
 } from "./composerFooterLayout";
-import { NoProjectChip } from "./chat/NoProjectChip";
 import { useComposerMenuProps } from "./chat/composerEventScope";
 import { cn } from "~/lib/utils";
 
@@ -1420,9 +1419,6 @@ export const BranchToolbar = memo(function BranchToolbar({
       data-compact={stripCompaction === "none" ? undefined : stripCompaction}
       data-composer-context-control
     >
-      {isScratchProject(activeProject, scratchWorkspaceRoot) ? (
-        <NoProjectChip started={isServerThread} />
-      ) : null}
       {machineMenu}
       {!(showGitControls && showBranchControls) && !onOpenWorkspaceDetails ? (
         <WorkspaceMenu {...workspaceMenuProps} />
