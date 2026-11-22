@@ -202,8 +202,8 @@ export function createBrowserPcmCapture(
             if (canStream() && prepared.streaming) {
               streaming = prepared.streaming;
               feed = prepared.streaming.feed;
+              // The opening audio stays in chunks: it belongs to the kept recording too.
               for (const chunk of chunks) feed(chunk);
-              chunks = [];
             }
             return prepared;
           })
