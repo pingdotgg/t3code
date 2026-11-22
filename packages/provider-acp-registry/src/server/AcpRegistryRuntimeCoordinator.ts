@@ -29,28 +29,38 @@ interface LiveConfigurationUpdate {
   readonly revision: number;
 }
 
+export interface AcpRegistryRevisionedLiveConfiguration {
+  readonly configuration: AcpRegistryLiveConfiguration;
+  readonly revision: number;
+}
+
 export interface AcpRegistryLiveConfigurationSnapshot {
-  readonly catalog: Option.Option<AcpRegistryLiveConfiguration>;
+  readonly catalog: Option.Option<AcpRegistryRevisionedLiveConfiguration>;
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
+  readonly pendingOptions: ReadonlyArray<AcpRegistryRevisionedLiveConfiguration>;
   readonly revision: number;
   readonly catalogRevision: number;
   readonly clearedThroughRevision: number;
 }
 
 interface StoredLiveConfiguration {
-  readonly catalog: {
-    readonly configuration: AcpRegistryLiveConfiguration;
-    readonly revision: number;
-  } | null;
+  readonly catalog: AcpRegistryRevisionedLiveConfiguration | null;
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
+  readonly optionsByModel: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration>;
   readonly revision: number;
   readonly catalogRevision: number;
   readonly clearedThroughRevision: number;
 }
 
+const MAX_TRACKED_MODEL_OPTIONS = 256;
+
+const EMPTY_OPTIONS_BY_MODEL: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration> =
+  new Map();
+
 export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
   catalog: Option.none(),
   configuration: Option.none(),
+  pendingOptions: [],
   revision: 0,
   catalogRevision: 0,
   clearedThroughRevision: 0,
@@ -59,16 +69,23 @@ export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnap
 const EMPTY_STORED_LIVE_CONFIGURATION: StoredLiveConfiguration = {
   catalog: null,
   configuration: Option.none(),
+  optionsByModel: EMPTY_OPTIONS_BY_MODEL,
   revision: 0,
   catalogRevision: 0,
   clearedThroughRevision: 0,
 };
 
+const sortedPendingOptions = (
+  optionsByModel: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration>,
+): ReadonlyArray<AcpRegistryRevisionedLiveConfiguration> =>
+  Array.from(optionsByModel.values()).sort((left, right) => left.revision - right.revision);
+
 const toPublicLiveConfigurationSnapshot = (
   entry: StoredLiveConfiguration,
 ): AcpRegistryLiveConfigurationSnapshot => ({
-  catalog: entry.catalog === null ? Option.none() : Option.some(entry.catalog.configuration),
+  catalog: entry.catalog === null ? Option.none() : Option.some(entry.catalog),
   configuration: entry.configuration,
+  pendingOptions: sortedPendingOptions(entry.optionsByModel),
   revision: entry.revision,
   catalogRevision: entry.catalogRevision,
   clearedThroughRevision: entry.clearedThroughRevision,
@@ -277,6 +294,7 @@ const make = Effect.gen(function* () {
         if (
           current.catalog === null &&
           Option.isNone(current.configuration) &&
+          current.optionsByModel.size === 0 &&
           nextCleared === current.clearedThroughRevision
         ) {
           return state;
@@ -286,6 +304,7 @@ const make = Effect.gen(function* () {
           ...current,
           catalog: null,
           configuration: Option.none(),
+          optionsByModel: EMPTY_OPTIONS_BY_MODEL,
           clearedThroughRevision: nextCleared,
         });
         return next;
@@ -312,9 +331,24 @@ const make = Effect.gen(function* () {
                     modelsFromModelSelect: false,
                   }),
                 );
+          const nextOptionsByModel: ReadonlyMap<
+            string | null,
+            AcpRegistryRevisionedLiveConfiguration
+          > = Option.isSome(nextConfiguration)
+            ? new Map([
+                [
+                  nextConfiguration.value.currentModelId,
+                  { configuration: nextConfiguration.value, revision: current.revision },
+                ],
+              ])
+            : EMPTY_OPTIONS_BY_MODEL;
           if (
             current.catalog === null &&
             Equal.equals(current.configuration, nextConfiguration) &&
+            Equal.equals(
+              sortedPendingOptions(current.optionsByModel),
+              sortedPendingOptions(nextOptionsByModel),
+            ) &&
             nextCleared === current.clearedThroughRevision
           ) {
             return [true, state] as const;
@@ -324,6 +358,7 @@ const make = Effect.gen(function* () {
             ...current,
             catalog: null,
             configuration: nextConfiguration,
+            optionsByModel: nextOptionsByModel,
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -343,13 +378,26 @@ const make = Effect.gen(function* () {
             const catalogRevision = hasCatalog
               ? current.catalogRevision + 1
               : current.catalogRevision;
-            // Store the active catalog separately from options-only updates so an
-            // unrelated session's options update never discards or mutates it.
+            // Store the active catalog and per-model options separately so an unrelated
+            // session's options update never discards the catalog or drops earlier models' options.
             const catalog = hasCatalog ? { configuration, revision } : current.catalog;
+            const optionsByModel = hasCatalog
+              ? EMPTY_OPTIONS_BY_MODEL
+              : (() => {
+                  const updated = new Map(current.optionsByModel);
+                  updated.delete(configuration.currentModelId);
+                  updated.set(configuration.currentModelId, { configuration, revision });
+                  if (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
+                    const oldestKey = updated.keys().next().value;
+                    if (oldestKey !== undefined) updated.delete(oldestKey);
+                  }
+                  return updated;
+                })();
             const next = new Map(state);
             next.set(instanceId, {
               catalog,
               configuration: Option.some(configuration),
+              optionsByModel,
               revision,
               catalogRevision,
               clearedThroughRevision: current.clearedThroughRevision,
@@ -395,9 +443,10 @@ const make = Effect.gen(function* () {
               deliveredRevision = current.catalog.revision;
               yield* onUpdate(current.catalog.configuration, current.catalog.revision);
             }
-            if (Option.isSome(current.configuration) && current.revision > deliveredRevision) {
-              deliveredRevision = current.revision;
-              yield* onUpdate(current.configuration.value, current.revision);
+            for (const entry of sortedPendingOptions(current.optionsByModel)) {
+              if (entry.revision <= deliveredRevision) continue;
+              deliveredRevision = entry.revision;
+              yield* onUpdate(entry.configuration, entry.revision);
             }
           }
           yield* Stream.fromSubscription(subscription).pipe(

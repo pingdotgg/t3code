@@ -42,7 +42,8 @@ import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
-const MAX_MODELS = 256;
+export const ACP_REGISTRY_MAX_MODELS = 256;
+const MAX_MODELS = ACP_REGISTRY_MAX_MODELS;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
@@ -220,6 +221,8 @@ export interface AcpRegistryLiveConfiguration {
   readonly advertisedReasoning?: Readonly<
     Record<string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>>
   >;
+  // Selected model beyond MAX_MODELS, carried without re-advertising the capped catalog.
+  readonly currentModel?: AcpRegistryProbeModel;
 }
 
 export interface PreparedAcpRegistryLiveConfiguration {
@@ -266,14 +269,32 @@ export function prepareAcpRegistryLiveConfiguration(
       metaByModelId.set(info.modelId, info._meta);
     }
   }
-  const advertisedModels = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
+  const attachReasoning = (model: AcpRegistryProbeModel): AcpRegistryProbeModel => {
     const reasoningEffort = advertisedReasoningEffort(effortOption, metaByModelId.get(model.id));
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
-  });
+  };
+  const baseModels = normalizeModels(candidates, null).map(attachReasoning);
+  const currentInBase =
+    boundedCurrentModelId !== null &&
+    baseModels.some((model) => model.id === boundedCurrentModelId);
+  const advertisedModels =
+    boundedCurrentModelId === null || currentInBase
+      ? baseModels
+      : normalizeModels(candidates, boundedCurrentModelId).map(attachReasoning);
   const currentModel =
     boundedCurrentModelId === null
       ? undefined
       : advertisedModels.find((model) => model.id === boundedCurrentModelId);
+  const currentInStablePrefix =
+    boundedCurrentModelId !== null &&
+    baseModels.slice(0, MAX_MODELS - 1).some((model) => model.id === boundedCurrentModelId);
+  const overflowCurrentModel =
+    currentModel !== undefined &&
+    baseModels.length === MAX_MODELS &&
+    candidates.length > MAX_MODELS &&
+    !currentInStablePrefix
+      ? currentModel
+      : undefined;
   const stripCurrentReasoning = currentModel?.reasoningEffort === null;
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
     (descriptor) =>
@@ -302,11 +323,11 @@ export function prepareAcpRegistryLiveConfiguration(
       ? Object.fromEntries(advertisedReasoningEntries)
       : undefined;
   return {
-    // Key on catalog identity and provenance (not per-model reasoning) so toggling
-    // an effort selector mid-session does not re-send a frozen pre-probe model list.
+    // Key on the uncapped-selection catalog identity and provenance so neither effort
+    // toggles nor selecting a model beyond MAX_MODELS re-advertise a frozen list.
     catalogKey: JSON.stringify([
       hasModelSelect,
-      advertisedModels.map(({ id, name, description }) => [id, name, description]),
+      baseModels.map(({ id, name, description }) => [id, name, description]),
     ]),
     toLiveConfiguration: (options) => {
       const includeCatalog = options?.includeCatalog !== false;
@@ -317,6 +338,9 @@ export function prepareAcpRegistryLiveConfiguration(
         modelOptionIds,
         modelsFromModelSelect: includeCatalog && hasModelSelect,
         ...(!includeCatalog && advertisedReasoning !== undefined ? { advertisedReasoning } : {}),
+        ...(!includeCatalog && overflowCurrentModel !== undefined
+          ? { currentModel: overflowCurrentModel }
+          : {}),
       };
     },
   };

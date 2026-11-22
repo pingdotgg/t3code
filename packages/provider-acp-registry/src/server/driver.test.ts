@@ -1483,7 +1483,15 @@ describe("acpRegistryEnrichmentCache", () => {
       }),
     );
 
-    // Drops reasoning when the probe disables it and returns none when no live option survives.
+    // Drops reasoning when the probe disables it, while keeping currentModelId selection when it differs from probe default.
+    const selectionOnly = Option.some({
+      models: [],
+      currentModelId: "old-model",
+      configOptions: [],
+      modelOptionIds: [],
+      modelsFromModelSelect: false,
+      partialOptions: true,
+    });
     expect(
       retainAcpRegistryLiveOptionsAfterProbe(
         {
@@ -1503,7 +1511,21 @@ describe("acpRegistryEnrichmentCache", () => {
           modelOptionIds: new Set(["effort"]),
         },
       ),
-    ).toEqual(Option.none());
+    ).toEqual(selectionOnly);
+    const appliedSelectionOnly = applyAcpRegistryLiveConfiguration(
+      probeWithFast(false),
+      Option.getOrThrow(selectionOnly),
+      [],
+    );
+    expect(appliedSelectionOnly.models.find((m) => m.slug === "old-model")?.isDefault).toBe(true);
+    expect(
+      appliedSelectionOnly.models
+        .find((m) => m.slug === "old-model")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["mode", "ask"],
+      ["fast", false],
+    ]);
 
     // Drops model-specific options when the probe ran directly on that model without them.
     expect(
@@ -1524,7 +1546,8 @@ describe("acpRegistryEnrichmentCache", () => {
       ),
     ).toEqual(Option.none());
 
-    // Never promotes a live model-specific option into a probe-shared option across models.
+    // Never promotes a live model-specific option into a probe-shared option across models,
+    // retaining only model selection when no options survive on a different probed model.
     expect(
       retainAcpRegistryLiveOptionsAfterProbe(
         {
@@ -1544,7 +1567,7 @@ describe("acpRegistryEnrichmentCache", () => {
           modelOptionIds: new Set(),
         },
       ),
-    ).toEqual(Option.none());
+    ).toEqual(selectionOnly);
 
     // Off-current reasoning retention requires matching native option IDs (thinking != effort).
     expect(
@@ -1580,12 +1603,12 @@ describe("acpRegistryEnrichmentCache", () => {
           modelOptionIds: new Set(["effort"]),
         },
       ),
-    ).toEqual(Option.none());
+    ).toEqual(selectionOnly);
   });
 });
 
 describe("prepareAcpRegistryLiveConfiguration", () => {
-  it("ignores in-cap selection and effort selector toggles while detecting overflow selection, renames, and projecting newly normalized per-model reasoning", () => {
+  it("keeps catalogKey stable across selection and effort toggles while carrying overflow selection, detecting renames, and safely projecting per-model reasoning", () => {
     const modelSelect = (
       currentValue: string,
       options: ReadonlyArray<{ value: string; name: string }>,
@@ -1606,9 +1629,55 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
 
     const keyM0 = prepareAcpRegistryLiveConfiguration(modelSelect("m0", choices)).catalogKey;
     expect(prepareAcpRegistryLiveConfiguration(modelSelect("m1", choices)).catalogKey).toBe(keyM0);
-    expect(prepareAcpRegistryLiveConfiguration(modelSelect("m256", choices)).catalogKey).not.toBe(
-      keyM0,
+    const preparedM256 = prepareAcpRegistryLiveConfiguration(modelSelect("m256", choices));
+    expect(preparedM256.catalogKey).toBe(keyM0);
+    const overflowOptionsOnly = preparedM256.toLiveConfiguration({ includeCatalog: false });
+    expect(overflowOptionsOnly.models).toEqual([]);
+    expect(overflowOptionsOnly.currentModel).toEqual({
+      id: "m256",
+      name: "Model 256",
+      description: null,
+    });
+    const cappedProvider = providerWithModels(
+      choices.slice(0, 256).map((choice) => ({
+        id: choice.value,
+        name: choice.name,
+        description: null,
+      })),
+      "m0",
     );
+    const withOverflowSelected = applyAcpRegistryLiveConfiguration(
+      cappedProvider,
+      overflowOptionsOnly,
+      [],
+    );
+    expect(withOverflowSelected.models).toHaveLength(256);
+    expect(withOverflowSelected.models.at(-1)?.slug).toBe("m256");
+    expect(withOverflowSelected.models.at(-1)?.isDefault).toBe(true);
+    // Switching back to m255 restores m255 into the last slot without re-sending the catalog.
+    const withM255Restored = applyAcpRegistryLiveConfiguration(
+      withOverflowSelected,
+      prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
+        includeCatalog: false,
+      }),
+      [],
+    );
+    expect(withM255Restored.models).toHaveLength(256);
+    expect(withM255Restored.models.at(-1)?.slug).toBe("m255");
+    expect(withM255Restored.models.at(-1)?.isDefault).toBe(true);
+    // A smaller catalog must never absorb an overflow model from another session.
+    const smallProvider = providerWithModels(
+      [
+        { id: "p0", name: "P0", description: null },
+        { id: "p1", name: "P1", description: null },
+      ],
+      "p0",
+    );
+    expect(
+      applyAcpRegistryLiveConfiguration(smallProvider, overflowOptionsOnly, []).models.map(
+        (model) => model.slug,
+      ),
+    ).toEqual(["p0", "p1"]);
     expect(
       prepareAcpRegistryLiveConfiguration(
         modelSelect("m0", [{ value: "m0", name: "Model 0 Renamed" }, ...choices.slice(1)]),
@@ -1668,6 +1737,7 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
         [
           { id: "model-a", name: "Model A", description: null },
           { id: "model-b", name: "Model B", description: null },
+          { id: "constructor", name: "Constructor", description: null },
         ],
         "model-a",
       ),
@@ -1679,6 +1749,10 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
         .find((model) => model.slug === "model-b")
         ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
     ).toEqual([["effort", "low"]]);
+    expect(
+      appliedToActive.models.find((model) => model.slug === "constructor")?.capabilities
+        ?.optionDescriptors,
+    ).toEqual([]);
   });
 });
 
@@ -1873,159 +1947,167 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
     }),
   );
 
-  it.effect("drops cached and session-reported models when its caches are invalidated", () =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
-      const agentPath = path.join(directory, "agent.mjs");
-      const modelsPath = path.join(directory, "models.json");
-      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "other-model"]));
-      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+  it.effect(
+    "supersedes session-reported models on invalidateCaches when a fresh probe finds models, and preserves them when it finds none",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-" });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "other-model"]));
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
 
-      const instance = yield* AcpRegistryDriver.create({
-        instanceId: identity.instanceId,
-        displayName: identity.displayName,
-        enabled: true,
-        environment: [],
-        config: decodeSettings({ agentId: "test-agent" }),
-      }).pipe(
-        Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
-          ...catalogWithInspection({
-            status: "ready",
-            agentId: "test-agent",
-            version: "1.0.0",
-            distribution: "npx",
-          }),
-          resolve: () =>
-            Effect.succeed({
-              distribution: "npx" as const,
-              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution: "npx",
             }),
-        }),
-      );
-      const modelSlugs = instance.snapshot.streamChanges.pipe(
-        Stream.map((snapshot) => snapshot.models.map((model) => model.slug)),
-      );
-      const waitForModels = (expected: ReadonlyArray<string>) =>
-        modelSlugs.pipe(
-          Stream.filter((slugs) => slugs.join() === expected.join()),
-          Stream.runHead,
+            resolve: () =>
+              Effect.succeed({
+                distribution: "npx" as const,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              }),
+          }),
+        );
+        const modelSlugs = instance.snapshot.streamChanges.pipe(
+          Stream.map((snapshot) => snapshot.models.map((model) => model.slug)),
+        );
+        const waitForModels = (expected: ReadonlyArray<string>) =>
+          modelSlugs.pipe(
+            Stream.filter((slugs) => slugs.join() === expected.join()),
+            Stream.runHead,
+          );
+
+        const probed = yield* waitForModels(["old-model", "other-model"]).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(probed);
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration(
+            [
+              {
+                id: "legacy",
+                name: "Legacy",
+                category: "other",
+                type: "select",
+                currentValue: "on",
+                options: [{ value: "on", name: "On" }],
+              },
+            ],
+            undefined,
+            {
+              currentModelId: "old-model",
+              availableModels: [
+                { modelId: "old-model", name: "old-model" },
+                { modelId: "session-model", name: "session-model" },
+              ],
+            },
+          ),
+        );
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify({
+            models: ["old-model", "new-model"],
+            configOptions: [
+              {
+                id: "fast",
+                name: "Fast",
+                category: "other",
+                type: "select",
+                currentValue: "on",
+                options: [{ value: "on", name: "On" }],
+              },
+            ],
+          }),
         );
 
-      const probed = yield* waitForModels(["old-model", "other-model"]).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* instance.snapshot.refresh;
-      yield* Fiber.join(probed);
-      yield* coordinator.publishLiveConfiguration(
-        identity.instanceId,
-        normalizeAcpRegistryLiveConfiguration(
-          [
-            {
-              id: "legacy",
-              name: "Legacy",
-              category: "other",
-              type: "select",
-              currentValue: "on",
-              options: [{ value: "on", name: "On" }],
-            },
-          ],
-          undefined,
-          {
-            currentModelId: "old-model",
-            availableModels: [
-              { modelId: "old-model", name: "old-model" },
-              { modelId: "session-model", name: "session-model" },
+        const refreshed = yield* waitForModels(["old-model", "new-model"]).pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.invalidateCaches ?? Effect.void;
+        yield* instance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
+
+        // A still-running session sending an options-only update after invalidateCaches must still
+        // reconcile against the replacement probe's schema (keeping fast and dropping legacy).
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration(
+            [
+              {
+                id: "legacy",
+                name: "Legacy",
+                category: "other",
+                type: "select",
+                currentValue: "on",
+                options: [{ value: "on", name: "On" }],
+              },
             ],
-          },
-        ),
-      );
-      yield* fileSystem.writeFileString(
-        modelsPath,
-        JSON.stringify({
-          models: ["old-model", "new-model"],
-          configOptions: [
+            undefined,
             {
-              id: "fast",
-              name: "Fast",
-              category: "other",
-              type: "select",
-              currentValue: "on",
-              options: [{ value: "on", name: "On" }],
+              currentModelId: "old-model",
+              availableModels: [
+                { modelId: "old-model", name: "old-model" },
+                { modelId: "session-model", name: "session-model" },
+              ],
             },
-          ],
-        }),
-      );
+          ).toLiveConfiguration({ includeCatalog: false }),
+        );
+        // Force a cached refresh so the semaphore-serialized watcher has finished before reading.
+        const synced = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const afterOptions = Option.getOrThrow(yield* Fiber.join(synced));
+        expect(afterOptions.models.map((model) => model.slug)).toEqual(["old-model", "new-model"]);
+        expect(
+          afterOptions.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([["fast", "on"]]);
 
-      const refreshed = yield* waitForModels(["old-model", "new-model"]).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* instance.invalidateCaches ?? Effect.void;
-      yield* instance.snapshot.refresh;
-      expect(Option.isSome(yield* Fiber.join(refreshed))).toBe(true);
-
-      // A still-running session sending an options-only update after invalidateCaches must still
-      // reconcile against the replacement probe's schema (keeping fast and dropping legacy).
-      yield* coordinator.publishLiveConfiguration(
-        identity.instanceId,
-        prepareAcpRegistryLiveConfiguration(
-          [
-            {
-              id: "legacy",
-              name: "Legacy",
-              category: "other",
-              type: "select",
-              currentValue: "on",
-              options: [{ value: "on", name: "On" }],
-            },
-          ],
-          undefined,
-          {
-            currentModelId: "old-model",
+        // When a probe returns no models, invalidateCaches + refresh must preserve the running
+        // session's catalog instead of dropping to synthetic default.
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "session-x",
             availableModels: [
-              { modelId: "old-model", name: "old-model" },
-              { modelId: "session-model", name: "session-model" },
+              { modelId: "session-x", name: "session-x" },
+              { modelId: "session-y", name: "session-y" },
             ],
-          },
-        ).toLiveConfiguration({ includeCatalog: false }),
-      );
-      // Force a cached refresh so the semaphore-serialized watcher has finished before reading.
-      const synced = yield* instance.snapshot.streamChanges.pipe(
-        Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
-        Stream.runHead,
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* instance.snapshot.refresh;
-      const afterOptions = Option.getOrThrow(yield* Fiber.join(synced));
-      expect(afterOptions.models.map((model) => model.slug)).toEqual(["old-model", "new-model"]);
-      expect(
-        afterOptions.models
-          .find((model) => model.slug === "old-model")
-          ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
-      ).toEqual([["fast", "on"]]);
-
-      // When a probe returns no models, invalidateCaches + refresh must preserve the running
-      // session's catalog instead of dropping to synthetic default.
-      yield* coordinator.publishLiveConfiguration(
-        identity.instanceId,
-        normalizeAcpRegistryLiveConfiguration([], undefined, {
-          currentModelId: "session-x",
-          availableModels: [
-            { modelId: "session-x", name: "session-x" },
-            { modelId: "session-y", name: "session-y" },
-          ],
-        }),
-      );
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify([]));
-      const emptyProbeAfterInvalidate = yield* waitForModels(["session-x", "session-y"]).pipe(
-        Effect.forkScoped({ startImmediately: true }),
-      );
-      yield* instance.invalidateCaches ?? Effect.void;
-      yield* instance.snapshot.refresh;
-      expect(Option.isSome(yield* Fiber.join(emptyProbeAfterInvalidate))).toBe(true);
-    }),
+          }),
+        );
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify([]));
+        const emptyProbeAfterInvalidate = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.invalidateCaches ?? Effect.void;
+        yield* instance.snapshot.refresh;
+        const afterEmptyProbe = Option.getOrThrow(yield* Fiber.join(emptyProbeAfterInvalidate));
+        expect(afterEmptyProbe.models.map((model) => model.slug)).toEqual([
+          "session-x",
+          "session-y",
+        ]);
+      }),
   );
 
   it.effect("keeps a local agent's reported version through the next readiness check", () =>
@@ -3772,8 +3854,10 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* Deferred.await(handoffCallbackBlocked);
 
         // Refresh interrupts the blocked watcher; readiness must still have synced acceptedCatalog
-        // before recording lastObservedLiveRevision, so a subsequent provisional probe keeps it.
+        // before recording lastObservedLiveRevision, so clearing the coordinator and running a
+        // subsequent provisional probe still keeps the accepted catalog.
         yield* instance.snapshot.refresh;
+        yield* coordinator.clearLiveConfiguration(identity.instanceId);
         yield* writeModels({ provisional: "placeholder" });
         yield* TestClock.adjust("16 minutes");
         const afterProvisional = yield* waitForEnriched().pipe(
@@ -3793,6 +3877,327 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ]);
           }),
         );
+      }),
+  );
+
+  it.effect(
+    "does not revert learned options to an already-applied catalog and replays all blocked per-model options on refresh",
+    () =>
+      Effect.gen(function* () {
+        const blockBWatcher = yield* Deferred.make<void>();
+        let shouldBlockB = false;
+        const { coordinator, instance, waitForEnriched } = yield* setupPeriodicDriver({
+          prefix: "acp-driver-replay-",
+          initialModels: ["model-a", "model-b"],
+          wrapCoordinator: (base) => ({
+            ...base,
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              base.watchLiveConfiguration(
+                instanceId,
+                (configuration, revision) =>
+                  shouldBlockB && configuration.currentModelId === "model-b"
+                    ? Effect.sync(() => {
+                        shouldBlockB = false;
+                      }).pipe(
+                        Effect.andThen(Deferred.succeed(blockBWatcher, undefined)),
+                        Effect.andThen(Effect.never),
+                      )
+                    : onUpdate(configuration, revision),
+                options,
+              ),
+          }),
+        });
+        const effortSelect = (currentValue: "low" | "high") => ({
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue,
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        });
+        const variantSelect = (currentValue: "v1" | "v2") => ({
+          id: "variant",
+          label: "Variant",
+          type: "select" as const,
+          currentValue,
+          options: [
+            { id: "v1", label: "V1" },
+            { id: "v2", label: "V2" },
+          ],
+        });
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        // Publish catalog [model-a (effort=low), model-b], then update model-a to effort=high,
+        // then switch to model-b. A readiness refresh must not relearn effort=low from the catalog.
+        const waitForEffort = (slug: string, expected: string) =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter(
+              (snapshot) =>
+                snapshot.models
+                  .find((m) => m.slug === slug)
+                  ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")
+                  ?.currentValue === expected,
+            ),
+            Stream.runHead,
+            Effect.forkScoped({ startImmediately: true }),
+          );
+
+        const sawLow = yield* waitForEffort("model-a", "low");
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [effortSelect("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(sawLow);
+
+        const sawHigh = yield* waitForEffort("model-a", "high");
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [effortSelect("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawHigh);
+
+        const sawBDefault = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models.find((m) => m.slug === "model-b")?.isDefault === true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawBDefault);
+
+        const refreshed = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const afterRefresh = Option.getOrThrow(yield* Fiber.join(refreshed));
+        expect(
+          afterRefresh.models
+            .find((m) => m.slug === "model-a")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
+        expect(afterRefresh.models.find((m) => m.slug === "model-b")?.isDefault).toBe(true);
+
+        // Block the watcher on model-b, then publish both model-b (variant=v1) and model-a (effort=low).
+        // Readiness handoff must replay both pending per-model updates, not only the last one.
+        shouldBlockB = true;
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [variantSelect("v1")],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+        });
+        yield* Deferred.await(blockBWatcher);
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [effortSelect("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+
+        const handoff = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const afterHandoff = Option.getOrThrow(yield* Fiber.join(handoff));
+        expect(
+          afterHandoff.models
+            .find((m) => m.slug === "model-b")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["variant", "v1"]]);
+        expect(
+          afterHandoff.models
+            .find((m) => m.slug === "model-a")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "low"]]);
+      }),
+  );
+
+  it.effect(
+    "removes options a live model stops reporting after a superseding probe and preserves concurrent live catalogs",
+    () =>
+      Effect.gen(function* () {
+        let injectLiveCatalogAfterClear = false;
+        const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
+          prefix: "acp-driver-post-probe-",
+          initialModels: ["model-a", "model-b"],
+          wrapCoordinator: (base) => ({
+            ...base,
+            clearLiveConfigurationIfRevision: (instanceId, options) =>
+              base.clearLiveConfigurationIfRevision(instanceId, options).pipe(
+                Effect.tap((cleared) =>
+                  cleared && injectLiveCatalogAfterClear
+                    ? Effect.sync(() => {
+                        injectLiveCatalogAfterClear = false;
+                      }).pipe(
+                        Effect.andThen(
+                          base.publishLiveConfiguration(instanceId, {
+                            models: [
+                              { id: "live-c", name: "Live C", description: null },
+                              { id: "live-d", name: "Live D", description: null },
+                            ],
+                            currentModelId: "live-c",
+                            configOptions: [],
+                            modelsFromModelSelect: true,
+                          }),
+                        ),
+                        Effect.andThen(
+                          base.publishLiveConfiguration(instanceId, {
+                            models: [],
+                            currentModelId: "live-c",
+                            configOptions: [
+                              {
+                                id: "effort",
+                                label: "Effort",
+                                type: "select",
+                                role: "reasoning",
+                                currentValue: "high",
+                                options: [
+                                  { id: "low", label: "Low" },
+                                  { id: "high", label: "High" },
+                                ],
+                              },
+                            ],
+                            modelOptionIds: ["effort"],
+                            modelsFromModelSelect: false,
+                          }),
+                        ),
+                      )
+                    : Effect.void,
+                ),
+              ),
+          }),
+        });
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        // Publish a live catalog so the next probe supersedes a live session and records probeOptions.
+        const sawPreProbe = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((m) => m.slug === "pre-probe")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "pre-probe", name: "Pre Probe", description: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(sawPreProbe);
+
+        yield* writeModels(["model-a", "model-b"]);
+        yield* TestClock.adjust("16 minutes");
+        const superseded = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(superseded);
+
+        // Model B learns variant=v1, then reports no options: variant must be dropped while keeping B default.
+        const sawVariant = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "model-b")
+                ?.capabilities?.optionDescriptors?.some((d) => d.id === "variant") === true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [
+            {
+              id: "variant",
+              label: "Variant",
+              type: "select",
+              currentValue: "v1",
+              options: [{ id: "v1", label: "V1" }],
+            },
+          ],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawVariant);
+
+        const sawDropped = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models.find((m) => m.slug === "model-b")?.isDefault === true &&
+              (snapshot.models.find((m) => m.slug === "model-b")?.capabilities?.optionDescriptors
+                ?.length ?? 0) === 0,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawDropped);
+
+        const afterDropRefresh = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const droppedSnapshot = Option.getOrThrow(yield* Fiber.join(afterDropRefresh));
+        expect(droppedSnapshot.models.find((m) => m.slug === "model-b")?.isDefault).toBe(true);
+        expect(
+          droppedSnapshot.models.find((m) => m.slug === "model-b")?.capabilities?.optionDescriptors,
+        ).toEqual([]);
+
+        // When a fresh live catalog + options-only update arrive right after clearLiveConfigurationIfRevision,
+        // the probe commit's replay must preserve the new catalog and its options rather than snapping back to probe baseline.
+        injectLiveCatalogAfterClear = true;
+        yield* writeModels(["probe-1", "probe-2"]);
+        yield* TestClock.adjust("16 minutes");
+        const concurrentCommit = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const published = Option.getOrThrow(yield* Fiber.join(concurrentCommit));
+        expect(published.models.map((m) => m.slug)).toEqual(["live-c", "live-d"]);
+        expect(
+          published.models
+            .find((m) => m.slug === "live-c")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
       }),
   );
 });
