@@ -27,6 +27,7 @@ import {
   readSystemColorPalettes,
   type MaterialYouPalettes,
 } from "../../../lib/materialYouPalette";
+import { FONT_CSS_VARIABLES } from "../../../lib/fontFamilies";
 import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialYouTheme";
 import { getMobileThemeRuntimeVariables } from "../../../lib/mobileThemeVariables";
 import type { MobileThemeVariables } from "../../../lib/mobileTheme";
@@ -161,7 +162,11 @@ const themeRuntimeStateAtom = Atom.make((get) =>
 let appliedRuntimeState: MobileThemeRuntimeState | null = null;
 
 function applyThemeRuntime(next: MobileThemeRuntimeState) {
-  for (const operation of createMobileThemeRuntimeOperations(appliedRuntimeState, next)) {
+  for (const operation of createMobileThemeRuntimeOperations(
+    appliedRuntimeState,
+    next,
+    FONT_CSS_VARIABLES,
+  )) {
     if (operation.kind === "update-text-variables") {
       Uniwind.updateCSSVariables(operation.themeName, operation.variables);
       continue;

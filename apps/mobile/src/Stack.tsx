@@ -151,6 +151,7 @@ import {
 } from "./features/layout/workspace-overlay-routes";
 import { ShowcaseReadyMarker } from "./features/showcase/ShowcaseCaptureCoordinator";
 import { immersiveRoute, modalRoute, pageRoute, sheetRoute } from "./features/layout/route-options";
+import { FONT_FAMILIES } from "./lib/fontFamilies";
 import { deriveLayout } from "./lib/layout";
 import { useNativeLayoutMetrics } from "./native/native-layout-metrics";
 import { isPresentedRoute } from "./native/workspace-stack-projection";
@@ -369,7 +370,11 @@ const SETTINGS_SCREENS = {
     linking: "settings/scheduled-tasks",
     options: {
       ...settingsPage(),
-      headerTitleStyle: { fontSize: 16, fontWeight: "800" },
+      headerTitleStyle: {
+        fontSize: 16,
+        fontWeight: "800",
+        ...(FONT_FAMILIES.headerHeavy ? { fontFamily: FONT_FAMILIES.headerHeavy } : {}),
+      },
     },
   }),
   SettingsScheduledTaskNew: createNativeStackScreen({
@@ -536,7 +541,7 @@ function NotFoundScreen() {
       }}
       style={[{ flex: 1 }, screenBgStyle]}
     >
-      <Text className="text-3xl font-t3-bold text-foreground" selectable>
+      <Text className="text-3xl font-display-bold text-foreground" selectable>
         <T>Route not found</T>
       </Text>
       <Pressable
@@ -897,6 +902,11 @@ registerPresentedRoutes(
   }),
 );
 
+// Standalone builds title screens in the display face; stock keeps the platform font.
+const headerTitleFontOptions = FONT_FAMILIES.header
+  ? { headerTitleStyle: { fontFamily: FONT_FAMILIES.header } }
+  : {};
+
 export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navigator }) {
   const { width, height } = useWindowDimensions();
   const nativeMetrics = useNativeLayoutMetrics();
@@ -916,6 +926,7 @@ export const RootStack = RootStackConfig.with(function AdaptiveRootStack({ Navig
               : resolve(ROUTE_TITLES[route.name]);
         return {
           ...(title === undefined ? {} : { title }),
+          ...headerTitleFontOptions,
           ...(Platform.OS === "android"
             ? {
                 animation: androidWorkspaceDestinationAnimation(

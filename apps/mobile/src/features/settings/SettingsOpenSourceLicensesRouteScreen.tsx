@@ -150,7 +150,7 @@ export function SettingsOpenSourceLicenseRouteScreen({ route }: LicenseDetailPro
         showsVerticalScrollIndicator={false}
       >
         <View className="gap-2 px-1">
-          <Text className="text-2xl font-t3-bold text-foreground">{entry.name}</Text>
+          <Text className="text-2xl font-display-bold text-foreground">{entry.name}</Text>
           <Text className="text-base leading-normal text-foreground-muted">
             {[entry.version, entry.license, formatLicenseBundles(entry.bundles, messages)]
               .filter((value): value is string => Boolean(value))

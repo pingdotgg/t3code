@@ -17,10 +17,15 @@
 
 /* ─── Typography ────────────────────────────────────────────────────── */
 @theme {
-  /* Keep these native family names aligned with app.config.ts. */
+  /* Keep these native family names aligned with app.config.ts. Standalone builds replace them
+     at runtime with src/lib/easydevFonts.ts. */
   --font-sans: "DMSans-Regular";
   --font-medium: "DMSans-Medium";
+  /* `t3-` keeps these clear of the font-weight utilities of the same name. */
+  --font-t3-semibold: "DMSans-Regular";
   --font-bold: "DMSans-Bold";
+  --font-display: "DMSans-Medium";
+  --font-display-bold: "DMSans-Bold";
 
   /* Keep this scale aligned with src/lib/typography.ts for native style props. */
   --text-3xs: 11px;

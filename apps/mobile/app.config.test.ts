@@ -1,5 +1,10 @@
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
 import { afterEach, expect, it, vi } from "vite-plus/test";
+
+import { buildFontCssVariables, resolveBuildFontFamilies } from "./src/lib/easydevFonts.ts";
 
 import appleAppSiteAssociation from "../web/public/.well-known/apple-app-site-association.json";
 import assetLinks from "../web/public/.well-known/assetlinks.json";
@@ -124,4 +129,50 @@ it("uses the fork's own Expo project and hosted app in a standalone build", asyn
   expect(config.android?.intentFilters?.[0]?.data).toEqual([
     { scheme: "https", host: "app.fork.example", pathPrefix: "/threads/" },
   ]);
+});
+
+function expoFontOptions(config: Awaited<ReturnType<typeof loadConfig>>) {
+  const plugin = config.plugins?.find(
+    (entry): entry is [string, { ios: { fonts: string[] }; android: { fonts: AndroidFont[] } }] =>
+      Array.isArray(entry) && entry[0] === "expo-font",
+  );
+  return plugin![1];
+}
+
+type AndroidFont = { fontFamily: string; fontDefinitions: { path: string; weight: number }[] };
+
+it("compiles only DM Sans into stock builds and leaves their font defaults alone", async () => {
+  const fonts = expoFontOptions(await loadConfig("production"));
+  expect(fonts.ios.fonts.every((path) => path.includes("dm-sans"))).toBe(true);
+  expect(fonts.android.fonts.map((font) => font.fontFamily)).toEqual([
+    "DMSans-Regular",
+    "DMSans-Medium",
+    "DMSans-Bold",
+  ]);
+  expect(buildFontCssVariables(false)).toEqual({});
+  expect(resolveBuildFontFamilies(false)).toMatchObject({
+    regular: "DMSans-Regular",
+    medium: "DMSans-Medium",
+    bold: "DMSans-Bold",
+    header: null,
+    mono: null,
+  });
+});
+
+it("registers every standalone default family on iOS and Android", async () => {
+  vi.stubEnv("T3CODE_STANDALONE", "1");
+  vi.stubEnv("T3CODE_MOBILE_BUNDLE_ID", "com.fork.code");
+  const fonts = expoFontOptions(await loadConfig("production"));
+  const android = new Map(fonts.android.fonts.map((font) => [font.fontFamily, font]));
+  // A family missing here renders in the system font with no error on either platform.
+  for (const family of new Set(Object.values(resolveBuildFontFamilies(true)))) {
+    const path = android.get(family!)?.fontDefinitions[0]?.path;
+    expect(path, family!).toBeDefined();
+    expect(fonts.ios.fonts).toContain(path);
+    expect(NodePath.basename(path!, ".ttf")).toBe(family);
+    expect(NodeFS.existsSync(NodePath.join(import.meta.dirname, path!))).toBe(true);
+  }
+  expect(Object.values(buildFontCssVariables(true)).every((family) => android.has(family))).toBe(
+    true,
+  );
 });

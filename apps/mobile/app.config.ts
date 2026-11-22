@@ -172,6 +172,27 @@ const dmSansFonts = {
   medium: "@expo-google-fonts/dm-sans/500Medium/DMSans_500Medium.ttf",
   bold: "@expo-google-fonts/dm-sans/700Bold/DMSans_700Bold.ttf",
 } as const;
+// Families src/lib/easydevFonts.ts selects. Each file is named for its PostScript name, which iOS
+// resolves by, and Android registers the same name. DM Sans stays: native composer chips name it.
+const standaloneFonts = isStandaloneBuild
+  ? (
+      [
+        ["inter", "Inter-Regular", 400],
+        ["inter", "Inter-Medium", 500],
+        ["inter", "Inter-SemiBold", 600],
+        ["inter", "Inter-Bold", 700],
+        ["jetbrains-mono", "JetBrainsMono-Regular", 400],
+        ["jetbrains-mono", "JetBrainsMono-Medium", 500],
+        ["outfit", "Outfit-SemiBold", 600],
+        ["outfit", "Outfit-Bold", 700],
+        ["outfit", "Outfit-ExtraBold", 800],
+      ] as const
+    ).map(([folder, family, weight]) => ({
+      family,
+      weight,
+      path: `./assets/fonts/${folder}/${family}.ttf`,
+    }))
+  : [];
 
 const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-widgets",
@@ -379,7 +400,12 @@ const config: ExpoConfig = {
       "expo-font",
       {
         ios: {
-          fonts: [dmSansFonts.regular, dmSansFonts.medium, dmSansFonts.bold],
+          fonts: [
+            dmSansFonts.regular,
+            dmSansFonts.medium,
+            dmSansFonts.bold,
+            ...standaloneFonts.map((font) => font.path),
+          ],
         },
         android: {
           fonts: [
@@ -395,6 +421,10 @@ const config: ExpoConfig = {
               fontFamily: "DMSans-Bold",
               fontDefinitions: [{ path: dmSansFonts.bold, weight: 700 }],
             },
+            ...standaloneFonts.map((font) => ({
+              fontFamily: font.family,
+              fontDefinitions: [{ path: font.path, weight: font.weight }],
+            })),
           ],
         },
       },

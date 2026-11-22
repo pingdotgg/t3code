@@ -2,6 +2,7 @@ import { T } from "gt-react-native";
 import { Platform, ScrollView, type StyleProp, type TextStyle, View } from "react-native";
 
 import { AppText as Text } from "../../../../components/ui/AppText";
+import { FONT_FAMILIES } from "../../../../lib/fontFamilies";
 import {
   resolveMarkdownFontSizes,
   resolveMobileCodeSurface,
@@ -9,11 +10,13 @@ import {
 import { getMobileTerminalTheme } from "../../../terminal/terminalTheme";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
 
-const CODE_FONT_FAMILY = Platform.select({
-  ios: "ui-monospace",
-  android: "monospace",
-  default: "monospace",
-});
+const CODE_FONT_FAMILY =
+  FONT_FAMILIES.mono ??
+  Platform.select({
+    ios: "ui-monospace",
+    android: "monospace",
+    default: "monospace",
+  });
 
 export function AppearancePreviewSeparator() {
   return <View className="h-px bg-separator" />;
