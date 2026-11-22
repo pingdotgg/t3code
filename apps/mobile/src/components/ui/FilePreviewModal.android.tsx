@@ -10,7 +10,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { openAttachmentInViewer } from "../../lib/attachmentDownload";
 import { useMediaActions } from "../../state/mediaActions";
 import type {
-  FilePreviewImage,
   FilePreviewImages,
   FilePreviewModalProps,
   FilePreviewViewerProps,
@@ -136,28 +135,21 @@ type ImagePreviewProps = {
 
 const ImagePreviewContext = createContext<ImagePreviewProps | null>(null);
 
+// Keyed by page so swiping away drops the previous image's pending share or save.
 function ImagePreviewHeader(header: { readonly imageIndex: number }) {
-  const props = useContext(ImagePreviewContext)!;
-  return (
-    <ImagePreviewPageHeader
-      key={header.imageIndex}
-      image={props.source.images[header.imageIndex]}
-      onRequestClose={props.onRequestClose}
-    />
-  );
+  return <ImagePreviewPageHeader key={header.imageIndex} imageIndex={header.imageIndex} />;
 }
 
-function ImagePreviewPageHeader(props: {
-  readonly image: FilePreviewImage | undefined;
-  readonly onRequestClose: () => void;
-}) {
+function ImagePreviewPageHeader(header: { readonly imageIndex: number }) {
+  const props = useContext(ImagePreviewContext)!;
+  const source = props.source.images[header.imageIndex];
   const gt = useGT();
   const insets = useSafeAreaInsets();
-  const mediaActions = useMediaActions(props.image?.actionsSource, props.onRequestClose);
+  const mediaActions = useMediaActions(source?.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
       <MediaPreviewHeader
-        title={props.image?.name ?? gt("Image")}
+        title={source?.name ?? gt("Image")}
         media={mediaActions}
         closeAccessibilityLabel={gt("Close image")}
         onClose={props.onRequestClose}
