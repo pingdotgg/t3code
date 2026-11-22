@@ -103,6 +103,21 @@ describe("buildRuntimeInstructions", () => {
       },
     });
     assert.isTrue(listed.startsWith(`${single}\n\n<workspace_folders>\n`));
+    const withFeedback = buildRuntimeInstructions({ harness: "Codex", agentFeedback: "auto" });
+    assert.isTrue(
+      buildRuntimeInstructions({
+        harness: "Codex",
+        agentFeedback: "auto",
+        runtimePolicy: {
+          ...base,
+          cwd: "/work/app",
+          workspace: {
+            folders: [{ name: "api", path: "/work/api", isGitRepository: true }],
+            extraRoots: [],
+          },
+        },
+      }).startsWith(`${withFeedback}\n\n<workspace_folders>\n`),
+    );
     assert.deepEqual(
       listed
         .slice(single.length + 2)
