@@ -1068,47 +1068,52 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     resolvePathEnvironmentVariable(env),
     env.DEVELOPER_DIR ?? "",
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
-  const cached = cache.get(cacheKey);
-  // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
-  if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
-    const cachedPath = cached.resolvedPath;
-    if (
-      cachedPath === null ||
-      (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
-        undefined
-    ) {
-      return cachedPath ?? "git";
-    }
-  }
   const pending = xcodeGitLookups.get(cache) ?? new Map<string, Deferred.Deferred<string | null>>();
   xcodeGitLookups.set(cache, pending);
-  // Registering and starting the lookup cannot be split by a yield or an interrupt, so callers
-  // find it as soon as it exists. Detached, a caller that stops waiting does not stop it.
-  const lookup = yield* Effect.uninterruptible(
-    Effect.suspend(() => {
-      const existing = pending.get(cacheKey);
-      if (existing !== undefined) return Effect.succeed(existing);
-      const shared = Deferred.makeUnsafe<string | null>();
-      pending.set(cacheKey, shared);
-      return lookupXcodeGit(env, resolveExecutable, locateXcodeGit).pipe(
-        Effect.tap((realGit) =>
-          Effect.sync(() => cacheCommandResolution(cache, cacheKey, realGit, nowNanos)),
-        ),
-        Effect.onExit((exit) =>
-          Effect.sync(() => {
-            if (pending.get(cacheKey) === shared) pending.delete(cacheKey);
-          }).pipe(
-            Effect.andThen(Deferred.done(shared, Exit.isSuccess(exit) ? exit : Exit.succeed(null))),
+  for (;;) {
+    const nowNanos = yield* Clock.currentTimeNanos;
+    const cached = cache.get(cacheKey);
+    // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
+    if (cached !== undefined && cached.expiresAtNanos > nowNanos) {
+      const cachedPath = cached.resolvedPath;
+      if (
+        cachedPath === null ||
+        (yield* Effect.promise(async () => resolveExecutable(cachedPath, "darwin", env))) !==
+          undefined
+      ) {
+        return cachedPath ?? "git";
+      }
+    }
+    // Registering and starting the lookup cannot be split by a yield or an interrupt, so callers
+    // find it as soon as it exists. Detached, a caller that stops waiting does not stop it.
+    // A caller whose cached answer was replaced meanwhile checks the new one instead.
+    const lookup = yield* Effect.uninterruptible(
+      Effect.suspend(() => {
+        const existing = pending.get(cacheKey);
+        if (existing !== undefined) return Effect.succeed(existing);
+        if (cache.get(cacheKey) !== cached) return Effect.undefined;
+        const shared = Deferred.makeUnsafe<string | null>();
+        pending.set(cacheKey, shared);
+        return lookupXcodeGit(env, resolveExecutable, locateXcodeGit).pipe(
+          Effect.tap((realGit) =>
+            Effect.sync(() => cacheCommandResolution(cache, cacheKey, realGit, nowNanos)),
           ),
-        ),
-        Effect.forkDetach,
-        Effect.as(shared),
-      );
-    }),
-  );
-  const realGit = yield* Deferred.await(lookup);
-  return realGit ?? "git";
+          Effect.onExit((exit) =>
+            Effect.sync(() => {
+              if (pending.get(cacheKey) === shared) pending.delete(cacheKey);
+            }).pipe(
+              Effect.andThen(
+                Deferred.done(shared, Exit.isSuccess(exit) ? exit : Exit.succeed(null)),
+              ),
+            ),
+          ),
+          Effect.forkDetach,
+          Effect.as(shared),
+        );
+      }),
+    );
+    if (lookup !== undefined) return (yield* Deferred.await(lookup)) ?? "git";
+  }
 });
 
 export interface SpawnCommandOptions extends CommandAvailabilityOptions {
