@@ -129,6 +129,7 @@ function curatedCauseMessages(cause: unknown): {
             category: categoryMessage(),
           };
         case "AcpModelSelectionError":
+        case "AcpPermissionModeError":
         case "ClaudeBackgroundWorkBlocksQueryReplacementError":
         case "ClaudeAppendSystemPromptFileError":
         case "ClaudeAppendSystemPromptMissingValueError":

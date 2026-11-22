@@ -986,11 +986,14 @@ export const layer: Layer.Layer<
       );
       if (sessionResult._tag === "Failure") {
         const failure = sessionResult.failure;
-        const requiresSignIn =
-          "cause" in failure &&
-          isProviderAdapterOpenSessionError(failure.cause) &&
-          failure.cause.requiresSignIn === true;
-        if (input.willRetry === true && !requiresSignIn) return yield* failure;
+        const openError =
+          "cause" in failure && isProviderAdapterOpenSessionError(failure.cause)
+            ? failure.cause
+            : undefined;
+        const requiresSignIn = openError?.requiresSignIn === true;
+        // A retry resolves the policy again and could run a mode the user did not pick.
+        const refusedMode = Predicate.isTagged(openError?.cause, "AcpPermissionModeError");
+        if (input.willRetry === true && !requiresSignIn && !refusedMode) return yield* failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",

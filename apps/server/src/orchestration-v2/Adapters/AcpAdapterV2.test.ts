@@ -101,6 +101,7 @@ import {
 
 import { appendUserInputAttachmentPaths } from "../../provider/userInputAttachments.ts";
 
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import { makeGrokAcpAdapterFlavor } from "@t3tools/provider-grok/testing";
 import {
   acpRegistryPromptFailure,
@@ -2954,6 +2955,57 @@ describe("AcpAdapterV2", () => {
             ProviderAdapter.ProviderCompactionUnsupportedError,
           );
         }
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.live(
+    "fails the session open with a permission mode error when the agent refuses the mode",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const mockAgentPath = yield* bundledMockAgentPath;
+        const instanceId = ProviderInstanceId.make("acp-test-refused-policy-mode");
+        const threadId = ThreadId.make("thread-acp-refused-policy-mode");
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            sessionModeForPolicy: () => "code",
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              environment: { T3_ACP_FAIL_SET_MODE_CONFIG_OPTION: "1" },
+            }),
+          },
+          selfInvocation: yield* resolveSelfInvocation(),
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "auto",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const modelSelection = { instanceId, model: "composer-2" } as const;
+        const result = yield* Effect.exit(
+          adapter
+            .openSession({
+              threadId,
+              providerSessionId: ProviderSessionId.make("provider-session-acp-refused-mode"),
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(
+              Effect.flatMap((runtime) =>
+                runtime.ensureThread({ threadId, modelSelection, runtimePolicy }),
+              ),
+            ),
+        );
+        const error = Exit.isFailure(result) ? Cause.squash(result.cause) : undefined;
+        assert.instanceOf(error, ProviderAdapter.ProviderAdapterOpenSessionError);
+        assert.strictEqual(
+          knownProviderFailureMessage(error),
+          'The agent does not offer its "code" mode in this session. Choose another permission mode, then retry.',
+        );
       }).pipe(Effect.provide(layerTest)),
   );
 

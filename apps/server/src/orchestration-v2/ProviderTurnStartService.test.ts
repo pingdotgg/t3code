@@ -3197,14 +3197,28 @@ effectIt.effect("fails rather than starts a fresh thread when a resume outcome i
   }),
 );
 
-effectIt.effect("fails the run without a retry when the provider needs sign-in", () =>
+const refusedModeMessage =
+  'The agent does not offer its "auto" mode in this session. Choose another permission mode, then retry.';
+
+effectIt.effect.each([
+  {
+    name: "the provider needs sign-in",
+    failure: { requiresSignIn: true } as const,
+    message: "Failed to open antigravity provider session new-provider-session.",
+  },
+  {
+    name: "the agent refuses the permission mode",
+    failure: { cause: { _tag: "AcpPermissionModeError", message: refusedModeMessage } },
+    message: refusedModeMessage,
+  },
+])("fails the run without a retry when $name", ({ failure, message }) =>
   Effect.gen(function* () {
     const harness = makeLocalCommandHarness({
       text: "Continue",
       openFailure: new ProviderAdapter.ProviderAdapterOpenSessionError({
         driver: ProviderDriverKind.make("antigravity"),
         providerSessionId: ProviderSessionId.make("new-provider-session"),
-        requiresSignIn: true,
+        ...failure,
       }),
     });
 
@@ -3216,10 +3230,7 @@ effectIt.effect("fails the run without a retry when the provider needs sign-in",
       {
         type: "error",
         status: "failed",
-        failure: {
-          class: "provider_error",
-          message: "Failed to open antigravity provider session new-provider-session.",
-        },
+        failure: { class: "provider_error", message },
       },
     ]);
   }),

@@ -307,6 +307,19 @@ class AcpModelSelectionError extends Schema.TaggedError<AcpModelSelectionError>(
   }
 }
 
+/** The agent refused the session mode the thread's permission level maps to. */
+class AcpPermissionModeError extends Schema.TaggedError<AcpPermissionModeError>()(
+  "AcpPermissionModeError",
+  {
+    mode: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `The agent does not offer its "${this.mode}" mode in this session. Choose another permission mode, then retry.`;
+  }
+}
+
 /** A prompt-steered turn spans several prompts, each reporting its own usage. */
 function addAcpUsage(
   total: EffectAcpSchema.Usage | undefined,
@@ -8290,7 +8303,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
           const modeLocked = flavor.lockSessionModeToPolicy && policyMode !== undefined;
           if (policyMode !== undefined) {
-            yield* runtime.setMode(policyMode);
+            yield* runtime
+              .setMode(policyMode)
+              .pipe(
+                Effect.mapError((error) =>
+                  error._tag === "AcpRequestError" && error.code === -32602
+                    ? new AcpPermissionModeError({ mode: policyMode, cause: error })
+                    : error,
+                ),
+              );
           }
           const modeState = yield* runtime.getModeState;
           if (
