@@ -638,8 +638,8 @@ export interface AcpAdapterV2Flavor {
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
   /**
-   * Finalize a settled turn this long after the prompt settles when an outliving tool still holds
-   * it, so a command that never reports back cannot leave the thread in Working forever.
+   * Finalize a settled turn held by an outliving tool once the session has been silent this long,
+   * so a command that never reports back cannot leave the thread in Working forever.
    */
   readonly postSettleBackgroundHoldTimeout?: Duration.Input;
   readonly isProviderWakeNotification?: (
@@ -2747,7 +2747,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const notePromptProgress =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (notification?: EffectAcpSchema.SessionNotification) {
-            if (promptInactivityTimeoutMillis === undefined) return;
+            if (
+              promptInactivityTimeoutMillis === undefined &&
+              flavor.postSettleBackgroundHoldTimeout === undefined
+            ) {
+              return;
+            }
             if (
               notification !== undefined &&
               !ACP_PROMPT_ACTIVITY_UPDATES.has(notification.update.sessionUpdate)
@@ -8845,9 +8850,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const timeout = flavor.postSettleBackgroundHoldTimeout;
             if (timeout === undefined) return;
             if (!context.promptSettled || context.finalized) return;
+            const timeoutMillis = Duration.toMillis(timeout);
+            const armedAt = yield* Clock.currentTimeMillis;
             // Armed even without held work yet: a pending reply can still start the command.
             yield* Effect.gen(function* () {
-              yield* Effect.sleep(timeout);
+              while (true) {
+                const quietSince = Math.max(armedAt, context.lastProgressAt);
+                const remaining = quietSince + timeoutMillis - (yield* Clock.currentTimeMillis);
+                if (remaining <= 0) break;
+                yield* Effect.sleep(Duration.millis(remaining));
+              }
               if (context.finalized || !context.promptSettled) return;
               if (!hasDeferredBackgroundWork(context)) return;
               // Only an outliving tool gets bounded here. Queued wakes, hydration and detached

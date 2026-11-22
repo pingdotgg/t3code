@@ -1327,6 +1327,16 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
       yield* startTurn(1, false);
       yield* throughPromptSettled;
+      // Progress keeps a command past the post-settle hold bound, which counts silence only.
+      for (const minute of [10, 20, 30]) {
+        yield* TestClock.adjust("10 minutes");
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...command,
+          status: "in_progress",
+          rawOutput: { output: `fetched ${minute} pages` },
+        });
+      }
       yield* TestClock.adjust("10 minutes");
       yield* send({
         sessionUpdate: "tool_call_update",
