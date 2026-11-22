@@ -47,36 +47,37 @@ export default function NotebookPreview(props: {
   useEffect(() => {
     const root = scroll.current;
     if (!root || !outputCount) return;
-    const candidates = new Map<Element, string>();
-    let active: Element[] = [];
-    const observer = new IntersectionObserver(
-      (entries) => {
-        for (const entry of entries) {
-          if (entry.isIntersecting)
-            candidates.set(entry.target, (entry.target as HTMLElement).dataset.notebookOutput!);
-          else candidates.delete(entry.target);
-        }
-        // Bound browsing contexts even when a cell contains hundreds of tiny HTML outputs.
-        const next = [...candidates.keys()].slice(0, 16);
-        const measured = active
-          .filter((node) => !next.includes(node))
-          .map(
-            (node) =>
-              [
-                (node as HTMLElement).dataset.notebookOutput!,
-                node.getBoundingClientRect().height,
-              ] as const,
-          );
-        active = next;
-        setOutputView((old) => ({
-          mounted: new Set(next.map((node) => candidates.get(node)!)),
-          heights: new Map([...old.heights, ...measured]),
-        }));
-      },
-      { root, rootMargin: "160px" },
-    );
-    for (const node of root.querySelectorAll("[data-notebook-output]")) observer.observe(node);
-    return () => observer.disconnect();
+    const inView = new Set<Element>();
+    const nearby = new Set<Element>();
+    let active: Element[] | undefined;
+    const outputKey = (node: Element) => node.getAttribute("data-notebook-output")!;
+    const track = (candidates: Set<Element>) => (entries: IntersectionObserverEntry[]) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) candidates.add(entry.target);
+        else candidates.delete(entry.target);
+      }
+      // Give visible outputs the limited iframe slots before preloading offscreen outputs.
+      const next = [...new Set([...inView, ...nearby])].slice(0, 16);
+      if (active?.length === next.length && active.every((node) => next.includes(node))) return;
+      const measured = (active ?? [])
+        .filter((node) => !next.includes(node))
+        .map((node) => [outputKey(node), node.getBoundingClientRect().height] as const);
+      active = next;
+      setOutputView((old) => ({
+        mounted: new Set(next.map(outputKey)),
+        heights: new Map([...old.heights, ...measured]),
+      }));
+    };
+    const viewportObserver = new IntersectionObserver(track(inView), { root });
+    const preloadObserver = new IntersectionObserver(track(nearby), { root, rootMargin: "160px" });
+    for (const node of root.querySelectorAll("[data-notebook-output]")) {
+      viewportObserver.observe(node);
+      preloadObserver.observe(node);
+    }
+    return () => {
+      viewportObserver.disconnect();
+      preloadObserver.disconnect();
+    };
   }, [outputCount]);
   return (
     <>
