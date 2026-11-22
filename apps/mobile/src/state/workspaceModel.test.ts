@@ -48,6 +48,7 @@ function environment(
       traceId: phase === "error" ? "trace-1" : null,
     },
     serverConfig: null,
+    refusedRouteIds: [],
   };
 }
 
