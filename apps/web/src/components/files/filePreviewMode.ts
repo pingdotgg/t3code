@@ -6,8 +6,9 @@ import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 
 export function resolveFilePreviewPath(path: string | null, cwd: string): string | null {
-  if (path === null) return null;
-  return path === "." || workspaceRelativeFilePath(path, cwd) === "." ? null : path;
+  if (path === null || path === ".") return null;
+  const workspacePath = workspaceRelativeFilePath(path, cwd);
+  return workspacePath === "." ? null : (workspacePath ?? path);
 }
 
 export const isMarkdownPreviewFile = (path: string): boolean =>

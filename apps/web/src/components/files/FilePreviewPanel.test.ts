@@ -97,8 +97,8 @@ describe("resolveFilePreviewPath", () => {
     ["/repo/project/", null],
     [".", null],
     [null, null],
-    ["/repo/project/src", "/repo/project/src"],
-    ["/repo/project/src/main.ts", "/repo/project/src/main.ts"],
+    ["/repo/project/src", "src"],
+    ["/repo/project/src/main.ts", "src/main.ts"],
     ["src/main.ts", "src/main.ts"],
     ["/repo/project-other", "/repo/project-other"],
   ])("opens %s in the appropriate workspace surface", (path, expected) => {
