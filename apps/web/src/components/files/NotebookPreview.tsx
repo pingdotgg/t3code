@@ -49,22 +49,26 @@ export default function NotebookPreview(props: {
     if (!root || !outputCount) return;
     const inView = new Set<Element>();
     const nearby = new Set<Element>();
-    let active: Element[] = [];
+    let active = new Set<Element>();
     const outputKey = (node: Element) => node.getAttribute("data-notebook-output")!;
     const track = (candidates: Set<Element>) => (entries: IntersectionObserverEntry[]) => {
       for (const entry of entries) {
         if (entry.isIntersecting) candidates.add(entry.target);
         else candidates.delete(entry.target);
       }
-      // Give visible outputs the limited iframe slots before preloading offscreen outputs.
-      const next = [...new Set([...inView, ...nearby])].slice(0, 16);
-      if (active.length === next.length && active.every((node) => next.includes(node))) return;
-      const measured = active
-        .filter((node) => !next.includes(node))
+      // Mount every visible output. Only preload while the total is below 16.
+      const next = new Set(inView);
+      for (const node of nearby) {
+        if (next.size >= 16) break;
+        next.add(node);
+      }
+      const measured = [...active]
+        .filter((node) => !next.has(node))
         .map((node) => [outputKey(node), node.getBoundingClientRect().height] as const);
+      if (active.size === next.size && measured.length === 0) return;
       active = next;
       setOutputView((old) => ({
-        mounted: new Set(next.map(outputKey)),
+        mounted: new Set(Array.from(next, outputKey)),
         heights: new Map([...old.heights, ...measured]),
       }));
     };
