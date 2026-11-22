@@ -1,4 +1,5 @@
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { AsyncResult } from "effect/reactivity";
 import * as Dialog from "../../components/ui/Dialog";
 import { TextInputWrapper } from "expo-paste-input";
@@ -11,9 +12,10 @@ import { View, type TextInputInstance } from "react-native";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { ComposerAttachmentButton } from "./ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
-import { pickComposerFiles, pickComposerMedia } from "../../lib/composerImages";
 import { useThreadSelection } from "../../state/use-thread-selection";
 import { useNavigation } from "@react-navigation/native";
+import { useGT } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/ui/VideoPreviewModal";
 import { useServerConfigs } from "../../state/entities";
@@ -22,13 +24,12 @@ import {
   appendComposerDraftAttachments,
   composerDraftsAtom,
   removeComposerDraftAttachment,
-  releaseUnusedComposerAttachmentFiles,
 } from "../../state/use-composer-drafts";
+import { questionAttachmentDraftKey } from "../../state/question-attachments";
 import {
-  changeQuestionAttachmentPreparation,
-  questionAttachmentDraftKey,
-  questionAttachmentPreparationAtom,
-} from "../../state/question-attachments";
+  pickQuestionAttachments,
+  startQuestionImagePreparation,
+} from "../../state/question-attachment-preparation";
 
 export function QuestionAttachments(props: {
   requestId: string;
@@ -39,6 +40,7 @@ export function QuestionAttachments(props: {
   onChangeText: (value: string) => void;
   onInputFocusChange?: ((focused: boolean) => void) | undefined;
 }) {
+  const gt = useGT();
   const { selectedThread } = useThreadSelection();
   const navigation = useNavigation();
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
@@ -104,30 +106,28 @@ export function QuestionAttachments(props: {
       props.requestId,
       props.question.id,
     );
-    changeQuestionAttachmentPreparation(key, 1);
-    void convertPastedImagesToAttachments({
-      uris,
-      existingCount: appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0,
-    })
-      .then(async (result) => {
-        if (
-          scope.active &&
-          (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) > 0
-        ) {
-          const problems = [
-            ...(result.error ? [result.error] : []),
-            ...(append(key, result.attachments) > 0 ? ["Too many attachments."] : []),
-          ];
-          if (problems.length) Dialog.alert("Could not paste image", problems.join("\n\n"));
-        } else await releaseUnusedComposerAttachmentFiles(result.attachments);
+    const preparation = startQuestionImagePreparation(key);
+    void convertPastedImagesToAttachments({ uris })
+      .then((result) =>
+        preparation.complete(result, {
+          isActive: () => scope.active,
+          append: (attachments) => append(key, attachments),
+        }),
+      )
+      .then(({ error, rejected }) => {
+        const problems = [
+          ...(error ? [error] : []),
+          ...(rejected > 0 ? [gt("Too many attachments.")] : []),
+        ];
+        if (problems.length) Dialog.alert(gt("Could not paste image"), problems.join("\n\n"));
       })
       .catch((error) =>
         Dialog.alert(
-          "Could not paste image",
-          error instanceof Error ? error.message : "Try again.",
+          gt("Could not paste image"),
+          errorDisplayMessage(error, m) ?? gt("Try again."),
         ),
       )
-      .finally(() => changeQuestionAttachmentPreparation(key, -1));
+      .finally(preparation.finish);
   });
   if (!selectedThread || props.question.allowCustomAnswer === false) return null;
   const { environmentId, id: threadId } = selectedThread;
@@ -142,36 +142,20 @@ export function QuestionAttachments(props: {
   const attachments = drafts[key]?.attachments ?? [];
   const pick = async (kind: "media" | "files") => {
     const scope = pickerScope.current;
-    changeQuestionAttachmentPreparation(key, 1);
     const picked = await settlePromise(async () => {
-      const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
-      const result =
-        kind === "files"
-          ? await pickComposerFiles({
-              existingCount,
-              maxBytes: capabilities?.fileAttachments?.maxUploadBytes,
-            })
-          : await pickComposerMedia({
-              existingCount,
-              maxVideoBytes: capabilities?.fileAttachments?.maxUploadBytes,
-            });
-      const picked = "files" in result ? result.files : result.attachments;
-      // Resolution on another client clears the reservation while the picker is open.
-      if (
-        !scope.active ||
-        (appAtomRegistry.get(questionAttachmentPreparationAtom)[key] ?? 0) === 0
-      ) {
-        await releaseUnusedComposerAttachmentFiles(picked);
-        return;
-      }
-      const rejected = append(key, picked);
-      if (result.error || rejected > 0)
-        Dialog.alert("Could not attach file", result.error ?? "Too many attachments.");
+      const result = await pickQuestionAttachments({
+        key,
+        kind,
+        maxUploadBytes: capabilities?.fileAttachments?.maxUploadBytes,
+        isActive: () => scope.active,
+        append: (attachments) => append(key, attachments),
+      });
+      if (result.error || result.rejected > 0)
+        Dialog.alert(gt("Could not attach file"), result.error ?? gt("Too many attachments."));
     });
-    changeQuestionAttachmentPreparation(key, -1);
     if (AsyncResult.isFailure(picked)) {
       const error = squashAtomCommandFailure(picked);
-      Dialog.alert("Could not attach file", error instanceof Error ? error.message : "Try again.");
+      Dialog.alert(gt("Could not attach file"), errorDisplayMessage(error, m) ?? gt("Try again."));
     }
   };
   return (
@@ -227,7 +211,7 @@ export function QuestionAttachments(props: {
             focusedRef.current = false;
             onInputFocusChange?.(false);
           }}
-          placeholder="Or type a custom answer"
+          placeholder={gt("Or type a custom answer")}
           className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
         />
       </TextInputWrapper>

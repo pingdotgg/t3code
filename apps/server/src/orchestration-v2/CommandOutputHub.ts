@@ -13,12 +13,12 @@ import {
   TERMINAL_OUTPUT_TAIL_CHARS,
   terminalOutputResumeText,
 } from "@t3tools/shared/terminalOutput";
+import { commandItemOutput } from "@t3tools/shared/commandOutput";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -67,21 +67,6 @@ const isCommandOutputError = Schema.is(OrchestrationV2CommandOutputError);
 
 function commandKey(target: CommandOutputTarget): string {
   return `${target.threadId}\u0000${target.itemId}`;
-}
-
-const decodeLegacyClaudeBashResult = Schema.decodeUnknownOption(
-  Schema.fromJsonString(
-    Schema.Struct({ stdout: Schema.String, stderr: Schema.String, interrupted: Schema.Boolean }),
-  ),
-);
-
-function legacyClaudeBashOutput(output: string): string {
-  if (!output.trimStart().startsWith('{"stdout"')) return output;
-  const parsed = decodeLegacyClaudeBashResult(output);
-  if (Option.isNone(parsed)) return output;
-  const out = parsed.value.stdout.trim().length > 0 ? parsed.value.stdout : "";
-  const err = parsed.value.stderr.trim().length > 0 ? parsed.value.stderr : "";
-  return out.length > 0 && err.length > 0 && !out.endsWith("\n") ? `${out}\n${err}` : out + err;
 }
 
 function persistedCommandOutput(output: string | undefined): {
@@ -269,8 +254,11 @@ export const make = Effect.gen(function* () {
                 running: false,
               };
             }
-            const output = settled.output && legacyClaudeBashOutput(settled.output);
-            return { kind: "replace", ...persistedCommandOutput(output), running: false };
+            return {
+              kind: "replace",
+              ...persistedCommandOutput(commandItemOutput(settled)),
+              running: false,
+            };
           }
           if (subscriber.needsReplace || tail === undefined) {
             if (subscriber.overflowed) throttle = COMMAND_OUTPUT_REPLACE_INTERVAL_MS;
