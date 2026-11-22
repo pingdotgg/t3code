@@ -1,5 +1,9 @@
 /// <reference lib="dom" />
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import JSZip from "jszip";
 
 import { test, WEB } from "./t3.ts";
@@ -33,18 +37,19 @@ test(
   "Two rapid right arrows advance two tabs in an Excel preview",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    const budget = await workbook();
-    const archive = await JSZip.loadAsync(budget);
+    const project = await t3.project("demo", { "budget.xlsx": await workbook() });
+    const archive = await JSZip.loadAsync(await workbook());
     const manifest = (await archive.file("xl/workbook.xml")!.async("string")).replace(
       '<sheet name="Forecast"',
       '<sheet state="hidden" name="Forecast"',
     );
     archive.file("xl/workbook.xml", manifest);
     const wraparound = await archive.generateAsync({ type: "uint8array" });
-    const project = await t3.project("demo", {
-      "budget.xlsx": budget,
-      "wraparound.xlsx": wraparound,
-    });
+    await Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFile(path.join(project, "wraparound.xlsx"), wraparound);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
 
     const thread = await t3.thread({ project, title: "Review budget", messages: ["Start"] });
     await t3.open(thread);
