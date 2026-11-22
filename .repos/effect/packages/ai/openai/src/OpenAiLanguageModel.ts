@@ -296,6 +296,10 @@ declare module "effect/ai/Prompt" {
        */
       readonly itemId?: string | null
       /**
+       * The model’s refusal explanation. Streamed explanations are separated by a blank line.
+       */
+      readonly refusal?: string | null
+      /**
        * The status of item.
        */
       readonly status?: typeof OpenAiSchema.MessageStatus.Encoded | null
@@ -383,6 +387,10 @@ declare module "effect/ai/Response" {
        * The OpenAI item ID associated with the streamed text part.
        */
       readonly itemId?: string | null
+      /**
+       * Refusal explanations from the completed message, separated by a blank line.
+       */
+      readonly refusal?: string | null
       /**
        * The annotations collected for the completed streamed text part.
        */
@@ -710,10 +718,9 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
         ...apiConfig,
         input: messages,
         include: include.size > 0 ? Array.from(include) : undefined,
-        text: {
-          verbosity: config.text?.verbosity ?? undefined,
-          format: responseFormat
-        }
+        text: responseFormat !== undefined || config.text?.verbosity !== undefined
+          ? { verbosity: config.text?.verbosity, format: responseFormat }
+          : undefined
       }
       if (tools) request.tools = tools
       if (toolChoice) request.tool_choice = toolChoice
@@ -733,6 +740,7 @@ export const make = Effect.fnUntraced(function*({ model, config: providerConfig 
         const [rawResponse, response] = yield* client.createResponse(request)
         annotateResponse(options.span, rawResponse)
         return yield* makeResponse({
+          config,
           options,
           rawResponse,
           response,
@@ -1055,6 +1063,17 @@ const prepareMessages = Effect.fnUntraced(
                   break
                 }
 
+                const result = part.providerExecuted
+                  ? providerExecutedParts.find((candidate): candidate is Prompt.ToolResultPart =>
+                    candidate.type === "tool-result" && candidate.id === part.id && candidate.name === part.name
+                  )
+                  : undefined
+
+                // The paired result emits the single stored-item reference
+                if (useItemReferences && Predicate.isNotUndefined(result)) {
+                  break
+                }
+
                 if (useItemReferences && Predicate.isNotNull(id)) {
                   messages.push({ type: "item_reference", id })
                   break
@@ -1066,10 +1085,7 @@ const prepareMessages = Effect.fnUntraced(
                   ) {
                     break
                   }
-                  const result = providerExecutedParts.find((candidate) =>
-                    candidate.type === "tool-result" && candidate.id === part.id && candidate.name === part.name
-                  )
-                  if (Predicate.isUndefined(result) || result.type !== "tool-result") {
+                  if (Predicate.isUndefined(result)) {
                     return yield* unreplayableProviderItem(part.name, part.id)
                   }
                   if (
@@ -1305,7 +1321,7 @@ const prepareMessages = Effect.fnUntraced(
                 id,
                 type: "shell_call_output",
                 call_id: part.id,
-                output: part.result as any,
+                output: getShellOutput(part),
                 ...(Predicate.isNotNull(status) ? { status } : {})
               })
               continue
@@ -1316,7 +1332,7 @@ const prepareMessages = Effect.fnUntraced(
                 id,
                 type: "local_shell_call_output",
                 call_id: part.id,
-                output: part.result as any,
+                output: getShellOutput(part),
                 ...(Predicate.isNotNull(status) ? { status } : {})
               })
               continue
@@ -1409,11 +1425,13 @@ const isKnownResponseStreamEvent = (
 
 const makeResponse = Effect.fnUntraced(
   function*<Tools extends ReadonlyArray<Tool.Any>>({
+    config,
     options,
     rawResponse,
     response,
     toolNameMapper
   }: {
+    readonly config: typeof Config.Service
     readonly options: LanguageModel.ProviderOptions
     readonly rawResponse: OpenAiSchema.Response
     readonly response: HttpClientResponse.HttpClientResponse
@@ -1521,7 +1539,7 @@ const makeResponse = Effect.fnUntraced(
               })
           })
 
-          const params = yield* transformToolCallParams(options, part.name, toolParams)
+          const params = yield* transformToolCallParams(config, options, part.name, toolParams)
 
           parts.push({
             type: "tool-call",
@@ -1639,6 +1657,10 @@ const makeResponse = Effect.fnUntraced(
         }
 
         case "message": {
+          // Commentary text would be joined with the final answer and break JSON decoding
+          if (options.responseFormat.type === "json" && part.phase === "commentary") {
+            break
+          }
           for (const contentPart of part.content) {
             switch (contentPart.type) {
               case "output_text": {
@@ -2141,7 +2163,7 @@ const makeStreamResponse = Effect.fnUntraced(
               case "shell_call": {
                 const toolName = toolNameMapper.getCustomName("shell")
                 activeToolCalls[event.output_index] = {
-                  id: event.item.id ?? event.item.call_id,
+                  id: event.item.call_id,
                   name: toolName
                 }
                 break
@@ -2307,7 +2329,7 @@ const makeStreamResponse = Effect.fnUntraced(
                     })
                 })
 
-                const params = yield* transformToolCallParams(options, toolName, toolParams)
+                const params = yield* transformToolCallParams(config, options, toolName, toolParams)
 
                 parts.push({
                   type: "tool-params-end",
@@ -2426,13 +2448,22 @@ const makeStreamResponse = Effect.fnUntraced(
               }
 
               case "message": {
+                const refusals = event.item.content.filter((part) => part.type === "refusal")
                 const annotations = activeAnnotations.length > 0
                   ? { annotations: activeAnnotations.slice() }
                   : undefined
                 parts.push({
                   type: "text-end",
                   id: event.item.id,
-                  metadata: { openai: { ...annotations, ...makeItemIdMetadata(event.item.id) } }
+                  metadata: {
+                    openai: {
+                      ...annotations,
+                      ...makeItemIdMetadata(event.item.id),
+                      ...(refusals.length > 0
+                        ? { refusal: refusals.map((part) => part.refusal).join("\n\n") }
+                        : undefined)
+                    }
+                  }
                 })
                 break
               }
@@ -2462,7 +2493,7 @@ const makeStreamResponse = Effect.fnUntraced(
                 const toolName = toolNameMapper.getCustomName("shell")
                 parts.push({
                   type: "tool-call",
-                  id: event.item.id ?? event.item.call_id,
+                  id: event.item.call_id,
                   name: toolName,
                   params: { action: event.item.action },
                   metadata: { openai: makeItemIdMetadata(event.item.id) }
@@ -2615,7 +2646,7 @@ const makeStreamResponse = Effect.fnUntraced(
                   })
               })
 
-              const params = yield* transformToolCallParams(options, toolCall.name, toolParams)
+              const params = yield* transformToolCallParams(config, options, toolCall.name, toolParams)
 
               parts.push({
                 type: "tool-params-end",
@@ -2893,9 +2924,9 @@ const prepareTools = Effect.fnUntraced(function*<Tools extends ReadonlyArray<Too
   // Convert the tools in the toolkit to the provider-defined format
   for (const tool of allowedTools) {
     if (Tool.isUserDefined(tool) || Tool.isDynamic(tool)) {
-      const strict = Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
+      const strict = getToolStrictMode(tool, config)
       const description = Tool.getDescription(tool)
-      const parameters = yield* tryToolJsonSchema(tool, "prepareTools")
+      const parameters = yield* tryToolJsonSchema(tool, strict, "prepareTools")
       tools.push({
         type: "function",
         name: tool.name,
@@ -3162,6 +3193,8 @@ const getStatus = (
 const getEncryptedContent = (
   part: Prompt.ReasoningPart
 ): string | null => part.options.openai?.encryptedContent ?? null
+// Shell tool successes are `{ output }`; failure results are passed through unchanged
+const getShellOutput = (part: Prompt.ToolResultPart): any => part.isFailure ? part.result : (part.result as any).output
 
 const getImageDetail = (part: Prompt.FilePart): ImageDetail => part.options.openai?.imageDetail ?? "auto"
 
@@ -3205,16 +3238,20 @@ const toolParametersError = (tool: Tool.Any, error: unknown, method: string): Ai
     method
   )
 
-const tryToolJsonSchema = <T extends Tool.Any>(tool: T, method: string) =>
+const getToolStrictMode = (tool: Tool.Any, config: typeof Config.Service): boolean =>
+  Tool.getStrictMode(tool) ?? config.strictJsonSchema ?? true
+
+const tryToolJsonSchema = <T extends Tool.Any>(tool: T, strict: boolean, method: string) =>
   Effect.try({
-    try: () => Tool.getJsonSchema(tool, { transformer: toCodecOpenAI }),
+    try: () =>
+      Tool.getJsonSchema(tool, { transformer: strict ? toCodecOpenAI : LanguageModel.defaultCodecTransformer }),
     catch: (error) => toolParametersError(tool, error, method)
   })
 
 const prepareResponseFormat = Effect.fnUntraced(function*({ config, options }: {
   readonly config: typeof Config.Service
   readonly options: LanguageModel.ProviderOptions
-}): Effect.fn.Return<typeof OpenAiSchema.TextResponseFormatConfiguration.Encoded, AiError.AiError> {
+}): Effect.fn.Return<typeof OpenAiSchema.TextResponseFormatConfiguration.Encoded | undefined, AiError.AiError> {
   if (options.responseFormat.type === "json") {
     const name = options.responseFormat.objectName
     const schema = options.responseFormat.schema
@@ -3227,7 +3264,7 @@ const prepareResponseFormat = Effect.fnUntraced(function*({ config, options }: {
       strict: config.strictJsonSchema ?? true
     }
   }
-  return { type: "text" }
+  return undefined
 })
 
 // Default new model names to reasoning without extending an allowlist.
@@ -3374,6 +3411,7 @@ const getUsageTokenDetail = (details: unknown, key: string): number | undefined 
   Predicate.hasProperty(details, key) && typeof details[key] === "number" ? details[key] : undefined
 
 const transformToolCallParams = Effect.fnUntraced(function*(
+  config: typeof Config.Service,
   options: LanguageModel.ProviderOptions,
   toolName: string,
   toolParams: unknown
@@ -3394,7 +3432,7 @@ const transformToolCallParams = Effect.fnUntraced(function*(
     })
   }
 
-  if (Tool.isDynamic(tool) && tool.jsonSchema !== undefined) {
+  if (!getToolStrictMode(tool, config) || (Tool.isDynamic(tool) && tool.jsonSchema !== undefined)) {
     return toolParams
   }
 
@@ -3405,7 +3443,10 @@ const transformToolCallParams = Effect.fnUntraced(function*(
     Schema.decodeEffect(codec)(toolParams) as Effect.Effect<unknown, Schema.SchemaError>
   ).pipe(
     Effect.flatMap((decoded) =>
-      Schema.encodeUnknownEffect(tool.parametersSchema)(decoded) as Effect.Effect<unknown, Schema.SchemaError>
+      Schema.encodeUnknownEffect(Schema.toCodecJson(tool.parametersSchema))(decoded) as Effect.Effect<
+        unknown,
+        Schema.SchemaError
+      >
     ),
     Effect.orElseSucceed(() => toolParams)
   )
