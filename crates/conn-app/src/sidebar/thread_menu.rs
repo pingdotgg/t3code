@@ -221,15 +221,70 @@ pub(crate) struct ThreadMenuAnchor {
     pub(crate) copy_open: bool,
 }
 
+/// Submenu close grace period when the pointer moves onto a sibling top-level row
+/// so diagonal motion from `Copy` toward lower submenu rows does not close it early.
+pub(crate) const SUBMENU_CLOSE_DELAY: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Whether a rendered menu list is the root context menu or a nested submenu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MenuLevel {
+    Root,
+    Submenu,
+}
+
+/// How hovering a row should affect the open `Copy` submenu.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubmenuHoverIntent {
+    /// Open the submenu immediately and cancel any pending close.
+    Open,
+    /// Keep the submenu open and cancel any pending close (pointer is inside the submenu).
+    KeepOpen,
+    /// Schedule closing the submenu after [`SUBMENU_CLOSE_DELAY`] unless the pointer reaches it.
+    CloseSoon,
+}
+
+#[must_use]
+fn submenu_hover_intent(level: MenuLevel, has_children: bool) -> SubmenuHoverIntent {
+    match (level, has_children) {
+        (MenuLevel::Submenu, _) => SubmenuHoverIntent::KeepOpen,
+        (MenuLevel::Root, true) => SubmenuHoverIntent::Open,
+        (MenuLevel::Root, false) => SubmenuHoverIntent::CloseSoon,
+    }
+}
+
+/// Opens the submenu to the left of the parent menu when opening to the right would clip
+/// past the window's right edge.
+#[must_use]
+fn submenu_opens_left(anchor_x: Pixels, viewport_w: Pixels) -> bool {
+    anchor_x + px(MENU_MIN_WIDTH_PX * 2.0 + 16.0) > viewport_w
+}
+
+/// Aligns the submenu's bottom edge to the `Copy` row when opening downward would clip
+/// past the bottom of the window.
+#[must_use]
+fn submenu_opens_upward(anchor_y: Pixels, item_count: usize, viewport_h: Pixels) -> bool {
+    let submenu_h = item_count as f32 * MENU_ROW_HEIGHT_PX + 16.0;
+    anchor_y + px(submenu_h) > viewport_h
+}
+
 /// Renders the anchored `dropdown-glass` Thread Actions menu.
 #[must_use]
 pub(crate) fn render_thread_action_menu(
     items: &[ThreadMenuItem],
     anchor: &ThreadMenuAnchor,
+    viewport: gpui_kit::Size<Pixels>,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> AnyElement {
-    let list = render_menu_list("thread-menu", items, anchor, tokens, cx);
+    let list = render_menu_list(
+        "thread-menu",
+        items,
+        anchor,
+        MenuLevel::Root,
+        viewport,
+        tokens,
+        cx,
+    );
     deferred(
         anchored()
             .position(anchor.position)
@@ -243,6 +298,7 @@ pub(crate) fn render_thread_action_menu(
 fn menu_surface(id: SharedString, tokens: &Tokens) -> gpui_kit::Stateful<gpui_kit::Div> {
     div()
         .id(id)
+        .occlude()
         .flex()
         .flex_col()
         .min_w(px(MENU_MIN_WIDTH_PX))
@@ -260,6 +316,8 @@ fn render_menu_list(
     id_prefix: &'static str,
     items: &[ThreadMenuItem],
     anchor: &ThreadMenuAnchor,
+    level: MenuLevel,
+    viewport: gpui_kit::Size<Pixels>,
     tokens: &Tokens,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
@@ -281,6 +339,7 @@ fn render_menu_list(
             muted.opacity(MENU_ICON_OPACITY)
         };
         let has_children = !item.children.is_empty();
+        let hover_intent = submenu_hover_intent(level, has_children);
         let action = item.action;
         let thread_id = anchor.thread_id.clone();
         let mut row = div()
@@ -323,13 +382,19 @@ fn render_menu_list(
                 .hover(move |s| s.bg(highlight))
                 .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
                     if *hovered {
-                        app.set_thread_menu_copy_open(has_children, cx);
+                        match hover_intent {
+                            SubmenuHoverIntent::Open => app.open_thread_menu_copy_submenu(cx),
+                            SubmenuHoverIntent::KeepOpen => app.keep_thread_menu_copy_open(cx),
+                            SubmenuHoverIntent::CloseSoon => {
+                                app.schedule_thread_menu_copy_close(cx);
+                            }
+                        }
                     }
                 }))
                 .on_click(cx.listener(move |app, _, window, cx| {
                     cx.stop_propagation();
                     if has_children {
-                        app.set_thread_menu_copy_open(true, cx);
+                        app.open_thread_menu_copy_submenu(cx);
                     } else {
                         app.run_thread_menu_action(thread_id.clone(), action, window, cx);
                     }
@@ -338,15 +403,39 @@ fn render_menu_list(
 
         if has_children && anchor.copy_open {
             row = row.bg(highlight);
-            let submenu = render_menu_list("thread-menu-copy", &item.children, anchor, tokens, cx);
-            row = row.child(
-                div()
-                    .absolute()
-                    .left_full()
-                    .top(px(-4.0))
-                    .pl(px(6.0))
-                    .child(submenu),
+            let submenu = render_menu_list(
+                "thread-menu-copy",
+                &item.children,
+                anchor,
+                MenuLevel::Submenu,
+                viewport,
+                tokens,
+                cx,
             );
+            let mut bridge = div()
+                .id("thread-menu-copy-bridge")
+                .occlude()
+                .absolute()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation())
+                .on_hover(cx.listener(|app, hovered: &bool, _, cx| {
+                    if *hovered {
+                        app.keep_thread_menu_copy_open(cx);
+                    }
+                }))
+                .child(submenu);
+            bridge =
+                if submenu_opens_upward(anchor.position.y, item.children.len(), viewport.height) {
+                    bridge.bottom(px(-4.0))
+                } else {
+                    bridge.top(px(-4.0))
+                };
+            bridge = if submenu_opens_left(anchor.position.x, viewport.width) {
+                bridge.right_full().pr(px(6.0))
+            } else {
+                bridge.left_full().pl(px(6.0))
+            };
+            row = row.child(bridge);
         }
         list = list.child(row);
     }
@@ -456,5 +545,49 @@ mod tests {
                 "menu icon `{path}` must exist"
             );
         }
+    }
+
+    #[test]
+    fn hovering_submenu_item_keeps_submenu_open_and_never_closes_it() {
+        assert_eq!(
+            submenu_hover_intent(MenuLevel::Root, true),
+            SubmenuHoverIntent::Open,
+            "hovering parent Copy row opens submenu immediately"
+        );
+        assert_eq!(
+            submenu_hover_intent(MenuLevel::Submenu, false),
+            SubmenuHoverIntent::KeepOpen,
+            "hovering any child row inside the submenu must keep the submenu open"
+        );
+        assert_eq!(
+            submenu_hover_intent(MenuLevel::Submenu, true),
+            SubmenuHoverIntent::KeepOpen,
+            "nested submenu row also keeps submenu open"
+        );
+        assert_eq!(
+            submenu_hover_intent(MenuLevel::Root, false),
+            SubmenuHoverIntent::CloseSoon,
+            "hovering a non-submenu sibling schedules a delayed close"
+        );
+    }
+
+    #[test]
+    fn submenu_flips_left_only_near_right_window_edge() {
+        assert!(
+            !submenu_opens_left(px(180.0), px(1200.0)),
+            "sidebar context menu opens submenu to the right"
+        );
+        assert!(
+            submenu_opens_left(px(950.0), px(1200.0)),
+            "right-edge context menu flips submenu to the left to stay inside viewport"
+        );
+        assert!(
+            !submenu_opens_upward(px(200.0), 4, px(800.0)),
+            "mid-window context menu opens submenu downward"
+        );
+        assert!(
+            submenu_opens_upward(px(740.0), 4, px(800.0)),
+            "bottom-edge context menu aligns submenu upward to stay inside viewport"
+        );
     }
 }

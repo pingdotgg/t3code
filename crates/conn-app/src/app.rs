@@ -107,6 +107,8 @@ pub(crate) struct ConnApp {
     rename_in_header: bool,
     /// Open Thread Actions menu (sidebar right-click or header title).
     thread_menu: Option<ThreadMenuAnchor>,
+    /// Bumped to cancel a pending `Copy` submenu hover-intent close.
+    thread_menu_copy_close_gen: u64,
     /// Bumped to cancel a pending header-title menu open (double-click renames instead).
     header_menu_generation: u64,
     /// Top-right Thread Details card.
@@ -393,6 +395,7 @@ impl ConnApp {
             _rename_sub: rename_sub,
             rename_in_header: false,
             thread_menu: None,
+            thread_menu_copy_close_gen: 0,
             header_menu_generation: 0,
             thread_details: ThreadDetailsState::default(),
             _sidebar_clock: None,
@@ -2664,6 +2667,7 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         self.thread_details.copy_menu = None;
+        self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
         self.thread_menu = Some(ThreadMenuAnchor {
             thread_id,
             position,
@@ -2695,20 +2699,53 @@ impl ConnApp {
         .detach();
     }
 
-    /// Shows or hides the Thread Actions `Copy` submenu.
-    pub(crate) fn set_thread_menu_copy_open(&mut self, open: bool, cx: &mut Context<'_, Self>) {
+    /// Immediately opens the Thread Actions `Copy` submenu and cancels any pending close.
+    pub(crate) fn open_thread_menu_copy_submenu(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
         if let Some(menu) = &mut self.thread_menu
-            && menu.copy_open != open
+            && !menu.copy_open
         {
-            menu.copy_open = open;
+            menu.copy_open = true;
             cx.notify();
         }
+    }
+
+    /// Keeps the `Copy` submenu open when the pointer enters the submenu or its hover bridge.
+    pub(crate) fn keep_thread_menu_copy_open(&mut self, cx: &mut Context<'_, Self>) {
+        self.open_thread_menu_copy_submenu(cx);
+    }
+
+    /// Closes the `Copy` submenu after a short grace delay unless the pointer enters it.
+    pub(crate) fn schedule_thread_menu_copy_close(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.thread_menu.as_ref().is_some_and(|m| m.copy_open) {
+            return;
+        }
+        self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        let generation = self.thread_menu_copy_close_gen;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(crate::sidebar::thread_menu::SUBMENU_CLOSE_DELAY)
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app.thread_menu_copy_close_gen == generation
+                    && let Some(menu) = &mut app.thread_menu
+                    && menu.copy_open
+                {
+                    menu.copy_open = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     /// Closes open shell popovers (Thread Actions menu, details card and its menus).
     /// Returns whether anything closed.
     fn dismiss_shell_popovers(&mut self, cx: &mut Context<'_, Self>) -> bool {
         let mut changed = self.thread_menu.take().is_some();
+        if changed {
+            self.thread_menu_copy_close_gen = self.thread_menu_copy_close_gen.wrapping_add(1);
+        }
         let details = &mut self.thread_details;
         if details.copy_menu.take().is_some() {
             changed = true;
@@ -5023,7 +5060,13 @@ impl Render for ConnApp {
                 ThreadMenuState::for_thread(&self.shell, thread, self.active_workspace.as_deref());
             let items = build_thread_action_menu_items(&state);
             let anchor = anchor.clone();
-            root = root.child(render_thread_action_menu(&items, &anchor, &self.tokens, cx));
+            root = root.child(render_thread_action_menu(
+                &items,
+                &anchor,
+                viewport,
+                &self.tokens,
+                cx,
+            ));
         }
 
         if let Some(modal) = &self.settings_modal {
