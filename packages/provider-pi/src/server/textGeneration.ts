@@ -4,12 +4,21 @@ import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
-import { TextGenerationError } from "@t3tools/contracts";
+import { ProviderDriverKind, TextGenerationError } from "@t3tools/contracts";
+import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
+import {
+  brokenVersionDetail,
+  noCompatibilityPolicy,
+  type ProviderCompatibilityLookup,
+} from "@t3tools/provider-core/server/compatibility";
+import { parseGenericCliVersion } from "@t3tools/provider-core/server/snapshotProbe";
 import type { PiSettings } from "../settings.ts";
 
 import { makePiRpcConnection, piRecordField, piRecordString, resolvePiModelSlug } from "./rpc.ts";
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
 import * as TextGenerationOperations from "@t3tools/provider-core/server/textGenerationOperations";
+import { isPiThinkingLevel } from "./modelCapabilities.ts";
+import { runPiVersionCommand } from "./status.ts";
 
 const PI_TIMEOUT_MS = 180_000;
 
@@ -27,12 +36,35 @@ const piTurnErrorDetail = (errorMessage: string | undefined) => {
 export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* (
   piSettings: PiSettings,
   environment: NodeJS.ProcessEnv = process.env,
+  compatibility: ProviderCompatibilityLookup = noCompatibilityPolicy,
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
   const runPiJson: TextGenerationOperations.Runner = Effect.fn("PiTextGeneration.runPiJson")(
     function* (request) {
       const { operation, cwd, prompt, modelSelection } = request;
+      const thinking = getModelSelectionStringOptionValue(modelSelection, "thinking");
+      if (thinking !== undefined && isPiThinkingLevel(thinking)) {
+        const output = yield* runPiVersionCommand(piSettings, environment, cwd).pipe(
+          Effect.timeoutOption(4_000),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        );
+        const version =
+          Option.isSome(output) && output.value.code === 0
+            ? parseGenericCliVersion(`${output.value.stdout}\n${output.value.stderr}`)
+            : null;
+        const broken =
+          version === null
+            ? "T3 Code could not determine the Pi version. Update Pi and try again."
+            : brokenVersionDetail({
+                name: "Pi",
+                version,
+                advisory: yield* compatibility(ProviderDriverKind.make("pi"), version),
+              });
+        if (broken !== undefined) {
+          return yield* new TextGenerationError({ operation, detail: broken });
+        }
+      }
 
       const resolvedLaunchArgs = resolvePiLaunchArgs(piSettings.launchArgs);
       if (!resolvedLaunchArgs.ok) {
@@ -89,6 +121,14 @@ export const makePiTextGeneration = Effect.fn("makePiTextGeneration")(function* 
                 : error,
             ),
           );
+      }
+
+      if (thinking !== undefined && isPiThinkingLevel(thinking)) {
+        // Pi rejects xhigh/max for models without a thinkingLevelMap entry; a stale saved
+        // level falls back to Pi's default instead of failing the whole generation.
+        yield* connection
+          .request({ type: "set_thinking_level", level: thinking })
+          .pipe(Effect.catchTags({ PiRpcError: () => Effect.void }));
       }
 
       yield* connection.request({ type: "prompt", message: prompt });
