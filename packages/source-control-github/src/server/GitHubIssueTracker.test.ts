@@ -80,6 +80,7 @@ const DETAIL_RESPONSE = JSON.stringify({
         viewerCanReopen: true,
         reactionGroups: [],
         closedByPullRequestsReferences: {
+          pageInfo: { hasNextPage: true, endCursor: "links-next" },
           nodes: [
             {
               number: 50,
@@ -186,9 +187,18 @@ function tracker(onRequest: (variables: unknown) => void, templateRepository?: u
                             pageInfo: { hasNextPage: false, endCursor: null },
                             nodes: [{ name: "needs repro", color: "ffffff" }],
                           },
-                          assignees: {
+                          closedByPullRequestsReferences: {
                             pageInfo: { hasNextPage: false, endCursor: null },
-                            nodes: [],
+                            nodes: [
+                              {
+                                number: 61,
+                                title: "fix(web): restore focus after paste",
+                                url: "https://github.com/acme/web/pull/61",
+                                state: "OPEN",
+                                isDraft: true,
+                                repository: { nameWithOwner: "acme/web" },
+                              },
+                            ],
                           },
                         },
                       },
@@ -216,6 +226,31 @@ const decodeBody = Schema.decodeUnknownSync(
 );
 
 describe("GitHubIssueTracker", () => {
+  it.effect("reads only the fields needed to link a GitHub issue and rejects missing issues", () =>
+    Effect.gen(function* () {
+      const requests: unknown[] = [];
+      const target = { cwd: "/w", host: "github.com", scope: "acme/web", key: "42" };
+      const url = "https://github.com/acme/web/issues/42";
+      const found = yield* tracker((input) => requests.push(input), {
+        issue: { number: 42, title: "Fixture issue", url },
+      });
+      expect(yield* found.getIssueLink(target)).toEqual({
+        displayKey: "#42",
+        title: "Fixture issue",
+        url,
+      });
+
+      const missing = yield* tracker((input) => requests.push(input), { issue: null });
+      expect(yield* Effect.flip(missing.getIssueLink(target))).toMatchObject({
+        reason: "not-found",
+      });
+      expect(requests).toEqual([
+        { owner: "acme", name: "web", number: 42 },
+        { owner: "acme", name: "web", number: 42 },
+      ]);
+    }),
+  );
+
   it.effect("writes an issue lifecycle without mutating pull requests or foreign comments", () =>
     Effect.gen(function* () {
       const writes: unknown[] = [];
@@ -397,7 +432,6 @@ describe("GitHubIssueTracker", () => {
           scope: "acme/web",
           state: "open",
           involvement: "all",
-          viewer: "julius",
           labels: ['needs "repro"'],
           assignee: "theo",
           sort: "created",
@@ -550,6 +584,10 @@ Redact secrets before uploading.`);
           number: 42,
           labelsCursor: "labels-next",
           assigneesCursor: null,
+          closingPullRequestsCursor: "links-next",
+          withLabels: true,
+          withAssignees: false,
+          withClosingPullRequests: true,
         },
       ]);
       expect(issue).toMatchObject({
@@ -599,6 +637,16 @@ Redact secrets before uploading.`);
           url: "https://github.com/acme/web/pull/50",
           state: "merged",
           isDraft: false,
+          closesIssue: true,
+        },
+        // A closing reference past the first page, with no timeline sighting, still shows.
+        {
+          repository: "acme/web",
+          number: 61,
+          title: "fix(web): restore focus after paste",
+          url: "https://github.com/acme/web/pull/61",
+          state: "open",
+          isDraft: true,
           closesIssue: true,
         },
       ]);

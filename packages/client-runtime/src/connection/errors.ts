@@ -1,9 +1,16 @@
 import type { ClientConnectionMethod, EnvironmentId } from "@t3tools/contracts";
 import type { RelayProtectedError } from "@t3tools/contracts/relay";
 import type { ManagedRelayClientError } from "../relay/managedRelay.ts";
-import { dpopFailureMessage, relayProtectedErrorMessage } from "../relay/errorPresentation.ts";
+import { msg } from "gt-i18n";
+import { dpopFailureText, relayProtectedErrorText } from "../relay/errorPresentation.ts";
 import type { RemoteEnvironmentAuthError } from "../authorization/remote.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import {
+  detailFromError,
+  errorI18nMessage,
+  markedTextEnglish,
+  translatableDetail,
+} from "../errors/translatable.ts";
 import {
   ConnectionBlockedError,
   type ConnectionAttemptError,
@@ -13,7 +20,9 @@ import {
 export function profileMissingError(connectionId: string): ConnectionBlockedError {
   return new ConnectionBlockedError({
     reason: "configuration",
-    detail: `Connection profile ${connectionId} is unavailable.`,
+    ...translatableDetail(
+      msg("Connection profile {connectionId} is unavailable.", { connectionId }),
+    ),
     hop: "device",
   });
 }
@@ -21,7 +30,9 @@ export function profileMissingError(connectionId: string): ConnectionBlockedErro
 export function credentialMissingError(connectionId: string): ConnectionBlockedError {
   return new ConnectionBlockedError({
     reason: "authentication",
-    detail: `Connection credential ${connectionId} is unavailable.`,
+    ...translatableDetail(
+      msg("Connection credential {connectionId} is unavailable.", { connectionId }),
+    ),
     hop: "device",
   });
 }
@@ -42,18 +53,26 @@ export function environmentMismatchError(input: {
 }): ConnectionBlockedError {
   return new ConnectionBlockedError({
     reason: "configuration",
-    detail: `Connected environment ${input.actual} does not match ${input.expected}.`,
+    ...translatableDetail(
+      msg("Connected environment {actual} does not match {expected}.", {
+        actual: input.actual,
+        expected: input.expected,
+      }),
+    ),
   });
 }
 
 function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError {
-  const detail = relayProtectedErrorMessage(error);
+  const text = relayProtectedErrorText(error);
+  const detail = markedTextEnglish(text);
+  const i18nMessage = text;
   const traceId = error.traceId;
   switch (error._tag) {
     case "RelayAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
         detail,
+        i18nMessage,
         traceId,
         hop: "relay",
         ...(error.dpopFailureReason === "time_window" ? { failureCause: "clock_skew" } : {}),
@@ -64,6 +83,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
       return new ConnectionBlockedError({
         reason: "authentication",
         detail,
+        i18nMessage,
         traceId,
         hop: "relay",
       });
@@ -74,6 +94,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         return new ConnectionTransientError({
           reason: "endpoint-unavailable",
           detail,
+          i18nMessage,
           traceId,
           hop: "tunnel",
           failureCause: "tunnel_pending",
@@ -83,6 +104,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
         return new ConnectionBlockedError({
           reason: "permission",
           detail,
+          i18nMessage,
           traceId,
           hop: "tunnel",
           failureCause: "tunnel_not_enabled",
@@ -91,17 +113,25 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
       return new ConnectionBlockedError({
         reason: "permission",
         detail,
+        i18nMessage,
         traceId,
         hop: "relay",
         ...(error.reason === "environment_link_not_found" ? { failureCause: "not_linked" } : {}),
       });
     case "RelayEnvironmentLinkProofInvalidError":
     case "RelayEnvironmentLinkLimitExceededError":
-      return new ConnectionBlockedError({ reason: "permission", detail, traceId, hop: "relay" });
+      return new ConnectionBlockedError({
+        reason: "permission",
+        detail,
+        i18nMessage,
+        traceId,
+        hop: "relay",
+      });
     case "RelayEnvironmentEndpointTimedOutError":
       return new ConnectionTransientError({
         reason: "timeout",
         detail,
+        i18nMessage,
         traceId,
         hop: "tunnel",
         failureCause: "timeout",
@@ -113,6 +143,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
       return new ConnectionTransientError({
         reason: "endpoint-unavailable",
         detail,
+        i18nMessage,
         traceId,
         // The tunnel carried the request when T3 Code is what failed to answer.
         hop:
@@ -128,6 +159,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
       return new ConnectionTransientError({
         reason: "endpoint-unavailable",
         detail,
+        i18nMessage,
         traceId,
         hop: "tunnel",
       });
@@ -136,6 +168,7 @@ function relayProtectedError(error: RelayProtectedError): ConnectionAttemptError
       return new ConnectionTransientError({
         reason: "relay-unavailable",
         detail,
+        i18nMessage,
         traceId,
         hop: "relay",
         failureCause: "relay_error",
@@ -151,7 +184,7 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
       }
       return new ConnectionTransientError({
         reason: "relay-unavailable",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "relay",
         // A status means the relay answered, so this device did reach it.
         ...(error.status !== undefined
@@ -162,19 +195,19 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
     case "ManagedRelayRequestTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "relay",
       });
     case "ManagedRelayUrlInvalidError":
       return new ConnectionBlockedError({
         reason: "configuration",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "relay",
       });
     case "ManagedRelayAccessTokenScopesUnexpectedError":
       return new ConnectionBlockedError({
         reason: "permission",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "relay",
       });
     case "ManagedRelayDpopKeyLoadError":
@@ -182,7 +215,7 @@ export function mapManagedRelayError(error: ManagedRelayClientError): Connection
     case "ManagedRelayRequestProofCreationError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "device",
       });
   }
@@ -192,7 +225,13 @@ export function mapRemoteEnvironmentError(
   error: RemoteEnvironmentAuthError,
   connectionMethod: ClientConnectionMethod = "direct",
 ): ConnectionAttemptError {
-  const networkHint = connectionMethod === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
+  const withNetworkHint = (cause: { readonly message: string }) => {
+    if (connectionMethod !== "relay") return detailFromError(cause);
+    const text = errorI18nMessage(cause);
+    return text === undefined
+      ? { detail: `${cause.message} ${NETWORK_BLOCKING_HINT}` }
+      : translatableDetail(...text, NETWORK_BLOCKING_HINT);
+  };
   // Over T3 Connect the relay already reached the host, so a request that never
   // arrives was blocked between this device and the tunnel.
   const unreachableHop = connectionMethod === "relay" ? "tunnel" : "server";
@@ -201,7 +240,7 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentAuthInvalidError":
       return new ConnectionBlockedError({
         reason: "authentication",
-        detail: "The environment credential is invalid.",
+        ...translatableDetail(msg("The environment credential is invalid.")),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -210,7 +249,9 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentOperationForbiddenError":
       return new ConnectionBlockedError({
         reason: "permission",
-        detail: "The environment credential does not grant the required access.",
+        ...translatableDetail(
+          msg("The environment credential does not grant the required access."),
+        ),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -218,7 +259,7 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentRequestInvalidError":
       return new ConnectionBlockedError({
         reason: "configuration",
-        detail: "The environment rejected the authentication request.",
+        ...translatableDetail(msg("The environment rejected the authentication request.")),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -226,7 +267,7 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentResourceNotFoundError":
       return new ConnectionBlockedError({
         reason: "configuration",
-        detail: "The environment endpoint could not be found.",
+        ...translatableDetail(msg("The environment endpoint could not be found.")),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -234,21 +275,21 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthTimeoutError":
       return new ConnectionTransientError({
         reason: "timeout",
-        detail: `${error.message}${networkHint}`,
+        ...withNetworkHint(error),
         hop: unreachableHop,
         via,
       });
     case "RemoteEnvironmentAuthFetchError":
       return new ConnectionTransientError({
         reason: "network",
-        detail: `${error.message}${networkHint}`,
+        ...withNetworkHint(error),
         hop: unreachableHop,
         via,
       });
     case "EnvironmentConnectApprovalPendingError":
       return new ConnectionTransientError({
         reason: "approval-pending",
-        detail: "This device is waiting for approval on the host.",
+        ...translatableDetail(msg("This device is waiting for approval on the host.")),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -257,7 +298,7 @@ export function mapRemoteEnvironmentError(
     case "EnvironmentInternalError":
       return new ConnectionTransientError({
         reason: "remote-unavailable",
-        detail: "The environment could not authorize the connection.",
+        ...translatableDetail(msg("The environment could not authorize the connection.")),
         traceId: error.traceId,
         hop: "server",
         via,
@@ -266,7 +307,7 @@ export function mapRemoteEnvironmentError(
     case "RemoteEnvironmentAuthUndeclaredStatusError":
       return new ConnectionTransientError({
         reason: "remote-unavailable",
-        detail: error.message,
+        ...detailFromError(error),
         hop: "server",
         via,
       });
@@ -280,16 +321,19 @@ export function mapRemoteEnvironmentError(
  */
 export function mapRemoteDpopEnvironmentError(
   error: RemoteEnvironmentAuthError,
+  connectionMethod: "relay" | "direct" = "relay",
 ): ConnectionAttemptError {
   if (error._tag === "EnvironmentAuthInvalidError" && error.reason === "invalid_credential") {
     return new ConnectionBlockedError({
       reason: "authentication",
-      detail: dpopFailureMessage("The environment credential is invalid.", error.dpopFailureReason),
+      ...translatableDetail(
+        ...dpopFailureText(msg("The environment credential is invalid."), error.dpopFailureReason),
+      ),
       traceId: error.traceId,
       hop: "server",
-      via: "relay",
+      via: connectionMethod,
       ...(error.dpopFailureReason === "time_window" ? { failureCause: "clock_skew" } : {}),
     });
   }
-  return mapRemoteEnvironmentError(error, "relay");
+  return mapRemoteEnvironmentError(error, connectionMethod);
 }

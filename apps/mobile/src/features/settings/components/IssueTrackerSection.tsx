@@ -1,4 +1,9 @@
-import { issueTrackerSummary } from "@t3tools/client-runtime/state/issue-trackers";
+import {
+  boundIssueTrackerScopes,
+  issueTrackerBindingFor,
+  issueTrackerScopeOptions,
+  issueTrackerSummary,
+} from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import type {
   EnvironmentId,
@@ -8,8 +13,10 @@ import type {
 } from "@t3tools/contracts";
 import { AsyncResult } from "effect/reactivity";
 import { useNavigation } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
 import { useState } from "react";
-import { Linking, Platform, View } from "react-native";
+import { Platform, View } from "react-native";
+import { tryOpenExternalUrl } from "../../../lib/openExternalUrl";
 import Svg, { Path } from "react-native-svg";
 import { withUniwind } from "uniwind";
 
@@ -42,6 +49,7 @@ const TRACKER_MARKS: Partial<Record<string, string>> = {
  * credential, then pick which of its scopes each project lists beside its repository's issues.
  */
 export function IssueTrackerSection(props: { readonly environments: readonly SettingsTarget[] }) {
+  const gt = useGT();
   return (
     <>
       {props.environments.map((environment) =>
@@ -51,8 +59,8 @@ export function IssueTrackerSection(props: { readonly environments: readonly Set
             environment={environment}
             title={
               props.environments.length > 1
-                ? `Issue trackers · ${environment.label}`
-                : "Issue trackers"
+                ? gt("Issue trackers · {environment}", { environment: environment.label })
+                : gt("Issue trackers")
             }
           />
         ) : null,
@@ -65,6 +73,8 @@ function EnvironmentTrackers(props: {
   readonly environment: SettingsTarget;
   readonly title: string;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const { environmentId } = props.environment;
   const query = useEnvironmentQuery(
@@ -75,7 +85,7 @@ function EnvironmentTrackers(props: {
     return query.error ? (
       <SettingsSection title={props.title} footer={query.error}>
         <View className="p-4">
-          <Button label="Try again" tone="secondary" onPress={query.refresh} />
+          <Button label={gt("Try again")} tone="secondary" onPress={query.refresh} />
         </View>
       </SettingsSection>
     ) : null;
@@ -87,7 +97,7 @@ function EnvironmentTrackers(props: {
           key={tracker.tracker}
           icon={<IssueTrackerMark tracker={tracker.tracker} />}
           label={tracker.displayName}
-          description={issueTrackerSummary(tracker, query.data?.bindings ?? {})}
+          description={issueTrackerSummary(tracker, query.data?.bindings ?? {}, messages)}
           ready={tracker.connected && tracker.account !== null}
           separated={index > 0}
           onPress={() =>
@@ -124,6 +134,7 @@ export function IssueTrackerCredentialForm(props: {
   readonly tracker: IssueTrackerConnection;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, tracker } = props;
   const connect = useAtomCommand(issueTrackerEnvironment.connect, { reportFailure: false });
   const [draft, setDraft] = useState("");
@@ -139,7 +150,7 @@ export function IssueTrackerCredentialForm(props: {
       return;
     }
     const error = squashAtomCommandFailure(result);
-    setFailure(error instanceof Error ? error.message : "The request failed.");
+    setFailure(error instanceof Error ? error.message : gt("The request failed."));
   };
   const helpUrl = tracker.credential.helpUrl;
   const locked = props.disabled || busy;
@@ -148,7 +159,9 @@ export function IssueTrackerCredentialForm(props: {
       <SecretTextInput
         accessibilityLabel={tracker.credential.label}
         placeholder={
-          tracker.connected ? "Saved. Enter a new value to replace it" : tracker.credential.label
+          tracker.connected
+            ? gt("Saved. Enter a new value to replace it")
+            : tracker.credential.label
         }
         value={draft}
         onChangeText={setDraft}
@@ -165,15 +178,15 @@ export function IssueTrackerCredentialForm(props: {
       <View className="flex-row flex-wrap justify-end gap-2">
         {helpUrl ? (
           <Button
-            label="Create one"
+            label={gt("Create one")}
             tone="text"
             size="compact"
-            onPress={() => void Linking.openURL(helpUrl).catch(() => undefined)}
+            onPress={() => void tryOpenExternalUrl(helpUrl)}
           />
         ) : null}
         {tracker.connected ? (
           <Button
-            label="Disconnect"
+            label={gt("Disconnect")}
             tone="secondary"
             size="compact"
             disabled={locked}
@@ -181,7 +194,11 @@ export function IssueTrackerCredentialForm(props: {
           />
         ) : null}
         <Button
-          label={tracker.connected ? "Replace" : "Connect"}
+          label={
+            tracker.connected
+              ? gt("Replace", { $context: "verb, replaces a saved credential" })
+              : gt("Connect", { $context: "verb, connects an issue tracker" })
+          }
           tone="primary"
           size="compact"
           loading={busy}
@@ -198,59 +215,81 @@ export function IssueTrackerProjectRows(props: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
+  readonly refreshing: boolean;
+  readonly refreshFailed: boolean;
   readonly disabled: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, tracker } = props;
   const bind = useAtomCommand(issueTrackerEnvironment.bindProject, {
     label: `bind project to ${tracker.displayName}`,
   });
   const projects = useProjects().filter((project) => project.environmentId === environmentId);
-  const [binding, setBinding] = useState<ProjectId | null>(null);
-  const change = async (projectId: ProjectId, scope: string) => {
-    if (props.disabled || binding !== null) return;
-    setBinding(projectId);
-    await bind({
-      environmentId,
-      input: {
-        projectId,
-        binding: scope === UNBOUND ? null : { tracker: tracker.tracker, scope },
-      },
-    });
-    setBinding(null);
+  const [picks, setPicks] = useState<Partial<Record<ProjectId, ReadonlyArray<string>>>>({});
+  const [saving, setSaving] = useState(false);
+  const held = Object.values(picks).some((scopes) => scopes !== undefined);
+  if (held && !saving && !props.refreshing && !props.refreshFailed) setPicks({});
+  const busy = saving || (held && props.refreshing);
+  const bound = (projectId: ProjectId) =>
+    picks[projectId] ?? boundIssueTrackerScopes(tracker.tracker, props.bindings[projectId]);
+  const change = async (projectId: ProjectId, scopes: ReadonlyArray<string>) => {
+    if (props.disabled || busy) return;
+    const binding = issueTrackerBindingFor(tracker.tracker, bound(projectId), scopes);
+    const before = picks[projectId];
+    setSaving(true);
+    setPicks((current) => ({
+      ...current,
+      [projectId]: boundIssueTrackerScopes(tracker.tracker, binding ?? undefined),
+    }));
+    const result = await bind({ environmentId, input: { projectId, binding } });
+    if (result._tag !== "Success") setPicks((current) => ({ ...current, [projectId]: before }));
+    setSaving(false);
   };
   return projects.map((project) => {
-    const bound = props.bindings[project.id];
     // A project bound to another tracker keeps that binding; this row shows it unbound.
-    const value = bound?.tracker === tracker.tracker ? bound.scope : UNBOUND;
-    const locked = props.disabled || binding !== null;
+    const value = bound(project.id);
+    const options = issueTrackerScopeOptions(tracker, value);
+    const toggle = (key: string) =>
+      key === UNBOUND
+        ? []
+        : value.includes(key)
+          ? value.filter((scope) => scope !== key)
+          : [...value, key];
+    const locked = props.disabled || busy;
     return (
       <Menu
         key={project.id}
-        title={`${tracker.displayName} ${tracker.scopeNoun} for ${project.title}`}
+        title={gt("{tracker} {scope} for {project}", {
+          tracker: tracker.displayName,
+          scope: tracker.scopeNoun,
+          project: project.title,
+        })}
         actions={[
           {
             id: UNBOUND,
-            title: "Not bound",
-            state: value === UNBOUND ? "on" : "off",
+            title: gt("Not bound"),
+            state: value.length === 0 ? "on" : "off",
             attributes: { disabled: locked },
           },
-          ...tracker.scopes.map((scope) => ({
+          ...options.map((scope) => ({
             id: scope.key,
             title: `${scope.name} (${scope.key})`,
-            state: scope.key === value ? ("on" as const) : ("off" as const),
-            attributes: { disabled: locked },
+            state: value.includes(scope.key) ? ("on" as const) : ("off" as const),
+            attributes: { disabled: locked || !scope.addable },
           })),
         ]}
-        onPressAction={({ nativeEvent }) => void change(project.id, nativeEvent.event)}
+        onPressAction={({ nativeEvent }) => void change(project.id, toggle(nativeEvent.event))}
       >
         <SettingsRow
           icon="folder"
           label={project.title}
           valuePosition="trailing"
           value={
-            value === UNBOUND
-              ? "Not bound"
-              : (tracker.scopes.find((scope) => scope.key === value)?.name ?? value)
+            value.length === 0
+              ? gt("Not bound")
+              : value
+                  .map((key) => tracker.scopes.find((scope) => scope.key === key)?.name ?? key)
+                  .join(", ")
           }
           disabled={locked}
         />

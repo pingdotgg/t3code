@@ -265,6 +265,35 @@ const githubContext = (host: string) => ({
 });
 
 describe("GitHubSourceControlProvider repository resolution", () => {
+  // regression: #38251 an Enterprise Server's hostname need not say "github"; a gh login vouches for it
+  it.effect.each([
+    ["github", "github"],
+    ["unknown", "unknown"],
+  ] as const)("refines a remote on an unknown host the gh login reads as %s", ([seen, expected]) =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({});
+      const remoteUrl = "https://code.acme.test/acme/web.git";
+      const identity = {
+        canonicalKey: "code.acme.test/acme/web",
+        locator: { source: "git-remote" as const, remoteName: "origin", remoteUrl },
+        rootPath: "/repo",
+        provider: SourceControlProviderKind.make("unknown"),
+      };
+      const refined = yield* provider.refineRepositoryIdentity!({
+        identity,
+        resolveContext: ({ context }) =>
+          Effect.succeed({
+            ...context,
+            provider: { ...context.provider, kind: SourceControlProviderKind.make(seen) },
+          }),
+      });
+      assert.deepStrictEqual(refined, {
+        ...identity,
+        provider: SourceControlProviderKind.make(expected),
+      });
+    }),
+  );
+
   it.effect("reads the repository gh would pick from the remotes", () => {
     const paths: string[] = [];
     const { layer } = harness({
@@ -476,6 +505,13 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
         ["open", "closed"],
       );
       assert.include(paths[0], "repos/acme/web/pulls?head=me%3Amain");
+      yield* gh.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "me:main",
+        state: "open",
+        repository: "me/web",
+      });
+      assert.include(paths[2], "repos/me/web/pulls?head=me%3Amain");
       assert.lengthOf(graphqlCalls, 0);
     }).pipe(Effect.provide(layer));
   });
@@ -583,6 +619,15 @@ describe("GitHubSourceControlProvider writes", () => {
         body: "Body",
         maintainer_can_modify: true,
       });
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "me:feature",
+        title: "Title",
+        bodyFile,
+        draft: true,
+      });
+      assert.strictEqual((requests[1]!.body as { draft?: unknown }).draft, true);
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
   });
 
