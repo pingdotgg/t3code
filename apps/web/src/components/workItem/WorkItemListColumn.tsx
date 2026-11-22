@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode, type RefObject } from "react";
+import { useEffect, useRef, type ReactNode, type Ref } from "react";
 
 import { cn } from "~/lib/utils";
 import { useLayoutPaneFocusedRef } from "~/layout/layoutPaneContext";
@@ -49,7 +49,7 @@ export function WorkItemListColumn({
   /** Whether the list sits beside an open review as its own pane. */
   split: boolean;
   listBody: ReactNode;
-  scrollRef: RefObject<HTMLDivElement | null>;
+  scrollRef: Ref<HTMLDivElement>;
 }) {
   const contentArea = workspaceAreaProps(area, 1, title);
   const focusedRef = useLayoutPaneFocusedRef();

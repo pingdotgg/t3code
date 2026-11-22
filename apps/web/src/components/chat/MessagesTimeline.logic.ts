@@ -12,12 +12,14 @@ import {
   IDLE_COMPACTION_TITLES,
 } from "@t3tools/client-runtime/user-message";
 import type { HandoffTimelineRun } from "@t3tools/client-runtime/handoff";
-import { renderCodexDirectivesForCopy } from "@t3tools/shared/codexMarkdownDirectives";
+import { renderCodexDirectivesForCopy } from "~/markdown/markdownText";
 import {
   commandDisplayText,
   commandProgramName,
 } from "@t3tools/client-runtime/work-log/command-label";
 import {
+  commandlessCommandLabel,
+  genericCommandStatusLabel,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   resolveWorkEntryToolPresentation,
@@ -164,6 +166,12 @@ export function workEntryDisplayLabel(
   const toolPresentation = resolveWorkEntryToolPresentation(entry, undefined, resolve);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command?.trim()) return commandDisplayText(entry.command);
+  const commandless = commandlessCommandLabel(
+    entry,
+    liveActivityToolStatus(entry.toolLifecycleStatus, false),
+    resolve,
+  );
+  if (commandless) return commandless;
   const action = toolGroupAction(entry);
   if (action === "code-search" || action === "search") {
     const searchLabel =
@@ -278,17 +286,7 @@ export function liveWorkEntryLabel(
   if (command) {
     const program = commandProgramName(command);
     if (program == null) {
-      return resolve(
-        status === "inProgress"
-          ? msg("Running command")
-          : status === "failed"
-            ? msg("Failed command")
-            : status === "declined"
-              ? msg("Declined command")
-              : status === "stopped"
-                ? msg("Stopped command")
-                : msg("Ran command"),
-      );
+      return genericCommandStatusLabel(status, resolve);
     }
     return resolve(
       status === "inProgress"
@@ -302,7 +300,10 @@ export function liveWorkEntryLabel(
               : msg("Ran {program}", { program }),
     );
   }
-  return workEntryDisplayLabel(entry, workspaceRoot, resolve);
+  return (
+    commandlessCommandLabel(entry, status, resolve) ??
+    workEntryDisplayLabel(entry, workspaceRoot, resolve)
+  );
 }
 
 export function workEntryIsVisibleInGroup(
@@ -562,6 +563,10 @@ export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly superseded?: boolean;
   /** A user prompt followed directly by another prompt sits in the same prompt stack. */
   readonly continuesPromptStack?: boolean;
+  /** A work row or closed fold directly above a prompt keeps a full turn gap below it. */
+  readonly precedesPrompt?: boolean;
+  /** A reply whose own turn goes on below it, such as with a notice, sits close to that row. */
+  readonly turnTailBelow?: boolean;
 };
 
 type MessagesTimelineRowContent =
@@ -576,8 +581,6 @@ type MessagesTimelineRowContent =
       expanded: boolean;
       /** The rows this fold shows only while open, in order. Empty while it is closed. */
       revealedRowIds: readonly string[];
-      /** A closed fold directly above a prompt keeps a full turn gap below it. */
-      precedesPrompt?: boolean;
     }
   | {
       kind: "worktree-setup";
@@ -1438,8 +1441,20 @@ function deriveMainTurnFolds(input: {
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
-    const lastEntryEnd = timelineEntryEnd(lastEntry);
+    // terminal message — take whichever ended last. A subagent card after it was
+    // spawned by background work once the turn settled, so it adds no turn time.
+    const lateSubagentIds = new Set(
+      group.entries.flatMap((entry, index) =>
+        index > terminalEntryIndex &&
+        entry.kind === "event" &&
+        entry.projectedItem.item.type === "subagent"
+          ? [entry.id]
+          : [],
+      ),
+    );
+    const lastTurnEntry =
+      group.entries.findLast((entry) => !lateSubagentIds.has(entry.id)) ?? lastEntry;
+    const lastEntryEnd = timelineEntryEnd(lastTurnEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(input.latestRun.startedAt, input.latestRun.completedAt)
@@ -1479,8 +1494,10 @@ function deriveMainTurnFolds(input: {
       if (anchorEntry === undefined || !hidesNonCompactionWork(entries)) continue;
       const segmentMs = computeElapsedMs(
         steer.createdAt,
-        entries.map(timelineEntryEnd).reduce<string | null>(maxIsoTimestamp, null) ??
-          steer.createdAt,
+        entries
+          .filter((entry) => !lateSubagentIds.has(entry.id))
+          .map(timelineEntryEnd)
+          .reduce<string | null>(maxIsoTimestamp, null) ?? steer.createdAt,
       );
       foldsByAnchorEntryId.set(anchorEntry.id, {
         runId: RunId.make(`${runId}:steer:${steer.id}`),
@@ -1718,8 +1735,20 @@ function deriveTurnFolds(input: {
     const isLatestInterruptedTurn =
       input.latestRun?.runId === runId && input.latestRun.status === "interrupted";
     // A turn cut short by a steer leaves trailing work entries behind its
-    // terminal message — take whichever ended last.
-    const lastEntryEnd = timelineEntryEnd(lastEntry);
+    // terminal message — take whichever ended last. A subagent card after it was
+    // spawned by background work once the turn settled, so it adds no turn time.
+    const lateSubagentIds = new Set(
+      group.entries.flatMap((entry, index) =>
+        index > terminalEntryIndex &&
+        entry.kind === "event" &&
+        entry.projectedItem.item.type === "subagent"
+          ? [entry.id]
+          : [],
+      ),
+    );
+    const lastTurnEntry =
+      group.entries.findLast((entry) => !lateSubagentIds.has(entry.id)) ?? lastEntry;
+    const lastEntryEnd = timelineEntryEnd(lastTurnEntry);
     const elapsedMs =
       input.latestRun?.runId === runId && input.latestRun.startedAt && input.latestRun.completedAt
         ? computeElapsedMs(
@@ -3135,11 +3164,29 @@ export function attachSwitchHandoffs(
     });
 }
 
-/** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
+/** Flags rows by their neighbours; rerun whenever rows move, so stale flags never split a group. */
 function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
   return rows.map((row, index) => {
-    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
     const next = rows[index + 1];
+    if (timelineRowIsWorkLog(row) || row.kind === "background-activity") {
+      const precedesPrompt =
+        (row.kind !== "background-activity" || !row.expanded) && timelineRowIsUserPrompt(next);
+      return (row.precedesPrompt ?? false) === precedesPrompt ? row : { ...row, precedesPrompt };
+    }
+    if (
+      (row.kind === "message" && row.message.role === "assistant") ||
+      row.kind === "assistant-meta"
+    ) {
+      const runId = row.message.runId;
+      const turnTailBelow =
+        runId != null &&
+        ((next?.kind === "work" && next.groupedEntries.every((entry) => entry.runId === runId)) ||
+          (next?.kind === "event" &&
+            next.projectedItem.item.type === "run_interrupt_result" &&
+            next.projectedItem.item.runId === runId));
+      return (row.turnTailBelow ?? false) === turnTailBelow ? row : { ...row, turnTailBelow };
+    }
+    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
     const own = timelineRowIsOwnUserMessage(row);
     const continuesPromptStack = timelineRowIsUserPrompt(next);
     const groupedWithPrevious = own && timelineRowIsOwnUserMessage(rows[index - 1]);
@@ -3186,8 +3233,10 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
       row.kind === "work-toggle" ||
       row.kind === "work-live" ||
       row.kind === "thinking" ||
-      // Subagent rows are tool rows in the same list.
-      (row.kind === "event" && row.projectedItem.item.type === "subagent"))
+      // Subagent rows and a turn's interrupt result are rows in the same list.
+      (row.kind === "event" &&
+        (row.projectedItem.item.type === "subagent" ||
+          row.projectedItem.item.type === "run_interrupt_result")))
   );
 }
 
@@ -3752,13 +3801,7 @@ export function applyBackgroundActivityGroups(
     // Expansion returns the original virtual rows, identities, disclosures and actions.
     result.push(...(expanded ? groupRows : keptRows));
   }
-  return result.map((row, index) =>
-    row.kind === "background-activity" &&
-    !row.expanded &&
-    timelineRowIsUserPrompt(result[index + 1])
-      ? { ...row, precedesPrompt: true }
-      : row,
-  );
+  return withPromptGrouping(result);
 }
 
 /**
@@ -4105,6 +4148,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.continuesPromptStack !== b.continuesPromptStack) return false;
   if (a.superseded !== b.superseded) return false;
   if (a.continuesWorkLog !== b.continuesWorkLog) return false;
+  if (a.precedesPrompt !== b.precedesPrompt) return false;
+  if (a.turnTailBelow !== b.turnTailBelow) return false;
 
   switch (a.kind) {
     case "background-activity": {
@@ -4115,7 +4160,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         shallow(a.updates, bg.updates) &&
         a.active === bg.active &&
         a.expanded === bg.expanded &&
-        a.precedesPrompt === bg.precedesPrompt &&
         shallow(a.runIds, bg.runIds) &&
         shallow(a.revealedRowIds, bg.revealedRowIds)
       );

@@ -49,8 +49,12 @@ export function getThreadErrorBannerMessage(error: string): string {
     : error;
 }
 
-export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
-  return error === null ? null : `${threadKey}\u0000${error}`;
+export function getThreadErrorBannerKey(
+  threadKey: string,
+  error: string | null,
+  source: string | null = null,
+): string | null {
+  return error === null ? null : `${threadKey}\u0000${source ?? ""}\u0000${error}`;
 }
 
 export function shouldShowThreadErrorBanner(
@@ -98,12 +102,13 @@ export function threadErrorBannerItem(
   },
   resolve: MessageResolver = m,
 ): ComposerBannerStackItem | null {
-  if (!error || bannerKey === null) return null;
+  if (!error) return null;
   const message = getThreadErrorBannerMessage(error);
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
   return {
-    id: `thread-error:${bannerKey}`,
+    // Only a server runtime error has a session dismissal key; a local one is cleared instead.
+    id: `thread-error:${bannerKey ?? error}`,
     variant: errorClass === "usage_limit" || chatGptLimit ? "warning" : "error",
     icon: chatGptLimit ? <OpenAI aria-hidden="true" /> : <CircleAlertIcon />,
     title: chatGptLimit ? resolve(msg("ChatGPT usage limit reached")) : resolve(msg("Run failed")),

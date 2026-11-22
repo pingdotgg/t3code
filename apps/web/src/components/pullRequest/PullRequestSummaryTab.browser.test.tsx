@@ -59,6 +59,7 @@ function setup() {
 }
 
 import "~/index.css";
+import { workspaceAreaProps } from "~/lib/workspaceFocus";
 import { act, fakeTimers, render as renderUi } from "../../../test/render";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 
@@ -251,6 +252,9 @@ it("ticks a description checkbox placed after an attachment and edits from the t
   );
   const boxes = () => screen.container.querySelectorAll<HTMLInputElement>('input[type="checkbox"]');
   expect([...boxes()].map((box) => box.disabled)).toEqual([false, false]);
+  // A collapsed description clips the list that follows the attachment.
+  const readMore = screen.getByRole("button", { name: "Read more" });
+  if (readMore.query()) await userEvent.click(readMore);
 
   await userEvent.click(boxes()[1]!);
   expect(state.update).toHaveBeenCalledWith({
@@ -483,4 +487,24 @@ it("adds promoted review conversations to chat without requiring review permissi
   );
   await userEvent.click(screen.getByRole("button", { name: "Add to chat", exact: true }));
   expect(onAddToChat).toHaveBeenCalledWith({ kind: "thread", thread });
+});
+
+it("scrolls from the keyboard after a click inside it", async () => {
+  setup();
+  const body = Array.from({ length: 80 }, (_, index) => `Paragraph ${index}`).join("\n\n");
+  const container = document.createElement("div");
+  container.className = "flex h-[300px]";
+  await using screen = await renderUi(
+    // The panel area takes focus itself, so a click on plain text lands on it unless the tab can.
+    <div {...workspaceAreaProps("panel", 4, "Workspace panel")} className="flex min-w-0 flex-1">
+      {tab({ ...detail, body })}
+    </div>,
+    { container },
+  );
+  const scroller = container.querySelector<HTMLElement>("[data-pull-request-summary-scroll]")!;
+  // The description starts collapsed; read all of it so the summary has something to scroll.
+  await userEvent.click(screen.getByRole("button", { name: "Read more" }));
+  await userEvent.click(screen.getByText("Paragraph 0", { exact: true }));
+  await userEvent.keyboard("{PageDown}");
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
 });

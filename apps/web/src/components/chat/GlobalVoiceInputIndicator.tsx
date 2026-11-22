@@ -15,8 +15,7 @@ import { ComposerSpeechButton } from "./ComposerSpeechButton";
  */
 export function GlobalVoiceInputIndicator({ hidden = false }: { hidden?: boolean }) {
   const gt = useGT();
-  const { prepared, grantId, cloudProvider, cloudModel } = useVoiceTranscriptionDestination();
-  const session = useRetainedVoiceInputSession({ prepared, grantId, cloudProvider, cloudModel });
+  const session = useRetainedVoiceInputSession(useVoiceTranscriptionDestination());
   const { state, target } = useVoiceInputSessionSnapshot(session);
   const presented = useVoiceOwnerPresented(target?.ownerKey ?? null);
   const { level } = useVoiceInputSessionActivity(

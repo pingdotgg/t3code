@@ -384,7 +384,7 @@ function RailEntry({
             <PullRequestReviewOutcomeIcon outcome={entry.outcome} className="size-3.5" />
           </RailMarker>
           <div className="flex min-h-6 min-w-0 items-center gap-2 text-body">
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
+            <h2 className="flex min-w-0 flex-1 flex-wrap items-center gap-x-1.5 gap-y-1">
               <Actor actor={entry.comment.author} />
               <Tooltip disabled={!stale}>
                 <TooltipTrigger render={<span className="text-muted-foreground" />}>
@@ -397,7 +397,7 @@ function RailEntry({
                   {pullRequestReviewOutcomeStaleLabel(entry.outcome, resolve)}
                 </TooltipPopup>
               </Tooltip>
-            </div>
+            </h2>
             {body && onAddToChat ? (
               <Tooltip>
                 <TooltipTrigger
@@ -648,7 +648,9 @@ export function PullRequestTimelineTab({
         </>
       )}
       estimatedItemSize={140}
-      className="h-full px-4"
+      tabIndex={-1}
+      data-workspace-focus-default
+      className="h-full px-4 outline-none"
       contentContainerClassName="relative min-w-0"
       ListHeaderComponent={<div className="h-0.75" />}
       ListFooterComponent={<div className="h-3" />}

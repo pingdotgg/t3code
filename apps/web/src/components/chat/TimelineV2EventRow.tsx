@@ -10,8 +10,20 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent") {
     return (
-      <WorkLogBlock continues={row.continuesWorkLog}>
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
         <V2SubagentGroup key={row.id} row={row} />
+      </WorkLogBlock>
+    );
+  }
+  if (item.type === "run_interrupt_result") {
+    return (
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
+        <V2LifecycleRow
+          environmentId={ctx.activeThreadEnvironmentId}
+          item={item}
+          runs={ctx.runs}
+          onOpenThread={ctx.onOpenThread}
+        />
       </WorkLogBlock>
     );
   }

@@ -452,7 +452,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   const capabilities = useServerConfigs().get(threadRef.environmentId)?.environment.capabilities;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const opensInApp = useClientSettings((settings) => settings.pullRequestLinksOpenInApp);
-  const prefetch = usePullRequestIntentPrefetch((target) =>
+  const { prefetch, reads: intentReads } = usePullRequestIntentPrefetch((target) =>
     links.some(
       (link) =>
         link.number === target.number &&
@@ -543,6 +543,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
 
   return (
     <PullRequestSpeedModeContext value={speedMode}>
+      {intentReads}
       {/* The list scrolls up under a pane's tab row (--surface-top-inset). */}
       <div
         className="flex h-[calc(100%+var(--surface-top-inset,0px))] min-h-0 flex-col"

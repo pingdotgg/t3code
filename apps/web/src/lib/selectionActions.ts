@@ -24,12 +24,19 @@ export function observeSelectionActions({
   element,
   getActionElement,
   restoreAfterScroll = false,
+  immediateMultiClick = false,
   onSelection,
   onDismiss,
 }: {
   element: HTMLElement;
   getActionElement?: () => HTMLElement | null;
   restoreAfterScroll?: boolean;
+  /**
+   * Show double- and triple-click selections at once instead of waiting out the multi-click
+   * interval. Their pointer is withheld so the action anchors below the selection, clear of
+   * the spot where a following click lands.
+   */
+  immediateMultiClick?: boolean;
   onSelection: (pointer: SelectionActionPoint | null) => void;
   onDismiss: (reason: "interaction" | "cancel") => void;
 }) {
@@ -109,8 +116,9 @@ export function observeSelectionActions({
     pointerDown = false;
     if (!gestureActive) return;
     gestureActive = false;
-    pointer = { x: event.clientX, y: event.clientY };
-    schedule(event.detail >= 2 ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
+    const multiClick = event.detail >= 2;
+    pointer = multiClick && immediateMultiClick ? null : { x: event.clientX, y: event.clientY };
+    schedule(multiClick && !immediateMultiClick ? SELECTION_MULTI_CLICK_INTERVAL_MS : 0);
   };
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
@@ -157,6 +165,8 @@ export function observeSelectionActions({
     cancel,
     selectionChanged() {
       if (isActionTarget(document.activeElement)) return;
+      // A caret (typing elsewhere) shows nothing, and with no actions open there is nothing to dismiss.
+      if (getActionElement && !getActionElement() && document.getSelection()?.isCollapsed) return;
       if (pointerDown || gestureActive) {
         onDismiss("cancel");
       } else if (!dismissed && timer === null && frame === null) {

@@ -33,7 +33,11 @@ import { Spinner } from "../ui/spinner";
 import { toastManager } from "../ui/toast";
 import { incompleteListings } from "../device/DeviceSetup";
 import { DeviceHostEditor } from "./DeviceHostEditor";
-import { updateDeviceHosts, groupDeviceHosts } from "./deviceHostsSettings.logic";
+import {
+  updateDeviceHosts,
+  groupDeviceHosts,
+  type DeviceHostGroup,
+} from "./deviceHostsSettings.logic";
 import { EasDeviceHostEditor } from "./EasDeviceHostEditor";
 import {
   easSessionLimits,
@@ -320,17 +324,20 @@ export function DeviceSourcesSettings(props: {
       gt("Simlock host not removed everywhere"),
     );
 
-  const [testing, setTesting] = useState<ReadonlySet<string>>(new Set());
-  const testSsh = async (host: SshDeviceHostConfig) => {
-    setTesting((current) => new Set(current).add(host.id));
-    const checked = await testConnection(host).finally(() =>
-      setTesting((current) => {
+  const [testingHosts, setTestingHosts] = useState<ReadonlySet<string>>(new Set());
+  const testSsh = async ({ host, members }: DeviceHostGroup) => {
+    const check = testConnection(host);
+    if (!check) return;
+    // Every member's id, so the row that remains after an environment drops out stays pending.
+    const ids = members.map((member) => member.host.id);
+    setTestingHosts((current) => new Set([...current, ...ids]));
+    const checked = await check.finally(() =>
+      setTestingHosts((current) => {
         const next = new Set(current);
-        next.delete(host.id);
+        for (const id of ids) next.delete(id);
         return next;
       }),
     );
-    if (!checked) return;
     const failed = targets.filter((target) => checked[target.environmentId]?.status === "failed");
     toastManager.add({
       type: failed.length ? "error" : "success",
@@ -435,6 +442,7 @@ export function DeviceSourcesSettings(props: {
   for (const group of sshGroups) {
     const host = group.host;
     const holders = new Set(group.members.map((member) => member.environmentId));
+    const testing = group.members.some((member) => testingHosts.has(member.host.id));
     rows.push({
       key: `ssh:${host.id}:${group.members.map((member) => member.environmentId).join(",")}`,
       shared: true,
@@ -447,7 +455,7 @@ export function DeviceSourcesSettings(props: {
         );
         if (!held)
           return { environmentId: member.environmentId, label: member.label, added: false };
-        const status = testing.has(host.id)
+        const status = testing
           ? ({ tone: "pending", label: gt("Testing connection") } as const)
           : hostStatus(member.state, held.host.id, m);
         return {
@@ -472,7 +480,7 @@ export function DeviceSourcesSettings(props: {
         () =>
           setEditing({ kind: "ssh", host, original: host, ...(grouped ? {} : { only: holders }) }),
         () => void saveSsh(host, true, host, holders),
-        <MenuItem onClick={() => void testSsh(host)}>
+        <MenuItem onClick={() => void testSsh(group)}>
           <T>Test connection</T>
         </MenuItem>,
       ),

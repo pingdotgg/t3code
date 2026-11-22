@@ -1,4 +1,5 @@
 import { T, useGT, useMessages, Var } from "gt-react";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -316,6 +317,8 @@ interface MessagesTimelineProps {
   onOpenThread: (
     threadId: OrchestrationV2TurnItem["threadId"],
     environmentId?: EnvironmentId,
+    /** How the click asked to open a subagent or side chat; a plain click when absent. */
+    intent?: SideThreadOpenIntent,
   ) => void;
   renderHtmlRender?: TimelineRowSharedState["renderHtmlRender"];
   turnItemSource?: TimelineRowSharedState["turnItemSource"];
@@ -1699,7 +1702,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
       return (
         <>
           {activityAnnouncer}
-          <div className="h-full min-h-0 bg-background" data-timeline-loading="true" />
+          <div className="h-full min-h-0" data-timeline-loading="true" />
         </>
       );
     }
@@ -1928,7 +1931,10 @@ function getItemType(item: MessagesTimelineRow) {
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
   const wakeUpsRail = use(TimelineWakeUpsRailCtx).get(row.id);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
-  const isSubagentGroup = row.kind === "event" && row.projectedItem.item.type === "subagent";
+  const isWorkLogEvent =
+    row.kind === "event" &&
+    (row.projectedItem.item.type === "subagent" ||
+      row.projectedItem.item.type === "run_interrupt_result");
   const command = row.kind === "message" && row.command?.standalone ? row.command : null;
   const isWorkLogRow =
     command !== null ||
@@ -1944,7 +1950,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
     <div
       className={cn(
         row.superseded && "ms-6",
-        isWorkLogRow || isSubagentGroup
+        isWorkLogRow || isWorkLogEvent
           ? undefined
           : row.kind === "background-activity" && row.precedesPrompt
             ? "pb-4"
@@ -1961,6 +1967,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   : (row.kind === "message" &&
                         row.message.role === "assistant" &&
                         !row.showAssistantMeta) ||
+                      row.turnTailBelow ||
                       row.kind === "worktree-setup" ||
                       row.kind === "event" ||
                       row.kind === "attempt-fold" ||
@@ -1993,6 +2000,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {isWorkLogRow ? (
         <WorkLogBlock
           continues={row.continuesWorkLog}
+          precedesPrompt={row.precedesPrompt}
           layout={
             isExpandedToolGroup
               ? "group-content"

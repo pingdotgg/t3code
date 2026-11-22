@@ -200,13 +200,31 @@ const layoutDeferredStorage = createDeferredStorage<StorageValue<LayoutPersisted
   typeof window !== "undefined" ? window.localStorage : undefined,
   (value) => JSON.stringify(value),
 );
+// The persist middleware saves after every set, also the session-only ones (on-screen keys, hints).
+let lastSaved: StorageValue<LayoutPersistedState> | null = null;
 const layoutPersistStorage: PersistStorage<LayoutPersistedState> = {
   getItem: (name) => {
     const raw = layoutDeferredStorage.getItem(name);
     return typeof raw === "string" ? (JSON.parse(raw) as StorageValue<LayoutPersistedState>) : null;
   },
-  setItem: (name, value) => layoutDeferredStorage.setItem(name, value),
-  removeItem: (name) => layoutDeferredStorage.removeItem(name),
+  setItem: (name, value) => {
+    const saved = lastSaved;
+    // Every persisted field, so one added to partialize later is compared too.
+    const fields = Object.keys(value.state) as (keyof LayoutPersistedState)[];
+    if (
+      saved !== null &&
+      saved.version === value.version &&
+      fields.every((field) => saved.state[field] === value.state[field])
+    ) {
+      return;
+    }
+    lastSaved = value;
+    layoutDeferredStorage.setItem(name, value);
+  },
+  removeItem: (name) => {
+    lastSaved = null;
+    layoutDeferredStorage.removeItem(name);
+  },
 };
 if (typeof window !== "undefined") {
   window.addEventListener("pagehide", () => layoutDeferredStorage.flush());

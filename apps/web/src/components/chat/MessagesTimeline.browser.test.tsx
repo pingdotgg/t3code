@@ -52,9 +52,8 @@ import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
-import type { Root } from "mdast";
-import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
-import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { THOUGHT_PREVIEW_MAX_LENGTH, thoughtPreviewMarkdown } from "./TimelineWorkEntryRow.logic";
+import { wordsHast } from "~/markdown/wordsHast";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
@@ -821,7 +820,8 @@ describe("MessagesTimeline work rows", () => {
         expect(screen.text()).toContain("Follow-up explanation");
         expect(screen.text()).not.toContain("Old interrupted progress");
         await click(screen.buttons("Open Simplify delivery")[0]!);
-        expect(onOpenThread).toHaveBeenCalledWith(childThreadId);
+        // A subagent's card says how it was clicked, so it opens beside the thread or in its place.
+        expect(onOpenThread).toHaveBeenCalledWith(childThreadId, undefined, "primary");
       } else if (source === "legacy") {
         expect(screen.text()).toContain("Old interrupted progress");
       } else {
@@ -830,6 +830,28 @@ describe("MessagesTimeline work rows", () => {
       }
     },
   );
+
+  it("keeps expanded tool output outside the row's toggle button", async () => {
+    setup();
+    await using screen = await renderTimeline([
+      work("tool-command", {
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        command: "npm test",
+        detail: "TOOL_OUTPUT_MARKER",
+      }),
+    ]);
+    const toggle = screen.button(/npm test/);
+    await click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    const output = [...document.querySelectorAll("pre")].find((pre) =>
+      pre.textContent?.includes("TOOL_OUTPUT_MARKER"),
+    );
+    expect(output).toBeDefined();
+    expect(output!.closest('[role="button"]')).toBeNull();
+    expect(document.getElementById(toggle.getAttribute("aria-controls") ?? "")).toContain(output);
+  });
 });
 
 describe("MessagesTimeline messages", () => {
@@ -2543,49 +2565,22 @@ describe("compact reasoning math", () => {
     ["hard  \nbreak\\\nagain", [["text", "hard break again"]]],
     ["<div>only html</div>", [["text", "Reasoning"]]],
   ])("keeps formulas while flattening compact reasoning previews: %j", (source, expected) => {
-    const tree = parseMarkdownWithMath(source);
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children.map((node) => [node.type, "value" in node ? node.value : null])).toEqual(
-      expected,
-    );
-  });
-
-  it("stops reading the tree once the preview is full", () => {
-    const beyondCap = (): string => {
-      throw new Error("read beyond cap");
-    };
-    const head = "x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 2);
-    const tree: Root = {
-      type: "root",
-      children: [
-        {
-          type: "paragraph",
-          children: [
-            { type: "text", value: head },
-            { type: "strong", children: [{ type: "text", value: "yz beyond" }] },
-            {
-              type: "inlineMath",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-        {
-          type: "paragraph",
-          children: [
-            {
-              type: "text",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-      ],
-    };
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children).toEqual([{ type: "text", value: `${head}yz` }]);
+    const tree = wordsHast(source, {
+      math: true,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions: thoughtPreviewMarkdown("Reasoning"),
+    });
+    expect(
+      tree.children.map((node) =>
+        node.type === "text"
+          ? ["text", node.value]
+          : node.type === "element" && node.children[0]?.type === "element"
+            ? ["inlineMath", String(node.children[0].properties.ariaLabel).trim()]
+            : [node.type, null],
+      ),
+    ).toEqual(expected);
   });
 });
 

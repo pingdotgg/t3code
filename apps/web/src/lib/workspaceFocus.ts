@@ -209,9 +209,21 @@ function revealInScrollers(target: HTMLElement) {
   }
 }
 
+/** What finds a remembered control again once its surface mounts anew. */
+const describeControl = (element: HTMLElement) => ({
+  tagName: element.tagName,
+  id: element.id,
+  label: element.getAttribute("aria-label"),
+  text: element.matches("button") ? element.textContent : null,
+});
+
 /** Keeps area focus local, like VS Code's layout service focusPart/visible-neighbour actions. */
 export function createWorkspaceFocusController(doc: Document) {
-  const lastFocused = new Map<string, HTMLElement>();
+  // Held weakly: one remembered control would keep its closed surface's whole tree alive.
+  const lastFocused = new Map<
+    string,
+    ReturnType<typeof describeControl> & { element: WeakRef<HTMLElement> }
+  >();
   let lastArea: HTMLElement | undefined;
   let lastAreaKey: string | undefined;
   // An area that took focus itself from the keyboard, or the non-tabbable default (the
@@ -246,7 +258,8 @@ export function createWorkspaceFocusController(doc: Document) {
     lastFocused.delete(key);
     // Custom file trees retarget focusin to their nonfocusable shadow host.
     const target = event.composedPath().find((element) => element instanceof HTMLElement);
-    lastFocused.set(key, target instanceof HTMLElement ? target : event.target);
+    const control = target instanceof HTMLElement ? target : event.target;
+    lastFocused.set(key, { element: new WeakRef(control), ...describeControl(control) });
     // Surface history must not retain an unbounded number of detached panel trees.
     if (lastFocused.size > 64) lastFocused.delete(lastFocused.keys().next().value!);
   };
@@ -254,7 +267,9 @@ export function createWorkspaceFocusController(doc: Document) {
 
   const focusArea = (area: HTMLElement, restore = true, nested = true) => {
     const key = workspaceAreaKey(area);
-    const previous = restore ? lastFocused.get(key) : undefined;
+    const remembered = restore ? lastFocused.get(key) : undefined;
+    const previous = remembered?.element.deref();
+    const shape = previous ? describeControl(previous) : remembered;
     const usable = (element: HTMLElement) =>
       isWorkspaceElementVisible(element) && !element.matches(":disabled");
     const belongs = (element: HTMLElement) => workspaceArea(element) === area && usable(element);
@@ -274,17 +289,14 @@ export function createWorkspaceFocusController(doc: Document) {
     // Panel surfaces may unmount when hidden. Recover the same named control when
     // it mounts again, without sharing focus history between different surface tabs.
     const restored =
-      previous && !previous.isConnected
+      shape && !previous?.isConnected
         ? Array.from(area.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)).find(
             (element) =>
               belongs(element) &&
-              element.tagName === previous.tagName &&
-              ((previous.id && element.id === previous.id) ||
-                (previous.getAttribute("aria-label") &&
-                  element.getAttribute("aria-label") === previous.getAttribute("aria-label")) ||
-                (previous.matches("button") &&
-                  previous.textContent?.trim() &&
-                  element.textContent === previous.textContent)),
+              element.tagName === shape.tagName &&
+              ((shape.id && element.id === shape.id) ||
+                (shape.label && element.getAttribute("aria-label") === shape.label) ||
+                (shape.text?.trim() && element.textContent === shape.text)),
           )
         : undefined;
     const surface = area.querySelector<HTMLElement>("[data-right-panel-surface-content]");
@@ -470,6 +482,8 @@ export function createWorkspaceFocusController(doc: Document) {
       if (
         doc.activeElement !== doc.body ||
         !doc.hasFocus() ||
+        // Scrolling swaps these out; focusing elsewhere would pull a screen reader's cursor along.
+        lost.closest("[inert][data-workspace-scroll-swap]") ||
         (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
       )
         return;
@@ -633,10 +647,11 @@ export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
 
 /** Puts the keyboard in the message box of the side chat a surface tab shows. */
 export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
+  const threadId = surfaceId.slice("thread:".length);
   requestWorkspaceFocus({
     area: "panel",
     surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
-    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+    selector: `[data-side-chat-pane="${CSS.escape(threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
   });
 }
 

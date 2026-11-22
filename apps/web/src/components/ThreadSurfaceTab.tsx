@@ -4,7 +4,11 @@ import { threadEnvironment } from "../state/threads";
 import { DEFAULT_RUNTIME_MODE } from "../types";
 /** Resolve surface context independently of ChatView so tabs remain usable after the chat closes,
  * and report when their thread is gone. */
-import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import { msg, T, useGT, useMessages } from "gt-react";
 import {
   AuthOrchestrationOperateScope,
@@ -14,6 +18,7 @@ import {
   type EnvironmentId,
   type IssueTrackerKind,
   type PreviewAnnotationPayload,
+  type PreviewSessionSnapshot,
   type ProjectId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -70,6 +75,7 @@ import {
   type RightPanelSurface,
 } from "../rightPanelStore";
 import {
+  readThreadShell,
   useAllEnvironmentShellsBootstrapped,
   useEnvironmentSupportsServerBrowser,
   useProject,
@@ -90,6 +96,8 @@ import { appAtomRegistry } from "../rpc/atomRegistry";
 import { useEnvironmentQuery } from "../state/query";
 import { focusActivePanelTerminal, focusTerminal } from "../lib/terminalFocus";
 import { requestSideChatComposerFocus } from "../lib/workspaceFocus";
+import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
+import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
 import type { TerminalContextSelection } from "../lib/terminalContext";
 import { useAtomCommand } from "../state/use-atom-command";
 import { vcsEnvironment } from "../state/vcs";
@@ -128,7 +136,11 @@ import { stackedThreadToast, toastManager } from "./ui/toast";
 import { m } from "../i18n/messages";
 import { confirmTerminalClose } from "../lib/terminalCloseConfirm";
 
-const SideChatPane = lazy(() => import("./chat/SideChatPane"));
+// Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
+const SideThreadPane = lazy(() => import("./chat/SideThreadPane"));
+const LinkedThreadPane = lazy(() =>
+  import("./chat/LinkedThreadPane").then((module) => ({ default: module.LinkedThreadPane })),
+);
 const PreviewPanel = lazy(() =>
   import("./preview/PreviewPanel").then((module) => ({ default: module.PreviewPanel })),
 );
@@ -296,7 +308,11 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
     device: true,
     "side-chat": sideChat.available,
   };
-  const open = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+  const open = (
+    kind: LauncherSurfaceKind,
+    browserProfileId?: string,
+    duplicateFrom?: PreviewSessionSnapshot,
+  ) => {
     if (!available[kind]) return;
     const store = useRightPanelStore.getState();
     switch (kind) {
@@ -327,6 +343,7 @@ export function useThreadSurfaceOpeners(threadRef: ScopedThreadRef) {
           threadRef,
           openPreview,
           ...(browserProfileId === undefined ? {} : { profileId: browserProfileId }),
+          ...(duplicateFrom === undefined ? {} : { duplicateFrom }),
         }).then((result) => {
           if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
           const error = squashAtomCommandFailure(result);
@@ -543,12 +560,17 @@ function ThreadSurfacePane({
   const threadTitle = useThreadTitle(threadRef);
   const { visible, paneId } = useLayoutPane();
   const handleNewThread = useNewThreadHandler();
+  const openInMainView = useOpenSurfaceInMainView(threadRef);
   const { projectRef } = context;
-  const add = (kind: LauncherSurfaceKind, browserProfileId?: string) => {
+  const add = (
+    kind: LauncherSurfaceKind,
+    browserProfileId?: string,
+    duplicateFrom?: PreviewSessionSnapshot,
+  ) => {
     if (paneId !== null && openers.available[kind]) {
       requestLayoutSurfacePlacement(threadRef, { kind: "pane", paneId });
     }
-    openers.open(kind, browserProfileId);
+    openers.open(kind, browserProfileId, duplicateFrom);
   };
   const getShortcutContext = () => ({
     terminalFocus: false,
@@ -584,9 +606,19 @@ function ThreadSurfacePane({
       threadTitle={threadTitle}
       onActivate={(active) => {
         // Choosing a side chat's tab puts the keyboard in its message box, even when it shows.
-        if (active.kind === "side-chat") requestSideChatComposerFocus(threadRef, active.id);
+        // A thread with no composer, or one not known yet, takes focus as any other tab does.
+        const kind =
+          active.kind === "thread"
+            ? sideThreadKindOf(
+                readThreadShell(scopeThreadRef(threadRef.environmentId, active.threadId)),
+              )
+            : null;
+        if (kind !== null && sideThreadComposer(kind) === "composer") {
+          requestSideChatComposerFocus(threadRef, active.id);
+        }
       }}
       onCloseSurface={close}
+      onOpenInMainView={openInMainView}
       onRenameDevice={(id, title) =>
         useRightPanelStore.getState().renameDevice(threadRef, id, title)
       }
@@ -596,6 +628,11 @@ function ThreadSurfacePane({
       onCopyFilePath={(path) => copyLayoutFilePath(threadRef, path)}
       onAddBrowser={() => add("browser")}
       onAddBrowserInProfile={(profileId) => add("browser", profileId)}
+      onDuplicateBrowser={(tab) => {
+        const snapshot =
+          tab.kind === "preview" && tab.resourceId ? previewState.sessions[tab.resourceId] : null;
+        if (snapshot) add("browser", undefined, snapshot);
+      }}
       onNewThread={
         projectRef === null
           ? undefined
@@ -707,6 +744,7 @@ function ThreadSurfaceContent({
   const shortcutLabels = useTerminalShortcutLabels();
   const shell = context.serverThread;
   const sideChatParentPanel: SideChatParentPanel = {
+    hostRef: threadRef,
     openToolDiff: (target) => {
       useDiffPanelStore.getState().selectToolCall(threadRef, target);
       useRightPanelStore.getState().open(threadRef, "diff");
@@ -715,14 +753,26 @@ function ThreadSurfaceContent({
   };
 
   switch (surface.kind) {
-    case "side-chat":
+    case "thread":
       return (
         <Suspense fallback={null}>
-          <SideChatPane
+          <SideThreadPane
+            key={surface.id}
             parentRef={threadRef}
-            threadId={surface.threadId}
+            surface={surface}
             parentPanel={sideChatParentPanel}
             onClose={() => void closeThreadSurface(threadRef, surface.id)}
+          />
+        </Suspense>
+      );
+    case "linked-thread":
+      return (
+        <Suspense fallback={null}>
+          <LinkedThreadPane
+            key={surface.id}
+            panelRef={threadRef}
+            surface={surface}
+            visible={visible}
           />
         </Suspense>
       );
@@ -775,7 +825,7 @@ function ThreadSurfaceContent({
             visible={visible}
             mode="embedded"
             composerDraftTarget={context.composerDraftTarget}
-            workspaceMutationId={workspaceMutationId}
+            workspaceMutationId={bridge?.workspaceRevision ?? null}
             threadRef={context.isServerThread || context.threadless ? threadRef : null}
             projectRef={context.threadless ? context.projectRef : null}
             folder={context.threadless && !context.projectRef ? context.workspaceRoot : null}
@@ -800,9 +850,14 @@ function ThreadSurfaceContent({
             }
             getShortcutContext={getShortcutContext}
             shortcutsEnabled={visible}
-            environmentId={threadRef.environmentId}
+            environmentId={
+              (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
+            }
             onSelectPullRequest={(reference) =>
               useRightPanelStore.getState().openPullRequest(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
                 projectId: reference.projectId,
                 repository: reference.repository,
                 number: reference.number,
@@ -866,10 +921,22 @@ function ThreadSurfaceContent({
             threadRef={context.threadless ? null : threadRef}
             onSelectPullRequest={(reference) =>
               useRightPanelStore.getState().openPullRequest(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
                 projectId: reference.projectId,
                 repository: reference.repository,
                 number: reference.number,
                 ...(reference.host ? { host: reference.host } : {}),
+              })
+            }
+            onSelectIssue={({ host, ...reference }) =>
+              useRightPanelStore.getState().openIssue(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
+                ...reference,
+                ...(host ? { host } : {}),
               })
             }
             // Back to the linked items, as a pull request among several goes back to them.
@@ -1231,7 +1298,11 @@ export function ThreadSurfaceServices() {
     const closer: SurfaceCloser = (threadRef, surfaces) => {
       for (const surface of surfaces) {
         if (
-          surface.kind === "side-chat" &&
+          surface.kind === "thread" &&
+          // Only a side chat the shell still lists is thrown away with its tab; a subagent belongs
+          // to its parent's work, and an unlisted side chat is already deleted.
+          readThreadShell(scopeThreadRef(threadRef.environmentId, surface.threadId))?.lineage
+            .sideChat === true &&
           readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)
         ) {
           void deleteThread({

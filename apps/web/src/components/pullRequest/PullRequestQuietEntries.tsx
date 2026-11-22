@@ -84,7 +84,7 @@ export function PullRequestReviewEntry({
   url: string | null;
   outcome: PullRequestReviewOutcome | null;
   /** The host's own word for a review that is neither an approval nor a change request. */
-  stateLabel: string;
+  stateLabel: ReactNode;
   preview: string | null;
   /** In place of the comment glyph, for an event line such as an issue's "closed this". */
   icon?: ReactNode;

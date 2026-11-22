@@ -1843,6 +1843,12 @@ describe("deriveMessagesTimelineRows", () => {
           message("third-steer", 25, "user", "steer"),
           edit("edit-after-steers", 28, 30),
           message("final", 30, "assistant"),
+          {
+            kind: "event",
+            id: "late-subagent",
+            createdAt: time(50),
+            projectedItem: { item: { type: "subagent", status: "completed", runId } } as never,
+          },
         ],
         latestRun: { runId, status, startedAt: time(0), completedAt: time(30) },
         isWorking: false,
@@ -1871,6 +1877,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       `turn-fold:${runId}`,
       "final",
+      "late-subagent",
     ]);
     expect(collapsed[5]).toMatchObject({
       createdAt: time(0),
@@ -1891,6 +1898,7 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${runId}`,
       "work-toggle:edit-before-steers",
       "final",
+      "late-subagent",
     ]);
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
 
@@ -1908,6 +1916,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       [`turn-fold:${runId}:steer:third-steer`, "Continued for 5s", null],
       "final",
+      "late-subagent",
     ]);
   });
 
@@ -3918,6 +3927,48 @@ describe("v2 run and attempt history", () => {
     const mainRows = deriveMessagesTimelineRows({ ...input, turnWorkFold: false });
     expect(mainRows.some((row) => row.kind === "turn-fold")).toBe(false);
     expect(mainRows.at(-1)?.id).toBe("interrupt-result");
+    // The interrupt result is a row of its turn: close under the turn, a turn gap before the next prompt.
+    expect(mainRows.find((row) => row.id === "work-entry")).toMatchObject({
+      continuesWorkLog: true,
+    });
+    const tailRows = deriveMessagesTimelineRows({
+      ...input,
+      turnWorkFold: false,
+      timelineEntries: [
+        {
+          id: "reply",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:02Z",
+          message: {
+            id: MessageId.make("reply"),
+            role: "assistant",
+            text: "Partial reply",
+            runId,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:02Z",
+            updatedAt: "2026-01-01T00:00:02Z",
+          },
+        },
+        input.timelineEntries[2]!,
+        {
+          id: "next-prompt",
+          kind: "message",
+          createdAt: "2026-01-01T00:00:04Z",
+          message: {
+            id: MessageId.make("next-prompt"),
+            role: "user",
+            text: "Keep going",
+            runId: null,
+            streaming: false,
+            createdAt: "2026-01-01T00:00:04Z",
+            updatedAt: "2026-01-01T00:00:04Z",
+          },
+        },
+      ],
+    });
+    const resultIndex = tailRows.findIndex((row) => row.id === "interrupt-result");
+    expect(tailRows[resultIndex]).toMatchObject({ precedesPrompt: true });
+    expect(tailRows[resultIndex - 1]).toMatchObject({ turnTailBelow: true });
     const stoppedRows = deriveMessagesTimelineRows({
       timelineEntries: [
         {

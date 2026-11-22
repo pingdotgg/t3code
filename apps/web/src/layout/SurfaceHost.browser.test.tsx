@@ -36,7 +36,7 @@ import {
   setLayoutStripViewportWidth,
   useLayoutStore,
 } from "./layoutStore";
-import { LayoutSurfaceHost } from "./SurfaceHost";
+import { LayoutSurfaceHost, selectSurfaceMounts } from "./SurfaceHost";
 import { requestLayoutSurfacePlacement, useLayoutSurfaceSync } from "./surfaceSync";
 
 const TOUR_KEY = "t3code:layout-tour:v1";
@@ -380,6 +380,73 @@ it("keeps a pane's tab strip and moves its joined tab when the pane switches tab
   );
   expect(secondPaneStrip()).toBe(strip);
   expect(strip.isConnected).toBe(true);
+});
+
+it("keeps a pane's surface element across a switch among its tabs of one thread", () => {
+  const shown = (tabId: string, paneId: string, threadKey = "thread-a") => ({
+    tabId,
+    paneId,
+    threadKey,
+  });
+  const keys = (mounts: ReturnType<typeof selectSurfaceMounts>) =>
+    Object.fromEntries([...mounts].map(([tabId, mount]) => [tabId, mount.key]));
+  const first = selectSurfaceMounts(new Map(), [shown("files", "p1"), shown("diff", "p2")]);
+  expect(keys(first)).toEqual({ files: "files", diff: "diff" });
+  expect(selectSurfaceMounts(first, [shown("files", "p1"), shown("diff", "p2")])).toBe(first);
+
+  // README.md replaces Files in its pane: the element stays, so its header does.
+  const switched = selectSurfaceMounts(first, [shown("readme", "p1"), shown("diff", "p2")]);
+  expect(keys(switched)).toEqual({ readme: "files", diff: "diff" });
+  // Another thread's tab in that pane gets its own.
+  const otherThread = selectSurfaceMounts(switched, [
+    shown("pr", "p1", "thread-b"),
+    shown("diff", "p2"),
+  ]);
+  expect(keys(otherThread)).toEqual({ pr: "pr", diff: "diff" });
+
+  // A tab dragged to another pane takes its element along; the pane it left starts a new one,
+  // never one just in use.
+  const moved = selectSurfaceMounts(switched, [shown("readme", "p2"), shown("files", "p1")]);
+  expect(keys(moved)).toEqual({ readme: "files", files: "files#2" });
+});
+
+it("keeps a surface's element, hidden, while another workspace shows", async () => {
+  using _tabs = setup();
+  const surfaceThread = scopeThreadRef(EnvironmentId.make("env"), ThreadId.make("files"));
+  const panels = useRightPanelStore.getState();
+  using _panels = { [Symbol.dispose]: () => useRightPanelStore.setState(panels) };
+  useRightPanelStore.setState({
+    byThreadKey: {
+      [scopedThreadKey(surfaceThread)]: {
+        isOpen: false,
+        activeSurfaceId: "diff",
+        surfaces: [{ id: "diff", kind: "diff" }],
+      },
+    },
+  });
+  useLayoutStore
+    .getState()
+    .openTab(
+      { kind: "surface", threadRef: surfaceThread, surfaceId: "diff" },
+      { placement: "new-column" },
+    );
+  const surfaceTabId = focusedTabId()!;
+  await using _screen = await renderHost();
+  const surface = () =>
+    document.querySelector<HTMLElement>(`[data-layout-tab-id="${surfaceTabId}"]`);
+  await vi.waitFor(() => expect(surface()?.hasAttribute("data-layout-pane-id")).toBe(true));
+  const element = surface()!;
+
+  await act(() => useLayoutStore.getState().focusWorkspaceStep(-1));
+  await vi.waitFor(() => expect(element.hasAttribute("data-layout-pane-id")).toBe(false));
+  expect(surface()).toBe(element);
+  expect(getComputedStyle(element).contentVisibility).toBe("hidden");
+  expect(element.getAttribute("aria-hidden")).toBe("true");
+
+  await act(() => useLayoutStore.getState().focusWorkspaceStep(1));
+  await vi.waitFor(() => expect(element.hasAttribute("data-layout-pane-id")).toBe(true));
+  expect(surface()).toBe(element);
+  expect(element.hasAttribute("aria-hidden")).toBe(false);
 });
 
 it("keeps an unfocused pane's joined tab with a dim rim, and black chrome keeps the notch", async () => {

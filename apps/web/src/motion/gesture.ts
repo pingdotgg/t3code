@@ -4,6 +4,7 @@
  * rubber band past the first and last stop (src/rubber_band.rs), and how a
  * browser wheel stream maps onto a gesture.
  */
+import { isMacPlatform } from "../lib/utils";
 
 /** Deltas older than this no longer count toward the velocity. */
 const HISTORY_LIMIT_MS = 150;
@@ -87,10 +88,41 @@ export function wheelDeltaPx(delta: number, event: WheelEvent): number {
   return delta;
 }
 
-function scrollsSideways(element: Element): boolean {
-  if (element.scrollWidth <= element.clientWidth) return false;
-  const { overflowX } = getComputedStyle(element);
-  return overflowX === "auto" || overflowX === "scroll";
+function sidewaysScroller(element: Element): { scrolls: boolean; stopsChain: boolean } {
+  const style = getComputedStyle(element);
+  const scroller = style.overflowX === "auto" || style.overflowX === "scroll";
+  return {
+    scrolls: scroller && element.scrollWidth > element.clientWidth,
+    // Chromium ends a scroll chain at a scroller that contains its overscroll, even one with
+    // nothing to scroll (a short code block): the swipe moves nothing past it.
+    stopsChain: scroller && style.overscrollBehaviorX !== "auto",
+  };
+}
+
+/**
+ * Who moves the strip for a sideways swipe along `path`: nobody when a scroller on the way can
+ * scroll sideways itself; the browser natively when the scroll chain reaches the strip; script
+ * when a scroller with nothing to scroll ends the chain first.
+ */
+export function sidewaysWheelStripScroll(
+  path: readonly EventTarget[],
+  strip: Element,
+  deltaX: number,
+  deltaY: number,
+): "native" | "script" | null {
+  if (Math.abs(deltaX) <= Math.abs(deltaY)) return null;
+  let stopped = false;
+  for (const node of path) {
+    if (node === strip) {
+      if (!sidewaysScroller(strip).scrolls) return null;
+      return stopped ? "script" : "native";
+    }
+    if (!(node instanceof Element)) continue;
+    const { scrolls, stopsChain } = sidewaysScroller(node);
+    if (scrolls) return null;
+    stopped ||= stopsChain;
+  }
+  return null;
 }
 
 /** Row controls outside the viewport forward sideways input to their tabs. */
@@ -104,20 +136,6 @@ export function scrollTabStripFromRow(event: WheelEvent, strip: HTMLElement): vo
   event.preventDefault();
   event.stopPropagation();
   strip.scrollLeft += wheelDeltaPx(delta, event);
-}
-
-export function sidewaysWheelScrollsStrip(
-  path: readonly EventTarget[],
-  strip: Element,
-  deltaX: number,
-  deltaY: number,
-): boolean {
-  if (Math.abs(deltaX) <= Math.abs(deltaY)) return false;
-  for (const node of path) {
-    if (node === strip) return scrollsSideways(strip);
-    if (node instanceof Element && scrollsSideways(node)) return false;
-  }
-  return false;
 }
 
 /**
@@ -188,4 +206,62 @@ export function setWheelScroller(
 ): void {
   if (canScroll) wheelScrollers.set(element, canScroll);
   else wheelScrollers.delete(element);
+}
+
+/** The chord that hands the wheel to the layout: alt+cmd on a Mac, ctrl+alt elsewhere. */
+export function layoutChordHeld(event: MouseEvent | KeyboardEvent): boolean {
+  return isMacPlatform(navigator.platform)
+    ? event.metaKey && event.altKey
+    : event.ctrlKey && event.altKey;
+}
+
+/**
+ * Listens to wheel events on `target`, able to cancel them only while the layout chord is held or
+ * `keep()` says a gesture it owns is still going. A cancelable wheel listener makes the compositor
+ * wait for the main thread before it scrolls anything under it, so otherwise it listens passively.
+ * Call `refresh` when `keep()` changes.
+ */
+export function listenLayoutWheel(
+  target: EventTarget,
+  listener: (event: WheelEvent) => void,
+  { capture = false, keep = () => false }: { capture?: boolean; keep?: () => boolean } = {},
+): { stop: () => void; refresh: () => void } {
+  let held = false;
+  let blocking: boolean | null = null;
+  const wheel = (event: Event) => {
+    // A chord pressed while the window was away sent no keydown: cancel from the next gesture on.
+    if (!blocking && layoutChordHeld(event as WheelEvent)) {
+      held = true;
+      refresh();
+    }
+    listener(event as WheelEvent);
+  };
+  const refresh = () => {
+    const next = held || keep();
+    if (next === blocking) return;
+    if (blocking !== null) target.removeEventListener("wheel", wheel, capture);
+    blocking = next;
+    target.addEventListener("wheel", wheel, { capture, passive: !next });
+  };
+  const onKey = (event: KeyboardEvent) => {
+    held = layoutChordHeld(event);
+    refresh();
+  };
+  const onBlur = () => {
+    held = false;
+    refresh();
+  };
+  window.addEventListener("keydown", onKey, true);
+  window.addEventListener("keyup", onKey, true);
+  window.addEventListener("blur", onBlur);
+  refresh();
+  return {
+    stop: () => {
+      target.removeEventListener("wheel", wheel, capture);
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("keyup", onKey, true);
+      window.removeEventListener("blur", onBlur);
+    },
+    refresh,
+  };
 }

@@ -156,8 +156,12 @@ export function SurfaceIcon({
       return (
         <PullRequestGlyph.link className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
       );
-    case "side-chat":
+    case "thread":
       return <SideChatTabIcon environmentId={environmentId} threadId={surface.threadId} />;
+    case "linked-thread":
+      return (
+        <MessagesSquare className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />
+      );
     case "device":
       return surface.target?.platform === "ios" ? (
         <AppleIcon className="size-3.5 shrink-0 group-data-[active-tab=true]/tab:text-foreground" />

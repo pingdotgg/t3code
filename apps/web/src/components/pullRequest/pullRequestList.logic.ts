@@ -608,6 +608,15 @@ export function mergePullRequestLists(
   };
 }
 
+/** Project errors do not count: the priority reads cover the same projects and are skipped here. */
+export function pullRequestListAnsweredEmpty(view: {
+  readonly data: MergedPullRequestList | null;
+  readonly isPending: boolean;
+  readonly error: unknown;
+}): boolean {
+  return view.data?.entries.length === 0 && !view.isPending && view.error === null;
+}
+
 export const pullRequestEnvironmentSetKey = (environmentIds: ReadonlyArray<string>): string =>
   [...environmentIds].sort((left, right) => left.localeCompare(right)).join(",");
 
@@ -825,6 +834,22 @@ function withDiffStat<Entry extends PullRequestListEntry & { readonly environmen
   return stat === undefined ? entry : { ...entry, ...stat };
 }
 
+// A shown row keeps its merged entry while its counts hold, so a memoized row skips the page's
+// re-renders.
+const shownEntriesWithDiffStat = new WeakMap<PullRequestListEntry, PullRequestListEntry>();
+
+function shownWithDiffStat<Entry extends PullRequestListEntry & { readonly environmentId: string }>(
+  entry: Entry,
+  statsByRow: ReadonlyMap<string, { readonly additions: number; readonly deletions: number }>,
+): Entry {
+  const merged = withDiffStat(entry, statsByRow);
+  if (merged === entry) return entry;
+  const held = shownEntriesWithDiffStat.get(entry) as Entry | undefined;
+  if (held?.additions === merged.additions && held.deletions === merged.deletions) return held;
+  shownEntriesWithDiffStat.set(entry, merged);
+  return merged;
+}
+
 export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEntry>(
   groups: ReadonlyArray<PullRequestGroup<Entry>>,
   sort: PullRequestListSort,
@@ -836,7 +861,7 @@ export function displayPullRequestGroups<Entry extends EnvironmentPullRequestEnt
   const displayed = new Map(
     groups.flatMap((group) =>
       group.entries.map(
-        (entry) => [pullRequestEntryKey(entry), withDiffStat(entry, statsByRow)] as const,
+        (entry) => [pullRequestEntryKey(entry), shownWithDiffStat(entry, statsByRow)] as const,
       ),
     ),
   );

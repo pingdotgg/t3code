@@ -26,8 +26,8 @@ export interface ComposerThreadItem {
 }
 
 /**
- * Threads from this server and linked machines, excluding subagents and side chats.
- * A bare `@` stays a file picker; `#` lists recent threads.
+ * Threads from this server and linked machines, excluding subagents and other threads' side
+ * chats. A bare `@` stays a file picker; `#` lists recent threads.
  */
 export function matchComposerThreadItems<Candidate extends ComposerThreadCandidate>(
   input: {
@@ -46,13 +46,19 @@ export function matchComposerThreadItems<Candidate extends ComposerThreadCandida
 ): ComposerThreadItem[] {
   const query = foldSearchQuery(input.query);
   if (query.length === 0 && !input.allowEmptyQuery) return [];
+  // Closing an unused side chat deletes it, so only one with a message is offered.
+  const isOwnSideChat = (shell: ComposerThreadCandidate) =>
+    shell.lineage.sideChat === true &&
+    shell.environmentId === input.environmentId &&
+    shell.lineage.parentThreadId === input.excludeThreadId &&
+    shell.latestUserMessageAt !== null;
   const candidates = input.shells.filter(
     (shell) =>
       (shell.environmentId === input.environmentId ||
         input.linkedEnvironments.has(shell.environmentId)) &&
       shell.id !== input.excludeThreadId &&
       shell.archivedAt === null &&
-      isListedThreadLineage(shell.lineage),
+      (isListedThreadLineage(shell.lineage) || isOwnSideChat(shell)),
   );
   const matches =
     query.length === 0
@@ -76,8 +82,9 @@ export function matchComposerThreadItems<Candidate extends ComposerThreadCandida
       type: "thread",
       thread: { environmentId: shell.environmentId, threadId: shell.id },
       label: shell.title,
-      description:
-        machine === undefined
+      description: isOwnSideChat(shell)
+        ? resolve(msg("Side chat"))
+        : machine === undefined
           ? (description ?? resolve(msg("Thread", { $context: "noun, search result type" })))
           : description === undefined
             ? resolve(msg("Thread on {machine}", { machine }))
@@ -102,13 +109,15 @@ export interface ComposerEnvironmentItem {
 }
 
 /**
- * The user's machines the `@` picker offers, so the agent can link or work there. The
- * composer's own environment is left out. Like threads, they need a query: bare `@` stays a
- * file picker.
+ * The machines the `@` picker offers, so the agent can link or work there: the client's paired
+ * machines and those the composer's environment links to. The composer's own environment is
+ * left out. Like threads, they need a query: bare `@` stays a file picker.
  */
 export function matchComposerEnvironmentItems(
   input: {
     environments: ReadonlyArray<ComposerEnvironmentCandidate>;
+    /** The machines the composer's environment links to, by name. */
+    linkedEnvironments: ReadonlyMap<EnvironmentId, string>;
     environmentId: EnvironmentId;
     query: string;
   },
@@ -116,7 +125,13 @@ export function matchComposerEnvironmentItems(
 ): ComposerEnvironmentItem[] {
   const query = input.query.trim().toLowerCase();
   if (query.length === 0) return [];
-  return input.environments
+  const paired = new Set(input.environments.map((environment) => environment.environmentId));
+  const linkedOnly = Array.from(input.linkedEnvironments, ([environmentId, label]) => ({
+    environmentId,
+    label,
+    machine: "server" as const,
+  })).filter((environment) => !paired.has(environment.environmentId));
+  return [...input.environments, ...linkedOnly]
     .filter(
       (environment) =>
         environment.environmentId !== input.environmentId &&

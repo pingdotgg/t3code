@@ -1,15 +1,19 @@
 /* oxlint-disable t3code/no-untranslated-copy -- Dev-only design catalog (loaded behind import.meta.env.DEV); its sample copy stays English. */
 import {
   ArchiveIcon,
+  ArrowRightLeftIcon,
   ArrowUpIcon,
   BellIcon,
   BotIcon,
   CircleAlertIcon,
+  CircleStopIcon,
   CopyIcon,
+  EraserIcon,
   FileIcon,
   FilePenIcon,
   FolderIcon,
   GitBranchIcon,
+  GitForkIcon,
   GlobeIcon,
   HammerIcon,
   ListTodoIcon,
@@ -1564,8 +1568,28 @@ function WorkLogSection() {
               </WorkLogDetails>
             </WorkLogRow>
           </WorkLogBlock>
-          <TimelineSystemDivider label="Context compacted" detail="92k → 14k tokens" />
-          <TimelineSystemDivider label="Run interrupted" tone="danger" />
+          <WorkLogBlock>
+            <TimelineSystemDivider
+              placement="turn"
+              label="Run interrupted"
+              detail="Stopped by user"
+              icon={CircleStopIcon}
+              wrapDetail
+            />
+          </WorkLogBlock>
+          <TimelineSystemDivider
+            label="Forked from conversation"
+            icon={GitForkIcon}
+            actionLabel="Open source conversation"
+            onAction={() => {}}
+          />
+          <TimelineSystemDivider label="New session" icon={EraserIcon} />
+          <TimelineSystemDivider
+            label="Context handoff"
+            detail="Claude → Codex"
+            icon={ArrowRightLeftIcon}
+            tone="danger"
+          />
         </Stage>
       </Specimen>
     </Section>
