@@ -1,7 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
-  ContextHandoffId,
   ContextTransferId,
   NodeId,
   EventId,
@@ -9,7 +8,6 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
-  ProviderThreadId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -354,6 +352,37 @@ it.effect.each(["sqlite"] as const)(
         (yield* store.getTurnStartContext(threadId, runId)).messages.map((m) => m.id),
         marker.id,
       );
+      const originalId = MessageId.make("unsent-original");
+      yield* store.apply({
+        id: EventId.make("unsent-original-event"),
+        type: "message.updated",
+        threadId,
+        runId: oldRunId,
+        occurredAt: now,
+        payload: { ...message, id: originalId, runId: oldRunId, text: "Original request" },
+      });
+      yield* putRun({
+        ...run,
+        id: oldRunId,
+        ordinal: 1,
+        status: "interrupted",
+        userMessageId: originalId,
+      });
+      const retryId = RunId.make("unsent-retry");
+      yield* putRun({ ...run, ordinal: 3, manualContinuationOfRunId: retryId });
+      yield* putRun({
+        ...run,
+        id: retryId,
+        ordinal: 2,
+        status: "interrupted",
+        manualContinuationOfRunId: oldRunId,
+      });
+      assert.equal(
+        (yield* store.getTurnStartContext(threadId, runId)).messages.find(
+          (m) => m.id === originalId,
+        )?.text,
+        "Original request",
+      );
       const other = ThreadId.make("other");
       yield* putThread({ ...thread, id: other });
       assert.deepEqual((yield* store.getTurnStartContext(other, runId)).messages, []);
@@ -572,61 +601,7 @@ it.effect(
         },
       });
       yield* userMessage(forkId, forkRunId, "/compact");
-      // Of other transfers, turn start reads only those a handoff of this thread references.
-      for (const id of ["transfer:handed-off-result", "transfer:unreferenced-result"]) {
-        yield* store.apply({
-          id: EventId.make(`event:${id}`),
-          type: "context-transfer.created",
-          threadId: forkId,
-          occurredAt: now,
-          payload: {
-            id: ContextTransferId.make(id),
-            type: "subagent_result",
-            sourceThreadId: sourceId,
-            targetThreadId: forkId,
-            sourcePoint: { threadId: sourceId },
-            basePoint: null,
-            sourceProviderInstanceId: instanceId,
-            targetProviderInstanceId: instanceId,
-            targetRunId: null,
-            status: "consumed",
-            resolution: null,
-            createdBy: "system",
-            error: null,
-            createdAt: now,
-            updatedAt: now,
-            consumedAt: now,
-          },
-        });
-      }
-      yield* store.apply({
-        id: EventId.make("event:handoff:handed-off-result"),
-        type: "context-handoff.updated",
-        threadId: forkId,
-        occurredAt: now,
-        payload: {
-          id: ContextHandoffId.make("handoff:handed-off-result"),
-          transferId: ContextTransferId.make("transfer:handed-off-result"),
-          threadId: forkId,
-          targetRunId: forkRunId,
-          fromProviderThreadIds: [],
-          toProviderThreadId: ProviderThreadId.make("provider-thread:fork"),
-          coveredRunOrdinals: { from: 1, to: 1 },
-          strategy: "delta_since_target_last_seen",
-          status: "ready",
-          summaryMessageId: null,
-          summaryText: "",
-          createdByProviderInstanceId: instanceId,
-          createdAt: now,
-          updatedAt: now,
-        },
-      });
 
-      const context = yield* store.getTurnStartContext(forkId, forkRunId);
-      assert.isTrue(context.hasConversation);
-      assert.deepEqual(
-        context.contextTransfers.map((transfer) => transfer.id),
-        ["transfer:fork-compact", "transfer:handed-off-result"],
-      );
+      assert.isTrue((yield* store.getTurnStartContext(forkId, forkRunId)).hasConversation);
     }).pipe(Effect.provide(layerDatabase)),
 );

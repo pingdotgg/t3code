@@ -1,7 +1,7 @@
 {
   "name": "@effect/platform-bun",
   "type": "module",
-  "version": "4.1.2",
+  "version": "4.1.5",
   "license": "MIT",
   "description": "Platform specific implementations for the Bun runtime",
   "homepage": "https://effect.website",
@@ -72,6 +72,6 @@
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "effect": "workspace:^",
-    "tinybench": "^6.2.2"
+    "tinybench": "^6.2.3"
   }
 }
