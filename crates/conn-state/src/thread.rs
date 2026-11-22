@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use conn_contract::{
@@ -153,9 +153,16 @@ pub struct ThreadState {
     pub run_timings: HashMap<String, RunTiming>,
     /// Ready filesystem checkpoints with changed files, keyed by `run_id`.
     pub turn_checkpoints: HashMap<String, TurnCheckpointSummary>,
-    /// Changes whenever [`Self::apply`] or [`Self::apply_projection`] runs, and is unique across
-    /// all thread states, so views can skip re-syncing a timeline that did not change.
+    /// Changes whenever [`Self::apply`], [`Self::apply_projection`], or
+    /// [`Self::prepend_history_page`] runs, and is unique across all thread states,
+    /// so views can skip re-syncing a timeline that did not change.
     pub revision: u64,
+    /// Opaque server cursor for fetching older history pages before `entries`.
+    pub history_cursor: Option<String>,
+    /// True when older history pages exist on the server before `entries`.
+    pub has_more_history: bool,
+    /// True while an on-demand earlier-history page request is in flight.
+    pub loading_earlier: bool,
 }
 
 impl ThreadState {
@@ -308,6 +315,86 @@ impl ThreadState {
             }
         }
         self.entries = entries;
+        self.history_cursor = None;
+        self.has_more_history = false;
+        self.loading_earlier = false;
+    }
+
+    /// Replaces this thread's timeline from an [`conn_contract::OrchestrationV2ThreadDetailSnapshot`],
+    /// preserving any bounded-snapshot history pagination cursor and flag.
+    pub fn apply_detail_snapshot(
+        &mut self,
+        snapshot: conn_contract::OrchestrationV2ThreadDetailSnapshot,
+    ) {
+        self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
+        self.history_cursor = snapshot.history_cursor;
+        self.has_more_history = snapshot.has_more_history.unwrap_or(false);
+        self.loading_earlier = false;
+    }
+
+    /// Prepends one older history page returned by `GET /api/orchestration/threads/:id/history`
+    /// ahead of existing timeline entries, deduplicating by entry ID and updating pagination
+    /// metadata (`history_cursor`, `has_more_history`, `loading_earlier`).
+    ///
+    /// Returns the number of newly prepended [`TimelineEntry`] rows.
+    pub fn prepend_history_page(
+        &mut self,
+        page: conn_contract::OrchestrationV2ThreadHistoryPage,
+    ) -> usize {
+        let existing_ids: HashSet<String> = self
+            .entries
+            .iter()
+            .map(|entry| entry.id().to_owned())
+            .collect();
+
+        let mut rows = page.items;
+        rows.sort_by_key(|row| row.position);
+
+        let mut prepended = Vec::with_capacity(rows.len());
+        let mut prepended_index: HashMap<String, usize> = HashMap::with_capacity(rows.len());
+
+        for row in rows {
+            let item = row.item;
+            let approval_pair = match &item {
+                ProjectionTurnItem::ApprovalRequest(i) => {
+                    Some((i.id.clone(), i.request_id.clone()))
+                }
+                _ => None,
+            };
+            let timing = extract_projection_timing(&item);
+
+            let Some(entry) = map_projection_turn_item(item) else {
+                continue;
+            };
+            if existing_ids.contains(entry.id()) {
+                continue;
+            }
+            if let Some((id, request_id)) = approval_pair {
+                self.approval_requests.entry(id).or_insert(request_id);
+            }
+            if let Some((id, entry_timing)) = timing {
+                self.entry_timings.entry(id).or_insert(entry_timing);
+            }
+            if let Some(&idx) = prepended_index.get(entry.id()) {
+                prepended[idx] = entry;
+            } else {
+                let idx = prepended.len();
+                prepended_index.insert(entry.id().to_owned(), idx);
+                prepended.push(entry);
+            }
+        }
+
+        let prepended_count = prepended.len();
+        if prepended_count > 0 {
+            prepended.append(&mut self.entries);
+            self.entries = prepended;
+        }
+
+        self.history_cursor = page.next_cursor;
+        self.has_more_history = page.has_more_history;
+        self.loading_earlier = false;
+        self.revision = next_revision();
+        prepended_count
     }
 
     /// Applies one `subscribeThread` stream item.
@@ -322,6 +409,9 @@ impl ThreadState {
             }
             ThreadStreamItem::Snapshot(snapshot) => {
                 self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
+                self.history_cursor = snapshot.history_cursor;
+                self.has_more_history = snapshot.has_more_history.unwrap_or(false);
+                self.loading_earlier = false;
                 true
             }
             ThreadStreamItem::Event(event_item) => {

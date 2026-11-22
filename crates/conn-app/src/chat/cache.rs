@@ -61,6 +61,9 @@ impl CachedRow {
 /// One flat row in GPUI's virtualized `ListState`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum VirtualItem {
+    LoadEarlier {
+        loading: bool,
+    },
     User {
         row_idx: usize,
         grouped_with_previous: bool,
@@ -93,6 +96,7 @@ impl VirtualItem {
     /// Stable identity key used to detect prefix preservation for `ListState::splice`.
     pub(super) fn stable_key(&self, rows: &[CachedRow]) -> String {
         match self {
+            Self::LoadEarlier { loading } => format!("load-earlier:{}", *loading as u8),
             Self::User {
                 row_idx,
                 grouped_with_previous,
@@ -163,7 +167,7 @@ impl VirtualItem {
             Self::Approval { row_idx } | Self::Notice { row_idx } => {
                 rows[*row_idx].entry.id() == target_id
             }
-            Self::ChangedFiles { .. } | Self::Working => false,
+            Self::LoadEarlier { .. } | Self::ChangedFiles { .. } | Self::Working => false,
         }
     }
 }
@@ -197,6 +201,13 @@ pub(super) struct SyncStats {
     pub(super) invalidated: usize,
     /// Start index in the virtual list where changes begin (`ListState::splice`).
     pub(super) splice_start: usize,
+    /// Exclusive end index in the previous virtual list where changes end.
+    pub(super) splice_old_end: usize,
+    /// Exclusive end index in the new virtual list where changes end.
+    pub(super) splice_new_end: usize,
+    /// Signed shift in virtual-item count above the unchanged tail when items are prepended
+    /// (used to keep the user's viewport anchored when older history pages arrive).
+    pub(super) prepended_delta: isize,
     /// Previous virtual item count before this sync.
     pub(super) old_item_count: usize,
     /// New virtual item count after this sync.
@@ -335,14 +346,17 @@ impl RowCache {
         self.toc.clear();
     }
 
-    /// Synchronizes the cache against `entries`, `entry_timings`, `turn_checkpoints`, and
-    /// `working`, rebuilding [`Self::items`] and [`Self::toc`] without eagerly parsing Markdown.
+    /// Synchronizes the cache against `entries`, `entry_timings`, `turn_checkpoints`,
+    /// `working`, and bounded-history pagination flags, rebuilding [`Self::items`] and
+    /// [`Self::toc`] without eagerly parsing Markdown.
     pub(super) fn sync(
         &mut self,
         entries: &[TimelineEntry],
         entry_timings: &HashMap<String, EntryTiming>,
         turn_checkpoints: &HashMap<String, TurnCheckpointSummary>,
         working: bool,
+        has_more_history: bool,
+        loading_earlier: bool,
     ) -> SyncStats {
         let mut previous: HashMap<String, CachedRow> = self
             .rows
@@ -393,7 +407,13 @@ impl RowCache {
             self.rows.push(CachedRow::new(entry.clone(), blocks));
         }
 
-        self.rebuild_virtual_items(entry_timings, turn_checkpoints, working);
+        self.rebuild_virtual_items(
+            entry_timings,
+            turn_checkpoints,
+            working,
+            has_more_history,
+            loading_earlier,
+        );
 
         let new_item_count = self.items.len();
         let splice_start = old_keys
@@ -401,12 +421,32 @@ impl RowCache {
             .zip(self.item_keys.iter())
             .take_while(|(a, b)| a == b)
             .count();
+        let common_suffix = old_keys[splice_start..]
+            .iter()
+            .rev()
+            .zip(self.item_keys[splice_start..].iter().rev())
+            .take_while(|(a, b)| a == b)
+            .count();
+        let splice_old_end = old_item_count - common_suffix;
+        let splice_new_end = new_item_count - common_suffix;
+        let at_head = splice_start == 0
+            || (splice_start == 1
+                && matches!(self.items.first(), Some(VirtualItem::LoadEarlier { .. })));
+        let prepended_delta = if at_head && common_suffix > 0 {
+            isize::try_from(splice_new_end).unwrap_or(isize::MAX)
+                - isize::try_from(splice_old_end).unwrap_or(isize::MAX)
+        } else {
+            0
+        };
 
         SyncStats {
             total: entries.len(),
             reused,
             invalidated,
             splice_start,
+            splice_old_end,
+            splice_new_end,
+            prepended_delta,
             old_item_count,
             new_item_count,
         }
@@ -417,6 +457,8 @@ impl RowCache {
         entry_timings: &HashMap<String, EntryTiming>,
         turn_checkpoints: &HashMap<String, TurnCheckpointSummary>,
         working: bool,
+        has_more_history: bool,
+        loading_earlier: bool,
     ) {
         let rows = &self.rows;
         let mut base_items: Vec<VirtualItem> = Vec::with_capacity(rows.len());
@@ -497,7 +539,9 @@ impl RowCache {
                 VirtualItem::WorkGroup { row_end, .. } => {
                     rows.get(row_end.saturating_sub(1))?.entry.id()
                 }
-                VirtualItem::ChangedFiles { .. } | VirtualItem::Working => return None,
+                VirtualItem::LoadEarlier { .. }
+                | VirtualItem::ChangedFiles { .. }
+                | VirtualItem::Working => return None,
             };
             entry_timings.get(id).and_then(|t| t.run_id.as_deref())
         };
@@ -517,8 +561,14 @@ impl RowCache {
             None
         };
 
-        let mut items: Vec<VirtualItem> = Vec::with_capacity(base_items.len() + 8);
+        let mut items: Vec<VirtualItem> = Vec::with_capacity(base_items.len() + 9);
         let mut toc: Vec<TocEntry> = Vec::new();
+
+        if has_more_history {
+            items.push(VirtualItem::LoadEarlier {
+                loading: loading_earlier,
+            });
+        }
 
         for (base_idx, item) in base_items.iter().enumerate() {
             if working_before_idx == Some(base_idx) {
@@ -701,7 +751,14 @@ mod tests {
             },
         ];
 
-        let s1 = cache.sync(&initial, &empty_timings(), &empty_checkpoints(), true);
+        let s1 = cache.sync(
+            &initial,
+            &empty_timings(),
+            &empty_checkpoints(),
+            true,
+            false,
+            false,
+        );
         assert_eq!(s1.total, 3, "initial sync count");
         assert_eq!(
             cache.parsed_markdown_count(),
@@ -722,7 +779,14 @@ mod tests {
             markdown: "Streaming... more text".to_owned(),
             streaming: true,
         };
-        let s2 = cache.sync(&updated, &empty_timings(), &empty_checkpoints(), true);
+        let s2 = cache.sync(
+            &updated,
+            &empty_timings(),
+            &empty_checkpoints(),
+            true,
+            false,
+            false,
+        );
         assert_eq!(s2.reused, 2, "user + unchanged assistant reused");
         assert_eq!(s2.invalidated, 1, "only changed assistant invalidated");
         assert_eq!(
@@ -743,7 +807,14 @@ mod tests {
             markdown: "Streaming... more text".to_owned(),
             streaming: false,
         };
-        let s3 = cache.sync(&updated, &empty_timings(), &empty_checkpoints(), false);
+        let s3 = cache.sync(
+            &updated,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            false,
+            false,
+        );
         assert_eq!(s3.invalidated, 0, "same markdown must not invalidate");
         assert_eq!(cache.parsed_markdown_count(), 2, "both parsed arcs kept");
     }
@@ -800,7 +871,7 @@ mod tests {
             }
         }
 
-        cache.sync(&entries, &timings, &checkpoints, false);
+        cache.sync(&entries, &timings, &checkpoints, false, false, false);
         assert_eq!(cache.toc().len(), 5, "one TOC entry per user turn");
         assert_eq!(cache.toc()[0].preview, "Turn 1 prompt");
         assert!(cache.toc()[1].has_checkpoint, "turn 2 flagged checkpoint");
@@ -864,7 +935,14 @@ mod tests {
                 streaming: false,
             },
         ];
-        cache.sync(&entries, &empty_timings(), &empty_checkpoints(), false);
+        cache.sync(
+            &entries,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            false,
+            false,
+        );
         let items = cache.items();
         assert_eq!(
             items.len(),
@@ -918,5 +996,139 @@ mod tests {
                 followed_by_work: false,
             }
         ));
+    }
+
+    #[test]
+    fn load_earlier_row_shifts_toc_and_tracks_prepend_delta_for_scroll_anchoring() {
+        let mut cache = RowCache::default();
+        let initial = vec![
+            TimelineEntry::User {
+                id: "u3".to_owned(),
+                text: "Latest prompt".to_owned(),
+                created_by_agent: false,
+            },
+            TimelineEntry::Assistant {
+                id: "a3".to_owned(),
+                markdown: "Latest reply".to_owned(),
+                streaming: false,
+            },
+        ];
+
+        // 1. Bounded snapshot with has_more_history=true prepends LoadEarlier at index 0.
+        let s1 = cache.sync(
+            &initial,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            true,
+            false,
+        );
+        assert_eq!(s1.new_item_count, 3);
+        assert_eq!(
+            cache.items()[0],
+            VirtualItem::LoadEarlier { loading: false }
+        );
+        assert_eq!(
+            cache.toc()[0].item_index,
+            1,
+            "TOC turn 1 must account for LoadEarlier row at index 0"
+        );
+
+        // 2. Switching loading_earlier to true splices only index 0 with zero prepend delta.
+        let s2 = cache.sync(
+            &initial,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            true,
+            true,
+        );
+        assert_eq!(s2.splice_start, 0);
+        assert_eq!(s2.splice_old_end, 1);
+        assert_eq!(s2.splice_new_end, 1);
+        assert_eq!(s2.prepended_delta, 0);
+        assert_eq!(cache.items()[0], VirtualItem::LoadEarlier { loading: true });
+
+        // 3. Prepending 2 older entries while keeping has_more_history=true yields +2 delta.
+        let with_page_2 = vec![
+            TimelineEntry::User {
+                id: "u2".to_owned(),
+                text: "Middle prompt".to_owned(),
+                created_by_agent: false,
+            },
+            TimelineEntry::Assistant {
+                id: "a2".to_owned(),
+                markdown: "Middle reply".to_owned(),
+                streaming: false,
+            },
+            initial[0].clone(),
+            initial[1].clone(),
+        ];
+        let s3 = cache.sync(
+            &with_page_2,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            true,
+            false,
+        );
+        assert_eq!(s3.splice_start, 0);
+        assert_eq!(s3.splice_old_end, 1);
+        assert_eq!(s3.splice_new_end, 3);
+        assert_eq!(s3.prepended_delta, 2);
+        assert_eq!(cache.items().len(), 5);
+
+        // 4. Prepending final 2 entries with has_more_history=false removes LoadEarlier (+1 net delta).
+        let with_page_1 = vec![
+            TimelineEntry::User {
+                id: "u1".to_owned(),
+                text: "First prompt".to_owned(),
+                created_by_agent: false,
+            },
+            TimelineEntry::Assistant {
+                id: "a1".to_owned(),
+                markdown: "First reply".to_owned(),
+                streaming: false,
+            },
+            with_page_2[0].clone(),
+            with_page_2[1].clone(),
+            with_page_2[2].clone(),
+            with_page_2[3].clone(),
+        ];
+        let s4 = cache.sync(
+            &with_page_1,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            false,
+            false,
+        );
+        assert_eq!(s4.splice_start, 0);
+        assert_eq!(s4.splice_old_end, 1);
+        assert_eq!(s4.splice_new_end, 2);
+        assert_eq!(s4.prepended_delta, 1);
+        assert_eq!(cache.items().len(), 6);
+        assert_eq!(cache.toc()[0].item_index, 0);
+
+        // 5. Direct prepend with LoadEarlier staying loading=false (splice_start == 1) also shifts.
+        let mut cache2 = RowCache::default();
+        cache2.sync(
+            &initial,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            true,
+            false,
+        );
+        let s5 = cache2.sync(
+            &with_page_2,
+            &empty_timings(),
+            &empty_checkpoints(),
+            false,
+            true,
+            false,
+        );
+        assert_eq!(s5.splice_start, 1);
+        assert_eq!(s5.prepended_delta, 2);
     }
 }

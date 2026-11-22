@@ -1114,3 +1114,210 @@ fn thread_hydrates_deduped_message_bodies() {
         state.entries[1]
     );
 }
+
+#[test]
+fn thread_bounded_snapshot_multi_page_prepend_and_deduplication() {
+    fn projected_user(position: i64, id: &str, text: &str, ts: &str) -> Value {
+        json!({
+            "position": position,
+            "visibility": "local",
+            "sourceThreadId": "thread-bounded",
+            "sourceItemId": id,
+            "item": {
+                "type": "user_message",
+                "id": id,
+                "threadId": "thread-bounded",
+                "runId": format!("run-{id}"),
+                "nodeId": null,
+                "parentItemId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "ordinal": position + 1,
+                "status": "completed",
+                "title": null,
+                "startedAt": ts,
+                "completedAt": ts,
+                "updatedAt": ts,
+                "messageId": format!("msg-{id}"),
+                "text": text,
+                "attachments": [],
+                "createdBy": "user",
+                "creationSource": "web",
+                "inputIntent": "turn_start"
+            }
+        })
+    }
+
+    fn projected_assistant(position: i64, id: &str, text: &str, ts: &str) -> Value {
+        json!({
+            "position": position,
+            "visibility": "local",
+            "sourceThreadId": "thread-bounded",
+            "sourceItemId": id,
+            "item": {
+                "type": "assistant_message",
+                "id": id,
+                "threadId": "thread-bounded",
+                "runId": format!("run-{id}"),
+                "nodeId": null,
+                "parentItemId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "ordinal": position + 1,
+                "status": "completed",
+                "title": null,
+                "startedAt": ts,
+                "completedAt": ts,
+                "updatedAt": ts,
+                "messageId": format!("msg-{id}"),
+                "text": text,
+                "streaming": false
+            }
+        })
+    }
+
+    let make_snapshot = |history_cursor: Option<&str>, has_more: Option<bool>| {
+        let mut obj = json!({
+            "kind": "snapshot",
+            "snapshotSequence": 50,
+            "projection": {
+                "thread": {
+                    "createdBy": "user",
+                    "creationSource": "web",
+                    "id": "thread-bounded",
+                    "projectId": "proj-1",
+                    "title": "Long thread",
+                    "providerInstanceId": "claudeAgent",
+                    "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                    "runtimeMode": "full-access",
+                    "interactionMode": "default",
+                    "branch": null,
+                    "worktreePath": null,
+                    "lineage": { "rootThreadId": "thread-bounded", "parentThreadId": null, "relationshipToParent": null },
+                    "forkedFrom": null,
+                    "activeProviderThreadId": null,
+                    "createdAt": "2026-11-13T09:00:00.000Z",
+                    "updatedAt": "2026-11-13T09:10:00.000Z",
+                    "archivedAt": null,
+                    "settledOverride": null,
+                    "settledAt": null,
+                    "deletedAt": null
+                },
+                "runs": [],
+                "attempts": [],
+                "nodes": [],
+                "subagents": [],
+                "providerSessions": [],
+                "providerThreads": [],
+                "providerTurns": [],
+                "runtimeRequests": [],
+                "messages": [],
+                "plans": [],
+                "turnItems": [],
+                "checkpointScopes": [],
+                "checkpoints": [],
+                "contextHandoffs": [],
+                "contextTransfers": [],
+                "visibleTurnItems": [
+                    projected_user(10, "u3", "Latest prompt", "2026-11-13T09:09:00.000Z"),
+                    projected_assistant(11, "a3", "Latest reply (live)", "2026-11-13T09:09:10.000Z")
+                ],
+                "updatedAt": "2026-11-13T09:10:00.000Z"
+            }
+        });
+        if let Some(map) = obj.as_object_mut() {
+            if let Some(cursor) = history_cursor {
+                map.insert("historyCursor".to_owned(), json!(cursor));
+            }
+            if let Some(more) = has_more {
+                map.insert("hasMoreHistory".to_owned(), json!(more));
+            }
+        }
+        decode_thread(obj)
+    };
+
+    // 1. Backwards-compatibility: snapshot omitting bounded fields defaults has_more_history=false.
+    let mut legacy = ThreadState::new("thread-bounded");
+    legacy.apply(make_snapshot(None, None));
+    assert!(!legacy.has_more_history);
+    assert_eq!(legacy.history_cursor, None);
+    assert!(!legacy.loading_earlier);
+
+    // 2. Bounded snapshot populates history_cursor and has_more_history.
+    let mut state = ThreadState::new("thread-bounded");
+    state.apply(make_snapshot(Some("cursor-page-2"), Some(true)));
+    assert!(state.has_more_history);
+    assert_eq!(state.history_cursor.as_deref(), Some("cursor-page-2"));
+    assert!(!state.loading_earlier);
+    assert_eq!(state.sequence, Some(50));
+
+    // 3. First history page: out-of-order positions + overlapping existing ID ("u3") + duplicate ID in page.
+    state.loading_earlier = true;
+    let page_2: conn_contract::OrchestrationV2ThreadHistoryPage = match from_json(json!({
+        "snapshotSequence": 60,
+        "items": [
+            projected_assistant(5, "a2", "Middle reply", "2026-11-13T09:05:10.000Z"),
+            projected_user(4, "u2", "Middle prompt", "2026-11-13T09:05:00.000Z"),
+            projected_user(10, "u3", "Stale overlapping prompt", "2026-11-13T09:09:00.000Z")
+        ],
+        "nextCursor": "cursor-page-1",
+        "hasMoreHistory": true
+    })) {
+        Ok(p) => p,
+        Err(err) => panic!("failed to decode page_2: {err}"),
+    };
+    let added_2 = state.prepend_history_page(page_2);
+    assert_eq!(added_2, 2, "overlapping existing u3 must be deduplicated");
+    assert!(!state.loading_earlier, "prepend must clear loading_earlier");
+    assert!(state.has_more_history);
+    assert_eq!(state.history_cursor.as_deref(), Some("cursor-page-1"));
+    assert_eq!(
+        state.sequence,
+        Some(50),
+        "history page must not advance WS resume sequence"
+    );
+    let ids_after_p2: Vec<&str> = state.entries.iter().map(TimelineEntry::id).collect();
+    assert_eq!(
+        ids_after_p2,
+        vec!["u2", "a2", "u3", "a3"],
+        "prepended page must be sorted by position and placed ahead of existing entries"
+    );
+    assert!(
+        matches!(&state.entries[2], TimelineEntry::User { text, .. } if text == "Latest prompt"),
+        "existing live entry u3 must not be overwritten by older page"
+    );
+    assert_eq!(
+        state.entry_run_id("a2"),
+        Some("run-a2"),
+        "timings must be recorded for prepended entries"
+    );
+
+    // 4. Second (final) history page clears has_more_history and history_cursor.
+    state.loading_earlier = true;
+    let page_1: conn_contract::OrchestrationV2ThreadHistoryPage = match from_json(json!({
+        "snapshotSequence": 61,
+        "items": [
+            projected_user(0, "u1", "First prompt", "2026-11-13T09:00:00.000Z"),
+            projected_assistant(1, "a1", "First reply", "2026-11-13T09:00:10.000Z"),
+            projected_user(4, "u2", "Duplicate from page 2", "2026-11-13T09:05:00.000Z")
+        ],
+        "nextCursor": null,
+        "hasMoreHistory": false
+    })) {
+        Ok(p) => p,
+        Err(err) => panic!("failed to decode page_1: {err}"),
+    };
+    let added_1 = state.prepend_history_page(page_1);
+    assert_eq!(added_1, 2);
+    assert!(!state.has_more_history);
+    assert_eq!(state.history_cursor, None);
+    assert!(!state.loading_earlier);
+    let ids_after_p1: Vec<&str> = state.entries.iter().map(TimelineEntry::id).collect();
+    assert_eq!(
+        ids_after_p1,
+        vec!["u1", "a1", "u2", "a2", "u3", "a3"],
+        "multi-page prepend must assemble complete chronological timeline"
+    );
+}

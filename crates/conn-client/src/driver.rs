@@ -98,6 +98,9 @@ struct DriverState {
     shell_after_sequence: Option<i64>,
     shell_request_id: Option<RequestId>,
     thread_subs: HashMap<String, ThreadSubState>,
+    /// Last observed stream sequence per thread, preserved across `UnsubscribeThread` ->
+    /// `SubscribeThread` so switching back replays deltas instead of re-downloading a snapshot.
+    thread_last_sequences: HashMap<String, i64>,
     panel_requests_device: Option<Option<String>>,
     panel_request_id: Option<RequestId>,
     annotation_subs: HashMap<String, Option<RequestId>>,
@@ -125,6 +128,7 @@ impl DriverState {
             shell_after_sequence: None,
             shell_request_id: None,
             thread_subs: HashMap::new(),
+            thread_last_sequences: HashMap::new(),
             panel_requests_device: None,
             panel_request_id: None,
             annotation_subs: HashMap::new(),
@@ -177,14 +181,19 @@ impl DriverState {
                 self.shell_subscribed = true;
             }
             Command::SubscribeThread(thread_id) => {
+                let last_seq = self.thread_last_sequences.get(&thread_id).copied();
                 self.thread_subs.entry(thread_id).or_insert(ThreadSubState {
-                    after_sequence: None,
+                    after_sequence: last_seq,
                     request_id: None,
                     subscribed_at: None,
                 });
             }
             Command::UnsubscribeThread(thread_id) => {
-                self.thread_subs.remove(&thread_id);
+                if let Some(sub) = self.thread_subs.remove(&thread_id)
+                    && let Some(seq) = sub.after_sequence
+                {
+                    self.thread_last_sequences.insert(thread_id, seq);
+                }
             }
             Command::SubscribePanelRequests(device_name) => {
                 self.panel_requests_device = Some(device_name);
@@ -609,10 +618,11 @@ where
             let needs_send = match state.thread_subs.get(&thread_id) {
                 Some(existing) => existing.request_id.is_none(),
                 None => {
+                    let last_seq = state.thread_last_sequences.get(&thread_id).copied();
                     state.thread_subs.insert(
                         thread_id.clone(),
                         ThreadSubState {
-                            after_sequence: None,
+                            after_sequence: last_seq,
                             request_id: None,
                             subscribed_at: None,
                         },
@@ -625,11 +635,14 @@ where
             }
         }
         Command::UnsubscribeThread(thread_id) => {
-            if let Some(sub) = state.thread_subs.remove(&thread_id)
-                && let Some(request_id) = sub.request_id
-            {
-                state.in_flight_streams.remove(&request_id);
-                send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+            if let Some(sub) = state.thread_subs.remove(&thread_id) {
+                if let Some(seq) = sub.after_sequence {
+                    state.thread_last_sequences.insert(thread_id, seq);
+                }
+                if let Some(request_id) = sub.request_id {
+                    state.in_flight_streams.remove(&request_id);
+                    send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
+                }
             }
         }
         Command::SubscribePanelRequests(device_name) => {
@@ -724,17 +737,19 @@ where
     let after_sequence = state
         .thread_subs
         .get(thread_id)
-        .and_then(|s| s.after_sequence);
+        .and_then(|s| s.after_sequence)
+        .or_else(|| state.thread_last_sequences.get(thread_id).copied());
     let input = OrchestrationV2SubscribeThreadInput {
         thread_id: thread_id.to_owned(),
         after_sequence,
         // T3 always asks for `synchronized`: it ends "Loading thread…" for threads whose
         // snapshot has no rows, and marks the end of an `afterSequence` replay.
         request_completion_marker: Some(true),
-        // `acceptDeferredWork` and `acceptCompactIds` stay off: `conn-server` ignores both
-        // today, and this client neither fetches deferred bodies nor decodes an `idTable`, so
-        // a server that starts honouring them must not see this client opt in.
-        accept_bounded_snapshot: None,
+        // Opt in to bounded snapshots (newest ~75 items / 10 turns) with on-demand `/history`
+        // paging; servers that don't support bounded snapshots ignore this flag safely.
+        // `acceptDeferredWork` and `acceptCompactIds` stay off until lazy body fetch & idTable
+        // decoding are wired.
+        accept_bounded_snapshot: Some(true),
         accept_deferred_work: None,
         accept_compact_turn_items: Some(true),
         accept_deduped_bodies: Some(true),
@@ -988,10 +1003,11 @@ where
                         if crate::perf::enabled() {
                             log_thread_item_decoded(state, &thread_id, &item, timing, decode_start);
                         }
-                        if let Some(seq) = extract_thread_sequence(&item)
-                            && let Some(sub) = state.thread_subs.get_mut(&thread_id)
-                        {
-                            sub.after_sequence = Some(seq);
+                        if let Some(seq) = extract_thread_sequence(&item) {
+                            state.thread_last_sequences.insert(thread_id.clone(), seq);
+                            if let Some(sub) = state.thread_subs.get_mut(&thread_id) {
+                                sub.after_sequence = Some(seq);
+                            }
                         }
                         if events_tx
                             .send(ClientEvent::Thread {

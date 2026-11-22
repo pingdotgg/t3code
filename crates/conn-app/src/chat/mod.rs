@@ -103,6 +103,8 @@ pub(crate) enum ChatEvent {
     OpenConnections,
     /// A built-in `/` slash command selected from the composer command menu.
     SlashCommand(String),
+    /// Request the next older history page for the active bounded thread.
+    LoadEarlierHistory,
 }
 
 /// GPUI entity rendering the Conn chat card (timeline + composer).
@@ -118,6 +120,8 @@ pub(crate) struct ChatView {
     thread_title: Option<String>,
     synchronized: bool,
     working: bool,
+    has_more_history: bool,
+    loading_earlier: bool,
     working_started_at_ms: Option<i64>,
     _working_tick: Option<gpui_kit::Task<()>>,
     cache: RowCache,
@@ -187,7 +191,10 @@ impl ChatView {
             let weak = weak.clone();
             // GPUI holds the list borrow while dispatching scroll callbacks; notify after.
             cx.defer(move |cx| {
-                let _ = weak.update(cx, |_, cx| cx.notify());
+                let _ = weak.update(cx, |view, cx| {
+                    view.maybe_request_earlier_history(cx);
+                    cx.notify();
+                });
             });
         });
 
@@ -242,6 +249,8 @@ impl ChatView {
             thread_title: None,
             synchronized: true,
             working: false,
+            has_more_history: false,
+            loading_earlier: false,
             working_started_at_ms: None,
             _working_tick: None,
             cache: RowCache::default(),
@@ -378,6 +387,8 @@ impl ChatView {
             self.thread_id = None;
             self.synchronized = true;
             self.working = false;
+            self.has_more_history = false;
+            self.loading_earlier = false;
             self.working_started_at_ms = None;
             self._working_tick = None;
             self.cache.clear();
@@ -405,7 +416,11 @@ impl ChatView {
             self.toc_hovered_slot = None;
             self.toc_pinned_slot = None;
             self.working_started_at_ms = None;
-        } else if self.has_thread && self.synced_revision == Some(thread.revision) {
+        } else if self.has_thread
+            && self.synced_revision == Some(thread.revision)
+            && self.has_more_history == thread.has_more_history
+            && self.loading_earlier == thread.loading_earlier
+        {
             if title_changed {
                 cx.notify();
             }
@@ -413,9 +428,14 @@ impl ChatView {
         }
         self.synced_revision = Some(thread.revision);
 
+        let was_following_tail = self.list_state.is_following_tail();
+        let prev_scroll = self.list_state.logical_scroll_top();
+
         self.has_thread = true;
         self.synchronized = thread.synchronized;
         self.working = thread.working;
+        self.has_more_history = thread.has_more_history;
+        self.loading_earlier = thread.loading_earlier;
         self.entry_timings = thread.entry_timings.clone();
         self.run_timings = thread.run_timings.clone();
         self.turn_checkpoints = thread.turn_checkpoints.clone();
@@ -426,6 +446,8 @@ impl ChatView {
             &self.entry_timings,
             &self.turn_checkpoints,
             self.working,
+            self.has_more_history,
+            self.loading_earlier,
         );
         if let Some((perf_thread, opened_at)) = &self.perf_open
             && perf_thread == &thread.thread_id
@@ -444,13 +466,23 @@ impl ChatView {
             self.list_state.reset(stats.new_item_count);
             self.list_state.set_follow_mode(FollowMode::Tail);
             self.list_state.scroll_to_end();
-        } else if stats.splice_start < stats.old_item_count
-            || stats.splice_start < stats.new_item_count
+        } else if stats.splice_start < stats.splice_old_end
+            || stats.splice_start < stats.splice_new_end
         {
             self.list_state.splice(
-                stats.splice_start..stats.old_item_count,
-                stats.new_item_count - stats.splice_start,
+                stats.splice_start..stats.splice_old_end,
+                stats.splice_new_end - stats.splice_start,
             );
+            if !was_following_tail && stats.prepended_delta != 0 && stats.new_item_count > 0 {
+                let next_ix = prev_scroll
+                    .item_ix
+                    .saturating_add_signed(stats.prepended_delta)
+                    .min(stats.new_item_count - 1);
+                self.list_state.scroll_to(ListOffset {
+                    item_ix: next_ix,
+                    offset_in_item: prev_scroll.offset_in_item,
+                });
+            }
         }
 
         cx.notify();
@@ -652,6 +684,33 @@ impl ChatView {
         self.list_state.set_follow_mode(FollowMode::Tail);
         self.list_state.scroll_to_end();
         cx.notify();
+    }
+
+    /// Emits [`ChatEvent::LoadEarlierHistory`] once while more history is available and idle.
+    fn request_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.has_more_history || self.loading_earlier {
+            return;
+        }
+        self.loading_earlier = true;
+        cx.emit(ChatEvent::LoadEarlierHistory);
+        cx.notify();
+    }
+
+    /// Auto-loads earlier history when the user scrolls near the top (`item_ix <= 2`) of a
+    /// bounded thread.
+    fn maybe_request_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.has_thread
+            || self.draft.is_some()
+            || !self.has_more_history
+            || self.loading_earlier
+            || self.list_state.is_following_tail()
+        {
+            return;
+        }
+        let top = self.list_state.logical_scroll_top();
+        if top.item_ix <= 2 {
+            self.request_earlier_history(cx);
+        }
     }
 
     /// Whether the virtualized timeline is currently following/resting at the tail.
@@ -1232,6 +1291,7 @@ impl ChatView {
 
         let body =
             match item {
+                VirtualItem::LoadEarlier { loading } => self.render_load_earlier_row(*loading, cx),
                 VirtualItem::User {
                     row_idx,
                     grouped_with_previous,
@@ -1353,6 +1413,56 @@ impl ChatView {
             outer = outer.pb(px(16.0));
         }
         outer.into_any_element()
+    }
+
+    /// Renders Conn's quiet top-of-timeline history pagination control (`TimelineHistoryControl`).
+    fn render_load_earlier_row(&self, loading: bool, cx: &mut Context<'_, Self>) -> AnyElement {
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let hairline = hsla_alpha(self.tokens.shell_divider, 0.7);
+        let label = if loading {
+            "Loading earlier…"
+        } else {
+            "Load earlier messages"
+        };
+
+        let mut center = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .flex_shrink_0();
+        if loading {
+            center = center.child(TurningArc::new(12.0, muted));
+        }
+        center = center.child(label);
+
+        let mut button = div()
+            .id("chat-load-earlier")
+            .a11y_button("chat.load-earlier", label)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(12.0))
+            .w_full()
+            .py(px(6.0))
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .text_color(muted)
+            .child(div().flex_1().h(px(1.0)).bg(hairline))
+            .child(center)
+            .child(div().flex_1().h(px(1.0)).bg(hairline));
+
+        if !loading {
+            button = button
+                .cursor_pointer()
+                .hover(move |s| s.text_color(fg))
+                .on_click(cx.listener(|view, _, _, cx| {
+                    view.request_earlier_history(cx);
+                }));
+        }
+
+        div().w_full().pb(px(8.0)).child(button).into_any_element()
     }
 
     fn render_user_bubble(

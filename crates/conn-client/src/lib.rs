@@ -17,6 +17,7 @@
 mod auth;
 pub mod device_hub;
 mod driver;
+pub mod history;
 pub mod perf;
 mod wire;
 
@@ -26,6 +27,7 @@ use std::sync::{Arc, RwLock};
 pub use crate::device_hub::{
     DEFAULT_DEVICE_HUB_BASE_PATH, DeviceHubAccess, DeviceHubVendor, mint_device_hub_access,
 };
+pub use crate::history::build_thread_history_url;
 
 use conn_contract::{
     AttachmentCreateUploadUrlInput, AttachmentCreateUploadUrlInputFile,
@@ -610,6 +612,192 @@ mod tests {
         assert!(
             saw_interrupt,
             "client must send Interrupt when cancel_stream is called"
+        );
+
+        conn.close();
+        let _ = tokio::time::timeout(Duration::from_secs(2), server_task).await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! for diffs while propagating setup errors with ?"
+    )]
+    async fn preserves_after_sequence_across_thread_resubscribe_sets_bounded_flag_and_gets_turn_item()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let (sub_payloads_tx, mut sub_payloads_rx) = mpsc::unbounded_channel::<Value>();
+        let (turn_item_req_tx, mut turn_item_req_rx) = mpsc::unbounded_channel::<Value>();
+
+        let server_task = tokio::spawn(async move {
+            let Ok((tcp, _)) = listener.accept().await else {
+                return;
+            };
+            let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                return;
+            };
+
+            let mut sub_count = 0usize;
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let Ok(frames) = conn_wire::decode_client_message(&text) else {
+                    continue;
+                };
+                for frame in frames {
+                    if let FromClient::Request(req) = frame {
+                        match req.tag.as_str() {
+                            "orchestration.subscribeThread" => {
+                                sub_count += 1;
+                                let _ = sub_payloads_tx.send(req.payload.clone());
+                                if sub_count == 1 {
+                                    // Send a minimal event advancing sequence to 42, then synchronized.
+                                    let chunk = FromServer::Chunk {
+                                        request_id: req.id,
+                                        values: vec![
+                                            json!({
+                                                "kind": "event",
+                                                "sequence": 42,
+                                                "event": {
+                                                    "type": "custom.noop",
+                                                    "payload": null
+                                                }
+                                            }),
+                                            json!({ "kind": "synchronized" }),
+                                        ],
+                                    };
+                                    let _ = ws
+                                        .send(Message::Text(encode_server_frame(&chunk).into()))
+                                        .await;
+                                } else {
+                                    let chunk = FromServer::Chunk {
+                                        request_id: req.id,
+                                        values: vec![json!({ "kind": "synchronized" })],
+                                    };
+                                    let _ = ws
+                                        .send(Message::Text(encode_server_frame(&chunk).into()))
+                                        .await;
+                                }
+                            }
+                            "orchestration.getTurnItem" => {
+                                let _ = turn_item_req_tx.send(req.payload.clone());
+                                let reply = FromServer::Exit {
+                                    request_id: req.id,
+                                    exit: Exit::success(json!({
+                                        "item": {
+                                            "id": "item-9",
+                                            "threadId": "thread-1",
+                                            "runId": "run-1",
+                                            "nodeId": null,
+                                            "providerThreadId": null,
+                                            "providerTurnId": null,
+                                            "nativeItemRef": null,
+                                            "parentItemId": null,
+                                            "ordinal": 1,
+                                            "status": "completed",
+                                            "title": null,
+                                            "startedAt": "2026-11-22T10:00:00.000Z",
+                                            "completedAt": "2026-11-22T10:00:01.000Z",
+                                            "updatedAt": "2026-11-22T10:00:01.000Z",
+                                            "type": "assistant_message",
+                                            "messageId": "msg-9",
+                                            "text": "Hydrated body",
+                                            "streaming": false
+                                        }
+                                    })),
+                                };
+                                let _ = ws
+                                    .send(Message::Text(encode_server_frame(&reply).into()))
+                                    .await;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+        });
+
+        let config = ServerConfig {
+            http_base_url: url::Url::parse(&format!("http://{addr}"))?,
+            credential: Credential::Bearer("test-bearer".to_owned()),
+        };
+        let (conn, mut events) = Connection::start(config, &tokio::runtime::Handle::current());
+
+        // Subscribe first time -> acceptBoundedSnapshot=true, no acceptDeferredWork, no afterSequence.
+        conn.subscribe_thread("thread-1");
+        let first_sub = tokio::time::timeout(Duration::from_secs(5), sub_payloads_rx.recv())
+            .await?
+            .ok_or("missing first subscribeThread payload")?;
+        assert_eq!(first_sub["threadId"], json!("thread-1"));
+        assert_eq!(
+            first_sub["acceptBoundedSnapshot"],
+            json!(true),
+            "subscribeThread must set acceptBoundedSnapshot=true"
+        );
+        assert!(
+            first_sub.get("acceptDeferredWork").is_none(),
+            "acceptDeferredWork must remain unset for now"
+        );
+        assert!(
+            first_sub.get("afterSequence").is_none(),
+            "initial subscribeThread must omit afterSequence"
+        );
+
+        // Wait until the client observes the sequence=42 event and Synchronized.
+        let mut saw_sync = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(ClientEvent::Thread {
+                thread_id,
+                item: conn_contract::OrchestrationV2ThreadStreamItem::Synchronized(_),
+            })) = tokio::time::timeout(Duration::from_secs(1), events.recv()).await
+                && thread_id == "thread-1"
+            {
+                saw_sync = true;
+                break;
+            }
+        }
+        assert!(saw_sync, "client must receive Synchronized for thread-1");
+
+        // Switch away and back -> must preserve afterSequence=42!
+        conn.unsubscribe_thread("thread-1");
+        conn.subscribe_thread("thread-1");
+        let second_sub = tokio::time::timeout(Duration::from_secs(5), sub_payloads_rx.recv())
+            .await?
+            .ok_or("missing second subscribeThread payload")?;
+        assert_eq!(
+            second_sub["afterSequence"],
+            json!(42),
+            "resubscribing after unsubscribe must preserve last observed afterSequence"
+        );
+        assert_eq!(
+            second_sub["acceptBoundedSnapshot"],
+            json!(true),
+            "resubscribe must keep acceptBoundedSnapshot=true"
+        );
+
+        // Typed orchestration.getTurnItem RPC.
+        let item = conn
+            .get_turn_item("thread-1", "item-9", Some("rev-1"))
+            .await?;
+        let req_payload = tokio::time::timeout(Duration::from_secs(5), turn_item_req_rx.recv())
+            .await?
+            .ok_or("missing getTurnItem payload")?;
+        assert_eq!(
+            req_payload,
+            json!({
+                "threadId": "thread-1",
+                "itemId": "item-9",
+                "revision": "rev-1"
+            })
+        );
+        assert!(
+            matches!(
+                item,
+                Some(conn_contract::OrchestrationV2TurnItem::AssistantMessage(ref m))
+                    if m.id == "item-9" && m.text == "Hydrated body"
+            ),
+            "get_turn_item must decode assistant item, got {item:?}"
         );
 
         conn.close();

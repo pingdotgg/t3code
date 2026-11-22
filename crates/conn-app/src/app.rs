@@ -229,6 +229,9 @@ impl ConnApp {
                 crate::chat::ChatEvent::SlashCommand(command) => {
                     app.handle_slash_command(command, cx);
                 }
+                crate::chat::ChatEvent::LoadEarlierHistory => {
+                    app.load_earlier_history(cx);
+                }
             },
         )
         .detach();
@@ -973,6 +976,78 @@ impl ConnApp {
             self.subscribed_thread_id = Some(thread_id.clone());
         }
         self.layout.selected_thread_id = Some(thread_id);
+    }
+
+    /// Fetches the next older history page for the currently selected bounded thread and prepends
+    /// its entries into [`ThreadState`] without losing the user's scroll position.
+    fn load_earlier_history(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            self.sync_chat(cx);
+            return;
+        };
+        let Some(thread_id) = self.layout.selected_thread_id.clone() else {
+            return;
+        };
+        let cursor = {
+            let Some(thread) = self.threads.get_mut(&thread_id) else {
+                return;
+            };
+            if !thread.has_more_history || thread.loading_earlier {
+                return;
+            }
+            let Some(cursor) = thread.history_cursor.clone() else {
+                thread.has_more_history = false;
+                self.sync_chat(cx);
+                return;
+            };
+            thread.loading_earlier = true;
+            cursor
+        };
+        self.sync_chat(cx);
+
+        let generation = self.connection_gen;
+        let expected_cursor = cursor.clone();
+        let req_thread_id = thread_id.clone();
+
+        cx.spawn(async move |this, cx| {
+            let task = crate::live::RT.spawn(async move {
+                connection
+                    .fetch_thread_history_page(&req_thread_id, &cursor)
+                    .await
+            });
+            let result = match task.await {
+                Ok(res) => res,
+                Err(join_err) => Err(conn_client::ClientError::Connection(format!(
+                    "thread history task failed: {join_err}"
+                ))),
+            };
+            let _ = this.update(cx, |app, cx| {
+                if app.connection_gen != generation {
+                    return;
+                }
+                if let Some(thread) = app.threads.get_mut(&thread_id) {
+                    if thread.history_cursor.as_deref() == Some(expected_cursor.as_str()) {
+                        match result {
+                            Ok(page) => {
+                                thread.prepend_history_page(page);
+                            }
+                            Err(err) => {
+                                eprintln!(
+                                    "conn-app: failed to load earlier history ({thread_id}): {err}"
+                                );
+                                thread.loading_earlier = false;
+                            }
+                        }
+                    } else {
+                        thread.loading_earlier = false;
+                    }
+                }
+                if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
+                    app.sync_chat(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// Picks the default project id for a new thread, honoring explicit selection, the active
