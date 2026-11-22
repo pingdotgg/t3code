@@ -5,9 +5,16 @@ export function areAllDiffFilesCollapsed(
   return fileKeys.length > 0 && fileKeys.every((fileKey) => collapsedFileKeys.has(fileKey));
 }
 
+/** Expands or collapses all of `fileKeys`; every other file, such as a hidden one, keeps its fold. */
 export function toggleAllDiffFiles(
   fileKeys: ReadonlyArray<string>,
   collapsedFileKeys: ReadonlySet<string>,
 ): ReadonlySet<string> {
-  return areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? new Set() : new Set(fileKeys);
+  const collapse = !areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys);
+  const next = new Set(collapsedFileKeys);
+  for (const fileKey of fileKeys) {
+    if (collapse) next.add(fileKey);
+    else next.delete(fileKey);
+  }
+  return next;
 }

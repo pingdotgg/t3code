@@ -55,11 +55,15 @@ export function extractDevinSubagentUpdate(
   };
 }
 
-// Devin also marks persistent and bypass grants allow_always; only allow_session is session-scoped.
-export function devinSessionPermissionOptionId(
-  options: ReadonlyArray<AcpSchema.PermissionOption>,
-): string | undefined {
-  return options.find(
-    (option) => option.optionId === "allow_session" && option.kind === "allow_always",
-  )?.optionId;
+// Devin's plan exit offers several allow_once options in no promised order, and it marks project,
+// global and bypass grants allow_always too. T3 answers only with options scoped to this session.
+export function devinAnswerablePermissionOptions(
+  request: AcpSchema.RequestPermissionRequest,
+): ReadonlyArray<AcpSchema.PermissionOption> {
+  return request.options.filter((option) => {
+    const optionId = option.optionId.trim();
+    return (
+      optionId !== "plan_bypass" && (option.kind !== "allow_always" || optionId === "allow_session")
+    );
+  });
 }
