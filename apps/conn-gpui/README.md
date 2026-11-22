@@ -39,6 +39,7 @@ cargo run -p conn-app
 
 - [`AGENTS.md`](AGENTS.md) — Agent rules, VM workflow, crate boundaries, visual parity checklist.
 - [`GOAL.md`](GOAL.md) — Phased 6-hour multi-agent spike plan.
+- [`docs/stack.md`](docs/stack.md) — Why the desktop, server and iPhone app use their stacks, what we rejected, and the costs we accept.
 - [`docs/architecture.md`](docs/architecture.md) — Detailed technical mapping from Conn + Threadbear into `conn-gpui`.
 - [`docs/design-spec.md`](docs/design-spec.md) — Pixel-for-pixel Conn visual specification (shell, tokens, icons, typography, panels).
 - [`docs/status.md`](docs/status.md) — Live progress ledger.
