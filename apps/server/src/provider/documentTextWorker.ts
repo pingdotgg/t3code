@@ -34,6 +34,14 @@ const HIDDEN = new Set([
   "sizeRelH",
   "sizeRelV",
   "fldData",
+  // An OpenDocument index keeps its templates beside the generated index; only the latter is content.
+  "table-of-content-source",
+  "illustration-index-source",
+  "table-index-source",
+  "object-index-source",
+  "user-index-source",
+  "alphabetical-index-source",
+  "bibliography-source",
 ]);
 
 // @effect-diagnostics-next-line extendsNativeError:off - this worker loads no Effect runtime; Truncation is a local throw sentinel.
@@ -212,6 +220,18 @@ function* paragraphs(node: XmlNode): Generator<TextPart, void> {
       if (["li", "div", "section"].includes(child.name)) yield "\n";
     }
   }
+}
+// A notes page also holds the slide image, slide number, date, header and footer placeholders.
+const NOTES_PAGE_PLACEHOLDERS = new Set(["sldImg", "sldNum", "dt", "hdr", "ftr"]);
+const isNotesPagePlaceholder = (node: XmlNode) =>
+  node.name === "sp" && NOTES_PAGE_PLACEHOLDERS.has(all(node, "ph").next().value?.attrs.type ?? "");
+function withoutNotesPagePlaceholders(node: XmlNode): XmlNode {
+  return {
+    ...node,
+    children: node.children
+      .filter((child) => typeof child === "string" || !isNotesPagePlaceholder(child))
+      .map((child) => (typeof child === "string" ? child : withoutNotesPagePlaceholders(child))),
+  };
 }
 function* inCell(parts: Iterable<TextPart>): Generator<TextPart, void> {
   yield CELL_START;
@@ -725,14 +745,16 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             !target
           )
             continue;
-          yield "Notes:\n";
-          yield* paragraphs(
+          const notesPage = withoutNotesPagePlaceholders(
             read(
               target.startsWith("/")
                 ? target.slice(1)
                 : NodePath.posix.join(NodePath.posix.dirname(name), target),
             ),
           );
+          if (!hasCellText(notesPage)) continue;
+          yield "Notes:\n";
+          yield* paragraphs(notesPage);
         }
       }
     } else if (extension === ".epub") {

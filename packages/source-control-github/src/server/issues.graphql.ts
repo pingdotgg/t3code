@@ -667,6 +667,52 @@ export declare namespace IssueComments {
 }
 
 /** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
+export const IssueLinkMetadataRepositoryIssueIssue = Schema.Struct({
+  /** Identifies the issue number. */
+  number: Shared.Int,
+  /** Identifies the issue title. */
+  title: Schema.String,
+  /** The HTTP URL for this issue */
+  url: Shared.URI
+})
+export interface IssueLinkMetadataRepositoryIssueIssue extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryIssueIssue.fields> {}
+
+/** A repository contains the content for a project. */
+export const IssueLinkMetadataRepositoryRepository = Schema.Struct({
+  /** Returns a single issue from the current repository by number. */
+  issue: Schema.NullOr(IssueLinkMetadataRepositoryIssueIssue)
+})
+export interface IssueLinkMetadataRepositoryRepository extends Schema.Struct.Type<typeof IssueLinkMetadataRepositoryRepository.fields> {}
+
+/** `query IssueLinkMetadata` */
+export const IssueLinkMetadata = GraphQL.query("IssueLinkMetadata", {
+  document: {
+    variables: [
+      { name: "owner", body: "String!" },
+      { name: "name", body: "String!" },
+      { name: "number", body: "Int!" }
+    ],
+    selections: [
+      { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){number title url}}"] }
+    ],
+    fragments: []
+  },
+  variables: {
+    owner: Schema.String,
+    name: Schema.String,
+    number: Shared.Int
+  },
+  result: Schema.Struct({
+    /** Lookup a given repository by the owner and repository name. */
+    repository: Schema.NullOr(IssueLinkMetadataRepositoryRepository)
+  })
+})
+export declare namespace IssueLinkMetadata {
+  export type Variables = typeof IssueLinkMetadata.variables.Type
+  export type Result = typeof IssueLinkMetadata.result.Type
+}
+
+/** An Issue is a place to discuss ideas, enhancements, tasks, and bugs for a project. */
 export const IssueNodeIdRepositoryIssueIssue = Schema.Struct({
   /** The Node ID of the Issue object */
   id: Shared.ID,
@@ -1038,4 +1084,4 @@ export declare namespace IssueCollections {
 }
 
 /** Every operation in issues.graphql. */
-export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)
+export const IssuesGraphQLGroup = GraphQLGroup.make(IssueSearch, IssueDetail, IssueComments, IssueLinkMetadata, IssueNodeId, IssueCommentScope, IssueCandidates, IssueTemplates, IssueViewer, IssueCollections)
