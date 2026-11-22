@@ -7,15 +7,14 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as References from "effect/References";
 import * as Tracer from "effect/Tracer";
-import * as OtlpExporter from "effect/observability/OtlpExporter";
 import * as OtlpMetrics from "effect/observability/OtlpMetrics";
-import * as OtlpTracer from "effect/observability/OtlpTracer";
 import * as Statement from "effect/sql/Statement";
 
 import * as ServerConfig from "../config.ts";
 import * as ResourceAttribution from "../resourceTelemetry/ResourceAttribution.ts";
 import * as ServerLogger from "../serverLogger.ts";
 import * as BrowserTraceCollector from "./BrowserTraceCollector.ts";
+import * as ServerTraceExporter from "./ServerTraceExporter.ts";
 
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
@@ -55,7 +54,7 @@ export const layer = Layer.unwrap(
         const delegate =
           config.otlpTracesUrl === undefined
             ? undefined
-            : yield* OtlpTracer.make({
+            : yield* ServerTraceExporter.make({
                 url: config.otlpTracesUrl,
                 exportInterval: `${traces.exportIntervalMs} millis`,
                 headers: traces.headers,
@@ -76,7 +75,7 @@ export const layer = Layer.unwrap(
           BrowserTraceCollector.layer(sink),
         );
       }),
-    ).pipe(Layer.provide(OtlpExporter.layerFlusher), Layer.provideMerge(layerSerialization));
+    ).pipe(Layer.provideMerge(layerSerialization));
 
     const metricsLayer =
       config.otlpMetricsUrl === undefined
