@@ -265,11 +265,12 @@ function StoppableChat(props: {
   stops: string[];
   keybindings?: ResolvedKeybindingsConfig;
   closedFinds?: string[];
-  onWidgetKeyDown?: KeyboardEventHandler;
+  onWidgetKeyDown?: KeyboardEventHandler | undefined;
   canStop?: boolean;
   context?: Partial<ShortcutMatchContext>;
+  onStopEscapeCheck?: (isStopEscape: (event: KeyboardEvent) => boolean) => void;
 }) {
-  useChatShortcuts({
+  const { isStopEscape } = useChatShortcuts({
     enabled: true,
     keybindings: props.keybindings ?? escapeStops,
     scriptKeybindings: [],
@@ -286,6 +287,7 @@ function StoppableChat(props: {
     },
     fallback: () => undefined,
   });
+  props.onStopEscapeCheck?.(isStopEscape);
   return (
     <div ref={focusOnMount} tabIndex={0} aria-label="Widget" onKeyDown={props.onWidgetKeyDown} />
   );
@@ -352,11 +354,21 @@ it.each([
   { name: "another text field", context: { editableFocus: true } },
 ])("leaves Escape to $name even with no when clause", async ({ context }) => {
   const stops: string[] = [];
-  await using _screen = await render(<StoppableChat stops={stops} context={context} />, options);
+  let isStopEscape: ((event: KeyboardEvent) => boolean) | undefined;
+  await using _screen = await render(
+    <StoppableChat
+      stops={stops}
+      context={context}
+      onStopEscapeCheck={(check) => (isStopEscape = check)}
+    />,
+    options,
+  );
 
   await userEvent.keyboard("{Escape}");
 
   expect(stops).toEqual([]);
+  // The Stop tooltip lets through only an Escape that stops the turn.
+  expect(isStopEscape?.(new KeyboardEvent("keydown", { key: "Escape" }))).toBe(false);
 });
 
 it("leaves Escape to an open native popover, which closes on it", async () => {
@@ -374,11 +386,27 @@ it("leaves Escape to an open native popover, which closes on it", async () => {
   await expect.element(popover).not.toBeVisible();
 });
 
-it("closes thread find before Escape can stop the turn", async () => {
+it.each([
+  { focus: "the page", context: {}, onWidgetKeyDown: undefined },
+  {
+    focus: "the composer, whose editor prevents every Escape",
+    context: { composerFocus: true, editableFocus: true },
+    onWidgetKeyDown: (event) => event.preventDefault(),
+  },
+] satisfies {
+  focus: string;
+  context: Partial<ShortcutMatchContext>;
+  onWidgetKeyDown: KeyboardEventHandler | undefined;
+}[])("closes thread find from $focus before Escape can stop the turn", async (focus) => {
   const stops: string[] = [];
   const closedFinds: string[] = [];
   await using _screen = await render(
-    <StoppableChat stops={stops} closedFinds={closedFinds} />,
+    <StoppableChat
+      stops={stops}
+      closedFinds={closedFinds}
+      context={focus.context}
+      onWidgetKeyDown={focus.onWidgetKeyDown}
+    />,
     options,
   );
 

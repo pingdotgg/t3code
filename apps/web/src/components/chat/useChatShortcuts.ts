@@ -1,5 +1,6 @@
 import type { KeybindingCommand, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { resolveChatShortcutCommand, type ShortcutMatchContext } from "../../keybindings";
 import { isTerminalCloseConfirmPending } from "../../lib/terminalCloseConfirm";
@@ -63,6 +64,36 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
+  /** Whether this Escape stops the turn here once no widget claims it. */
+  const isStopEscape = useStableCallback((event: KeyboardEvent) => {
+    if (
+      embedded ||
+      !input.enabled ||
+      input.threadFindActive ||
+      event.key !== "Escape" ||
+      event.isComposing ||
+      event.keyCode === 229 ||
+      isCommandPaletteOpen() ||
+      isInSideChatPane(event.target)
+    )
+      return false;
+    const context = input.getShortcutContext(event.target);
+    // Bindings can omit a when clause, and these surfaces keep Escape for themselves.
+    if (
+      context.terminalFocus ||
+      context.previewFocus ||
+      context.modelPickerOpen ||
+      (context.editableFocus && !context.composerFocus) ||
+      // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
+      (popoverSupported && document.querySelector(":popover-open") !== null)
+    )
+      return false;
+    return (
+      resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
+        context,
+      }) === "thread.stop"
+    );
+  });
   const handleShortcut = useEffectEvent((event: KeyboardEvent) => {
     const { keybindings } = input;
     if (preventRepeatedTerminalCloseShortcut(event, keybindings)) {
@@ -116,35 +147,16 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     )
       return;
     const context = input.getShortcutContext(event.target);
+    // ProseMirror prevents every Escape, so a claim made while the composer has focus must
+    // also stop propagation, as the composer's own claims do.
+    if (event.defaultPrevented && !context.composerFocus) return;
     if (input.threadFindActive) {
-      if (
-        event.defaultPrevented ||
-        context.terminalFocus ||
-        context.previewFocus ||
-        context.modelPickerOpen
-      )
-        return;
+      if (context.terminalFocus || context.previewFocus || context.modelPickerOpen) return;
       event.preventDefault();
       input.closeThreadFind();
       return;
     }
-    // ProseMirror prevents every Escape, so a claim made while the composer has focus must
-    // also stop propagation, as the composer's own claims do.
-    if (!input.enabled || (event.defaultPrevented && !context.composerFocus)) return;
-    // Bindings can omit a when clause, and these surfaces keep Escape for themselves.
-    if (
-      context.terminalFocus ||
-      context.previewFocus ||
-      context.modelPickerOpen ||
-      (context.editableFocus && !context.composerFocus) ||
-      // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
-      (popoverSupported && document.querySelector(":popover-open") !== null)
-    )
-      return;
-    const command = resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
-      context,
-    });
-    const stop = command === "thread.stop" ? input.commands["thread.stop"] : undefined;
+    const stop = isStopEscape(event) ? input.commands["thread.stop"] : undefined;
     if (!stop || stop({ event, terminalFocusOwner: getTerminalFocusOwner() }) === false) return;
     event.preventDefault();
   });
@@ -177,4 +189,5 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       window.removeEventListener("keydown", onKeyDown);
     };
   }, [composerElement, embedded]);
+  return { isStopEscape };
 }

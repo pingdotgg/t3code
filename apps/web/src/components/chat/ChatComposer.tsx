@@ -148,11 +148,7 @@ import { useDictationSubmissionShortcut } from "../../speech/useDictationSubmiss
 import { useEnvironmentSpeechInput } from "../../speech/useEnvironmentSpeechInput";
 import { ComposerSpeechButton, ComposerSpeechRecordingPill } from "./ComposerSpeechButton";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
-import {
-  resolveShortcutCommand,
-  shortcutLabelForCommand,
-  type ShortcutMatchContext,
-} from "../../keybindings";
+import { shortcutLabelForCommand, type ShortcutMatchContext } from "../../keybindings";
 import {
   type TerminalContextDraft,
   type TerminalContextSelection,
@@ -439,6 +435,9 @@ export interface ChatComposerProps {
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
   getShortcutContext: (eventTarget: EventTarget | null) => ShortcutMatchContext;
+  /** Null where the stop shortcut cannot stop this chat, such as a side chat. */
+  stopShortcutLabel: string | null;
+  isStopShortcutEvent: (event: KeyboardEvent) => boolean;
   terminalOpen: boolean;
   gitCwd: string | null;
   pullRequestProjectId: ProjectId | null;
@@ -568,6 +567,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     settings,
     keybindings,
     getShortcutContext,
+    stopShortcutLabel,
+    isStopShortcutEvent,
     terminalOpen,
     gitCwd,
     pullRequestProjectId,
@@ -1788,15 +1789,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     updateTrigger(trigger);
   };
   const onPromptChangeStable = useStableCallback(onPromptChange);
-  const stopShortcutLabel = shortcutLabelForCommand(keybindings, "thread.stop", {
-    context: { composerFocus: true, turnRunning: true },
-  });
-  const isStopShortcutEventStable = useStableCallback(
-    (event: KeyboardEvent) =>
-      resolveShortcutCommand(event, keybindings, {
-        context: { composerFocus: true, turnRunning: true },
-      }) === "thread.stop",
-  );
 
   const applyPromptReplacement = (
     rangeStart: number,
@@ -3713,7 +3705,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   isEditingQueuedMessage={isEditingQueuedMessage}
                   onInterrupt={handleInterruptPrimaryActionStable}
                   stopShortcutLabel={stopShortcutLabel}
-                  isStopShortcutEvent={isStopShortcutEventStable}
+                  isStopShortcutEvent={isStopShortcutEvent}
                 >
                   <button
                     type="button"
@@ -4033,7 +4025,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       },
                     )}
                     stopShortcutLabel={stopShortcutLabel}
-                    isStopShortcutEvent={isStopShortcutEventStable}
+                    isStopShortcutEvent={isStopShortcutEvent}
                     voiceInputActive={voiceInputActive}
                     isSendBusy={isSendBusy}
                     isSendHeld={composerSendHeld}

@@ -150,7 +150,7 @@ const BROWSER_SURFACE: RightPanelSurface = {
 };
 const DIFF_SURFACE: RightPanelSurface = { id: "diff", kind: "diff" };
 
-function panel(activeSurface: RightPanelSurface) {
+function panel(activeSurface: RightPanelSurface, overrides: Partial<RightPanelTabsProps> = {}) {
   const noop = () => {};
   const props: RightPanelTabsProps = {
     mode: "inline",
@@ -202,7 +202,7 @@ function panel(activeSurface: RightPanelSurface) {
       </div>
     ),
   };
-  return <RightPanelTabs {...props} />;
+  return <RightPanelTabs {...props} {...overrides} />;
 }
 
 // Chromium focuses on an uncancelled mousedown and runs history back/forward on an
@@ -291,4 +291,27 @@ describe("device tab rename", () => {
     await userEvent.keyboard("{Enter}");
     expect(onRenameDevice).toHaveBeenCalledExactlyOnceWith(DEVICE_SURFACE.id, "日本語");
   });
+});
+
+it("claims the Escape that cancels a tab drag, so the chat cannot also stop the turn", async () => {
+  await using screen = await render(panel(DIFF_SURFACE, { onMoveSurface: () => {} }));
+  const tab = screen.container.querySelector<HTMLElement>("[data-active-tab='true']")!;
+  const rect = tab.getBoundingClientRect();
+  const at = { clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 };
+  const pointer = (type: string, init: PointerEventInit) =>
+    new PointerEvent(type, { bubbles: true, isPrimary: true, button: 0, buttons: 1, ...init });
+  tab.dispatchEvent(pointer("pointerdown", at));
+  document.dispatchEvent(pointer("pointermove", { ...at, clientX: at.clientX + 40 }));
+  // The dragged tab is raised above its neighbours.
+  await vi.waitFor(() => expect(tab.classList.contains("z-10")).toBe(true));
+  const reachedWindow = vi.fn();
+  window.addEventListener("keydown", reachedWindow);
+  using _listener = {
+    [Symbol.dispose]: () => window.removeEventListener("keydown", reachedWindow),
+  };
+
+  await userEvent.keyboard("{Escape}");
+
+  await vi.waitFor(() => expect(tab.classList.contains("z-10")).toBe(false));
+  expect(reachedWindow).not.toHaveBeenCalled();
 });

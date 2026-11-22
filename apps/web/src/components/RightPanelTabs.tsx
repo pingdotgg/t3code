@@ -899,12 +899,33 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
+// dnd-kit cancels a drag on Escape without claiming it, so the same Escape would stop the turn.
+// Its pointer sensor binds the private `handleKeydown` from the prototype when it attaches.
+class TabPointerSensor extends PointerSensor {}
+const cancelDragOnEscape: (this: PointerSensor, event: KeyboardEvent) => void = Reflect.get(
+  PointerSensor.prototype,
+  "handleKeydown",
+);
+Reflect.set(
+  TabPointerSensor.prototype,
+  "handleKeydown",
+  function claimDragEscape(this: PointerSensor, event: KeyboardEvent) {
+    if (event.code === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+    cancelDragOnEscape.call(this, event);
+  },
+);
+
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
   children: ReactNode;
 }) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(
+    useSensor(TabPointerSensor, { activationConstraint: { distance: 6 } }),
+  );
   const surfaceIds = props.surfaces.map((surface) => surface.id);
   const { onMove, surfaces } = props;
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
