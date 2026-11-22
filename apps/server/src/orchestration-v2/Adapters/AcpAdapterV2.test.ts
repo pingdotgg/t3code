@@ -2737,6 +2737,8 @@ describe("AcpAdapterV2", () => {
           authorizationHeader: "Bearer reconnect-cache-hygiene-token",
           browserToolsAvailable: false,
         });
+        type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let latestSessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
@@ -2747,6 +2749,13 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               protocolEvents,
               environment: { T3_ACP_ENABLE_RESUME: "1" },
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    latestSessionUpdate = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              }),
             }),
           },
           selfInvocation,
@@ -2886,7 +2895,8 @@ describe("AcpAdapterV2", () => {
         const planPrompt = yield* drainPrompt();
         assert.include(planPrompt.prompt, "T3 Code interaction mode: Plan");
 
-        // Reconnecting a compacted thread (acpDeliveredInstructions: null) re-injects instructions.
+        // Idle compaction right after resumeThread (before any turn) clears persisted delivery
+        // metadata so a subsequent reconnect re-injects instructions.
         const runtime3 = yield* adapter.openSession({
           threadId,
           providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-3"),
@@ -2894,18 +2904,48 @@ describe("AcpAdapterV2", () => {
           runtimePolicy: defaultPolicy,
           initialNativeThreadId: persistedSessionId,
         });
-        const compactedThread = yield* runtime3.resumeThread({
-          providerThread: {
-            ...persistedThread,
-            nativeMetadata: {
-              ...persistedThread.nativeMetadata,
-              acpDeliveredInstructions: null,
-            },
-          },
+        yield* runtime3.resumeThread({
+          providerThread: persistedThread,
           modelSelection,
           runtimePolicy: defaultPolicy,
         });
-        yield* runtime3.startTurn(
+        assert.isDefined(latestSessionUpdate);
+        const compactedEventFiber = yield* runtime3.events.pipe(
+          Stream.filter((event) => event.type === "provider_thread.updated"),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        yield* latestSessionUpdate({
+          sessionId: persistedSessionId,
+          update: {
+            sessionUpdate: "compaction_update",
+            compactionId: "compact-idle-after-resume",
+            status: "completed",
+          },
+        });
+        const compactedEvent = yield* Fiber.join(compactedEventFiber);
+        if (
+          Option.isNone(compactedEvent) ||
+          compactedEvent.value.type !== "provider_thread.updated"
+        ) {
+          assert.fail("Expected provider_thread.updated clearing acpDeliveredInstructions");
+        }
+        assert.isNull(compactedEvent.value.providerThread.nativeMetadata?.acpDeliveredInstructions);
+
+        // Reconnecting with that cleared metadata re-injects instructions.
+        const runtime4 = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-reconnect-4"),
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+          initialNativeThreadId: persistedSessionId,
+        });
+        const compactedThread = yield* runtime4.resumeThread({
+          providerThread: compactedEvent.value.providerThread,
+          modelSelection,
+          runtimePolicy: defaultPolicy,
+        });
+        yield* runtime4.startTurn(
           makeTurnInput({
             threadId,
             providerThread: compactedThread,
@@ -2917,7 +2957,7 @@ describe("AcpAdapterV2", () => {
             modelSelection,
           }),
         );
-        yield* runtime3.events.pipe(
+        yield* runtime4.events.pipe(
           Stream.takeUntil((event) => event.type === "turn.terminal"),
           Stream.runDrain,
         );
