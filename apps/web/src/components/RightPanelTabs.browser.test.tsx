@@ -302,7 +302,6 @@ it("claims the Escape that cancels a tab drag, so the chat cannot also stop the 
     new PointerEvent(type, { bubbles: true, isPrimary: true, button: 0, buttons: 1, ...init });
   tab.dispatchEvent(pointer("pointerdown", at));
   document.dispatchEvent(pointer("pointermove", { ...at, clientX: at.clientX + 40 }));
-  // The dragged tab is raised above its neighbours.
   await vi.waitFor(() => expect(tab.classList.contains("z-10")).toBe(true));
   const reachedWindow = vi.fn();
   window.addEventListener("keydown", reachedWindow);

@@ -78,6 +78,7 @@ import { readLocalApi } from "~/localApi";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { Button } from "~/components/ui/button";
 import { AndroidIcon, AppleIcon } from "~/components/Icons";
+import { claimEscape } from "../lib/claimEscape";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Kbd } from "~/components/ui/kbd";
 import {
@@ -910,10 +911,7 @@ Reflect.set(
   TabPointerSensor.prototype,
   "handleKeydown",
   function claimDragEscape(this: PointerSensor, event: KeyboardEvent) {
-    if (event.code === "Escape") {
-      event.preventDefault();
-      event.stopPropagation();
-    }
+    if (event.code === "Escape") claimEscape(event);
     cancelDragOnEscape.call(this, event);
   },
 );

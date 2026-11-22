@@ -1,3 +1,5 @@
+import { claimEscape } from "./claimEscape";
+
 export type SelectionActionPoint = { x: number; y: number };
 
 export const SELECTION_MULTI_CLICK_INTERVAL_MS = 500;
@@ -146,11 +148,7 @@ export function observeSelectionActions({
   const onKeyDown = (event: KeyboardEvent) => {
     if (isActionTarget(event.target) && event.key !== "Escape") return;
     if (event.key === "Escape") {
-      // A showing action owns this Escape; the chat would otherwise also stop the agent.
-      if (getActionElement?.()) {
-        event.preventDefault();
-        event.stopPropagation();
-      }
+      if (getActionElement?.()) claimEscape(event);
       dismiss();
     } else if (!pointerDown) {
       cancelPending();

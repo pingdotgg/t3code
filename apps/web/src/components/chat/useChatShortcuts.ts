@@ -18,6 +18,18 @@ import { composerShortcutCommands } from "./composerShortcuts";
 // `:popover-open` throws in browsers without the Popover API.
 const popoverSupported = typeof HTMLElement !== "undefined" && "popover" in HTMLElement.prototype;
 
+/** Surfaces that keep Escape for themselves, even from a stop binding with no when clause. */
+function surfaceKeepsEscape(context: ShortcutMatchContext & { readonly modelPickerOpen: boolean }) {
+  return (
+    context.terminalFocus ||
+    context.previewFocus ||
+    context.modelPickerOpen ||
+    (context.editableFocus && !context.composerFocus) ||
+    // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
+    (popoverSupported && document.querySelector(":popover-open") !== null)
+  );
+}
+
 /** Returning false lets the key event through untouched. */
 type ChatShortcutHandler = (context: {
   readonly event: KeyboardEvent;
@@ -64,7 +76,6 @@ interface ChatShortcutsInput {
 export function useChatShortcuts(input: ChatShortcutsInput) {
   const embedded = input.embedded === true;
   const composerElement = embedded ? (input.composerElement ?? null) : null;
-  /** Whether this Escape stops the turn here once no widget claims it. */
   const isStopEscape = useStableCallback((event: KeyboardEvent) => {
     if (
       embedded ||
@@ -78,16 +89,7 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
     )
       return false;
     const context = input.getShortcutContext(event.target);
-    // Bindings can omit a when clause, and these surfaces keep Escape for themselves.
-    if (
-      context.terminalFocus ||
-      context.previewFocus ||
-      context.modelPickerOpen ||
-      (context.editableFocus && !context.composerFocus) ||
-      // A native popover, such as a full screen MCP app, closes on this Escape unless it is prevented.
-      (popoverSupported && document.querySelector(":popover-open") !== null)
-    )
-      return false;
+    if (surfaceKeepsEscape(context)) return false;
     return (
       resolveChatShortcutCommand(event, input.keybindings, input.scriptKeybindings, {
         context,
@@ -127,8 +129,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       context: shortcutContext,
     });
     if (!command || (inSideChatPane && !SIDE_CHAT_PANE_COMMANDS.has(command))) return;
-    // Waits for bubbling, so an Escape that closes a widget cannot also stop the agent.
-    if (command === "thread.stop" && event.key === "Escape") return;
+    const leftToUnclaimedEscape = command === "thread.stop" && event.key === "Escape";
+    if (leftToUnclaimedEscape) return;
     const run =
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??

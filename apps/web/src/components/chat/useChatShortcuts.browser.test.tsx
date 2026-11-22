@@ -320,7 +320,6 @@ it.each([
   },
 );
 
-// ProseMirror calls preventDefault on every Escape; the composer claims one by stopping it too.
 it.each([
   {
     name: "stops on the Escape the editor only prevented",
@@ -367,7 +366,6 @@ it.each([
   await userEvent.keyboard("{Escape}");
 
   expect(stops).toEqual([]);
-  // The Stop tooltip lets through only an Escape that stops the turn.
   expect(isStopEscape?.(new KeyboardEvent("keydown", { key: "Escape" }))).toBe(false);
 });
 

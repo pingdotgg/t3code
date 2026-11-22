@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { AssistantCitationRequest, AssistantCitationTarget } from "./AssistantCitationSource";
 import type { CitationPhase } from "./citationProcedure";
+import { claimEscape } from "../../lib/claimEscape";
 
 const CITATION_SCROLL_KEYS = new Set([
   "ArrowUp",
@@ -90,12 +91,8 @@ export function useAssistantCitationTarget({
       };
       const onKeyDown = (event: KeyboardEvent) => {
         if (event.key === "Escape") {
-          // A pending citation scroll owns this Escape; the chat would otherwise also stop the agent.
           const activation = activationRef.current;
-          if (!activation.dismissed && !activation.scrolled && !done) {
-            event.preventDefault();
-            event.stopPropagation();
-          }
+          if (!activation.dismissed && !activation.scrolled && !done) claimEscape(event);
           dismiss(false);
         } else if (
           CITATION_SCROLL_KEYS.has(event.key) &&

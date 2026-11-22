@@ -593,7 +593,6 @@ function normalizeShortcutKeyToken(key: string): string | null {
   return null;
 }
 
-/** Esc cancels every other recorder; stopping a turn is the one command bound to Esc itself. */
 export function commandRecordsEscape(command: string): boolean {
   return command === "thread.stop";
 }

@@ -827,7 +827,6 @@ function useKeybindingRowEditor({
       setKeyDraft(next, { isRecording: false });
       return;
     }
-    // Re-recording the saved Esc swaps the field for the pill; without focus the next Esc closes settings.
     flushSync(() => setKeyDraft(next, { isRecording: false }));
     pillRef.current?.focus();
   };

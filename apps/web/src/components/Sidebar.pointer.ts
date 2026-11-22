@@ -1,6 +1,7 @@
 import { type PointerEvent as ReactPointerEvent } from "react";
 import { type SensorProps } from "@dnd-kit/core";
 import { getOwnerDocument, getWindow } from "@dnd-kit/utilities";
+import { claimEscape } from "../lib/claimEscape";
 
 type Options = {
   distance: number;
@@ -105,8 +106,7 @@ export class SidebarPointerSensor {
   };
   private keydown = (event: KeyboardEvent) => {
     if (event.code !== "Escape") return;
-    event.preventDefault();
-    event.stopPropagation();
+    claimEscape(event);
     this.cancel();
   };
   private visibilityChange = () => {

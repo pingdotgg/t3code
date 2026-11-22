@@ -164,7 +164,6 @@ function StopGenerationButton({
   return (
     <Tooltip
       onOpenChange={(_open, eventDetails) => {
-        // The stop shortcut must reach the chat instead of only closing this tooltip.
         if (eventDetails.reason !== "escape-key" || !isStopShortcutEvent?.(eventDetails.event))
           return;
         eventDetails.cancel();

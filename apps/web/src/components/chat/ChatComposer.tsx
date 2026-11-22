@@ -435,7 +435,6 @@ export interface ChatComposerProps {
   settings: UnifiedSettings;
   keybindings: ResolvedKeybindingsConfig;
   getShortcutContext: (eventTarget: EventTarget | null) => ShortcutMatchContext;
-  /** Null where the stop shortcut cannot stop this chat, such as a side chat. */
   stopShortcutLabel: string | null;
   isStopShortcutEvent: (event: KeyboardEvent) => boolean;
   terminalOpen: boolean;
