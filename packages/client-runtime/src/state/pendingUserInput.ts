@@ -64,18 +64,11 @@ export function resolvePendingUserInputAnswer(
 ): PendingUserInputAnswer | null {
   if (draft?.attachmentsBlocked) return null;
   const customAnswer =
-    question.initialAnswer !== undefined
-      ? (draft?.customAnswer ?? null)
-      : normalizeDraftAnswer(draft?.customAnswer);
-
-  const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
-
-  // If allowCustomAnswer is explicitly false and an option is chosen, keep the chosen option.
-  // If the user typed a custom answer via the Other option, submit the custom answer.
-  if (question.allowCustomAnswer === false && selectedOptionValues.length > 0) {
-    return question.multiSelect ? selectedOptionValues : selectedOptionValues[0]!;
-  }
-
+    question.allowCustomAnswer === false
+      ? null
+      : question.initialAnswer !== undefined
+        ? (draft?.customAnswer ?? null)
+        : normalizeDraftAnswer(draft?.customAnswer);
   if (customAnswer !== null && customAnswer.length > 0) {
     return customAnswer;
   }
@@ -83,6 +76,7 @@ export function resolvePendingUserInputAnswer(
     return "";
   }
 
+  const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
       ? selectedOptionValues
@@ -101,6 +95,10 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
+  if (question.allowCustomAnswer === false) {
+    return draft ?? {};
+  }
+
   const selectedOptionValues =
     question.initialAnswer !== undefined || customAnswer.trim().length > 0
       ? undefined

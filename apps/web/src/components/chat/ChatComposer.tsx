@@ -1709,7 +1709,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : detectComposerTrigger(nextPrompt, expandedCursor);
     const updateTrigger = textChanged ? setComposerTrigger : followComposerCaret;
     if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
-      if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
       setComposerCursor(nextCursor);
       updateTrigger(trigger);
       onChangeActivePendingUserInputCustomAnswer(

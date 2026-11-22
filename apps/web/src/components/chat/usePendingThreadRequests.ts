@@ -252,7 +252,7 @@ function makePendingCustomAnswerSetter(input: {
       return;
     }
     const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
-    if (!question) {
+    if (!question || question.allowCustomAnswer === false) {
       return;
     }
     input.writePrompt(value);

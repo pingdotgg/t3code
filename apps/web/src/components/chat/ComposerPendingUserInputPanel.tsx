@@ -155,11 +155,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   };
 
   const handleSelectOtherOption = () => {
-    if (disabled || isResponding) return;
+    if (disabled || isResponding || !activeQuestion) return;
     if (autoAdvanceTimerRef.current !== null) {
       window.clearTimeout(autoAdvanceTimerRef.current);
       autoAdvanceTimerRef.current = null;
     }
+    for (const val of progress.selectedOptionValues) {
+      onToggleOption(activeQuestion.id, val);
+    }
+    setOptimisticSingleSelect(null);
     focusComposerStable();
   };
 
@@ -193,7 +197,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         if (!option) return;
         event.preventDefault();
         selectOptionFromShortcut(activeQuestion.id, option.value ?? option.label);
-      } else if (optionIndex === activeQuestion.options.length && activeQuestion.options.length > 0) {
+      } else if (
+        optionIndex === activeQuestion.options.length &&
+        activeQuestion.options.length > 0
+      ) {
         event.preventDefault();
         selectOtherFromShortcut();
       }
@@ -375,7 +382,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     className={cn(
                       questionTextAlign,
                       "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
-                      customAnswerActive ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
+                      customAnswerActive
+                        ? "text-foreground"
+                        : "text-foreground/70 hover:bg-muted/30",
                       (disabled || isResponding) && "opacity-50 cursor-not-allowed",
                       !disabled && !isResponding && "cursor-pointer",
                     )}
@@ -388,9 +397,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">
-                        Other
-                      </span>
+                      <span className="text-sm font-medium">Other</span>
                       <span className="text-secondary-label text-2xs">
                         Type a custom response or suggestion in the composer below
                       </span>
