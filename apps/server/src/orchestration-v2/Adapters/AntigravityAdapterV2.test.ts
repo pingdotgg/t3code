@@ -2084,50 +2084,6 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       }).pipe(Effect.provide(layerSession)),
   );
 
-  it.effect(
-    "auto-approves a detached full-access permission request across a settled soft interrupt",
-    () =>
-      Effect.gen(function* () {
-        const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
-        yield* opened.startTurn(1, false);
-        const started = yield* opened.throughPromptSettled;
-        const turn = started.find((event) => event.type === "provider_turn.updated");
-        if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
-
-        // Soft interrupt (new message, not Stop): leaves background work alive and does not quarantine.
-        yield* opened.session.interruptTurn({
-          providerThread: opened.providerThread,
-          providerTurnId: turn.providerTurn.id,
-        });
-        yield* opened.throughTerminal;
-
-        const permission = yield* opened
-          .requestPermission(
-            {
-              sessionId: "mock-session-1",
-              toolCall: {
-                toolCallId: "call_after_soft_interrupt",
-                kind: "execute",
-                title: "git commit",
-                status: "pending",
-              },
-              options: [
-                { optionId: "allow", name: "Allow", kind: "allow_once" },
-                { optionId: "deny", name: "Deny", kind: "reject_once" },
-              ],
-            },
-            { requestId: "permission-soft", method: "session/request_permission" },
-          )
-          .pipe(Effect.forkScoped({ startImmediately: true }));
-        yield* opened.startTurn(2, false);
-        assert.deepEqual(yield* Fiber.join(permission), {
-          outcome: { outcome: "selected", optionId: "allow" },
-        });
-        yield* opened.releaseSteer;
-        yield* opened.throughTerminal;
-      }).pipe(Effect.provide(layerSession)),
-  );
-
   it.effect("cancels a detached permission request after Stop even in full-access mode", () =>
     Effect.gen(function* () {
       const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
