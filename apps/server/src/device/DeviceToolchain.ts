@@ -49,7 +49,7 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
       const policy = this.releaseAgeCutoff
         ? `min-release-age / before cutoff: ${this.releaseAgeCutoff}`
         : "min-release-age / before";
-      return `npm blocked installing ${this.tool} because of your npm release-age policy (${policy}). Wait until the release ages past that cutoff or adjust your npm config, then retry.`;
+      return `npm blocked installing ${this.tool} because of your npm release-age policy (${policy}). If using min-release-age, wait until the release ages past that cutoff; if using a fixed before date, adjust your npm config, then retry.`;
     }
     const suffix = this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`;
     return `Installing ${this.tool} failed while ${this.step}${suffix}.`;

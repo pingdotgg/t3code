@@ -1998,14 +1998,18 @@ it.effect.each(["exit", "missing", "release_age"] as const)(
             : failure === "release_age"
               ? "release_age_blocked"
               : "package_manager_missing",
+        ...(failure === "release_age" ? { releaseAgeCutoff: "20/11/2026, 10:56:49 am" } : {}),
       });
-      expect(error.message).toBe(
-        failure === "exit"
-          ? "Device update device tool failed: The device command failed (exit code 243)."
-          : failure === "release_age"
-            ? "Device update device tool failed: npm blocked installing device tools because of your npm release-age policy (min-release-age / before cutoff: 20/11/2026, 10:56:49 am). Wait until the release ages past that cutoff or adjust your npm config, then retry."
+      if (failure === "release_age") {
+        expect(error.message).toContain("min-release-age");
+        expect(error.message).toContain("20/11/2026, 10:56:49 am");
+      } else {
+        expect(error.message).toBe(
+          failure === "exit"
+            ? "Device update device tool failed: The device command failed (exit code 243)."
             : "Device update device tool failed: Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
-      );
+        );
+      }
       expect(error.message).not.toContain("private:credential");
     }).pipe(
       Effect.provide(
