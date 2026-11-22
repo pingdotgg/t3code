@@ -1,11 +1,12 @@
 import { msg, useGT, useMessages } from "gt-react-native";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import type { PdfAppearance } from "@t3tools/contracts/settings";
 import { AsyncResult } from "effect/reactivity";
 import { View } from "react-native";
 
 import { ListChoiceRow } from "../../../../components/ui/ListChoiceRow";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../../../state/preferences";
+import { useAtomCommand } from "../../../../state/use-atom-command";
 import { SettingsSection } from "../../components/SettingsSection";
 
 const OPTIONS: ReadonlyArray<readonly [PdfAppearance, string]> = [
@@ -18,7 +19,7 @@ export function PdfAppearanceSection() {
   const gt = useGT();
   const m = useMessages();
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const updatePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const ready = AsyncResult.isSuccess(preferences);
   const appearance = ready ? (preferences.value.pdfAppearance ?? "match-app") : "match-app";
   return (
@@ -30,7 +31,9 @@ export function PdfAppearanceSection() {
             label={m(label)}
             disabled={!ready}
             selected={appearance === value}
-            onPress={() => updatePreferences({ pdfAppearance: value })}
+            onPress={() => {
+              void savePreferences({ pdfAppearance: value });
+            }}
             separated={index > 0}
           />
         ))}

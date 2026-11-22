@@ -402,7 +402,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           },
         },
         decode: decodeAwardEmojiJson,
-      });
+      }).pipe(
+        // GitLab before 16.1 has no `Note.awardEmoji`; comments then load without reactions.
+        Effect.catchIf(
+          (error) => error.reason === "failed",
+          () => Effect.succeed(null),
+        ),
+      );
 
     const linked = (input: {
       readonly cwd: string;
@@ -567,9 +573,9 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
-                  reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
+                  reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
                 })),
-                commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
+                commentsCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
                 events: [...systemEvents, ...labelEvents].sort((left, right) =>
                   left.createdAt.localeCompare(right.createdAt),
                 ),

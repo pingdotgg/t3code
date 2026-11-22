@@ -350,9 +350,9 @@ function followHandedOffServers(servers: ReadonlyArray<HandedOffServer>): void {
         ).pipe(
           Stream.map((state) => AsyncResult.getOrElse(state, () => AVAILABLE_CONNECTION_STATE)),
         ),
-        retryNow: Effect.promise(() =>
-          environmentCatalog.retryNow.run(appAtomRegistry, server.environmentId),
-        ).pipe(Effect.asVoid),
+        retryNow: environmentCatalog.retryNow
+          .run(appAtomRegistry, server.environmentId)
+          .pipe(Effect.ignoreCause),
       }),
     );
     const unsubscribe = appAtomRegistry.subscribe(
