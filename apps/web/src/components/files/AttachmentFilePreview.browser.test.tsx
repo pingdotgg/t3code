@@ -584,6 +584,7 @@ describe("large text preview recovery", () => {
           absolutePath="/repo/large.txt"
           name="large.txt"
           delimiter={null}
+          markdownCwd={null}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}

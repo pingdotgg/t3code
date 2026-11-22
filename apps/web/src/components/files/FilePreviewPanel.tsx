@@ -102,6 +102,7 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { LARGE_MARKDOWN_RENDER_MAX_BYTES } from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
   type FileCommentAnnotationGroup,
@@ -1394,7 +1395,9 @@ export default function FilePreviewPanel({
   const revealHandled =
     revealLine === null ||
     (handledReveal?.path === relativePath && handledReveal.requestId === revealRequestId);
-  const renderMarkdown = isMarkdown && renderMarkdownPreferred && revealHandled;
+  const markdownRenderable =
+    isMarkdown && (file.data?.byteLength ?? 0) <= LARGE_MARKDOWN_RENDER_MAX_BYTES;
+  const renderMarkdown = markdownRenderable && renderMarkdownPreferred && revealHandled;
   const renderMermaid = isMermaid && renderMermaidPreferred && revealHandled;
   const renderBrowserFile = isPdf || (isHtml && renderBrowserFilePreferred && revealHandled);
   const renderTable = tableDelimiter !== null && renderTablePreferred && revealHandled;
@@ -1408,7 +1411,10 @@ export default function FilePreviewPanel({
           ? ("html" as const)
           : null;
   const canToggleRendered =
-    previewPath !== null && attachment === undefined && renderedMode !== null;
+    previewPath !== null &&
+    attachment === undefined &&
+    renderedMode !== null &&
+    (!isMarkdown || markdownRenderable);
   const showsRawText =
     previewPath !== null &&
     file.data !== null &&
@@ -1709,7 +1715,7 @@ export default function FilePreviewPanel({
       !isMedia &&
       !renderBrowserFile &&
       file.data?.truncated &&
-      (draft || isMarkdown || isMermaid || isHtml) ? (
+      (draft || renderMermaid) ? (
         <div className="shrink-0 border-b border-warning/20 bg-warning-surface px-3 py-1.5 text-2xs text-warning-foreground">
           {gt(
             "{count, plural, one {Preview limited to the first 1 MB of a {formatted} byte file.} other {Preview limited to the first 1 MB of a {formatted} byte file.}}",
@@ -1794,16 +1800,15 @@ export default function FilePreviewPanel({
             file.data?.truncated &&
             !isDocument &&
             !draft &&
-            !isMarkdown &&
-            !isMermaid &&
-            !isHtml ? (
+            !renderMermaid ? (
             <WorkspaceLargeTextPreview
-              key={`${absolutePath}:${renderTable}:${fileRefreshRevision}`}
+              key={`${absolutePath}:${renderTable}:${renderMarkdown}:${fileRefreshRevision}`}
               environmentId={environmentId}
               threadRef={threadRef}
               absolutePath={absolutePath}
               name={relativePath}
               delimiter={renderTable ? tableDelimiter : null}
+              markdownCwd={renderMarkdown ? cwd : null}
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
@@ -1955,12 +1960,15 @@ export default function FilePreviewPanel({
 }
 
 const LargeTextViewer = lazy(() => import("./LargeTextViewer"));
+const LargeMarkdownViewer = lazy(() => import("./LargeMarkdownViewer"));
 export function WorkspaceLargeTextPreview(props: {
   environmentId: EnvironmentId;
   threadRef: ScopedThreadRef;
   absolutePath: string;
   name: string;
   delimiter: "," | "\t" | null;
+  /** Renders the file as Markdown resolving links against this workspace; null shows source. */
+  markdownCwd: string | null;
   workspaceMutationId: string | null;
   revealLine: number | null;
   revealRequestId: number;
@@ -2069,21 +2077,38 @@ export function WorkspaceLargeTextPreview(props: {
           </div>
         }
       >
-        <LargeTextViewer
-          key={`${src}:${revision}`}
-          name={props.name}
-          copyContents={copyContents}
-          onRetry={() => {
-            void refreshAssetUrl()
-              .then(() => setRevision((value) => value + 1))
-              .catch(showError);
-          }}
-          src={src}
-          delimiter={props.delimiter}
-          revealLine={props.revealLine}
-          revealRequestId={props.revealRequestId}
-          wordWrap={props.wordWrap}
-        />
+        {props.markdownCwd !== null ? (
+          <LargeMarkdownViewer
+            key={`${src}:${revision}`}
+            src={src}
+            cwd={props.markdownCwd}
+            relativePath={props.name}
+            threadRef={props.threadRef}
+            workspaceMutationId={props.workspaceMutationId}
+            copyContents={copyContents}
+            onRetry={() => {
+              void refreshAssetUrl()
+                .then(() => setRevision((value) => value + 1))
+                .catch(showError);
+            }}
+          />
+        ) : (
+          <LargeTextViewer
+            key={`${src}:${revision}`}
+            name={props.name}
+            copyContents={copyContents}
+            onRetry={() => {
+              void refreshAssetUrl()
+                .then(() => setRevision((value) => value + 1))
+                .catch(showError);
+            }}
+            src={src}
+            delimiter={props.delimiter}
+            revealLine={props.revealLine}
+            revealRequestId={props.revealRequestId}
+            wordWrap={props.wordWrap}
+          />
+        )}
       </Suspense>
     </>
   );

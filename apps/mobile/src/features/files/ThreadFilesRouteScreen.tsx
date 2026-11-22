@@ -74,6 +74,7 @@ import {
   needsWorkspaceFileContents,
 } from "./filePath";
 import { useWorkspaceFileAssetUrlState } from "./workspaceFileAssetUrl";
+import { MOBILE_FULL_FILE_MAX_BYTES, useFullFileText } from "./useFullFileText";
 
 function FilesBrowserHeader(props: {
   readonly projectName: string;
@@ -253,6 +254,8 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  /** Renders Markdown in lazily parsed chunks; set for files past the 1 MB preview. */
+  readonly chunkMarkdown: boolean;
   readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
@@ -347,6 +350,7 @@ function FileContent(props: {
           markdown={props.fileContents}
           relativePath={props.relativePath}
           threadId={props.threadId}
+          chunked={props.chunkMarkdown}
           onRefresh={props.onRefresh}
         />
       ) : (
@@ -703,10 +707,31 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         : defaultViewMode(relativePath);
   const resolvedActiveMode =
     isVideoFile || isAudioFile ? "preview" : canPreview ? activeMode : "source";
+  // Metadata is needed only to distinguish directories; file contents can load concurrently.
+  const needsFileContents = needsWorkspaceFileContents({
+    relativePath,
+    metadataKind: metadata.data?.kind,
+    activeMode: resolvedActiveMode,
+  });
+  const fileQuery = useEnvironmentQuery(
+    canReadFiles &&
+      environmentId !== null &&
+      cwd !== null &&
+      relativePath !== null &&
+      needsFileContents
+      ? projectEnvironment.readFile({
+          environmentId,
+          input: { cwd, relativePath },
+        })
+      : null,
+  );
+  const fileData = fileQuery.data as ProjectReadFileResult | null;
+  const fetchesFullText =
+    fileData?.truncated === true && fileData.byteLength <= MOBILE_FULL_FILE_MAX_BYTES;
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
-    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
+    (isBrowserFile || isImageFile || isVideoFile || isAudioFile || fetchesFullText)
       ? relativePath
       : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
@@ -717,6 +742,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     draftCwd: threadId === null ? cwd : null,
   });
   const assetPreviewUri = assetPreview._tag === "Success" ? assetPreview.url : null;
+  const fullText = useFullFileText(fetchesFullText ? assetPreviewUri : null);
+  // A failed full download falls back to the 1 MB preview with its partial-file notice.
+  const fileContents =
+    fileData === null
+      ? null
+      : !fetchesFullText || fullText.failed || assetPreview._tag === "Failure"
+        ? fileData.contents
+        : fullText.text;
+  const fileTruncated = fileData?.truncated === true && fullText.text === null;
   const mediaSource: MediaActionsSource | undefined =
     environmentId !== null &&
     relativePath !== null &&
@@ -758,28 +792,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const handleRetryPreview = () => {
     void assetPreview.refresh().finally(() => setPreviewRevision((current) => current + 1));
   };
-  // Metadata is needed only to distinguish directories; file contents can load concurrently.
-  const needsFileContents = needsWorkspaceFileContents({
-    relativePath,
-    metadataKind: metadata.data?.kind,
-    activeMode: resolvedActiveMode,
-  });
-  const fileQuery = useEnvironmentQuery(
-    canReadFiles &&
-      environmentId !== null &&
-      cwd !== null &&
-      relativePath !== null &&
-      needsFileContents
-      ? projectEnvironment.readFile({
-          environmentId,
-          input: { cwd, relativePath },
-        })
-      : null,
-  );
-  const fileData = fileQuery.data as ProjectReadFileResult | null;
   // iOS only: Android lays out a whole-file selectable TextView on the UI thread, which stalls.
   const canSelectText =
-    Platform.OS === "ios" && resolvedActiveMode === "source" && fileData?.contents != null;
+    Platform.OS === "ios" && resolvedActiveMode === "source" && fileContents !== null;
   const selectingText = canSelectText && textSelectionPath === relativePath;
 
   const handleSelectFile = (path: string) => {
@@ -906,13 +921,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
                 ),
             } as const,
           ]),
-      fileData?.contents != null
+      fileContents !== null
         ? ({
             id: "copy-contents",
-            title: fileData.truncated ? gt("Copy preview") : gt("Copy contents"),
+            title: fileTruncated ? gt("Copy preview") : gt("Copy contents"),
             icon: "doc.on.doc",
             inline: false,
-            onPress: () => copyTextWithHaptic(fileData.contents),
+            onPress: () => copyTextWithHaptic(fileContents),
           } as const)
         : null,
       isPdfFile({ name: relativePath }) && previewUri !== null
@@ -1083,12 +1098,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           videoSource={videoSource}
           mediaSource={mediaSource}
           resolveVideoUri={assetPreview.refresh}
-          fileContents={fileData?.contents ?? null}
+          fileContents={fileContents}
           fileError={fileQuery.error}
           initialLine={targetLine}
           relativePath={relativePath}
           threadId={threadId}
-          truncated={fileData?.truncated ?? false}
+          truncated={fileTruncated}
+          chunkMarkdown={fileData?.truncated ?? false}
           selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
         />

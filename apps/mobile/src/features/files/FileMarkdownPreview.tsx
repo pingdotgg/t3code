@@ -7,6 +7,9 @@ import { useGT } from "gt-react-native";
 import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
+import { LegendList } from "@legendapp/list/react-native";
+import { splitLargeMarkdown } from "@t3tools/shared/markdownChunks";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
@@ -84,6 +87,8 @@ export function FileMarkdownPreview(props: {
   readonly markdown: string;
   readonly relativePath: string;
   readonly threadId: ThreadId | null;
+  /** Splits the file into separately parsed blocks in a virtualized list. */
+  readonly chunked?: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
   const navigation = useNavigation();
@@ -223,44 +228,82 @@ export function FileMarkdownPreview(props: {
     if (!openMedia(href)) void tryOpenExternalUrl(href, "markdown-link");
   };
 
+  const refreshControl = props.onRefresh ? (
+    <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
+  ) : undefined;
+  const renderMarkdown = (markdown: string) => (
+    <SelectableMarkdownText
+      markdown={markdown}
+      fileEmbedLabel={(href) =>
+        markdownFileEmbedLabel(
+          href,
+          {
+            environmentId: props.environmentId,
+            threadId: props.threadId ?? undefined,
+            workspaceRoot: markdownDirectory,
+            captured: props.captured,
+          },
+          false,
+        )
+      }
+      onLinkPress={onLinkPress}
+      renderImage={renderImage}
+      resolveImageSource={resolveImageSource}
+      onImagePress={onImagePress}
+      textStyle={styles.nativeTextStyle}
+    />
+  );
+  const modals = (
+    <>
+      <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
+      <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
+    </>
+  );
+  const markdown = maskMarkdownFrontmatter(props.markdown);
+
+  if (props.chunked) {
+    // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
+    const chunks = splitLargeMarkdown(markdown);
+    return (
+      <View className="flex-1 bg-sheet">
+        <LegendList
+          renderScrollComponent={NativeScrollView}
+          contentInsetAdjustmentBehavior="automatic"
+          refreshControl={refreshControl}
+          data={chunks}
+          keyExtractor={(_chunk, index) => String(index)}
+          estimatedItemSize={
+            (styles.nativeTextStyle.lineHeight *
+              chunks.reduce((lines, chunk) => lines + chunk.lines, 0)) /
+            chunks.length
+          }
+          recycleItems={false}
+          contentContainerStyle={{ paddingHorizontal: 18, paddingVertical: 18 }}
+          ItemSeparatorComponent={ChunkSeparator}
+          renderItem={({ item }) => (
+            <View className="mx-auto w-full max-w-[760px]">{renderMarkdown(item.text)}</View>
+          )}
+        />
+        {modals}
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       className="flex-1 bg-sheet"
       contentInsetAdjustmentBehavior="automatic"
       contentContainerStyle={{ padding: 18 }}
-      refreshControl={
-        props.onRefresh ? (
-          <RefreshControl
-            refreshing={isPullRefreshing}
-            onRefresh={() => void handlePullToRefresh()}
-          />
-        ) : undefined
-      }
+      refreshControl={refreshControl}
     >
       <View className="mx-auto w-full max-w-[760px]">
-        <SelectableMarkdownText
-          markdown={maskMarkdownFrontmatter(props.markdown)}
-          fileEmbedLabel={(href) =>
-            markdownFileEmbedLabel(
-              href,
-              {
-                environmentId: props.environmentId,
-                threadId: props.threadId ?? undefined,
-                workspaceRoot: markdownDirectory,
-                captured: props.captured,
-              },
-              false,
-            )
-          }
-          onLinkPress={onLinkPress}
-          renderImage={renderImage}
-          resolveImageSource={resolveImageSource}
-          onImagePress={onImagePress}
-          textStyle={styles.nativeTextStyle}
-        />
-        <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
-        <VideoPreviewModal source={expandedVideo} onRequestClose={() => setExpandedVideo(null)} />
+        {renderMarkdown(markdown)}
+        {modals}
       </View>
     </ScrollView>
   );
+}
+
+function ChunkSeparator() {
+  return <View className="h-5" />;
 }
