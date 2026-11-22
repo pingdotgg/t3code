@@ -78,6 +78,15 @@ describe("cloneUrlForProtocol", () => {
     );
   });
 
+  it("switches Bitbucket Cloud between its SSH and HTTPS hosts", () => {
+    expect(cloneUrlForProtocol("https://bitbucket.org/workspace/repo.git", "ssh")).toBe(
+      "git@ssh.bitbucket.org:workspace/repo.git",
+    );
+    expect(cloneUrlForProtocol("git@ssh.bitbucket.org:workspace/repo.git", "https")).toBe(
+      "https://bitbucket.org/workspace/repo.git",
+    );
+  });
+
   it("preserves encoded Azure repository components and same-protocol URLs", () => {
     const ssh = "git@ssh.dev.azure.com:v3/Fabrikam/Project%20One/fab%20repo";
     const https = "https://dev.azure.com/Fabrikam/Project%20One/_git/fab%20repo";
