@@ -118,6 +118,12 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 }
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
+// Fork builds (danielphan2003/t3code): a separate Android package, name and
+// scheme, so a sideloaded build installs beside the store app instead of
+// replacing it. Unset, the build is the upstream variant.
+const forkAndroidPackage = repoEnv.T3CODE_FORK_ANDROID_PACKAGE?.trim() || undefined;
+const forkAppName = repoEnv.T3CODE_FORK_APP_NAME?.trim() || undefined;
+const forkScheme = repoEnv.T3CODE_FORK_SCHEME?.trim() || undefined;
 // Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
 const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
@@ -233,10 +239,10 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 // Match iOS PostScript names on Android so RN and the native composer share fonts before runtime loading.
 
 const config: ExpoConfig = {
-  name: variant.appName,
+  name: forkAppName ?? variant.appName,
   slug: "t3-code",
   platforms: ["ios", "android"],
-  scheme: variant.scheme,
+  scheme: forkScheme ?? variant.scheme,
   version: repoEnv.T3CODE_MOBILE_VERSION ?? "2.3.0",
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
@@ -298,7 +304,7 @@ const config: ExpoConfig = {
   },
   android: {
     icon: variant.assets.appIcon,
-    package: variant.androidPackage,
+    package: forkAndroidPackage ?? variant.androidPackage,
     ...(repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE
       ? { googleServicesFile: repoEnv.T3CODE_ANDROID_GOOGLE_SERVICES_FILE }
       : {}),
@@ -314,14 +320,17 @@ const config: ExpoConfig = {
     predictiveBackGestureEnabled: true,
     // expo-sensors declares this for its pedometer, which the app does not use.
     blockedPermissions: ["android.permission.ACTIVITY_RECOGNITION"],
-    intentFilters: [
-      {
-        action: "VIEW",
-        autoVerify: true,
-        data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
-        category: ["BROWSABLE", "DEFAULT"],
-      },
-    ],
+    // app.t3.codes verifies only the upstream packages, so a fork leaves its links to the store app.
+    intentFilters: forkAndroidPackage
+      ? []
+      : [
+          {
+            action: "VIEW",
+            autoVerify: true,
+            data: [{ scheme: "https", host: HOSTED_APP_HOST, pathPrefix: "/threads/" }],
+            category: ["BROWSABLE", "DEFAULT"],
+          },
+        ],
   },
   web: {
     favicon: variant.assets.appIcon,

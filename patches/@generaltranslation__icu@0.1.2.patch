@@ -1,0 +1,104 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..d4528761204a8934c1bd790d39492d29d9b71f05 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -750,11 +750,45 @@ const TIME_STYLES = {
+ 	long: LONG_TIME_STYLE,
+ 	full: LONG_TIME_STYLE
+ };
++// Patched for the T3 Code fork: React re-renders call formatMessage for the
++// same messages many times a second, and each call re-parsed the message,
++// resolved the locale (Intl.NumberFormat.supportedLocalesOf plus new
++// Intl.Locale, slow on Hermes) and built new Intl formatters. Cache all three
++// per locale; a parsed message is never mutated.
++const MESSAGE_CACHE_LIMIT = 5000;
++const localeCache = /* @__PURE__ */ new Map();
++const messageCache = /* @__PURE__ */ new Map();
++const formatterCaches = /* @__PURE__ */ new Map();
+ function formatMessage(message, locales = "en", variables = {}) {
+-	const parts = formatElements(parse(message, { locale: resolveLocale(locales) }), {
++	const localesKey = typeof locales === "string" ? locales : locales.join(",");
++	let locale = localeCache.get(localesKey);
++	if (locale === void 0 && !localeCache.has(localesKey)) {
++		locale = resolveLocale(locales);
++		localeCache.set(localesKey, locale);
++	}
++	const messageKey = localesKey + "\u0000" + message;
++	let elements = messageCache.get(messageKey);
++	if (elements === void 0) {
++		elements = parse(message, { locale });
++		if (messageCache.size >= MESSAGE_CACHE_LIMIT) messageCache.clear();
++		messageCache.set(messageKey, elements);
++	}
++	let formatters = formatterCaches.get(localesKey);
++	if (formatters === void 0) {
++		formatters = {
++			numberFormats: /* @__PURE__ */ new Map(),
++			dateTimeFormats: /* @__PURE__ */ new Map(),
++			pluralRules: /* @__PURE__ */ new Map()
++		};
++		formatterCaches.set(localesKey, formatters);
++	}
++	const parts = formatElements(elements, {
+ 		message,
+ 		locales,
+-		variables
++		variables,
++		numberFormats: formatters.numberFormats,
++		dateTimeFormats: formatters.dateTimeFormats,
++		pluralRules: formatters.pluralRules
+ 	});
+ 	if (parts.length === 1) return parts[0];
+ 	return parts.length ? parts : "";
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a54f2235227290efe761215b30da542562b2e77f..458350f43f8661b768aace105c9b308fd5e7a0b5 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -749,11 +749,45 @@ const TIME_STYLES = {
+ 	long: LONG_TIME_STYLE,
+ 	full: LONG_TIME_STYLE
+ };
++// Patched for the T3 Code fork: React re-renders call formatMessage for the
++// same messages many times a second, and each call re-parsed the message,
++// resolved the locale (Intl.NumberFormat.supportedLocalesOf plus new
++// Intl.Locale, slow on Hermes) and built new Intl formatters. Cache all three
++// per locale; a parsed message is never mutated.
++const MESSAGE_CACHE_LIMIT = 5000;
++const localeCache = /* @__PURE__ */ new Map();
++const messageCache = /* @__PURE__ */ new Map();
++const formatterCaches = /* @__PURE__ */ new Map();
+ function formatMessage(message, locales = "en", variables = {}) {
+-	const parts = formatElements(parse(message, { locale: resolveLocale(locales) }), {
++	const localesKey = typeof locales === "string" ? locales : locales.join(",");
++	let locale = localeCache.get(localesKey);
++	if (locale === void 0 && !localeCache.has(localesKey)) {
++		locale = resolveLocale(locales);
++		localeCache.set(localesKey, locale);
++	}
++	const messageKey = localesKey + "\u0000" + message;
++	let elements = messageCache.get(messageKey);
++	if (elements === void 0) {
++		elements = parse(message, { locale });
++		if (messageCache.size >= MESSAGE_CACHE_LIMIT) messageCache.clear();
++		messageCache.set(messageKey, elements);
++	}
++	let formatters = formatterCaches.get(localesKey);
++	if (formatters === void 0) {
++		formatters = {
++			numberFormats: /* @__PURE__ */ new Map(),
++			dateTimeFormats: /* @__PURE__ */ new Map(),
++			pluralRules: /* @__PURE__ */ new Map()
++		};
++		formatterCaches.set(localesKey, formatters);
++	}
++	const parts = formatElements(elements, {
+ 		message,
+ 		locales,
+-		variables
++		variables,
++		numberFormats: formatters.numberFormats,
++		dateTimeFormats: formatters.dateTimeFormats,
++		pluralRules: formatters.pluralRules
+ 	});
+ 	if (parts.length === 1) return parts[0];
+ 	return parts.length ? parts : "";

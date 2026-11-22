@@ -1,5 +1,6 @@
 import { msg } from "gt-i18n";
 import { translatableDetail } from "../errors/translatable.ts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -63,6 +64,21 @@ const ROUTE_CHECK_TIMEOUT_MS = 2_500;
 // wait the full probe timeout for a LAN the device has already left. A route
 // that misses it connects over relay, then upgrades with a second reconnect.
 const ROUTE_CHECK_HEAD_START_MS = 500;
+// A head start that ends this late means the client's own thread was busy (a
+// React Native render can hold it for over a second), so check answers that
+// arrived meanwhile have not been read yet. They get one more short wait
+// instead of being judged silent by a timer that fired late.
+const ROUTE_CHECK_LATE_TIMER_MS = 100;
+const ROUTE_CHECK_LATE_GRACE_MS = 150;
+
+export interface ConnectOptions {
+  /**
+   * A route that just passed its preflight. It is tried first without a fresh
+   * check, so a busy client does not miss the head start, land on a worse
+   * route and put the route it was switching to in cooldown.
+   */
+  readonly trustedRouteId?: string;
+}
 
 export class ConnectionDriver extends Context.Service<
   ConnectionDriver,
@@ -70,6 +86,7 @@ export class ConnectionDriver extends Context.Service<
     readonly connect: (
       entry: ConnectionCatalogEntry,
       reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+      options?: ConnectOptions,
     ) => Effect.Effect<EnvironmentConnectionLease, ConnectionAttemptError, Scope.Scope>;
     readonly preflight: (
       entry: ConnectionCatalogEntry,
@@ -86,13 +103,21 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   connectRoute: (
     route: ConnectionRoute,
   ) => Effect.Effect<RouteConnection, ConnectionAttemptError, R | Scope.Scope>,
+  options: ConnectOptions = {},
 ) {
   const routes = usableRoutes(entry);
   const checks =
     routes.length === 1
       ? []
       : yield* Effect.forEach(routes, (route) => Effect.forkChild(checkRoute(route)));
-  const headStart = yield* Effect.forkChild(Effect.sleep(ROUTE_CHECK_HEAD_START_MS));
+  const headStart = yield* Effect.forkChild(
+    Effect.gen(function* () {
+      const startedAt = yield* Clock.currentTimeMillis;
+      yield* Effect.sleep(ROUTE_CHECK_HEAD_START_MS);
+      const lateBy = (yield* Clock.currentTimeMillis) - startedAt - ROUTE_CHECK_HEAD_START_MS;
+      if (lateBy >= ROUTE_CHECK_LATE_TIMER_MS) yield* Effect.sleep(ROUTE_CHECK_LATE_GRACE_MS);
+    }),
+  );
   const attemptScope = yield* Scope.Scope;
   let transient: ConnectionAttemptError | undefined;
   let blocked: ConnectionAttemptError | undefined;
@@ -115,8 +140,11 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
   });
   const silent: Array<{ readonly route: ConnectionRoute; readonly index: number }> = [];
   for (const [index, route] of routes.entries()) {
+    const trusted =
+      options.trustedRouteId !== undefined &&
+      connectionRouteId(route.target) === options.trustedRouteId;
     const check =
-      checks.length === 0
+      checks.length === 0 || trusted
         ? "unchecked"
         : yield* Effect.raceFirst(
             Fiber.join(checks[index]!),
@@ -131,16 +159,41 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     // An incompatible server is the same server on every route.
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
-  const late = yield* Effect.forEach(silent, ({ index }) => Fiber.join(checks[index]!), {
-    concurrency: "unbounded",
-  });
-  const answeredLate = silent.filter((_, position) => late[position] !== "silent");
-  const stillSilent = silent.filter((_, position) => late[position] === "silent");
-  for (const { route } of [...answeredLate, ...stillSilent]) {
+  // A route that missed the head start is tried as soon as its check answers,
+  // instead of after every slower check finished: a LAN the device has left
+  // would otherwise hold a route that answered long ago for the whole check
+  // timeout. Checks that finished together go in route order.
+  const settledChecks = (entries: ReadonlyArray<(typeof silent)[number]>) =>
+    entries.flatMap((entry) => {
+      const exit = checks[entry.index]!.pollUnsafe();
+      if (exit === undefined) return [];
+      return [{ entry, check: Exit.isSuccess(exit) ? exit.value : ("silent" as const) }];
+    });
+  let pending: ReadonlyArray<(typeof silent)[number]> = silent;
+  const stillSilent: Array<(typeof silent)[number]> = [];
+  while (pending.length > 0) {
+    let settled = settledChecks(pending);
+    if (settled.length === 0) {
+      yield* Effect.raceAll(pending.map(({ index }) => Fiber.await(checks[index]!)));
+      settled = settledChecks(pending);
+    }
+    pending = pending.filter((entry) => !settled.some((done) => done.entry === entry));
+    for (const { entry, check } of settled) {
+      if (check === "silent") {
+        stillSilent.push(entry);
+        continue;
+      }
+      const result = yield* attempt(entry.route);
+      if (result._tag === "Success") return { ...result.success, refusedRouteIds };
+      if (result.failure.reason === "unsupported") return yield* result.failure;
+    }
+  }
+  stillSilent.sort((left, right) => left.index - right.index);
+  for (const { route } of stillSilent) {
     // A route still silent after its whole check can hold the attempt open far
     // longer than the check did. Once another route failed in a way that
     // retries, the retry reaches it sooner than waiting here would.
-    if (transient !== undefined && stillSilent.some((entry) => entry.route === route)) break;
+    if (transient !== undefined) break;
     const result = yield* attempt(route);
     if (result._tag === "Success") return { ...result.success, refusedRouteIds };
     if (result.failure.reason === "unsupported") return yield* result.failure;
@@ -230,6 +283,7 @@ export const make = Effect.gen(function* () {
   const connect = Effect.fn("ConnectionDriver.connect")(function* (
     entry: ConnectionCatalogEntry,
     reportProgress: (progress: ConnectionDriverProgress) => Effect.Effect<void>,
+    options?: ConnectOptions,
   ) {
     const target = entry.target;
     yield* Effect.annotateCurrentSpan({
@@ -267,6 +321,7 @@ export const make = Effect.gen(function* () {
         }
         return { prepared, session } satisfies RouteConnection;
       }),
+      options,
     );
   });
 

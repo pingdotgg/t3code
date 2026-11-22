@@ -369,6 +369,7 @@ patchedDependencies:
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
+  '@generaltranslation/icu@0.1.2': a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
@@ -15367,9 +15368,9 @@ snapshots:
 
   '@generaltranslation/format@0.1.9':
     dependencies:
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
 
-  '@generaltranslation/icu@0.1.2': {}
+  '@generaltranslation/icu@0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)': {}
 
   '@generaltranslation/python-extractor@0.2.64':
     dependencies:
@@ -19995,7 +19996,7 @@ snapshots:
     dependencies:
       '@generaltranslation/api': 0.5.6
       '@generaltranslation/format': 0.1.9
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
       '@noble/hashes': 2.4.0
 
   gensync@1.0.0-beta.2: {}
@@ -20149,7 +20150,7 @@ snapshots:
       '@babel/types': 7.29.8
       '@clack/prompts': 1.0.0-alpha.6
       '@generaltranslation/format': 0.1.9
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
       '@generaltranslation/python-extractor': 0.2.64
       '@generaltranslation/supported-locales': 2.1.45
       '@generaltranslation/vue-extractor': 0.1.23(supports-color@8.1.1)

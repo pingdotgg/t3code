@@ -341,17 +341,25 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     routes: new Map(),
   }));
 
+  // A route the better-route check just preflighted goes first and is trusted:
+  // its fresh check would race the head start again, and a busy client misses it.
   const attemptEntry = Effect.gen(function* () {
     const latest = yield* Ref.get(currentEntry);
     const routes = connectionRoutes(latest);
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
-    if (Option.isNone(preferred)) return latest;
+    if (Option.isNone(preferred)) return { entry: latest, options: {} };
     const route = routes.find(
       (candidate) => connectionRouteId(candidate.target) === preferred.value,
     );
     return route === undefined
-      ? latest
-      : entryWithRoutes(latest, [route, ...routes.filter((candidate) => candidate !== route)]);
+      ? { entry: latest, options: {} }
+      : {
+          entry: entryWithRoutes(latest, [
+            route,
+            ...routes.filter((candidate) => candidate !== route),
+          ]),
+          options: { trustedRouteId: preferred.value },
+        };
   });
 
   const learnRoutesFrom = Effect.fnUntraced(function* (
@@ -514,11 +522,15 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     lastFailure: ConnectionAttemptError | null,
     synchronizedRoutes: Ref.Ref<number>,
   ) {
-    return yield* driver.connect(yield* attemptEntry, (progress) =>
-      (progress.stage === "synchronizing"
-        ? Ref.update(synchronizedRoutes, (count) => count + 1)
-        : Effect.void
-      ).pipe(Effect.andThen(reportProgress(attempt, nextGeneration, lastFailure, progress))),
+    const { entry: attemptTarget, options } = yield* attemptEntry;
+    return yield* driver.connect(
+      attemptTarget,
+      (progress) =>
+        (progress.stage === "synchronizing"
+          ? Ref.update(synchronizedRoutes, (count) => count + 1)
+          : Effect.void
+        ).pipe(Effect.andThen(reportProgress(attempt, nextGeneration, lastFailure, progress))),
+      options,
     );
   });
 
@@ -1213,6 +1225,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         const applicationActivated = yield* waitForSignal;
         if (applicationActivated) {
           resetRetryLadder();
+          // Android reports a backgrounded app offline (it also destroys the
+          // app's sockets) and reports it online again only seconds after it
+          // returns, so returning to the app tries at once instead of waiting.
+          replacing = true;
         }
         continue;
       }
@@ -1325,6 +1341,9 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       const applicationActivated = yield* waitForRetrySignal(delayMs);
       if (applicationActivated) {
         resetRetryLadder();
+        // Android often closes the socket just before the resume wakeup, so the
+        // wakeup lands here; it must skip the offline report as in the park above.
+        replacing = true;
       }
     }
   });
