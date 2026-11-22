@@ -3827,18 +3827,16 @@ export function ChatComposer(props: ChatComposerProps) {
             props.stashHost,
           )
         : null}
-      {props.trayControlsHost
-        ? createPortal(
-            <div
-              ref={attachExpandedComposerControls}
-              data-chat-composer-resting-controls="true"
-              className="flex min-w-0 items-center gap-0.5"
-            >
-              {composerControls}
-            </div>,
-            props.trayControlsHost,
-          )
-        : null}
+      {props.trayControlsHost ? (
+        <InComposerHost
+          host={props.trayControlsHost}
+          ref={attachExpandedComposerControls}
+          data-chat-composer-resting-controls="true"
+          className="flex min-w-0 items-center gap-0.5"
+        >
+          {composerControls}
+        </InComposerHost>
+      ) : null}
       <ComposerBanner.Dock>
         <ComposerBannerStack items={shelfItems} />
       </ComposerBanner.Dock>
