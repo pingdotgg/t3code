@@ -1080,12 +1080,11 @@ function claudeCanCheckReadOnlyMcpCalls(
   permissionMode: PermissionMode,
   rules: ReadonlyArray<ClaudePermissionRule> | null,
 ): boolean {
-  // Idle cards cannot answer CLI approval requests; keep T3's existing prompts outside this path.
+  // Under bypass, canUseTool prompts for an ask during a turn and refuses it when idle, so asks stay enforced.
   return (
     capabilities.has("mcp_call_check_permissions_v1") &&
     permissionMode === "bypassPermissions" &&
-    rules !== null &&
-    !claudeRulesMayCoverMcpTools(rules, ["ask"])
+    rules !== null
   );
 }
 

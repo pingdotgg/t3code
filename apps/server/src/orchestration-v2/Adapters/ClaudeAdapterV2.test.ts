@@ -7105,11 +7105,15 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: true,
     },
     {
-      case: "native checks and an ask rule for a hidden alias containing __",
-      rules: [{ behavior: "ask", rule: "mcp__finance__prod" }],
+      case: "native permission checks and unrelated ask and deny rules",
+      rules: [
+        { behavior: "ask", rule: "mcp__atlassian__createJiraIssue" },
+        { behavior: "deny", rule: "mcp__buildkite__create_build" },
+      ],
       nativeChecks: true,
+      checked: true,
       called: true,
-      readOnly: false,
+      readOnly: true,
     },
     {
       case: "native checks with unreadable permission rules",
