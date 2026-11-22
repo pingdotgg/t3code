@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitLargeMarkdown } from "./markdownChunks.ts";
+import { createMarkdownSplitter, splitLargeMarkdown } from "./markdownChunks.ts";
 
 const starts = (text: string) =>
   splitLargeMarkdown(text, 1).map((chunk) => chunk.text.split("\n")[0]);
@@ -89,5 +89,25 @@ describe("splitLargeMarkdown", () => {
       "# a\n\nb\n",
       "# c\n\nd",
     ]);
+  });
+
+  it("keeps leading frontmatter in the first piece", () => {
+    const text = ["---", "title: x", "", "# not a heading", "---", "", "# Heading"].join("\n");
+    expect(starts(text)).toEqual(["---", "# Heading"]);
+  });
+
+  it("cuts streamed text exactly as it cuts the whole text", () => {
+    const text = Array.from(
+      { length: 40 },
+      (_, index) =>
+        `## Section ${index}\n\nParagraph ${index}\n\n\`\`\`\n# code ${index}\n\n\`\`\`\n`,
+    ).join("\n");
+    const splitter = createMarkdownSplitter(64);
+    const streamed = [];
+    for (let start = 0; start < text.length; start += 7) {
+      streamed.push(...splitter.push(text.slice(start, start + 7)));
+    }
+    streamed.push(...splitter.end());
+    expect(streamed).toEqual(splitLargeMarkdown(text, 64));
   });
 });

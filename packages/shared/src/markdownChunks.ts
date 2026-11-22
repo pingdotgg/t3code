@@ -1,5 +1,5 @@
 // Rendered markdown files above this stay in the virtualized source viewer.
-export const LARGE_MARKDOWN_RENDER_MAX_BYTES = 32 * 1024 * 1024;
+export const LARGE_MARKDOWN_RENDER_MAX_BYTES = 64 * 1024 * 1024;
 // About one screen of rendered Markdown; parsing costs up to ~40 ms per KB with tables and math.
 const CHUNK_TARGET_CHARS = 4 * 1024;
 // Past two chunks, rendered previews split the document and parse it lazily.
@@ -53,40 +53,72 @@ export interface MarkdownChunk {
   readonly lines: number;
 }
 
+const FRONTMATTER_OPEN = /^\uFEFF?---[ \t]*\r?$/;
+const FRONTMATTER_CLOSE = /^(?:---|\.\.\.)[ \t]*\r?$/;
+// An opening rule with no closer is a thematic break, not frontmatter; stop waiting for one.
+const FRONTMATTER_MAX_LINES = 1000;
+
 /**
- * Cuts Markdown too large to parse at once into pieces of roughly `targetChars`, only at
- * column-0 headings or paragraphs that start a new top-level block. Definitions and footnotes
- * resolve only inside their own piece, and duplicate heading slugs restart per piece.
+ * Cuts Markdown into pieces of roughly `targetChars` as its text arrives, only at column-0
+ * headings or paragraphs that start a new top-level block. Leading frontmatter stays in the
+ * first piece. Definitions and footnotes resolve only inside their own piece, and duplicate
+ * heading slugs restart per piece.
  */
-export function splitLargeMarkdown(
-  text: string,
-  targetChars = CHUNK_TARGET_CHARS,
-): MarkdownChunk[] {
-  const lines = text.split("\n");
-  const chunks: MarkdownChunk[] = [];
-  let start = 0;
+export function createMarkdownSplitter(targetChars = CHUNK_TARGET_CHARS) {
+  let lines: string[] = [];
+  let partial = "";
+  let first = true;
   let chars = 0;
   let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
+  const flush = (done: MarkdownChunk[]) => {
+    done.push({ text: lines.join("\n"), lines: lines.length });
+    lines = [];
+    chars = 0;
+  };
+  const add = (line: string, done: MarkdownChunk[]) => {
     if (closes !== null) {
       if (closes(line)) closes = null;
+    } else if (first && FRONTMATTER_OPEN.test(line)) {
+      let seen = 0;
+      closes = (next) => FRONTMATTER_CLOSE.test(next) || ++seen >= FRONTMATTER_MAX_LINES;
     } else {
       const cut =
         chars >= targetChars &&
         (ATX_HEADING.test(line) ||
           (afterBlankLine && BLOCK_START.test(line) && !ORDERED_ITEM.test(line)));
-      if (cut) {
-        chunks.push({ text: lines.slice(start, index).join("\n"), lines: index - start });
-        start = index;
-        chars = 0;
-      }
+      if (cut) flush(done);
       closes = blockCloser(line);
     }
+    first = false;
+    lines.push(line);
     chars += line.length + 1;
     afterBlankLine = line.trim() === "";
-  }
-  chunks.push({ text: lines.slice(start).join("\n"), lines: lines.length - start });
-  return chunks;
+  };
+  return {
+    /** Adds text and returns the pieces it completed. */
+    push(text: string): MarkdownChunk[] {
+      const done: MarkdownChunk[] = [];
+      const parts = (partial + text).split("\n");
+      partial = parts.pop()!;
+      for (const line of parts) add(line, done);
+      return done;
+    },
+    /** Returns the last piece once the text has ended. */
+    end(): MarkdownChunk[] {
+      const done: MarkdownChunk[] = [];
+      add(partial, done);
+      partial = "";
+      flush(done);
+      return done;
+    },
+  };
+}
+
+export function splitLargeMarkdown(
+  text: string,
+  targetChars = CHUNK_TARGET_CHARS,
+): MarkdownChunk[] {
+  const splitter = createMarkdownSplitter(targetChars);
+  return [...splitter.push(text), ...splitter.end()];
 }

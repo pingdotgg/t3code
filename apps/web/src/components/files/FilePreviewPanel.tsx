@@ -103,10 +103,11 @@ import { FileExplorerPane } from "./FileExplorerPane";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
 import { breadcrumbPathOf, retainedBreadcrumbTrail, trailChildOf } from "./filePath";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
-import { ChunkedMarkdown, splitMarkdownForPreview } from "./ChunkedMarkdown";
+import { ChunkedMarkdown } from "./ChunkedMarkdown";
 import {
   CHUNKED_MARKDOWN_MIN_CHARS,
   LARGE_MARKDOWN_RENDER_MAX_BYTES,
+  splitLargeMarkdown,
 } from "@t3tools/shared/markdownChunks";
 import {
   type FileCommentAnnotationEntry,
@@ -1238,7 +1239,7 @@ function RenderedMarkdownSurface({
   if (contents.length > CHUNKED_MARKDOWN_MIN_CHARS)
     return (
       <ChunkedMarkdown
-        file={splitMarkdownForPreview(contents)}
+        chunks={splitLargeMarkdown(contents)}
         cwd={cwd}
         relativePath={relativePath}
         threadRef={threadRef}

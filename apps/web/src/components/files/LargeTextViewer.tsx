@@ -1,6 +1,7 @@
 import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useImperativeHandle, useRef, useState, type RefObject } from "react";
 import { m } from "~/i18n/messages";
+import { Spinner } from "~/components/ui/spinner";
 import { parseDelimitedPreview } from "@t3tools/shared/delimitedPreview";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -255,27 +256,28 @@ export default function LargeTextViewer(props: {
         className="flex min-h-10 shrink-0 flex-wrap items-center gap-x-1 border-b border-border/60 px-3 py-2 text-xs text-muted-foreground tabular-nums"
         role="status"
       >
-        {props.delimiter
-          ? `${gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
-              count: rowCount,
-              formatted: rowCount.toLocaleString(),
-            })} · ${gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
-              count: columnCount,
-              formatted: columnCount.toLocaleString(),
-            })}`
-          : gt("{count, plural, one {{formatted} line} other {{formatted} lines}}", {
-              count: meta.count,
-              formatted: meta.count.toLocaleString(),
-            })}
+        {/* Counts appear once indexing ends; the prefix count alone would understate the file. */}
+        {!meta.complete
+          ? null
+          : props.delimiter
+            ? `${gt("{count, plural, one {{formatted} row} other {{formatted} rows}}", {
+                count: rowCount,
+                formatted: rowCount.toLocaleString(),
+              })} · ${gt("{count, plural, one {{formatted} column} other {{formatted} columns}}", {
+                count: columnCount,
+                formatted: columnCount.toLocaleString(),
+              })}`
+            : gt("{count, plural, one {{formatted} line} other {{formatted} lines}}", {
+                count: meta.count,
+                formatted: meta.count.toLocaleString(),
+              })}
         {meta.complete && meta.sizeBytes !== undefined
           ? ` · ${meta.sizeBytes === 0 ? gt("0 bytes") : formatAttachmentSize(meta.sizeBytes, messages)}`
-          : ` · ${gt("Indexing…")}`}
+          : null}
       </div>
       {!meta.complete ? (
-        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20">
-          <FileSurfaceNotice>
-            <T>Loading the rest of the file…</T>
-          </FileSurfaceNotice>
+        <div className="pointer-events-none absolute right-4 bottom-3 z-20">
+          <Spinner size="md" tone="muted" />
         </div>
       ) : null}
       {meta.columns === 1024 ? (
