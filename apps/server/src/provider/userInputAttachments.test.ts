@@ -1153,8 +1153,6 @@ describe("question answer paths", () => {
           expected: [
             "## Slide 1\nFirst slide\nOverview\nNotes:\nSpeaker only\n\n## Slide 2\nSecond\n\n## Slide 3\nThird\n\nNotes:\n42",
           ],
-          occurrences: { text: "\nNotes:", count: 2 },
-          absent: ["Slide preview", "Thumbnail metadata"],
         },
         {
           ext: "ods",

@@ -124,13 +124,6 @@ function xml(source: string, extension: string): XmlNode {
       return;
     }
     if (node.name === "Fallback" && !retainCompatibilityFallback(parent, node)) return;
-    if (
-      extension === ".odp" &&
-      (node.name === "table-cell" || node.name === "covered-table-cell") &&
-      odfValue(node).trim()
-    ) {
-      node.hasText = true;
-    }
     if (HIDDEN.has(node.name) || (!node.hasText && node.name !== "noBreakHyphen")) return;
     parent.hasText = true;
     if (node.name === "Choice") parent.hasTextChoice = true;
@@ -640,7 +633,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
             ...part,
             children: part.children.filter((child) => child !== notes),
           });
-          if (notes?.hasText) {
+          if (notes && hasCellText(notes)) {
             yield "\nNotes:\n";
             yield* paragraphs(notes);
           }
