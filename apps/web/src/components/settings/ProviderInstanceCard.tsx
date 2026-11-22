@@ -72,10 +72,10 @@ import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
-  type CustomModelSave,
   customModelsKey,
-  pendingCustomModelSaves,
-  settleCustomModelSave,
+  type PendingSave,
+  pendingSaves,
+  settleSave,
 } from "./customModelSaves.logic";
 import { getProviderRestartNotice } from "../ProviderUpdateLaunchNotification.logic";
 import {
@@ -747,29 +747,31 @@ interface ProviderInstanceCardProps {
 const EMPTY_ACP_PROJECTS: NonNullable<ProviderInstanceCardProps["acpProjects"]> = [];
 const NO_SECRET_SOURCES: ReadonlyArray<SecretSource> = [];
 const NO_CUSTOM_MODELS: ReadonlyArray<CustomModelDefinition> = [];
+const modelOrderKey = (order: ReadonlyArray<string>) => JSON.stringify(order);
 
 /**
- * Every custom model save writes the whole list, so the next edit starts from the last list sent
- * until the config stream echoes it, which can land before or after the save's reply.
+ * Each save writes the whole list, so the next edit starts from the last list sent until the
+ * config stream echoes it, which can land before or after the save's reply.
  */
-function useCustomModelSaves(
-  stored: ReadonlyArray<CustomModelDefinition>,
-  save: (next: ReadonlyArray<CustomModelDefinition>) => Promise<boolean>,
+function usePendingSaves<T>(
+  stored: T,
+  keyOf: (value: T) => string,
+  save: (next: T) => Promise<boolean>,
 ) {
-  const [saves, setSaves] = useState<ReadonlyArray<CustomModelSave>>([]);
-  const storedKey = customModelsKey(stored);
+  const [saves, setSaves] = useState<ReadonlyArray<PendingSave<T>>>([]);
+  const storedKey = keyOf(stored);
   const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
   if (previousStoredKey !== storedKey) {
     setPreviousStoredKey(storedKey);
     // Unchanged contents can match a queued restore, so only a stream change can be an echo.
-    setSaves((list) => pendingCustomModelSaves(list, storedKey));
+    setSaves((list) => pendingSaves(list, storedKey));
   }
-  const current = saves.at(-1)?.models ?? stored;
-  const update = useStableCallback(async (next: ReadonlyArray<CustomModelDefinition>) => {
-    const sent: CustomModelSave = { models: next, key: customModelsKey(next) };
+  const current = saves.at(-1)?.value ?? stored;
+  const update = useStableCallback(async (next: T) => {
+    const sent: PendingSave<T> = { value: next, key: keyOf(next) };
     setSaves((list) => [...list, sent]);
     const saved = await save(next);
-    setSaves((list) => settleCustomModelSave(list, sent, saved));
+    setSaves((list) => settleSave(list, sent, saved));
     return saved;
   });
   return [current, update] as const;
@@ -892,10 +894,11 @@ export function ProviderInstanceCard({
     instance.config !== null && typeof instance.config === "object"
       ? (instance.config as Record<string, unknown>).customModels
       : undefined;
-  const [customModels, updateCustomModels] = useCustomModelSaves(
+  const [customModels, updateCustomModels] = usePendingSaves(
     instance.driver === "antigravity"
       ? NO_CUSTOM_MODELS
       : readCustomModelEntries(storedCustomModels),
+    customModelsKey,
     (next) => {
       const nextConfig = nextConfigBlobWithValue(
         instance.config,
@@ -905,6 +908,11 @@ export function ProviderInstanceCard({
       const { config: _omit, ...rest } = instance;
       return onUpdate({ ...rest, config: nextConfig } as ProviderInstanceConfig);
     },
+  );
+  const [currentModelOrder, updateModelOrder] = usePendingSaves(
+    modelOrder,
+    modelOrderKey,
+    onModelOrderChange,
   );
   const modelsForDisplay = deriveProviderModelsForDisplay({
     liveModels: liveProvider?.models,
@@ -1502,12 +1510,12 @@ export function ProviderInstanceCard({
               customModels={customModels}
               hiddenModels={hiddenModels}
               favoriteModels={favoriteModels}
-              modelOrder={modelOrder}
+              modelOrder={currentModelOrder}
               onChange={updateCustomModels}
               onHiddenModelsChange={onHiddenModelsChange}
               onFavoriteModelsChange={onFavoriteModelsChange}
               onToggleFavorite={onToggleFavorite}
-              onModelOrderChange={onModelOrderChange}
+              onModelOrderChange={updateModelOrder}
             />
           </div>
         </SettingsSection>

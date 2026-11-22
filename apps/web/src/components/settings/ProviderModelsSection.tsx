@@ -55,10 +55,6 @@ const FILTER_THRESHOLD = 8;
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 4 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
-// Saved order only arrives via the settings push, so a drop holds its order until a push after
-// `base`, the saved order at drop time, matches it. The pre-drop snapshot cannot acknowledge it.
-type PendingOrder = { readonly order: ReadonlyArray<string>; readonly base: ReadonlyArray<string> };
-
 // Positions shift for many rows when one is starred, so only the grip reads them, not the row memo.
 const ModelPositionContext = createContext<ReadonlyMap<string, number>>(new Map());
 
@@ -152,8 +148,7 @@ interface ProviderModelsSectionProps {
   ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onToggleFavorite: (model: string) => void;
-  /** Resolves false when the order was not saved. */
-  readonly onModelOrderChange: (next: ReadonlyArray<string>) => Promise<boolean>;
+  readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
 }
 
 type ModelGroup = "favorite" | "visible" | "hidden";
@@ -203,21 +198,11 @@ export function ProviderModelsSection({
       .filter((model) => heldPlacements.get(model.slug) ?? hiddenModelSet.has(model.slug))
       .map((model) => model.slug),
   );
-  const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
-  const groupWithOrder = (order: ReadonlyArray<string>) =>
-    groupModelsForDisplay(listedModels, {
-      favoriteModels: favoriteModelSet,
-      hiddenModels: placedHiddenSet,
-      modelOrder: order,
-    });
-  const savedDisplayModels = groupWithOrder(modelOrder);
-  const pendingDisplayModels = pendingOrder === null ? null : groupWithOrder(pendingOrder.order);
-  const pendingMatchesSaved =
-    pendingDisplayModels?.every((model, index) => model === savedDisplayModels[index]) ?? false;
-  if (pendingOrder !== null && pendingOrder.base !== modelOrder && pendingMatchesSaved) {
-    setPendingOrder(null);
-  }
-  const displayModels = pendingDisplayModels ?? savedDisplayModels;
+  const displayModels = groupModelsForDisplay(listedModels, {
+    favoriteModels: favoriteModelSet,
+    hiddenModels: placedHiddenSet,
+    modelOrder,
+  });
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
   const hiddenCount = displayModels.filter(
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
@@ -305,7 +290,7 @@ export function ProviderModelsSection({
       setEditingSlug(null);
     }
     void onChange(customModels.filter((entry) => entry.slug !== slug));
-    void onModelOrderChange(modelOrder.filter((model) => model !== slug));
+    onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
   };
@@ -359,11 +344,9 @@ export function ProviderModelsSection({
     const from = order.indexOf(String(event.active.id));
     const to = order.indexOf(String(event.over.id));
     if (from < 0 || to < 0) return;
-    const next = arrayMove(order, from, to);
-    setPendingOrder({ order: next, base: modelOrder });
-    void onModelOrderChange(next).then((saved) => {
-      if (!saved) setPendingOrder((current) => (current?.order === next ? null : current));
-    });
+    // Another device can star or hide a row mid-drag, moving it out of the drag's group.
+    if (groupOf(displayModels[from]!) !== groupOf(displayModels[to]!)) return;
+    onModelOrderChange(arrayMove(order, from, to));
   };
 
   const handleToggleEdit = useStableCallback((slug: string) => {
@@ -480,18 +463,20 @@ export function ProviderModelsSection({
                     canManageCustomModels && model.isCustom && editingSlug === model.slug
                       ? customModels.find((entry) => entry.slug === model.slug)
                       : undefined;
+                  // An open editor stretches the row's sortable rect, so it does not reorder.
+                  const showHandle = !isHidden && !isFiltering && editingEntry === undefined;
                   const item = (
                     <SortableModelItem
-                      key={`${instanceId}:${model.slug}`}
+                      key={`${instanceId}:model:${model.slug}`}
                       slug={model.slug}
-                      canDrag={canWritePreferences && !isHidden && !isFiltering}
+                      canDrag={canWritePreferences && showHandle}
                       acceptsDrop={dragGroup === null || dragGroup === group}
                       renderRow={(handleRef, handleAttributes, handleListeners) => (
                         <ProviderModelRow
                           model={model}
                           isHidden={isHidden}
                           isFavorite={group === "favorite"}
-                          showHandle={!isHidden && !isFiltering}
+                          showHandle={showHandle}
                           handleRef={handleRef}
                           handleAttributes={handleAttributes}
                           handleListeners={handleListeners}

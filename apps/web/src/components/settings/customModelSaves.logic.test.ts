@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  type CustomModelSave,
-  pendingCustomModelSaves,
-  settleCustomModelSave,
-} from "./customModelSaves.logic";
+import { type PendingSave, pendingSaves, settleSave } from "./customModelSaves.logic";
 
 type Step =
   | { readonly send: string }
@@ -14,20 +10,20 @@ type Step =
 /** Replays sends, replies and stored-list echoes; returns the pending saves' keys. */
 function replay(initial: string, steps: ReadonlyArray<Step>) {
   let stored = initial;
-  let saves: ReadonlyArray<CustomModelSave> = [];
-  const sent: Array<CustomModelSave> = [];
+  let saves: ReadonlyArray<PendingSave<ReadonlyArray<string>>> = [];
+  const sent: Array<PendingSave<ReadonlyArray<string>>> = [];
   for (const step of steps) {
     if ("send" in step) {
-      const save: CustomModelSave = { models: [], key: step.send };
+      const save: PendingSave<ReadonlyArray<string>> = { value: [], key: step.send };
       sent.push(save);
       saves = saves.concat(save);
     } else if ("reply" in step) {
       const save = sent.find((entry) => entry.key === step.reply)!;
       sent.splice(sent.indexOf(save), 1);
-      saves = settleCustomModelSave(saves, save, step.saved ?? true);
+      saves = settleSave(saves, save, step.saved ?? true);
     } else if (step.echo !== stored) {
       stored = step.echo;
-      saves = pendingCustomModelSaves(saves, stored);
+      saves = pendingSaves(saves, stored);
     }
   }
   return saves.map((entry) => entry.key);
