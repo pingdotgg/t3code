@@ -4,33 +4,32 @@ import {
   type ServerProvider,
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
+import { RegistryContext } from "@effect/atom-react";
+import { type Atom, AtomRegistry } from "effect/reactivity";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { render } from "../../../test/render";
 
-const peers = vi.hoisted(() => ({ providers: [] as unknown[] }));
+type PresentationMap = ReadonlyMap<
+  string,
+  { readonly serverConfig: { readonly providers: readonly ServerProvider[] } | null }
+>;
 
-vi.mock(import("~/state/presentation"), async (original) => {
+const presentationsAtom = vi.hoisted(() => ({
+  current: null as Atom.Writable<PresentationMap, PresentationMap> | null,
+}));
+
+vi.mock(import("~/state/presentation"), async () => {
   const { Atom } = await import("effect/reactivity");
-  const actual = await original();
+  const atom = Atom.make<PresentationMap>(new Map());
+  presentationsAtom.current = atom;
   return {
-    ...actual,
     environmentPresentations: {
-      ...actual.environmentPresentations,
-      presentationsWithProvidersAtom: Atom.make(
-        () =>
-          new Map([
-            [
-              "linked",
-              {
-                entry: { target: { label: "Linked" } },
-                serverConfig: { providers: peers.providers },
-              },
-            ],
-          ]),
-      ) as never,
+      presentationsWithProvidersAtom: atom as never,
     },
-  };
+    environmentSummaries: {} as never,
+    useEnvironmentPresentation: () => ({ isReady: true, presentation: null }),
+  } as never;
 });
 
 import { ThreadDetailsUsage } from "./ThreadDetailsUsage";
@@ -72,16 +71,30 @@ function claude(usageLimits: ServerProviderUsageLimits): ServerProvider {
   };
 }
 
+function registryWithPeers(peers: readonly ServerProvider[]) {
+  const registry = AtomRegistry.make();
+  registry.set(
+    presentationsAtom.current!,
+    new Map([
+      ["connecting", { serverConfig: null }],
+      ["linked", { serverConfig: { providers: peers } }],
+    ]),
+  );
+  return registry;
+}
+
 describe("ThreadDetailsUsage", () => {
   it("shows a linked environment's fresher reading of the same account", async () => {
-    peers.providers = [claude(limits(25, "2026-10-30T11:58:00.000Z"))];
+    const registry = registryWithPeers([claude(limits(25, "2026-10-30T11:58:00.000Z"))]);
     await using screen = await render(
-      <ThreadDetailsUsage
-        providerInstanceId={instanceId}
-        model={null}
-        providers={[claude(limits(80, "2026-10-30T11:00:00.000Z"))]}
-        sources={[]}
-      />,
+      <RegistryContext.Provider value={registry}>
+        <ThreadDetailsUsage
+          providerInstanceId={instanceId}
+          model={null}
+          providers={[claude(limits(80, "2026-10-30T11:00:00.000Z"))]}
+          sources={[]}
+        />
+      </RegistryContext.Provider>,
     );
     await expect.element(screen.getByRole("link", { name: "Session: 75% left" })).toBeVisible();
   });

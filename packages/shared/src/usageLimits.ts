@@ -944,7 +944,6 @@ export function hubRoutes(
     account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
 }
 
-// A readable reading beats an unreadable one; between equals the later check wins.
 function fresherLimits(next: ServerProviderUsageLimits, previous: ServerProviderUsageLimits) {
   const previousUsable = limitsNotice(previous) === null;
   const usable = limitsNotice(next) === null;
@@ -960,15 +959,21 @@ export function accountUsageLimits(
   own: ServerProviderUsageLimits,
   peers: Iterable<ServerProvider>,
 ): ServerProviderUsageLimits {
-  if (!provider.enabled || own.unavailable?.reason === "unsupported") return own;
+  if (
+    !provider.enabled ||
+    provider.auth.endpoint !== undefined ||
+    own.unavailable?.reason === "unsupported"
+  ) {
+    return own;
+  }
   const enabledPeers = [...peers].filter((peer) => peer.enabled);
   const resolveKey = accountKeyResolver([provider, ...enabledPeers].map(nativeReport));
   const key = resolveKey(nativeReport(provider));
   if (key === null) return own;
   let best = own;
-  for (const peer of enabledPeers) {
+  for (const peer of providersWithLimits(enabledPeers)) {
     if (peer.driver !== provider.driver || !peer.usageLimits) continue;
-    if (limitsNotice(peer.usageLimits) !== null) continue;
+    if (peer.auth.endpoint !== undefined || limitsNotice(peer.usageLimits) !== null) continue;
     if (resolveKey(nativeReport(peer)) !== key) continue;
     if (fresherLimits(peer.usageLimits, best)) best = peer.usageLimits;
   }

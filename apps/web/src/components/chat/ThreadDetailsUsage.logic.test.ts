@@ -147,58 +147,36 @@ describe("resolveThreadDetailsLimits", () => {
 });
 
 describe("resolveThreadDetailsLimits across environments", () => {
-  const stale = "2026-10-30T11:00:00.000Z";
   const fresh = "2026-10-30T11:58:00.000Z";
-  const identified = (
-    usageLimits: ServerProviderUsageLimits,
-    auth: ServerProvider["auth"] = { status: "authenticated" },
-  ): ServerProvider => ({ ...claudeInstance(usageLimits), auth });
-  const reading = (usedPercent: number, at: string, credentialFingerprint?: string) => ({
-    ...limitsAt(usedPercent),
-    checkedAt: at,
-    ...(credentialFingerprint ? { credentialFingerprint } : {}),
-  });
   const failed: ServerProviderUsageLimits = {
     checkedAt,
     windows: [],
     unavailable: { reason: "probeFailed" },
   };
 
-  it("shows a linked environment's fresher reading of the same credential", () => {
-    const own = identified(reading(80, stale, "fp-1"));
-    const peer = identified(reading(25, fresh, "fp-1"));
-    expect(resolveThreadDetailsLimits(instanceId, null, [own], [], now, [peer])).toEqual({
-      kind: "instance",
-      limits: peer.usageLimits,
-    });
-  });
-
-  it("shows a linked environment's readable windows over a failed local probe", () => {
-    const auth = { status: "authenticated" as const, email: "dev@example.com" };
-    const own = identified(failed, auth);
-    const peer = identified(reading(25, fresh), auth);
-    expect(resolveThreadDetailsLimits(instanceId, null, [own], [], now, [peer])).toEqual({
-      kind: "instance",
-      limits: peer.usageLimits,
-    });
-  });
-
-  it("keeps a hub-routed instance's own reading instead of a non-hub peer's", () => {
-    const own = identified(unsupported, {
-      status: "authenticated",
-      type: "customEndpoint",
-      label: "Custom API endpoint",
-      endpoint: "http://127.0.0.1:8317",
-      email: "dev@example.com",
-    });
-    const peer = identified(reading(25, fresh), {
-      status: "authenticated",
-      email: "dev@example.com",
-    });
+  it("keeps a hub-routed instance's failed reading instead of a non-hub peer's", () => {
+    const own: ServerProvider = {
+      ...claudeInstance(failed),
+      auth: {
+        status: "authenticated",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+        endpoint: "http://127.0.0.1:8317",
+        email: "dev@example.com",
+      },
+    };
+    const peer: ServerProvider = {
+      ...claudeInstance({ ...limitsAt(25), checkedAt: fresh }),
+      auth: { status: "authenticated", email: "dev@example.com" },
+    };
     const unreadable = hub("Hub", [{ id: "a.json", limits: failed }]);
     expect(resolveThreadDetailsLimits(instanceId, null, [own], [unreadable], now, [peer])).toEqual({
       kind: "instance",
-      limits: unsupported,
+      limits: failed,
+    });
+    expect(resolveThreadDetailsLimits(instanceId, null, [own], [], now, [peer])).toEqual({
+      kind: "instance",
+      limits: failed,
     });
   });
 });

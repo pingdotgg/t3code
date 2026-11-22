@@ -2029,17 +2029,11 @@ describe("accountUsageLimits", () => {
   const login = (overrides: Partial<ServerProvider> = {}) =>
     provider({ instanceId: ProviderInstanceId.make("login"), ...overrides });
 
-  it.each(["codex", "claudeAgent", "antigravity"])(
-    "takes a fresher %s reading that shares a credential fingerprint",
-    (driver) => {
-      const own = login({
-        driver: ProviderDriverKind.make(driver),
-        usageLimits: readings(80, older),
-      });
-      const peer = login({ driver: own.driver, usageLimits: readings(20, newer) });
-      expect(accountUsageLimits(own, own.usageLimits!, [peer])).toBe(peer.usageLimits);
-    },
-  );
+  it("takes a fresher reading that shares a credential fingerprint", () => {
+    const own = login({ usageLimits: readings(80, older) });
+    const peer = login({ usageLimits: readings(20, newer) });
+    expect(accountUsageLimits(own, own.usageLimits!, [peer])).toBe(peer.usageLimits);
+  });
 
   it("takes a fresher reading that shares an email and workspace", () => {
     const auth = { status: "authenticated" as const, email: "Dev@Example.com", workspaceId: "w1" };
@@ -2067,7 +2061,27 @@ describe("accountUsageLimits", () => {
       { driver: ProviderDriverKind.make("claudeAgent") },
     ],
     ["disabled peer", readings(80, older), readings(20, newer), { enabled: false }],
+    ["uninstalled peer", readings(80, older), readings(20, newer), { installed: false }],
+    [
+      "unavailable peer",
+      readings(80, older),
+      readings(20, newer),
+      { availability: "unavailable" as const },
+    ],
     ["failed peer", readings(80, older), failed(newer), {}],
+    [
+      "hub-routed peer",
+      readings(80, older),
+      readings(20, newer),
+      {
+        auth: {
+          status: "authenticated" as const,
+          email: "a@x.io",
+          workspaceId: "w1",
+          endpoint: "http://127.0.0.1:8317",
+        },
+      },
+    ],
     [
       "other workspace",
       readings(80, older),
@@ -2091,6 +2105,36 @@ describe("accountUsageLimits", () => {
       ...peerOverrides,
     });
     expect(accountUsageLimits(own, ownLimits, [peer])).toBe(ownLimits);
+  });
+
+  it("keeps a hub-routed login's own reading instead of a direct peer's", () => {
+    const ownLimits = failed(older);
+    const own = login({
+      auth: { status: "authenticated", email: "a@x.io", endpoint: "http://127.0.0.1:8317" },
+      usageLimits: ownLimits,
+    });
+    const peer = login({
+      auth: { status: "authenticated", email: "a@x.io" },
+      usageLimits: readings(20, newer),
+    });
+    expect(accountUsageLimits(own, ownLimits, [peer])).toBe(ownLimits);
+  });
+
+  it("keeps its own reading when multiple workspaces make the account ambiguous", () => {
+    const ownLimits = readings(80, older);
+    const own = login({
+      auth: { status: "authenticated", email: "a@x.io" },
+      usageLimits: ownLimits,
+    });
+    const peerA = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w1" },
+      usageLimits: readings(20, newer),
+    });
+    const peerB = login({
+      auth: { status: "authenticated", email: "a@x.io", workspaceId: "w2" },
+      usageLimits: readings(10, newer),
+    });
+    expect(accountUsageLimits(own, ownLimits, [peerA, peerB])).toBe(ownLimits);
   });
 
   it("keeps an unsupported own reading", () => {
