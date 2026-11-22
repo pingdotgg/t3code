@@ -12,6 +12,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
+import * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlRateLimit from "@t3tools/source-control-core/server/SourceControlRateLimit";
 
 import type * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
@@ -662,6 +663,38 @@ describe("GitHubSourceControlProvider writes", () => {
         sshUrl: "git@github.com:acme/new.git",
       });
       assert.deepStrictEqual(requests, ["GET user", "POST orgs/acme/repos"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("tells the user to pick another name when GitHub says the name is taken", () => {
+    const { layer } = harness({
+      remotes: "",
+      api: {
+        rest: (input) =>
+          input.path === "user"
+            ? Effect.succeed(restResponse({ login: "me" }))
+            : Effect.fail(
+                new GitHubRequestPolicy.GitHubApiResponseError({
+                  host: "github.com",
+                  operation: "createRepository",
+                  status: 422,
+                  githubErrors: [
+                    "Repository creation failed.",
+                    "name already exists on this account",
+                  ],
+                }),
+              ),
+      },
+    });
+    return Effect.gen(function* () {
+      const gh = yield* GitHubSourceControlProvider.make;
+      const error = yield* Effect.flip(
+        gh.createRepository({ cwd: "/repo", repository: "me/taken", visibility: "private" }),
+      );
+      const shown = SourceControlProvider.userFacingSourceControlDetail(error.cause);
+      assert.ok(shown, "the name rejection reaches the user instead of the generic message");
+      assert.include(shown, "taken");
+      assert.match(shown, /already exists/i);
     }).pipe(Effect.provide(layer));
   });
 
