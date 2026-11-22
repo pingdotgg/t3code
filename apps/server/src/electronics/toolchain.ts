@@ -84,49 +84,68 @@ function mapKiCadSeverity(raw: string | undefined): "error" | "warning" | "info"
 function parseKiCadJsonViolations(
   jsonText: string,
   source: "kicad_erc" | "kicad_drc",
-): ElectronicsValidationIssue[] {
+):
+  | { readonly valid: true; readonly issues: ElectronicsValidationIssue[] }
+  | { readonly valid: false } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(jsonText);
   } catch {
-    return [];
+    return { valid: false };
   }
-  if (typeof parsed !== "object" || parsed === null) return [];
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { valid: false };
+  }
 
   const violations: KiCadViolationRaw[] = [];
   const obj = parsed as {
-    violations?: KiCadViolationRaw[];
-    unconnected_items?: KiCadViolationRaw[];
-    sheets?: Array<{ violations?: KiCadViolationRaw[] }>;
+    violations?: unknown;
+    unconnected_items?: unknown;
+    sheets?: unknown;
   };
 
-  if (Array.isArray(obj.violations)) violations.push(...obj.violations);
-  if (Array.isArray(obj.unconnected_items)) violations.push(...obj.unconnected_items);
+  const hasExpectedContainer =
+    Array.isArray(obj.violations) ||
+    Array.isArray(obj.unconnected_items) ||
+    Array.isArray(obj.sheets);
+  if (!hasExpectedContainer) {
+    return { valid: false };
+  }
+
+  if (Array.isArray(obj.violations)) violations.push(...(obj.violations as KiCadViolationRaw[]));
+  if (Array.isArray(obj.unconnected_items)) {
+    violations.push(...(obj.unconnected_items as KiCadViolationRaw[]));
+  }
   if (Array.isArray(obj.sheets)) {
-    for (const sheet of obj.sheets) {
-      if (Array.isArray(sheet.violations)) violations.push(...sheet.violations);
+    for (const sheet of obj.sheets as Array<{ violations?: unknown }>) {
+      if (Array.isArray(sheet?.violations)) {
+        violations.push(...(sheet.violations as KiCadViolationRaw[]));
+      }
     }
   }
 
-  return violations.map((v, idx) => {
-    const pos = v.items?.[0]?.pos;
-    const detail = v.items
-      ?.map((i) => i.description)
-      .filter((d): d is string => typeof d === "string" && d.length > 0)
-      .slice(0, 2)
-      .join("; ");
-    const baseMsg = v.description ?? v.type ?? "KiCad rule violation";
-    return {
-      id: `${source}-${idx + 1}`,
-      code: v.type ?? source,
-      severity: mapKiCadSeverity(v.severity),
-      source,
-      message: detail ? `${baseMsg} (${detail})` : baseMsg,
-      refs: [],
-      ...(typeof pos?.x === "number" ? { x: pos.x } : {}),
-      ...(typeof pos?.y === "number" ? { y: pos.y } : {}),
-    };
-  });
+  return {
+    valid: true,
+    issues: violations.map((v, idx) => {
+      const pos = v.items?.[0]?.pos;
+      const detail = v.items
+        ?.map((i) => i.description)
+        .filter((d): d is string => typeof d === "string" && d.length > 0)
+        .slice(0, 2)
+        .join("; ");
+      const baseMsg = v.description ?? v.type ?? "KiCad rule violation";
+      return {
+        id: `${source}-${idx + 1}`,
+        code: v.type ?? source,
+        severity: mapKiCadSeverity(v.severity),
+        source,
+        message: detail ? `${baseMsg} (${detail})` : baseMsg,
+        refs: [],
+        ...(typeof pos?.x === "number" ? { x: pos.x } : {}),
+        ...(typeof pos?.y === "number" ? { y: pos.y } : {}),
+      };
+    }),
+  };
 }
 
 export const runKiCadExternalValidation = Effect.fn(
@@ -165,11 +184,19 @@ export const runKiCadExternalValidation = Effect.fn(
         };
       }
       const reportText = yield* fs.readFileString(reportPath);
-      const issues = parseKiCadJsonViolations(reportText, source);
+      const parsedReport = parseKiCadJsonViolations(reportText, source);
+      if (!parsedReport.valid) {
+        return {
+          ran: false,
+          source,
+          issues: [] as ElectronicsValidationIssue[],
+          note: `kicad-cli produced an invalid or truncated JSON ${source === "kicad_erc" ? "ERC" : "DRC"} report.`,
+        };
+      }
       return {
         ran: true,
         source,
-        issues,
+        issues: parsedReport.issues,
         note: undefined as string | undefined,
       };
     }),
@@ -185,10 +212,46 @@ export const runKiCadExternalValidation = Effect.fn(
   );
 });
 
+const MAX_STAGED_INCLUDES = 24;
+const MAX_INCLUDE_FILE_BYTES = 1024 * 1024;
+
+function stripUnsafeSpiceLines(spiceSource: string): {
+  readonly lines: string[];
+  readonly blockedDirectives: string[];
+} {
+  const output: string[] = [];
+  const blockedDirectives: string[] = [];
+  let inControlBlock = false;
+  for (const rawLine of spiceSource.split(/\r?\n/u)) {
+    const trimmed = rawLine.trim();
+    if (/^\.control\b/iu.test(trimmed)) {
+      inControlBlock = true;
+      blockedDirectives.push(".control");
+      continue;
+    }
+    if (/^\.endc\b/iu.test(trimmed)) {
+      inControlBlock = false;
+      continue;
+    }
+    if (inControlBlock) continue;
+    if (/^\.(shell|system|csparam|write|wrdata|save|plot)\b/iu.test(trimmed)) {
+      blockedDirectives.push(trimmed.split(/\s+/u)[0] ?? trimmed);
+      continue;
+    }
+    if (/^\.(end|op|ac|tran|dc|print)\b/iu.test(trimmed)) {
+      continue;
+    }
+    output.push(rawLine);
+  }
+  return { lines: output, blockedDirectives };
+}
+
 export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSimulation")(
   function* (input: {
     readonly model: ElectronicsCircuitModel;
     readonly spiceSource: string;
+    readonly workspaceRoot: string;
+    readonly sourceFilePath: string;
     readonly kind: ElectronicsSimulationKind;
     readonly ngspicePath?: string;
     readonly outputNode?: string;
@@ -208,14 +271,72 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ngspice-" });
-        const deckPath = path.join(tmpDir, "deck.cir");
-        const stripped = input.spiceSource
-          .split(/\r?\n/u)
-          .filter((line) => !/^\s*\.(end|op|ac|tran|dc|control|endc)\b/iu.test(line))
-          .join("\n");
+        const rootReal = yield* fs
+          .realPath(input.workspaceRoot)
+          .pipe(Effect.orElseSucceed(() => path.resolve(input.workspaceRoot)));
+        const sourceDir = path.dirname(path.resolve(input.sourceFilePath));
+        const { lines, blockedDirectives } = stripUnsafeSpiceLines(input.spiceSource);
+        if (blockedDirectives.length > 0) {
+          // Refuse to execute decks with interactive/shell control blocks on the server.
+          return null;
+        }
 
+        // Validate and stage any workspace-relative .include / .lib references inside tmpDir.
+        const stagedPaths = new Set<string>();
+        const sanitizedLines: string[] = [];
+        for (const line of lines) {
+          const incMatch = /^\s*\.(include|inc|lib)\s+("([^"]+)"|'([^']+)'|(\S+))(.*)$/iu.exec(
+            line,
+          );
+          if (!incMatch) {
+            sanitizedLines.push(line);
+            continue;
+          }
+          const directiveName = incMatch[1]!;
+          const refPath = incMatch[3] ?? incMatch[4] ?? incMatch[5] ?? "";
+          const trailing = incMatch[6] ?? "";
+          if (
+            refPath.length === 0 ||
+            path.isAbsolute(refPath) ||
+            stagedPaths.size >= MAX_STAGED_INCLUDES
+          ) {
+            return null;
+          }
+          const resolvedCandidate = path.resolve(sourceDir, refPath);
+          const relLex = path.relative(rootReal, resolvedCandidate);
+          if (relLex.startsWith("..") || path.isAbsolute(relLex)) {
+            return null;
+          }
+          const exists = yield* fs.exists(resolvedCandidate);
+          if (!exists) return null;
+          const realCandidate = yield* fs.realPath(resolvedCandidate);
+          const relReal = path.relative(rootReal, realCandidate);
+          if (relReal.startsWith("..") || path.isAbsolute(relReal)) {
+            return null;
+          }
+          const stat = yield* fs.stat(realCandidate);
+          if (stat.type !== "File" || Number(stat.size) > MAX_INCLUDE_FILE_BYTES) {
+            return null;
+          }
+          const stagedRel = relReal.replaceAll("\\", "/");
+          const stagedTarget = path.join(tmpDir, stagedRel);
+          if (!stagedPaths.has(stagedRel)) {
+            stagedPaths.add(stagedRel);
+            const includeContent = yield* fs.readFileString(realCandidate);
+            const cleanedInc = stripUnsafeSpiceLines(includeContent);
+            if (cleanedInc.blockedDirectives.length > 0) return null;
+            yield* fs.makeDirectory(path.dirname(stagedTarget), { recursive: true });
+            yield* fs.writeFileString(stagedTarget, cleanedInc.lines.join("\n"));
+          }
+          sanitizedLines.push(`.${directiveName} "${stagedRel}"${trailing}`);
+        }
+
+        const deckPath = path.join(tmpDir, "deck.cir");
         const targetNode =
           input.outputNode ?? input.model.nets.find((n) => !n.isGround)?.name ?? "out";
+        if (!/^[A-Za-z0-9_.:+-]+$/u.test(targetNode)) {
+          return null;
+        }
 
         const directive =
           input.kind === "dc_op"
@@ -224,10 +345,10 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
               ? `.ac dec ${input.pointsPerDecade ?? 10} ${input.startFreqHz ?? 10} ${input.stopFreqHz ?? 1_000_000}\n.print ac vdb(${targetNode}) vp(${targetNode})`
               : `.tran ${input.stepTimeSeconds ?? 5e-5} ${input.stopTimeSeconds ?? 5e-3}\n.print tran v(${targetNode})`;
 
-        const deck = `${stripped}\n${directive}\n.end\n`;
+        const deck = `${sanitizedLines.join("\n")}\n${directive}\n.end\n`;
         yield* fs.writeFileString(deckPath, deck);
 
-        const stdout = yield* execToolString(executable, ["-b", deckPath], RUN_TIMEOUT);
+        const stdout = yield* execToolString(executable, ["-b", deckPath], RUN_TIMEOUT, tmpDir);
         const nodeVoltages: Array<{ node: string; voltageV: number }> = [];
         const points: Array<{ x: number; y: number; phaseDeg?: number }> = [];
 

@@ -171,18 +171,30 @@ function mapKiCadPinType(raw: string | undefined): ElectronicsPinElectricalType 
   }
 }
 
-export function parseEngineeringNumber(raw: string): number | null {
+export function parseEngineeringNumber(
+  raw: string,
+  options: { readonly spice?: boolean } = {},
+): number | null {
+  const spice = options.spice ?? false;
   const cleaned = raw
     .trim()
-    .replace(/Ω|OHMS?|OHM|F|H|V|A|HZ$/iu, "")
+    .replace(/Ω|OHMS?|OHM|HZ$/iu, "")
     .trim();
-  const match = /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*(meg|t|g|k|m|u|µ|n|p|f|r)?/iu.exec(
-    cleaned,
-  );
+  const match =
+    /^([+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*(meg|mil|t|g|k|m|u|µ|n|p|f|r)?([a-z]*)$/iu.exec(
+      cleaned,
+    );
   if (!match) return null;
   const base = Number(match[1]);
   if (!Number.isFinite(base)) return null;
-  const suffix = (match[2] ?? "").toLowerCase();
+  const rawSuffix = match[2] ?? "";
+  const trailingUnit = match[3] ?? "";
+  // In non-SPICE display values like "1F" (1 Farad), uppercase standalone "F" is Farads,
+  // whereas "10f" or "10fF" (or any SPICE value "10f"/"10F") is femto (1e-15).
+  if (!spice && rawSuffix === "F" && trailingUnit.length === 0) {
+    return base;
+  }
+  const suffix = rawSuffix.toLowerCase();
   switch (suffix) {
     case "t":
       return base * 1e12;
@@ -190,6 +202,8 @@ export function parseEngineeringNumber(raw: string): number | null {
       return base * 1e9;
     case "meg":
       return base * 1e6;
+    case "mil":
+      return base * 25.4e-6;
     case "k":
       return base * 1e3;
     case "m":
@@ -354,6 +368,21 @@ interface LibPinDef {
   readonly electricalType: ElectronicsPinElectricalType;
   readonly x: number;
   readonly y: number;
+  readonly unit: number;
+  readonly style: number;
+}
+
+function parseKiCadSubSymbolUnitStyle(name: string | undefined): {
+  readonly unit: number;
+  readonly style: number;
+} {
+  if (!name) return { unit: 0, style: 0 };
+  const match = /_(\d+)_(\d+)$/u.exec(name);
+  if (!match) return { unit: 0, style: 0 };
+  return {
+    unit: Number(match[1]),
+    style: Number(match[2]),
+  };
 }
 
 function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
@@ -366,7 +395,7 @@ function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
     if (!libId) continue;
     const pins: LibPinDef[] = [];
 
-    const collectPins = (node: SExprList) => {
+    const collectPins = (node: SExprList, unit: number, style: number) => {
       for (const pin of findChildren(node, "pin")) {
         const electricalType = mapKiCadPinType(atomString(pin[1]));
         const at = findChild(pin, "at");
@@ -377,15 +406,17 @@ function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
         const x = atomNumber(at?.[1]) ?? 0;
         const y = atomNumber(at?.[2]) ?? 0;
         if (number) {
-          pins.push({ number, name, electricalType, x, y });
+          pins.push({ number, name, electricalType, x, y, unit, style });
         }
       }
       for (const sub of findChildren(node, "symbol")) {
-        collectPins(sub);
+        const subName = atomString(sub[1]);
+        const parsed = parseKiCadSubSymbolUnitStyle(subName);
+        collectPins(sub, parsed.unit, parsed.style);
       }
     };
 
-    collectPins(sym);
+    collectPins(sym, 0, 0);
     libMap.set(libId, pins);
   }
   return libMap;
@@ -484,6 +515,7 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     kind: ElectronicsComponentKind;
     libId?: string;
     footprint?: string;
+    unit?: number;
     x: number;
     y: number;
     rotation: number;
@@ -505,6 +537,9 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     const y = atomNumber(at?.[2]) ?? 0;
     const rotation = atomNumber(at?.[3]) ?? 0;
     const mirror = atomString(findChild(sym, "mirror")?.[1]);
+    const symUnit = atomNumber(findChild(sym, "unit")?.[1]);
+    const symStyle = atomNumber(findChild(sym, "convert")?.[1]) ?? 1;
+    const targetUnit = symUnit ?? 1;
 
     let ref = "";
     let value = "";
@@ -521,7 +556,11 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     if (!value) value = libId?.split(":").pop() ?? ref;
 
     const kind = inferComponentKind(ref, libId, value);
-    const libPins = libId ? (libMap.get(libId) ?? []) : [];
+    const allLibPins = libId ? (libMap.get(libId) ?? []) : [];
+    const libPins = allLibPins.filter(
+      (lp) =>
+        (lp.unit === 0 || lp.unit === targetUnit) && (lp.style === 0 || lp.style === symStyle),
+    );
     const pins = libPins.map((lp) => {
       const pos = transformKiCadSchPin(x, y, rotation, mirror, lp.x, lp.y);
       return {
@@ -543,6 +582,7 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
       kind,
       ...(libId !== undefined ? { libId } : {}),
       ...(footprint !== undefined ? { footprint } : {}),
+      ...(symUnit !== undefined ? { unit: Math.round(symUnit) } : {}),
       x,
       y,
       rotation,
@@ -550,7 +590,7 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     });
   }
 
-  // Build spatial connectivity graph
+  // Build spatial connectivity graph with a uniform spatial grid index for wire segments
   const uf = new UnionFind();
   const pointIds = new Map<string, number>();
   let nextId = 1;
@@ -564,45 +604,72 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     return id;
   };
 
-  // Connect wire endpoints
+  const SCH_GRID_CELL = 10;
+  const wireGrid = new Map<string, number[]>();
+  const largeWireIndices: number[] = [];
   const wireStartIds: number[] = [];
-  for (const w of wires) {
+  for (let i = 0; i < wires.length; i += 1) {
+    const w = wires[i]!;
     const a = getPointId(w.x1, w.y1);
     const b = getPointId(w.x2, w.y2);
     uf.union(a, b);
     wireStartIds.push(a);
-  }
 
-  // Connect junctions lying on any wire segment
-  for (const j of junctions) {
-    const jId = getPointId(j.x, j.y);
-    for (let i = 0; i < wires.length; i += 1) {
-      if (isPointOnSegment(j.x, j.y, wires[i]!)) {
-        uf.union(jId, wireStartIds[i]!);
+    const minCx = Math.floor((Math.min(w.x1, w.x2) - 0.5) / SCH_GRID_CELL);
+    const maxCx = Math.floor((Math.max(w.x1, w.x2) + 0.5) / SCH_GRID_CELL);
+    const minCy = Math.floor((Math.min(w.y1, w.y2) - 0.5) / SCH_GRID_CELL);
+    const maxCy = Math.floor((Math.max(w.y1, w.y2) + 0.5) / SCH_GRID_CELL);
+    if ((maxCx - minCx + 1) * (maxCy - minCy + 1) > 256) {
+      largeWireIndices.push(i);
+    } else {
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        for (let cy = minCy; cy <= maxCy; cy += 1) {
+          const cellKey = `${cx},${cy}`;
+          let bucket = wireGrid.get(cellKey);
+          if (!bucket) {
+            bucket = [];
+            wireGrid.set(cellKey, bucket);
+          }
+          bucket.push(i);
+        }
       }
     }
   }
 
-  // Connect pins and labels lying on wire endpoints or segments
-  for (const comp of components) {
-    for (const pin of comp.pins) {
-      const pId = getPointId(pin.x, pin.y);
-      for (let i = 0; i < wires.length; i += 1) {
-        if (isPointOnSegment(pin.x, pin.y, wires[i]!)) {
-          uf.union(pId, wireStartIds[i]!);
+  const unionPointWithTouchingWires = (px: number, py: number, ptId: number) => {
+    const cx = Math.floor(px / SCH_GRID_CELL);
+    const cy = Math.floor(py / SCH_GRID_CELL);
+    const bucket = wireGrid.get(`${cx},${cy}`);
+    if (bucket) {
+      for (const i of bucket) {
+        if (isPointOnSegment(px, py, wires[i]!)) {
+          uf.union(ptId, wireStartIds[i]!);
         }
       }
+    }
+    for (const i of largeWireIndices) {
+      if (isPointOnSegment(px, py, wires[i]!)) {
+        uf.union(ptId, wireStartIds[i]!);
+      }
+    }
+  };
+
+  // Connect junctions lying on any wire segment
+  for (const j of junctions) {
+    unionPointWithTouchingWires(j.x, j.y, getPointId(j.x, j.y));
+  }
+
+  // Connect pins lying on wire endpoints or segments
+  for (const comp of components) {
+    for (const pin of comp.pins) {
+      unionPointWithTouchingWires(pin.x, pin.y, getPointId(pin.x, pin.y));
     }
   }
 
   const labelGroupsByName = new Map<string, number>();
   for (const lbl of labels) {
     const lId = getPointId(lbl.x, lbl.y);
-    for (let i = 0; i < wires.length; i += 1) {
-      if (isPointOnSegment(lbl.x, lbl.y, wires[i]!)) {
-        uf.union(lId, wireStartIds[i]!);
-      }
-    }
+    unionPointWithTouchingWires(lbl.x, lbl.y, lId);
     // Same-name labels connect electrically across the sheet
     const prev = labelGroupsByName.get(lbl.text);
     if (prev !== undefined) {
@@ -730,6 +797,7 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     kind: c.kind,
     ...(c.libId !== undefined ? { libId: c.libId } : {}),
     ...(c.footprint !== undefined ? { footprint: c.footprint } : {}),
+    ...(c.unit !== undefined ? { unit: c.unit } : {}),
     x: c.x,
     y: c.y,
     rotation: c.rotation,
@@ -829,6 +897,35 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
 
+    const readPcbNet = (node: SExprList | undefined): string | undefined => {
+      if (!node) return undefined;
+      const code = atomNumber(node[1]);
+      if (code !== undefined) {
+        const inlineName = atomString(node[2]);
+        const resolved = inlineName && inlineName.length > 0 ? inlineName : netIdToName.get(code);
+        return resolved && resolved.length > 0 ? resolved : undefined;
+      }
+      // KiCad 10 writes name-based nets directly: (net "GND")
+      const directName = atomString(node[1]);
+      if (directName && directName.length > 0) {
+        if (!netPinsMap.has(directName)) {
+          netPinsMap.set(directName, []);
+        }
+        return directName;
+      }
+      return undefined;
+    };
+
+    const readLayersList = (node: SExprList | undefined): string[] | undefined => {
+      if (!node) return undefined;
+      const out: string[] = [];
+      for (let i = 1; i < node.length; i += 1) {
+        const s = atomString(node[i]);
+        if (s && s.length > 0) out.push(s);
+      }
+      return out.length > 0 ? out : undefined;
+    };
+
     const pins: ElectronicsPin[] = [];
     for (const pad of findChildren(fp, "pad")) {
       const padNum = atomString(pad[1]) ?? "";
@@ -838,16 +935,14 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       const wx = Number((fx + pxLocal * cos - pyLocal * sin).toFixed(3));
       const wy = Number((fy + pxLocal * sin + pyLocal * cos).toFixed(3));
 
-      const netNode = findChild(pad, "net");
-      const netCode = atomNumber(netNode?.[1]);
-      const netName =
-        atomString(netNode?.[2]) ?? (netCode !== undefined ? netIdToName.get(netCode) : undefined);
-
-      const cleanNet = netName && netName.length > 0 ? netName : undefined;
+      const cleanNet = readPcbNet(findChild(pad, "net"));
+      const rawLayers = readLayersList(findChild(pad, "layers"));
+      const copperLayers = rawLayers?.filter((l) => l.endsWith(".Cu") || l === "*");
       pins.push({
         number: padNum || String(pins.length + 1),
         electricalType: "passive",
         ...(cleanNet !== undefined ? { net: cleanNet } : {}),
+        ...(copperLayers && copperLayers.length > 0 ? { layers: copperLayers } : {}),
         x: wx,
         y: wy,
       });
@@ -879,6 +974,24 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     });
   }
 
+  const readCopperNet = (node: SExprList | undefined): string | undefined => {
+    if (!node) return undefined;
+    const code = atomNumber(node[1]);
+    if (code !== undefined) {
+      const inlineName = atomString(node[2]);
+      const resolved = inlineName && inlineName.length > 0 ? inlineName : netIdToName.get(code);
+      return resolved && resolved.length > 0 ? resolved : undefined;
+    }
+    const directName = atomString(node[1]);
+    if (directName && directName.length > 0) {
+      if (!netPinsMap.has(directName)) {
+        netPinsMap.set(directName, []);
+      }
+      return directName;
+    }
+    return undefined;
+  };
+
   const wires: ElectronicsWireSegment[] = [];
   for (const seg of findChildren(root, "segment")) {
     const start = findChild(seg, "start");
@@ -889,8 +1002,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const y2 = atomNumber(end?.[2]);
     const width = atomNumber(findChild(seg, "width")?.[1]) ?? 0.25;
     const layer = atomString(findChild(seg, "layer")?.[1]) ?? "F.Cu";
-    const netCode = atomNumber(findChild(seg, "net")?.[1]);
-    const net = netCode !== undefined ? netIdToName.get(netCode) : undefined;
+    const net = readCopperNet(findChild(seg, "net"));
     if (x1 !== undefined && y1 !== undefined && x2 !== undefined && y2 !== undefined) {
       wires.push({
         x1,
@@ -911,8 +1023,15 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const y = atomNumber(at?.[2]);
     const size = atomNumber(findChild(via, "size")?.[1]) ?? 0.6;
     const drill = atomNumber(findChild(via, "drill")?.[1]);
-    const netCode = atomNumber(findChild(via, "net")?.[1]);
-    const net = netCode !== undefined ? netIdToName.get(netCode) : undefined;
+    const net = readCopperNet(findChild(via, "net"));
+    const layersNode = findChild(via, "layers");
+    const viaLayers: string[] = [];
+    if (layersNode) {
+      for (let i = 1; i < layersNode.length; i += 1) {
+        const s = atomString(layersNode[i]);
+        if (s && s.length > 0) viaLayers.push(s);
+      }
+    }
     if (x !== undefined && y !== undefined) {
       vias.push({
         x,
@@ -920,6 +1039,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
         size,
         ...(drill !== undefined ? { drill } : {}),
         ...(net !== undefined ? { net } : {}),
+        ...(viaLayers.length > 0 ? { layers: viaLayers } : {}),
       });
     }
   }
@@ -1283,19 +1403,24 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
     }
   }
 
-  // Union-find across source_ports via source_trace
-  const portIndex = new Map<string, number>();
-  let nextPortId = 1;
-  const getPid = (id: string) => {
-    const existing = portIndex.get(id);
+  // Union-find across source_ports AND source_nets via source_trace so separate traces
+  // referencing the same source_net_id are always unified into one electrical net.
+  const graphIndex = new Map<string, number>();
+  let nextGraphId = 1;
+  const getGraphId = (key: string) => {
+    const existing = graphIndex.get(key);
     if (existing !== undefined) return existing;
-    const assigned = nextPortId;
-    nextPortId += 1;
-    portIndex.set(id, assigned);
+    const assigned = nextGraphId;
+    nextGraphId += 1;
+    graphIndex.set(key, assigned);
     return assigned;
   };
   const uf = new UnionFind();
-  const rootNetLabel = new Map<number, string>();
+  const pendingLabels: Array<{ readonly memberId: number; readonly name: string }> = [];
+
+  for (const [netId, netName] of sourceNets.entries()) {
+    pendingLabels.push({ memberId: getGraphId(`net:${netId}`), name: netName });
+  }
 
   for (const el of elements) {
     if (el.type !== "source_trace") continue;
@@ -1306,33 +1431,62 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
       ? el.connected_source_net_ids.filter((id): id is string => typeof id === "string")
       : [];
 
-    for (let i = 0; i + 1 < connectedPorts.length; i += 1) {
-      uf.union(getPid(connectedPorts[i]!), getPid(connectedPorts[i + 1]!));
+    const memberIds: number[] = [
+      ...connectedPorts.map((pid) => getGraphId(`port:${pid}`)),
+      ...connectedNets.map((nid) => getGraphId(`net:${nid}`)),
+    ];
+    for (let i = 0; i + 1 < memberIds.length; i += 1) {
+      uf.union(memberIds[i]!, memberIds[i + 1]!);
     }
-    const explicitNetName =
-      (typeof el.display_name === "string" && el.display_name.trim().length > 0
-        ? el.display_name.trim()
-        : undefined) ??
-      connectedNets.map((nid) => sourceNets.get(nid)).find((n): n is string => Boolean(n));
 
-    if (explicitNetName && connectedPorts.length > 0) {
-      rootNetLabel.set(uf.find(getPid(connectedPorts[0]!)), explicitNetName);
+    const explicitDisplayName =
+      typeof el.display_name === "string" && el.display_name.trim().length > 0
+        ? el.display_name.trim()
+        : undefined;
+    const explicitSourceNetName = connectedNets
+      .map((nid) => sourceNets.get(nid))
+      .find((n): n is string => Boolean(n));
+    const label = explicitSourceNetName ?? explicitDisplayName;
+    if (label && memberIds.length > 0) {
+      pendingLabels.push({ memberId: memberIds[0]!, name: label });
+    }
+  }
+
+  // Resolve explicit net names AFTER all unions finish so trace ordering never drops labels.
+  const rootNetLabel = new Map<number, string>();
+  for (const { memberId, name } of pendingLabels) {
+    const root = uf.find(memberId);
+    if (!rootNetLabel.has(root)) {
+      rootNetLabel.set(root, name);
     }
   }
 
   const netPinsMap = new Map<string, ElectronicsNetPinRef[]>();
   const portToNet = new Map<string, string>();
   const rootToAutoName = new Map<number, string>();
+  const explicitNetNames = new Set(rootNetLabel.values());
   let netCounter = 1;
 
+  // Group ports by component in O(N) once instead of scanning all ports per component.
+  const portsByComponent = new Map<string, Array<readonly [string, Record<string, unknown>]>>();
   for (const [portId, sp] of sourcePorts.entries()) {
-    const pid = portIndex.get(portId);
+    if (typeof sp.source_component_id === "string") {
+      let bucket = portsByComponent.get(sp.source_component_id);
+      if (!bucket) {
+        bucket = [];
+        portsByComponent.set(sp.source_component_id, bucket);
+      }
+      bucket.push([portId, sp]);
+    }
+    const pid = graphIndex.get(`port:${portId}`);
     if (pid === undefined) continue;
     const root = uf.find(pid);
     let netName = rootNetLabel.get(root) ?? rootToAutoName.get(root);
     if (!netName) {
-      netName = `NET_${netCounter}`;
-      netCounter += 1;
+      do {
+        netName = `NET_${netCounter}`;
+        netCounter += 1;
+      } while (explicitNetNames.has(netName));
       rootToAutoName.set(root, netName);
     }
     portToNet.set(portId, netName);
@@ -1382,9 +1536,9 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
     fallbackIdx += 1;
 
     const pins: ElectronicsPin[] = [];
-    let pIdx = 0;
-    for (const [portId, sp] of sourcePorts.entries()) {
-      if (sp.source_component_id !== compId) continue;
+    const compPorts = portsByComponent.get(compId) ?? [];
+    for (let pIdx = 0; pIdx < compPorts.length; pIdx += 1) {
+      const [portId, sp] = compPorts[pIdx]!;
       const pinNum =
         typeof sp.pin_number === "number" || typeof sp.pin_number === "string"
           ? String(sp.pin_number)
@@ -1405,7 +1559,6 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
         x: px,
         y: py,
       });
-      pIdx += 1;
     }
 
     components.push({

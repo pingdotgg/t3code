@@ -50,6 +50,8 @@ export function ElectronicsSettings() {
       <SettingsSection id="electronics" title={gt("Electronics Workbench")}>
         <SettingsRow
           id="electronics-workbench-enabled"
+          serverScoped
+          settingKeys={["enableElectronicsWorkbench"]}
           title={gt("Enable Electronics Workbench")}
           description={gt(
             "Shows the Electronics tab in the right-hand panel with built-in schematic/PCB/SPICE parsing, path validation, and MNA simulation.",
@@ -68,6 +70,8 @@ export function ElectronicsSettings() {
 
         <SettingsRow
           id="electronics-agent-access"
+          serverScoped
+          settingKeys={["enableAgentElectronicsAccess"]}
           title={gt("Allow agent MCP access")}
           description={gt(
             "Lets agents list, inspect, trace paths, validate ERC/DRC, simulate circuits, and open designs in the Electronics panel.",
@@ -86,6 +90,8 @@ export function ElectronicsSettings() {
 
         <SettingsRow
           id="electronics-external-tools"
+          serverScoped
+          settingKeys={["electronicsAllowExternalTools"]}
           title={gt("Allow local EDA CLI tools")}
           description={gt(
             "Permits running locally installed kicad-cli (ERC/DRC) and ngspice (full nonlinear SPICE simulation). Built-in checks always work without external binaries.",

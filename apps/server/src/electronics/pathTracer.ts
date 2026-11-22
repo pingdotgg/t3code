@@ -29,10 +29,22 @@ function resolveEndpoint(model: ElectronicsCircuitModel, rawQuery: string): Reso
   const warnings: string[] = [];
   const nets = new Set<string>();
 
-  // 1. Exact net match (case-insensitive)
-  const exactNet = model.nets.find((n) => n.name.toLowerCase() === query.toLowerCase());
-  if (exactNet) {
-    nets.add(exactNet.name);
+  // 1. Exact net match (prefer exact case; case-insensitive fallback only when unambiguous)
+  const exactCaseNet = model.nets.find((n) => n.name === query);
+  if (exactCaseNet) {
+    nets.add(exactCaseNet.name);
+    return { query, nets, warnings };
+  }
+  const lowerQuery = query.toLowerCase();
+  const ciNetMatches = model.nets.filter((n) => n.name.toLowerCase() === lowerQuery);
+  if (ciNetMatches.length === 1) {
+    nets.add(ciNetMatches[0]!.name);
+    return { query, nets, warnings };
+  }
+  if (ciNetMatches.length > 1) {
+    warnings.push(
+      `Net query "${query}" matched multiple nets differing only by case (${ciNetMatches.map((n) => n.name).join(", ")}); specify exact case.`,
+    );
     return { query, nets, warnings };
   }
 

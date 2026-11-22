@@ -33,6 +33,7 @@ import {
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthProvidersManageScope,
   type AuthEnvironmentScope,
@@ -3418,10 +3419,26 @@ export const layerWsRpc = (
         [WS_METHODS.electronicsSimulate]: (input) => electronicsService.simulate(input),
         [WS_METHODS.electronicsToolchainStatus]: (input) =>
           electronicsService.getToolchainStatus(input.refresh ?? false),
-        [WS_METHODS.electronicsOpenPanel]: (input) => electronicsService.openPanel(input),
+        [WS_METHODS.electronicsOpenPanel]: (input) =>
+          authorizeEffect(AuthFilesystemReadScope, electronicsService.openPanel(input)),
         [WS_METHODS.electronicsClosePanel]: (input) =>
           electronicsService.closePanel(input.threadId).pipe(Effect.as({})),
-        [WS_METHODS.subscribeElectronicsState]: (_input) => electronicsService.subscribeState,
+        [WS_METHODS.subscribeElectronicsState]: (_input) =>
+          currentSession.scopes.includes(AuthFilesystemReadScope)
+            ? electronicsService.subscribeState
+            : electronicsService.subscribeState.pipe(
+                Stream.map((state) => ({
+                  ...state,
+                  sessions: state.sessions.map(
+                    ({
+                      lastTrace: _lastTrace,
+                      lastValidation: _lastValidation,
+                      lastSimulation: _lastSimulation,
+                      ...session
+                    }) => session,
+                  ),
+                })),
+              ),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

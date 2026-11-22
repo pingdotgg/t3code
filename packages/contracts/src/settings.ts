@@ -1469,7 +1469,7 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(true)),
   ),
   electronicsAllowExternalTools: Schema.Boolean.pipe(
-    Schema.withDecodingDefault(Effect.succeed(true)),
+    Schema.withDecodingDefault(Effect.succeed(false)),
   ),
   electronicsKicadCliPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   electronicsNgspicePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),

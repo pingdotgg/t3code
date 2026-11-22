@@ -260,7 +260,7 @@ export function RightPanelSurfaceContent(props: {
       return (
         <Suspense fallback={null}>
           <ElectronicsPanel
-            key={surface.id}
+            key={`${scopedThreadKey(threadRef)}:${surface.id}`}
             threadRef={threadRef}
             workspaceRoot={props.files.workspaceRoot}
             initialFilePath={surface.filePath}

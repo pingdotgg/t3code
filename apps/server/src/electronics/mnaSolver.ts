@@ -11,6 +11,8 @@ import type {
 
 import { isGroundNetName, parseEngineeringNumber } from "./parsers.ts";
 
+const MAX_MNA_MATRIX_SIZE = 256;
+
 interface LinearElement {
   readonly ref: string;
   readonly valueText: string;
@@ -20,11 +22,13 @@ interface LinearElement {
   readonly numericValue: number;
   readonly acMag: number;
   readonly acPhaseRad: number;
+  readonly hasExplicitAc: boolean;
   readonly pulse?: {
     readonly v1: number;
     readonly v2: number;
     readonly td: number;
     readonly tr: number;
+    readonly tf: number;
     readonly pw: number;
     readonly per: number;
   };
@@ -35,30 +39,37 @@ interface LinearElement {
   };
 }
 
-function parseSourceSpec(raw: string): {
+function parseSourceSpec(
+  raw: string,
+  spiceMode: boolean,
+): {
   dc: number;
   acMag: number;
   acPhaseRad: number;
+  hasExplicitAc: boolean;
   pulse?: LinearElement["pulse"];
   sin?: LinearElement["sin"];
 } {
   let dc = 0;
   let acMag = 0;
   let acPhaseRad = 0;
+  let hasExplicitAc = false;
   let pulse: LinearElement["pulse"];
   let sin: LinearElement["sin"];
+  const parseNum = (t: string) => parseEngineeringNumber(t, { spice: spiceMode });
 
   const pulseMatch = /PULSE\s*\(([^)]+)\)/iu.exec(raw);
   if (pulseMatch) {
     const nums = pulseMatch[1]!
       .trim()
       .split(/[\s,]+/u)
-      .map((t) => parseEngineeringNumber(t) ?? 0);
+      .map((t) => parseNum(t) ?? 0);
     pulse = {
       v1: nums[0] ?? 0,
       v2: nums[1] ?? 5,
       td: nums[2] ?? 0,
       tr: Math.max(1e-12, nums[3] ?? 1e-6),
+      tf: Math.max(1e-12, nums[4] ?? nums[3] ?? 1e-6),
       pw: nums[5] ?? 1e-3,
       per: nums[6] ?? 2e-3,
     };
@@ -70,7 +81,7 @@ function parseSourceSpec(raw: string): {
     const nums = sinMatch[1]!
       .trim()
       .split(/[\s,]+/u)
-      .map((t) => parseEngineeringNumber(t) ?? 0);
+      .map((t) => parseNum(t) ?? 0);
     sin = {
       vo: nums[0] ?? 0,
       va: nums[1] ?? 1,
@@ -81,30 +92,26 @@ function parseSourceSpec(raw: string): {
 
   const acMatch = /\bAC\s+([^\s]+)(?:\s+([^\s]+))?/iu.exec(raw);
   if (acMatch) {
-    acMag = parseEngineeringNumber(acMatch[1]!) ?? 1;
-    const phaseDeg = acMatch[2] ? (parseEngineeringNumber(acMatch[2]) ?? 0) : 0;
+    hasExplicitAc = true;
+    acMag = parseNum(acMatch[1]!) ?? 1;
+    const phaseDeg = acMatch[2] ? (parseNum(acMatch[2]) ?? 0) : 0;
     acPhaseRad = (phaseDeg * Math.PI) / 180;
   }
 
   const dcMatch = /\bDC\s+([^\s]+)/iu.exec(raw);
   if (dcMatch) {
-    dc = parseEngineeringNumber(dcMatch[1]!) ?? dc;
+    dc = parseNum(dcMatch[1]!) ?? dc;
   } else if (!pulse && !sin) {
-    // Plain numeric value like "5" or "3.3V"
     const firstToken = raw.trim().split(/\s+/u)[0] ?? "";
-    const parsed = parseEngineeringNumber(firstToken);
+    const parsed = parseNum(firstToken);
     if (parsed !== null) dc = parsed;
-  }
-
-  // If user didn't specify AC magnitude on a voltage source, default AC stimulus to 1V for AC sweep
-  if (acMag === 0 && !acMatch) {
-    acMag = 1;
   }
 
   return {
     dc,
     acMag,
     acPhaseRad,
+    hasExplicitAc,
     ...(pulse !== undefined ? { pulse } : {}),
     ...(sin !== undefined ? { sin } : {}),
   };
@@ -114,6 +121,7 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
   elements: LinearElement[];
   skipped: string[];
 } {
+  const spiceMode = model.format === "spice";
   const elements: LinearElement[] = [];
   const skipped: string[] = [];
 
@@ -129,7 +137,7 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
 
     const prefix = comp.ref[0]?.toUpperCase();
     if (comp.kind === "resistor" || prefix === "R") {
-      const val = parseEngineeringNumber(comp.value);
+      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -140,12 +148,13 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
           numericValue: val,
           acMag: 0,
           acPhaseRad: 0,
+          hasExplicitAc: false,
         });
       } else {
         skipped.push(`${comp.ref} (unparseable resistance "${comp.value}")`);
       }
     } else if (comp.kind === "capacitor" || prefix === "C") {
-      const val = parseEngineeringNumber(comp.value);
+      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -156,12 +165,13 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
           numericValue: val,
           acMag: 0,
           acPhaseRad: 0,
+          hasExplicitAc: false,
         });
       } else {
         skipped.push(`${comp.ref} (unparseable capacitance "${comp.value}")`);
       }
     } else if (comp.kind === "inductor" || prefix === "L") {
-      const val = parseEngineeringNumber(comp.value);
+      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -172,12 +182,13 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
           numericValue: val,
           acMag: 0,
           acPhaseRad: 0,
+          hasExplicitAc: false,
         });
       } else {
         skipped.push(`${comp.ref} (unparseable inductance "${comp.value}")`);
       }
     } else if (comp.kind === "power_source" || prefix === "V" || prefix === "I") {
-      const spec = parseSourceSpec(comp.value);
+      const spec = parseSourceSpec(comp.value, spiceMode);
       elements.push({
         ref: comp.ref,
         valueText: comp.value,
@@ -187,6 +198,7 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
         numericValue: spec.dc,
         acMag: spec.acMag,
         acPhaseRad: spec.acPhaseRad,
+        hasExplicitAc: spec.hasExplicitAc,
         ...(spec.pulse !== undefined ? { pulse: spec.pulse } : {}),
         ...(spec.sin !== undefined ? { sin: spec.sin } : {}),
       });
@@ -328,25 +340,25 @@ function sourceValueAtTime(el: LinearElement, t: number): number {
     const phase = p.per > 0 ? (t - p.td) % p.per : t - p.td;
     if (phase < p.tr) return p.v1 + ((p.v2 - p.v1) * phase) / p.tr;
     if (phase < p.tr + p.pw) return p.v2;
-    if (phase < p.tr + p.pw + p.tr) {
-      return p.v2 - ((p.v2 - p.v1) * (phase - p.tr - p.pw)) / p.tr;
+    if (phase < p.tr + p.pw + p.tf) {
+      return p.v2 - ((p.v2 - p.v1) * (phase - p.tr - p.pw)) / p.tf;
     }
     return p.v1;
   }
-  // Step from 0 to DC at t >= 0 for transient visualization
-  return t === 0 ? 0 : el.numericValue;
+  return el.numericValue;
 }
 
 function chooseDefaultOutputNode(
   nonGroundNodes: ReadonlyArray<string>,
   voltageSources: ReadonlyArray<LinearElement>,
+  isRefNode: (netName: string) => boolean,
 ): string | undefined {
   if (nonGroundNodes.length === 0) return undefined;
   const preferred = nonGroundNodes.find((n) => /OUT|FILT|MID|DIV|LOAD/iu.test(n));
   if (preferred) return preferred;
   const drivenByVSource = new Set<string>();
   for (const vs of voltageSources) {
-    if (!isGroundNetName(vs.n1)) drivenByVSource.add(vs.n1);
+    if (!isRefNode(vs.n1)) drivenByVSource.add(vs.n1);
   }
   return nonGroundNodes.find((n) => !drivenByVSource.has(n)) ?? nonGroundNodes[0];
 }
@@ -376,13 +388,18 @@ export function runBuiltinMnaSimulation(
     throw new Error("No simulatable linear elements (R, C, L, V, I) were found in this circuit.");
   }
 
+  // Format-aware reference node rule: in SPICE decks, only node 0 (normalized to "GND") is ground;
+  // arbitrary nodes such as VSS or AVSS remain independent solved nodes.
+  const isRefNode = (name: string): boolean =>
+    model.format === "spice" ? name === "0" || name.toUpperCase() === "GND" : isGroundNetName(name);
+
   // Gather non-ground nodes
   const nodeIndex = new Map<string, number>();
   const nonGroundNodes: string[] = [];
   let hasGround = false;
   for (const el of elements) {
     for (const n of [el.n1, el.n2]) {
-      if (isGroundNetName(n)) {
+      if (isRefNode(n)) {
         hasGround = true;
       } else if (!nodeIndex.has(n)) {
         nodeIndex.set(n, nonGroundNodes.length);
@@ -404,6 +421,11 @@ export function runBuiltinMnaSimulation(
   const N = nonGroundNodes.length;
   const M = voltageSources.length;
   const size = N + M;
+  if (size > MAX_MNA_MATRIX_SIZE) {
+    throw new Error(
+      `Circuit has ${size} MNA unknowns, exceeding the built-in dense solver cap (${MAX_MNA_MATRIX_SIZE}). Enable ngspice in Settings -> Electronics for large circuits.`,
+    );
+  }
 
   const solveDc = (): {
     nodeVoltages: ElectronicsSimulationNodeVoltage[];
@@ -414,8 +436,8 @@ export function runBuiltinMnaSimulation(
     const b = new Array<number>(size).fill(0);
 
     const stampG = (n1: string, n2: string, g: number) => {
-      const i1 = isGroundNetName(n1) ? -1 : nodeIndex.get(n1)!;
-      const i2 = isGroundNetName(n2) ? -1 : nodeIndex.get(n2)!;
+      const i1 = isRefNode(n1) ? -1 : nodeIndex.get(n1)!;
+      const i2 = isRefNode(n2) ? -1 : nodeIndex.get(n2)!;
       if (i1 >= 0) A[i1]![i1]! += g;
       if (i2 >= 0) A[i2]![i2]! += g;
       if (i1 >= 0 && i2 >= 0) {
@@ -436,8 +458,8 @@ export function runBuiltinMnaSimulation(
         // DC short (1 mΩ)
         stampG(el.n1, el.n2, 1e3);
       } else if (el.type === "I") {
-        const i1 = isGroundNetName(el.n1) ? -1 : nodeIndex.get(el.n1)!;
-        const i2 = isGroundNetName(el.n2) ? -1 : nodeIndex.get(el.n2)!;
+        const i1 = isRefNode(el.n1) ? -1 : nodeIndex.get(el.n1)!;
+        const i2 = isRefNode(el.n2) ? -1 : nodeIndex.get(el.n2)!;
         if (i1 >= 0) b[i1]! -= el.numericValue;
         if (i2 >= 0) b[i2]! += el.numericValue;
       }
@@ -446,8 +468,8 @@ export function runBuiltinMnaSimulation(
     for (let s = 0; s < M; s += 1) {
       const vs = voltageSources[s]!;
       const row = N + s;
-      const i1 = isGroundNetName(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
-      const i2 = isGroundNetName(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
+      const i1 = isRefNode(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
+      const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
       const rowArr = A[row]!;
       if (i1 >= 0) {
         rowArr[i1] = 1;
@@ -468,7 +490,7 @@ export function runBuiltinMnaSimulation(
       return { node, voltageV: v };
     });
 
-    const getV = (n: string) => (isGroundNetName(n) ? 0 : (voltageByNode.get(n) ?? 0));
+    const getV = (n: string) => (isRefNode(n) ? 0 : (voltageByNode.get(n) ?? 0));
     const componentReadings: ElectronicsSimulationComponentReading[] = [];
 
     for (const el of elements) {
@@ -501,7 +523,7 @@ export function runBuiltinMnaSimulation(
   const targetNode =
     options.outputNode && nodeIndex.has(options.outputNode)
       ? options.outputNode
-      : chooseDefaultOutputNode(nonGroundNodes, voltageSources);
+      : chooseDefaultOutputNode(nonGroundNodes, voltageSources, isRefNode);
 
   if (kind === "dc_op") {
     const totalPowerW = dc.componentReadings
@@ -531,6 +553,16 @@ export function runBuiltinMnaSimulation(
   }
 
   if (kind === "ac_sweep") {
+    const hasAnyExplicitAc = elements.some(
+      (e) => (e.type === "V" || e.type === "I") && e.hasExplicitAc,
+    );
+    const fallbackAcSourceRef = !hasAnyExplicitAc ? voltageSources[0]?.ref : undefined;
+    if (fallbackAcSourceRef) {
+      notes.push(
+        `No explicit AC stimulus found; applied a 1 V AC test excitation to ${fallbackAcSourceRef}.`,
+      );
+    }
+
     const startFreq = Math.max(0.1, options.startFreqHz ?? 10);
     const stopFreq = Math.max(startFreq * 10, options.stopFreqHz ?? 1_000_000);
     const ptsPerDecade = options.pointsPerDecade ?? 12;
@@ -554,8 +586,8 @@ export function runBuiltinMnaSimulation(
       for (let i = 0; i < N; i += 1) A[i]![i]!.re += 1e-12;
 
       const stampY = (n1: string, n2: string, y: Complex) => {
-        const i1 = isGroundNetName(n1) ? -1 : nodeIndex.get(n1)!;
-        const i2 = isGroundNetName(n2) ? -1 : nodeIndex.get(n2)!;
+        const i1 = isRefNode(n1) ? -1 : nodeIndex.get(n1)!;
+        const i2 = isRefNode(n2) ? -1 : nodeIndex.get(n2)!;
         if (i1 >= 0) A[i1]![i1] = cAdd(A[i1]![i1]!, y);
         if (i2 >= 0) A[i2]![i2] = cAdd(A[i2]![i2]!, y);
         if (i1 >= 0 && i2 >= 0) {
@@ -572,8 +604,8 @@ export function runBuiltinMnaSimulation(
         } else if (el.type === "L") {
           stampY(el.n1, el.n2, { re: 0, im: -1 / (omega * el.numericValue) });
         } else if (el.type === "I") {
-          const i1 = isGroundNetName(el.n1) ? -1 : nodeIndex.get(el.n1)!;
-          const i2 = isGroundNetName(el.n2) ? -1 : nodeIndex.get(el.n2)!;
+          const i1 = isRefNode(el.n1) ? -1 : nodeIndex.get(el.n1)!;
+          const i2 = isRefNode(el.n2) ? -1 : nodeIndex.get(el.n2)!;
           const val: Complex = {
             re: el.acMag * Math.cos(el.acPhaseRad),
             im: el.acMag * Math.sin(el.acPhaseRad),
@@ -586,8 +618,8 @@ export function runBuiltinMnaSimulation(
       for (let s = 0; s < M; s += 1) {
         const vs = voltageSources[s]!;
         const row = N + s;
-        const i1 = isGroundNetName(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
-        const i2 = isGroundNetName(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
+        const i1 = isRefNode(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
+        const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
         if (i1 >= 0) {
           A[row]![i1] = { re: 1, im: 0 };
           A[i1]![row] = { re: 1, im: 0 };
@@ -596,9 +628,10 @@ export function runBuiltinMnaSimulation(
           A[row]![i2] = { re: -1, im: 0 };
           A[i2]![row] = { re: -1, im: 0 };
         }
+        const effectiveAcMag = vs.ref === fallbackAcSourceRef ? 1 : vs.acMag;
         b[row] = {
-          re: vs.acMag * Math.cos(vs.acPhaseRad),
-          im: vs.acMag * Math.sin(vs.acPhaseRad),
+          re: effectiveAcMag * Math.cos(vs.acPhaseRad),
+          im: effectiveAcMag * Math.sin(vs.acPhaseRad),
         };
       }
 
@@ -679,7 +712,7 @@ export function runBuiltinMnaSimulation(
         new Set([
           ...voltageSources
             .map((v) => v.n1)
-            .filter((n) => !isGroundNetName(n))
+            .filter((n) => !isRefNode(n))
             .slice(0, 1),
           targetNode,
         ]),
@@ -689,23 +722,41 @@ export function runBuiltinMnaSimulation(
   const seriesMap = new Map<string, Array<{ x: number; y: number }>>();
   for (const n of outNodes) seriesMap.set(n, []);
 
-  // State variables for capacitors (previous voltage) and inductors (previous current)
+  // Initialize reactive elements from the DC operating point (matching SPICE .tran without UIC)
+  const getDcV = (n: string) => (isRefNode(n) ? 0 : (dc.voltageByNode.get(n) ?? 0));
   const capPrevV = new Map<string, number>();
   const indPrevI = new Map<string, number>();
   for (const el of elements) {
-    if (el.type === "C") capPrevV.set(el.ref, 0);
-    if (el.type === "L") indPrevI.set(el.ref, 0);
+    if (el.type === "C") capPrevV.set(el.ref, getDcV(el.n1) - getDcV(el.n2));
+    if (el.type === "L") indPrevI.set(el.ref, (getDcV(el.n1) - getDcV(el.n2)) * 1e3);
+  }
+  const hasTimeVaryingSource = elements.some(
+    (e) => (e.type === "V" || e.type === "I") && (e.pulse !== undefined || e.sin !== undefined),
+  );
+  if (!hasTimeVaryingSource) {
+    notes.push(
+      "All sources are constant DC; transient starts from the DC operating point. Use PULSE(...) or SIN(...) to observe a step or waveform response.",
+    );
   }
 
   for (let step = 0; step <= steps; step += 1) {
     const t = step * dt;
+    if (step === 0) {
+      for (const n of outNodes) {
+        seriesMap.get(n)!.push({
+          x: 0,
+          y: Number(getDcV(n).toPrecision(5)),
+        });
+      }
+      continue;
+    }
     const A = Array.from({ length: size }, () => new Array<number>(size).fill(0));
     const b = new Array<number>(size).fill(0);
     for (let i = 0; i < N; i += 1) A[i]![i]! += 1e-12;
 
     const stampG = (n1: string, n2: string, g: number) => {
-      const i1 = isGroundNetName(n1) ? -1 : nodeIndex.get(n1)!;
-      const i2 = isGroundNetName(n2) ? -1 : nodeIndex.get(n2)!;
+      const i1 = isRefNode(n1) ? -1 : nodeIndex.get(n1)!;
+      const i2 = isRefNode(n2) ? -1 : nodeIndex.get(n2)!;
       if (i1 >= 0) A[i1]![i1]! += g;
       if (i2 >= 0) A[i2]![i2]! += g;
       if (i1 >= 0 && i2 >= 0) {
@@ -714,8 +765,8 @@ export function runBuiltinMnaSimulation(
       }
     };
     const stampI = (n1: string, n2: string, curr: number) => {
-      const i1 = isGroundNetName(n1) ? -1 : nodeIndex.get(n1)!;
-      const i2 = isGroundNetName(n2) ? -1 : nodeIndex.get(n2)!;
+      const i1 = isRefNode(n1) ? -1 : nodeIndex.get(n1)!;
+      const i2 = isRefNode(n2) ? -1 : nodeIndex.get(n2)!;
       if (i1 >= 0) b[i1]! -= curr;
       if (i2 >= 0) b[i2]! += curr;
     };
@@ -741,8 +792,8 @@ export function runBuiltinMnaSimulation(
     for (let s = 0; s < M; s += 1) {
       const vs = voltageSources[s]!;
       const row = N + s;
-      const i1 = isGroundNetName(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
-      const i2 = isGroundNetName(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
+      const i1 = isRefNode(vs.n1) ? -1 : nodeIndex.get(vs.n1)!;
+      const i2 = isRefNode(vs.n2) ? -1 : nodeIndex.get(vs.n2)!;
       const rowArr = A[row]!;
       if (i1 >= 0) {
         rowArr[i1] = 1;
@@ -756,7 +807,7 @@ export function runBuiltinMnaSimulation(
     }
 
     const sol = solveRealLinear(A, b);
-    const vAt = (n: string) => (isGroundNetName(n) ? 0 : sol[nodeIndex.get(n)!]!);
+    const vAt = (n: string) => (isRefNode(n) ? 0 : sol[nodeIndex.get(n)!]!);
 
     for (const el of elements) {
       if (el.type === "C") {

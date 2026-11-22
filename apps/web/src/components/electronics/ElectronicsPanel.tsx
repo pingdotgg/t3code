@@ -20,7 +20,7 @@ import {
   RouteIcon,
   ShieldCheckIcon,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
@@ -108,11 +108,40 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   );
 
   const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
+  const activeContextRef = useRef({
+    env: threadRef.environmentId,
+    cwd: workspaceRoot,
+    file: selectedFile,
+  });
+  const reqSeqRef = useRef({ files: 0, model: 0, trace: 0, validate: 0, sim: 0 });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks latest active context so stale async command responses are discarded
+  useEffect(() => {
+    activeContextRef.current = {
+      env: threadRef.environmentId,
+      cwd: workspaceRoot,
+      file: selectedFile,
+    };
+    reqSeqRef.current.trace += 1;
+    reqSeqRef.current.validate += 1;
+    reqSeqRef.current.sim += 1;
+  }, [threadRef.environmentId, workspaceRoot, selectedFile]);
+
+  const isCurrentFileContext = (env: string, cwd: string | null, file: string) =>
+    activeContextRef.current.env === env &&
+    activeContextRef.current.cwd === cwd &&
+    activeContextRef.current.file === file;
 
   if (threadSession && threadSession.updatedAt !== lastSyncedAt) {
     setLastSyncedAt(threadSession.updatedAt);
     if (threadSession.filePath !== selectedFile) {
       setSelectedFile(threadSession.filePath);
+      setSelectedNet(null);
+      setSelectedRef(null);
+      setTraceResult(null);
+      setValidationReport(null);
+      setSimResult(null);
+      setSimError(null);
     }
     setActiveTab(threadSession.activeTab);
     if (threadSession.selectedNet !== undefined) {
@@ -134,11 +163,21 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
 
   const triggerFilesRefresh = () => {
     if (!workspaceRoot) return;
+    const reqEnv = threadRef.environmentId;
+    const reqCwd = workspaceRoot;
+    const seq = ++reqSeqRef.current.files;
     setLoadingFiles(true);
     void listFilesCmd({
-      environmentId: threadRef.environmentId,
-      input: { cwd: workspaceRoot },
+      environmentId: reqEnv,
+      input: { cwd: reqCwd },
     }).then((result) => {
+      if (
+        reqSeqRef.current.files !== seq ||
+        activeContextRef.current.env !== reqEnv ||
+        activeContextRef.current.cwd !== reqCwd
+      ) {
+        return;
+      }
       setLoadingFiles(false);
       if (result._tag === "Success") {
         setFiles(result.value.files);
@@ -152,11 +191,18 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
 
   const triggerModelRefresh = () => {
     if (!workspaceRoot || !selectedFile) return;
+    const reqEnv = threadRef.environmentId;
+    const reqCwd = workspaceRoot;
+    const reqFile = selectedFile;
+    const seq = ++reqSeqRef.current.model;
     setLoadingModel(true);
     void inspectCmd({
-      environmentId: threadRef.environmentId,
-      input: { cwd: workspaceRoot, filePath: selectedFile },
+      environmentId: reqEnv,
+      input: { cwd: reqCwd, filePath: reqFile },
     }).then((result) => {
+      if (reqSeqRef.current.model !== seq || !isCurrentFileContext(reqEnv, reqCwd, reqFile)) {
+        return;
+      }
       setLoadingModel(false);
       if (result._tag === "Success") {
         setModel(result.value);
@@ -172,11 +218,12 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   useEffect(() => {
     if (!workspaceRoot) return;
     let active = true;
+    const seq = ++reqSeqRef.current.files;
     void listFilesCmd({
       environmentId: threadRef.environmentId,
       input: { cwd: workspaceRoot },
     }).then((result) => {
-      if (!active) return;
+      if (!active || reqSeqRef.current.files !== seq) return;
       setLoadingFiles(false);
       if (result._tag === "Success") {
         setFiles(result.value.files);
@@ -195,11 +242,12 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   useEffect(() => {
     if (!workspaceRoot || !selectedFile) return;
     let active = true;
+    const seq = ++reqSeqRef.current.model;
     void inspectCmd({
       environmentId: threadRef.environmentId,
       input: { cwd: workspaceRoot, filePath: selectedFile },
     }).then((result) => {
-      if (!active) return;
+      if (!active || reqSeqRef.current.model !== seq) return;
       setLoadingModel(false);
       if (result._tag === "Success") {
         setModel(result.value);
@@ -216,17 +264,24 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
 
   const handleRunTrace = () => {
     if (!workspaceRoot || !selectedFile || traceFrom.trim().length === 0) return;
+    const reqEnv = threadRef.environmentId;
+    const reqCwd = workspaceRoot;
+    const reqFile = selectedFile;
+    const seq = ++reqSeqRef.current.trace;
     setTraceRunning(true);
     void traceCmd({
-      environmentId: threadRef.environmentId,
+      environmentId: reqEnv,
       input: {
-        cwd: workspaceRoot,
-        filePath: selectedFile,
+        cwd: reqCwd,
+        filePath: reqFile,
         from: traceFrom.trim(),
         ...(traceTo.trim().length > 0 ? { to: traceTo.trim() } : {}),
         traversePassives,
       },
     }).then((result) => {
+      if (reqSeqRef.current.trace !== seq || !isCurrentFileContext(reqEnv, reqCwd, reqFile)) {
+        return;
+      }
       setTraceRunning(false);
       if (result._tag === "Success") {
         setTraceResult(result.value);
@@ -239,11 +294,18 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
 
   const handleRunValidate = () => {
     if (!workspaceRoot || !selectedFile) return;
+    const reqEnv = threadRef.environmentId;
+    const reqCwd = workspaceRoot;
+    const reqFile = selectedFile;
+    const seq = ++reqSeqRef.current.validate;
     setValidationRunning(true);
     void validateCmd({
-      environmentId: threadRef.environmentId,
-      input: { cwd: workspaceRoot, filePath: selectedFile, useExternalToolchain: true },
+      environmentId: reqEnv,
+      input: { cwd: reqCwd, filePath: reqFile, useExternalToolchain: true },
     }).then((result) => {
+      if (reqSeqRef.current.validate !== seq || !isCurrentFileContext(reqEnv, reqCwd, reqFile)) {
+        return;
+      }
       setValidationRunning(false);
       if (result._tag === "Success") {
         setValidationReport(result.value);
@@ -253,18 +315,25 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
 
   const handleRunSimulate = () => {
     if (!workspaceRoot || !selectedFile) return;
+    const reqEnv = threadRef.environmentId;
+    const reqCwd = workspaceRoot;
+    const reqFile = selectedFile;
+    const seq = ++reqSeqRef.current.sim;
     setSimRunning(true);
     setSimError(null);
     void simulateCmd({
-      environmentId: threadRef.environmentId,
+      environmentId: reqEnv,
       input: {
-        cwd: workspaceRoot,
-        filePath: selectedFile,
+        cwd: reqCwd,
+        filePath: reqFile,
         kind: simKind,
         ...(simOutputNode ? { outputNode: simOutputNode } : {}),
         useExternalToolchain: true,
       },
     }).then((result) => {
+      if (reqSeqRef.current.sim !== seq || !isCurrentFileContext(reqEnv, reqCwd, reqFile)) {
+        return;
+      }
       setSimRunning(false);
       if (result._tag === "Success") {
         setSimResult(result.value);

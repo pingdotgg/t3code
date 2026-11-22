@@ -19,10 +19,11 @@ const requireElectronicsAgentAccess = Effect.gen(function* () {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const settings = yield* settingsService.getSettings.pipe(
     Effect.mapError(
-      (err) =>
+      (cause) =>
         new ElectronicsError({
           code: "internal",
-          message: `Could not read settings: ${err.message}`,
+          message: "Could not read server settings.",
+          cause,
         }),
     ),
   );

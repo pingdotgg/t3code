@@ -55,45 +55,45 @@ const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set([
   "coverage",
 ]);
 
-export interface ElectronicsServiceShape {
-  readonly getState: Effect.Effect<ElectronicsServiceState>;
-  readonly subscribeState: Stream.Stream<ElectronicsServiceState>;
-  readonly getToolchainStatus: (
-    refresh?: boolean,
-  ) => Effect.Effect<ElectronicsToolchainStatus, ElectronicsError>;
-  readonly listFiles: (cwd: string) => Effect.Effect<ElectronicsListFilesResult, ElectronicsError>;
-  readonly inspect: (
-    cwd: string,
-    filePath: string,
-  ) => Effect.Effect<ElectronicsCircuitModel, ElectronicsError>;
-  readonly tracePath: (
-    input: ElectronicsTracePathInput,
-    threadId?: ThreadId,
-  ) => Effect.Effect<ElectronicsTracePathResult, ElectronicsError>;
-  readonly validate: (
-    input: ElectronicsValidateInput,
-    threadId?: ThreadId,
-  ) => Effect.Effect<ElectronicsValidationReport, ElectronicsError>;
-  readonly simulate: (
-    input: ElectronicsSimulateInput,
-    threadId?: ThreadId,
-  ) => Effect.Effect<ElectronicsSimulationResult, ElectronicsError>;
-  readonly openPanel: (input: {
-    readonly threadId: ThreadId;
-    readonly cwd: string;
-    readonly filePath: string;
-    readonly activeTab?: ElectronicsPanelTab | undefined;
-    readonly selectedNet?: string | undefined;
-  }) => Effect.Effect<ElectronicsThreadSession, ElectronicsError>;
-  readonly closePanel: (threadId: ThreadId) => Effect.Effect<void, ElectronicsError>;
-  readonly getThreadSession: (
-    threadId: ThreadId,
-  ) => Effect.Effect<ElectronicsThreadSession | undefined>;
-}
-
 export class ElectronicsService extends Context.Service<
   ElectronicsService,
-  ElectronicsServiceShape
+  {
+    readonly getState: Effect.Effect<ElectronicsServiceState>;
+    readonly subscribeState: Stream.Stream<ElectronicsServiceState>;
+    readonly getToolchainStatus: (
+      refresh?: boolean,
+    ) => Effect.Effect<ElectronicsToolchainStatus, ElectronicsError>;
+    readonly listFiles: (
+      cwd: string,
+    ) => Effect.Effect<ElectronicsListFilesResult, ElectronicsError>;
+    readonly inspect: (
+      cwd: string,
+      filePath: string,
+    ) => Effect.Effect<ElectronicsCircuitModel, ElectronicsError>;
+    readonly tracePath: (
+      input: ElectronicsTracePathInput,
+      threadId?: ThreadId,
+    ) => Effect.Effect<ElectronicsTracePathResult, ElectronicsError>;
+    readonly validate: (
+      input: ElectronicsValidateInput,
+      threadId?: ThreadId,
+    ) => Effect.Effect<ElectronicsValidationReport, ElectronicsError>;
+    readonly simulate: (
+      input: ElectronicsSimulateInput,
+      threadId?: ThreadId,
+    ) => Effect.Effect<ElectronicsSimulationResult, ElectronicsError>;
+    readonly openPanel: (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly filePath: string;
+      readonly activeTab?: ElectronicsPanelTab | undefined;
+      readonly selectedNet?: string | undefined;
+    }) => Effect.Effect<ElectronicsThreadSession, ElectronicsError>;
+    readonly closePanel: (threadId: ThreadId) => Effect.Effect<void, ElectronicsError>;
+    readonly getThreadSession: (
+      threadId: ThreadId,
+    ) => Effect.Effect<ElectronicsThreadSession | undefined>;
+  }
 >()("t3/electronics/ElectronicsService") {}
 
 export const layer = Layer.effect(
@@ -105,15 +105,18 @@ export const layer = Layer.effect(
     const serverSettings = yield* ServerSettings.ServerSettingsService;
 
     const sessionsRef = yield* Ref.make<Map<ThreadId, ElectronicsThreadSession>>(new Map());
+    const closeGenRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
+    const lastUpdatedMsRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
     const toolchainCacheRef = yield* Ref.make<ElectronicsToolchainStatus | null>(null);
     const updates = yield* PubSub.unbounded<ElectronicsServiceState>();
 
     const getSettings = serverSettings.getSettings.pipe(
       Effect.mapError(
-        (err) =>
+        (cause) =>
           new ElectronicsError({
             code: "internal",
-            message: `Unable to read server settings: ${err.message}`,
+            message: "Unable to read server settings.",
+            cause,
           }),
       ),
     );
@@ -281,19 +284,21 @@ export const layer = Layer.effect(
       const resolved = yield* resolveWorkspaceFile(cwd, requestedPath);
       const content = yield* fs.readFileString(resolved.absolutePath).pipe(
         Effect.mapError(
-          (err) =>
+          (cause) =>
             new ElectronicsError({
               code: "parse_failed",
-              message: `Failed reading "${resolved.relativePath}": ${String(err)}`,
+              message: `Failed reading "${resolved.relativePath}".`,
+              cause,
             }),
         ),
       );
       const model = yield* Effect.try({
         try: () => parseElectronicsFile(resolved.relativePath, content),
-        catch: (err) =>
+        catch: (cause) =>
           new ElectronicsError({
             code: "parse_failed",
-            message: err instanceof Error ? err.message : String(err),
+            message: `Failed parsing "${resolved.relativePath}".`,
+            cause,
           }),
       });
       return { ...resolved, content, model };
@@ -341,19 +346,46 @@ export const layer = Layer.effect(
       return { files: found, toolchain } satisfies ElectronicsListFilesResult;
     });
 
+    const currentCloseGeneration = (threadId: ThreadId) =>
+      Ref.get(closeGenRef).pipe(Effect.map((m) => m.get(threadId) ?? 0));
+
+    const nextMonotonicIso = Effect.fn("ElectronicsService.nextMonotonicIso")(function* (
+      threadId: ThreadId,
+    ) {
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const nextMs = yield* Ref.modify(lastUpdatedMsRef, (map) => {
+        const prev = map.get(threadId) ?? 0;
+        const monotonic = Math.max(nowMs, prev + 1);
+        const next = new Map(map);
+        next.set(threadId, monotonic);
+        return [monotonic, next] as const;
+      });
+      return DateTime.formatIso(DateTime.makeUnsafe(nextMs));
+    });
+
     const updateThreadSession = Effect.fn("ElectronicsService.updateThreadSession")(function* (
       threadId: ThreadId,
       updater: (existing: ElectronicsThreadSession | undefined) => ElectronicsThreadSession,
+      expectedCloseGen?: number,
     ) {
-      let nextSession!: ElectronicsThreadSession;
-      yield* Ref.update(sessionsRef, (map) => {
-        const next = new Map(map);
-        nextSession = updater(next.get(threadId));
-        next.set(threadId, nextSession);
-        return next;
+      const committed = yield* Effect.gen(function* () {
+        if (expectedCloseGen !== undefined) {
+          const gen = yield* currentCloseGeneration(threadId);
+          if (gen !== expectedCloseGen) return null;
+        }
+        let nextSession: ElectronicsThreadSession | null = null;
+        yield* Ref.update(sessionsRef, (map) => {
+          const next = new Map(map);
+          nextSession = updater(next.get(threadId));
+          next.set(threadId, nextSession);
+          return next;
+        });
+        return nextSession;
       });
-      yield* broadcast;
-      return nextSession;
+      if (committed !== null) {
+        yield* broadcast;
+      }
+      return committed;
     });
 
     const inspect = Effect.fn("ElectronicsService.inspect")(function* (
@@ -370,6 +402,7 @@ export const layer = Layer.effect(
       threadId?: ThreadId,
     ) {
       yield* ensureEnabled;
+      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const result = traceCircuitPath(loaded.model, {
         from: input.from,
@@ -380,25 +413,29 @@ export const layer = Layer.effect(
         ...(input.maxHops !== undefined ? { maxHops: input.maxHops } : {}),
       });
       if (threadId !== undefined) {
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* updateThreadSession(threadId, (existing) => ({
+        const now = yield* nextMonotonicIso(threadId);
+        yield* updateThreadSession(
           threadId,
-          filePath: loaded.relativePath,
-          format: loaded.format,
-          activeTab: "trace",
-          ...(result.highlightedNets[0] !== undefined
-            ? { selectedNet: result.highlightedNets[0] }
-            : {}),
-          lastTrace: result,
-          ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
-            ? { lastValidation: existing.lastValidation }
-            : {}),
-          ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
-            ? { lastSimulation: existing.lastSimulation }
-            : {}),
-          openedAt: existing?.openedAt ?? now,
-          updatedAt: now,
-        }));
+          (existing) => ({
+            threadId,
+            filePath: loaded.relativePath,
+            format: loaded.format,
+            activeTab: "trace",
+            ...(result.highlightedNets[0] !== undefined
+              ? { selectedNet: result.highlightedNets[0] }
+              : {}),
+            lastTrace: result,
+            ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
+              ? { lastValidation: existing.lastValidation }
+              : {}),
+            ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
+              ? { lastSimulation: existing.lastSimulation }
+              : {}),
+            openedAt: existing?.openedAt ?? now,
+            updatedAt: now,
+          }),
+          startGen,
+        );
       }
       return result;
     });
@@ -408,6 +445,7 @@ export const layer = Layer.effect(
       threadId?: ThreadId,
     ) {
       const settings = yield* ensureEnabled;
+      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const builtin = runBuiltinCircuitValidation(loaded.model);
       const enginesUsed: ElectronicsValidationSource[] = ["builtin"];
@@ -453,25 +491,29 @@ export const layer = Layer.effect(
       });
 
       if (threadId !== undefined) {
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* updateThreadSession(threadId, (existing) => ({
+        const now = yield* nextMonotonicIso(threadId);
+        yield* updateThreadSession(
           threadId,
-          filePath: loaded.relativePath,
-          format: loaded.format,
-          activeTab: "checks",
-          ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
-            ? { selectedNet: existing.selectedNet }
-            : {}),
-          ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
-            ? { lastTrace: existing.lastTrace }
-            : {}),
-          lastValidation: report,
-          ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
-            ? { lastSimulation: existing.lastSimulation }
-            : {}),
-          openedAt: existing?.openedAt ?? now,
-          updatedAt: now,
-        }));
+          (existing) => ({
+            threadId,
+            filePath: loaded.relativePath,
+            format: loaded.format,
+            activeTab: "checks",
+            ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
+              ? { selectedNet: existing.selectedNet }
+              : {}),
+            ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
+              ? { lastTrace: existing.lastTrace }
+              : {}),
+            lastValidation: report,
+            ...(existing?.lastSimulation !== undefined && existing.filePath === loaded.relativePath
+              ? { lastSimulation: existing.lastSimulation }
+              : {}),
+            openedAt: existing?.openedAt ?? now,
+            updatedAt: now,
+          }),
+          startGen,
+        );
       }
 
       return report;
@@ -482,6 +524,7 @@ export const layer = Layer.effect(
       threadId?: ThreadId,
     ) {
       const settings = yield* ensureEnabled;
+      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const kind = input.kind ?? "dc_op";
 
@@ -495,6 +538,8 @@ export const layer = Layer.effect(
           result = yield* runNgspiceSimulation({
             model: loaded.model,
             spiceSource: loaded.content,
+            workspaceRoot: input.cwd,
+            sourceFilePath: loaded.absolutePath,
             kind,
             ...(settings.electronicsNgspicePath
               ? { ngspicePath: settings.electronicsNgspicePath }
@@ -537,34 +582,39 @@ export const layer = Layer.effect(
                 ? { stepTimeSeconds: input.stepTimeSeconds }
                 : {}),
             }),
-          catch: (err) =>
+          catch: (cause) =>
             new ElectronicsError({
               code: "simulation_failed",
-              message: err instanceof Error ? err.message : String(err),
+              message: cause instanceof Error ? cause.message : "Circuit simulation failed.",
+              cause,
             }),
         });
       }
 
       if (threadId !== undefined) {
-        const now = DateTime.formatIso(yield* DateTime.now);
-        yield* updateThreadSession(threadId, (existing) => ({
+        const now = yield* nextMonotonicIso(threadId);
+        yield* updateThreadSession(
           threadId,
-          filePath: loaded.relativePath,
-          format: loaded.format,
-          activeTab: "simulate",
-          ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
-            ? { selectedNet: existing.selectedNet }
-            : {}),
-          ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
-            ? { lastTrace: existing.lastTrace }
-            : {}),
-          ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
-            ? { lastValidation: existing.lastValidation }
-            : {}),
-          lastSimulation: result,
-          openedAt: existing?.openedAt ?? now,
-          updatedAt: now,
-        }));
+          (existing) => ({
+            threadId,
+            filePath: loaded.relativePath,
+            format: loaded.format,
+            activeTab: "simulate",
+            ...(existing?.selectedNet !== undefined && existing.filePath === loaded.relativePath
+              ? { selectedNet: existing.selectedNet }
+              : {}),
+            ...(existing?.lastTrace !== undefined && existing.filePath === loaded.relativePath
+              ? { lastTrace: existing.lastTrace }
+              : {}),
+            ...(existing?.lastValidation !== undefined && existing.filePath === loaded.relativePath
+              ? { lastValidation: existing.lastValidation }
+              : {}),
+            lastSimulation: result,
+            openedAt: existing?.openedAt ?? now,
+            updatedAt: now,
+          }),
+          startGen,
+        );
       }
 
       return result;
@@ -579,8 +629,8 @@ export const layer = Layer.effect(
     }) {
       yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
-      const now = DateTime.formatIso(yield* DateTime.now);
-      return yield* updateThreadSession(input.threadId, (existing) => ({
+      const now = yield* nextMonotonicIso(input.threadId);
+      const session = yield* updateThreadSession(input.threadId, (existing) => ({
         threadId: input.threadId,
         filePath: loaded.relativePath,
         format: loaded.format,
@@ -602,9 +652,15 @@ export const layer = Layer.effect(
         openedAt: existing?.openedAt ?? now,
         updatedAt: now,
       }));
+      return session!;
     });
 
     const closePanel = Effect.fn("ElectronicsService.closePanel")(function* (threadId: ThreadId) {
+      yield* Ref.update(closeGenRef, (map) => {
+        const next = new Map(map);
+        next.set(threadId, (next.get(threadId) ?? 0) + 1);
+        return next;
+      });
       yield* Ref.update(sessionsRef, (map) => {
         const next = new Map(map);
         next.delete(threadId);
@@ -618,8 +674,10 @@ export const layer = Layer.effect(
 
     const subscribeState: Stream.Stream<ElectronicsServiceState> = Stream.unwrap(
       Effect.gen(function* () {
+        // Subscribe BEFORE snapshotting so updates emitted during buildState are never missed.
+        const subscription = yield* PubSub.subscribe(updates);
         const initial = yield* buildState;
-        return Stream.concat(Stream.make(initial), Stream.fromPubSub(updates));
+        return Stream.concat(Stream.make(initial), Stream.fromSubscription(subscription));
       }),
     );
 

@@ -12,6 +12,41 @@ function nearPoint(ax: number, ay: number, bx: number, by: number, tol = 0.25): 
   return Math.hypot(ax - bx, ay - by) <= tol;
 }
 
+function copperLayerOrder(layer: string): number | null {
+  if (layer === "F.Cu") return 0;
+  if (layer === "B.Cu") return 31;
+  const inner = /^In(\d+)\.Cu$/u.exec(layer);
+  if (inner) return Number(inner[1]);
+  return null;
+}
+
+function padMatchesTrackLayer(
+  padLayers: ReadonlyArray<string> | undefined,
+  trackLayer: string | undefined,
+): boolean {
+  if (!trackLayer || !padLayers || padLayers.length === 0) return true;
+  return padLayers.includes(trackLayer) || padLayers.includes("*.Cu") || padLayers.includes("*");
+}
+
+function viaMatchesTrackLayer(
+  viaLayers: ReadonlyArray<string> | undefined,
+  trackLayer: string | undefined,
+): boolean {
+  if (!trackLayer || !viaLayers || viaLayers.length === 0) return true;
+  if (viaLayers.includes(trackLayer) || viaLayers.includes("*.Cu") || viaLayers.includes("*")) {
+    return true;
+  }
+  if (viaLayers.length === 2) {
+    const start = copperLayerOrder(viaLayers[0]!);
+    const end = copperLayerOrder(viaLayers[1]!);
+    const target = copperLayerOrder(trackLayer);
+    if (start !== null && end !== null && target !== null) {
+      return target >= Math.min(start, end) && target <= Math.max(start, end);
+    }
+  }
+  return false;
+}
+
 /**
  * Deterministic static electrical & layout rule checker.
  * Runs in pure TypeScript with zero external binaries required.
@@ -25,13 +60,44 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
   let seq = 1;
   const nextId = (prefix: string) => `${prefix}-${seq++}`;
 
-  // 1. Duplicate component references
-  const seenRefs = new Map<string, number>();
+  // 1. Duplicate component references (allow distinct KiCad units of the same physical symbol)
+  const seenByRef = new Map<
+    string,
+    { libId?: string; units: Set<number>; unnumberedCount: number }
+  >();
+  const flaggedDupRefs = new Set<string>();
   for (const comp of model.components) {
     if (comp.kind === "power_symbol" || comp.ref.startsWith("#")) continue;
-    const count = (seenRefs.get(comp.ref) ?? 0) + 1;
-    seenRefs.set(comp.ref, count);
-    if (count === 2) {
+    let entry = seenByRef.get(comp.ref);
+    if (!entry) {
+      entry = {
+        ...(comp.libId !== undefined ? { libId: comp.libId } : {}),
+        units: new Set<number>(),
+        unnumberedCount: 0,
+      };
+      seenByRef.set(comp.ref, entry);
+    }
+    let isDuplicate = false;
+    if (comp.unit !== undefined) {
+      if (entry.units.has(comp.unit) || entry.unnumberedCount > 0) {
+        isDuplicate = true;
+      } else if (
+        entry.libId !== undefined &&
+        comp.libId !== undefined &&
+        entry.libId !== comp.libId
+      ) {
+        isDuplicate = true;
+      } else {
+        entry.units.add(comp.unit);
+      }
+    } else {
+      entry.unnumberedCount += 1;
+      if (entry.unnumberedCount > 1 || entry.units.size > 0) {
+        isDuplicate = true;
+      }
+    }
+    if (isDuplicate && !flaggedDupRefs.has(comp.ref)) {
+      flaggedDupRefs.add(comp.ref);
       issues.push({
         id: nextId("dup-ref"),
         code: "duplicate_reference",
@@ -217,11 +283,21 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
   if (model.format === "kicad_pcb") {
     for (const net of model.nets) {
       // Collect pad positions belonging to this net
-      const padPoints: Array<{ x: number; y: number; ref: string }> = [];
+      const padPoints: Array<{
+        x: number;
+        y: number;
+        ref: string;
+        layers?: ReadonlyArray<string>;
+      }> = [];
       for (const comp of model.components) {
         for (const pin of comp.pins) {
           if (pin.net === net.name && pin.x !== undefined && pin.y !== undefined) {
-            padPoints.push({ x: pin.x, y: pin.y, ref: comp.ref });
+            padPoints.push({
+              x: pin.x,
+              y: pin.y,
+              ref: comp.ref,
+              ...(pin.layers !== undefined ? { layers: pin.layers } : {}),
+            });
           }
         }
       }
@@ -252,40 +328,94 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
       const trackOffset = padPoints.length;
       const viaOffset = padPoints.length + netTracks.length;
 
-      // Connect tracks to pads
+      // Spatial grid index (1 mm cells) for O(N) endpoint adjacency across tracks, pads, and vias
+      const PCB_CELL = 1.0;
+      const cellOf = (x: number, y: number) =>
+        [Math.floor(x / PCB_CELL), Math.floor(y / PCB_CELL)] as const;
+      const addToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
+        const [cx, cy] = cellOf(x, y);
+        const key = `${cx},${cy}`;
+        let bucket = grid.get(key);
+        if (!bucket) {
+          bucket = [];
+          grid.set(key, bucket);
+        }
+        bucket.push(item);
+      };
+      const forNearby = <T>(
+        grid: Map<string, T[]>,
+        x: number,
+        y: number,
+        fn: (item: T) => void,
+      ) => {
+        const [cx, cy] = cellOf(x, y);
+        for (let dx = -1; dx <= 1; dx += 1) {
+          for (let dy = -1; dy <= 1; dy += 1) {
+            const bucket = grid.get(`${cx + dx},${cy + dy}`);
+            if (!bucket) continue;
+            for (const item of bucket) fn(item);
+          }
+        }
+      };
+
+      const padGrid = new Map<string, number[]>();
+      for (let p = 0; p < padPoints.length; p += 1) {
+        addToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
+      }
+      const viaGrid = new Map<string, number[]>();
+      for (let v = 0; v < netVias.length; v += 1) {
+        addToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
+      }
+      const trackGridByLayer = new Map<
+        string,
+        Map<string, Array<{ idx: number; x: number; y: number }>>
+      >();
+      const getLayerGrid = (layerKey: string) => {
+        let g = trackGridByLayer.get(layerKey);
+        if (!g) {
+          g = new Map();
+          trackGridByLayer.set(layerKey, g);
+        }
+        return g;
+      };
+
       for (let t = 0; t < netTracks.length; t += 1) {
         const seg = netTracks[t]!;
-        for (let p = 0; p < padPoints.length; p += 1) {
-          const pad = padPoints[p]!;
-          if (
-            nearPoint(pad.x, pad.y, seg.x1, seg.y1, 0.5) ||
-            nearPoint(pad.x, pad.y, seg.x2, seg.y2, 0.5)
-          ) {
-            union(p, trackOffset + t);
-          }
-        }
-        // Connect tracks to other tracks on same layer
-        for (let t2 = t + 1; t2 < netTracks.length; t2 += 1) {
-          const seg2 = netTracks[t2]!;
-          if (seg.layer && seg2.layer && seg.layer !== seg2.layer) continue;
-          if (
-            nearPoint(seg.x1, seg.y1, seg2.x1, seg2.y1) ||
-            nearPoint(seg.x1, seg.y1, seg2.x2, seg2.y2) ||
-            nearPoint(seg.x2, seg.y2, seg2.x1, seg2.y1) ||
-            nearPoint(seg.x2, seg.y2, seg2.x2, seg2.y2)
-          ) {
-            union(trackOffset + t, trackOffset + t2);
-          }
-        }
-        // Connect tracks to vias (any layer)
-        for (let v = 0; v < netVias.length; v += 1) {
-          const via = netVias[v]!;
-          if (
-            nearPoint(via.x, via.y, seg.x1, seg.y1, 0.4) ||
-            nearPoint(via.x, via.y, seg.x2, seg.y2, 0.4)
-          ) {
-            union(trackOffset + t, viaOffset + v);
-          }
+        const endpoints = [
+          [seg.x1, seg.y1],
+          [seg.x2, seg.y2],
+        ] as const;
+
+        // Connect track endpoints to pads on matching copper layers
+        for (const [ex, ey] of endpoints) {
+          forNearby(padGrid, ex, ey, (p) => {
+            const pad = padPoints[p]!;
+            if (
+              padMatchesTrackLayer(pad.layers, seg.layer) &&
+              nearPoint(pad.x, pad.y, ex, ey, 0.5)
+            ) {
+              union(p, trackOffset + t);
+            }
+          });
+          // Connect track endpoints to vias whose copper layer span includes seg.layer
+          forNearby(viaGrid, ex, ey, (v) => {
+            const via = netVias[v]!;
+            if (
+              viaMatchesTrackLayer(via.layers, seg.layer) &&
+              nearPoint(via.x, via.y, ex, ey, 0.4)
+            ) {
+              union(trackOffset + t, viaOffset + v);
+            }
+          });
+          // Connect track endpoints to previously indexed tracks on the same copper layer
+          const layerKey = seg.layer ?? "__any__";
+          const layerGrid = getLayerGrid(layerKey);
+          forNearby(layerGrid, ex, ey, (other) => {
+            if (nearPoint(other.x, other.y, ex, ey)) {
+              union(trackOffset + t, trackOffset + other.idx);
+            }
+          });
+          addToGrid(layerGrid, ex, ey, { idx: t, x: ex, y: ey });
         }
       }
 

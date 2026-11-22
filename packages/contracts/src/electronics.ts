@@ -55,6 +55,7 @@ export const ElectronicsPin = Schema.Struct({
   net: Schema.optional(Schema.String),
   x: Schema.optional(Schema.Number),
   y: Schema.optional(Schema.Number),
+  layers: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ElectronicsPin = typeof ElectronicsPin.Type;
 
@@ -64,6 +65,7 @@ export const ElectronicsComponent = Schema.Struct({
   kind: ElectronicsComponentKind,
   libId: Schema.optional(Schema.String),
   footprint: Schema.optional(Schema.String),
+  unit: Schema.optional(Schema.Int),
   x: Schema.optional(Schema.Number),
   y: Schema.optional(Schema.Number),
   rotation: Schema.optional(Schema.Number),
@@ -106,6 +108,7 @@ export const ElectronicsVia = Schema.Struct({
   size: Schema.Number,
   drill: Schema.optional(Schema.Number),
   net: Schema.optional(Schema.String),
+  layers: Schema.optional(Schema.Array(Schema.String)),
 });
 export type ElectronicsVia = typeof ElectronicsVia.Type;
 
@@ -339,6 +342,7 @@ export class ElectronicsError extends Schema.TaggedError<ElectronicsError>()("El
     "internal",
   ]),
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 // RPC payloads

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import { runBuiltinMnaSimulation } from "./mnaSolver.ts";
-import { parseElectronicsFile } from "./parsers.ts";
+import { parseElectronicsFile, parseEngineeringNumber } from "./parsers.ts";
 import { traceCircuitPath } from "./pathTracer.ts";
 import { assembleValidationReport, runBuiltinCircuitValidation } from "./validator.ts";
 
@@ -280,7 +280,11 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     expect(cutoffMetric!.value).toBeGreaterThan(1500);
     expect(cutoffMetric!.value).toBeLessThan(1680);
 
-    const tran = runBuiltinMnaSimulation(model, {
+    const pulseModel = parseElectronicsFile(
+      "sim/rc_pulse.cir",
+      "* RC Step\nV1 vin 0 PULSE(0 5 0 1n 1n 5m 10m)\nR1 vin vout 1k\nC1 vout 0 100n\n.end\n",
+    );
+    const tran = runBuiltinMnaSimulation(pulseModel, {
       kind: "transient",
       outputNode: "vout",
       stopTimeSeconds: 1e-3,
@@ -288,8 +292,138 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     expect(tran.series.length).toBeGreaterThanOrEqual(1);
     const outTrace = tran.series.find((s) => s.label === "V(vout)");
     expect(outTrace).toBeDefined();
+    expect(outTrace!.points[0]!.y).toBeCloseTo(0, 3);
     const finalV = outTrace!.points[outTrace!.points.length - 1]!.y;
     // After 10*tau (tau = 0.1ms), capacitor charges to ~5V
     expect(finalV).toBeGreaterThan(4.9);
+  });
+
+  it("handles SPICE femto suffix, case-sensitive nets, SPICE VSS, AC excitation, and MNA cap", () => {
+    expect(parseEngineeringNumber("10f", { spice: true })).toBeCloseTo(1e-14, 20);
+    expect(parseEngineeringNumber("10uF")).toBeCloseTo(1e-5, 12);
+    expect(parseEngineeringNumber("1F")).toBeCloseTo(1, 12);
+
+    // Case-sensitive nets DATA vs data must not collide
+    const caseModel = parseElectronicsFile(
+      "sim/case.cir",
+      "* Case nets\nV1 DATA 0 5\nR1 DATA 0 1k\nR2 data 0 2k\n.end\n",
+    );
+    const traceLower = traceCircuitPath(caseModel, { from: "data", to: "R2.1" });
+    expect(traceLower.connected).toBe(true);
+    expect(traceLower.directNet).toBe("data");
+
+    // SPICE node VSS is NOT implicitly forced to ground 0
+    const vssModel = parseElectronicsFile(
+      "sim/vss.cir",
+      "* Split supply\nVneg VSS 0 -5\nR1 VSS 0 1k\n.end\n",
+    );
+    const vssDc = runBuiltinMnaSimulation(vssModel, { kind: "dc_op", outputNode: "VSS" });
+    expect(vssDc.nodeVoltages.find((n) => n.node === "VSS")?.voltageV).toBeCloseTo(-5, 4);
+
+    // DC-only supply must NOT be excited during AC sweep when another source has AC 1
+    const dualSrc = parseElectronicsFile(
+      "sim/dual_ac.cir",
+      "* Dual source AC\nVdd vdd 0 DC 5\nVin vin 0 DC 0 AC 1\nR1 vdd out 1k\nR2 vin out 1k\n.end\n",
+    );
+    const dualAc = runBuiltinMnaSimulation(dualSrc, {
+      kind: "ac_sweep",
+      outputNode: "out",
+      startFreqHz: 100,
+      stopFreqHz: 1000,
+      pointsPerDecade: 4,
+    });
+    // Voltage divider of AC 1 across equal 1k resistors = 0.5 (-6.02 dB), NOT 1.0 (0 dB)
+    expect(dualAc.series[0]!.points[0]!.y).toBeCloseTo(-6.02, 1);
+
+    // Matrix size cap rejects huge ladders before dense allocation
+    const ladderLines = ["* Huge ladder", "V1 n0 0 5"];
+    for (let i = 0; i < 300; i += 1) {
+      ladderLines.push(`R${i + 1} n${i} n${i + 1} 1k`);
+    }
+    ladderLines.push("Rend n300 0 1k", ".end");
+    const hugeModel = parseElectronicsFile("sim/huge.cir", ladderLines.join("\n"));
+    expect(() => runBuiltinMnaSimulation(hugeModel, { kind: "dc_op" })).toThrow(/exceeding/i);
+  });
+
+  it("handles KiCad multi-unit symbols, KiCad 10 name-based PCB nets, layer/via checks, and Circuit JSON net IDs", () => {
+    // KiCad multi-unit symbol: unit 1 and unit 2 of U1 share refdes without duplicate_reference
+    const multiUnitSch = `(kicad_sch
+  (lib_symbols
+    (symbol "OpAmp:LM358"
+      (symbol "LM358_1_1"
+        (pin input line (at -5 0 0) (length 2) (name "IN1") (number "3"))
+      )
+      (symbol "LM358_2_1"
+        (pin input line (at -5 0 0) (length 2) (name "IN2") (number "5"))
+      )
+    )
+  )
+  (symbol (lib_id "OpAmp:LM358") (at 20 20 0) (unit 1)
+    (property "Reference" "U1")
+    (property "Value" "LM358")
+  )
+  (symbol (lib_id "OpAmp:LM358") (at 50 20 0) (unit 2)
+    (property "Reference" "U1")
+    (property "Value" "LM358")
+  )
+)`;
+    const muModel = parseElectronicsFile("sch/multi.kicad_sch", multiUnitSch);
+    expect(muModel.components.map((c) => c.pins.map((p) => p.number))).toEqual([["3"], ["5"]]);
+    const muVal = runBuiltinCircuitValidation(muModel);
+    expect(muVal.issues.some((i) => i.code === "duplicate_reference")).toBe(false);
+
+    // KiCad 10 name-based PCB nets: F.Cu pads with a B.Cu track and no via MUST flag unrouted
+    const kicad10Pcb = `(kicad_pcb
+  (footprint "R_0603" (layer "F.Cu") (at 10 10)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 20 10)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "SIG"))
+  )
+  (segment (start 10 10) (end 20 10) (width 0.25) (layer "B.Cu") (net "SIG"))
+)`;
+    const k10Model = parseElectronicsFile("pcb/k10.kicad_pcb", kicad10Pcb);
+    expect(k10Model.nets.map((n) => n.name)).toContain("SIG");
+    const k10Val = runBuiltinCircuitValidation(k10Model);
+    expect(k10Val.issues.some((i) => i.code === "unrouted_pcb_net" && i.net === "SIG")).toBe(true);
+
+    // Circuit JSON: two traces sharing one source_net_id unify even with different display_names
+    const cjTwoTraces = JSON.stringify([
+      {
+        type: "source_component",
+        source_component_id: "c1",
+        name: "R1",
+        ftype: "simple_resistor",
+        resistance: 1000,
+      },
+      {
+        type: "source_component",
+        source_component_id: "c2",
+        name: "R2",
+        ftype: "simple_resistor",
+        resistance: 2000,
+      },
+      { type: "source_port", source_port_id: "p1", source_component_id: "c1", pin_number: 1 },
+      { type: "source_port", source_port_id: "p2", source_component_id: "c2", pin_number: 1 },
+      { type: "source_net", source_net_id: "sn1", name: "SHARED_BUS" },
+      {
+        type: "source_trace",
+        display_name: "seg_a",
+        connected_source_port_ids: ["p1"],
+        connected_source_net_ids: ["sn1"],
+      },
+      {
+        type: "source_trace",
+        display_name: "seg_b",
+        connected_source_port_ids: ["p2"],
+        connected_source_net_ids: ["sn1"],
+      },
+    ]);
+    const cjModel = parseElectronicsFile("two.circuit.json", cjTwoTraces);
+    const cjTrace = traceCircuitPath(cjModel, { from: "R1.1", to: "R2.1" });
+    expect(cjTrace.connected).toBe(true);
+    expect(cjTrace.directNet).toBe("SHARED_BUS");
   });
 });
