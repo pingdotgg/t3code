@@ -35,24 +35,22 @@ export function modelMatchesCatalogQuery(input: {
   ].some((value) => value.toLocaleLowerCase().includes(query));
 }
 
-export function visibleModelsForCatalog(input: {
+export function visibleCatalogModels(input: {
   readonly models: ReadonlyArray<ModelOption>;
   readonly providerLabel: string;
   readonly query: string;
-  readonly manageHidden: boolean;
-  readonly showLegacy: boolean;
-  readonly favoritesOnly: boolean;
   readonly favoriteKeys: ReadonlySet<string>;
+  readonly favoritesOnly: boolean;
+  readonly showLegacy: boolean;
   readonly isDisplayed: (model: ModelOption) => boolean;
 }): ReadonlyArray<ModelOption> {
   const catalogModels =
-    input.manageHidden || input.showLegacy || input.favoritesOnly || input.query.trim().length > 0
+    input.showLegacy || input.favoritesOnly || input.query.trim().length > 0
       ? input.models
       : input.models.filter(
           (model) =>
             !model.isLegacy || input.isDisplayed(model) || input.favoriteKeys.has(model.key),
         );
-
   return favoritesFirst(
     catalogModels.filter(
       (model) =>

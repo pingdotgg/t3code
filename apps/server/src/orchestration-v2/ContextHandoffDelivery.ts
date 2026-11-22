@@ -25,6 +25,15 @@ import {
 } from "@t3tools/provider-core/server/handoffBudget";
 import * as ProjectionStore from "./ProjectionStore.ts";
 
+// A first word with a second slash is a path, not a command.
+const SLASH_COMMAND = /^\s*\/[^\s/]+(?:\s|$)/u;
+
+/** Providers only run a native command that opens the prompt, so its turn defers inline context to the next one. */
+export const isSlashCommandMessage = (message: {
+  readonly role: string;
+  readonly text: string;
+}): boolean => message.role === "user" && SLASH_COMMAND.test(message.text);
+
 // Matches the messages the summary pass never covers, so the latest exchange stays verbatim.
 const FRESH_TAIL_MESSAGES = 6;
 
