@@ -7,6 +7,7 @@ import * as Equal from "effect/Equal";
 import * as Exit from "effect/Exit";
 import * as Hash from "effect/Hash";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import {
   SourceControlProviderError,
@@ -31,7 +32,7 @@ import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 const PROVIDER_DETECTION_CACHE_CAPACITY = 2_048;
 const PROVIDER_DETECTION_CACHE_TTL = Duration.seconds(5);
 const UNKNOWN_REMOTE_CACHE_CAPACITY = 512;
-const UNKNOWN_REMOTE_CACHE_TTL = Duration.minutes(5);
+const UNKNOWN_REMOTE_CACHE_TTL = Duration.hours(1);
 
 export interface SourceControlProviderRegistration {
   readonly kind: SourceControlProviderKind;
@@ -74,16 +75,11 @@ function unsupportedProvider(
   // Binding context does not create a second provider-operation span.
   return SourceControlProvider.SourceControlProvider.of({
     kind,
-    // Unknown hosts have no readable change requests; return none to avoid poll warnings on every refresh.
-    listChangeRequests: (input) =>
-      kind === "unknown"
-        ? Effect.succeed([])
-        : new SourceControlProviderError({
-            provider: kind,
-            operation: "listChangeRequests",
-            cwd: input.cwd,
-            detail: `No ${kind} source control provider is registered.`,
-          }),
+    // Unknown hosts, and hosts whose forge a feature flag leaves out, have no readable change
+    // requests; return none to avoid poll warnings on every refresh.
+    listChangeRequests: Effect.fn("SourceControlProviderRegistry.unsupported.listChangeRequests")(
+      () => Effect.succeed([]),
+    ),
     getChangeRequest: (input) =>
       new SourceControlProviderError({
         provider: kind,
@@ -186,6 +182,18 @@ class UnknownRemoteLookup {
   }
 }
 
+function discoveryFingerprint(items: ReadonlyArray<SourceControlProviderDiscoveryItem>): string {
+  return JSON.stringify(
+    items.map((item) => [
+      item.kind,
+      item.status,
+      item.auth.status,
+      Option.getOrNull(item.auth.host),
+      item.auth.accounts?.map((account) => [account.host, account.authenticated]) ?? null,
+    ]),
+  );
+}
+
 function bindProviderContext(
   provider: SourceControlProvider.SourceControlProvider["Service"],
   context: SourceControlProvider.SourceControlProviderContext | null,
@@ -266,6 +274,8 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
     yield* Stream.runForEach(settingsChanges, () => Cache.invalidateAll(unknownRemoteCache)).pipe(
       Effect.forkScoped,
     );
+
+    let lastDiscovery: string | undefined;
 
     const refineContext = (
       cwd: string,
@@ -357,6 +367,15 @@ export const makeWithProviders = Effect.fn("makeSourceControlProviderRegistryWit
             cwd: config.cwd,
           }),
         { concurrency: "unbounded" },
+      ).pipe(
+        // A CLI installed or signed in since the last check may claim a remote no forge claimed.
+        Effect.tap((items) => {
+          const fingerprint = discoveryFingerprint(items);
+          if (fingerprint === lastDiscovery) return Effect.void;
+          const changed = lastDiscovery !== undefined;
+          lastDiscovery = fingerprint;
+          return changed ? Cache.invalidateAll(unknownRemoteCache) : Effect.void;
+        }),
       ),
     });
   },
