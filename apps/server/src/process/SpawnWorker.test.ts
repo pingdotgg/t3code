@@ -3,6 +3,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -15,6 +16,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as SpawnWorker from "./SpawnWorker.ts";
 
+const envChdir = vi.hoisted(() => ({ supported: true }));
+vi.mock("@t3tools/shared/envTrampoline", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/shared/envTrampoline")>()),
+  supportsEnvChdir: () => Promise.resolve(envChdir.supported),
+}));
+
 const layer = SpawnWorker.layer.pipe(Layer.provide(NodeServices.layer));
 const text = <E>(stream: Stream.Stream<Uint8Array, E>) =>
   stream.pipe(Stream.decodeText(), Stream.mkString);
@@ -22,12 +29,14 @@ const node = (script: string, args: ReadonlyArray<string> = [], options = {}) =>
   ChildProcess.make(process.execPath, ["-e", script, ...args], options);
 
 describe("SpawnWorker", () => {
-  it.live("runs the server's Windows children on a launcher thread, not the server thread", () =>
+  it.live("runs children on a launcher thread where the server thread would wait on them", () =>
     Effect.gen(function* () {
-      for (const [platform, onServerThread] of [
-        ["win32", false],
-        ["linux", true],
+      for (const [platform, hasEnvChdir, onServerThread] of [
+        ["win32", true, false],
+        ["linux", true, true],
+        ["linux", false, false],
       ] as const) {
+        envChdir.supported = hasEnvChdir;
         const launched = Effect.gen(function* () {
           const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
           const child = yield* spawner.spawn(
@@ -126,6 +135,38 @@ describe("SpawnWorker", () => {
       const healthy = yield* spawner.spawn(node("process.stdout.write('ok')"));
       expect(yield* text(healthy.stdout)).toBe("ok");
       expect(yield* healthy.exitCode).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(layer)),
+  );
+
+  it.live("a short child's output ends while a sibling launched beside it still runs", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const untilStdin =
+        "process.stdout.write('ready');process.stdin.once('data',()=>process.exit(0))";
+      // Workers that own a child stay alive, as beside a running agent, so each round's two
+      // launches land on two warm workers at once.
+      yield* Effect.all(
+        Array.from({ length: 4 }, () =>
+          Effect.gen(function* () {
+            const holder = yield* spawner.spawn(node(untilStdin));
+            expect(yield* holder.stdout.pipe(Stream.take(1), text)).toBe("ready");
+          }),
+        ),
+        { concurrency: "unbounded" },
+      );
+      for (let round = 0; round < 20; round++) {
+        const [sibling, output] = yield* Effect.all(
+          [
+            spawner.spawn(node(untilStdin, [], { stdin: { stream: Stream.never } })),
+            spawner
+              .spawn(node("process.stdout.write('ok')"))
+              .pipe(Effect.flatMap((child) => text(child.stdout))),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(output).toBe("ok");
+        expect(yield* sibling.isRunning).toBe(true);
+      }
     }).pipe(Effect.scoped, Effect.provide(layer)),
   );
 

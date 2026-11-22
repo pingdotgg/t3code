@@ -68,6 +68,7 @@ it.effect(
                     reclaimableBytes: 1000,
                     incrementalVacuumEnabled: false,
                     legacyDatabaseBytes: 4000,
+                    legacyOnlyRecords: { projects: 0, threads: 0 },
                   }),
                 compact: () =>
                   startServer.pipe(
@@ -151,6 +152,7 @@ it.effect("warns how long reclaiming can take and reports each step with its ela
                 reclaimableBytes: 0,
                 incrementalVacuumEnabled: false,
                 legacyDatabaseBytes: null,
+                legacyOnlyRecords: null,
               }),
             compact: (_databasePath, onStep) =>
               Effect.gen(function* () {

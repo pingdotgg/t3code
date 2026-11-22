@@ -202,7 +202,10 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
     workspaceRoots,
     (cwd) =>
       Effect.gen(function* () {
-        const status = yield* git.statusDetails(cwd);
+        // Startup checks once, so it waits for the fetch rather than reading the old references.
+        const status = yield* git
+          .statusDetails(cwd)
+          .pipe(Effect.provideService(GitVcsDriver.AwaitStatusFetch, true));
         if (
           !status.isRepo ||
           !status.isDefaultBranch ||
