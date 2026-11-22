@@ -377,13 +377,17 @@ interface SidebarThreadPartitionInput {
   readonly clockKey: string;
 }
 
-function scrollSidebarToTop(content: HTMLElement | null) {
-  const viewport =
-    content?.closest("[data-slot=scroll-area-viewport]") ??
-    content
-      ?.querySelector('[data-sidebar-list="active"]')
-      ?.closest("[data-slot=scroll-area-viewport]");
-  viewport?.scrollTo({ top: 0 });
+function sidebarViewports(content: HTMLElement | null): Set<HTMLElement> {
+  const viewports = new Set<HTMLElement>();
+  if (!content) return viewports;
+  const selector = '[data-slot="scroll-area-viewport"]';
+  const outer = content.closest<HTMLElement>(selector);
+  if (outer) viewports.add(outer);
+  for (const list of content.querySelectorAll("[data-sidebar-list]")) {
+    const viewport = list.closest<HTMLElement>(selector);
+    if (viewport) viewports.add(viewport);
+  }
+  return viewports;
 }
 
 function threadShellKey(thread: Pick<SidebarThreadSummary, "environmentId" | "id">): string {
@@ -1099,7 +1103,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const threadListRef = useRef<HTMLDivElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement | null>(null);
-  const dragLabelOffsetRef = useRef(0);
+  const dragBoundaryTopRef = useRef<number | null>(null);
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const shiftGuardRef = useRef<ReturnType<typeof createSidebarShiftGuard> | null>(null);
   const [dragState, setDragState] = useState<{
@@ -1112,7 +1116,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   } | null>(null);
   const dragSensorRef = useRef<SidebarPointerSensor | null>(null);
   const contextDragKeyRef = useRef<string | null>(null);
-  const dragScrollRef = useRef<{ readonly viewport: Element; readonly top: number } | null>(null);
+  const dragScrollRef = useRef<ReadonlyMap<HTMLElement, number> | null>(null);
   const [actionSweep, setActionSweep] = useState<{
     action: SidebarSweepAction;
     keys: ReadonlySet<string>;
@@ -1132,7 +1136,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const setProjectScopeKeys = (keys: readonly string[]) => {
     clearSelection();
     setPersistedProjectScopeKeys(keys);
-    scrollSidebarToTop(sidebarContentRef.current);
+    for (const viewport of sidebarViewports(sidebarContentRef.current)) viewport.scrollTop = 0;
   };
   // A scope whose project is gone reads as all projects once every snapshot has
   // loaded. The stored keys are left alone, so the scope returns with its project.
@@ -1769,7 +1773,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     })();
   };
   const restrictBelowPins: Modifier = (args) =>
-    restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
+    restrictBelowSidebarLabel(args, dragBoundaryTopRef.current);
   const dndModifiers = [restrictToVerticalAxis, restrictBelowPins];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-registers DOM lists when Settled moves between viewports or search replaces them
   useLayoutEffect(() => {
@@ -1848,8 +1852,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
   // The path out of the list often crosses dnd-kit's edge zone, which autoscrolls the sidebar.
   const restoreDragScroll = () => {
-    const scroll = dragScrollRef.current;
-    if (scroll && scroll.viewport.scrollTop !== scroll.top) scroll.viewport.scrollTop = scroll.top;
+    if (!dragScrollRef.current) return;
+    for (const [viewport, top] of dragScrollRef.current) {
+      if (viewport.scrollTop !== top) viewport.scrollTop = top;
+    }
   };
   const moveThreadContextDrag = (point: { x: number; y: number }) => {
     // Search results cannot reorder, so their context preview starts inside the list.
@@ -1935,6 +1941,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         onStart: () => sweepTo(originKey),
         onMove: ({ y }) => sweepTo(list && sidebarThreadKeyAtY(list, y)),
         onEnd: () => {
+          const visible = new Set(visibleThreadKeysRef.current);
+          if (sweptKeys.some((key) => !visible.has(key))) return;
           const keys = sweptKeys.filter(canApply);
           if (action === "settle") {
             settleThreads(keys);
@@ -2003,18 +2011,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (activeSection === undefined) return;
     listMotionRef.current?.suspend();
     const list = threadListRef.current;
-    const viewport = list
-      ?.querySelector<HTMLElement>(`[data-thread-item="${CSS.escape(activeKey)}"]`)
-      ?.closest('[data-slot="scroll-area-viewport"]');
-    dragScrollRef.current = viewport ? { viewport, top: viewport.scrollTop } : null;
+    dragScrollRef.current = new Map(
+      Array.from(sidebarViewports(list), (viewport) => [viewport, viewport.scrollTop]),
+    );
     const header = list?.querySelector<HTMLElement>('[data-testid="sidebar-pinned-header"]');
     if (list && header) {
       const listRect = list.getBoundingClientRect();
       const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
-      dragLabelOffsetRef.current =
-        header.getBoundingClientRect().top - listRect.top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+      dragBoundaryTopRef.current =
+        header.getBoundingClientRect().top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
     } else {
-      dragLabelOffsetRef.current = 0;
+      dragBoundaryTopRef.current = null;
     }
     setDragState({
       activeKey,

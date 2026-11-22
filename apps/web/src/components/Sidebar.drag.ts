@@ -21,11 +21,11 @@ const isShelfHeader = (item: SidebarListItem | undefined) =>
     item.marker === "settled-header");
 
 export function restrictBelowSidebarLabel(
-  { transform, containerNodeRect, draggingNodeRect }: Parameters<Modifier>[0],
-  offset: number,
+  { transform, draggingNodeRect }: Parameters<Modifier>[0],
+  boundaryTop: number | null,
 ) {
-  if (!containerNodeRect || !draggingNodeRect) return transform;
-  const minimumY = containerNodeRect.top + offset - draggingNodeRect.top;
+  if (boundaryTop === null || !draggingNodeRect) return transform;
+  const minimumY = boundaryTop - draggingNodeRect.top;
   return transform.y < minimumY ? { ...transform, y: minimumY } : transform;
 }
 

@@ -761,7 +761,7 @@ describe("lifted card clearance", () => {
     right: 260,
     width: 260,
   });
-  const apply = (cardTop: number, cardHeight: number, y: number, listTop = 136, offset = 32) =>
+  const apply = (cardTop: number, cardHeight: number, y: number, listTop = 136, minimumTop = 168) =>
     restrictBelowSidebarLabel(
       {
         transform: { ...stationary, y },
@@ -776,7 +776,7 @@ describe("lifted card clearance", () => {
         scrollableAncestorRects: [],
         windowRect: null,
       },
-      offset,
+      minimumTop,
     );
 
   it.each([36, 82])("keeps a %ipx row below empty Pins even past the top edge", (height) => {
@@ -791,8 +791,8 @@ describe("lifted card clearance", () => {
     expect(apply(511, 36, -200).y).toBe(-200);
   });
 
-  it("follows the list when it scrolls and includes content preceding Pins", () => {
-    expect(511 + apply(511, 36, -500, 96).y).toBe(128);
-    expect(511 + apply(511, 36, -500, 136, 114).y).toBe(250);
+  it("keeps the same pinned boundary for drags that start in different viewports", () => {
+    expect(511 + apply(511, 36, -500, 136, 168).y).toBe(168);
+    expect(511 + apply(511, 36, -500, 410, 168).y).toBe(168);
   });
 });
