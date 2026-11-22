@@ -69,6 +69,10 @@ are saved on the server and can be edited or removed before they send.
 When Enter sends, `Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses
 the opposite action: it steers when your default is Queue and queues when your
 default is Steer.
+A slash command such as `/compact` or `/context` waits for the current turn to
+finish, because a command steered into a turn would replace the agent's task.
+Sending a queued command now moves it to the front of the queue. [Goal](#goals)
+commands are the exception: some can stop the current turn.
 If your **Send shortcut** requires `Cmd+Enter` or `Ctrl+Enter`, that shortcut uses
 your default follow-up behavior; add **Shift** to use the opposite action. This
 applies only to multiline messages when you choose the multiline send option.
@@ -77,7 +81,17 @@ Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to sen
 the oldest queued message as a steer. This leaves the current draft intact and
 requires an active turn that supports steering. If that shortcut sends the opposite
 action for your draft, move focus outside the composer to steer the queued message. Change
-`thread.steerQueuedMessage` in **Settings → Keybindings** to use another shortcut.
+`thread.steerQueuedMessage` in **Settings → Keybindings** to use another shortcut. To make
+`Cmd+Enter` or `Ctrl+Enter` steer the oldest queued message when the composer is empty, add
+this rule to your [keybindings file](keybindings.md#edit-the-configuration-file):
+
+```json
+{
+  "key": "mod+enter",
+  "command": "thread.steerQueuedMessage",
+  "when": "composerFocus && turnRunning && composerEmpty"
+}
+```
 
 Press `Option+Up` on macOS or `Alt+Up` on Windows and Linux with the cursor at the
 start of the composer to edit the most recently queued message. Change
@@ -85,8 +99,10 @@ start of the composer to edit the most recently queued message. Change
 
 Mobile has the same choice under **Settings → Chat**. While a turn is
 running the send button shows which action it will take. Long-press it to use the
-other action for a single message, or hold `Cmd` while sending from a hardware
-keyboard. The button only offers Steer when the running agent supports it.
+other action for a single message. From a hardware keyboard, `Cmd+Return`
+(`Ctrl+Return` on Android) uses the other action, or `Cmd+Shift+Return`
+(`Ctrl+Shift+Return`) when Return inserts a new line. The button only offers
+Steer when the running agent supports it.
 
 ## Queue messages offline on mobile
 
@@ -140,8 +156,12 @@ delete it like other inline context. Copying, reloading, and restoring a
 with its quote, and sending tells the agent which words were quoted and which comment you wrote.
 The quoted text and comment count toward the message limit.
 
-Mobile displays saved quotes and comments, but does not create citations or
-navigate to their sources.
+On mobile, long-press an assistant response, adjust the text selection, and choose
+**Cite** to insert a quote at the composer cursor. If the passage appears more than
+once in that section, choose its source occurrence. Select more surrounding text
+if a short passage appears too often. Tap a quote in a draft to add
+or edit its comment, or to remove it. To open the source message, tap a quote in
+a draft or sent message, then choose **Go to message**.
 
 ## Recall a sent prompt
 
@@ -156,6 +176,16 @@ the text is an unedited recalled prompt, with the caret on the first visual line
 the last visual line for `ArrowDown`, counting wrapped lines. Editing a recalled prompt turns it
 into a normal draft.
 
+## Suggested next prompt
+
+Turn on **Suggest next prompt** in Settings > Labs. After a Claude or Codex turn completes, the
+empty composer shows a predicted next message. Press `Tab` to fill it in, then edit or send it, or
+press `Escape` to dismiss it. Each suggestion is one extra request that reuses the turn's prompt
+cache, so it uses a little of your plan's usage. Claude skips suggestions on the first turn of a
+thread and near usage limits. Codex needs version 0.165 or later; if T3 Code manages
+Codex, update it in Settings > Providers. Codex follows a change to the setting at once; open Claude
+threads follow it after they restart. Suggestions show on web and desktop.
+
 ## Edit an earlier prompt
 
 On web and desktop, choose **Edit from here** beneath a sent message to rewind
@@ -165,8 +195,10 @@ to its checkpoint from before that message. That also undoes edits you made your
 File restore is only offered for threads running in a worktree, and it is
 refused when another thread or agent session also uses that directory, a folder
 inside it, or a folder that contains it, since
-restoring would erase their changes. A thread that works in the project directory
-rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
+restoring would erase their changes. Completed subagents belonging to the reverting
+thread do not block restoring that same worktree, provided they have no queued or
+active work, pending requests, or background tasks. A thread that works in the project
+directory rewinds the conversation only. The selected prompt and its attachments return to the composer for editing and
 resending. Any unsent draft stays above the restored prompt.
 
 This removes the selected message and later conversation from the active thread
@@ -187,8 +219,9 @@ and use **Attach again** or remove the missing file before sending.
 ## Voice input on web and desktop
 
 Use the composer's microphone or `mod+shift+d` to dictate into your draft. Audio
-is transcribed on an environment you choose in **Settings → Voice**; nothing is
-sent until you choose one. See [Voice input](./voice-input.md).
+is transcribed on an environment you choose in **Settings → Voice**, or on the Mac
+with Apple Speech in the macOS desktop app; nothing is sent until you choose one.
+See [Voice input](./voice-input.md).
 
 ## Voice input on mobile
 
@@ -242,12 +275,17 @@ shortcut described above.
 
 On web and desktop, queued messages appear at the end of the thread as dashed messages that have
 not been sent yet. On mobile they appear above the composer. Each shows its text and any attached
-images. **Send now** sends a message right away, into the running turn if there is one. You can
-also edit or remove it.
+images. **Send now** sends a message right away, into the running turn if there is one. While a
+turn runs, a slash command moves to the front of the queue instead. You can also edit or
+remove it.
 
 If you stop the agent or the server restarts, queued messages keep their order and are held.
-Press **Resume** in an empty composer to continue. **Resume** also continues a stopped
-run or one that hit a usage limit, even with nothing queued. Sending a new message also resumes the queue, unless it steers a turn that is already
+Press **Resume** in an empty composer to continue. For stopped runs and usage limits,
+this uses the provider's native continuation without sending a new prompt. If the provider
+does not support it, send a message to continue instead. If the original request never reached
+the provider, Resume sends that request again.
+
+Sending a new message also resumes the queue, unless it steers a turn that is already
 running. You can edit or remove held messages without starting them.
 
 The pencil on a queued message opens it in the composer for editing. The original message
@@ -272,10 +310,10 @@ session** in the command palette on web and desktop. The conversation continues,
 and your next message starts the agent again with the new setup.
 
 Provider commands must start the message to run. T3 Code commands such as
-`/model` and `/plan`, and skill mentions, work on any line.
+`/model` and skill mentions work on any line.
 
 Send `/compact` in an existing conversation to reduce context usage when the
-provider supports it, even with the context meter turned off.
+provider supports it.
 
 Send `/clear` on its own, or pick it from the slash menu, to start a fresh session
 in the same thread. Your next message goes to a new provider session that doesn't see the
@@ -283,25 +321,24 @@ earlier messages, and the thread marks where it began with **New session**.
 Earlier messages and diffs stay in the thread. Dismiss the notice above the
 composer to keep the current session instead.
 
-On web and desktop, turn on **Settings → Labs → Legacy → Context
-window indicator (legacy)** to see context usage. The meter is off by default
-and appears once the provider reports usage. Open it for usage details and
-**Compact context** when the provider supports compaction.
+On web and desktop, turn on **Context window** in **Settings → Appearance →
+Thread details** to see context usage in the thread details card. It appears
+once the provider reports usage.
 
 Claude instances can also compact idle threads for you. See
 [compact long conversations](./providers-claude.md#compact-long-conversations).
 
 ## Goals
 
-With Codex and Claude, send `/goal` followed by what "done" means, for example
+With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it, and so does Codex ending its work without meeting the goal.
+- Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping
+  their goal pauses it. Codex also pauses when its work ends without meeting the goal.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current
@@ -343,6 +380,10 @@ environment must be connected and up to date. The transcript includes the visibl
 saved text context at the time of the drop; later messages and the contents of attached files
 are not copied. The agent can read the saved transcript after the source disconnects. Normal
 file attachment limits apply.
+
+Type `@` and part of a model or provider name, such as `@opus`, to name that model for the
+agent, for example when delegating. It does not change the thread's model. Join words with
+`:`, `/` or `-`, as in `@opus:opencode`.
 
 Images keep their thumbnail shelf above the text and also get a chip at your cursor, so you can
 say exactly which image you mean. Deleting an image chip leaves the image on the shelf; removing

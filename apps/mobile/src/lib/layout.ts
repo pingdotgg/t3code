@@ -77,6 +77,11 @@ export interface Layout {
   readonly shellPadding: number;
 }
 
+/** The iOS split's preferred sidebar column width, which the tab bar over a page also takes. */
+export function nativeSidebarColumnWidth(layout: Layout) {
+  return (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
+}
+
 export interface WorkspacePaneLayout {
   readonly primarySidebarVisible: boolean;
   /** Whether the sidebar shows once a collapsed split expands; independent of the current width. */
@@ -91,18 +96,6 @@ export interface WorkspacePaneLayout {
 export interface FileInspectorPaneLayout {
   readonly supported: boolean;
   readonly width: number | null;
-}
-
-export function deriveThreadFeedInitialContentInset(input: {
-  readonly platform: string;
-  readonly usesNativeAutomaticInsets: boolean;
-  readonly bottomContentInset: number;
-}): { readonly bottom: number } | undefined {
-  if (input.platform !== "android" || input.usesNativeAutomaticInsets) {
-    return undefined;
-  }
-
-  return { bottom: Math.max(0, input.bottomContentInset) };
 }
 
 export function deriveLayout(input: {
@@ -163,7 +156,13 @@ export function deriveLayout(input: {
     usesSplitView: true,
     listPaneWidth:
       division?.x ??
-      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+      (input.nativeWorkspace === true && variant === "medium"
+        ? 350
+        : clamp(
+            Math.round(width * 0.32),
+            SPLIT_SIDEBAR_MIN_WIDTH,
+            SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
+          )),
     ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };
@@ -218,6 +217,8 @@ export function isPrimarySidebarPinned(input: {
 export function deriveWorkspacePaneLayout(input: {
   readonly layout: Layout;
   readonly viewportWidth: number;
+  /** Width UIKit keeps out of its columns, such as the Duo's system bar. */
+  readonly horizontalSafeArea?: number;
   readonly nativeWorkspace?: boolean;
   /** Whether the sidebar floats over the content rather than taking its room; medium by default. */
   readonly primarySidebarFloats?: boolean;
@@ -251,7 +252,11 @@ export function deriveWorkspacePaneLayout(input: {
     auxiliaryPaneVisible &&
     inspectorWidth !== null &&
     input.layout.listPaneWidth !== null &&
-    viewportWidth - input.layout.listPaneWidth - (input.layout.listPaneGap ?? 0) - inspectorWidth <
+    viewportWidth -
+      (input.nativeWorkspace ? (input.horizontalSafeArea ?? 0) : 0) -
+      input.layout.listPaneWidth -
+      (input.layout.listPaneGap ?? 0) -
+      inspectorWidth <
       (input.nativeWorkspace ? NATIVE_INSPECTOR_MIN_MAIN_WIDTH : FILE_INSPECTOR_MIN_MAIN_WIDTH);
   const primarySidebarVisible =
     preferredPrimarySidebarVisible && !primarySidebarSuppressedByAuxiliary;

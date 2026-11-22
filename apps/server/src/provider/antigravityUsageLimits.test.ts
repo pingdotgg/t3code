@@ -1,5 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import { describe, expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
@@ -10,7 +11,11 @@ import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
-import { makeAntigravityUsageProbe } from "./antigravityUsageLimits.ts";
+import {
+  decodeGoKeyringSecret,
+  makeAntigravityUsageProbe,
+  readWindowsCliCredential,
+} from "./antigravityUsageLimits.ts";
 
 const summary = {
   groups: [
@@ -65,7 +70,10 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
-    authMethod?: "oauth-personal" | "gemini-api-key";
+    authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
+    keyringSecret?: string;
+    /** Reads the OS keyring instead of `keyringSecret`. */
+    nativeKeyring?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -111,7 +119,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual({ project: "project-id" });
+      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -132,6 +140,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
   const usage = yield* makeAntigravityUsageProbe({
     profileDirectory,
     authMethod: options.authMethod ?? "oauth-personal",
+    ...(options.nativeKeyring ? {} : { readKeyringSecret: Effect.succeed(options.keyringSecret) }),
   }).pipe(Effect.provideService(HttpClient.HttpClient, http));
   return { ...usage, requests, writeToken, tokenPath };
 });
@@ -330,11 +339,12 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // Oracle: the existing endpoint merge keeps the most-used reading.
-  it.effect("keeps the used endpoint reading and its reset over an untouched reading", () =>
+  // Oracle: workspace sign-ins are metered on cloudcode-pa, so its reading wins even when less used.
+  it.effect("reports a business account's quota from the endpoint it is metered on", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")));
       const { probe } = yield* fixture({
+        authMethod: "oauth-business",
         summaryByHost: {
           "daily-cloudcode-pa.googleapis.com": {
             buckets: [
@@ -383,9 +393,8 @@ describe("Antigravity subscription limits", () => {
           id: "3p-weekly",
           label: "Claude & GPT (shared) · Weekly",
           kind: "weekly",
-          usedPercent: 50,
+          usedPercent: 0,
           windowDurationMins: 10080,
-          resetsAt: "2026-10-27T10:16:04.000Z",
         },
       ]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
@@ -474,11 +483,47 @@ describe("Antigravity subscription limits", () => {
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("3p-5h")?.usedPercent).toBeCloseTo(70);
-      expect(byId.get("3p-weekly")?.usedPercent).toBe(100);
+      expect(byId.get("3p-weekly")?.usedPercent).toBe(50);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("labels Argon's weekly quota apart from the default Gemini weekly quota", () =>
+  // Oracle: reported payloads for a personal sign-in, whose runtime meters on the daily endpoint.
+  it.effect("reports a personal account's quota from the daily endpoint it is metered on", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-11-07T12:00:00Z")));
+      const argon = (remainingFraction: number, resetTime: string) => ({
+        groups: [
+          {
+            displayName: "Gemini 4 Argon",
+            buckets: [
+              {
+                bucketId: "gemini-argon-wtu-weekly",
+                window: "weekly",
+                remainingFraction,
+                resetTime,
+              },
+            ],
+          },
+        ],
+      });
+      const { probe } = yield* fixture({
+        authMethod: "oauth-personal",
+        summaryByHost: {
+          "daily-cloudcode-pa.googleapis.com": argon(0.8623059, "2026-11-14T08:41:35Z"),
+          "cloudcode-pa.googleapis.com": argon(0, "2026-11-08T18:27:14Z"),
+        },
+      });
+      expect((yield* probe).windows).toEqual([
+        expect.objectContaining({
+          id: "gemini-argon-wtu-weekly",
+          usedPercent: expect.closeTo(13.77, 2),
+          resetsAt: "2026-11-14T08:41:35.000Z",
+        }),
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("labels Argon and Carbon quotas apart from the default Gemini quota", () =>
     Effect.gen(function* () {
       const { probe } = yield* fixture({
         summary: {
@@ -490,6 +535,16 @@ describe("Antigravity subscription limits", () => {
                 { bucketId: "gemini-argon-wtu-weekly", window: "weekly", remainingFraction: 0.6 },
               ],
             },
+            {
+              displayName: "Gemini 4 Carbon",
+              buckets: [
+                { bucketId: "gemini-carbon-wtu-weekly", window: "weekly", remainingFraction: 0.4 },
+              ],
+            },
+            {
+              displayName: " ",
+              buckets: [{ bucketId: "gemini-carbon-5h", window: "5h", remainingFraction: 0.8 }],
+            },
           ],
         },
       });
@@ -497,6 +552,8 @@ describe("Antigravity subscription limits", () => {
       const byId = new Map(limits.windows.map((window) => [window.id, window]));
       expect(byId.get("gemini-weekly")?.label).toBe("Gemini · Weekly");
       expect(byId.get("gemini-argon-wtu-weekly")?.label).toBe("Gemini 4 Argon · Weekly");
+      expect(byId.get("gemini-carbon-wtu-weekly")?.label).toBe("Gemini 4 Carbon · Weekly");
+      expect(byId.get("gemini-carbon-5h")?.label).toBe("Gemini Carbon · 5-hour");
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -605,6 +662,117 @@ describe("Antigravity subscription limits", () => {
       expect(JSON.stringify(limits)).not.toMatch(/client-secret|refresh-a|access-token/);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
+
+  it.effect("reads the native CLI's stored sign-in when acp_token.json is absent", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { probe, tokenPath } = yield* fixture({ missingToken: true });
+      // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
+      yield* fs.writeFileString(
+        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+        JSON.stringify({
+          token: {
+            access_token: "access-token",
+            token_type: "Bearer",
+            refresh_token: "refresh-a",
+            expiry: "2099-01-01T00:00:00Z",
+            expires_in: 3600,
+          },
+          auth_method: "consumer",
+          id_token_email: "someone@example.com",
+        }),
+      );
+      const limits = yield* probe;
+      expect(limits.unavailable?.message).not.toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads a Gemini Enterprise keyring sign-in and reports when it has expired", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const keyringSecret = (expiry: string) =>
+        JSON.stringify({ token: { access_token: "access-token", refresh_token: "r", expiry } });
+      // Google account instances keep their own sign-in; the shared entry belongs to another app.
+      const personal = yield* fixture({
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T14:00:00Z"),
+      });
+      expect((yield* personal.probe).unavailable?.message).toBe(
+        "Sign in with Google to see Antigravity limits.",
+      );
+      expect(personal.requests).toEqual([]);
+
+      const signedIn = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        userId: "google-user-1",
+        keyringSecret: keyringSecret("2026-10-09T14:00:00.123456789+01:00"),
+      });
+      const limits = yield* signedIn.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+
+      const expired = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        keyringSecret: keyringSecret("2026-10-09T12:00:30Z"),
+      });
+      expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
+      expect(expired.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+    "reads go-keyring's Windows credential target without changing it",
+    (ctx) =>
+      Effect.gen(function* () {
+        // Never overwrite a real sign-in on a developer's machine.
+        if (readWindowsCliCredential(HostProcess.Architecture.defaultValue())) return ctx.skip();
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")),
+        );
+        const { AsyncEntry } = yield* Effect.promise(() => import("@napi-rs/keyring"));
+        // go-keyring writes the UTF-8 JSON at `<service>:<user>`.
+        const target = AsyncEntry.withTarget("gemini:antigravity", "gemini", "antigravity");
+        const stored = new TextEncoder().encode(
+          JSON.stringify({
+            token: { access_token: "access-token", expiry: "2026-10-09T14:00:00Z" },
+          }),
+        );
+        yield* Effect.acquireRelease(
+          Effect.promise(() => target.setSecret(stored)),
+          () => Effect.promise(() => target.deleteCredential()),
+        );
+        const { probe } = yield* fixture({
+          authMethod: "oauth-business",
+          missingToken: true,
+          nativeKeyring: true,
+        });
+        const limits = yield* probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+        expect(readWindowsCliCredential(HostProcess.Architecture.defaultValue())).toEqual(
+          Buffer.from(stored),
+        );
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it("decodes go-keyring's macOS encodings", () => {
+    const value = '{"token":{}}';
+    const bytes = (text: string) => new TextEncoder().encode(text);
+    expect(decodeGoKeyringSecret(bytes(value))).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-base64:${Buffer.from(value).toString("base64")}`)),
+    ).toBe(value);
+    expect(
+      decodeGoKeyringSecret(bytes(`go-keyring-encoded:${Buffer.from(value).toString("hex")}`)),
+    ).toBe(value);
+  });
 
   it.effect("does not make network requests for API keys or missing sign-ins", () =>
     Effect.gen(function* () {

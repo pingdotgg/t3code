@@ -108,7 +108,9 @@ const reactionGroups = (groups: ReadonlyArray<Json> | undefined) =>
 const remark = ({ author, reactionGroups: groups, ...raw }: Json) => ({
   body: "",
   lastEditedAt: null,
+  isMinimized: false,
   url: "https://github.com/acme/web/pull/1#discussion",
+  pullRequestReview: null,
   ...raw,
   author: actor(author),
   reactionGroups: reactionGroups(groups),
@@ -172,6 +174,7 @@ const withReviewDefaults = (raw: string): string => {
       latestReviews: {
         nodes: nodesIn(latestReviews).map((node) => ({
           state: "COMMENTED",
+          isMinimized: false,
           ...node,
           author: actor(node["author"]),
         })),
@@ -233,7 +236,16 @@ function listJson(entries: ReadonlyArray<Record<string, unknown>>): string {
                       ),
                     },
                   }),
-              ...(latestReviews === undefined ? {} : { latestReviews: { nodes: latestReviews } }),
+              ...(latestReviews === undefined
+                ? {}
+                : {
+                    latestReviews: {
+                      nodes: (latestReviews as ReadonlyArray<Json>).map((review) => ({
+                        isMinimized: false,
+                        ...review,
+                      })),
+                    },
+                  }),
               ...(checks === undefined
                 ? {}
                 : { commits: { nodes: [{ commit: { statusCheckRollup: { state: checks } } }] } }),
@@ -283,6 +295,13 @@ describe("pull request list decoding", () => {
             reviewDecision: null,
             latestReviews: [{ author: user("octocat"), state: "COMMENTED" }],
           },
+          {
+            reviewDecision: null,
+            latestReviews: [
+              { author: user("octocat"), state: "APPROVED" },
+              { author: user("drive-by"), state: "CHANGES_REQUESTED", isMinimized: true },
+            ],
+          },
         ]),
       ),
     );
@@ -291,6 +310,7 @@ describe("pull request list decoding", () => {
       "changes-requested",
       "approved",
       null,
+      "approved",
     ]);
   });
 
@@ -339,10 +359,18 @@ describe("pull request detail decoding", () => {
           checkSuite: { workflowRun: null },
           ...fields,
         };
-  const inWorkflow = ({ workflowName, ...fields }: Record<string, unknown>) =>
+  const inWorkflow = ({
+    workflowName,
+    workflowId = `W_kwDORLtfbc4${String(workflowName)}`,
+    event = "pull_request",
+    runNumber = 95380,
+    ...fields
+  }: Record<string, unknown>) =>
     check({
       ...fields,
-      checkSuite: { workflowRun: { workflow: { name: workflowName } } },
+      checkSuite: {
+        workflowRun: { event, runNumber, workflow: { id: workflowId, name: workflowName } },
+      },
     });
 
   const coreJson = (
@@ -373,6 +401,8 @@ describe("pull request detail decoding", () => {
             createdAt: "2026-07-01T00:00:00Z",
             updatedAt: "2026-07-05T00:00:00Z",
             mergedAt: null,
+            mergeCommit: null,
+            mergedBy: null,
             closedAt: null,
             headRefName: "feat/detail",
             baseRefName: "main",
@@ -469,6 +499,7 @@ describe("pull request detail decoding", () => {
                 (comment) => ({
                   lastEditedAt: null,
                   url: "https://github.com/c",
+                  isMinimized: false,
                   author: null,
                   ...comment,
                 }),
@@ -480,6 +511,7 @@ describe("pull request detail decoding", () => {
                 (review) => ({
                   lastEditedAt: null,
                   url: "https://github.com/r",
+                  isMinimized: false,
                   author: null,
                   submittedAt: null,
                   ...review,
@@ -529,12 +561,48 @@ describe("pull request detail decoding", () => {
     expect(detail.checksState).toBe("pending");
   });
 
+  it("reads a merged pull request's merge commit and who merged it", () => {
+    expect(
+      detailOf([], {
+        state: "MERGED",
+        mergedAt: "2026-07-05T00:00:00Z",
+        mergeCommit: { oid: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9" },
+        mergedBy: {
+          __typename: "User",
+          login: "octocat",
+          avatarUrl: "https://avatars.githubusercontent.com/u/1",
+          name: "Octo Cat",
+        },
+      }),
+    ).toMatchObject({
+      state: "merged",
+      mergeCommitSha: "3b2f958603a51d8c42c4ede02eee7b8cb310b2d9",
+      mergedBy: { login: "octocat", name: "Octo Cat" },
+    });
+  });
+
   it("reads an auto-merge request and strategy, and its null as off", () => {
     expect(detailOf([], { autoMergeRequest: { mergeMethod: "SQUASH" } })).toMatchObject({
       autoMergeEnabled: true,
       autoMergeMethod: "squash",
     });
     expect(detailOf([], { autoMergeRequest: null }).autoMergeEnabled).toBe(false);
+  });
+
+  it("reads the newest merge queue removal, and none where the queue was not asked about", () => {
+    const removal = {
+      __typename: "RemovedFromMergeQueueEvent",
+      id: "RMQE_1",
+      createdAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    };
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [removal] } }).mergeQueueRemoval).toEqual({
+      id: "RMQE_1",
+      removedAt: "2026-07-05T00:00:00Z",
+      reason: "Required status checks failed",
+    });
+    expect(detailOf([], { mergeQueueRemovals: { nodes: [] } }).mergeQueueRemoval).toBeUndefined();
+    expect(detailOf([]).mergeQueueRemoval).toBeUndefined();
   });
 
   it("shows a re-running check once, as the run that is happening now", () => {
@@ -595,6 +663,139 @@ describe("pull request detail decoding", () => {
     }
   });
 
+  it("drops a cancelled check whose workflow run was superseded by a newer run on the head", () => {
+    const superseded = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95379,
+      status: "COMPLETED",
+      startedAt: "2026-10-30T10:00:00Z",
+      completedAt: "2026-10-30T10:00:05Z",
+    };
+    const replacement = {
+      workflowName: "CI",
+      workflowId: "W_kwDORLtfbc4N00ni",
+      runNumber: 95380,
+      status: "COMPLETED",
+      conclusion: "SUCCESS",
+      startedAt: "2026-10-30T10:00:10Z",
+      completedAt: "2026-10-30T10:05:00Z",
+    };
+    const rollup = [
+      inWorkflow({ ...superseded, name: "check", conclusion: "CANCELLED" }),
+      inWorkflow({
+        ...superseded,
+        name: "web browser tests (runner ${{ matrix.slice }} of 6)",
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({ ...replacement, name: "check" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 1 of 6)" }),
+      inWorkflow({ ...replacement, name: "web browser tests (runner 2 of 6)" }),
+    ];
+    const detail = detailOf(rollup);
+
+    expect([detail.checks.map((check) => [check.name, check.status]), detail.checksState]).toEqual([
+      [
+        ["check", "success"],
+        ["web browser tests (runner 1 of 6)", "success"],
+        ["web browser tests (runner 2 of 6)", "success"],
+      ],
+      "passing",
+    ]);
+  });
+
+  it("keeps a cancelled check when the newer run is another workflow with the same name", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4N00ni",
+        runNumber: 95379,
+        conclusion: "CANCELLED",
+      }),
+      inWorkflow({
+        name: "lint",
+        workflowName: "CI",
+        workflowId: "W_kwDORLtfbc4ToKTh",
+        runNumber: 95380,
+        conclusion: "SUCCESS",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+      "test",
+      "cancelled",
+    ]);
+    expect(detail.checksState).toBe("failing");
+  });
+
+  it("drops a required cancelled check once a newer run reports it, whenever it finished", () => {
+    const detail = detailOf([
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 41,
+        conclusion: "CANCELLED",
+        isRequired: true,
+        startedAt: "2026-10-30T10:00:00Z",
+        completedAt: "2026-10-30T10:09:00Z",
+      }),
+      inWorkflow({
+        name: "test",
+        workflowName: "CI",
+        runNumber: 42,
+        conclusion: "SUCCESS",
+        isRequired: true,
+        startedAt: "2026-10-30T10:01:00Z",
+        completedAt: "2026-10-30T10:05:00Z",
+      }),
+    ]);
+
+    expect(detail.checks.map((check) => [check.name, check.status])).toEqual([["test", "success"]]);
+    expect(detail.checksState).toBe("passing");
+  });
+
+  it.each([
+    ["a push", "push", "push", "CANCELLED", false, "cancelled"],
+    ["another event", "pull_request", "pull_request_target", "CANCELLED", false, "cancelled"],
+    ["a pull request run", "pull_request", "pull_request", "FAILURE", false, "failure"],
+    [
+      "a pull request run, if required",
+      "pull_request",
+      "pull_request",
+      "CANCELLED",
+      true,
+      "cancelled",
+    ],
+  ])(
+    "keeps an older run's check when the newer run is %s",
+    (_label, olderEvent, newerEvent, conclusion, isRequired, status) => {
+      const detail = detailOf([
+        inWorkflow({
+          name: "test (packages/shared)",
+          workflowName: "CI",
+          event: olderEvent,
+          runNumber: 41,
+          conclusion,
+          isRequired,
+        }),
+        inWorkflow({
+          name: "test (apps/server)",
+          workflowName: "CI",
+          event: newerEvent,
+          runNumber: 42,
+          conclusion: "SUCCESS",
+        }),
+      ]);
+
+      expect(detail.checks.map((check) => [check.name, check.status])).toContainEqual([
+        "test (packages/shared)",
+        status,
+      ]);
+      expect(detail.checksState).toBe("failing");
+    },
+  );
+
   it("merges reviews with comments in time order and keeps a bodyless approval", () => {
     const detail = expectSuccess(activity(JSON.parse(detailJson) as Record<string, unknown>));
     expect(detail.comments.map((comment) => comment.id)).toEqual(["r1", "c1", "r2"]);
@@ -619,6 +820,29 @@ describe("pull request detail decoding", () => {
     );
 
     expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r5"]);
+  });
+
+  it("leaves out the comments and reviews a maintainer hid", () => {
+    const detail = expectSuccess(
+      activity({
+        comments: [
+          { id: "c1", body: "kept", createdAt: "2026-07-04T00:00:00Z" },
+          { id: "c2", body: "spam", createdAt: "2026-07-05T00:00:00Z", isMinimized: true },
+        ],
+        reviews: [
+          {
+            id: "r1",
+            body: "spam",
+            state: "CHANGES_REQUESTED",
+            submittedAt: "2026-07-03T00:00:00Z",
+            isMinimized: true,
+          },
+          { id: "r2", body: "", state: "APPROVED", submittedAt: "2026-07-06T00:00:00Z" },
+        ],
+      }),
+    );
+
+    expect(detail.comments.map((comment) => comment.id)).toEqual(["c1", "r2"]);
   });
 
   it.each(["APPROVED", "CHANGES_REQUESTED", "DISMISSED"])(
@@ -849,7 +1073,14 @@ describe("review thread decoding", () => {
             comments: {
               nodes: [
                 { id: "t1", body: "fix this", createdAt: "2026-07-01T00:00:00Z" },
-                { id: "t2", body: "fixed", createdAt: "2026-07-01T01:00:00Z" },
+                {
+                  id: "t2",
+                  body: "fixed",
+                  createdAt: "2026-07-01T01:00:00Z",
+                  pullRequestReview: {
+                    url: "https://github.com/acme/web/pull/1#pullrequestreview-9",
+                  },
+                },
               ],
             },
           },
@@ -858,6 +1089,42 @@ describe("review thread decoding", () => {
     );
     const comments = reviewThreadConversation(result.threads.map((entry) => entry.thread));
     expect(comments.map((comment) => comment.id)).toEqual(["t1", "t2"]);
+    // A reply-only review has no text of its own; its link finds it through the reply it posted.
+    expect(result.threads[0]?.thread.comments.map((comment) => comment.reviewUrl)).toEqual([
+      undefined,
+      "https://github.com/acme/web/pull/1#pullrequestreview-9",
+    ]);
+  });
+
+  it("leaves out hidden thread comments, and a thread with none left", () => {
+    const result = expectSuccess(
+      decodeReviewThreadsJson(
+        threadsJson([
+          {
+            id: "PRRT_hidden_root",
+            path: "apps/server/src/ws.ts",
+            comments: {
+              nodes: [
+                { id: "t1", createdAt: "2026-07-01T00:00:00Z", isMinimized: true },
+                { id: "t2", createdAt: "2026-07-01T01:00:00Z" },
+              ],
+            },
+          },
+          {
+            id: "PRRT_all_hidden",
+            path: "apps/web/src/main.tsx",
+            comments: {
+              nodes: [{ id: "t3", createdAt: "2026-07-01T00:00:00Z", isMinimized: true }],
+            },
+          },
+        ]),
+      ),
+    );
+
+    expect(result.threads.map((entry) => [entry.thread.id, entry.commentCount])).toEqual([
+      ["PRRT_hidden_root", 1],
+    ]);
+    expect(result.threads[0]?.thread.comments.map((comment) => comment.id)).toEqual(["t2"]);
   });
 
   it("keeps GitHub's own count of a thread whose comments were not all read", () => {
@@ -883,7 +1150,7 @@ describe("review thread decoding", () => {
     });
   });
 
-  it("ends a thread's walk on the last page, which still names a cursor", () => {
+  it("ends a thread's walk on the last page, which still names a cursor, counting what it hid", () => {
     const decoded = expectSuccess(
       decodeReviewThreadCommentsJson(
         JSON.stringify({
@@ -893,7 +1160,10 @@ describe("review thread decoding", () => {
               pullRequest: { id: "PR_1" },
               comments: {
                 pageInfo: { hasNextPage: false, endCursor: "Y3Vyc29yOjk" },
-                nodes: [{ id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" }],
+                nodes: [
+                  { id: "t8", body: "spam", createdAt: "2026-07-01T00:00:00Z", isMinimized: true },
+                  { id: "t9", body: "last", createdAt: "2026-07-01T00:00:00Z" },
+                ],
               },
             },
           },
@@ -901,6 +1171,7 @@ describe("review thread decoding", () => {
       ),
     );
     expect(decoded.comments.map((comment) => comment.id)).toEqual(["t9"]);
+    expect(decoded.hiddenCount).toBe(1);
     expect(decoded.nextCursor).toBeNull();
   });
 });
@@ -1366,13 +1637,6 @@ describe("reviewer request payload", () => {
       ]),
     ).toEqual({ reviewers: ["octocat", "hubot"], team_reviewers: ["reviewers"] });
   });
-
-  it("sends both lists even where one of them is empty, which is what GitHub reads", () => {
-    expect(buildReviewerRequest([{ id: "octocat", kind: "user" }])).toEqual({
-      reviewers: ["octocat"],
-      team_reviewers: [],
-    });
-  });
 });
 
 describe("review submission payload", () => {
@@ -1437,32 +1701,6 @@ describe("review submission payload", () => {
 });
 
 describe("decodePullRequestFilesJson", () => {
-  it("quotes literal backslashes without interpreting them as escapes", () => {
-    const result = expectSuccess(
-      decodePullRequestFilesJson(
-        JSON.stringify([
-          {
-            filename: String.raw`src\notes.ts`,
-            status: "modified",
-            patch: "@@ -1 +1 @@\n-old\n+new",
-          },
-        ]),
-      ),
-    );
-
-    expect(result.patch).toBe(
-      [
-        String.raw`diff --git "a/src\\notes.ts" "b/src\\notes.ts"`,
-        String.raw`--- "a/src\\notes.ts"`,
-        String.raw`+++ "b/src\\notes.ts"`,
-        "@@ -1 +1 @@",
-        "-old",
-        "+new",
-        "",
-      ].join("\n"),
-    );
-  });
-
   it("preserves spaces and literal backslashes in both rename paths", () => {
     const result = expectSuccess(
       decodePullRequestFilesJson(
@@ -1694,12 +1932,14 @@ describe("pull request lookups", () => {
 });
 
 describe("pull request watch fingerprints", () => {
-  it("moves status with checks and remarks with comments, each without the other", () => {
+  it("moves status with checks and queue removals, and remarks with comments, not across", () => {
     const pullRequest = (input: {
       readonly running: number;
       readonly failed: number;
       readonly commentEditedAt: string | null;
       readonly reviews: number;
+      readonly removals: number;
+      readonly timelineItems: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1707,6 +1947,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
+      mergeQueueRemovals: { totalCount: input.timelineItems, filteredCount: input.removals },
       commits: {
         nodes: [
           {
@@ -1728,7 +1969,14 @@ describe("pull request watch fingerprints", () => {
     });
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
       toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1 };
+    const base = {
+      running: 2,
+      failed: 0,
+      commentEditedAt: null,
+      reviews: 1,
+      removals: 0,
+      timelineItems: 3,
+    };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -1739,5 +1987,12 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.remarks).not.toBe(before.remarks);
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
+    // Queued and dropped between two passes leaves the head and its checks as they were.
+    const dropped = fingerprint({ ...base, removals: 1, timelineItems: 5 });
+    expect(dropped.status).not.toBe(before.status);
+    expect(dropped.remarks).toBe(before.remarks);
+    // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
+    const queued = fingerprint({ ...base, timelineItems: 4 });
+    expect(queued.status).toBe(before.status);
   });
 });

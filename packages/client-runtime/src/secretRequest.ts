@@ -1,5 +1,7 @@
+import { errorDisplayMessage } from "./errors/translatable.ts";
 import {
   SecretReference,
+  secretRequestPageUrl,
   type OrchestrationV2TurnItem,
   type SecretProviderId,
   type SecretRequestAnswerInput,
@@ -9,6 +11,8 @@ import {
 import { builtInSecretProviderDefinitions } from "@t3tools/secret-provider-definitions/registry";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export type SecretRequestItem = Extract<
   OrchestrationV2TurnItem,
@@ -16,11 +20,104 @@ export type SecretRequestItem = Extract<
 >;
 
 /** A `file` request lets the agent's commands read the value, so its card must not promise more. */
-export const secretRequestPrivacyNote = (item: Pick<SecretRequestItem, "delivery">) =>
-  item.delivery === "file"
-    ? "Kept out of chat, in a private file this agent's commands can read for 24 hours"
-    : "Stored securely, never shown to the agent";
-export const SECRET_REQUEST_DEFAULT_PLACEHOLDER = "Paste the secret";
+export const secretRequestPrivacyNote = (
+  item: Pick<SecretRequestItem, "delivery" | "fields">,
+  resolve: MFunctionType = mFallback,
+) =>
+  item.delivery !== "file"
+    ? resolve(msg("Stored securely, never shown to the agent"))
+    : item.fields === undefined
+      ? resolve(
+          msg("Kept out of chat, in a private file this agent's commands can read for 24 hours"),
+        )
+      : resolve(
+          msg("Kept out of chat, in private files this agent's commands can read for 24 hours"),
+        );
+const SECRET_REQUEST_DEFAULT_PLACEHOLDER = msg("Paste the secret");
+
+export interface SecretRequestInput {
+  /** Key in the card's values: the field name, or "" for a request without fields. */
+  readonly key: string;
+  readonly label: string;
+  readonly placeholder: string;
+  /** Masked, with a toggle to show it. */
+  readonly secret: boolean;
+}
+
+export function secretRequestInputs(
+  item: Pick<SecretRequestItem, "label" | "placeholder" | "fields">,
+  resolve: MFunctionType = mFallback,
+): ReadonlyArray<SecretRequestInput> {
+  if (item.fields === undefined) {
+    return [
+      {
+        key: "",
+        label: item.label,
+        placeholder: item.placeholder ?? resolve(SECRET_REQUEST_DEFAULT_PLACEHOLDER),
+        secret: true,
+      },
+    ];
+  }
+  return item.fields.map((field) => ({
+    key: field.name,
+    label: field.label,
+    placeholder: field.placeholder ?? "",
+    secret: field.secret !== false,
+  }));
+}
+
+// Backticks, <angle brackets> and markdown link targets (balanced parentheses allowed) keep their
+// exact text; a bare link drops trailing sentence punctuation.
+const REASON_LINK =
+  /`(https?:\/\/[^`\s]+)`|<(https?:\/\/[^>\s]+)>|\]\((https?:\/\/(?:[^()\s]|\([^()\s]*\))+)\)|(https?:\/\/[^\s<>"'`[\]]+)/giu;
+/** Drops trailing sentence punctuation; a `)` stays when the link opened a matching `(`. */
+function trimPunctuation(link: string): string {
+  let end = link.length;
+  while (end > 0 && ".,;:!?)".includes(link[end - 1]!)) {
+    const kept = link.slice(0, end);
+    if (link[end - 1] === ")" && kept.split("(").length > kept.split(")").length - 1) break;
+    end -= 1;
+  }
+  return link.slice(0, end);
+}
+
+/** Drops a closing `*` or `_` run only when the same run opened emphasis before the link and is still open. */
+function trimEmphasis(link: string, before: string) {
+  const run = /(\*{1,3}|_{1,3})$/u.exec(link)?.[1];
+  if (run === undefined) return link;
+  const escaped = run.replaceAll("*", "\\*");
+  // Nested emphasis (`**_url_**`) opens one run right after another.
+  const opener = [...before.matchAll(new RegExp(`(?:^|[\\s(*_])${escaped}(?=\\S|$)`, "gu"))].at(-1);
+  if (opener === undefined) return link;
+  const closed = new RegExp(`\\S${escaped}(?:[\\s.,;:!?)]|$)`, "u").test(
+    before.slice(opener.index + opener[0].length),
+  );
+  return closed ? link : trimPunctuation(link.slice(0, -run.length));
+}
+
+/** The one distinct http(s) link in `reason`, for agents that put it there instead of in `url`. */
+function reasonLink(reason: string): string | undefined {
+  const raw = Array.from(reason.matchAll(REASON_LINK), (match) => {
+    const [, ticked, angled, target, bare] = match;
+    if (bare === undefined) return ticked ?? angled ?? target ?? "";
+    const before = reason.slice(0, match.index);
+    let link = trimPunctuation(bare);
+    for (let next = trimEmphasis(link, before); next !== link; next = trimEmphasis(link, before)) {
+      link = next;
+    }
+    return link;
+  });
+  // Two spellings of one page (`https://a.dev` and `https://a.dev/`) count once.
+  const links = new Set(raw.map((link) => secretRequestPageUrl(link)?.href ?? link));
+  return links.size === 1 ? [...links][0] : undefined;
+}
+
+/** Only http(s), so an agent cannot make the card open another scheme. */
+export function secretRequestLink(item: Pick<SecretRequestItem, "url" | "reason">) {
+  const raw = item.url ?? reasonLink(item.reason);
+  const url = raw === undefined ? null : secretRequestPageUrl(raw);
+  return url === null ? null : { href: url.href, host: url.host };
+}
 
 export type SecretRequestDisplay =
   | { readonly kind: "pending" }
@@ -31,26 +128,7 @@ export type SecretRequestDisplay =
       readonly label: string;
     };
 
-const SAVED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "saved",
-  label: "Saved securely and kept private",
-};
-const DECLINED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "declined",
-  label: "Declined",
-};
-const ENDED_DISPLAY: SecretRequestDisplay = {
-  kind: "answered",
-  outcome: "ended",
-  label: "Request ended",
-};
 const PENDING_DISPLAY: SecretRequestDisplay = { kind: "pending" };
-const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
-  kind: "pending-elsewhere",
-  label: "Waiting for an answer in the original thread",
-};
 
 /**
  * `visibility` is the projected row's: a request inherited from another
@@ -59,16 +137,26 @@ const PENDING_ELSEWHERE_DISPLAY: SecretRequestDisplay = {
 export function secretRequestDisplay(
   item: Pick<SecretRequestItem, "secretStatus">,
   visibility: "local" | "inherited" | "synthetic",
+  resolve: MFunctionType = mFallback,
 ): SecretRequestDisplay {
   switch (item.secretStatus) {
     case "pending":
-      return visibility === "local" ? PENDING_DISPLAY : PENDING_ELSEWHERE_DISPLAY;
+      return visibility === "local"
+        ? PENDING_DISPLAY
+        : {
+            kind: "pending-elsewhere",
+            label: resolve(msg("Waiting for an answer in the original thread")),
+          };
     case "saved":
-      return SAVED_DISPLAY;
+      return {
+        kind: "answered",
+        outcome: "saved",
+        label: resolve(msg("Saved securely and kept private")),
+      };
     case "declined":
-      return DECLINED_DISPLAY;
+      return { kind: "answered", outcome: "declined", label: resolve(msg("Declined")) };
     case "cancelled":
-      return ENDED_DISPLAY;
+      return { kind: "answered", outcome: "ended", label: resolve(msg("Request ended")) };
   }
 }
 
@@ -82,6 +170,23 @@ export interface SecretRequestSource {
 }
 
 const NO_SOURCES: ReadonlyArray<SecretRequestSource> = [];
+
+// Secret provider packages author this text in English; the same English, translatable here.
+const INVALID_REFERENCE_MESSAGES: ReadonlyMap<string, string> = new Map([
+  [
+    "Use a 1Password reference like op://vault/item/field.",
+    msg("Use a 1Password reference like {example}.", { example: "op://vault/item/field" }),
+  ],
+]);
+
+/** A secret provider's `invalidReferenceMessage` in the UI language when it is a known one. */
+export function invalidSecretReferenceText(
+  message: string,
+  resolve: MFunctionType = mFallback,
+): string {
+  const translated = INVALID_REFERENCE_MESSAGES.get(message);
+  return translated === undefined ? message : resolve(translated);
+}
 const decodeConfigByKind = new Map(
   builtInSecretProviderDefinitions.definitions.map((definition) => [
     definition.kind,
@@ -93,13 +198,15 @@ const decodeConfigByKind = new Map(
 export function secretRequestSources(
   config: Pick<ServerConfig, "secretRequestReferences"> | null | undefined,
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   if (config?.secretRequestReferences !== true) return NO_SOURCES;
-  return configuredSecretSources(providers);
+  return configuredSecretSources(providers, resolve);
 }
 
 export function configuredSecretSources(
   providers: ServerSettings["secretProviders"],
+  resolve: MFunctionType = mFallback,
 ): ReadonlyArray<SecretRequestSource> {
   return (Object.keys(providers) as Array<SecretProviderId>).flatMap((id) => {
     const provider = providers[id];
@@ -118,7 +225,10 @@ export function configuredSecretSources(
         label: provider.label,
         isReference: definition.isReference,
         referencePlaceholder: definition.referencePlaceholder,
-        invalidReferenceMessage: definition.invalidReferenceMessage,
+        invalidReferenceMessage: invalidSecretReferenceText(
+          definition.invalidReferenceMessage,
+          resolve,
+        ),
       },
     ];
   });
@@ -137,27 +247,40 @@ export function secretRequestReference(
     : undefined;
 }
 
+/** A card value by input key. Own keys only: a field may be named `constructor`. */
+export const secretRequestValue = (values: Readonly<Record<string, string>>, key: string) =>
+  Object.hasOwn(values, key) ? (values[key] ?? "") : "";
+
 export type SecretRequestReply =
-  | { readonly type: "save"; readonly secret: string }
+  /** Keyed by `SecretRequestInput.key`. */
+  | { readonly type: "save"; readonly values: Readonly<Record<string, string>> }
+  /** Single-value cards only: the server reads it through `source`. */
   | { readonly type: "reference"; readonly source: SecretRequestSource; readonly reference: string }
   | { readonly type: "decline" };
 
+/** Null until every input has a value, or while a reference is not `source`'s syntax. */
 export function secretRequestAnswerInput(
-  item: Pick<SecretRequestItem, "id" | "threadId">,
+  item: Pick<SecretRequestItem, "id" | "threadId" | "label" | "placeholder" | "fields">,
   answer: SecretRequestReply,
 ): SecretRequestAnswerInput | null {
-  if (answer.type === "decline") {
-    return { threadId: item.threadId, turnItemId: item.id, answer: { type: "decline" } };
-  }
+  const base = { threadId: item.threadId, turnItemId: item.id };
+  if (answer.type === "decline") return { ...base, answer: { type: "decline" } };
   if (answer.type === "reference") {
-    const reference = secretRequestReference(answer.source, answer.reference);
-    return reference === undefined
-      ? null
-      : { threadId: item.threadId, turnItemId: item.id, answer: { type: "reference", reference } };
+    const reference =
+      item.fields === undefined
+        ? secretRequestReference(answer.source, answer.reference)
+        : undefined;
+    return reference === undefined ? null : { ...base, answer: { type: "reference", reference } };
   }
-  const secret = answer.secret.trim();
-  if (secret.length === 0) return null;
-  return { threadId: item.threadId, turnItemId: item.id, answer: { type: "save", secret } };
+  const entries = secretRequestInputs(item).map(
+    (input) => [input.key, secretRequestValue(answer.values, input.key).trim()] as const,
+  );
+  if (entries.some(([, value]) => value.length === 0)) return null;
+  if (item.fields === undefined) {
+    return { ...base, answer: { type: "save", secret: entries[0]?.[1] ?? "" } };
+  }
+
+  return { ...base, answer: { type: "save", values: Object.fromEntries(entries) } };
 }
 
 const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuthorizationError"]);
@@ -166,7 +289,10 @@ const USER_FACING_FAILURE_TAGS = new Set(["SecretRequestError", "EnvironmentAuth
  * Only known server errors pass their message through: anything else (transport or encoding
  * failures) gets the generic copy, so the typed value can never surface in the UI.
  */
-export function secretRequestFailureMessage(failure: unknown): string {
+export function secretRequestFailureMessage(
+  failure: unknown,
+  resolve: MFunctionType = mFallback,
+): string {
   if (
     typeof failure === "object" &&
     failure !== null &&
@@ -177,7 +303,7 @@ export function secretRequestFailureMessage(failure: unknown): string {
     typeof failure.message === "string" &&
     failure.message.trim().length > 0
   ) {
-    return failure.message;
+    return errorDisplayMessage(failure, resolve) ?? failure.message;
   }
-  return "Could not answer the request. Try again.";
+  return resolve(msg("Could not answer the request. Try again."));
 }

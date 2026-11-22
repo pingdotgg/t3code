@@ -32,11 +32,13 @@ import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/
 import { discoverGrokSkills } from "./skills.ts";
 import {
   homebrewOwnershipFromCommandPath,
+  isNixStoreCommandPath,
   makeCachedProviderMaintenanceResolution,
   makeManualOnlyProviderMaintenanceCapabilities,
   makeProviderMaintenanceCapabilities,
   type ProviderMaintenanceCapabilitiesResolver,
   resolveHomebrewProviderMaintenance,
+  resolveMiseProviderMaintenance,
   resolveProviderMaintenanceCapabilitiesEffect,
 } from "@t3tools/provider-core/server/maintenanceResolver";
 import {
@@ -49,16 +51,28 @@ const decodeGrokSettings = Schema.decodeSync(GrokSettings);
 const DRIVER_KIND = ProviderDriverKind.make("grok");
 // npm latest matches the stable channel installed by grok update.
 const GROK_NPM_PACKAGE = "@xai-official/grok";
-// `grok update` installs under `GROK_HOME`; use the resolved executable and instance environment.
 // npm 12 blocks the postinstall that moves the new binary in, yet exits 0, so allow it by env.
-// Homebrew casks need brew upgrades; `grok update` would install a second copy.
-// Keep casks manual when their brew cannot vouch for them.
+// Mise and Homebrew casks upgrade through their manager; `grok update` would install a second
+// copy, so a cask its brew cannot vouch for stays manual, as does a Nix store install.
 const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
   resolve: Effect.fn("resolveGrokMaintenance")(function* (context) {
     if (!context) {
       return makeManualOnlyProviderMaintenanceCapabilities({
         provider: DRIVER_KIND,
         packageName: GROK_NPM_PACKAGE,
+      });
+    }
+    const mise = yield* resolveMiseProviderMaintenance(
+      { provider: DRIVER_KIND, packageName: GROK_NPM_PACKAGE },
+      { tool: "grok" },
+      context,
+    );
+    if (mise) return mise;
+    if ([context.resolvedCommandPath, context.realCommandPath].some(isNixStoreCommandPath)) {
+      return makeManualOnlyProviderMaintenanceCapabilities({
+        provider: DRIVER_KIND,
+        packageName: GROK_NPM_PACKAGE,
+        installPath: context.realCommandPath,
       });
     }
     const homebrew = homebrewOwnershipFromCommandPath(context.realCommandPath);
@@ -77,6 +91,24 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
         })
       );
     }
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const name = path.basename(context.realCommandPath).toLowerCase();
+    const installDir = path.dirname(context.realCommandPath);
+    const installDirName = path.basename(installDir).toLowerCase();
+    const home = path.dirname(installDir);
+    // `grok update` installs under `$GROK_HOME`, so a script install keeps its own home even if the
+    // instance sets another: `<home>/bin/grok` links into `<home>/downloads`, or on Windows is a copy
+    // beside it. Only an install script creates `downloads`, so a bare `bin/grok` elsewhere is not one.
+    const isScriptInstall =
+      (installDirName === "downloads" && name.startsWith("grok-")) ||
+      (installDirName === "bin" &&
+        (/^grok-\d/.test(name) ||
+          ((name === "grok" || name === "grok.exe") &&
+            (yield* fileSystem
+              .exists(path.join(home, "downloads"))
+              .pipe(Effect.orElseSucceed(() => false))))));
+    const scriptHome = isScriptInstall ? { GROK_HOME: home } : {};
     return makeProviderMaintenanceCapabilities({
       provider: DRIVER_KIND,
       packageName: GROK_NPM_PACKAGE,
@@ -84,7 +116,14 @@ const UPDATE: ProviderMaintenanceCapabilitiesResolver = {
       updateArgs: ["update"],
       updateLockKey: "grok",
       platform: context.platform,
-      env: { ...context.env, npm_config_allow_scripts: GROK_NPM_PACKAGE },
+      env: {
+        ...context.env,
+        ...scriptHome,
+        npm_config_allow_scripts: GROK_NPM_PACKAGE,
+        // An npx-launched server's npm_config_user_agent outranks Grok's `[cli] installer`, steering
+        // a script install to npm. The runner extends process.env; only undefined removes a key.
+        npm_config_user_agent: undefined,
+      },
     });
   }),
 };
@@ -199,6 +238,9 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv, Path.Path> 
       getSettings: snapshotSettings.getSettings,
       streamSettings: snapshotSettings.streamSettings,
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
+      // Each check starts the Grok CLI four times. A ready instance is rechecked on refresh or a
+      // settings change; only an unhealthy one keeps polling until it recovers.
+      refreshOnInterval: (snapshot) => snapshot.status !== "ready",
       initialSnapshot: (settings) =>
         buildInitialGrokProviderSnapshot(settings.provider).pipe(Effect.map(stampIdentity)),
       checkProvider,
