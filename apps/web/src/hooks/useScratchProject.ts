@@ -8,13 +8,18 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  SCRATCH_BLOCKED_HELP_URL,
+  type ScratchBlockedByRepository,
+} from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { msg } from "gt-react";
 import { useContext } from "react";
 
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { m } from "~/i18n/messages";
+import { readLocalApi } from "~/localApi";
 import {
   type EnvironmentPresentation,
   useEnvironments,
@@ -31,6 +36,44 @@ function reportScratchFailure(title: string, error: unknown) {
       description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
     }),
   );
+}
+
+/** The client's translated copy of the server's English `scratchBlockedMessage`. */
+export const scratchBlockedCopy = ({ baseDir, repositoryRoot }: ScratchBlockedByRepository) =>
+  m(
+    msg(
+      "T3 Code keeps threads without a project in {baseDir}, which is inside the Git repository at {repositoryRoot}. To keep that repository safe, these threads are disabled on this machine.",
+      { baseDir, repositoryRoot },
+    ),
+  );
+
+const openScratchBlockedHelp = () =>
+  void readLocalApi()
+    ?.shell.openExternal(SCRATCH_BLOCKED_HELP_URL)
+    .catch(() => undefined);
+
+let scratchBlockedToastId: ReturnType<typeof toastManager.add> | undefined;
+
+function reportScratchBlocked(blocked: ScratchBlockedByRepository) {
+  // The toast stays until dismissed, so a repeated shortcut replaces it instead of stacking.
+  if (scratchBlockedToastId !== undefined) toastManager.close(scratchBlockedToastId);
+  const id = toastManager.add(
+    stackedThreadToast({
+      // Nothing failed: the server turned this off on purpose, and a warning shows the reason in full.
+      type: "warning",
+      title: m(msg("Can't start a thread without a project")),
+      description: scratchBlockedCopy(blocked),
+      timeout: 0,
+      actionProps: {
+        children: m(msg("How to fix")),
+        onClick: () => {
+          toastManager.close(id);
+          openScratchBlockedHelp();
+        },
+      },
+    }),
+  );
+  scratchBlockedToastId = id;
 }
 
 type ScratchEnvironment = Pick<EnvironmentPresentation, "connection" | "serverConfig"> & {
@@ -62,6 +105,26 @@ export function createScratchProjectActions(input: {
     return offering.length === 1 ? (offering[0]?.environmentId ?? null) : null;
   };
 
+  const scratchBlockedFor = (
+    environmentId: EnvironmentId | null,
+  ): ScratchBlockedByRepository | null => {
+    for (const entry of input.environments()) {
+      if (entry.environmentId === environmentId && entry.connection.phase === "connected") {
+        return entry.serverConfig?.scratchBlockedByRepository ?? null;
+      }
+    }
+    return null;
+  };
+
+  // The reason to show when no machine can start one. Only the primary or `fallback` machine
+  // counts, since the wording says "this machine".
+  const scratchBlocked = (fallback: EnvironmentId | null): ScratchBlockedByRepository | null => {
+    for (const entry of input.environments()) {
+      if (scratchWorkspaceRootFor(entry.environmentId) !== null) return null;
+    }
+    return scratchBlockedFor(input.primaryEnvironmentId()) ?? scratchBlockedFor(fallback);
+  };
+
   const openScratchProject = async (
     environmentId: EnvironmentId,
     failureTitle = m(msg("Could not start without a project")),
@@ -91,7 +154,25 @@ export function createScratchProjectActions(input: {
     }
   };
 
-  return { scratchWorkspaceRootFor, scratchEnvironmentId, openScratchProject, startScratchThread };
+  // Entry points stay visible on a blocked machine, so picking one says why.
+  const startScratchThreadOrExplain = async (
+    environmentId: EnvironmentId | null,
+    blocked: ScratchBlockedByRepository | null,
+  ) => {
+    if (environmentId !== null) await startScratchThread(environmentId);
+    else if (blocked !== null) reportScratchBlocked(blocked);
+  };
+
+  return {
+    scratchWorkspaceRootFor,
+    scratchEnvironmentId,
+    scratchBlockedFor,
+    scratchBlocked,
+    openScratchBlockedHelp,
+    openScratchProject,
+    startScratchThread,
+    startScratchThreadOrExplain,
+  };
 }
 
 export function useScratchProject() {

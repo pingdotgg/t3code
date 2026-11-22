@@ -15,8 +15,11 @@ export function NoProjectsHero() {
   const gt = useGT();
   const contentArea = workspaceAreaProps("home", 1, gt("Home"));
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentId, scratchBlocked, startScratchThreadOrExplain } = useScratchProject();
   const scratchTargetEnvironmentId = scratchEnvironmentId(primaryEnvironmentId);
+  const scratchBlockedByRepository =
+    scratchTargetEnvironmentId === null ? scratchBlocked(primaryEnvironmentId) : null;
+  const offersScratch = scratchTargetEnvironmentId !== null || scratchBlockedByRepository !== null;
 
   return (
     <SidebarInset
@@ -34,25 +37,30 @@ export function NoProjectsHero() {
                 <T>What should we work on?</T>
               </EmptyTitle>
               <EmptyDescription>
-                {scratchTargetEnvironmentId === null
-                  ? gt("Add a project to start your first thread.")
-                  : gt("Add a project, or start without one.")}
+                {offersScratch
+                  ? gt("Add a project, or start without one.")
+                  : gt("Add a project to start your first thread.")}
               </EmptyDescription>
               <div className="mt-6 flex justify-center gap-2">
                 <Button size="sm" onClick={() => openCommandPalette({ open: "add-project" })}>
                   <PlusIcon className="size-4" />
                   <T>Add project</T>
                 </Button>
-                {scratchTargetEnvironmentId === null ? null : (
+                {offersScratch ? (
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => void startScratchThread(scratchTargetEnvironmentId)}
+                    onClick={() =>
+                      void startScratchThreadOrExplain(
+                        scratchTargetEnvironmentId,
+                        scratchBlockedByRepository,
+                      )
+                    }
                   >
                     <MessageSquareDashedIcon className="size-4" />
                     <T>Start without a project</T>
                   </Button>
-                )}
+                ) : null}
               </div>
             </EmptyHeader>
           </div>

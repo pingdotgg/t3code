@@ -707,6 +707,19 @@ export const ServerFeatureFlags = Schema.Struct({
 });
 export type ServerFeatureFlags = typeof ServerFeatureFlags.Type;
 
+export const ScratchBlockedByRepository = Schema.Struct({
+  baseDir: TrimmedNonEmptyString,
+  repositoryRoot: TrimmedNonEmptyString,
+});
+export type ScratchBlockedByRepository = typeof ScratchBlockedByRepository.Type;
+
+export const SCRATCH_BLOCKED_HELP_URL =
+  "https://github.com/pingdotgg/t3code/blob/main/docs/user/thread-sidebar.md#when-threads-without-a-project-are-disabled";
+
+/** The server's English wording. Clients translate the same sentence in their own catalogs. */
+export const scratchBlockedMessage = (blocked: ScratchBlockedByRepository) =>
+  `T3 Code keeps threads without a project in ${blocked.baseDir}, which is inside the Git repository at ${blocked.repositoryRoot}. To keep that repository safe, these threads are disabled on this machine.`;
+
 export const ServerConfig = Schema.Struct({
   environment: ExecutionEnvironmentDescriptor,
   auth: ServerAuthDescriptor,
@@ -752,6 +765,8 @@ export const ServerConfig = Schema.Struct({
   /** A secret request card may be answered with a secret provider reference. */
   secretRequestReferences: Schema.optionalKey(Schema.Boolean),
   scratchWorkspaceRoot: Schema.optionalKey(TrimmedNonEmptyString),
+  /** Sent in place of `scratchWorkspaceRoot` when the T3 home sits inside a Git repository. */
+  scratchBlockedByRepository: Schema.optionalKey(ScratchBlockedByRepository),
   newProjectsRoot: Schema.optionalKey(TrimmedNonEmptyString),
   /**
    * The latest stall long enough to notice, sent only for a few minutes after
