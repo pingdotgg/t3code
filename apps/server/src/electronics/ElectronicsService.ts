@@ -103,6 +103,16 @@ export class ElectronicsService extends Context.Service<
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
     }) => Effect.Effect<ElectronicsThreadSession, ElectronicsError>;
+    readonly openPanelWithModel: (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly filePath: string;
+      readonly activeTab?: ElectronicsPanelTab | undefined;
+      readonly selectedNet?: string | undefined;
+    }) => Effect.Effect<
+      { readonly session: ElectronicsThreadSession; readonly model: ElectronicsCircuitModel },
+      ElectronicsError
+    >;
     readonly closePanel: (threadId: ThreadId) => Effect.Effect<void, ElectronicsError>;
     readonly getThreadSession: (
       threadId: ThreadId,
@@ -499,8 +509,8 @@ export const layer = Layer.effect(
       input: ElectronicsTracePathInput,
       threadId?: ThreadId,
     ) {
-      yield* ensureEnabled;
       const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const result = traceCircuitPath(loaded.model, {
         from: input.from,
@@ -557,8 +567,8 @@ export const layer = Layer.effect(
       input: ElectronicsValidateInput,
       threadId?: ThreadId,
     ) {
-      const settings = yield* ensureEnabled;
       const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      const settings = yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const builtin = runBuiltinCircuitValidation(loaded.model);
       const enginesUsed: ElectronicsValidationSource[] = ["builtin"];
@@ -651,8 +661,8 @@ export const layer = Layer.effect(
       input: ElectronicsSimulateInput,
       threadId?: ThreadId,
     ) {
-      const settings = yield* ensureEnabled;
       const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      const settings = yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const kind = input.kind ?? "dc_op";
 
@@ -812,22 +822,22 @@ export const layer = Layer.effect(
       return result;
     });
 
-    const openPanel = Effect.fn("ElectronicsService.openPanel")(function* (input: {
+    const openPanelWithModel = Effect.fn("ElectronicsService.openPanel")(function* (input: {
       readonly threadId: ThreadId;
       readonly cwd: string;
       readonly filePath: string;
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
     }) {
-      yield* ensureEnabled;
-      // Atomically reserve a navigation generation at entry so overlapping openPanel(A) + openPanel(B)
-      // always settles on the newest request regardless of load order, while closePanel still cancels both.
+      // Atomically reserve a navigation generation BEFORE any async settings/file I/O so
+      // closePanel or a newer openPanel starting during settings/file load always wins.
       const myGen = yield* Ref.modify(closeGenRef, (map) => {
         const nextGen = (map.get(input.threadId) ?? 0) + 1;
         const next = new Map(map);
         next.set(input.threadId, nextGen);
         return [nextGen, next] as const;
       });
+      yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const now = yield* nextMonotonicIso(input.threadId);
       const nextSession = (
@@ -856,8 +866,16 @@ export const layer = Layer.effect(
         updatedAt: now,
       });
       const committed = yield* updateThreadSession(input.threadId, nextSession, myGen);
-      return committed ?? nextSession(undefined);
+      return { session: committed ?? nextSession(undefined), model: loaded.model };
     });
+
+    const openPanel = (input: {
+      readonly threadId: ThreadId;
+      readonly cwd: string;
+      readonly filePath: string;
+      readonly activeTab?: ElectronicsPanelTab | undefined;
+      readonly selectedNet?: string | undefined;
+    }) => openPanelWithModel(input).pipe(Effect.map((res) => res.session));
 
     const closePanel = Effect.fn("ElectronicsService.closePanel")(function* (threadId: ThreadId) {
       yield* Ref.update(closeGenRef, (map) => {
@@ -905,6 +923,7 @@ export const layer = Layer.effect(
       validate,
       simulate,
       openPanel,
+      openPanelWithModel,
       closePanel,
       getThreadSession,
     });

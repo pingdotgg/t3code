@@ -75,8 +75,7 @@ const handlers = {
     Effect.gen(function* () {
       const { threadId, cwd } = yield* requireElectronicsAgentAccess;
       const service = yield* ElectronicsService.ElectronicsService;
-      const model = yield* service.inspect(cwd, input.filePath);
-      const session = yield* service.openPanel({
+      const { session, model } = yield* service.openPanelWithModel({
         threadId,
         cwd,
         filePath: input.filePath,

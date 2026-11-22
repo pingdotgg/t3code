@@ -38,6 +38,7 @@ interface LinearElement {
     readonly freq: number;
     readonly td: number;
     readonly theta: number;
+    readonly phaseRad: number;
   };
 }
 
@@ -90,8 +91,9 @@ function parseSourceSpec(
       freq: nums[2] ?? 1000,
       td: Math.max(0, nums[3] ?? 0),
       theta: nums[4] ?? 0,
+      phaseRad: ((nums[5] ?? 0) * Math.PI) / 180,
     };
-    dc = sin.vo;
+    dc = sin.vo + sin.va * Math.sin(sin.phaseRad);
   }
 
   const acMatch = /\bAC\s+([^\s]+)(?:\s+([^\s]+))?/iu.exec(raw);
@@ -350,10 +352,10 @@ function solveComplexLinear(AInput: Complex[][], bInput: Complex[]): Complex[] {
 function sourceValueAtTime(el: LinearElement, t: number): number {
   if (el.sin) {
     const s = el.sin;
-    if (t <= s.td) return s.vo;
+    if (t <= s.td) return s.vo + s.va * Math.sin(s.phaseRad);
     const elapsed = t - s.td;
     const damping = s.theta !== 0 ? Math.exp(-s.theta * elapsed) : 1;
-    return s.vo + s.va * damping * Math.sin(2 * Math.PI * s.freq * elapsed);
+    return s.vo + s.va * damping * Math.sin(2 * Math.PI * s.freq * elapsed + s.phaseRad);
   }
   if (el.pulse) {
     const p = el.pulse;

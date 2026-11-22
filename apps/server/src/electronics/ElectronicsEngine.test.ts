@@ -958,5 +958,60 @@ ${libEntries.join("\n")}
     const splitBounceModel = parseElectronicsFile("pcb/split_bounce.kicad_pcb", splitBouncePcb);
     const splitTrace = traceCircuitPath(splitBounceModel, { from: "SIG", to: "J2.1" });
     expect(splitTrace.connected).toBe(false);
+
+    // Large 50mm-radius semicircle arc: adaptive chord tessellation keeps sagitta <= 0.004mm
+    // so a pad on the true arc connects while a pad with a real copper gap stays disconnected.
+    const largeArcOnPcb = `(kicad_pcb
+  (footprint "J1" (layer "F.Cu") (at 50 0)
+    (property "Reference" "J1") (property "Value" "CON")
+    (pad "1" smd circle (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "ARC"))
+  )
+  (footprint "J2" (layer "F.Cu") (at 49.57224 6.52631)
+    (property "Reference" "J2") (property "Value" "CON")
+    (pad "1" smd circle (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "ARC"))
+  )
+  (arc (start 50 0) (mid 0 50) (end -50 0) (width 0.2) (layer "F.Cu") (net "ARC"))
+)`;
+    const largeArcOnModel = parseElectronicsFile("pcb/large_arc_on.kicad_pcb", largeArcOnPcb);
+    expect(traceCircuitPath(largeArcOnModel, { from: "J1.1", to: "J2.1" }).connected).toBe(true);
+    expect(
+      runBuiltinCircuitValidation(largeArcOnModel).issues.some(
+        (i) => i.code === "unrouted_pcb_net",
+      ),
+    ).toBe(false);
+
+    const largeArcOffPcb = `(kicad_pcb
+  (footprint "J1" (layer "F.Cu") (at 50 0)
+    (property "Reference" "J1") (property "Value" "CON")
+    (pad "1" smd circle (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "ARC"))
+  )
+  (footprint "J2" (layer "F.Cu") (at 49.14815 6.47048)
+    (property "Reference" "J2") (property "Value" "CON")
+    (pad "1" smd circle (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "ARC"))
+  )
+  (arc (start 50 0) (mid 0 50) (end -50 0) (width 0.2) (layer "F.Cu") (net "ARC"))
+)`;
+    const largeArcOffModel = parseElectronicsFile("pcb/large_arc_off.kicad_pcb", largeArcOffPcb);
+    expect(traceCircuitPath(largeArcOffModel, { from: "J1.1", to: "J2.1" }).connected).toBe(false);
+    expect(
+      runBuiltinCircuitValidation(largeArcOffModel).issues.some(
+        (i) => i.code === "unrouted_pcb_net",
+      ),
+    ).toBe(true);
+
+    // SIN damping (theta) and phase (deg): SIN(0 1 1k 0 1000 90) starts at 1 V and decays to ~e^-1 V at 1 ms
+    const sinDampedModel = parseElectronicsFile(
+      "sim/sin_damped.cir",
+      "* Damped phase-shifted sine\nV1 in 0 SIN(0 1 1k 0 1000 90)\nR1 in 0 1k\n.end\n",
+    );
+    const sinDampedTran = runBuiltinMnaSimulation(sinDampedModel, {
+      kind: "transient",
+      outputNode: "in",
+      stopTimeSeconds: 1e-3,
+      stepTimeSeconds: 1e-5,
+    });
+    const dampedPts = sinDampedTran.series.find((s) => s.label === "V(in)")!.points;
+    expect(dampedPts[0]?.y).toBeCloseTo(1, 3);
+    expect(dampedPts[dampedPts.length - 1]?.y).toBeCloseTo(Math.exp(-1), 2);
   });
 });

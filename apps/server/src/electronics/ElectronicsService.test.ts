@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ThreadId } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -224,4 +225,97 @@ it.effect(
       const afterCrossTrace = yield* service.getThreadSession(threadId);
       expect(afterCrossTrace?.filePath).toBe("b.cir");
     }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+);
+
+it.effect(
+  "deterministically prevents a slow openPanel(A) from clobbering a newer openPanel(B) or closePanel",
+  () =>
+    Effect.gen(function* () {
+      const aStarted = yield* Deferred.make<void>();
+      const releaseA = yield* Deferred.make<void>();
+      const aCloseStarted = yield* Deferred.make<void>();
+      const releaseAClose = yield* Deferred.make<void>();
+      let aReadCount = 0;
+
+      const gatedFsLayer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const baseFs = yield* FileSystem.FileSystem;
+          return {
+            ...baseFs,
+            readFileString: (filePath: string, encoding?: string) => {
+              if (filePath.endsWith("/a.cir")) {
+                aReadCount += 1;
+                const callIdx = aReadCount;
+                return Effect.gen(function* () {
+                  if (callIdx === 1) {
+                    yield* Deferred.succeed(aStarted, undefined);
+                    yield* Deferred.await(releaseA);
+                  } else if (callIdx === 2) {
+                    yield* Deferred.succeed(aCloseStarted, undefined);
+                    yield* Deferred.await(releaseAClose);
+                  }
+                  return yield* baseFs.readFileString(filePath, encoding);
+                });
+              }
+              return baseFs.readFileString(filePath, encoding);
+            },
+          };
+        }),
+      ).pipe(Layer.provide(NodeServices.layer));
+
+      const mockSettings = ServerSettings.layerTest({});
+      const mockSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(new Error("ENOENT") as never)),
+      );
+      const gatedLayer = ElectronicsService.layer.pipe(
+        Layer.provide(mockSettings),
+        Layer.provide(mockSpawner),
+        Layer.provide(gatedFsLayer),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const service = yield* ElectronicsService.ElectronicsService;
+
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-race-" });
+        yield* fs.writeFileString(
+          path.join(dir, "a.cir"),
+          "* A\nV1 in 0 5\nR1 in out 1k\nR2 out 0 1k\n.end\n",
+        );
+        yield* fs.writeFileString(
+          path.join(dir, "b.cir"),
+          "* B\nV1 in 0 3.3\nR1 in out 2k\nR2 out 0 2k\n.end\n",
+        );
+
+        const threadId = ThreadId.make("thread-elec-race");
+
+        // Case 1: openPanel(A) starts and blocks in file I/O; openPanel(B) starts & completes;
+        // then openPanel(A) finishes -> B must remain the active session.
+        const slowAFiber = yield* Effect.forkChild(
+          service.openPanelWithModel({ threadId, cwd: dir, filePath: "a.cir" }),
+        );
+        yield* Deferred.await(aStarted);
+        const fastB = yield* service.openPanelWithModel({ threadId, cwd: dir, filePath: "b.cir" });
+        expect(fastB.session.filePath).toBe("b.cir");
+        expect(fastB.model.components.length).toBeGreaterThan(0);
+        yield* Deferred.succeed(releaseA, undefined);
+        yield* Fiber.join(slowAFiber);
+        expect((yield* service.getThreadSession(threadId))?.filePath).toBe("b.cir");
+
+        // Case 2: openPanel(A) starts and blocks in file I/O; closePanel runs;
+        // then openPanel(A) finishes -> panel must remain closed.
+        const slowA2Fiber = yield* Effect.forkChild(
+          service.openPanel({ threadId, cwd: dir, filePath: "a.cir" }),
+        );
+        yield* Deferred.await(aCloseStarted);
+        yield* service.closePanel(threadId);
+        yield* Deferred.succeed(releaseAClose, undefined);
+        yield* Fiber.join(slowA2Fiber);
+        expect(yield* service.getThreadSession(threadId)).toBeUndefined();
+      }).pipe(Effect.scoped, Effect.provide(gatedLayer));
+    }),
 );
