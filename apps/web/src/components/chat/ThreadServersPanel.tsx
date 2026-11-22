@@ -91,6 +91,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   const initialCount = visibleRowCount(servers.length, SERVER_PAGE_COUNT);
   const shownCount = visibleRowCount(servers.length, visibleCount);
   const hiddenCount = servers.length - shownCount;
+  const nextCount = visibleRowCount(servers.length, shownCount + SERVER_PAGE_COUNT) - shownCount;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -345,11 +346,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           )}
           {hiddenCount > 0 ? (
             <T>
-              Show{" "}
-              <Var>
-                {visibleRowCount(servers.length, shownCount + SERVER_PAGE_COUNT) - shownCount}
-              </Var>{" "}
-              more
+              Show <Var>{nextCount}</Var> more
             </T>
           ) : (
             <T>Show less</T>
