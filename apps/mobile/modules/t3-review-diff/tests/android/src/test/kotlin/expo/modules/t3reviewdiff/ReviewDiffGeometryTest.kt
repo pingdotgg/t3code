@@ -1,6 +1,12 @@
 package expo.modules.t3reviewdiff
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.RectF
+import android.text.StaticLayout
+import android.text.TextPaint
 import android.view.View
 import kotlin.math.ceil
 import expo.modules.kotlin.AppContext
@@ -175,6 +181,82 @@ class ReviewDiffGeometryTest {
         assertEquals(false, drawing.tokensChangeWidth(tokens, recolored, style))
       }
     }
+  }
+
+  @Test
+  fun unwrappedWordDiffHighlightsCoverTheTextDrawCodeDraws() {
+    val drawing = ReviewDiffCanvasDrawing(RuntimeEnvironment.getApplication())
+    val boxes = mutableListOf<RectF>()
+    val texts = mutableMapOf<String, Float>()
+    val paints = mutableMapOf<String, TextPaint>()
+    val bitmap = Bitmap.createBitmap(1000, 60, Bitmap.Config.ARGB_8888)
+    val canvas = object : Canvas(bitmap) {
+      override fun drawRoundRect(rect: RectF, rx: Float, ry: Float, paint: Paint) {
+        boxes += RectF(rect)
+      }
+
+      override fun drawText(
+        text: String,
+        start: Int,
+        end: Int,
+        x: Float,
+        y: Float,
+        paint: Paint
+      ) {
+        texts[text.substring(start, end)] = x
+        paints[text.substring(start, end)] = TextPaint(paint)
+      }
+    }
+
+    // The framework's caret position in the piece drawCode drew, kerning included.
+    fun caret(piece: String, offset: Int): Float {
+      val layout = StaticLayout.Builder.obtain(piece, 0, piece.length, paints.getValue(piece), 1000)
+      return texts.getValue(piece) + layout.build().getPrimaryHorizontal(offset)
+    }
+    val lines = CodeLines(intArrayOf(0), 0)
+    for (weight in listOf("medium", "regular")) {
+      val style = DiffStyle.defaults(1f).copy(codeFontWeight = weight, codeFontSizePx = 17f)
+      for (prefix in listOf("if ", "说明 ", "😀 ")) {
+        val tokens = listOf(
+          DiffToken(prefix, Color.RED, 2),
+          DiffToken("go ", Color.BLUE, 0),
+          DiffToken("1.27.3", Color.GREEN, 0),
+          DiffToken(";", Color.BLUE, 0),
+          DiffToken(" LTP.", Color.BLUE, 0),
+          DiffToken(" AV", Color.GREEN, 0),
+          DiffToken("LP.", Color.BLUE, 0),
+        )
+        val content = tokens.joinToString("") { it.content }
+        val start = content.indexOf("1.27.3")
+        val kerned = content.indexOf("TP")
+        val crossing = content.indexOf("VLP")
+        val row = row("line", content).copy(
+          wordDiffRanges = listOf(
+            DiffWordDiffRange(start, start + "1.27.3".length),
+            DiffWordDiffRange(kerned, kerned + 2),
+            DiffWordDiffRange(crossing, crossing + 3),
+          ),
+        )
+        boxes.clear()
+        texts.clear()
+        paints.clear()
+        drawing.configureCodePaint(Color.BLACK, 0, style)
+        drawing.drawWordDiffRanges(canvas, row, tokens, 10f, 0, 40, lines, style)
+        drawing.drawCode(canvas, row, tokens, 10f, 28f, style, lines)
+        assertEquals(3, boxes.size)
+        val (box, kernedBox, crossingBox) = boxes
+        val case = "weight=$weight prefix=$prefix"
+        assertEquals("$case left", requireNotNull(texts["1.27.3"]), box.left, 0.5f)
+        assertEquals("$case right", requireNotNull(texts[";"]), box.right, 0.5f)
+        val unkerned = texts.getValue(" LTP.") + paints.getValue(" LTP.").measureText(" L")
+        if (weight == "medium") assertTrue("$case L and T kern", caret(" LTP.", 2) < unkerned - 1f)
+        assertEquals("$case kerned left", caret(" LTP.", 2), kernedBox.left, 0.5f)
+        assertEquals("$case kerned right", caret(" LTP.", 4), kernedBox.right, 0.5f)
+        assertEquals("$case crossing left", caret(" AV", 2), crossingBox.left, 0.5f)
+        assertEquals("$case crossing right", caret("LP.", 2), crossingBox.right, 0.5f)
+      }
+    }
+    bitmap.recycle()
   }
 
   @Test

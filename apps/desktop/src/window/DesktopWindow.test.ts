@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
@@ -246,6 +247,7 @@ function layerTest(input: {
   readonly previewZoomReapplies?: number[];
   readonly onReveal?: (window: Electron.BrowserWindow) => void;
   readonly focusedWindow?: Electron.BrowserWindow;
+  readonly fallbackWindow?: Electron.BrowserWindow;
   readonly platform?: NodeJS.Platform;
   readonly appearanceWindows?: ReadonlyArray<{
     readonly window: Electron.BrowserWindow;
@@ -299,7 +301,9 @@ function layerTest(input: {
         Effect.as(input.window),
       ),
     main: Ref.get(input.mainWindow),
-    currentMainOrFirst: Ref.get(input.mainWindow),
+    currentMainOrFirst: Ref.get(input.mainWindow).pipe(
+      Effect.map(Option.orElse(() => Option.fromNullishOr(input.fallbackWindow ?? null))),
+    ),
     focusedMainOrFirst:
       input.focusedWindow === undefined
         ? Ref.get(input.mainWindow)
@@ -844,7 +848,7 @@ describe("DesktopWindow", () => {
     }),
   );
 
-  it.effect("reloads and inspects the main window even when a popup has focus", () =>
+  it.effect("routes menu commands to the main window even when a popup has focus", () =>
     Effect.gen(function* () {
       const fakeWindow = makeFakeBrowserWindow();
       const popup = makeFakeBrowserWindow();
@@ -864,7 +868,10 @@ describe("DesktopWindow", () => {
         yield* desktopWindow.runMainContentsCommand("reload");
         yield* desktopWindow.runMainContentsCommand("forceReload");
         yield* desktopWindow.runMainContentsCommand("toggleDevTools");
+        yield* desktopWindow.dispatchMenuAction("open-settings");
 
+        assert.deepEqual(fakeWindow.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
+        assert.equal(popup.send.mock.calls.length, 0);
         assert.equal(fakeWindow.reload.mock.calls.length, 1);
         assert.equal(fakeWindow.reloadIgnoringCache.mock.calls.length, 1);
         assert.equal(fakeWindow.toggleDevTools.mock.calls.length, 1);
@@ -872,6 +879,113 @@ describe("DesktopWindow", () => {
         assert.equal(popup.reloadIgnoringCache.mock.calls.length, 0);
         assert.equal(popup.toggleDevTools.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("reloads only the browser page selected through its context menu", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const guest = makeFakeBrowserWindow();
+      const otherGuest = makeFakeBrowserWindow();
+      const popup = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+      const menus = yield* Queue.unbounded<ElectronMenu.ElectronMenuTemplateInput>();
+
+      yield* Effect.gen(function* () {
+        const desktopWindow = yield* DesktopWindow.DesktopWindow;
+        yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+        const attach = main.webContentsListeners.get("did-attach-webview");
+        if (!attach) return yield* Effect.die("did-attach-webview listener was not registered");
+        attach({}, guest.window.webContents);
+        attach({}, otherGuest.window.webContents);
+        const openPopup = guest.webContentsListeners.get("did-create-window");
+        if (!openPopup) return yield* Effect.die("did-create-window listener was not registered");
+        openPopup(popup.window);
+
+        const pages = [main, guest, otherGuest, popup];
+        for (const page of pages) {
+          const contextMenu = page.webContentsListeners.get("context-menu");
+          if (!contextMenu) return yield* Effect.die("context-menu listener was not registered");
+          contextMenu(
+            { preventDefault: vi.fn() },
+            {
+              misspelledWord: "",
+              linkURL: "",
+              mediaType: "none",
+              editFlags: { canCut: false, canCopy: true, canPaste: false, canSelectAll: true },
+            },
+          );
+          const menu = yield* Queue.take(menus);
+          assert.deepEqual(
+            menu.template.filter((item) => item.role).map((item) => [item.role, item.enabled]),
+            [
+              ["cut", false],
+              ["copy", true],
+              ["paste", false],
+              ["selectAll", true],
+            ],
+          );
+          const reload = menu.template.find((item) => item.label === "Reload");
+          if (page === main) {
+            assert.isUndefined(reload);
+            continue;
+          }
+          if (!reload?.click) return yield* Effect.die("browser context menu has no Reload action");
+          assert.isUndefined(reload.accelerator);
+          reload.click({} as Electron.MenuItem, main.window, {} as KeyboardEvent);
+          assert.equal(page.reload.mock.calls.length, 1);
+          for (const otherPage of pages) {
+            if (otherPage !== page) assert.equal(otherPage.reload.mock.calls.length, 0);
+          }
+          vi.mocked(page.window.webContents.isDestroyed).mockReturnValue(true);
+          reload.click({} as Electron.MenuItem, main.window, {} as KeyboardEvent);
+          assert.equal(page.reload.mock.calls.length, 1);
+          page.reload.mockClear();
+        }
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: main.window,
+            createCount,
+            mainWindow,
+            onPopupTemplate: (menu) => Queue.offer(menus, menu).pipe(Effect.asVoid),
+          }),
+        ),
+      );
+    }),
+  );
+
+  it.effect("recreates main for Settings when only an unregistered popup survives", () =>
+    Effect.gen(function* () {
+      const main = makeFakeBrowserWindow();
+      const auxiliary = makeFakeBrowserWindow();
+      const createCount = yield* Ref.make(0);
+      const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+
+      yield* Effect.gen(function* () {
+        const windows = yield* DesktopWindow.DesktopWindow;
+        yield* windows.dispatchMenuAction("open-settings");
+        assert.deepEqual(main.send.mock.calls, [["desktop:menu-action", "open-settings"]]);
+        assert.equal(auxiliary.send.mock.calls.length, 0);
+        assert.equal(yield* Ref.get(createCount), 1);
+        assert.strictEqual(yield* windows.ensureMain, main.window);
+        assert.equal(yield* Ref.get(createCount), 1);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            window: main.window,
+            createCount,
+            mainWindow,
+            fallbackWindow: auxiliary.window,
+            desktopSettings: {
+              ...DesktopAppSettings.DEFAULT_DESKTOP_SETTINGS,
+              localEnvironmentEnabled: false,
+            },
+          }),
+        ),
+      );
     }),
   );
 
@@ -1186,6 +1300,38 @@ describe("DesktopWindow", () => {
         assert.deepEqual(mainWindowBoundsUpdates, [{ x: 180, y: 120, width: 1440, height: 960 }]);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "brings the window back after the renderer dies more often than the reload budget",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.handleBackendReady(new URL("http://127.0.0.1:3773"));
+
+          const renderProcessGone = fakeWindow.webContentsListeners.get("render-process-gone");
+          if (!renderProcessGone) {
+            return yield* Effect.die("render-process-gone listener was not registered");
+          }
+          for (let crash = 1; crash <= 4; crash++) {
+            const loadsBefore = fakeWindow.loadURL.mock.calls.length;
+            renderProcessGone({}, { reason: "oom", exitCode: -536870904 });
+            yield* TestClock.adjust(crash < 4 ? 1_000 : 60_000);
+            yield* Effect.promise(() => Promise.resolve());
+            assert.isAbove(
+              fakeWindow.loadURL.mock.calls.length,
+              loadsBefore,
+              `window shows nothing after renderer crash ${crash}`,
+            );
+          }
+        }).pipe(Effect.provide(layer));
+      }),
   );
 
   it.effect("updates title bar overlays only on windows created with one", () =>
