@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { openAttachmentInViewer } from "../../lib/attachmentDownload";
 import { useMediaActions } from "../../state/mediaActions";
 import type {
+  FilePreviewImage,
   FilePreviewImages,
   FilePreviewModalProps,
   FilePreviewViewerProps,
@@ -137,14 +138,26 @@ const ImagePreviewContext = createContext<ImagePreviewProps | null>(null);
 
 function ImagePreviewHeader(header: { readonly imageIndex: number }) {
   const props = useContext(ImagePreviewContext)!;
-  const source = props.source.images[header.imageIndex];
+  return (
+    <ImagePreviewPageHeader
+      key={header.imageIndex}
+      image={props.source.images[header.imageIndex]}
+      onRequestClose={props.onRequestClose}
+    />
+  );
+}
+
+function ImagePreviewPageHeader(props: {
+  readonly image: FilePreviewImage | undefined;
+  readonly onRequestClose: () => void;
+}) {
   const gt = useGT();
   const insets = useSafeAreaInsets();
-  const mediaActions = useMediaActions(source?.actionsSource, props.onRequestClose);
+  const mediaActions = useMediaActions(props.image?.actionsSource, props.onRequestClose);
   return (
     <View className="bg-black/70" style={{ paddingTop: insets.top }}>
       <MediaPreviewHeader
-        title={source?.name ?? gt("Image")}
+        title={props.image?.name ?? gt("Image")}
         media={mediaActions}
         closeAccessibilityLabel={gt("Close image")}
         onClose={props.onRequestClose}
