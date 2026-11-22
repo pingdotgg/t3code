@@ -11042,9 +11042,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               context.assistant.streamBlocks.clear();
-              const usage: ClaudeMessageUsage | null | undefined = event.message.usage;
-              context.streamUsage = usage == null ? null : { messageId: event.message.id, usage };
-              if (usage != null) yield* emitContextUsage(context, usage, true);
+              const usage: ClaudeMessageUsage = event.message.usage ?? {};
+              context.streamUsage = { messageId: event.message.id, usage };
+              yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
               const usage: typeof event.usage | null | undefined = event.usage;
               const stream = context.streamUsage;

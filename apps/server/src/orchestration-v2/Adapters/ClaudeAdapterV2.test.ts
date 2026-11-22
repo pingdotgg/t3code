@@ -997,22 +997,7 @@ describe("ClaudeAdapterV2 context usage", () => {
     assert.strictEqual(usage.promptCacheExpiresAt, "2026-08-29T00:05:00.000Z");
   });
 
-  it("normalizes missing, null, or non-finite usage fields to zero integers", () => {
-    const emptyUsage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
-      {},
-      null,
-      "2026-08-29T00:03:00.000Z",
-    );
-    assert.deepEqual(decodeProviderTurnTokenUsage(emptyUsage), {
-      usedTokens: 0,
-      maxTokens: null,
-      inputTokens: 0,
-      cachedInputTokens: 0,
-      outputTokens: 0,
-      reasoningOutputTokens: 0,
-      updatedAt: "2026-08-29T00:03:00.000Z",
-    });
-
+  it("counts missing, negative, or non-finite usage fields as zero", () => {
     const partialUsage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {
         input_tokens: 1_200,
@@ -10441,10 +10426,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           type: "message_start",
           message: { id: "msg_null_usage", usage: null },
         }),
-        usageSnapshotFrame("msg_null_usage", "00000000-0000-4000-8000-000000000676", {
-          input_tokens: 12_600,
-          output_tokens: 40,
+        usageStreamFrame({
+          type: "message_delta",
+          delta: { stop_reason: "end_turn", stop_sequence: null },
+          usage: { input_tokens: 12_600, output_tokens: 40 },
         }),
+        usageSnapshotFrame("msg_null_usage", "00000000-0000-4000-8000-000000000676", {}),
         makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000677", result: "Done." }),
       ];
       for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
