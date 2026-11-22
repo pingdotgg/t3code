@@ -1105,8 +1105,25 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         expect(protoOrphanAfterClear?.["__proto__"]).toEqual(lowEffort);
 
-        // Retained reasoning caps at 256 and evicts older orphaned entries before newer candidates.
+        // Retained reasoning caps at 256 during clear and evicts older orphaned entries before
+        // newer candidates (1 orphan + 255 newer candidates + 1 preserved catalog reasoning entry
+        // carried by a newer same-model update = 257 entries entering retention).
         yield* coordinator.clearLiveConfiguration(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "catalog-pub", name: "Catalog Pub", description: null },
+            {
+              id: "catalog-model",
+              name: "Catalog Model",
+              description: null,
+              reasoningEffort: lowEffort,
+            },
+          ],
+          currentModelId: "catalog-pub",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const capCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
           currentModelId: "orphan-pub",
@@ -1123,7 +1140,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         });
         const newerAdvertised = Object.fromEntries(
-          Array.from({ length: 256 }, (_, index) => [`newer-${index}`, lowEffort]),
+          Array.from({ length: 255 }, (_, index) => [`newer-${index}`, lowEffort]),
         );
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
@@ -1133,9 +1150,21 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
           advertisedReasoning: newerAdvertised,
         });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "catalog-pub",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["oldest-orphan"] !== undefined,
+          ),
+        ).toBe(true);
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: replacedCrossCatalog.catalogRevision,
+            catalogRevision: capCatalog.catalogRevision,
             retain: (live) => Option.some({ ...live, partialOptions: true }),
           }),
         ).toBe(true);
@@ -1147,7 +1176,12 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(false);
         expect(
           afterCapClear.pendingOptions.some(
-            (e) => e.configuration.advertisedReasoning?.["newer-255"] !== undefined,
+            (e) => e.configuration.advertisedReasoning?.["newer-0"] !== undefined,
+          ),
+        ).toBe(true);
+        expect(
+          afterCapClear.pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["catalog-model"] !== undefined,
           ),
         ).toBe(true);
 

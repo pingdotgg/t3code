@@ -393,14 +393,23 @@ export function updateAcpRegistryLearnedModelsFromLive(
         isModelSpecificDescriptor(descriptor, modelOptionIds) &&
         (!isReasoningDisabled || !isReasoningDescriptor(descriptor)),
     );
-    if (incoming.length > 0) {
+    const previous = learnedBySlug.get(slug);
+    const replace = options?.replaceCurrentLearnedOptions === true;
+    if (incoming.length === 0) {
+      if (replace && previous !== undefined) {
+        learnedBySlug.delete(slug);
+        if (slug === lastLearnedSlug) lastLearnedSlug = undefined;
+        dataChanged = true;
+      }
+    } else {
       const incomingIds = new Set(incoming.map((descriptor) => descriptor.id));
-      const previous = learnedBySlug.get(slug);
-      const preservedPrevious = (previous?.capabilities?.optionDescriptors ?? []).filter(
-        (descriptor) =>
-          !incomingIds.has(descriptor.id) &&
-          (!isReasoningDisabled || !isReasoningDescriptor(descriptor)),
-      );
+      const preservedPrevious = replace
+        ? []
+        : (previous?.capabilities?.optionDescriptors ?? []).filter(
+            (descriptor) =>
+              !incomingIds.has(descriptor.id) &&
+              (!isReasoningDisabled || !isReasoningDescriptor(descriptor)),
+          );
       const updated: ServerProviderModel = {
         slug,
         name: configuration.cappedLastModel.name,
@@ -2245,6 +2254,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       Option.isSome(liveSnapshot.catalog) ||
                       Option.isSome(liveSnapshot.configuration) ||
                       Option.isSome(afterClear.configuration) ||
+                      afterClear.pendingOptions.length > 0 ||
                       afterClear.revision > liveSnapshot.revision ||
                       accepted.probeOptions !== null;
                     yield* resetAppliedLiveRevisions;
@@ -2350,26 +2360,45 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           instanceId,
                         );
                       const appliedRevision = yield* Ref.get(lastAppliedLiveRevision);
-                      if (revision <= clearedThroughRevision || revision < appliedRevision) {
+                      if (revision <= clearedThroughRevision) {
                         return;
                       }
                       const rawCurrent = yield* getSnapshot;
-                      const accepted = yield* Ref.get(acceptedCatalog);
-                      // Sync models array identity with acceptedCatalog when managedProvider
-                      // deduplicated a structurally equal snapshot whose overflow-tail tag changed.
-                      const current =
-                        accepted.probeOptions === null &&
-                        accepted.models.length > 0 &&
-                        Equal.equals(rawCurrent.models, accepted.models)
-                          ? { ...rawCurrent, models: accepted.models }
-                          : rawCurrent;
                       if (
-                        !current.installed ||
-                        (current.auth.status === "unauthenticated" &&
+                        !rawCurrent.installed ||
+                        (rawCurrent.auth.status === "unauthenticated" &&
                           configuration.models.length === 0)
                       ) {
                         return;
                       }
+                      const accepted = yield* Ref.get(acceptedCatalog);
+                      if (revision < appliedRevision) {
+                        // A retiring watcher can apply a newer catalog and options between
+                        // readiness returning and applySnapshotBase committing. Restore the
+                        // already-accepted catalog without replaying the stale intermediate step.
+                        if (
+                          accepted.probeOptions === null &&
+                          accepted.models.length > 0 &&
+                          !Equal.equals(rawCurrent.models, accepted.models)
+                        ) {
+                          const { message: _staleMessage, ...rest } = rawCurrent;
+                          yield* publishSnapshot({
+                            ...rest,
+                            ...(rawCurrent.status !== "ready" && rawCurrent.message !== undefined
+                              ? { message: rawCurrent.message }
+                              : {}),
+                            models: accepted.models,
+                          });
+                        }
+                        return;
+                      }
+                      // Always base live updates on acceptedCatalog.models when no probe baseline is
+                      // active, preserving both WeakMap overflow-tail identity and any newer catalog
+                      // whose publish was dropped during a readiness generation handoff.
+                      const current =
+                        accepted.probeOptions === null && accepted.models.length > 0
+                          ? { ...rawCurrent, models: accepted.models }
+                          : rawCurrent;
                       const next = yield* applyLiveConfigurationStep(current, configuration, {
                         preserveStatus: current.status !== "ready",
                         revision,

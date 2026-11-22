@@ -42,6 +42,7 @@ import {
 } from "./driver.ts";
 import {
   ACP_REGISTRY_MAX_MODELS,
+  type AcpRegistryLiveConfiguration,
   acpRegistryAdvertisesModelCatalog,
   acpRegistryProbeResult,
   normalizeAcpRegistryLiveConfiguration,
@@ -1632,6 +1633,55 @@ describe("acpRegistryEnrichmentCache", () => {
       ),
     ).toEqual(selectionOnly);
 
+    // Second-clear retention preserves replaceModelOptions only when the partial entry already
+    // carried it, and does not drop an earlier preserveDefault replacement entry.
+    const secondClearSchema = {
+      models: [
+        { id: "new-model", name: "new-model", description: null },
+        { id: "old-model", name: "old-model", description: null },
+      ],
+      currentModelId: "new-model",
+      configOptions: [],
+      modelOptionIds: new Set<string>(),
+    };
+    expect(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
+          replaceModelOptions: true,
+        },
+        secondClearSchema,
+      ),
+    ).toEqual(selectionOnly);
+    expect(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+        },
+        secondClearSchema,
+      ),
+    ).toEqual(
+      Option.some({
+        models: [],
+        currentModelId: "old-model",
+        configOptions: [],
+        modelOptionIds: [],
+        modelsFromModelSelect: false,
+        partialOptions: true,
+      }),
+    );
+
     // Never promotes a live shared option into a probe model-specific option on the probe's current model.
     expect(
       retainAcpRegistryLiveOptionsAfterProbe(
@@ -2321,6 +2371,55 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
         .find((m) => m.slug === "m255")
         ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
     ).toEqual([["variant", "v2"]]);
+    // Replacement intent on an off-screen displaced tail replaces (or deletes when empty) prior
+    // learned descriptors for m255 instead of merging them back.
+    const replacedDisplacedTailEntry = {
+      ...prepareAcpRegistryLiveConfiguration([
+        ...modelSelect("m255", choices),
+        effortOption("high"),
+      ]).toLiveConfiguration({ includeCatalog: false }),
+      partialOptions: true,
+      preserveDefault: true,
+    };
+    const mergedDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
+      learnedWithEarlierOrdinaryTail,
+      afterEarlierOrdinaryTail.models,
+      replacedDisplacedTailEntry,
+    );
+    expect(
+      mergedDisplacedTail
+        .find((m) => m.slug === "m255")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["variant", "v2"],
+      ["effort", "high"],
+    ]);
+    const replacedDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
+      learnedWithEarlierOrdinaryTail,
+      afterEarlierOrdinaryTail.models,
+      replacedDisplacedTailEntry,
+      undefined,
+      { replaceCurrentLearnedOptions: true },
+    );
+    expect(
+      replacedDisplacedTail
+        .find((m) => m.slug === "m255")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([["effort", "high"]]);
+    const clearedDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
+      learnedWithEarlierOrdinaryTail,
+      afterEarlierOrdinaryTail.models,
+      {
+        ...prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+        partialOptions: true,
+        preserveDefault: true,
+      },
+      undefined,
+      { replaceCurrentLearnedOptions: true },
+    );
+    expect(clearedDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
     // Restoring m255 into slot 255 while a different model (m0) is current with its own
     // `variant` option must keep m255's off-screen learned `variant=v2` intact.
     const m0RestoringM255 = {
@@ -3931,6 +4030,152 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           }),
         );
 
+        // When only an earlier preserveDefault entry remains in pendingOptions (configuration is
+        // None), invalidateCaches + refresh must keep probeOptions active so the retained override
+        // survives and later stale live options are still filtered against the new probe schema.
+        yield* writeModels({
+          models: ["new-model", "old-model"],
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "new-model",
+              options: [
+                { value: "new-model", name: "New Model" },
+                { value: "old-model", name: "Old Model" },
+              ],
+            },
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        });
+        const withEffortProbe = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(withEffortProbe);
+
+        const sawPendingOverride = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models.find((m) => m.slug === "new-model")?.isDefault === true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              role: "reasoning",
+              currentValue: "low",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "new-model",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawPendingOverride);
+
+        yield* TestClock.adjust("16 minutes");
+        const clearedToPendingOnly = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(clearedToPendingOnly);
+        expect(Option.isNone(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
+          true,
+        );
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(identity.instanceId)).pendingOptions
+            .length,
+        ).toBeGreaterThan(0);
+
+        yield* instance.invalidateCaches ?? Effect.void;
+        const afterInvalidatePendingOnly = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const invalidatedSnap = Option.getOrThrow(yield* Fiber.join(afterInvalidatePendingOnly));
+        expect(
+          invalidatedSnap.models
+            .find((m) => m.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue,
+        ).toBe("low");
+
+        const sawFilteredLegacy = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "new-model")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+              "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "new-model",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              role: "reasoning",
+              currentValue: "low",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+            {
+              id: "legacy",
+              label: "Legacy",
+              type: "boolean",
+              currentValue: true,
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        const filteredSnap = Option.getOrThrow(yield* Fiber.join(sawFilteredLegacy));
+        expect(
+          filteredSnap.models.map((m) => [
+            m.slug,
+            (m.capabilities?.optionDescriptors ?? []).map((d) => d.id),
+          ]),
+        ).toEqual([
+          ["new-model", ["effort"]],
+          ["old-model", ["effort"]],
+        ]);
+        yield* writeModels(["new-model", "old-model", "other-model"]);
+        yield* TestClock.adjust("16 minutes");
+
         const restoredForAuthInvalidate = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
         );
@@ -4569,6 +4814,54 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       Effect.gen(function* () {
         const handoffCallbackBlocked = yield* Deferred.make<void>();
         let blockHandoffWatcher = false;
+        let retiringRaceArmed = false;
+        let retiringRacePending = false;
+        let retiringWatcherReady = yield* Deferred.make<void>();
+        let trackRetiringWatcherReady = false;
+        let retiringReadyCount = 0;
+        let retiringOnUpdate:
+          | ((configuration: AcpRegistryLiveConfiguration, revision: number) => Effect.Effect<void>)
+          | null = null;
+        let retiringRaceUpdates: Array<{
+          readonly configuration: AcpRegistryLiveConfiguration;
+          readonly revision: number;
+        }> = [];
+        const racedCatalog: AcpRegistryLiveConfiguration = {
+          models: [
+            { id: "raced-a", name: "Raced A", description: null },
+            { id: "raced-b", name: "Raced B", description: null },
+          ],
+          currentModelId: "raced-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        };
+        const racedOptions: AcpRegistryLiveConfiguration = {
+          models: [],
+          currentModelId: "raced-b",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              role: "reasoning",
+              currentValue: "high",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        };
+        const markRetiringReady = () =>
+          Effect.suspend(() => {
+            if (!trackRetiringWatcherReady) return Effect.void;
+            retiringReadyCount += 1;
+            if (retiringReadyCount < 2) return Effect.void;
+            trackRetiringWatcherReady = false;
+            return Deferred.succeed(retiringWatcherReady, undefined).pipe(Effect.asVoid);
+          });
         const {
           coordinator,
           instance,
@@ -4580,20 +4873,65 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           initialModels: ["old-model", "other-model"],
           wrapCoordinator: (base) => ({
             ...base,
-            watchLiveConfiguration: (instanceId, onUpdate, options) =>
-              base.watchLiveConfiguration(
-                instanceId,
-                (configuration, revision) =>
-                  blockHandoffWatcher && configuration.currentModelId === "handoff-a"
-                    ? Effect.sync(() => {
-                        blockHandoffWatcher = false;
-                      }).pipe(
-                        Effect.andThen(Deferred.succeed(handoffCallbackBlocked, undefined)),
-                        Effect.andThen(Effect.never),
-                      )
-                    : onUpdate(configuration, revision),
-                options,
+            getUrlAuthAction: (instanceId) =>
+              base.getUrlAuthAction(instanceId).pipe(
+                Effect.tap(() =>
+                  retiringRaceArmed
+                    ? Effect.gen(function* () {
+                        retiringRaceArmed = false;
+                        retiringRacePending = true;
+                        yield* base.publishLiveConfiguration(instanceId, racedCatalog);
+                        const r2 = (yield* base.getLiveConfigurationWithRevision(instanceId))
+                          .revision;
+                        yield* base.publishLiveConfiguration(instanceId, racedOptions);
+                        const r3 = (yield* base.getLiveConfigurationWithRevision(instanceId))
+                          .revision;
+                        retiringRaceUpdates = [
+                          { configuration: racedCatalog, revision: r2 },
+                          { configuration: racedOptions, revision: r3 },
+                        ];
+                      })
+                    : Effect.void,
+                ),
               ),
+            watchUrlAuthAction: (instanceId, onUpdate) =>
+              markRetiringReady().pipe(
+                Effect.andThen(base.watchUrlAuthAction(instanceId, onUpdate)),
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    if (!retiringRacePending || retiringOnUpdate === null) return Effect.void;
+                    retiringRacePending = false;
+                    const runUpdate = retiringOnUpdate;
+                    const updates = retiringRaceUpdates;
+                    retiringRaceUpdates = [];
+                    return Effect.forEach(updates, ({ configuration, revision }) =>
+                      runUpdate(configuration, revision),
+                    ).pipe(Effect.asVoid);
+                  }),
+                ),
+              ),
+            watchLiveConfiguration: (instanceId, onUpdate, options) => {
+              retiringOnUpdate = onUpdate;
+              return markRetiringReady().pipe(
+                Effect.andThen(
+                  base.watchLiveConfiguration(
+                    instanceId,
+                    (configuration, revision) => {
+                      if (retiringRacePending && onUpdate === retiringOnUpdate) return Effect.void;
+                      return blockHandoffWatcher && configuration.currentModelId === "handoff-a"
+                        ? Effect.sync(() => {
+                            blockHandoffWatcher = false;
+                          }).pipe(
+                            Effect.andThen(Deferred.succeed(handoffCallbackBlocked, undefined)),
+                            Effect.andThen(Effect.never),
+                          )
+                        : onUpdate(configuration, revision);
+                    },
+                    options,
+                  ),
+                ),
+              );
+            },
           }),
         });
 
@@ -4633,11 +4971,41 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
 
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
+            retiringWatcherReady = yield* Deferred.make<void>();
+            trackRetiringWatcherReady = true;
             yield* instance.snapshot.refresh;
+            yield* Deferred.await(retiringWatcherReady);
             expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
               "handoff-a",
               "handoff-b",
             ]);
+
+            // If the retiring live watcher applies a newer catalog (R2) and options update (R3)
+            // after readiness reads R1 and applySnapshotBase commits R1, the replacement watcher
+            // must restore the already-accepted catalog instead of leaving R1 visible.
+            const sawRacedRestored = yield* instance.snapshot.streamChanges.pipe(
+              Stream.filter(
+                (snapshot) =>
+                  snapshot.models.map((m) => m.slug).join() === "raced-a,raced-b" &&
+                  snapshot.models.find((m) => m.slug === "raced-b")?.isDefault === true &&
+                  snapshot.models
+                    .find((m) => m.slug === "raced-b")
+                    ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")
+                    ?.currentValue === "high",
+              ),
+              Stream.runHead,
+              Effect.forkScoped({ startImmediately: true }),
+            );
+            retiringRaceArmed = true;
+            yield* instance.snapshot.refresh;
+            const restoredRaced = Option.getOrThrow(yield* Fiber.join(sawRacedRestored));
+            expect(restoredRaced.models.map((m) => m.slug)).toEqual(["raced-a", "raced-b"]);
+            expect(restoredRaced.models.find((m) => m.slug === "raced-b")?.isDefault).toBe(true);
+            expect(
+              restoredRaced.models
+                .find((m) => m.slug === "raced-b")
+                ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+            ).toEqual([["effort", "high"]]);
           }),
         );
       }),
@@ -5826,12 +6194,24 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
 
         let blockReasoningWatcher = false;
         let releaseReasoningWatcher = yield* Deferred.make<void>();
+        let gateProbeResolve = false;
+        const probeResolveEntered = yield* Deferred.make<void>();
+        const releaseProbeResolve = yield* Deferred.make<void>();
         const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
           prefix: "acp-driver-advertised-reasoning-",
           initialModels: {
             models: entries,
             configOptions: [modelSelect("a")],
           },
+          onResolve: () =>
+            gateProbeResolve
+              ? Effect.sync(() => {
+                  gateProbeResolve = false;
+                }).pipe(
+                  Effect.andThen(Deferred.succeed(probeResolveEntered, undefined)),
+                  Effect.andThen(Deferred.await(releaseProbeResolve)),
+                )
+              : Effect.void,
           wrapCoordinator: (base) => ({
             ...base,
             watchLiveConfiguration: (instanceId, onUpdate, options) =>
@@ -6076,6 +6456,21 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         });
         yield* Fiber.join(sawBLearnedAndCLearned);
 
+        yield* writeModels({
+          models: ids.map((id) => ({ modelId: id, name: id })),
+          configOptions: [modelSelect("a"), modeSelect],
+        });
+        yield* TestClock.adjust("16 minutes");
+        gateProbeResolve = true;
+        const probeConsumedRemoval = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const refreshFiber = yield* instance.snapshot.refresh.pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        // Wait until readiness has finished and the probe is in flight before publishing b's
+        // removal and a's selection, so readiness cannot replay them ahead of probe retention.
+        yield* Deferred.await(probeResolveEntered);
         releaseReasoningWatcher = yield* Deferred.make<void>();
         blockReasoningWatcher = true;
         yield* coordinator.publishLiveConfiguration(identity.instanceId, {
@@ -6092,15 +6487,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           modelOptionIds: [],
           modelsFromModelSelect: false,
         });
-        yield* writeModels({
-          models: ids.map((id) => ({ modelId: id, name: id })),
-          configOptions: [modelSelect("a"), modeSelect],
-        });
-        yield* TestClock.adjust("16 minutes");
-        const probeConsumedRemoval = yield* waitForEnriched().pipe(
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        yield* instance.snapshot.refresh;
+        yield* Deferred.succeed(releaseProbeResolve, undefined);
+        yield* Fiber.join(refreshFiber);
         const afterProbeConsumedRemoval = Option.getOrThrow(
           yield* Fiber.join(probeConsumedRemoval),
         );
