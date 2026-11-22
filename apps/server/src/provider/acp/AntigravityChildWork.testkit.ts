@@ -49,6 +49,33 @@ export const invokeStep = (input: {
   );
 export const plannerStep = (callIds: ReadonlyArray<string>) =>
   proto(field(20, proto(...callIds.map((id) => field(7, toolCall(id))))));
+export const commandStep = (input: {
+  readonly callId: string;
+  readonly commandLine: string;
+  readonly toolSummary?: string;
+}) =>
+  proto(
+    [...varint(1 * 8), ...varint(132)],
+    field(
+      5,
+      proto(
+        field(
+          4,
+          proto(
+            field(1, input.callId),
+            field(2, "run_command"),
+            field(
+              3,
+              JSON.stringify({
+                CommandLine: input.commandLine,
+                ...(input.toolSummary === undefined ? {} : { toolSummary: input.toolSummary }),
+              }),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
 
 export const transcriptLines = [
   // Trimmed from 1.4.5: the launch envelope around the prompt the parent record already holds.

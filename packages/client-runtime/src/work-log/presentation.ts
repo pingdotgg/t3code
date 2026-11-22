@@ -272,7 +272,51 @@ export function genericCommandStatusLabel(
   );
 }
 
-const GENERIC_COMMAND_TITLES = new Set(["Ran command", "Run command", "Command"]);
+const GENERIC_COMMAND_TITLES = new Set([
+  "ran command",
+  "run command",
+  "running command",
+  "command",
+  "bash",
+  "run bash",
+  "running bash",
+  "ran bash",
+  "shell",
+  "run shell",
+  "running shell",
+  "ran shell",
+  "run_command",
+  "run run_command",
+  "running run_command",
+]);
+
+/** Non-generic human summary a provider attached to a command (e.g. Antigravity `toolSummary`). */
+export function commandCustomTitle(
+  entry: Pick<
+    WorkLogPresentationEntry,
+    "itemType" | "command" | "rawCommand" | "toolTitle" | "label" | "structuredPayload"
+  >,
+): string | null {
+  if (entry.itemType !== "command_execution") return null;
+  // The provider's own title, before a client substitutes its translated fallback.
+  const title = (
+    entry.structuredPayload ? entry.structuredPayload.title : entry.toolTitle || entry.label
+  )?.trim();
+  if (!title) return null;
+  const normalized = normalizeCompactToolLabel(title).toLowerCase();
+  if (GENERIC_COMMAND_TITLES.has(normalized)) return null;
+  const rawCommand = (entry.rawCommand ?? entry.command)?.trim();
+  if (rawCommand) {
+    const normalizedCommand = rawCommand.toLowerCase();
+    if (normalized === normalizedCommand) return null;
+    const firstToken = normalizedCommand.split(/\s+/, 1)[0];
+    const executable = firstToken?.split(/[\\/]/).at(-1);
+    if ((firstToken && normalized === firstToken) || (executable && normalized === executable)) {
+      return null;
+    }
+  }
+  return title;
+}
 
 export function commandlessCommandLabel(
   entry: Pick<
@@ -283,13 +327,7 @@ export function commandlessCommandLabel(
   resolve: MFunctionType = mFallback,
 ): string | null {
   if (entry.itemType !== "command_execution" || entry.command?.trim()) return null;
-  // The provider's own title, before a client substitutes its translated fallback.
-  const title = (
-    entry.structuredPayload ? entry.structuredPayload.title : entry.toolTitle || entry.label
-  )?.trim();
-  return !title || GENERIC_COMMAND_TITLES.has(normalizeCompactToolLabel(title))
-    ? genericCommandStatusLabel(status, resolve)
-    : null;
+  return commandCustomTitle(entry) === null ? genericCommandStatusLabel(status, resolve) : null;
 }
 
 export function resolveWorkEntryToolPresentation(

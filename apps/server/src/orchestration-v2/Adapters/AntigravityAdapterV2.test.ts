@@ -43,6 +43,7 @@ import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 import { makeAcpAdapterV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
+import { commandStep } from "../../provider/acp/AntigravityChildWork.testkit.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
@@ -2117,6 +2118,88 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       });
       assert.deepEqual(result.matched, taskIds);
     }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.live(
+    "tails background task-<idx>.log into command_output.delta and hydrates toolSummary from SQLite",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const NodeSqlite = yield* Effect.promise(() => import("node:sqlite"));
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-ag-cmd-tail-" });
+        const acpDir = path.join(profile, "antigravity-acp");
+        const conversationsDir = path.join(acpDir, "conversations");
+        const tasksDir = path.join(acpDir, "brain", "mock-session-1", ".system_generated", "tasks");
+        yield* fileSystem.makeDirectory(conversationsDir, { recursive: true });
+        yield* fileSystem.makeDirectory(tasksDir, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(path.join(conversationsDir, "mock-session-1.db"));
+        db.exec(
+          "CREATE TABLE steps (idx integer PRIMARY KEY, step_type integer NOT NULL DEFAULT 0, step_format integer NOT NULL DEFAULT 0, step_payload blob)",
+        );
+        db.prepare("INSERT INTO steps (idx, step_type, step_payload) VALUES (?, ?, ?)").run(
+          17,
+          132,
+          commandStep({
+            callId: "call_bg_capture",
+            commandLine: "python3 capture.py",
+            toolSummary: "Capture 60 frames if sky is clean",
+          }),
+        );
+        db.close();
+        const logFile = path.join(tasksDir, "task-17.log");
+        yield* fileSystem.writeFileString(logFile, "sky median 412 ADU\n");
+
+        const cmd = {
+          toolCallId: "call_bg_capture",
+          kind: "execute",
+          title: "Run command",
+          rawInput: { CommandLine: "python3 capture.py", WaitMsBeforeAsync: 5000 },
+        } as const;
+        const { send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, undefined, undefined, {
+            profileDirectory: profile,
+            initialToolCalls: [{ sessionUpdate: "tool_call", ...cmd, status: "in_progress" }],
+          });
+        yield* startTurn(1, false);
+        const settledEvents = yield* throughPromptSettled;
+
+        const isTitleEvent = (event: (typeof settledEvents)[number]) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.title === "Capture 60 frames if sky is clean";
+        const isChunkEvent = (event: (typeof settledEvents)[number]) =>
+          event.type === "command_output.delta" && event.chunk.includes("sky median 412 ADU");
+
+        const seen = [...settledEvents];
+        if (!seen.some(isTitleEvent)) {
+          seen.push(...(yield* until(isTitleEvent)));
+        }
+        assert.isTrue(seen.some(isTitleEvent));
+        if (!seen.some(isChunkEvent)) {
+          seen.push(...(yield* until(isChunkEvent)));
+        }
+        assert.isTrue(seen.some(isChunkEvent));
+
+        yield* fileSystem.writeFileString(logFile, "sky median 412 ADU\n60 frames captured\n");
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...cmd,
+          status: "completed",
+          rawOutput: { combinedOutput: "sky median 412 ADU\n60 frames captured\n", exitCode: 0 },
+        });
+        const settled = yield* until(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "completed",
+        );
+        const completedEvent = settled.at(-1);
+        assert.equal(
+          completedEvent?.type === "turn_item.updated" ? completedEvent.turnItem.title : null,
+          "Capture 60 frames if sky is clean",
+        );
+      }).pipe(Effect.provide(layerSession)),
   );
 
   // agy 1.5.11 reads a prompt sent mid-turn as a steer: it answers the running prompt end_turn
