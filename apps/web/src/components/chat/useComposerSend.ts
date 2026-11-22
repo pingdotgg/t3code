@@ -549,71 +549,25 @@ export function useComposerSend(input: ComposerSendInput) {
       );
       return;
     }
-    if (!directAnnotation) {
-      const capabilitiesBeforeHold = liveAttachmentCapabilities(
-        environmentId,
-        sendCtx?.files ?? [],
-      );
-      if (capabilitiesBeforeHold.fileBlockReason !== null) {
-        setThreadError(activeThread.id, capabilitiesBeforeHold.fileBlockReason);
-        return;
-      }
-      const heldForAttachments = holdComposerSend(
-        composerDraftTarget,
-        capabilitiesBeforeHold.supportsAttachmentUploads ? environmentId : null,
-      );
-      if (heldForAttachments) {
-        const heldResult = await heldForAttachments;
-        if (heldResult.status === "cancelled") return;
-        if (heldResult.status === "upload-failed") {
-          setThreadError(activeThread.id, heldResult.reason);
-          if (!isCurrentRouteThread()) {
-            const targetThreadRef = scopeThreadRef(environmentId, activeThread.id);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: m(msg("Message not sent")),
-                description: heldResult.reason,
-                actionProps: draftId
-                  ? {
-                      children: m(msg("Open draft")),
-                      onClick: () => {
-                        void navigate({ to: "/draft/$draftId", params: { draftId } });
-                      },
-                    }
-                  : {
-                      children: m(msg("Open thread")),
-                      onClick: () => {
-                        void navigate({
-                          to: "/$environmentId/$threadId",
-                          params: buildThreadRouteParams(targetThreadRef),
-                        });
-                      },
-                    },
-              }),
-            );
-          }
-          return;
-        }
-        const draftAfterHold = useComposerDraftStore
-          .getState()
-          .getComposerDraft(composerDraftTarget);
-        if (!draftAfterHold) return;
-        // A dictation sent after leaving the thread carries its transcript outside the draft.
-        promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
-        if (sendCtx) {
-          sendCtx = {
-            ...sendCtx,
-            prompt: promptAtSend,
-            images: draftAfterHold.images,
-            files: draftAfterHold.files,
-            terminalContexts: draftAfterHold.terminalContexts,
-            previewAnnotations: draftAfterHold.previewAnnotations,
-            reviewComments: draftAfterHold.reviewComments,
-            threadContexts: draftAfterHold.threadContexts,
-            environmentContexts: draftAfterHold.environmentContexts,
-          };
-        }
+    const heldForImages = directAnnotation ? null : holdComposerSend(composerDraftTarget);
+    if (heldForImages) {
+      if ((await heldForImages).status === "cancelled") return;
+      const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (!draftAfterHold) return;
+      // A dictation sent after leaving the thread carries its transcript outside the draft.
+      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      if (sendCtx) {
+        sendCtx = {
+          ...sendCtx,
+          prompt: promptAtSend,
+          images: draftAfterHold.images,
+          files: draftAfterHold.files,
+          terminalContexts: draftAfterHold.terminalContexts,
+          previewAnnotations: draftAfterHold.previewAnnotations,
+          reviewComments: draftAfterHold.reviewComments,
+          threadContexts: draftAfterHold.threadContexts,
+          environmentContexts: draftAfterHold.environmentContexts,
+        };
       }
     }
     const startDraftAttachmentUploads = (

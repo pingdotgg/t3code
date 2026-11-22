@@ -428,14 +428,13 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             shortcut: alternateShortcutLabel,
           })
         : gt("Click to queue, {modifier}-click to steer", { modifier });
-  const submitTooltip = isSendHeld
-    ? gt("Sending when attachments are ready")
-    : (submitStatus ??
-      (compactsBeforeSend
-        ? gt("Summarize {tokens} tokens of history, then send", { tokens: compactTokens })
-        : isRunning && !isEditingQueuedMessage && canSteer
-          ? dispatchTooltip
-          : submitLabel));
+  const submitTooltip =
+    submitStatus ??
+    (compactsBeforeSend
+      ? gt("Summarize {tokens} tokens of history, then send", { tokens: compactTokens })
+      : isRunning && !isEditingQueuedMessage && canSteer
+        ? dispatchTooltip
+        : submitLabel);
 
   const isBusyOrHeld = isSendBusy || isSendHeld;
   const sendButton = (

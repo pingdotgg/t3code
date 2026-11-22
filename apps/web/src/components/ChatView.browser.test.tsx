@@ -61,7 +61,7 @@ const PNG = Uint8Array.from(
 );
 
 /** Accepts every attachment upload without sending its bytes, until disposed. */
-function acceptAttachmentUploads(waitForUpload?: Promise<void>): Disposable {
+function acceptAttachmentUploads(): Disposable {
   const mint = answerRpc(WS_METHODS.attachmentsCreateUploadUrl, () =>
     Effect.succeed({ attachmentId: "upload-1", relativeUrl: "/upload", expiresAt: 0 }),
   );
@@ -73,11 +73,7 @@ function acceptAttachmentUploads(waitForUpload?: Promise<void>): Disposable {
   const send = vi.spyOn(XMLHttpRequest.prototype, "send").mockImplementation(function (
     this: XMLHttpRequest,
   ) {
-    if (waitForUpload) {
-      void waitForUpload.then(() => this.dispatchEvent(new ProgressEvent("load")));
-    } else {
-      queueMicrotask(() => this.dispatchEvent(new ProgressEvent("load")));
-    }
+    queueMicrotask(() => this.dispatchEvent(new ProgressEvent("load")));
   });
   return {
     [Symbol.dispose]: () => {
@@ -114,6 +110,19 @@ vi.mock("../../../../packages/client-runtime/src/connection/driver.ts", async (i
     import("effect/Layer"),
   ]);
   return { ...actual, layer: Layer.succeed(actual.ConnectionDriver, fakeDriver) };
+});
+
+// Null runs the real compression; a test sets it to hold an image in preparation.
+const compression = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+vi.mock(import("~/lib/imageCompression"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    prepareImageForAttachment: async (...args) => {
+      await compression.gate;
+      return actual.prepareImageForAttachment(...args);
+    },
+  };
 });
 
 vi.mock(import("~/rpc/requestLatencyState"), async (original) => ({
@@ -443,7 +452,7 @@ it("an interrupted image-only first send of a new thread says it may not have be
 });
 
 it.each(["new", "existing"] as const)(
-  "Enter while an image uploads shows a cancellable banner, cancels on edit or Esc, and still sends after leaving a %s thread",
+  "Enter while an image compresses shows a cancellable banner, cancels on edit or Esc, and still sends after leaving a %s thread",
   async (kind) => {
     const thread = threadWithHistory(`upload-wait-${kind}`, 1);
     const other = threadWithHistory(`upload-wait-other-${kind}`, 1);
@@ -473,8 +482,10 @@ it.each(["new", "existing"] as const)(
       // AppRoot brings its own router.
       router: false,
     });
-    const upload = Promise.withResolvers<void>();
-    using _uploads = acceptAttachmentUploads(upload.promise);
+    const compressed = Promise.withResolvers<void>();
+    compression.gate = compressed.promise;
+    using _compression = { [Symbol.dispose]: () => (compression.gate = null) };
+    using _uploads = acceptAttachmentUploads();
     const editor = page.getByTestId("composer-editor");
     await expect.element(editor).toBeVisible();
     await expect.element(page.getByText("render", { exact: true }).first()).toBeVisible();
@@ -487,33 +498,32 @@ it.each(["new", "existing"] as const)(
       .dispatchEvent(
         new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
       );
-    await expect.element(page.getByRole("img", { name: "shot.png" })).toBeVisible();
 
     // Enter arms the send and shows the banner plus a disabled spinner button.
     await userEvent.keyboard("check image{Enter}");
-    await expect.element(page.getByText("Sending once upload finishes")).toBeVisible();
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
     const waitingButton = page.getByRole("button", { name: "Sending when ready", exact: true });
     await expect.element(waitingButton).toBeDisabled();
     await expect.element(waitingButton).toHaveAttribute("aria-busy", "true");
 
     // Typing disarms the queued send and keeps the edit.
     await userEvent.keyboard(" now");
-    await expect.element(page.getByText("Sending once upload finishes")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
     await expect.element(editor).toHaveTextContent("check image now");
 
     // Enter arms again; Esc cancels cleanly.
     await userEvent.keyboard("{Enter}");
-    await expect.element(page.getByText("Sending once upload finishes")).toBeVisible();
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
     await userEvent.keyboard("{Escape}");
-    await expect.element(page.getByText("Sending once upload finishes")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Sending once image is ready")).not.toBeInTheDocument();
 
-    // Enter arms again; leaving the thread still sends automatically once the upload finishes.
+    // Enter arms again; leaving the thread still sends once the image is ready.
     await userEvent.keyboard("{Enter}");
-    await expect.element(page.getByText("Sending once upload finishes")).toBeVisible();
+    await expect.element(page.getByText("Sending once image is ready")).toBeVisible();
     await router.navigate({ to: `/${ENVIRONMENT_ID}/${other.id}` });
     await expect.element(page.getByText(`Answer 0 for upload-wait-other-${kind}.`)).toBeVisible();
 
-    upload.resolve();
+    compressed.resolve();
     await vi.waitFor(() => {
       if (kind === "new") {
         expect(launch.calls).toHaveLength(1);

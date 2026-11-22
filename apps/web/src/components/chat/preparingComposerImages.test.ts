@@ -27,13 +27,13 @@ it("holds a message send until its images join the draft, and cancels on edit, c
     },
   };
   drafts.setPrompt(draftTarget, "check");
-  expect(holdComposerSend(draftTarget, null)).toBeNull();
+  expect(holdComposerSend(draftTarget)).toBeNull();
 
   // Two pastes compress separately; the first joining the draft is not an edit.
   addPreparingComposerImages(target, [preparingImage("first")]);
   addPreparingComposerImages(target, [preparingImage("second")]);
-  const held = holdComposerSend(draftTarget, null);
-  await expect(holdComposerSend(draftTarget, null)).resolves.toEqual({ status: "cancelled" });
+  const held = holdComposerSend(draftTarget);
+  await expect(holdComposerSend(draftTarget)).resolves.toEqual({ status: "cancelled" });
   removePreparingComposerImages(target, new Set(["first"]));
   joinPreparedImagesToDraft(() => drafts.setPrompt(draftTarget, "check first"));
   removePreparingComposerImages(target, new Set(["second"]));
@@ -46,7 +46,7 @@ it("holds a message send until its images join the draft, and cancels on edit, c
     () => removePreparingComposerImages(target, new Set(["later"]), { cancelSubmission: true }),
   ]) {
     addPreparingComposerImages(target, [preparingImage("later")]);
-    const cancelled = holdComposerSend(draftTarget, null);
+    const cancelled = holdComposerSend(draftTarget);
     cancel();
     await expect(cancelled).resolves.toEqual({ status: "cancelled" });
     cancelPreparingComposerImages(target);

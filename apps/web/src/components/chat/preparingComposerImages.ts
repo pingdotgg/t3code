@@ -1,24 +1,14 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { msg } from "gt-react";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
 import {
-  composerFileNeedsReattach,
   composerTargetKey,
   type ComposerThreadTarget,
   useComposerDraftStore,
 } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { m } from "../../i18n/messages";
-import {
-  awaitAttachmentUploads,
-  readAttachmentUpload,
-  retryAttachmentUpload,
-  startAttachmentUpload,
-} from "../../lib/attachmentUploadQueue";
-import { attachmentUploadFailureText } from "../../lib/attachmentUploadState";
 import { composerDraftContentChanged } from "./composerSend.logic";
 
 export interface PreparingComposerImage {
@@ -137,8 +127,7 @@ const cancelGenerations = new Map<string, number>();
 
 export type HeldComposerSendResult =
   | { readonly status: "ready" }
-  | { readonly status: "cancelled" }
-  | { readonly status: "upload-failed"; readonly reason: string };
+  | { readonly status: "cancelled" };
 
 const heldSends = new Map<string, (result: HeldComposerSendResult) => void>();
 const useHeldSendStore = create<{ readonly targetKeys: Readonly<Record<string, true>> }>(() => ({
@@ -151,7 +140,7 @@ function invalidatePendingSubmit(targetKey: string) {
   heldSends.get(targetKey)?.({ status: "cancelled" });
 }
 
-/** Whether a send from the target's draft is waiting on its attachments. */
+/** Whether a send from the target's draft is waiting on its images to finish preparing. */
 export function useComposerSendHeld(targetKey: string): boolean {
   return useHeldSendStore((state) => state.targetKeys[targetKey] === true);
 }
@@ -171,28 +160,15 @@ export function joinPreparedImagesToDraft<T>(insert: () => T): T {
 }
 
 /**
- * Holds a send made while the draft still has images compressing or, with `uploadEnvironmentId`,
- * attachments still uploading. Resolves ready once they finish, cancelled if edited/cancelled,
- * or upload-failed if an upload fails. Null means nothing needs to wait. Lives outside the
- * composer so leaving the thread still completes the send.
+ * Holds a send made while the draft still has images compressing. Resolves ready once they join
+ * the draft, or cancelled if the draft is edited or the send cancelled. Null means nothing needs
+ * to wait. Lives outside the composer so leaving the thread still completes the send.
  */
 export function holdComposerSend(
   draftTarget: ComposerThreadTarget,
-  uploadEnvironmentId: EnvironmentId | null,
 ): Promise<HeldComposerSendResult> | null {
   const targetKey = composerTargetKey(draftTarget);
-  const uploadableAttachments = () => {
-    const draft = useComposerDraftStore.getState().getComposerDraft(draftTarget);
-    if (!draft) return [];
-    return [...draft.images, ...draft.files.filter((file) => !composerFileNeedsReattach(file))];
-  };
-  const needsUpload =
-    uploadEnvironmentId !== null &&
-    uploadableAttachments().some((attachment) => {
-      const upload = readAttachmentUpload(attachment.id);
-      return upload?.status !== "ready" || upload.environmentId !== uploadEnvironmentId;
-    });
-  if (countPreparingComposerImages(targetKey) === 0 && !needsUpload) return null;
+  if (countPreparingComposerImages(targetKey) === 0) return null;
   if (heldSends.has(targetKey)) return Promise.resolve({ status: "cancelled" });
   return new Promise((resolve) => {
     let draft = useComposerDraftStore.getState().getComposerDraft(draftTarget);
@@ -209,53 +185,10 @@ export function holdComposerSend(
       resolve(result);
     };
     heldSends.set(targetKey, settle);
-    const onImagesReady = (waitMicrotask: boolean) => {
-      stopWatchingImages();
-      const continueAfterImages = () => {
-        if (heldSends.get(targetKey) !== settle) return;
-        if (uploadEnvironmentId === null) {
-          settle({ status: "ready" });
-          return;
-        }
-        const attachments = uploadableAttachments();
-        if (attachments.length === 0) {
-          settle({ status: "ready" });
-          return;
-        }
-        for (const attachment of attachments) {
-          const upload = readAttachmentUpload(attachment.id);
-          if (upload?.status === "ready" && upload.environmentId === uploadEnvironmentId) {
-            continue;
-          }
-          const start = upload?.status === "failed" ? retryAttachmentUpload : startAttachmentUpload;
-          start({ environmentId: uploadEnvironmentId, image: attachment, draftTarget });
-        }
-        void awaitAttachmentUploads(attachments.map((attachment) => attachment.id)).then(() => {
-          if (heldSends.get(targetKey) !== settle) return;
-          for (const attachment of attachments) {
-            const upload = readAttachmentUpload(attachment.id);
-            if (upload?.status === "ready" && upload.environmentId === uploadEnvironmentId) {
-              continue;
-            }
-            const reason =
-              upload?.status === "failed"
-                ? attachmentUploadFailureText(upload, m)
-                : m(msg("Attachment ''{name}'' failed to upload.", { name: attachment.name }));
-            settle({ status: "upload-failed", reason });
-            return;
-          }
-          settle({ status: "ready" });
-        });
-      };
-      if (waitMicrotask) {
-        // Let joinPreparedImagesToDraft finish inserting compressed images in this tick first.
-        queueMicrotask(continueAfterImages);
-      } else {
-        continueAfterImages();
-      }
-    };
     const stopWatchingImages = usePreparingComposerImageStore.subscribe((state) => {
-      if (!state.byTargetKey[targetKey]) onImagesReady(true);
+      if (state.byTargetKey[targetKey]) return;
+      // Let joinPreparedImagesToDraft finish inserting compressed images in this tick first.
+      queueMicrotask(() => settle({ status: "ready" }));
     });
     const stopWatchingDraft = useComposerDraftStore.subscribe((state) => {
       const next = state.getComposerDraft(draftTarget);
@@ -267,7 +200,6 @@ export function holdComposerSend(
     useHeldSendStore.setState((state) => ({
       targetKeys: { ...state.targetKeys, [targetKey]: true },
     }));
-    if (countPreparingComposerImages(targetKey) === 0) onImagesReady(false);
   });
 }
 

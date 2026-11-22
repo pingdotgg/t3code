@@ -1,14 +1,7 @@
-import type { EnvironmentId } from "@t3tools/contracts";
 import { msg, useGT } from "gt-react";
 
-import {
-  composerTargetKey,
-  type ComposerThreadTarget,
-  useComposerThreadDraft,
-} from "../../composerDraftStore";
+import { composerTargetKey, type ComposerThreadTarget } from "../../composerDraftStore";
 import { m, type MessageResolver } from "../../i18n/messages";
-import { useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
-import { formatAttachmentUploadProgress } from "../../lib/attachmentUploadState";
 import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
@@ -16,58 +9,22 @@ import { usePreparingComposerImages } from "./preparingComposerImages";
 
 export const HELD_COMPOSER_SEND_BANNER_ID = "held-composer-send";
 
-function HeldComposerSendStatus({
-  environmentId,
-  draftTarget,
-}: {
-  readonly environmentId: EnvironmentId;
-  readonly draftTarget: ComposerThreadTarget;
-}) {
+function HeldComposerSendStatus({ draftTarget }: { readonly draftTarget: ComposerThreadTarget }) {
   const gt = useGT();
-  const targetKey = composerTargetKey(draftTarget);
-  const preparingCount = usePreparingComposerImages(targetKey).length;
-  const draft = useComposerThreadDraft(draftTarget);
-  const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
-
-  let label: string;
-  if (preparingCount > 0) {
-    label = gt(
-      "{count, plural, one {Sending once image is ready} other {Sending once {count} images are ready}}",
-      { count: preparingCount },
-    );
-  } else {
-    const uploading: number[] = [];
-    for (const attachment of [...draft.images, ...draft.files]) {
-      const upload = uploadsByImageId[attachment.id];
-      if (upload?.status === "uploading" && upload.environmentId === environmentId) {
-        uploading.push(upload.progress);
-      }
-    }
-    if (uploading.length > 0) {
-      const averageProgress =
-        uploading.reduce((sum, progress) => sum + progress, 0) / uploading.length;
-      label =
-        averageProgress > 0
-          ? gt(
-              "{count, plural, one {Sending once upload finishes ({percent})} other {Sending once {count} uploads finish ({percent})}}",
-              { count: uploading.length, percent: formatAttachmentUploadProgress(averageProgress) },
-            )
-          : gt(
-              "{count, plural, one {Sending once upload finishes} other {Sending once {count} uploads finish}}",
-              { count: uploading.length },
-            );
-    } else {
-      label = gt("Sending message");
-    }
-  }
-
+  const preparingCount = usePreparingComposerImages(composerTargetKey(draftTarget)).length;
+  const label =
+    preparingCount > 0
+      ? gt(
+          "{count, plural, one {Sending once image is ready} other {Sending once {count} images are ready}}",
+          { count: preparingCount },
+        )
+      : gt("Sending message");
   return <span aria-live="polite">{label}</span>;
 }
 
-/** Shown while a send waits for image compression or attachment uploads to finish. */
+/** Shown while a send waits for pasted or dropped images to finish compressing. */
 export function heldComposerSendBannerItem(
   input: {
-    readonly environmentId: EnvironmentId;
     readonly draftTarget: ComposerThreadTarget;
     readonly onCancel: () => void;
   },
@@ -77,9 +34,7 @@ export function heldComposerSendBannerItem(
     id: HELD_COMPOSER_SEND_BANNER_ID,
     variant: "info",
     icon: <Spinner size="xs" aria-hidden="true" />,
-    title: (
-      <HeldComposerSendStatus environmentId={input.environmentId} draftTarget={input.draftTarget} />
-    ),
+    title: <HeldComposerSendStatus draftTarget={input.draftTarget} />,
     description: resolve(msg("Edit or press Esc to cancel")),
     actions: (
       <Button

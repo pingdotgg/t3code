@@ -2781,11 +2781,7 @@ export default function ChatView(props: ChatViewProps) {
     const heldSendItems = composerSendHeld
       ? [
           heldComposerSendBannerItem(
-            {
-              environmentId,
-              draftTarget: composerDraftTarget,
-              onCancel: cancelHeldSendStable,
-            },
+            { draftTarget: composerDraftTarget, onCancel: cancelHeldSendStable },
             messages,
           ),
         ]

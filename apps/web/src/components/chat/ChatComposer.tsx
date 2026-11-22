@@ -825,8 +825,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? needsReattachFileCount === 1
           ? gt("Attach the interrupted file again or remove it")
           : gt("Attach the interrupted files again or remove them")
-        : // A message send waits for its uploads. Answers need them first.
-          questionAttachmentTarget
+        : // A plain send waits for its uploads. Answers and approval redirects need them first.
+          questionAttachmentTarget ||
+            pendingApprovals.some((approval) => !heldRequestIds.has(approval.requestId))
           ? attachmentUploadBlockReason(
               {
                 imageIds: [...composerImages, ...composerFiles].map((attachment) => attachment.id),
