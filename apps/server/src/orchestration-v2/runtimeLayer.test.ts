@@ -9326,7 +9326,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                 nodeId: run.rootNodeId,
                 providerInstanceId: run.providerInstanceId,
                 occurredAt: now,
-                payload: { ...run, ...patch, status, startedAt: now, completedAt: now },
+                payload: { ...run, status, startedAt: now, completedAt: now, ...patch },
               },
             ],
           });
@@ -9433,6 +9433,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       yield* dispatcher.send("issue", "agent", false);
       yield* dispatcher.end("setup", "failed", "", {
         workspacePreparation: { type: "worktree", baseRef: "main" },
+        startedAt: null,
       });
       yield* dispatcher.awaitHeld("issue");
       assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
@@ -9469,6 +9470,75 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.include(String(resume.cause), "Retry worktree setup");
       assert.isTrue((yield* dispatcher.runFor("issue")).queueHeld);
     }),
+  );
+
+  it.effect.each(["a new message", "the held queue"] as const)(
+    "starts %s in the project checkout after a failed turn whose worktree was set up",
+    (next) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const threadId = ThreadId.make(`runtime-layer-worktree-left-for-checkout:${next}`);
+        const checkoutRoot = `${process.cwd()}/src`;
+        yield* seedProject({
+          projectId: ProjectId.make(`${threadId}:project`),
+          title: "Checkout",
+          workspaceRoot: checkoutRoot,
+          defaultModelSelection: null,
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        const { send, runFor, end, awaitHeld } = yield* queueTestThread(threadId);
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`${threadId}:message:first`),
+          threadId,
+          messageId: MessageId.make(`${threadId}:message:first`),
+          text: "first",
+          attachments: [],
+          modelSelection,
+          dispatchMode: {
+            type: "defer_start",
+            workspaceStrategy: { type: "worktree", baseRef: "main" },
+          },
+        });
+        const first = yield* runFor("first");
+        yield* orchestrator.dispatch({
+          type: "prepared-run.release",
+          commandId: CommandId.make(`${threadId}:release`),
+          threadId,
+          runId: first.id,
+        });
+        yield* send("queued", "user", false);
+        yield* end("first", "failed");
+        yield* awaitHeld("queued");
+        // The user switches the thread to the project checkout.
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`${threadId}:checkout`),
+          threadId,
+          worktreePath: null,
+        });
+        if (next === "a new message") {
+          yield* send("second", "user", true);
+          assert.equal((yield* runFor("second")).status, "starting");
+          return;
+        }
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`${threadId}:resume`),
+          threadId,
+        });
+        const queued = yield* runFor("queued");
+        assert.equal(queued.status, "starting");
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const rootNode = projection.nodes.find((node) => node.id === queued.rootNodeId);
+        assert.equal(
+          projection.checkpointScopes.find((scope) => scope.id === rootNode?.checkpointScopeId)
+            ?.cwd,
+          checkoutRoot,
+        );
+      }),
   );
 
   it.effect("keeps queued user selections and pauses only the limited provider", () =>
@@ -10876,7 +10946,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                       ...active,
                       status: "failed",
                       workspacePreparation: { type: "worktree", baseRef: "main" },
-                      startedAt: now,
+                      startedAt: null,
                       completedAt: now,
                     }
                   : { ...active, status: "completed", startedAt: now, completedAt: now },
