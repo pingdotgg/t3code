@@ -1102,12 +1102,12 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
     if (byId.some((device) => input.hostId === undefined || device.hostId === input.hostId)) {
       return yield* locate(state, input, byId);
     }
-    // A failed refresh keeps the previous devices, so the device may be there unlisted.
+    // A failed or incomplete refresh keeps the previous devices, so the device may be there unlisted.
     const failed = (
       input.hostId === undefined ? state.hosts.map((host) => host.id) : [input.hostId]
     ).flatMap((id) => {
       const status = state.hostStatuses[id];
-      return status?.status === "failed" && status.detail
+      return (status?.status === "failed" || status?.incompletePlatforms?.length) && status.detail
         ? [{ ...namedHost(state, id), detail: status.detail }]
         : [];
     });

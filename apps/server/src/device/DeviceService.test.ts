@@ -1086,6 +1086,9 @@ it.effect.each([
         detail: "The device hub did not answer within 40 seconds.",
         incompletePlatforms,
       });
+      expect(
+        yield* service.locateDevice({ deviceId: DeviceId.make("emulator-5562") }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "DeviceListFailedError", hosts: [{ id: LOCAL_DEVICE_HOST_ID }] });
     }),
 );
 
