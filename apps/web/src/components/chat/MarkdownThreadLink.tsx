@@ -136,7 +136,7 @@ export function MarkdownThreadLink(props: {
   return (
     <ThreadContextChip
       record={{ ...ref, title }}
-      projectId={resolved?.metadata.projectId ?? null}
+      metadata={resolved?.metadata ?? null}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
     />
   );

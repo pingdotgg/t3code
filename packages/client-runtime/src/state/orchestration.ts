@@ -114,12 +114,10 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
           return yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadLinkMetadata, input);
         }
         const titles = yield* request(ORCHESTRATION_V2_WS_METHODS.getThreadTitles, input);
-        return Object.fromEntries(
-          Object.entries(titles).map(([id, title]) => [
-            id,
-            { title, projectId: null } satisfies OrchestrationV2ThreadLinkMetadata,
-          ]),
+        const metadata: Record<ThreadId, OrchestrationV2ThreadLinkMetadata> = Object.fromEntries(
+          Object.entries(titles).map(([id, title]) => [id, { title, projectId: null }]),
         );
+        return metadata;
       }),
     }),
     threadTranscript: createEnvironmentCommand(runtime, {

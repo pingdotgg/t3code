@@ -1,6 +1,11 @@
 import { RegistryContext } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type OrchestrationV2ThreadLinkMetadata,
+  ProjectId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -67,7 +72,7 @@ vi.mock(import("../../state/orchestration"), () => ({
 
 function setup() {
   const reply = Atom.make<
-    AsyncResult.AsyncResult<Record<string, { title: string; projectId: ProjectId | null }>, string>
+    AsyncResult.AsyncResult<Record<string, OrchestrationV2ThreadLinkMetadata>, string>
   >(AsyncResult.initial());
   state.reply = reply;
   state.linked = new Map();
@@ -89,12 +94,13 @@ function setup() {
 }
 
 it.each([
-  { legacy: false, encoded: false },
-  { legacy: true, encoded: false },
-  { legacy: false, encoded: true },
+  { legacy: false, encoded: false, archived: false },
+  { legacy: true, encoded: false, archived: false },
+  { legacy: false, encoded: true, archived: false },
+  { legacy: false, encoded: false, archived: true },
 ])(
-  "resolves an unloaded thread with its icon and the correct destination, %j",
-  async ({ legacy, encoded }) => {
+  "resolves an unloaded thread with its status and the correct destination, %j",
+  async ({ legacy, encoded, archived }) => {
     const { reply, registry } = setup();
     using _registry = { [Symbol.dispose]: () => registry.dispose() };
     const environmentId = EnvironmentId.make("environment");
@@ -119,7 +125,11 @@ it.each([
       registry.set(
         reply,
         AsyncResult.success({
-          [threadId]: { title: "Older essay", projectId: ProjectId.make("essay-project") },
+          [threadId]: {
+            title: "Older essay",
+            projectId: ProjectId.make("essay-project"),
+            ...(archived ? { archived: true } : {}),
+          },
           ...(encoded
             ? {
                 "older-thread": {
@@ -133,7 +143,13 @@ it.each([
     );
     const link = screen.getByRole("link", { name: "Thread, Older essay" });
     await expect.element(link).toBeVisible();
-    await expect.element(screen.getByRole("img", { name: "Essays project icon" })).toBeVisible();
+    const projectIcon = screen.getByRole("img", { name: "Essays project icon" });
+    if (archived) {
+      await expect.element(link).toHaveAccessibleDescription("Archived thread");
+      await expect.element(projectIcon).not.toBeInTheDocument();
+    } else {
+      await expect.element(projectIcon).toBeVisible();
+    }
     await link.click();
     await vi.waitFor(() =>
       expect(screen.router?.state.location.pathname).toBe(
