@@ -364,7 +364,7 @@ export function DraftHeroHeadline({
           {projectSelector}
         </DraftHeroProjectHeading>
       ) : (
-        <h1 className="w-full text-center font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
+        <h1 className="w-full text-center font-display font-normal text-2xl text-foreground tracking-tight sm:text-3xl">
           {isScratchDraft ? (
             <T>What should we work on?</T>
           ) : canChooseProject ? (

@@ -2,7 +2,10 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 
 import "@fontsource-variable/inter";
+import "@fontsource-variable/jetbrains-mono";
+import "@fontsource-variable/outfit";
 import "./index.css";
+import "./easydev-theme.css";
 
 import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";

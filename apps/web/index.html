@@ -19,6 +19,8 @@
         const THEME_FOLLOW_SYSTEM_STORAGE_KEY = "t3code:theme-follow-system";
         const THEME_APPEARANCE_MODE_STORAGE_KEY = "t3code:theme-appearance-mode";
         const THEME_HALVES_STORAGE_KEY = "t3code:theme-halves:v1";
+        // vite.config.ts stamps the build's default theme here; "system" means the stock palette.
+        const DEFAULT_THEME = "system";
         const SPLASH_COLORS = {
           light: {
             background: "#ffffff",
@@ -122,6 +124,20 @@
               chrome: "oklch(0.225975 0.031062 293.741)",
             },
           },
+          easydev: {
+            light: {
+              background: "#fafaf8",
+              foreground: "#212121",
+              accent: "#866a19",
+              chrome: "#fafaf8",
+            },
+            dark: {
+              background: "#121110",
+              foreground: "#f3f1ec",
+              accent: "#d4af37",
+              chrome: "#121110",
+            },
+          },
         };
         const BUILT_IN_THEME_MODES = Object.fromEntries(
           Object.entries(BUILT_IN_THEME_PALETTES).map(([id, palettes]) => [
@@ -138,6 +154,7 @@
           "ocean",
           "ember",
           "iris",
+          "easydev",
           "t3-chat-dark",
           "t3-grove",
           "t3-ocean",
@@ -219,7 +236,8 @@
         };
 
         try {
-          const storedTheme = window.localStorage.getItem("t3code:theme");
+          const rawStoredTheme = window.localStorage.getItem("t3code:theme");
+          const storedTheme = rawStoredTheme ?? (DEFAULT_THEME === "system" ? null : DEFAULT_THEME);
           const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
           const LEGACY_THEME_IDS = {
             "t3-chat-dark": "t3-chat",
@@ -262,7 +280,7 @@
               ? "system"
               : storedFollowSystem === "false"
                 ? preferenceMode
-                : theme === "system"
+                : theme === "system" || rawStoredTheme === null
                   ? "system"
                   : preferenceMode;
           // A valid mix half for the wanted appearance takes over: it decides

@@ -34,31 +34,60 @@ export const MOBILE_THEME_OPTIONS: ReadonlyArray<{
 export type MobileThemeVariable = keyof ReturnType<typeof createMobileThemeVariables>;
 export type MobileThemeVariables = Readonly<Record<MobileThemeVariable, string>>;
 
-function normalizeMobileThemeId(value: unknown): MobileThemeId {
+function normalizeMobileThemeId(value: unknown, fallback: MobileThemeId): MobileThemeId {
   return typeof value === "string" && (MOBILE_THEME_IDS as readonly string[]).includes(value)
     ? (value as MobileThemeId)
-    : DEFAULT_MOBILE_THEME_ID;
+    : fallback;
+}
+
+/**
+ * Standalone builds move stock T3 Code choices to EasyDev once, then record it so a later pick of
+ * the stock theme stays. Null means nothing to write.
+ */
+export function easydevThemeMigrationPatch(preferences: {
+  readonly themeId?: MobileThemeId;
+  readonly lightThemeId?: MobileThemeId;
+  readonly darkThemeId?: MobileThemeId;
+  readonly easydevThemeMigrated?: boolean;
+}): {
+  themeId?: MobileThemeId;
+  lightThemeId?: MobileThemeId;
+  darkThemeId?: MobileThemeId;
+  easydevThemeMigrated: true;
+} | null {
+  if (preferences.easydevThemeMigrated === true) return null;
+  const patch: ReturnType<typeof easydevThemeMigrationPatch> & object = {
+    easydevThemeMigrated: true,
+  };
+  for (const key of ["themeId", "lightThemeId", "darkThemeId"] as const) {
+    if (preferences[key] === DEFAULT_MOBILE_THEME_ID) patch[key] = "easydev";
+  }
+  return patch;
 }
 
 export function normalizeMobileThemeMode(value: unknown): MobileThemeMode {
   return value === "light" || value === "dark" || value === "system" ? value : "system";
 }
 
-export function resolveMobileThemeIds(preferences: {
-  readonly themeId?: unknown;
-  readonly lightThemeId?: unknown;
-  readonly darkThemeId?: unknown;
-}): MobileThemeIds {
-  const legacyThemeId = normalizeMobileThemeId(preferences.themeId);
+/** `fallback` is the build's default palette, used where nothing valid is stored. */
+export function resolveMobileThemeIds(
+  preferences: {
+    readonly themeId?: unknown;
+    readonly lightThemeId?: unknown;
+    readonly darkThemeId?: unknown;
+  },
+  fallback: MobileThemeId = DEFAULT_MOBILE_THEME_ID,
+): MobileThemeIds {
+  const legacyThemeId = normalizeMobileThemeId(preferences.themeId, fallback);
   return {
     light:
       preferences.lightThemeId === undefined
         ? legacyThemeId
-        : normalizeMobileThemeId(preferences.lightThemeId),
+        : normalizeMobileThemeId(preferences.lightThemeId, fallback),
     dark:
       preferences.darkThemeId === undefined
         ? legacyThemeId
-        : normalizeMobileThemeId(preferences.darkThemeId),
+        : normalizeMobileThemeId(preferences.darkThemeId, fallback),
   };
 }
 

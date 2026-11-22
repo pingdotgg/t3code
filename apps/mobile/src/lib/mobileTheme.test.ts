@@ -18,6 +18,7 @@ import {
   createMobileThemeSelectionPatch,
   createMobileThemeVariables,
   DEFAULT_MOBILE_THEME_ID,
+  easydevThemeMigrationPatch,
   flattenThemeColor,
   getMobileThemeVariables,
   resolveMobileThemeIds,
@@ -236,6 +237,25 @@ describe("mobile themes", () => {
       light: DEFAULT_MOBILE_THEME_ID,
       dark: "grove",
     });
+    expect(resolveMobileThemeIds({}, "easydev")).toEqual({ light: "easydev", dark: "easydev" });
+    expect(resolveMobileThemeIds({ darkThemeId: "missing" }, "easydev")).toEqual({
+      light: "easydev",
+      dark: "easydev",
+    });
+  });
+
+  it("moves stock theme choices to EasyDev once and keeps every other choice", () => {
+    expect(
+      easydevThemeMigrationPatch({ lightThemeId: DEFAULT_MOBILE_THEME_ID, darkThemeId: "grove" }),
+    ).toEqual({ lightThemeId: "easydev", easydevThemeMigrated: true });
+    expect(easydevThemeMigrationPatch({ themeId: DEFAULT_MOBILE_THEME_ID })).toEqual({
+      themeId: "easydev",
+      easydevThemeMigrated: true,
+    });
+    expect(easydevThemeMigrationPatch({ themeId: "iris" })).toEqual({ easydevThemeMigrated: true });
+    expect(
+      easydevThemeMigrationPatch({ themeId: DEFAULT_MOBILE_THEME_ID, easydevThemeMigrated: true }),
+    ).toBeNull();
   });
 
   it("changes either theme without switching the active appearance", () => {

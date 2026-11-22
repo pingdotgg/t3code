@@ -11,6 +11,7 @@ import {
   publishedThemeDefinitions,
   resolveThemeAppearance,
   T3_CHAT_THEME,
+  EASYDEV_THEME,
   EMBER_THEME,
   GROVE_THEME,
   IRIS_THEME,
@@ -42,6 +43,8 @@ function runBootScript(options: {
   storage?: Record<string, string>;
   storageThrows?: boolean;
   prefersDark: boolean;
+  /** What vite.config.ts stamps in; standalone builds use the EasyDev palette. */
+  defaultTheme?: string;
 }): BootResult {
   const classes = new Set<string>();
   const bootVariables: Record<string, string> = {};
@@ -89,7 +92,14 @@ function runBootScript(options: {
       property === "color" && toCanonicalThemeColor(value) !== null,
   };
 
-  new Function("window", "document", "CSS", bootScript)(fakeWindow, fakeDocument, fakeCss);
+  const script =
+    options.defaultTheme === undefined
+      ? bootScript
+      : bootScript.replace(
+          'const DEFAULT_THEME = "system";',
+          `const DEFAULT_THEME = ${JSON.stringify(options.defaultTheme)};`,
+        );
+  new Function("window", "document", "CSS", script)(fakeWindow, fakeDocument, fakeCss);
 
   return {
     isDark: classes.has("dark"),
@@ -310,7 +320,14 @@ describe("index.html boot script", () => {
   });
 
   it("keeps every built-in boot splash in sync with the real palettes", () => {
-    for (const theme of [T3_CHAT_THEME, GROVE_THEME, OCEAN_THEME, EMBER_THEME, IRIS_THEME]) {
+    for (const theme of [
+      T3_CHAT_THEME,
+      GROVE_THEME,
+      OCEAN_THEME,
+      EMBER_THEME,
+      IRIS_THEME,
+      EASYDEV_THEME,
+    ]) {
       expect(theme.appearance).toBe("light");
       for (const mode of ["light", "dark"] as const) {
         const colors = getThemeColorsForMode(theme, mode);
@@ -395,6 +412,23 @@ describe("index.html boot script", () => {
     expect(boot.bootVariables["--boot-accent"]).toBe(getDefaultThemeColors("dark").accent);
     expect(boot.backgroundColor).toBe(DEFAULT_DARK_CHROME);
     expect(boot.metaContent).toBe(DEFAULT_DARK_CHROME);
+  });
+
+  it("paints a build's default palette, following the OS, until a theme is stored", () => {
+    for (const prefersDark of [false, true]) {
+      const mode = prefersDark ? "dark" : "light";
+      const boot = runBootScript({ prefersDark, defaultTheme: EASYDEV_THEME.id });
+      expect(boot.themeId).toBe(EASYDEV_THEME.id);
+      expect(boot.isDark).toBe(prefersDark);
+      expect(boot.backgroundColor).toBe(getThemeColorsForMode(EASYDEV_THEME, mode)!.chrome);
+    }
+
+    const stored = runBootScript({
+      storage: { [THEME_STORAGE_KEY]: "system" },
+      prefersDark: true,
+      defaultTheme: EASYDEV_THEME.id,
+    });
+    expect(stored.themeId).toBeUndefined();
   });
 
   it("follows the OS appearance when storage is unavailable", () => {

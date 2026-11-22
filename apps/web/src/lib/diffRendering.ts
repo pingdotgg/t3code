@@ -358,6 +358,28 @@ export const DIFF_SURFACE_THEME_UNSAFE_CSS = `
   color: var(--code-foreground) !important;
 }
 
+/* A palette can set the exact row tint with --diff-addition-background or
+   --diff-deletion-background; otherwise this is Pierre's own mix. */
+[data-background] :is([data-line], [data-no-newline])[data-line-type="change-addition"] {
+  --diffs-computed-diff-line-bg: var(
+    --diff-addition-background,
+    light-dark(
+      color-mix(in lab, var(--diffs-computed-decoration-bg) var(--mix-light), var(--diffs-diff-line-mix-target)),
+      color-mix(in lab, var(--diffs-computed-decoration-bg) var(--mix-dark), var(--diffs-diff-line-mix-target))
+    )
+  );
+}
+
+[data-background] :is([data-line], [data-no-newline])[data-line-type="change-deletion"] {
+  --diffs-computed-diff-line-bg: var(
+    --diff-deletion-background,
+    light-dark(
+      color-mix(in lab, var(--diffs-computed-decoration-bg) var(--mix-light), var(--diffs-diff-line-mix-target)),
+      color-mix(in lab, var(--diffs-computed-decoration-bg) var(--mix-dark), var(--diffs-diff-line-mix-target))
+    )
+  );
+}
+
 /* The library's change-icon colors are tuned for dark canvases; light mode takes the app's darker tokens. */
 [data-change-icon="new"] {
   color: var(

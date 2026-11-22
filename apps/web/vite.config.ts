@@ -20,6 +20,8 @@ import {
   DEV_PROXIED_PATH_PREFIXES,
 } from "@t3tools/shared/devProxy";
 
+import { EASYDEV_THEME } from "@t3tools/shared/themePalettes";
+
 import { appSchemeDefine, loadRepoEnv } from "../../scripts/lib/public-config";
 import { rebrandPlugin } from "../../scripts/lib/rebrand";
 import {
@@ -297,6 +299,21 @@ function bootstrapTitlePlugin(): Plugin {
   };
 }
 
+// Gives index.html's boot script the default theme useTheme.ts resolves, so a fork's first paint
+// already uses its palette. Matches IS_STANDALONE_BUILD in src/projectLinks.ts.
+function bootstrapDefaultThemePlugin(): Plugin {
+  const defaultTheme = repoEnv.T3CODE_STANDALONE === "1" ? EASYDEV_THEME.id : "system";
+  return {
+    name: "t3code:bootstrap-default-theme",
+    transformIndexHtml(html) {
+      return html.replace(
+        'const DEFAULT_THEME = "system";',
+        `const DEFAULT_THEME = ${JSON.stringify(defaultTheme)};`,
+      );
+    },
+  };
+}
+
 // A standalone build must not declare T3's mobile apps as the handlers for the fork's domain.
 function standaloneWellKnownPlugin(): Plugin | undefined {
   const files = standaloneWellKnownFiles(repoEnv);
@@ -348,6 +365,7 @@ export default defineConfig(({ command }) => {
     plugins: [
       rebrandPlugin(repoEnv),
       bootstrapTitlePlugin(),
+      bootstrapDefaultThemePlugin(),
       devCompressionPlugin(),
       chunkCycleGuardPlugin(),
       standaloneWellKnownPlugin(),

@@ -1,6 +1,7 @@
-import { createContext, startTransition, use, useMemo, type ReactNode } from "react";
+import { createContext, startTransition, use, useEffect, useMemo, type ReactNode } from "react";
 import { AppState, Appearance, Platform, useColorScheme } from "react-native";
 
+import Constants from "expo-constants";
 import { manufacturer } from "expo-device";
 import {
   resolveAndroidNavigationStyle,
@@ -30,7 +31,9 @@ import { materialYouPaletteToMobileThemeVariables } from "../../../lib/materialY
 import { getMobileThemeRuntimeVariables } from "../../../lib/mobileThemeVariables";
 import type { MobileThemeVariables } from "../../../lib/mobileTheme";
 import {
+  DEFAULT_MOBILE_THEME_ID,
   createMobileThemePairPatch,
+  easydevThemeMigrationPatch,
   createMobileThemeSelectionPatch,
   normalizeMobileThemeMode,
   resolveMobileThemeIds,
@@ -74,6 +77,12 @@ interface AppearancePreferencesContextValue {
   readonly mathRenderingEnabled: boolean;
   readonly setMathRenderingEnabled: (value: boolean) => void;
 }
+
+const IS_STANDALONE_BUILD = Constants.expoConfig?.extra?.standalone === true;
+// Standalone builds open in the EasyDev palette until the user picks another.
+const BUILD_DEFAULT_THEME_ID: MobileThemeId = IS_STANDALONE_BUILD
+  ? "easydev"
+  : DEFAULT_MOBILE_THEME_ID;
 
 const AppearancePreferencesContext = createContext<AppearancePreferencesContextValue | null>(null);
 
@@ -204,7 +213,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   );
   const themeMode = normalizeMobileThemeMode(storedPreferences?.themeMode);
   const themeAppearance = themeMode === "system" ? systemColorScheme : themeMode;
-  const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {});
+  const resolvedThemeIds = resolveMobileThemeIds(storedPreferences ?? {}, BUILD_DEFAULT_THEME_ID);
   const themeIds = useMemo<MobileThemeIds>(
     () => ({ light: resolvedThemeIds.light, dark: resolvedThemeIds.dark }),
     [resolvedThemeIds.dark, resolvedThemeIds.light],
@@ -224,6 +233,17 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     [baseFontSize, codeFontSize, codeWordBreak, terminalFontSize],
   );
   const isReady = AsyncResult.isSuccess(preferencesResult);
+  const needsEasydevMigration =
+    IS_STANDALONE_BUILD &&
+    storedPreferences !== null &&
+    easydevThemeMigrationPatch(storedPreferences) !== null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- writes the one-time EasyDev theme migration to stored preferences
+  useEffect(() => {
+    if (!needsEasydevMigration) return;
+    const current = storedPreferencesOf(appAtomRegistry.get(mobilePreferencesAtom));
+    const patch = current ? easydevThemeMigrationPatch(current) : null;
+    if (patch !== null) void savePreferences(patch);
+  }, [needsEasydevMigration, savePreferences]);
   const updatePreferences = (patch: Partial<Preferences>) => {
     startTransition(() => {
       void savePreferences(patch);
@@ -239,6 +259,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
     // the first one's optimistic write.
     const selected = resolveMobileThemeIds(
       storedPreferencesOf(appAtomRegistry.get(mobilePreferencesAtom)) ?? {},
+      BUILD_DEFAULT_THEME_ID,
     );
     updateThemePreferences(
       createMobileThemeSelectionPatch(selected, themeAppearance, appearance, value),

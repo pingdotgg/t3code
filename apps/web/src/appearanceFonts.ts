@@ -10,12 +10,23 @@ import {
   MIN_PROMPT_FONT_SIZE,
 } from "@t3tools/contracts";
 
-export const DEFAULT_SANS_FONT_STACK =
+import { IS_STANDALONE_BUILD } from "./projectLinks";
+
+const UPSTREAM_SANS_FONT_STACK =
   '-apple-system, BlinkMacSystemFont, "Inter Variable", "Segoe UI", system-ui, sans-serif';
 
 // Some engines map `ui-monospace` to a proportional font, so prefer concrete names.
-export const DEFAULT_CODE_FONT_STACK =
+const UPSTREAM_CODE_FONT_STACK =
   '"SF Mono", "SFMono-Regular", Menlo, Consolas, "Liberation Mono", monospace';
+
+// Standalone builds ship the EasyDev faces, bundled in main.tsx, ahead of the platform ones.
+export const DEFAULT_SANS_FONT_STACK = IS_STANDALONE_BUILD
+  ? `"Inter Variable", ${UPSTREAM_SANS_FONT_STACK}`
+  : UPSTREAM_SANS_FONT_STACK;
+
+export const DEFAULT_CODE_FONT_STACK = IS_STANDALONE_BUILD
+  ? `"JetBrains Mono Variable", ${UPSTREAM_CODE_FONT_STACK}`
+  : UPSTREAM_CODE_FONT_STACK;
 
 export const TYPOGRAPHY_ADVANCED_STORAGE_KEY = "t3code:typography-advanced";
 
@@ -81,7 +92,10 @@ export function applyAppearanceFontVariables(
   ];
   for (const [variable, custom, fallback] of families) {
     const list = cssFontFamilies(custom);
-    if (list === null) {
+    if (list === null && IS_STANDALONE_BUILD && variable !== "--font-composer") {
+      // index.css holds the upstream stacks, so a standalone default is set here.
+      root.style.setProperty(variable, fallback);
+    } else if (list === null) {
       root.style.removeProperty(variable);
     } else {
       root.style.setProperty(variable, `${list}, ${fallback}`);

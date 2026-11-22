@@ -1,4 +1,15 @@
-export const BUILT_IN_THEME_IDS = ["t3-chat", "grove", "ocean", "ember", "iris"] as const;
+import { EASYDEV_THEME } from "./easydevTheme.ts";
+
+export { EASYDEV_THEME };
+
+export const BUILT_IN_THEME_IDS = [
+  "t3-chat",
+  "grove",
+  "ocean",
+  "ember",
+  "iris",
+  "easydev",
+] as const;
 
 export const MOBILE_DEFAULT_THEME_ID = "t3-code";
 
@@ -916,6 +927,7 @@ export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [
   OCEAN_THEME,
   EMBER_THEME,
   IRIS_THEME,
+  EASYDEV_THEME,
 ];
 
 export function getThemeColorsForAppearance(

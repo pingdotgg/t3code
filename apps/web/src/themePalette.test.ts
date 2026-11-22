@@ -26,6 +26,7 @@ import {
   resolveThemeAppearance,
   serializeThemeFile,
   T3_CHAT_THEME,
+  EASYDEV_THEME,
   GROVE_THEME,
   updateCustomTheme,
   updateThemeColorFamily,
@@ -35,6 +36,7 @@ import {
   themeColorToHex,
   toCanonicalThemeColor,
   THEME_FILE_VERSION,
+  type ThemeColorRole,
 } from "./themePalette";
 
 function asHex(value: string): string {
@@ -102,6 +104,43 @@ describe("theme files", () => {
       for (const background of [colors.muted, colors.messageSurface, colors.codeBackground]) {
         expect(distance(colors.searchMatchBackground, background)).toBeGreaterThan(0.08);
         expect(distance(colors.searchMatchActiveBackground, background)).toBeGreaterThan(0.08);
+      }
+    }
+  });
+
+  it("keeps EasyDev text at WCAG AA on every surface it sits on", () => {
+    const pairs: ReadonlyArray<readonly [ThemeColorRole, ThemeColorRole]> = [
+      ["text", "canvas"],
+      ["text", "surfaceRaised"],
+      ["text", "accentSurface"],
+      ["textMuted", "canvas"],
+      ["textMuted", "surfaceRaised"],
+      ["textMuted", "accentSurface"],
+      ["mutedForeground", "muted"],
+      ["secondaryLabel", "surfaceRaised"],
+      ["placeholder", "surface"],
+      ["accent", "canvas"],
+      ["accent", "sidebar"],
+      ["accentForeground", "accent"],
+      ["messageActionForeground", "messageAction"],
+      ["messageForeground", "messageSurface"],
+      ["errorForeground", "errorSurface"],
+      ["errorForeground", "canvas"],
+      ["warningForeground", "warningSurface"],
+      ["updateForeground", "updateSurface"],
+      ["updateForeground", "canvas"],
+      ["codeForeground", "codeBackground"],
+      ["sidebarForeground", "sidebarRowSelected"],
+      ["sidebarMutedForeground", "sidebar"],
+      ["sidebarMutedForeground", "sidebarRowSelected"],
+      ["terminalForeground", "terminalBackground"],
+    ];
+    for (const mode of ["light", "dark"] as const) {
+      const colors = getThemeColorsForMode(EASYDEV_THEME, mode)!;
+      for (const [foreground, background] of pairs) {
+        expect
+          .soft(contrastRatio(colors[foreground], colors[background]), `${mode} ${foreground}`)
+          .toBeGreaterThanOrEqual(4.5);
       }
     }
   });

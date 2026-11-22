@@ -1,0 +1,36 @@
+/* EasyDev palette tokens that have no theme color role: status, diff, and the display font.
+   Colors live in packages/shared/src/easydevTheme.ts; this only covers what roles cannot. */
+html[data-theme-id="easydev"] {
+  --font-display: "Outfit Variable", var(--font-sans);
+  --info: #3e7cc2;
+  --info-foreground: #3570b3;
+  --success: #2e9e55;
+  --success-foreground: #1f7a3a;
+  --diff-addition-foreground: #1f7a3a;
+  --diff-deletion-foreground: #b53b32;
+}
+
+html.dark[data-theme-id="easydev"] {
+  --info: #7fb0e8;
+  --info-foreground: #7fb0e8;
+  --success: #7ccb92;
+  --success-foreground: #7ccb92;
+  --diff-addition-foreground: #7ccb92;
+  --diff-deletion-foreground: #ec7b6e;
+}
+
+/* The blue-orange diff setting keeps its own colors. */
+html[data-theme-id="easydev"]:not([data-diff-color-scheme="blue-orange"]) {
+  --diff-addition-background: #e6f4ea;
+  --diff-deletion-background: #fce9e6;
+}
+
+html.dark[data-theme-id="easydev"]:not([data-diff-color-scheme="blue-orange"]) {
+  --diff-addition-background: #1c3324;
+  --diff-deletion-background: #3a1f1c;
+}
+
+/* Linho's #d4af37 fill is ~2:1 as text on its canvas; gold text takes the darker accent. */
+html:not(.dark)[data-theme-id="easydev"] .text-primary {
+  --primary: var(--app-theme-accent);
+}

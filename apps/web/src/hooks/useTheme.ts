@@ -3,8 +3,11 @@ import type { DesktopBridge } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
 import * as Schema from "effect/Schema";
 import { useSyncExternalStore } from "react";
+import { IS_STANDALONE_BUILD } from "../projectLinks";
+import { standaloneThemeMigration } from "./standaloneThemeMigration";
 import {
   applyThemePalette,
+  EASYDEV_THEME,
   CUSTOM_THEMES_STORAGE_KEY,
   invalidateCustomThemes,
   canonicalThemePreference,
@@ -39,9 +42,12 @@ type ThemeSnapshot = {
 type DesktopThemeBridge = Pick<DesktopBridge, "setTheme">;
 
 const STORAGE_KEY = "t3code:theme";
+const STANDALONE_THEME_MIGRATION_STORAGE_KEY = "t3code:easydev-theme-migrated:v1";
+// index.html's boot script gets the same default from vite.config.ts.
+export const DEFAULT_THEME_PREFERENCE: Theme = IS_STANDALONE_BUILD ? EASYDEV_THEME.id : "system";
 const MEDIA_QUERY = "(prefers-color-scheme: dark)";
 const DEFAULT_THEME_SNAPSHOT: ThemeSnapshot = {
-  theme: "system",
+  theme: DEFAULT_THEME_PREFERENCE,
   resolvedTheme: "light",
   systemDark: false,
   followSystem: true,
@@ -152,7 +158,8 @@ function readStoredFollowSystem(theme: Theme): boolean {
     if (raw === "false") return false;
   } catch {}
 
-  return theme === "system";
+  // The default palette still follows the OS until the user picks a mode.
+  return theme === "system" || theme === DEFAULT_THEME_PREFERENCE;
 }
 
 function isThemePreferenceMode(value: string | null): value is ThemePreferenceMode {
@@ -391,7 +398,28 @@ function syncDesktopTheme(
   );
 }
 
+function migrateStandaloneTheme(): void {
+  let action: ReturnType<typeof standaloneThemeMigration>;
+  try {
+    action = standaloneThemeMigration({
+      standalone: IS_STANDALONE_BUILD,
+      migrated: window.localStorage.getItem(STANDALONE_THEME_MIGRATION_STORAGE_KEY) !== null,
+      storedTheme: window.localStorage.getItem(STORAGE_KEY),
+      hasThemeHalves: window.localStorage.getItem(THEME_HALVES_STORAGE_KEY) !== null,
+    });
+  } catch {
+    return;
+  }
+  if (action === null) return;
+  // setTheme keeps the stored light, dark, or system mode.
+  if (action === "adopt" && !setTheme(EASYDEV_THEME.id)) return;
+  try {
+    window.localStorage.setItem(STANDALONE_THEME_MIGRATION_STORAGE_KEY, "1");
+  } catch {}
+}
+
 if (typeof document !== "undefined" && typeof window !== "undefined") {
+  migrateStandaloneTheme();
   applyTheme(getStored());
 }
 
