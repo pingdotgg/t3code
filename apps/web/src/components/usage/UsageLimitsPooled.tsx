@@ -408,6 +408,7 @@ function SegmentTriggers({
       remaining,
     }),
     resetsIn,
+    credits ? scope : null,
     timeLeft === null ? null : gt("{timeLeft}% of the window left", { timeLeft }),
     credits
       ? gt(
@@ -581,6 +582,7 @@ function LegendRow({
               {scope ? <span className="font-normal text-muted-foreground">{scope}</span> : null}
             </span>
             <span className="sr-only">
+              {scope ? `${scope} ` : ""}
               {gt(
                 "{count, plural, one {{count} reset credit banked} other {{count} reset credits banked}}",
                 { count: credits },

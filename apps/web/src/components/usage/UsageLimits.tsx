@@ -192,7 +192,10 @@ function WindowBar({
             ) : null}
             {shared ? (
               <span className="text-muted-foreground">
-                {shared.labels.join(", ")} used {shared.percent}% of this, shown lighter.
+                {gt("{labels} used {percent}% of this, shown lighter.", {
+                  labels: shared.labels.join(", "),
+                  percent: shared.percent,
+                })}
               </span>
             ) : null}
             {resetsAt ? (
