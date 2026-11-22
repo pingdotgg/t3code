@@ -2305,6 +2305,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        // Mode values configureSession left the agent in; a later difference is the agent's own change.
+        const configuredModes = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+        const readModes = Effect.gen(function* () {
+          const modes = new Map<string, string>();
+          for (const option of yield* runtime.getConfigOptions) {
+            if (
+              option.type === "select" &&
+              (option.category === "mode" || option.category === "collaboration_mode")
+            ) {
+              modes.set(option.id, option.currentValue);
+            }
+          }
+          const modeId = (yield* runtime.getModeState)?.currentModeId;
+          if (modeId !== undefined && !modes.has(ACP_SESSION_MODE_OPTION_ID)) {
+            modes.set(ACP_SESSION_MODE_OPTION_ID, modeId);
+          }
+          return modes;
+        });
         const configuredRuntimeMode = yield* Ref.make<
           ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] | null
         >(null);
@@ -8357,6 +8375,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           yield* validateModelSelection(modelSelection);
+          yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
@@ -8545,6 +8564,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // Re-applying the thread's mode would undo a deliberate exit, such as leaving plan mode once
+        // the plan was approved. Report it instead, so picking the old mode again is a real change.
+        const reportAgentModeChanges = Effect.fnUntraced(function* (threadId: ThreadId) {
+          const selection = yield* Ref.get(activeSelection);
+          if (selection === null || selection.options === undefined) return;
+          const configured = yield* Ref.get(configuredModes);
+          const live = yield* readModes;
+          const changes: Array<{ id: string; from: string; to: string }> = [];
+          const options = selection.options.map((option) => {
+            const value = live.get(option.id);
+            if (
+              value === undefined ||
+              typeof option.value !== "string" ||
+              value === configured.get(option.id) ||
+              value === option.value
+            ) {
+              return option;
+            }
+            changes.push({ id: option.id, from: option.value, to: value });
+            return { ...option, value };
+          });
+          if (changes.length === 0) return;
+          yield* Ref.set(activeSelection, { ...selection, options });
+          yield* Ref.set(configuredModes, live);
+          yield* emitProviderEvent({
+            type: "thread_model_selection.updated",
+            driver,
+            threadId,
+            instanceId: selection.instanceId,
+            changes,
+          });
+        });
+
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
@@ -8640,6 +8692,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             });
           }
+          yield* reportAgentModeChanges(context.input.threadId);
           const turn = providerTurnPayload(context, settledStatus, now);
           yield* Ref.update(providerTurns, (current) => {
             const updated = new Map(current);
