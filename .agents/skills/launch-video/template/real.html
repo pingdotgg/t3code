@@ -1,0 +1,258 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <!--
+      Real-app story: each beat is a frozen page of the real app (beats/<name>.html, written by
+      snapshot.mjs from a staging scenario), stacked as iframes in .app. The app was frozen at a
+      1440×720 viewport; .app scales it 1.0556× into the 1520×760 window, so a point (x, y) in a
+      beat is canvas (40 + 1.0556·x, 26 + 1.0556·y).
+    -->
+    <style>
+      @font-face {
+        font-family: Inter;
+        src: url(inter.woff2) format("woff2");
+        font-weight: 100 900;
+      }
+      @font-face {
+        font-family: JB;
+        src: url(jbmono.woff2) format("woff2");
+        font-weight: 100 800;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --text: #f1f3f7;
+        --muted: #a3a3a3;
+        --dim: #636368;
+      }
+      html,
+      body {
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background: #000;
+        font-family: Inter, sans-serif;
+        color: var(--text);
+        -webkit-font-smoothing: antialiased;
+      }
+      .canvas {
+        position: relative;
+        width: 1600px;
+        height: 900px;
+        overflow: hidden;
+        background:
+          radial-gradient(1000px 520px at 50% 0%, rgba(52, 107, 241, 0.13), transparent 70%), #000;
+      }
+      .cam {
+        position: absolute;
+        inset: 0;
+        transform-origin: 0 0;
+      }
+      .win {
+        position: absolute;
+        left: 40px;
+        top: 26px;
+        width: 1520px;
+        height: 760px;
+        border-radius: 14px;
+        overflow: hidden;
+        background: #000;
+        box-shadow:
+          0 0 0 1px rgba(255, 255, 255, 0.1),
+          0 40px 120px rgba(0, 0, 0, 0.8);
+      }
+      .app {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1440px;
+        height: 720px;
+        transform: scale(1.05556);
+        transform-origin: 0 0;
+      }
+      .app iframe {
+        position: absolute;
+        inset: 0;
+        width: 1440px;
+        height: 720px;
+        border: 0;
+        opacity: 0;
+        background: #000;
+      }
+      .cursor {
+        position: absolute;
+        left: 0;
+        top: 0;
+        z-index: 20;
+        transform-origin: 4px 3px;
+        filter: drop-shadow(0 4px 8px rgba(0, 0, 0, 0.6));
+      }
+      .shade {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 190px;
+        background: linear-gradient(to bottom, transparent, rgba(0, 0, 0, 0.96) 42%);
+        z-index: 30;
+      }
+      .cap {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 806px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 16px;
+        font-size: 40px;
+        font-weight: 700;
+        letter-spacing: -0.025em;
+        z-index: 31;
+        opacity: 0;
+      }
+      .cap .n {
+        width: 50px;
+        height: 50px;
+        border-radius: 13px;
+        display: grid;
+        place-items: center;
+        font-family: JB;
+        font-size: 25px;
+        font-weight: 700;
+        background: #191a1d;
+        color: var(--text);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.12);
+      }
+      .cap .m {
+        color: var(--muted);
+        font-weight: 560;
+      }
+      .outro {
+        position: absolute;
+        inset: 0;
+        z-index: 50;
+        opacity: 0;
+        display: grid;
+        place-items: center;
+        text-align: center;
+        background:
+          radial-gradient(760px 460px at 50% 34%, rgba(52, 107, 241, 0.16), transparent 70%), #000;
+      }
+      .outro .logo {
+        width: 176px;
+        height: 176px;
+        display: block;
+        margin: 0 auto -10px;
+        filter: drop-shadow(0 0 1px rgba(255, 255, 255, 0.35))
+          drop-shadow(0 18px 60px rgba(52, 107, 241, 0.35));
+      }
+      .outro h2 {
+        margin-top: 44px;
+        font-size: 76px;
+        line-height: 1.02;
+        font-weight: 760;
+        letter-spacing: -0.045em;
+      }
+      .outro h2 .and {
+        color: var(--muted);
+      }
+      .outro p {
+        margin-top: 22px;
+        font-size: 34px;
+        color: var(--muted);
+        font-weight: 550;
+        letter-spacing: -0.02em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+      }
+      .outro p b {
+        color: var(--text);
+        font-weight: 650;
+      }
+      .ver {
+        font-family: JB;
+        font-size: 22px;
+        font-weight: 600;
+        color: var(--text);
+        padding: 6px 13px;
+        border-radius: 10px;
+        background: rgba(255, 255, 255, 0.07);
+        box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+      }
+      .outro .url {
+        margin-top: 46px;
+        font-family: JB;
+        font-size: 22px;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="canvas">
+      <div class="cam">
+        <div class="win">
+          <div class="app">
+            <!-- One iframe per beat, in order. -->
+            <iframe data-beat="BEAT_ONE" src="beats/BEAT_ONE.html"></iframe>
+          </div>
+        </div>
+        <div class="cursor" id="cur">
+          <svg viewBox="0 0 24 24" width="26" height="26">
+            <path
+              d="M4 2.5 L4 19.5 L8.6 15.2 L11.6 21.6 L14.6 20.2 L11.7 14 L18 14 Z"
+              fill="#fff"
+              stroke="#000"
+              stroke-width="1.4"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+      </div>
+      <div class="shade"></div>
+      <div class="cap" id="cap1">
+        <span class="n">1</span><span>Lead phrase <span class="m">and the rest.</span></span>
+      </div>
+    </div>
+    <div class="outro">
+      <div>
+        <img class="logo" src="logo-prod.png" />
+        <h2>Feature name<br /><span class="and">second line</span></h2>
+        <p>Available now in <b>T3 Code</b> <span class="ver">0.0.0</span></p>
+        <div class="url">t3.codes</div>
+      </div>
+    </div>
+    <!-- kit.js last: Kit.ready waits for the beat iframes above. -->
+    <script src="kit.js"></script>
+    <script>
+      // Everything here is in animation seconds. capture.mjs calls setup() once the beats have loaded.
+      window.setup = () => {
+        // One visibility window per beat; never pair Kit.show and Kit.hide on one element.
+        Kit.beats([["BEAT_ONE", 0]]);
+        // Captions play in order and must not overlap.
+        Kit.captions([["#cap1", 0.4, 5.8]]);
+        Kit.anim(".outro", [{ opacity: 0 }, { opacity: 1 }], { at: 6, dur: 0.5 });
+        Kit.stagger(".outro .logo, .outro h2, .outro p, .outro .url", 6.05, 0.08, "rise", {
+          y: 18,
+        });
+      };
+      window.layoutTime = 1;
+      window.placeCursor = () =>
+        Kit.measure(() =>
+          Kit.cursor("#cur", [
+            { t: 0, at: [900, 600], hidden: true },
+            { t: 6, hidden: true },
+          ]),
+        );
+      Kit.timeline([
+        [6, 0, 6],
+        [3, 6.6, 6.6],
+      ]);
+    </script>
+  </body>
+</html>

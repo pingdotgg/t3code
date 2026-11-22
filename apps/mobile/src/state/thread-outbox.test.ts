@@ -718,6 +718,42 @@ describe("thread outbox", () => {
     registry.dispose();
   });
 
+  it("composes concurrent modifications of one message instead of rejecting the later one", async () => {
+    const registry = AtomRegistry.make();
+    const stored = new Map<MessageId, QueuedThreadMessage>();
+    const manager = createThreadOutboxManager({
+      registry,
+      storage: {
+        load: async () => ({ messages: [], errors: [] }),
+        write: async (message) => {
+          stored.set(message.messageId, message);
+        },
+        remove: async () => undefined,
+      },
+    });
+    const message = queuedMessage({
+      messageId: "message-two-uploads",
+      createdAt: "2026-06-08T10:00:01.000Z",
+    });
+    await manager.enqueue(message);
+
+    // Two attachments finishing together each record their upload on the same message.
+    const results = await Promise.all([
+      manager.modify(message.messageId, (current) => ({ ...current, text: `${current.text} a` })),
+      manager.modify(message.messageId, (current) => ({ ...current, text: `${current.text} b` })),
+    ]);
+
+    expect(results).toEqual([true, true]);
+    const composed = { ...message, text: `${message.text} a b` };
+    expect(registry.get(manager.queuedMessagesByThreadKeyAtom)).toEqual({
+      "environment-1:thread-1": [composed],
+    });
+    expect(stored.get(message.messageId)).toEqual(composed);
+    await manager.remove(composed);
+    await expect(manager.modify(message.messageId, (current) => current)).resolves.toBe(false);
+    registry.dispose();
+  });
+
   it("rejects a stale revision before its payload reaches durable storage", async () => {
     const registry = AtomRegistry.make();
     const writes: string[] = [];
@@ -1262,6 +1298,19 @@ describe("thread outbox", () => {
         creation: { ...creationMessage.creation, branch: "" },
       }),
     ).toBe(false);
+    const plainFolderCreation = {
+      ...creationMessage,
+      creation: {
+        ...creationMessage.creation,
+        branch: null,
+        repositories: ["/workspace/api"],
+        startsFromRepositoryDefaults: true,
+      },
+    } satisfies QueuedThreadMessage;
+    expect(decodeQueuedThreadMessage(encodeQueuedThreadMessage(plainFolderCreation))).toEqual(
+      plainFolderCreation,
+    );
+    expect(isQueuedThreadCreationSendable(plainFolderCreation)).toBe(true);
     expect(isQueuedThreadCreationSendable({ ...creationMessage, modelSelection: undefined })).toBe(
       false,
     );
