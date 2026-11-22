@@ -104,6 +104,7 @@ pub(crate) fn render_thread_sidebar(
     layout: &LayoutState,
     workspaces: &[OrbitWorkspace],
     active_workspace: Option<&str>,
+    draft_project_id: Option<&str>,
     collapsed_projects: &HashSet<String>,
     search_input: &Entity<InputState>,
     renaming_thread_id: Option<&str>,
@@ -210,7 +211,7 @@ pub(crate) fn render_thread_sidebar(
             "sidebar-new-thread",
             IconName::SquarePen,
             tokens,
-            cx.listener(|app, _event, _window, cx| app.start_new_thread(None, cx)),
+            cx.listener(|app, _event, window, cx| app.start_new_thread(None, Some(window), cx)),
         )
         .a11y_button("sidebar.new-thread", "New thread")
         .aria_keyshortcuts("Meta+N")
@@ -301,15 +302,19 @@ pub(crate) fn render_thread_sidebar(
 
     let now_secs = current_unix_secs();
     let visible_threads: Vec<&ThreadShell> = shell
-        .threads
-        .iter()
+        .top_level_active_threads()
         .filter(|thread| thread_in_scope(thread))
         .filter(|thread| {
             thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
         })
         .collect();
 
-    let mut thread_rows = Vec::with_capacity(visible_threads.len());
+    let mut thread_rows =
+        Vec::with_capacity(visible_threads.len() + usize::from(draft_project_id.is_some()));
+    if let Some(project_id) = draft_project_id {
+        let project = shell.project(project_id);
+        thread_rows.push(render_draft_sidebar_row(project, tokens, cx));
+    }
     for (idx, thread) in visible_threads.into_iter().enumerate() {
         let project = shell.project(&thread.project_id);
         let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
@@ -333,8 +338,8 @@ pub(crate) fn render_thread_sidebar(
     // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
     // (Conn shows "Settled 0"), pushed to the bottom of the list with `mt-auto`.
     let settled_threads: Vec<&ThreadShell> = shell
-        .archived_threads
-        .iter()
+        .top_level_settled_threads()
+        .into_iter()
         .filter(|thread| thread_in_scope(thread))
         .filter(|thread| {
             thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
@@ -824,6 +829,108 @@ fn render_thread_card(
     }
 
     // Outer `li` wrapper carries `py-0.5` (`2px`) matching `SidebarThreadRow.tsx:1610`.
+    div().w_full().py(px(2.0)).child(card)
+}
+
+/// Active unsent draft row pinned at the top of the sidebar list (Conn `SidebarDraftBlock` parity).
+fn render_draft_sidebar_row(
+    project: Option<&ProjectShell>,
+    tokens: &Tokens,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::Div {
+    let fg = hsla(tokens.foreground);
+    let muted = hsla(tokens.sidebar_muted_foreground);
+    let hover_bg = hsla(tokens.sidebar_row_hover);
+    let active_bg = hsla(tokens.sidebar_row_active);
+
+    let favicon = project.map_or_else(
+        || render_project_monogram("New", ROW_FAVICON_PX, tokens),
+        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
+    );
+    let project_name = project.map_or("Select project", |p| p.title.as_str());
+
+    let discard_btn = div()
+        .id("sidebar-draft-discard")
+        .a11y_button("sidebar.draft.discard", "Discard draft")
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(20.0))
+        .flex_shrink_0()
+        .rounded(px(5.0))
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover_bg))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(|app, _, _, cx| {
+            cx.stop_propagation();
+            app.cancel_new_thread(cx);
+        }))
+        .conn_tooltip("Discard draft", tokens)
+        .child(icons::concept("superhero/close.svg", 12.0, muted));
+
+    let mut card = div()
+        .id("sidebar-draft-row")
+        .a11y(
+            gpui_kit::Role::ListItem,
+            "sidebar.draft",
+            "New thread draft",
+        )
+        .aria_selected(true)
+        .flex()
+        .flex_col()
+        .w_full()
+        .px(px(ROW_HORIZONTAL_INSET_PX))
+        .py(px(SIDEBAR_CONTENT_INSET_PX))
+        .rounded(px(ROW_RADIUS_PX))
+        .border_t_1()
+        .bg(active_bg)
+        .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .w_full()
+                .h(px(TITLE_LINE_HEIGHT_PX))
+                .min_w_0()
+                .child(icons::concept("superhero/edit.svg", 14.0, muted))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(TITLE_FONT_SIZE_PX))
+                        .line_height(px(TITLE_LINE_HEIGHT_PX))
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                        .text_color(fg)
+                        .child("New thread"),
+                )
+                .child(discard_btn),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(6.0))
+                .w_full()
+                .mt(px(4.0))
+                .pl(px(META_LINE_INDENT_PX))
+                .min_w_0()
+                .text_size(px(META_FONT_SIZE_PX))
+                .line_height(px(META_LINE_HEIGHT_PX))
+                .text_color(muted)
+                .child(favicon)
+                .child(div().min_w_0().truncate().child(project_name.to_owned())),
+        );
+
+    if tokens.appearance == Appearance::Light {
+        card = card
+            .border_1()
+            .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
+    }
+
     div().w_full().py(px(2.0)).child(card)
 }
 

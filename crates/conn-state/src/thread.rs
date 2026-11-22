@@ -216,6 +216,64 @@ impl ThreadState {
         self.turn_checkpoints.get(run_id)
     }
 
+    /// Replaces this thread's timeline from a full [`conn_contract::OrchestrationV2ThreadProjection`]
+    /// (from `subscribeThread` snapshots or `orchestration.launchThread` responses).
+    pub fn apply_projection(
+        &mut self,
+        projection: conn_contract::OrchestrationV2ThreadProjection,
+        sequence: Option<i64>,
+    ) {
+        self.thread_id = projection.thread.id;
+        if let Some(seq) = sequence {
+            self.advance_sequence(seq);
+        }
+        self.working = runs_are_working(&projection.runs);
+
+        self.run_timings.clear();
+        for run in &projection.runs {
+            self.record_run_timing(run);
+        }
+
+        self.turn_checkpoints.clear();
+        for checkpoint in &projection.checkpoints {
+            self.record_checkpoint(checkpoint);
+        }
+
+        self.approval_requests.clear();
+        self.entry_timings.clear();
+        let mut entries = Vec::new();
+        if !projection.visible_turn_items.is_empty() {
+            let mut rows = projection.visible_turn_items;
+            rows.sort_by_key(|row| row.position);
+            for row in rows {
+                if let ProjectionTurnItem::ApprovalRequest(i) = &row.item {
+                    self.approval_requests
+                        .insert(i.id.clone(), i.request_id.clone());
+                }
+                if let Some((id, timing)) = extract_projection_timing(&row.item) {
+                    self.entry_timings.insert(id, timing);
+                }
+                if let Some(entry) = map_projection_turn_item(row.item) {
+                    upsert_entry(&mut entries, entry);
+                }
+            }
+        } else {
+            for turn_item in projection.turn_items {
+                if let ProjectionTurnItem::ApprovalRequest(i) = &turn_item {
+                    self.approval_requests
+                        .insert(i.id.clone(), i.request_id.clone());
+                }
+                if let Some((id, timing)) = extract_projection_timing(&turn_item) {
+                    self.entry_timings.insert(id, timing);
+                }
+                if let Some(entry) = map_projection_turn_item(turn_item) {
+                    upsert_entry(&mut entries, entry);
+                }
+            }
+        }
+        self.entries = entries;
+    }
+
     /// Applies one `subscribeThread` stream item.
     ///
     /// Returns `true` when timeline entries or the `working` state changed.
@@ -226,53 +284,7 @@ impl ThreadState {
                 false
             }
             ThreadStreamItem::Snapshot(snapshot) => {
-                let projection = snapshot.projection;
-                self.thread_id = projection.thread.id;
-                self.sequence = Some(snapshot.snapshot_sequence);
-                self.working = runs_are_working(&projection.runs);
-
-                self.run_timings.clear();
-                for run in &projection.runs {
-                    self.record_run_timing(run);
-                }
-
-                self.turn_checkpoints.clear();
-                for checkpoint in &projection.checkpoints {
-                    self.record_checkpoint(checkpoint);
-                }
-
-                self.entry_timings.clear();
-                let mut entries = Vec::new();
-                if !projection.visible_turn_items.is_empty() {
-                    let mut rows = projection.visible_turn_items;
-                    rows.sort_by_key(|row| row.position);
-                    for row in rows {
-                        if let ProjectionTurnItem::ApprovalRequest(i) = &row.item {
-                            self.approval_requests
-                                .insert(i.id.clone(), i.request_id.clone());
-                        }
-                        if let Some((id, timing)) = extract_projection_timing(&row.item) {
-                            self.entry_timings.insert(id, timing);
-                        }
-                        if let Some(entry) = map_projection_turn_item(row.item) {
-                            upsert_entry(&mut entries, entry);
-                        }
-                    }
-                } else {
-                    for turn_item in projection.turn_items {
-                        if let ProjectionTurnItem::ApprovalRequest(i) = &turn_item {
-                            self.approval_requests
-                                .insert(i.id.clone(), i.request_id.clone());
-                        }
-                        if let Some((id, timing)) = extract_projection_timing(&turn_item) {
-                            self.entry_timings.insert(id, timing);
-                        }
-                        if let Some(entry) = map_projection_turn_item(turn_item) {
-                            upsert_entry(&mut entries, entry);
-                        }
-                    }
-                }
-                self.entries = entries;
+                self.apply_projection(snapshot.projection, Some(snapshot.snapshot_sequence));
                 true
             }
             ThreadStreamItem::Event(event_item) => {

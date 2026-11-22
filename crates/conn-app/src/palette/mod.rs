@@ -674,6 +674,7 @@ pub(crate) fn render_overlay(palette: &Entity<CommandPalette>) -> AnyElement {
 
 fn action_icon(action: &PaletteAction) -> IconName {
     match action {
+        PaletteAction::NewThread => IconName::SquarePen,
         PaletteAction::ToggleSidebar => IconName::PanelLeft,
         PaletteAction::ToggleRightPanel => IconName::PanelRight,
         PaletteAction::OpenPanel(RightPanelTab::Files) => IconName::Folder,

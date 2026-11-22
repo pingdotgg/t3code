@@ -50,6 +50,7 @@ const SIDEBAR_TOGGLE_RADIUS_PX: f32 = 8.0;
 pub(crate) fn render_chat_header(
     shell: &ShellState,
     layout: &LayoutState,
+    draft_project_id: Option<&str>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
@@ -62,12 +63,18 @@ pub(crate) fn render_chat_header(
     let active_thread = layout
         .selected_thread_id
         .as_deref()
-        .and_then(|id| shell.thread(id));
-    let active_project = active_thread.and_then(|t| shell.project(&t.project_id));
+        .and_then(|id| shell.find_thread(id));
+    let active_project = active_thread
+        .and_then(|t| shell.project(&t.project_id))
+        .or_else(|| draft_project_id.and_then(|id| shell.project(id)));
 
-    let thread_title = active_thread
-        .map(|t| t.title.as_str())
-        .unwrap_or("New thread");
+    let thread_title = if draft_project_id.is_some() {
+        "New thread"
+    } else {
+        active_thread
+            .map(|t| t.title.as_str())
+            .unwrap_or("New thread")
+    };
 
     // When the sidebar is collapsed, clear the macOS traffic lights (`90px`)
     // so the reopen-sidebar toggle sits at the exact same x=90px coordinate.

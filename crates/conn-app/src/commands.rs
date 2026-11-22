@@ -50,8 +50,22 @@ pub(crate) fn new_thread_id() -> String {
     new_id("thread")
 }
 
+/// Workspace preparation mode chosen for a new thread draft.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum WorkspaceStrategyChoice {
+    /// Run directly in the project's local checkout (`workspaceStrategy: { type: "root" }`).
+    #[default]
+    Local,
+    /// Create a fresh git worktree from `HEAD` (`workspaceStrategy: { type: "worktree", baseRef: "HEAD" }`).
+    Worktree,
+}
+
 /// `orchestration.launchThread` payload: create `thread_id` in `project_id` and send `text`
 /// and `attachments` as its first message (Conn's composer does the same for a new thread).
+#[expect(
+    clippy::too_many_arguments,
+    reason = "maps directly to OrchestrationV2ThreadLaunchInput wire fields"
+)]
 pub(crate) fn launch_thread_payload(
     thread_id: &str,
     project_id: &str,
@@ -60,16 +74,27 @@ pub(crate) fn launch_thread_payload(
     model_selection: serde_json::Value,
     runtime_mode: &str,
     interaction_mode: &str,
+    workspace_strategy: WorkspaceStrategyChoice,
 ) -> serde_json::Value {
-    let title: String = text
+    let first_line: String = text
         .lines()
-        .next()
-        .unwrap_or_default()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .unwrap_or("New thread")
         .chars()
         .take(80)
         .collect();
+    let title = if first_line.is_empty() {
+        "New thread".to_owned()
+    } else {
+        first_line
+    };
     let attachments_json: Vec<serde_json::Value> =
         attachments.iter().map(conn_contract::to_json).collect();
+    let strategy_json = match workspace_strategy {
+        WorkspaceStrategyChoice::Local => json!({ "type": "root" }),
+        WorkspaceStrategyChoice::Worktree => json!({ "type": "worktree", "baseRef": "HEAD" }),
+    };
     json!({
         "commandId": new_id("cmd"),
         "creationSource": "web",
@@ -80,13 +105,54 @@ pub(crate) fn launch_thread_payload(
         "modelSelection": model_selection,
         "runtimeMode": runtime_mode,
         "interactionMode": interaction_mode,
-        "workspaceStrategy": { "type": "root" },
+        "workspaceStrategy": strategy_json,
         "initialMessage": {
             "messageId": new_id("msg"),
             "text": text,
             "attachments": attachments_json,
         },
     })
+}
+
+/// Extracts a concise human-readable message from a [`conn_client::ClientError`].
+pub(crate) fn format_client_error(err: &conn_client::ClientError) -> String {
+    match err {
+        conn_client::ClientError::Rpc(val) => {
+            extract_rpc_message(val).unwrap_or_else(|| val.to_string())
+        }
+        other => other.to_string(),
+    }
+}
+
+fn extract_rpc_message(val: &serde_json::Value) -> Option<String> {
+    if let Some(msg) = val.get("detail").and_then(serde_json::Value::as_str)
+        && !msg.trim().is_empty()
+    {
+        return Some(msg.trim().to_owned());
+    }
+    if let Some(msg) = val.get("message").and_then(serde_json::Value::as_str)
+        && !msg.trim().is_empty()
+    {
+        return Some(msg.trim().to_owned());
+    }
+    if let Some(reasons) = val.get("reasons").and_then(serde_json::Value::as_array) {
+        for reason in reasons {
+            if let Some(err) = reason.get("error").and_then(extract_rpc_message) {
+                return Some(err);
+            }
+            if let Some(defect) = reason.get("defect") {
+                if let Some(msg) = extract_rpc_message(defect) {
+                    return Some(msg);
+                }
+                if let Some(s) = defect.as_str()
+                    && !s.trim().is_empty()
+                {
+                    return Some(s.trim().to_owned());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// `runtime-request.respond`: answer an approval with `decision` (`accept`,
@@ -286,18 +352,44 @@ mod tests {
 
     #[test]
     fn launch_payload_decodes_as_contract_input() {
-        let payload = launch_thread_payload(
-            "t1",
-            "p1",
-            "hello\nworld",
-            &[],
-            json!({"instanceId": "claudeAgent", "model": "haiku"}),
-            "full-access",
-            "default",
+        for strategy in [
+            WorkspaceStrategyChoice::Local,
+            WorkspaceStrategyChoice::Worktree,
+        ] {
+            let payload = launch_thread_payload(
+                "t1",
+                "p1",
+                "hello\nworld",
+                &[],
+                json!({"instanceId": "claudeAgent", "model": "haiku"}),
+                "full-access",
+                "default",
+                strategy,
+            );
+            let decoded: Result<conn_contract::OrchestrationV2ThreadLaunchInput, _> =
+                conn_contract::from_json(payload);
+            assert!(
+                decoded.is_ok(),
+                "launchThread input ({strategy:?}) decodes: {decoded:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn format_client_error_extracts_nested_rpc_message() {
+        let err = conn_client::ClientError::Rpc(json!({
+            "reasons": [{
+                "_tag": "Fail",
+                "error": {
+                    "_tag": "OrchestrationV2ThreadLaunchError",
+                    "message": "Provider instance \"codex\" is disabled."
+                }
+            }]
+        }));
+        assert_eq!(
+            format_client_error(&err),
+            "Provider instance \"codex\" is disabled."
         );
-        let decoded: Result<conn_contract::OrchestrationV2ThreadLaunchInput, _> =
-            conn_contract::from_json(payload);
-        assert!(decoded.is_ok(), "launchThread input decodes: {decoded:?}");
     }
 
     #[test]

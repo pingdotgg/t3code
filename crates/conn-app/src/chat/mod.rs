@@ -18,12 +18,12 @@ use conn_state::{
 use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, Render, ScrollHandle, SharedString, StatefulInteractiveElement,
-    Styled, Subscription, Window, div, px, relative,
+    IntoElement, MouseButton, ParentElement, Render, ScrollHandle, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Window, deferred, div, px, relative,
 };
 
 use self::cache::{CachedRow, RowCache, TimelineItem, group_rows};
-use self::color::{hsla, message_highlight, muted_icon, prose_foreground};
+use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::TurningArc;
 use crate::a11y::ConnA11yExt as _;
@@ -45,6 +45,24 @@ const BODY_LINE_HEIGHT_PX: f32 = 22.75;
 const UI_FONT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
+
+/// Project option selectable from the new-thread draft canvas.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DraftProjectOption {
+    pub(crate) id: String,
+    pub(crate) title: String,
+    pub(crate) workspace_root: String,
+}
+
+/// View state rendered while composing a brand-new thread before `orchestration.launchThread`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct DraftViewInfo {
+    pub(crate) project_id: String,
+    pub(crate) project_title: String,
+    pub(crate) workspace_root: String,
+    pub(crate) projects: Vec<DraftProjectOption>,
+    pub(crate) launching: bool,
+}
 
 /// Events emitted by [`ChatView`] to the host shell.
 #[derive(Clone, Debug, PartialEq)]
@@ -72,6 +90,14 @@ pub(crate) enum ChatEvent {
     RuntimeModeSelected(String),
     /// Switch the thread's interaction mode (`thread.interaction-mode.set`).
     InteractionModeSelected(String),
+    /// Toggle Local (`false`) vs Worktree (`true`) for a new-thread draft.
+    WorkspaceModeSelected(bool),
+    /// Switch which project a new-thread draft will launch in.
+    DraftProjectSelected(String),
+    /// Start a new thread from the empty state CTA.
+    StartNewThread,
+    /// Open Settings → Connections from the empty/offline state.
+    OpenConnections,
     /// A built-in `/` slash command selected from the composer command menu.
     SlashCommand(String),
 }
@@ -80,6 +106,11 @@ pub(crate) enum ChatEvent {
 pub(crate) struct ChatView {
     tokens: Tokens,
     has_thread: bool,
+    has_projects: bool,
+    connected: bool,
+    draft: Option<DraftViewInfo>,
+    draft_project_menu_open: bool,
+    error_banner: Option<String>,
     thread_id: Option<String>,
     thread_title: Option<String>,
     working: bool,
@@ -151,6 +182,9 @@ impl ChatView {
                 ComposerEvent::InteractionModeSelected(mode) => {
                     cx.emit(ChatEvent::InteractionModeSelected(mode.clone()));
                 }
+                ComposerEvent::WorkspaceModeSelected(worktree) => {
+                    cx.emit(ChatEvent::WorkspaceModeSelected(*worktree));
+                }
                 ComposerEvent::SlashCommand(command) => {
                     cx.emit(ChatEvent::SlashCommand(command.clone()));
                 }
@@ -160,6 +194,11 @@ impl ChatView {
         Self {
             tokens,
             has_thread: false,
+            has_projects: false,
+            connected: false,
+            draft: None,
+            draft_project_menu_open: false,
+            error_banner: None,
             thread_id: None,
             thread_title: None,
             working: false,
@@ -186,9 +225,82 @@ impl ChatView {
         connection: Option<conn_client::Connection>,
         cx: &mut Context<'_, Self>,
     ) {
+        self.connected = connection.is_some();
         self.composer
             .update(cx, |c, cx| c.set_connection(connection, cx));
         cx.notify();
+    }
+
+    /// Re-fetches provider/model options from `server.getConfig` (e.g. once WS connects).
+    pub(crate) fn refresh_providers(&mut self, cx: &mut Context<'_, Self>) {
+        self.composer.update(cx, |c, cx| c.refresh_providers(cx));
+    }
+
+    /// Returns the composer's currently resolved `(instance_id, model_slug, options)` selection.
+    #[must_use]
+    pub(crate) fn current_model_selection(
+        &self,
+        cx: &gpui_kit::App,
+    ) -> Option<(
+        String,
+        String,
+        Option<serde_json::Map<String, serde_json::Value>>,
+    )> {
+        self.composer.read(cx).current_model_selection()
+    }
+
+    /// Moves keyboard focus into the composer input.
+    pub(crate) fn focus_composer(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.composer.update(cx, |c, cx| c.focus_input(window, cx));
+    }
+
+    /// Restores or sets the composer textarea text (for example if a launch fails).
+    pub(crate) fn set_draft_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.set_draft_text(text, window, cx));
+    }
+
+    /// Updates empty-state context flags (whether projects exist and whether a live server is
+    /// connected).
+    pub(crate) fn set_shell_availability(
+        &mut self,
+        has_projects: bool,
+        connected: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.has_projects != has_projects || self.connected != connected {
+            self.has_projects = has_projects;
+            self.connected = connected;
+            cx.notify();
+        }
+    }
+
+    /// Enters or updates draft new-thread mode (when `Some`), or leaves draft mode (`None`).
+    pub(crate) fn set_draft(&mut self, draft: Option<DraftViewInfo>, cx: &mut Context<'_, Self>) {
+        let is_draft = draft.is_some();
+        let launching = draft.as_ref().is_some_and(|d| d.launching);
+        if self.draft != draft {
+            if !is_draft {
+                self.draft_project_menu_open = false;
+            }
+            self.draft = draft;
+            cx.notify();
+        }
+        self.composer
+            .update(cx, |c, cx| c.set_draft_mode(is_draft, launching, cx));
+    }
+
+    /// Displays (or clears) a dismissible error banner directly above the composer.
+    pub(crate) fn set_error(&mut self, error: Option<String>, cx: &mut Context<'_, Self>) {
+        if self.error_banner != error {
+            self.error_banner = error;
+            cx.notify();
+        }
     }
 
     pub(crate) fn set_tokens(&mut self, tokens: Tokens, cx: &mut Context<'_, Self>) {
@@ -226,6 +338,7 @@ impl ChatView {
             self.wrapped_code_keys.clear();
             self.copied_code_key = None;
             self.stick_to_bottom = true;
+            self.composer.update(cx, |c, cx| c.set_working(false, cx));
             cx.notify();
             return;
         };
@@ -491,7 +604,118 @@ impl ChatView {
         self.stick_to_bottom = distance_from_bottom <= STICK_TO_BOTTOM_THRESHOLD_PX;
     }
 
-    fn render_empty_no_thread(&self) -> AnyElement {
+    fn render_empty_no_thread(&self, cx: &mut Context<'_, Self>) -> AnyElement {
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let control_bg = hsla(self.tokens.shell_control);
+        let border = hsla(self.tokens.shell_inner_border);
+        let hover_bg = hsla(self.tokens.shell_highlight);
+
+        let mut card = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(12.0))
+            .max_w(px(420.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(44.0))
+                    .rounded(px(12.0))
+                    .bg(hsla(self.tokens.shell_tile))
+                    .border_1()
+                    .border_color(hsla(self.tokens.shell_tile_border))
+                    .child(icons::icon(icons::CHAT_CIRCLE, 20.0, muted)),
+            )
+            .child(
+                div()
+                    .text_size(px(15.0))
+                    .line_height(px(22.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg)
+                    .child(if self.has_projects {
+                        "Pick a thread or start a new one"
+                    } else if self.connected {
+                        "Add a project to start a thread"
+                    } else {
+                        "Connect to a conn-server"
+                    }),
+            )
+            .child(
+                div()
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child(if self.has_projects {
+                        "Select an existing thread in the sidebar or press ⌘N to compose a new one."
+                    } else if self.connected {
+                        "Use the Add project button in the sidebar to register a local folder."
+                    } else {
+                        "Open Settings → Connections to connect to an Orbit Node or local conn-server."
+                    }),
+            );
+
+        if self.has_projects {
+            card = card.child(
+                div()
+                    .id("chat-empty-new-thread")
+                    .a11y_button("chat.empty.new-thread", "New thread")
+                    .mt(px(4.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .h(px(32.0))
+                    .px(px(14.0))
+                    .rounded(px(8.0))
+                    .bg(hsla(self.tokens.primary))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(hsla(self.tokens.primary_foreground))
+                    .cursor_pointer()
+                    .hover(|s| s.opacity(0.90))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(ChatEvent::StartNewThread);
+                    }))
+                    .child(icons::icon(
+                        "superhero/edit.svg",
+                        14.0,
+                        hsla(self.tokens.primary_foreground),
+                    ))
+                    .child("New thread"),
+            );
+        } else if !self.connected {
+            card = card.child(
+                div()
+                    .id("chat-empty-open-connections")
+                    .a11y_button("chat.empty.connections", "Open Connections")
+                    .mt(px(4.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(6.0))
+                    .h(px(32.0))
+                    .px(px(14.0))
+                    .rounded(px(8.0))
+                    .bg(control_bg)
+                    .border_1()
+                    .border_color(border)
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(fg)
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(|_, _, _, cx| {
+                        cx.emit(ChatEvent::OpenConnections);
+                    }))
+                    .child("Open Connections"),
+            );
+        }
+
         div()
             .flex()
             .flex_1()
@@ -500,44 +724,240 @@ impl ChatView {
             .justify_center()
             .px(px(32.0))
             .py(px(48.0))
+            .child(card)
+            .into_any_element()
+    }
+
+    fn render_draft_canvas(&self, draft: &DraftViewInfo, cx: &mut Context<'_, Self>) -> AnyElement {
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let control_bg = hsla(self.tokens.shell_control);
+        let border = hsla(self.tokens.shell_inner_border);
+        let hover_bg = hsla(self.tokens.shell_highlight);
+        let glass_bg = hsla(self.tokens.shell_overlay);
+        let glass_divider = hsla(self.tokens.glass_divider);
+        let can_switch = draft.projects.len() > 1 && !draft.launching;
+
+        let mut project_pill = div()
+            .id("draft-project-picker")
+            .a11y_button(
+                "chat.draft.project-picker",
+                format!("Project: {}", draft.project_title),
+            )
+            .aria_expanded(self.draft_project_menu_open)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .h(px(30.0))
+            .px(px(10.0))
+            .rounded(px(8.0))
+            .bg(control_bg)
+            .border_1()
+            .border_color(border)
+            .text_size(px(UI_FONT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(fg)
+            .child(icons::icon("superhero/folder.svg", 14.0, muted))
+            .child(draft.project_title.clone());
+
+        if can_switch {
+            project_pill = project_pill
+                .cursor_pointer()
+                .hover(move |s| s.bg(hover_bg))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(|view, _, _, cx| {
+                    view.draft_project_menu_open = !view.draft_project_menu_open;
+                    cx.notify();
+                }))
+                .child(icons::icon("superhero/chevron-down.svg", 12.0, muted));
+        }
+
+        let mut picker_slot = div().relative().child(project_pill);
+        if self.draft_project_menu_open && can_switch {
+            let mut menu = div()
+                .id("draft-project-menu")
+                .absolute()
+                .top_full()
+                .left_0()
+                .mt(px(4.0))
+                .w(px(260.0))
+                .max_h(px(260.0))
+                .overflow_y_scroll()
+                .rounded(px(10.0))
+                .bg(glass_bg)
+                .border_1()
+                .border_color(glass_divider)
+                .shadow_md()
+                .p(px(4.0))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .occlude()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+
+            for (idx, project) in draft.projects.iter().enumerate() {
+                let is_active = project.id == draft.project_id;
+                let project_id = project.id.clone();
+                menu = menu.child(
+                    div()
+                        .id(("draft-project-opt", idx))
+                        .a11y_button(
+                            SharedString::from(format!("chat.draft.project.{}", project.id)),
+                            project.title.clone(),
+                        )
+                        .aria_selected(is_active)
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8.0))
+                        .h(px(30.0))
+                        .px(px(8.0))
+                        .rounded(px(7.0))
+                        .cursor_pointer()
+                        .text_size(px(UI_FONT_PX))
+                        .line_height(px(UI_LINE_HEIGHT_PX))
+                        .text_color(if is_active { fg } else { muted })
+                        .hover(move |s| s.bg(hover_bg).text_color(fg))
+                        .on_click(cx.listener(move |view, _, _, cx| {
+                            view.draft_project_menu_open = false;
+                            cx.emit(ChatEvent::DraftProjectSelected(project_id.clone()));
+                            cx.notify();
+                        }))
+                        .child(icons::icon("superhero/folder.svg", 14.0, muted))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .child(project.title.clone()),
+                        )
+                        .child(if is_active {
+                            icons::icon("superhero/check.svg", 13.0, fg).into_any_element()
+                        } else {
+                            div().size(px(13.0)).into_any_element()
+                        }),
+                );
+            }
+            picker_slot = picker_slot.child(deferred(menu).with_priority(3));
+        }
+
+        let mut center = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(10.0))
+            .max_w(px(460.0))
             .child(
                 div()
                     .flex()
-                    .flex_col()
                     .items_center()
-                    .gap(px(12.0))
+                    .justify_center()
+                    .size(px(44.0))
+                    .rounded(px(12.0))
+                    .bg(hsla(self.tokens.shell_tile))
+                    .border_1()
+                    .border_color(hsla(self.tokens.shell_tile_border))
+                    .child(icons::icon("superhero/edit.svg", 20.0, muted)),
+            )
+            .child(
+                div()
+                    .text_size(px(16.0))
+                    .line_height(px(24.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(fg)
+                    .child("New thread"),
+            )
+            .child(picker_slot);
+
+        if draft.launching {
+            center = center.child(
+                div()
+                    .mt(px(4.0))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child(TurningArc::new(14.0, muted))
+                    .child("Creating thread…"),
+            );
+        } else if !draft.workspace_root.is_empty() {
+            center = center.child(
+                div()
                     .max_w(px(420.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .size(px(44.0))
-                            .rounded(px(12.0))
-                            .bg(hsla(self.tokens.shell_tile))
-                            .border_1()
-                            .border_color(hsla(self.tokens.shell_tile_border))
-                            .child(icons::icon(
-                                icons::CHAT_CIRCLE,
-                                20.0,
-                                hsla(self.tokens.muted_foreground),
-                            )),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(15.0))
-                            .line_height(px(22.0))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(hsla(self.tokens.foreground))
-                            .child("Pick a thread to continue"),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(UI_FONT_PX))
-                            .line_height(px(UI_LINE_HEIGHT_PX))
-                            .text_color(hsla(self.tokens.muted_foreground))
-                            .child("Select an existing thread or create a new one to get started."),
-                    ),
+                    .truncate()
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .text_color(muted)
+                    .child(draft.workspace_root.clone()),
+            );
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .w_full()
+            .items_center()
+            .justify_center()
+            .py(px(48.0))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|view, _, _, cx| {
+                    if view.draft_project_menu_open {
+                        view.draft_project_menu_open = false;
+                        cx.notify();
+                    }
+                }),
+            )
+            .child(center)
+            .into_any_element()
+    }
+
+    fn render_error_banner(&self, message: &str, cx: &mut Context<'_, Self>) -> AnyElement {
+        let destructive = hsla(self.tokens.destructive);
+        let hover_bg = hsla(self.tokens.shell_highlight);
+        div()
+            .w_full()
+            .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
+            .mx_auto()
+            .mb(px(8.0))
+            .px(px(12.0))
+            .py(px(8.0))
+            .rounded(px(10.0))
+            .bg(hsla_alpha(self.tokens.destructive, 0.10))
+            .border_1()
+            .border_color(hsla_alpha(self.tokens.destructive, 0.30))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(8.0))
+            .text_size(px(UI_FONT_PX))
+            .line_height(px(UI_LINE_HEIGHT_PX))
+            .text_color(destructive)
+            .child(icons::icon(icons::ERROR_CIRCLE, 15.0, destructive))
+            .child(div().flex_1().min_w_0().child(message.to_owned()))
+            .child(
+                div()
+                    .id("chat-error-banner-dismiss")
+                    .a11y_button("chat.error.dismiss", "Dismiss error")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .size(px(20.0))
+                    .flex_shrink_0()
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(hover_bg))
+                    .on_click(cx.listener(|view, _, _, cx| {
+                        view.error_banner = None;
+                        cx.notify();
+                    }))
+                    .child(icons::icon("superhero/close.svg", 12.0, destructive)),
             )
             .into_any_element()
     }
@@ -1372,14 +1792,14 @@ impl ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        if !self.has_thread {
+        if !self.has_thread && self.draft.is_none() {
             return div()
                 .flex()
                 .flex_col()
                 .size_full()
                 .min_h_0()
                 .min_w_0()
-                .child(self.render_empty_no_thread());
+                .child(self.render_empty_no_thread(cx));
         }
 
         // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px),
@@ -1393,7 +1813,9 @@ impl Render for ChatView {
             .pt(px(16.0))
             .pb(px(16.0));
 
-        if self.cache.rows().is_empty() && !self.working {
+        if let Some(draft) = &self.draft {
+            lane = lane.flex_1().child(self.render_draft_canvas(draft, cx));
+        } else if self.cache.rows().is_empty() && !self.working {
             // Conn `MessagesTimeline` empty state: centered muted `text-sm` prompt.
             lane = lane.flex_1().items_center().justify_center().child(
                 div()
@@ -1453,19 +1875,22 @@ impl Render for ChatView {
             .px(px(CHAT_LANE_PADDING_X_PX))
             .child(lane);
 
-        let composer_lane = div()
+        let mut composer_lane = div()
             .flex_none()
             .w_full()
             .px(px(CHAT_LANE_PADDING_X_PX))
             .pb(px(16.0))
-            .pt(px(8.0))
-            .child(
-                div()
-                    .w_full()
-                    .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
-                    .mx_auto()
-                    .child(self.composer.clone()),
-            );
+            .pt(px(8.0));
+        if let Some(error) = self.error_banner.as_deref() {
+            composer_lane = composer_lane.child(self.render_error_banner(error, cx));
+        }
+        composer_lane = composer_lane.child(
+            div()
+                .w_full()
+                .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
+                .mx_auto()
+                .child(self.composer.clone()),
+        );
 
         div()
             .flex()

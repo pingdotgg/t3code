@@ -331,34 +331,79 @@ impl OrbitFleetClient {
 
     /// Mints a single-use pairing URL (`POST /api/v1/conn/environments/{server_id}/pairings`)
     /// for connecting to a Node or Instance without manual tokens.
+    ///
+    /// Supports both synchronous pairing responses (`{ pairing, pairing_url }`) and Orbit
+    /// Gateway's async operation responses (`202 Accepted` with `{ id, status, target_id }`,
+    /// polled via `GET /api/v1/operations/{id}` followed by
+    /// `GET /api/v1/conn/environments/{server_id}/pairings/{pairing_id}`).
     pub async fn mint_pairing(&self, server_id: &str) -> ProfileResult<OrbitPairingTicket> {
         let path = format!("/environments/{server_id}/pairings");
         let data = self.call(GatewayRequest::post(&path)).await?;
-        let obj = data.as_object().ok_or_else(|| invalid(&path))?;
-        let pairing = obj
-            .get("pairing")
-            .and_then(Value::as_object)
+        if let Some(ticket) = decode_pairing_ticket(&data, server_id) {
+            return Ok(ticket);
+        }
+
+        // Async Gateway operation (`conn.pairing_create`): poll `/api/v1/operations/{id}` until
+        // it succeeds, then fetch the issued pairing URL.
+        let op_id = data
+            .get("id")
+            .and_then(Value::as_i64)
             .ok_or_else(|| invalid(&path))?;
-        let pairing_url = obj
-            .get("pairing_url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| invalid(&path))?
-            .to_owned();
-        let resolved_id = pairing
-            .get("environment_id")
-            .and_then(Value::as_str)
-            .unwrap_or(server_id)
-            .to_owned();
-        let expires_at = pairing
-            .get("expires_at")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        Ok(OrbitPairingTicket {
-            server_id: resolved_id,
-            pairing_url,
-            expires_at,
-        })
+        let mut op = data;
+        let op_path = format!("/operations/{op_id}");
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+
+        loop {
+            let status = op.get("status").and_then(Value::as_str).unwrap_or_default();
+            match status {
+                "succeeded" => break,
+                "failed" | "cancelled" | "timed_out" => {
+                    let message = op
+                        .get("error")
+                        .and_then(|e| {
+                            e.as_str()
+                                .or_else(|| e.get("message").and_then(Value::as_str))
+                        })
+                        .or_else(|| op.get("error_code").and_then(Value::as_str))
+                        .unwrap_or("Orbit pairing operation failed.")
+                        .to_owned();
+                    return Err(ProfileError::Gateway {
+                        code: format!("orbit.pairing_{status}"),
+                        message,
+                        status: 500,
+                    });
+                }
+                _ => {}
+            }
+
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ProfileError::Gateway {
+                    code: "orbit.pairing_timeout".to_owned(),
+                    message: "Timed out waiting for Orbit Gateway to mint a pairing link."
+                        .to_owned(),
+                    status: 504,
+                });
+            }
+
+            let wait_secs = op
+                .get("poll_after_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 2);
+            tokio::time::sleep(std::time::Duration::from_millis(wait_secs * 500)).await;
+            op = self.call(GatewayRequest::get(&op_path).at_root()).await?;
+        }
+
+        let pairing_id = op
+            .get("result")
+            .and_then(|r| r.get("pairing_id"))
+            .and_then(Value::as_i64)
+            .or_else(|| op.get("target_id").and_then(Value::as_i64))
+            .ok_or_else(|| invalid(&op_path))?;
+
+        let fetch_path = format!("/environments/{server_id}/pairings/{pairing_id}");
+        let fetched = self.call(GatewayRequest::get(&fetch_path)).await?;
+        decode_pairing_ticket(&fetched, server_id).ok_or_else(|| invalid(&fetch_path))
     }
 
     /// Requests Orbit to wake a stopped Instance (`POST /api/v1/instances/{id}/wake`).
@@ -416,6 +461,27 @@ fn invalid(path: &str) -> ProfileError {
     ProfileError::InvalidResponse {
         path: path.to_owned(),
     }
+}
+
+fn decode_pairing_ticket(data: &Value, fallback_server_id: &str) -> Option<OrbitPairingTicket> {
+    let obj = data.as_object()?;
+    let pairing_url = obj.get("pairing_url").and_then(Value::as_str)?.to_owned();
+    let pairing = obj.get("pairing").and_then(Value::as_object)?;
+    let resolved_id = pairing
+        .get("environment_id")
+        .and_then(Value::as_str)
+        .unwrap_or(fallback_server_id)
+        .to_owned();
+    let expires_at = pairing
+        .get("expires_at")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    Some(OrbitPairingTicket {
+        server_id: resolved_id,
+        pairing_url,
+        expires_at,
+    })
 }
 
 fn decode_target(value: &Value) -> Option<OrbitServerTarget> {
@@ -781,6 +847,68 @@ mod tests {
         assert_eq!(
             ticket.http_base_url().map(|u| u.to_string()).as_deref(),
             Some("http://10.44.0.7:3773/")
+        );
+    }
+
+    #[tokio::test]
+    async fn mints_pairing_ticket_via_async_operation_poll() {
+        let poll_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let poll_count_ref = std::sync::Arc::clone(&poll_count);
+        let transport = MockGateway::new(move |req| match (req.root, req.path.as_str()) {
+            (false, "/environments/node-nick/pairings") => Ok(GatewayResponse {
+                status: 202,
+                body: serde_json::json!({
+                    "data": {
+                        "id": 32452,
+                        "kind": "conn.pairing_create",
+                        "target_id": 3508,
+                        "status": "queued",
+                        "poll_after_seconds": 1
+                    }
+                })
+                .to_string(),
+            }),
+            (true, "/operations/32452") => {
+                poll_count_ref.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(GatewayResponse {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": {
+                            "id": 32452,
+                            "status": "succeeded",
+                            "target_id": 3508,
+                            "result": { "pairing_id": 3508 }
+                        }
+                    })
+                    .to_string(),
+                })
+            }
+            (false, "/environments/node-nick/pairings/3508") => Ok(GatewayResponse {
+                status: 200,
+                body: serde_json::json!({
+                    "data": {
+                        "pairing_url": "http://10.44.0.6:3773/pair#token=ASYNC999",
+                        "pairing": {
+                            "id": 3508,
+                            "environment_id": "node-nick",
+                            "expires_at": "2026-11-22T08:25:18+00:00"
+                        }
+                    }
+                })
+                .to_string(),
+            }),
+            other => panic!("unexpected request: {other:?}"),
+        });
+        let client = OrbitFleetClient::new(transport);
+        let ticket = client
+            .mint_pairing("node-nick")
+            .await
+            .expect("async pairing");
+        assert_eq!(poll_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(ticket.pairing_code().as_deref(), Some("ASYNC999"));
+        assert_eq!(
+            ticket.http_base_url().map(|u| u.to_string()).as_deref(),
+            Some("http://10.44.0.6:3773/")
         );
     }
 

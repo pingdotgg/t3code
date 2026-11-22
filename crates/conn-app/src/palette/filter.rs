@@ -49,6 +49,7 @@ pub(crate) struct PaletteTarget {
 /// Shell action triggered from the command palette.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum PaletteAction {
+    NewThread,
     ToggleSidebar,
     ToggleRightPanel,
     OpenPanel(RightPanelTab),
@@ -76,6 +77,12 @@ pub(crate) struct ActionEntry {
 
 /// Built-in actions available in the command palette.
 pub(crate) const BUILTIN_ACTIONS: &[ActionEntry] = &[
+    ActionEntry {
+        title: "New thread",
+        keywords: "new thread compose create chat start draft",
+        shortcut: Some(&["⌘", "N"]),
+        action: PaletteAction::NewThread,
+    },
     ActionEntry {
         title: "Toggle sidebar",
         keywords: "sidebar rail navigation panel left",

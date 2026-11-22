@@ -109,10 +109,17 @@ pub(crate) enum SettingsEvent {
     OrbitForcePull,
     OrbitRestoreBackup,
     OrbitConnectTarget(String),
-    OrbitWakeInstance { instance_id: i64, server_id: String },
+    OrbitWakeInstance {
+        instance_id: i64,
+        server_id: String,
+    },
     OrbitToggleSyncWorkspaces(bool),
     OrbitToggleSyncAppearance(bool),
     OrbitToggleSyncDesktopSettings(bool),
+    ConnectDirectServer {
+        raw_url: String,
+        bearer_token: String,
+    },
     Close,
 }
 
@@ -175,6 +182,9 @@ pub(crate) struct SettingsModal {
     _search_sub: Subscription,
     new_profile_input: Entity<InputState>,
     show_stopped_instances: bool,
+    direct_server_url_input: Entity<InputState>,
+    direct_server_token_input: Entity<InputState>,
+    direct_server_error: Option<String>,
     operator_url_input: Entity<InputState>,
     operator_saved_notice: Option<String>,
     scheduled_tasks: Entity<ScheduledTasksView>,
@@ -239,6 +249,15 @@ impl SettingsModal {
                 .placeholder(conn_desktop::operator::DEFAULT_OPERATOR_URL)
                 .default_value(operator_url)
         });
+        let initial_server_url = connection.server_url.clone().unwrap_or_default();
+        let direct_server_url_input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("http://127.0.0.1:3780/pair#token=…")
+                .default_value(initial_server_url)
+        });
+        let direct_server_token_input = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("Bearer token (optional if pairing URL)")
+        });
         let new_profile_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("New profile name"));
 
@@ -274,6 +293,9 @@ impl SettingsModal {
             _search_sub: search_sub,
             new_profile_input,
             show_stopped_instances: false,
+            direct_server_url_input,
+            direct_server_token_input,
+            direct_server_error: None,
             operator_url_input,
             operator_saved_notice: None,
             scheduled_tasks,
@@ -334,6 +356,23 @@ impl SettingsModal {
     fn select_theme(&mut self, theme_id: String, cx: &mut Context<'_, Self>) {
         self.active_theme_id = theme_id.clone();
         cx.emit(SettingsEvent::ApplyTheme(theme_id));
+        cx.notify();
+    }
+
+    fn submit_direct_server(&mut self, cx: &mut Context<'_, Self>) {
+        let raw_url = self.direct_server_url_input.read(cx).value().to_string();
+        let bearer_token = self.direct_server_token_input.read(cx).value().to_string();
+        let token_opt = (!bearer_token.trim().is_empty()).then_some(bearer_token.as_str());
+        if let Err(err) = conn_desktop::server_store::parse_server_input(&raw_url, token_opt) {
+            self.direct_server_error = Some(err);
+            cx.notify();
+            return;
+        }
+        self.direct_server_error = None;
+        cx.emit(SettingsEvent::ConnectDirectServer {
+            raw_url,
+            bearer_token,
+        });
         cx.notify();
     }
 
@@ -1610,6 +1649,65 @@ impl SettingsModal {
             ),
         ];
 
+        let direct_connect_btn = div()
+            .id("conn-settings-direct-connect")
+            .a11y_button("settings.direct.connect", "Connect to conn-server")
+            .px(px(10.0))
+            .py(px(5.0))
+            .rounded(px(7.0))
+            .bg(hsla(self.tokens.primary))
+            .text_size(px(12.0))
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(hsla(self.tokens.primary_foreground))
+            .cursor_pointer()
+            .hover(|s| s.opacity(0.90))
+            .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.submit_direct_server(cx);
+            }))
+            .child("Connect");
+
+        let mut direct_rows = vec![
+            settings_row(
+                "Server or pairing URL",
+                Some(
+                    "Paste a conn-server pairing URL (http://127.0.0.1:3780/pair#token=...) or server URL.",
+                ),
+                div()
+                    .w(px(280.0))
+                    .child(Input::new(&self.direct_server_url_input))
+                    .into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+            settings_row(
+                "Bearer token",
+                Some("Needed only when entering a plain server URL without #token=."),
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .w(px(210.0))
+                            .child(Input::new(&self.direct_server_token_input)),
+                    )
+                    .child(direct_connect_btn)
+                    .into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ),
+        ];
+        if let Some(err) = &self.direct_server_error {
+            direct_rows.push(settings_row(
+                "Connection error",
+                Some(err),
+                div().into_any_element(),
+                &self.tokens,
+                &self.geometry,
+            ));
+        }
+
         let mut page = div()
             .flex()
             .flex_col()
@@ -1618,6 +1716,12 @@ impl SettingsModal {
             .child(settings_section(
                 "Active server",
                 rows,
+                &self.tokens,
+                &self.geometry,
+            ))
+            .child(settings_section(
+                "Connect to conn-server",
+                direct_rows,
                 &self.tokens,
                 &self.geometry,
             ));

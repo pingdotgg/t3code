@@ -25,6 +25,91 @@ pub(crate) static RT: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
         .expect("a tokio runtime")
 });
 
+/// Returns `true` when `CONN_GPUI_DEMO=1` explicitly forces the offline demo fixture.
+pub(crate) fn demo_mode_enabled() -> bool {
+    std::env::var("CONN_GPUI_DEMO")
+        .map(|v| matches!(v.trim(), "1" | "true" | "on" | "yes"))
+        .unwrap_or(false)
+}
+
+/// Startup server target resolved from explicit env vars or persisted desktop sessions.
+pub(crate) struct StartupServer {
+    pub(crate) config: ServerConfig,
+    pub(crate) label: Option<String>,
+    pub(crate) orbit_server_id: Option<String>,
+}
+
+/// Resolves the initial `conn-server` target to connect to on launch:
+/// 1. Explicit env vars (`CONN_GPUI_SERVER` / `CONN_GPUI_PAIRING_URL`) always win.
+/// 2. Unless `CONN_GPUI_DEMO=1`, the most recently used saved direct server (`server.json`)
+///    or cached Orbit Node/Instance session (`orbit-sessions.json`).
+pub(crate) fn startup_server() -> Option<StartupServer> {
+    if let Some(config) = server_config_from_env() {
+        return Some(StartupServer {
+            config,
+            label: None,
+            orbit_server_id: None,
+        });
+    }
+    if demo_mode_enabled() {
+        return None;
+    }
+
+    let direct = conn_desktop::server_store::SavedServerConfig::load_default().and_then(|saved| {
+        let http_base_url = url::Url::parse(&saved.url).ok()?;
+        Some((
+            saved.updated_at_unix,
+            StartupServer {
+                config: ServerConfig {
+                    http_base_url,
+                    credential: Credential::Bearer(saved.bearer),
+                },
+                label: saved.label,
+                orbit_server_id: None,
+            },
+        ))
+    });
+
+    let orbit = if crate::orbit_sync::orbit_sync_enabled_by_env() {
+        let store = conn_desktop::orbit::OrbitSessionStore::load_default();
+        store
+            .active_server_id
+            .as_deref()
+            .and_then(|sid| store.sessions.get(sid))
+            .and_then(|session| {
+                if session.bearer.trim().is_empty() {
+                    return None;
+                }
+                let http_base_url = url::Url::parse(&session.url).ok()?;
+                Some((
+                    session.paired_at_unix,
+                    StartupServer {
+                        config: ServerConfig {
+                            http_base_url,
+                            credential: Credential::Bearer(session.bearer.clone()),
+                        },
+                        label: Some(session.label.clone()),
+                        orbit_server_id: Some(session.server_id.clone()),
+                    },
+                ))
+            })
+    } else {
+        None
+    };
+
+    match (direct, orbit) {
+        (Some((d_ts, d_srv)), Some((o_ts, o_srv))) => {
+            if d_ts >= o_ts {
+                Some(d_srv)
+            } else {
+                Some(o_srv)
+            }
+        }
+        (Some((_, srv)), None) | (None, Some((_, srv))) => Some(srv),
+        (None, None) => None,
+    }
+}
+
 /// The server to connect to, or `None` to run on the demo fixture.
 pub(crate) fn server_config_from_env() -> Option<ServerConfig> {
     let token = std::env::var("CONN_GPUI_TOKEN").ok().or_else(|| {

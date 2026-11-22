@@ -407,19 +407,29 @@ async fn run(
                 .and_then(Value::as_str)
                 .map(str::to_owned);
             let mode = cmd.get("mode").and_then(Value::as_str).map(str::to_owned);
-            app.update(cx, |app, cx| {
-                let project_id = project.and_then(|title| {
-                    app.shell()
-                        .projects
-                        .iter()
-                        .find(|p| p.title == title || p.id == title)
-                        .map(|p| p.id.clone())
-                });
-                app.set_draft_runtime_mode(mode);
-                app.start_new_thread(project_id, cx);
-                json!("ok")
-            })
-            .map_err(|e| err(e.into()))
+            let worktree = cmd.get("worktree").and_then(Value::as_bool);
+            let entity = app.upgrade().ok_or("app is gone")?;
+            window
+                .update(cx, |_, window, cx| {
+                    entity.update(cx, |app, cx| {
+                        let project_id = project.and_then(|title| {
+                            app.shell()
+                                .projects
+                                .iter()
+                                .find(|p| p.title == title || p.id == title)
+                                .map(|p| p.id.clone())
+                        });
+                        app.start_new_thread(project_id, Some(window), cx);
+                        if let Some(mode) = mode {
+                            app.set_draft_runtime_mode(Some(mode), cx);
+                        }
+                        if let Some(use_worktree) = worktree {
+                            app.set_draft_workspace_strategy(use_worktree, cx);
+                        }
+                    });
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
         }
         "approve" | "deny" => {
             let decision = if text(cmd, "cmd") == "approve" {

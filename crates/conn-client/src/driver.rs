@@ -669,8 +669,8 @@ where
         http_snapshot_fallback: None,
         known_project_identities: None,
         request_completion_marker: None,
-        omit_idle_subagents: None,
-        omit_older_settled: None,
+        omit_idle_subagents: Some(true),
+        omit_older_settled: Some(true),
     };
     let payload = serde_json::to_value(&input)
         .map_err(|err| format!("failed to encode subscribeShell payload: {err}"))?;

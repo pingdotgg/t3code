@@ -901,3 +901,82 @@ fn layout_toggles_selection_and_width_clamping() {
         "clamp_widths should reset non-finite right_panel_width to default"
     );
 }
+
+#[test]
+fn shell_partitions_settled_and_subagent_threads_and_finds_archived() {
+    let mut state = ShellState::default();
+
+    let mut settled = thread_json(
+        "t-settled",
+        "proj-1",
+        "Settled in active list",
+        "completed",
+        "2026-11-13T09:04:00.000Z",
+        None,
+    );
+    settled["settledAt"] = json!("2026-11-13T09:05:00.000Z");
+
+    let mut subagent = thread_json(
+        "t-sub",
+        "proj-1",
+        "Delegated subagent",
+        "running",
+        "2026-11-13T09:06:00.000Z",
+        None,
+    );
+    subagent["lineage"] = json!({
+        "rootThreadId": "t-active",
+        "parentThreadId": "t-active",
+        "relationshipToParent": "subagent"
+    });
+
+    let snap = decode_shell(json!({
+        "kind": "snapshot",
+        "snapshot": {
+            "schemaVersion": 1,
+            "snapshotSequence": 20,
+            "projects": [
+                project_json("proj-1", "Conn", "2026-11-13T09:00:00.000Z")
+            ],
+            "threads": [
+                thread_json("t-active", "proj-1", "Active", "idle", "2026-11-13T09:03:00.000Z", None),
+                settled,
+                subagent
+            ],
+            "archivedThreads": [
+                thread_json("t-archived", "proj-1", "Archived", "completed", "2026-11-13T09:02:00.000Z", None)
+            ]
+        }
+    }));
+    state.apply(snap);
+
+    let active_ids: Vec<&str> = state
+        .top_level_active_threads()
+        .map(|t| t.id.as_str())
+        .collect();
+    assert_eq!(
+        active_ids,
+        vec!["t-active"],
+        "settled and subagent threads must be excluded from top_level_active_threads"
+    );
+
+    let settled_ids: Vec<&str> = state
+        .top_level_settled_threads()
+        .into_iter()
+        .map(|t| t.id.as_str())
+        .collect();
+    assert_eq!(
+        settled_ids,
+        vec!["t-settled", "t-archived"],
+        "top_level_settled_threads must combine settled active rows and archived rows newest-first"
+    );
+
+    assert!(
+        state.find_thread("t-archived").is_some(),
+        "find_thread must resolve archived threads"
+    );
+    assert!(
+        state.find_thread("t-settled").is_some(),
+        "find_thread must resolve settled threads"
+    );
+}

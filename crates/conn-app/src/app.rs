@@ -38,6 +38,19 @@ enum SeamDrag {
     RightPanel { from_x: f32, start: f32 },
 }
 
+/// State of a brand-new thread draft being composed before `orchestration.launchThread`.
+#[derive(Clone, Debug)]
+struct DraftThreadState {
+    project_id: String,
+    model_instance_id: Option<String>,
+    model_slug: Option<String>,
+    model_options: Option<serde_json::Map<String, serde_json::Value>>,
+    runtime_mode: String,
+    interaction_mode: String,
+    use_worktree: bool,
+    launching: bool,
+}
+
 /// Root view of the Conn native desktop shell.
 pub(crate) struct ConnApp {
     tokens: Tokens,
@@ -50,6 +63,9 @@ pub(crate) struct ConnApp {
     theme_id: String,
     connection: Option<Connection>,
     status: Option<ConnectionStatus>,
+    /// True when the active connection came from `CONN_GPUI_*` env vars (skip overwriting
+    /// persisted user `server.json`).
+    env_pinned_server: bool,
     /// Timelines of subscribed threads, by thread id.
     threads: HashMap<String, ThreadState>,
     chat: Entity<crate::chat::ChatView>,
@@ -57,10 +73,8 @@ pub(crate) struct ConnApp {
     /// Thread streams the server ended (for example a thread launched a moment before the
     /// server knew it). Resubscribed once the shell lists the thread.
     ended_threads: HashSet<String>,
-    /// A new thread being composed in this project; sent with `orchestration.launchThread`.
-    draft_project: Option<String>,
-    /// Runtime mode for the draft, when set (else the project's latest thread's mode).
-    draft_runtime_mode: Option<String>,
+    /// Active new-thread draft; sent with `orchestration.launchThread` on first message.
+    draft: Option<DraftThreadState>,
     /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
     right_panel_open_tabs: Vec<PanelSurface>,
     /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
@@ -119,24 +133,28 @@ impl std::fmt::Debug for ConnApp {
 
 impl ConnApp {
     /// Creates the root shell. With a server config it connects and streams the live shell;
-    /// without one it shows the built-in demo fixture.
+    /// without one it shows the built-in demo fixture (or awaits Orbit auto-connect).
     #[must_use]
     pub(crate) fn new(
         theme_id: String,
         tokens: Tokens,
-        server: Option<ServerConfig>,
+        server: Option<crate::live::StartupServer>,
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) -> Self {
         let mut layout = LayoutState::default();
-        let server_url = server.as_ref().map(|c| c.http_base_url.to_string());
+        let env_pinned_server = crate::live::server_config_from_env().is_some();
+        let server_url = server.as_ref().map(|s| s.config.http_base_url.to_string());
+        let server_label = server.as_ref().and_then(|s| s.label.clone());
+        let initial_orbit_server_id = server.as_ref().and_then(|s| s.orbit_server_id.clone());
 
         let (shell, connection) = match server {
-            Some(config) => {
-                let (connection, events) = Connection::start(config, crate::live::RT.handle());
+            Some(startup) => {
+                let (connection, events) =
+                    Connection::start(startup.config, crate::live::RT.handle());
                 connection.subscribe_shell();
                 connection.subscribe_panel_requests(Some(default_device_name()));
-                Self::pump_events(1, None, events, cx);
+                Self::pump_events(1, startup.orbit_server_id, events, cx);
                 (ShellState::default(), Some(connection))
             }
             None => {
@@ -151,11 +169,17 @@ impl ConnApp {
 
         let chat =
             cx.new(|cx| crate::chat::ChatView::new(tokens.clone(), connection.clone(), window, cx));
-        cx.subscribe(
+        cx.subscribe_in(
             &chat,
-            |app, _chat, event: &crate::chat::ChatEvent, cx| match event {
+            window,
+            |app, _chat, event: &crate::chat::ChatEvent, window, cx| match event {
                 crate::chat::ChatEvent::Send { text, attachments } => {
-                    app.send_prompt_with_attachments(text.clone(), attachments.clone(), cx);
+                    app.send_prompt_with_attachments(
+                        text.clone(),
+                        attachments.clone(),
+                        Some(window),
+                        cx,
+                    );
                 }
                 crate::chat::ChatEvent::Stop => app.stop_selected(cx),
                 crate::chat::ChatEvent::Approval { entry_id, decision } => {
@@ -179,6 +203,22 @@ impl ConnApp {
                 }
                 crate::chat::ChatEvent::InteractionModeSelected(mode) => {
                     app.set_interaction_mode(mode, cx);
+                }
+                crate::chat::ChatEvent::WorkspaceModeSelected(use_worktree) => {
+                    app.set_draft_workspace_strategy(*use_worktree, cx);
+                }
+                crate::chat::ChatEvent::DraftProjectSelected(project_id) => {
+                    app.set_draft_project(project_id.clone(), cx);
+                }
+                crate::chat::ChatEvent::StartNewThread => {
+                    app.start_new_thread(None, Some(window), cx);
+                }
+                crate::chat::ChatEvent::OpenConnections => {
+                    app.open_settings_page(
+                        Some(crate::settings::SettingsPage::Connections),
+                        window,
+                        cx,
+                    );
                 }
                 crate::chat::ChatEvent::SlashCommand(command) => {
                     app.handle_slash_command(command, cx);
@@ -241,7 +281,10 @@ impl ConnApp {
             },
         );
 
-        let orbit = crate::orbit_sync::OrbitSyncState::default();
+        let orbit = crate::orbit_sync::OrbitSyncState {
+            active_server_id: initial_orbit_server_id,
+            ..Default::default()
+        };
         let mut app = Self {
             tokens,
             geometry: ShellGeometry::default(),
@@ -253,12 +296,12 @@ impl ConnApp {
             theme_id,
             connection,
             status: None,
+            env_pinned_server,
             threads: HashMap::new(),
             chat,
             right_panel,
             ended_threads: HashSet::new(),
-            draft_project: None,
-            draft_runtime_mode: None,
+            draft: None,
             right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
             right_panel_file: None,
             right_panel_add_menu_open: false,
@@ -276,7 +319,7 @@ impl ConnApp {
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
-            server_label: None,
+            server_label,
             connection_gen: 1,
             orbit,
             pending_open_thread: None,
@@ -287,6 +330,7 @@ impl ConnApp {
             annotation_watching_threads: HashSet::new(),
             annotation_last_sent: HashMap::new(),
         };
+        app.sync_chat(cx);
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
             app.sync_orbit_profile(crate::orbit_sync::allow_startup_theme_adopt(), cx);
             if let Some(rx) = app.right_panel.read(cx).subscribe_orbit_events(cx) {
@@ -336,6 +380,9 @@ impl ConnApp {
                     PaletteEvent::ApplyTheme(id) => {
                         app.set_theme(id, cx);
                     }
+                    PaletteEvent::Action(PaletteAction::NewThread) => {
+                        app.start_new_thread(None, Some(window), cx);
+                    }
                     PaletteEvent::Action(PaletteAction::ToggleSidebar) => app.toggle_sidebar(cx),
                     PaletteEvent::Action(PaletteAction::ToggleRightPanel) => {
                         app.toggle_right_panel(cx);
@@ -378,8 +425,24 @@ impl ConnApp {
 
     /// Opens (or closes) the Settings route modal.
     pub(crate) fn open_settings(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.open_settings_page(None, window, cx);
+    }
+
+    /// Opens the Settings route modal, optionally landing directly on `page` (or closing it when
+    /// toggled with `page == None`).
+    pub(crate) fn open_settings_page(
+        &mut self,
+        page: Option<crate::settings::SettingsPage>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         use crate::settings::{SettingsConnectionInfo, SettingsEvent, SettingsModal};
-        if self.settings_modal.take().is_some() {
+        if let Some(existing) = &self.settings_modal {
+            if let Some(target_page) = page {
+                existing.update(cx, |m, cx| m.select_page(target_page, cx));
+                return;
+            }
+            self.settings_modal = None;
             self.restore_focus(window, cx);
             self.sync_browser_visibility(cx);
             cx.notify();
@@ -400,7 +463,7 @@ impl ConnApp {
         let projects = self.scheduled_task_projects();
         let default_model = self.default_scheduled_task_model();
         let modal = cx.new(|cx| {
-            SettingsModal::new(
+            let mut m = SettingsModal::new(
                 theme_id,
                 tokens,
                 reduce_transparency,
@@ -412,7 +475,11 @@ impl ConnApp {
                 &custom_themes,
                 window,
                 cx,
-            )
+            );
+            if let Some(target_page) = page {
+                m.select_page(target_page, cx);
+            }
+            m
         });
         let sub = cx.subscribe_in(
             &modal,
@@ -472,6 +539,12 @@ impl ConnApp {
                     if *enabled {
                         app.sync_orbit_profile(false, cx);
                     }
+                }
+                SettingsEvent::ConnectDirectServer {
+                    raw_url,
+                    bearer_token,
+                } => {
+                    app.connect_direct_server(raw_url.clone(), bearer_token.clone(), cx);
                 }
                 SettingsEvent::Close => {
                     app.settings_modal = None;
@@ -549,29 +622,60 @@ impl ConnApp {
             .update(cx, |panel, cx| panel.set_surface_visible(visible, cx));
     }
 
-    /// Pushes the selected thread's timeline (and title/model) into the chat view.
+    /// Pushes the selected thread's timeline (or active draft state) into the chat view and right panel.
     fn sync_chat(&mut self, cx: &mut Context<'_, Self>) {
         let selected = self.layout.selected_thread_id.as_deref();
-        let shell_thread = selected.and_then(|id| self.shell.thread(id));
-        let title = if self.draft_project.is_some() {
+        let shell_thread = selected.and_then(|id| self.shell.find_thread(id));
+        let draft_view = self.draft.as_ref().map(|draft| {
+            let project = self.shell.project(&draft.project_id);
+            let projects = self
+                .shell
+                .projects
+                .iter()
+                .filter(|p| p.archived_at.is_none())
+                .map(|p| crate::chat::DraftProjectOption {
+                    id: p.id.clone(),
+                    title: p.title.clone(),
+                    workspace_root: p.workspace_root.clone(),
+                })
+                .collect();
+            crate::chat::DraftViewInfo {
+                project_id: draft.project_id.clone(),
+                project_title: project
+                    .map(|p| p.title.clone())
+                    .unwrap_or_else(|| draft.project_id.clone()),
+                workspace_root: project
+                    .map(|p| p.workspace_root.clone())
+                    .unwrap_or_default(),
+                projects,
+                launching: draft.launching,
+            }
+        });
+        let title = if self.draft.is_some() {
             Some("New thread".to_owned())
         } else {
             shell_thread.map(|t| t.title.clone())
         };
-        let root = shell_thread.and_then(|t| {
-            t.worktree_path.clone().or_else(|| {
-                self.shell
-                    .project(&t.project_id)
-                    .map(|p| p.workspace_root.clone())
+        let root = shell_thread
+            .and_then(|t| {
+                t.worktree_path.clone().or_else(|| {
+                    self.shell
+                        .project(&t.project_id)
+                        .map(|p| p.workspace_root.clone())
+                })
             })
-        });
-        let model = shell_thread.and_then(|t| t.model_selection.model.as_str().map(str::to_owned));
+            .or_else(|| {
+                self.draft
+                    .as_ref()
+                    .and_then(|d| self.shell.project(&d.project_id))
+                    .map(|p| p.workspace_root.clone())
+            });
         let timeline = selected.and_then(|id| self.threads.get(id));
         let fallback = selected.map(conn_state::ThreadState::new);
         let thread = timeline.or(fallback.as_ref());
         let project_id = shell_thread
             .map(|t| t.project_id.clone())
-            .or_else(|| self.draft_project.clone());
+            .or_else(|| self.draft.as_ref().map(|d| d.project_id.clone()));
         let thread_id = selected.map(str::to_owned);
         let surface = self.right_panel_surface();
         let panel_root = root.clone();
@@ -579,25 +683,60 @@ impl ConnApp {
             panel.set_context(project_id.clone(), panel_root, thread_id, cx);
             panel.set_surface(&surface, cx);
         });
-        let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
-        let model_options = shell_thread
-            .map(|t| conn_contract::to_json(&t.model_selection))
-            .and_then(|v| {
-                v.get("options")
-                    .and_then(serde_json::Value::as_object)
-                    .cloned()
-            });
-        let branch = shell_thread.and_then(|t| t.branch.clone());
-        let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
-        let runtime_mode = shell_thread
-            .map(|t| conn_contract::to_json(&t.runtime_mode))
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "full-access".to_owned());
-        let interaction_mode = shell_thread
-            .map(|t| conn_contract::to_json(&t.interaction_mode))
-            .and_then(|v| v.as_str().map(str::to_owned))
-            .unwrap_or_else(|| "default".to_owned());
+        let (
+            model_instance,
+            model,
+            model_options,
+            branch,
+            worktree_active,
+            runtime_mode,
+            interaction_mode,
+        ) = if let Some(draft) = &self.draft {
+            (
+                draft.model_instance_id.clone(),
+                draft.model_slug.clone(),
+                draft.model_options.clone(),
+                None,
+                draft.use_worktree,
+                draft.runtime_mode.clone(),
+                draft.interaction_mode.clone(),
+            )
+        } else {
+            let model =
+                shell_thread.and_then(|t| t.model_selection.model.as_str().map(str::to_owned));
+            let model_instance = shell_thread.map(|t| t.provider_instance_id.clone());
+            let model_options = shell_thread
+                .map(|t| conn_contract::to_json(&t.model_selection))
+                .and_then(|v| {
+                    v.get("options")
+                        .and_then(serde_json::Value::as_object)
+                        .cloned()
+                });
+            let branch = shell_thread.and_then(|t| t.branch.clone());
+            let worktree_active = shell_thread.is_some_and(|t| t.worktree_path.is_some());
+            let runtime_mode = shell_thread
+                .map(|t| conn_contract::to_json(&t.runtime_mode))
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "full-access".to_owned());
+            let interaction_mode = shell_thread
+                .map(|t| conn_contract::to_json(&t.interaction_mode))
+                .and_then(|v| v.as_str().map(str::to_owned))
+                .unwrap_or_else(|| "default".to_owned());
+            (
+                model_instance,
+                model,
+                model_options,
+                branch,
+                worktree_active,
+                runtime_mode,
+                interaction_mode,
+            )
+        };
+        let has_projects = self.shell.projects.iter().any(|p| p.archived_at.is_none());
+        let connected = self.connection.is_some();
         self.chat.update(cx, |chat, cx| {
+            chat.set_shell_availability(has_projects, connected, cx);
+            chat.set_draft(draft_view, cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
@@ -671,6 +810,7 @@ impl ConnApp {
                 }
                 if matches!(status, ConnectionStatus::Connected) {
                     self.orbit.connecting_server_id = None;
+                    self.chat.update(cx, |chat, cx| chat.refresh_providers(cx));
                 }
                 self.status = Some(status);
             }
@@ -680,6 +820,17 @@ impl ConnApp {
                     let label = self.server_label.clone().unwrap_or_else(|| sid.to_owned());
                     self.orbit.sessions.record_bearer(sid, url, label, token);
                     self.orbit.persist_sessions();
+                } else if !self.env_pinned_server
+                    && let Some(url) = self.server_url.clone()
+                {
+                    let saved = conn_desktop::server_store::SavedServerConfig::new(
+                        url,
+                        self.server_label.clone(),
+                        token,
+                    );
+                    if let Err(err) = saved.save_default() {
+                        eprintln!("server store: failed to persist bearer: {err}");
+                    }
                 }
             }
             ClientEvent::Shell(item) => {
@@ -693,16 +844,21 @@ impl ConnApp {
                     connection.subscribe_shell();
                 }
                 if let Some(pending_id) = self.pending_open_thread.clone()
-                    && self.shell.threads.iter().any(|t| t.id == pending_id)
+                    && self.shell.find_thread(&pending_id).is_some()
                 {
                     self.pending_open_thread = None;
                     self.select_thread(pending_id, cx);
-                } else if self.layout.selected_thread_id.is_none()
-                    && let Some(first) = self.shell.threads.first()
-                {
-                    let (project_id, thread_id) = (first.project_id.clone(), first.id.clone());
-                    self.layout.selected_project_id = Some(project_id);
-                    self.open_thread(thread_id);
+                } else if self.layout.selected_thread_id.is_none() && self.draft.is_none() {
+                    let initial = self
+                        .shell
+                        .top_level_active_threads()
+                        .next()
+                        .or_else(|| self.shell.threads.first())
+                        .map(|first| (first.project_id.clone(), first.id.clone()));
+                    if let Some((project_id, thread_id)) = initial {
+                        self.layout.selected_project_id = Some(project_id);
+                        self.open_thread(thread_id);
+                    }
                 }
             }
             ClientEvent::Thread { thread_id, item } => {
@@ -742,7 +898,7 @@ impl ConnApp {
         let ready: Vec<String> = self
             .ended_threads
             .iter()
-            .filter(|id| self.shell.thread(id).is_some())
+            .filter(|id| self.shell.find_thread(id).is_some())
             .cloned()
             .collect();
         for id in ready {
@@ -753,7 +909,7 @@ impl ConnApp {
 
     /// Selects `thread_id` and subscribes to its timeline once.
     fn open_thread(&mut self, thread_id: String) {
-        self.draft_project = None;
+        self.draft = None;
         if let Some(connection) = &self.connection
             && !self.threads.contains_key(&thread_id)
         {
@@ -764,104 +920,391 @@ impl ConnApp {
         self.layout.selected_thread_id = Some(thread_id);
     }
 
-    /// Sets the runtime mode (`approval-required`, `full-access`, ...) for the next draft.
-    #[cfg(feature = "automation")]
-    pub(crate) fn set_draft_runtime_mode(&mut self, mode: Option<String>) {
-        self.draft_runtime_mode = mode;
+    /// Picks the default project id for a new thread, honoring explicit selection, the active
+    /// workspace filter (Orbit workspace or project id), currently selected project, or first
+    /// non-archived project.
+    fn resolve_new_thread_project(&self, requested: Option<String>) -> Option<String> {
+        if let Some(id) = requested
+            && self.shell.project(&id).is_some()
+        {
+            return Some(id);
+        }
+        if let Some(ws_id) = self.active_workspace.as_deref() {
+            if let Some(orbit_ws) = self.orbit.workspaces.iter().find(|w| w.id == ws_id) {
+                if let Some(sel) = self
+                    .layout
+                    .selected_project_id
+                    .as_deref()
+                    .and_then(|id| self.shell.project(id))
+                    && conn_desktop::orbit::workspace_matches_project(
+                        orbit_ws,
+                        &sel.id,
+                        &sel.title,
+                        &sel.workspace_root,
+                    )
+                {
+                    return Some(sel.id.clone());
+                }
+                if let Some(matched) = self.shell.projects.iter().find(|p| {
+                    p.archived_at.is_none()
+                        && conn_desktop::orbit::workspace_matches_project(
+                            orbit_ws,
+                            &p.id,
+                            &p.title,
+                            &p.workspace_root,
+                        )
+                }) {
+                    return Some(matched.id.clone());
+                }
+            } else if self.shell.project(ws_id).is_some() {
+                return Some(ws_id.to_owned());
+            }
+        }
+        self.layout
+            .selected_project_id
+            .clone()
+            .filter(|id| self.shell.project(id).is_some())
+            .or_else(|| {
+                self.shell
+                    .projects
+                    .iter()
+                    .find(|p| p.archived_at.is_none())
+                    .or_else(|| self.shell.projects.first())
+                    .map(|p| p.id.clone())
+            })
     }
 
-    /// Starts a new thread draft in `project_id` (or the selected thread's project). The
-    /// composer's first send launches it.
+    /// Sets the runtime mode (`approval-required`, `full-access`, ...) for the active draft.
+    #[cfg(feature = "automation")]
+    pub(crate) fn set_draft_runtime_mode(
+        &mut self,
+        mode: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let (Some(draft), Some(mode)) = (&mut self.draft, mode) {
+            draft.runtime_mode = mode;
+            self.sync_chat(cx);
+            cx.notify();
+        }
+    }
+
+    /// Starts a new thread draft in `project_id` (or the active workspace/project). The
+    /// composer's first send launches it via `orchestration.launchThread`.
     pub(crate) fn start_new_thread(
         &mut self,
         project_id: Option<String>,
+        window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        let project_id = project_id
-            .or_else(|| self.layout.selected_project_id.clone())
-            .or_else(|| self.shell.projects.first().map(|p| p.id.clone()));
-        let Some(project_id) = project_id else {
+        let Some(project_id) = self.resolve_new_thread_project(project_id) else {
+            if let Some(window) = window {
+                self.add_project_via_picker(window, cx);
+            }
             return;
         };
+        let template = self.shell.threads_for_project(&project_id).next();
+        let project_model = self
+            .shell
+            .project(&project_id)
+            .and_then(|p| p.default_model_selection.as_ref())
+            .or_else(|| template.map(|t| &t.model_selection));
+        let (model_instance_id, model_slug, model_options) = if let Some(sel) = project_model {
+            let val = conn_contract::to_json(sel);
+            let instance = val
+                .get("instanceId")
+                .or_else(|| val.get("provider"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .or_else(|| template.map(|t| t.provider_instance_id.clone()));
+            let slug = val
+                .get("model")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let opts = val
+                .get("options")
+                .and_then(serde_json::Value::as_object)
+                .cloned();
+            (instance, slug, opts)
+        } else if let Some((inst, slug, opts)) = self.chat.read(cx).current_model_selection(cx) {
+            (Some(inst), Some(slug), opts)
+        } else {
+            (None, None, None)
+        };
+        let runtime_mode = template
+            .map(|t| conn_contract::to_json(&t.runtime_mode))
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "full-access".to_owned());
+        let interaction_mode = template
+            .map(|t| conn_contract::to_json(&t.interaction_mode))
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .unwrap_or_else(|| "default".to_owned());
+
         self.layout.selected_project_id = Some(project_id.clone());
         self.layout.selected_thread_id = None;
-        self.draft_project = Some(project_id);
+        self.draft = Some(DraftThreadState {
+            project_id,
+            model_instance_id,
+            model_slug,
+            model_options,
+            runtime_mode,
+            interaction_mode,
+            use_worktree: false,
+            launching: false,
+        });
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+        self.sync_chat(cx);
+        if let Some(window) = window {
+            self.chat
+                .update(cx, |chat, cx| chat.focus_composer(window, cx));
+        }
+        cx.notify();
+    }
+
+    /// Discards the active new-thread draft and falls back to the most recent active thread.
+    pub(crate) fn cancel_new_thread(&mut self, cx: &mut Context<'_, Self>) {
+        if self.draft.take().is_none() {
+            return;
+        }
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+        let initial = self
+            .shell
+            .top_level_active_threads()
+            .next()
+            .or_else(|| self.shell.threads.first())
+            .map(|first| (first.project_id.clone(), first.id.clone()));
+        if let Some((project_id, thread_id)) = initial {
+            self.layout.selected_project_id = Some(project_id);
+            self.open_thread(thread_id);
+        }
         self.sync_chat(cx);
         cx.notify();
+    }
+
+    /// Changes the target project of the active new-thread draft.
+    pub(crate) fn set_draft_project(&mut self, project_id: String, cx: &mut Context<'_, Self>) {
+        let Some(draft) = &mut self.draft else {
+            return;
+        };
+        if draft.launching || draft.project_id == project_id {
+            return;
+        }
+        draft.project_id = project_id.clone();
+        self.layout.selected_project_id = Some(project_id);
+        self.sync_chat(cx);
+        cx.notify();
+    }
+
+    /// Toggles whether the active new-thread draft launches in a fresh git worktree or local root.
+    pub(crate) fn set_draft_workspace_strategy(
+        &mut self,
+        use_worktree: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(draft) = &mut self.draft
+            && !draft.launching
+        {
+            draft.use_worktree = use_worktree;
+            self.sync_chat(cx);
+            cx.notify();
+        }
     }
 
     /// Launches the draft thread with `text` and `attachments` as its first message.
     fn launch_draft(
         &mut self,
-        project_id: String,
         text: String,
         attachments: Vec<conn_contract::ChatAttachment>,
+        window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
         let Some(connection) = self.connection.clone() else {
+            self.chat.update(cx, |chat, cx| {
+                chat.set_error(
+                    Some(
+                        "Not connected to a conn-server. Open Settings → Connections to connect."
+                            .to_owned(),
+                    ),
+                    cx,
+                );
+            });
+            if let Some(window) = window {
+                self.chat
+                    .update(cx, |chat, cx| chat.set_draft_text(text, window, cx));
+            }
             return;
         };
-        let template = self.shell.threads_for_project(&project_id).next();
-        let model = self
-            .shell
-            .project(&project_id)
-            .and_then(|p| p.default_model_selection.clone())
-            .or_else(|| template.map(|t| t.model_selection.clone()));
-        let Some(model) = model else {
-            eprintln!("new thread: no model selection for project {project_id}");
+        let Some(draft) = self.draft.clone() else {
             return;
         };
-        let runtime = self.draft_runtime_mode.take().map_or_else(
-            || {
-                template.map_or_else(
-                    || serde_json::json!("full-access"),
-                    |t| conn_contract::to_json(&t.runtime_mode),
-                )
-            },
-            serde_json::Value::String,
-        );
-        let interaction = template.map_or_else(
-            || serde_json::json!("default"),
-            |t| conn_contract::to_json(&t.interaction_mode),
-        );
+        if draft.launching {
+            return;
+        }
+        let project_id = draft.project_id.clone();
+
+        // Resolve model selection: explicit draft selection -> live composer catalog -> project
+        // default -> latest thread in project -> any thread on server.
+        let model_json = if let (Some(inst), Some(slug)) = (
+            draft.model_instance_id.as_deref(),
+            draft.model_slug.as_deref(),
+        ) {
+            let mut obj = serde_json::Map::new();
+            obj.insert("instanceId".to_owned(), serde_json::json!(inst));
+            obj.insert("model".to_owned(), serde_json::json!(slug));
+            if let Some(opts) = &draft.model_options
+                && !opts.is_empty()
+            {
+                obj.insert(
+                    "options".to_owned(),
+                    serde_json::Value::Object(opts.clone()),
+                );
+            }
+            Some(serde_json::Value::Object(obj))
+        } else if let Some((inst, slug, opts)) = self.chat.read(cx).current_model_selection(cx) {
+            let mut obj = serde_json::Map::new();
+            obj.insert("instanceId".to_owned(), serde_json::json!(inst));
+            obj.insert("model".to_owned(), serde_json::json!(slug));
+            if let Some(opts) = opts
+                && !opts.is_empty()
+            {
+                obj.insert("options".to_owned(), serde_json::Value::Object(opts));
+            }
+            Some(serde_json::Value::Object(obj))
+        } else {
+            self.shell
+                .project(&project_id)
+                .and_then(|p| p.default_model_selection.clone())
+                .or_else(|| {
+                    self.shell
+                        .threads_for_project(&project_id)
+                        .next()
+                        .map(|t| t.model_selection.clone())
+                })
+                .or_else(|| {
+                    self.shell
+                        .threads
+                        .first()
+                        .map(|t| t.model_selection.clone())
+                })
+                .map(|m| conn_contract::to_json(&m))
+        };
+
+        let Some(model_json) = model_json else {
+            self.chat.update(cx, |chat, cx| {
+                chat.set_error(
+                    Some("Pick a model in the composer before creating a thread.".to_owned()),
+                    cx,
+                );
+            });
+            if let Some(window) = window {
+                self.chat
+                    .update(cx, |chat, cx| chat.set_draft_text(text, window, cx));
+            }
+            return;
+        };
+
+        let strategy = if draft.use_worktree {
+            crate::commands::WorkspaceStrategyChoice::Worktree
+        } else {
+            crate::commands::WorkspaceStrategyChoice::Local
+        };
         let thread_id = crate::commands::new_thread_id();
         let payload = crate::commands::launch_thread_payload(
             &thread_id,
             &project_id,
             &text,
             &attachments,
-            conn_contract::to_json(&model),
-            runtime.as_str().unwrap_or("full-access"),
-            interaction.as_str().unwrap_or("default"),
+            model_json,
+            &draft.runtime_mode,
+            &draft.interaction_mode,
+            strategy,
         );
-        self.draft_project = None;
-        self.open_thread(thread_id);
+
+        if let Some(active_draft) = &mut self.draft {
+            active_draft.launching = true;
+        }
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         self.sync_chat(cx);
-        cx.spawn(async move |_, _| {
-            if let Err(e) = connection
+        cx.notify();
+
+        let generation = self.connection_gen;
+        let fallback_text = text;
+        let launch_window = window.map(|w| w.window_handle());
+        cx.spawn(async move |this, cx| {
+            let result = connection
                 .call_json("orchestration.launchThread", payload)
-                .await
-            {
-                eprintln!("new thread: launchThread failed: {e}");
-            }
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app.connection_gen != generation {
+                    return;
+                }
+                match result {
+                    Ok(value) => {
+                        let parsed = conn_contract::from_json::<
+                            conn_contract::OrchestrationV2ThreadLaunchResult,
+                        >(value.clone());
+                        let final_thread_id = match &parsed {
+                            Ok(res) => res.thread_id.clone(),
+                            Err(_) => value
+                                .get("threadId")
+                                .and_then(serde_json::Value::as_str)
+                                .unwrap_or(&thread_id)
+                                .to_owned(),
+                        };
+                        if let Ok(res) = parsed {
+                            let mut state = ThreadState::new(final_thread_id.clone());
+                            state.apply_projection(res.projection, res.sequence);
+                            app.threads.insert(final_thread_id.clone(), state);
+                        }
+                        app.draft = None;
+                        app.layout.selected_project_id = Some(project_id.clone());
+                        app.layout.selected_thread_id = Some(final_thread_id.clone());
+                        app.ended_threads.remove(&final_thread_id);
+                        connection.subscribe_thread(&final_thread_id);
+                        app.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+                        app.sync_chat(cx);
+                        cx.notify();
+                    }
+                    Err(err) => {
+                        let msg = crate::commands::format_client_error(&err);
+                        eprintln!("new thread: launchThread failed: {msg}");
+                        if let Some(active_draft) = &mut app.draft {
+                            active_draft.launching = false;
+                        }
+                        app.chat.update(cx, |chat, cx| {
+                            chat.set_error(Some(format!("Could not create thread: {msg}")), cx);
+                        });
+                        if let Some(win) = launch_window {
+                            let chat = app.chat.clone();
+                            let restore = fallback_text.clone();
+                            let _ = win.update(cx, |_, window, cx| {
+                                chat.update(cx, |c, cx| c.set_draft_text(restore, window, cx));
+                            });
+                        }
+                        app.sync_chat(cx);
+                        cx.notify();
+                    }
+                }
+            });
         })
         .detach();
     }
 
-    /// Sends `text` (without attachments) to the selected thread.
+    /// Sends `text` (without attachments) to the selected thread (or launches the active draft).
     pub(crate) fn send_prompt(&mut self, text: String, cx: &mut Context<'_, Self>) {
-        self.send_prompt_with_attachments(text, Vec::new(), cx);
+        self.send_prompt_with_attachments(text, Vec::new(), None, cx);
     }
 
-    /// Sends `text` and `attachments` to the selected thread over `orchestration.dispatchCommand`.
+    /// Sends `text` and `attachments` to the selected thread over `orchestration.dispatchCommand`,
+    /// or launches the active new-thread draft via `orchestration.launchThread`.
     pub(crate) fn send_prompt_with_attachments(
         &mut self,
         text: String,
         attachments: Vec<conn_contract::ChatAttachment>,
+        window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(project_id) = self.draft_project.clone() {
-            self.launch_draft(project_id, text, attachments, cx);
+        if self.draft.is_some() {
+            self.launch_draft(text, attachments, window, cx);
             return;
         }
         let (Some(connection), Some(thread_id)) = (
@@ -876,12 +1319,36 @@ impl ConnApp {
             Ok(command) => command,
             Err(e) => {
                 eprintln!("send: could not build message.dispatch: {e}");
+                self.chat.update(cx, |chat, cx| {
+                    chat.set_error(Some(format!("Could not build message: {e}")), cx);
+                });
                 return;
             }
         };
-        cx.spawn(async move |_, _| {
-            if let Err(e) = connection.dispatch_command(command).await {
-                eprintln!("send: dispatchCommand failed: {e}");
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
+        let generation = self.connection_gen;
+        let send_window = window.map(|w| w.window_handle());
+        let fallback_text = text;
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = connection.dispatch_command(command).await {
+                let msg = crate::commands::format_client_error(&err);
+                eprintln!("send: dispatchCommand failed: {msg}");
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen != generation {
+                        return;
+                    }
+                    app.chat.update(cx, |chat, cx| {
+                        chat.set_error(Some(format!("Send failed: {msg}")), cx);
+                    });
+                    if let Some(win) = send_window {
+                        let chat = app.chat.clone();
+                        let restore = fallback_text.clone();
+                        let _ = win.update(cx, |_, window, cx| {
+                            chat.update(cx, |c, cx| c.set_draft_text(restore, window, cx));
+                        });
+                    }
+                    cx.notify();
+                });
             }
         })
         .detach();
@@ -924,8 +1391,8 @@ impl ConnApp {
         .detach();
     }
 
-    /// Switches the selected thread's model and optional effort/provider options
-    /// (`thread.model-selection.set`).
+    /// Switches the selected thread's (or active draft's) model and optional effort/provider
+    /// options (`thread.model-selection.set`).
     pub(crate) fn select_model(
         &mut self,
         instance_id: &str,
@@ -933,6 +1400,14 @@ impl ConnApp {
         options: Option<&serde_json::Map<String, serde_json::Value>>,
         cx: &mut Context<'_, Self>,
     ) {
+        if let Some(draft) = &mut self.draft {
+            draft.model_instance_id = Some(instance_id.to_owned());
+            draft.model_slug = Some(model.to_owned());
+            draft.model_options = options.cloned();
+            self.sync_chat(cx);
+            cx.notify();
+            return;
+        }
         let (Some(connection), Some(thread_id)) = (
             self.connection.clone(),
             self.layout.selected_thread_id.clone(),
@@ -1037,10 +1512,20 @@ impl ConnApp {
         serde_json::json!({
             "theme": self.theme_id(),
             "live": self.connection().is_some(),
+            "serverUrl": self.server_url,
             "status": self.connection_status().map(|s| format!("{s:?}")),
             "projects": self.shell().projects.iter().map(|p| &p.title).collect::<Vec<_>>(),
             "threads": self.shell.threads.iter().map(|t| serde_json::json!({"id": t.id, "title": t.title, "activity": format!("{:?}", self.shell.activity(&t.id))})).collect::<Vec<_>>(),
+            "activeThreads": self.shell.top_level_active_threads().map(|t| serde_json::json!({"id": t.id, "title": t.title, "projectId": t.project_id, "activity": format!("{:?}", self.shell.activity(&t.id))})).collect::<Vec<_>>(),
+            "settledCount": self.shell.top_level_settled_threads().len(),
             "selected": self.layout.selected_thread_id,
+            "draft": self.draft.as_ref().map(|d| serde_json::json!({
+                "projectId": d.project_id,
+                "useWorktree": d.use_worktree,
+                "runtimeMode": d.runtime_mode,
+                "interactionMode": d.interaction_mode,
+                "launching": d.launching,
+            })),
             "sidebarOpen": self.layout.sidebar_open,
             "rightPanel": self.layout.right_panel_open.then(|| format!("{:?}", self.layout.right_panel_tab)),
             "timeline": timeline,
@@ -1061,6 +1546,7 @@ impl ConnApp {
             .shell
             .threads
             .iter()
+            .chain(self.shell.archived_threads.iter())
             .find(|t| (!id.is_empty() && t.id == id) || (!title.is_empty() && t.title == title))
             .map(|t| t.id.clone())
             .ok_or_else(|| format!("no thread with id `{id}` or title `{title}`"))?;
@@ -1075,11 +1561,15 @@ impl ConnApp {
         cx: &mut Context<'_, Self>,
     ) {
         let thread_id = thread_id.into();
-        let project_id = self.shell.thread(&thread_id).map(|t| t.project_id.clone());
+        let project_id = self
+            .shell
+            .find_thread(&thread_id)
+            .map(|t| t.project_id.clone());
         self.open_thread(thread_id);
         if project_id.is_some() {
             self.layout.selected_project_id = project_id;
         }
+        self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         self.sync_chat(cx);
         cx.notify();
     }
@@ -1439,7 +1929,7 @@ impl ConnApp {
             return Ok((project.id, tid));
         }
 
-        self.start_new_thread(Some(project.id.clone()), cx);
+        self.start_new_thread(Some(project.id.clone()), None, cx);
         Ok((project.id, String::new()))
     }
 
@@ -1613,8 +2103,14 @@ impl ConnApp {
     }
 
     fn render_chat_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
-        let header =
-            render_chat_header(&self.shell, &self.layout, &self.tokens, &self.geometry, cx);
+        let header = render_chat_header(
+            &self.shell,
+            &self.layout,
+            self.draft.as_ref().map(|d| d.project_id.as_str()),
+            &self.tokens,
+            &self.geometry,
+            cx,
+        );
 
         let join = CardJoin {
             left: self.layout.sidebar_open,
@@ -2343,6 +2839,25 @@ impl ConnApp {
                 {
                     let _ = self.apply_theme_choice(&theme_id, false, cx);
                 }
+                // Auto-connect to the local (or previously active) Orbit Node when launched
+                // without an explicit server or demo mode flag.
+                if self.connection.is_none()
+                    && !crate::live::demo_mode_enabled()
+                    && self.orbit.connecting_server_id.is_none()
+                {
+                    let preferred = self
+                        .orbit
+                        .sessions
+                        .active_server_id
+                        .as_deref()
+                        .and_then(|sid| self.orbit.fleet.find_by_server_id(sid))
+                        .filter(|t| t.is_awake())
+                        .or_else(|| self.orbit.fleet.nodes.first())
+                        .map(|t| t.server_id.clone());
+                    if let Some(server_id) = preferred {
+                        self.connect_orbit_target(server_id, cx);
+                    }
+                }
             }
             Err(err) => {
                 self.orbit.status = crate::orbit_sync::OrbitSyncStatus::Offline(err.to_string());
@@ -2472,8 +2987,7 @@ impl ConnApp {
         self.annotation_last_sent.clear();
         self.layout.selected_thread_id = None;
         self.layout.selected_project_id = None;
-        self.draft_project = None;
-        self.draft_runtime_mode = None;
+        self.draft = None;
 
         let (connection, events) = Connection::start(config, crate::live::RT.handle());
         connection.subscribe_shell();
@@ -2482,13 +2996,78 @@ impl ConnApp {
 
         self.connection = Some(connection.clone());
         self.chat.update(cx, |chat, cx| {
-            chat.set_connection(Some(connection.clone()), cx)
+            chat.set_error(None, cx);
+            chat.set_connection(Some(connection.clone()), cx);
         });
         self.right_panel
             .update(cx, |panel, cx| panel.set_connection(Some(connection), cx));
         self.sync_chat(cx);
         self.refresh_settings_orbit_info(cx);
         cx.notify();
+    }
+
+    /// Connects directly to a user-entered `conn-server` pairing URL or base URL + bearer token
+    /// from Settings → Connections, persisting the bearer for automatic reconnect on next launch.
+    fn connect_direct_server(
+        &mut self,
+        raw_url: String,
+        bearer_token: String,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let token_opt = (!bearer_token.trim().is_empty()).then_some(bearer_token.as_str());
+        let parsed = match conn_desktop::server_store::parse_server_input(&raw_url, token_opt) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                self.orbit.notice = Some(err);
+                self.refresh_settings_orbit_info(cx);
+                cx.notify();
+                return;
+            }
+        };
+        self.env_pinned_server = false;
+        let (http_base_url, credential, immediate_bearer) = match parsed {
+            conn_desktop::server_store::ParsedServerInput::Pairing {
+                http_base_url,
+                pairing_code,
+            } => (
+                http_base_url,
+                conn_client::Credential::PairingCode(pairing_code),
+                None,
+            ),
+            conn_desktop::server_store::ParsedServerInput::Bearer {
+                http_base_url,
+                bearer,
+            } => (
+                http_base_url,
+                conn_client::Credential::Bearer(bearer.clone()),
+                Some(bearer),
+            ),
+        };
+        let label = http_base_url
+            .host_str()
+            .map(|h| match http_base_url.port() {
+                Some(port) => format!("{h}:{port}"),
+                None => h.to_owned(),
+            });
+        if let Some(bearer) = immediate_bearer {
+            let saved = conn_desktop::server_store::SavedServerConfig::new(
+                http_base_url.to_string(),
+                label.clone(),
+                bearer,
+            );
+            if let Err(err) = saved.save_default() {
+                eprintln!("server store: failed to persist direct server: {err}");
+            }
+        }
+        self.connect_to_server_config(
+            ServerConfig {
+                http_base_url,
+                credential,
+            },
+            None,
+            label,
+            cx,
+        );
     }
 
     /// Connects to an Orbit Node or running Orbit Instance, reusing a cached local bearer token
@@ -2564,6 +3143,7 @@ impl ConnApp {
                     app.connect_to_server_config(config, Some(server_id), Some(target_title), cx);
                 }
                 Err(err) => {
+                    eprintln!("orbit pairing failed for {target_title}: {err}");
                     app.orbit.connecting_server_id = None;
                     app.orbit.notice = Some(format!("Pairing failed for {target_title}: {err}"));
                     app.refresh_settings_orbit_info(cx);
@@ -2790,10 +3370,13 @@ impl ConnApp {
             });
         }
     }
-    /// Switches the selected thread's runtime permission mode (`thread.runtime-mode.set`).
+    /// Switches the selected thread's (or active draft's) runtime permission mode
+    /// (`thread.runtime-mode.set`).
     fn set_runtime_mode(&mut self, mode: &str, cx: &mut Context<'_, Self>) {
-        if self.draft_project.is_some() {
-            self.draft_runtime_mode = Some(mode.to_owned());
+        if let Some(draft) = &mut self.draft {
+            draft.runtime_mode = mode.to_owned();
+            self.sync_chat(cx);
+            cx.notify();
             return;
         }
         let (Some(connection), Some(thread_id)) = (
@@ -2813,8 +3396,15 @@ impl ConnApp {
         .detach();
     }
 
-    /// Switches the selected thread's interaction mode (`thread.interaction-mode.set`).
+    /// Switches the selected thread's (or active draft's) interaction mode
+    /// (`thread.interaction-mode.set`).
     fn set_interaction_mode(&mut self, mode: &str, cx: &mut Context<'_, Self>) {
+        if let Some(draft) = &mut self.draft {
+            draft.interaction_mode = mode.to_owned();
+            self.sync_chat(cx);
+            cx.notify();
+            return;
+        }
         let (Some(connection), Some(thread_id)) = (
             self.connection.clone(),
             self.layout.selected_thread_id.clone(),
@@ -2836,12 +3426,21 @@ impl ConnApp {
     fn handle_slash_command(&mut self, command: &str, cx: &mut Context<'_, Self>) {
         match command {
             "plan" => {
+                if let Some(draft) = &self.draft {
+                    let next = if draft.interaction_mode == "plan" {
+                        "default"
+                    } else {
+                        "plan"
+                    };
+                    self.set_interaction_mode(next, cx);
+                    return;
+                }
                 let Some(thread_id) = self.layout.selected_thread_id.as_deref() else {
                     return;
                 };
                 let next_mode = self
                     .shell
-                    .thread(thread_id)
+                    .find_thread(thread_id)
                     .map(|t| conn_contract::to_json(&t.interaction_mode))
                     .and_then(|v| v.as_str().map(str::to_owned))
                     .map(|current| if current == "plan" { "default" } else { "plan" })
@@ -2865,13 +3464,8 @@ impl ConnApp {
         };
         let is_settled = self
             .shell
-            .archived_threads
-            .iter()
-            .any(|t| t.id == thread_id)
-            || self
-                .shell
-                .thread(&thread_id)
-                .is_some_and(|t| t.settled_at.is_some());
+            .find_thread(&thread_id)
+            .is_some_and(ShellState::is_settled);
         self.settle_thread(thread_id, !is_settled, cx);
     }
 
@@ -3002,8 +3596,8 @@ impl Render for ConnApp {
             .on_action(cx.listener(|app, _: &ToggleRightPanel, _window, cx| {
                 app.toggle_right_panel(cx);
             }))
-            .on_action(cx.listener(|app, _: &NewThread, _window, cx| {
-                app.start_new_thread(None, cx);
+            .on_action(cx.listener(|app, _: &NewThread, window, cx| {
+                app.start_new_thread(None, Some(window), cx);
             }))
             .on_action(
                 cx.listener(|app, _: &crate::palette::OpenCommandPalette, window, cx| {
@@ -3044,6 +3638,7 @@ impl Render for ConnApp {
                     &self.layout,
                     &self.orbit.workspaces,
                     self.active_workspace.as_deref(),
+                    self.draft.as_ref().map(|d| d.project_id.as_str()),
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
                     self.renaming_thread_id.as_deref(),

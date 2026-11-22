@@ -129,6 +129,32 @@ impl ModelCatalog {
         Self { providers: groups }
     }
 
+    /// Returns the preferred default model across available providers:
+    /// first ready provider's `is_default` model, else first model of a ready provider,
+    /// else any `is_default` model, else the very first model in the catalog.
+    #[must_use]
+    pub(crate) fn default_model(&self) -> Option<&ModelOption> {
+        self.providers
+            .iter()
+            .filter(|p| p.ready)
+            .flat_map(|p| p.models.iter())
+            .find(|m| m.is_default)
+            .or_else(|| {
+                self.providers
+                    .iter()
+                    .filter(|p| p.ready)
+                    .flat_map(|p| p.models.iter())
+                    .next()
+            })
+            .or_else(|| {
+                self.providers
+                    .iter()
+                    .flat_map(|p| p.models.iter())
+                    .find(|m| m.is_default)
+            })
+            .or_else(|| self.providers.iter().flat_map(|p| p.models.iter()).next())
+    }
+
     /// Looks up a model by `(instance_id, slug)` or by `slug` / short alias alone.
     #[must_use]
     pub(crate) fn find_model(

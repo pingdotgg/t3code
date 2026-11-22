@@ -12,4 +12,5 @@ pub mod database;
 pub mod mcp;
 pub mod operator;
 pub mod orbit;
+pub mod server_store;
 pub mod vault;

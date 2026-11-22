@@ -150,6 +150,59 @@ impl ShellState {
         self.threads.iter().find(|t| t.id == thread_id)
     }
 
+    /// Finds any thread by id across both active and archived thread lists.
+    #[must_use]
+    pub fn find_thread(&self, thread_id: &str) -> Option<&ThreadShell> {
+        self.threads
+            .iter()
+            .chain(self.archived_threads.iter())
+            .find(|t| t.id == thread_id)
+    }
+
+    /// Returns `true` when `thread` is a delegated subagent child rather than a top-level thread.
+    #[must_use]
+    pub fn is_subagent(thread: &ThreadShell) -> bool {
+        thread.lineage.parent_thread_id.is_some()
+    }
+
+    /// Returns `true` when `thread` belongs in the Settled shelf (`settledAt` or `archivedAt` set).
+    #[must_use]
+    pub fn is_settled(thread: &ThreadShell) -> bool {
+        thread
+            .settled_at
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+            || thread
+                .archived_at
+                .as_deref()
+                .is_some_and(|s| !s.trim().is_empty())
+    }
+
+    /// Top-level active (unsettled, non-archived, non-deleted, non-subagent) threads, newest first.
+    pub fn top_level_active_threads(&self) -> impl Iterator<Item = &ThreadShell> {
+        self.threads
+            .iter()
+            .filter(|t| t.deleted_at.is_none() && !Self::is_subagent(t) && !Self::is_settled(t))
+    }
+
+    /// Top-level settled threads (both settled entries inside `threads` and `archived_threads`),
+    /// newest activity first.
+    #[must_use]
+    pub fn top_level_settled_threads(&self) -> Vec<&ThreadShell> {
+        let mut out: Vec<&ThreadShell> = self
+            .threads
+            .iter()
+            .filter(|t| t.deleted_at.is_none() && !Self::is_subagent(t) && Self::is_settled(t))
+            .chain(
+                self.archived_threads
+                    .iter()
+                    .filter(|t| t.deleted_at.is_none() && !Self::is_subagent(t)),
+            )
+            .collect();
+        out.sort_by(|left, right| compare_threads(left, right));
+        out
+    }
+
     /// Finds a project by id.
     #[must_use]
     pub fn project(&self, project_id: &str) -> Option<&ProjectShell> {
@@ -163,7 +216,7 @@ impl ShellState {
     /// followed by active run statuses (`Working`), then `Failed`, else `Idle`.
     #[must_use]
     pub fn activity(&self, thread_id: &str) -> ThreadActivity {
-        let Some(thread) = self.thread(thread_id) else {
+        let Some(thread) = self.find_thread(thread_id) else {
             return ThreadActivity::Idle;
         };
         thread_activity(thread)

@@ -122,6 +122,8 @@ pub(crate) enum ComposerEvent {
     },
     RuntimeModeSelected(String),
     InteractionModeSelected(String),
+    /// Toggle between Local (`false`) and Worktree (`true`) when composing a new thread draft.
+    WorkspaceModeSelected(bool),
     SlashCommand(String),
 }
 
@@ -132,6 +134,8 @@ pub(crate) struct Composer {
     workspace_root: Option<String>,
     thread_branch: Option<String>,
     worktree_active: bool,
+    is_draft: bool,
+    submitting: bool,
     runtime_mode: String,
     interaction_mode: String,
     runtime_menu_open: bool,
@@ -241,6 +245,8 @@ impl Composer {
             workspace_root: None,
             thread_branch: None,
             worktree_active: false,
+            is_draft: false,
+            submitting: false,
             runtime_mode: "full-access".to_owned(),
             interaction_mode: "default".to_owned(),
             runtime_menu_open: false,
@@ -341,6 +347,79 @@ impl Composer {
         cx.notify();
     }
 
+    /// Marks whether the composer is currently composing a new-thread draft and whether launch is
+    /// in flight.
+    pub(crate) fn set_draft_mode(
+        &mut self,
+        is_draft: bool,
+        submitting: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.is_draft == is_draft && self.submitting == submitting {
+            return;
+        }
+        self.is_draft = is_draft;
+        self.submitting = submitting;
+        cx.notify();
+    }
+
+    /// Moves keyboard focus into the composer textarea.
+    pub(crate) fn focus_input(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.textarea.update(cx, |input, cx| {
+            input.focus(window, cx);
+        });
+    }
+
+    /// Restores or replaces the composer textarea text (e.g. if a thread launch fails).
+    pub(crate) fn set_draft_text(
+        &mut self,
+        text: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        self.on_draft_changed(cx);
+    }
+
+    /// Returns the composer's resolved `(instance_id, model_slug, options)` selection,
+    /// falling back to the loaded `server.getConfig` catalog default when unset.
+    #[must_use]
+    pub(crate) fn current_model_selection(
+        &self,
+    ) -> Option<(
+        String,
+        String,
+        Option<serde_json::Map<String, serde_json::Value>>,
+    )> {
+        if let Some(opt) = self
+            .catalog
+            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
+        {
+            return Some((
+                opt.instance_id.clone(),
+                opt.slug.clone(),
+                self.selected_options.clone(),
+            ));
+        }
+        if let Some(instance_id) = self.selected_instance_id.as_deref()
+            && !instance_id.trim().is_empty()
+            && !self.selected_model.trim().is_empty()
+            && self.selected_model != "Default model"
+        {
+            return Some((
+                instance_id.to_owned(),
+                self.selected_model.clone(),
+                self.selected_options.clone(),
+            ));
+        }
+        self.catalog
+            .default_model()
+            .map(|opt| (opt.instance_id.clone(), opt.slug.clone(), None))
+    }
+
     /// Updates the active provider/model and options displayed in the composer footer.
     pub(crate) fn set_model_selection(
         &mut self,
@@ -398,6 +477,14 @@ impl Composer {
                     Ok(config) => {
                         composer.catalog = ModelCatalog::from_server_config(&config);
                         composer.catalog_error = None;
+                        if (composer.selected_instance_id.is_none()
+                            || composer.selected_model == "Default model")
+                            && let Some(default_opt) = composer.catalog.default_model().cloned()
+                        {
+                            composer.selected_instance_id = Some(default_opt.instance_id);
+                            composer.selected_driver = Some(default_opt.driver);
+                            composer.selected_model = default_opt.slug;
+                        }
                     }
                     Err(err) => {
                         composer.catalog_error = Some(err.to_string());
@@ -833,6 +920,9 @@ impl Composer {
 
     /// Submits the current non-empty draft (and any uploaded attachments) via [`ComposerEvent::Send`].
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.submitting {
+            return;
+        }
         let raw = self.textarea.read(cx).value().to_string();
         let trimmed = raw.trim().to_owned();
         let still_uploading = self
@@ -1154,16 +1244,55 @@ impl Composer {
         } else {
             "Local"
         };
-        left = left.child(
-            div()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.0))
-                .flex_shrink_0()
-                .child(icons::icon(env_icon, 12.0, muted))
-                .child(env_label),
-        );
+        if self.is_draft {
+            let next_worktree = !self.worktree_active;
+            left = left.child(
+                div()
+                    .id("composer-workspace-mode-toggle")
+                    .a11y_button(
+                        "composer.workspace-mode",
+                        format!("Workspace mode: {env_label}"),
+                    )
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .h(px(22.0))
+                    .px(px(6.0))
+                    .rounded(px(6.0))
+                    .flex_shrink_0()
+                    .cursor_pointer()
+                    .text_color(if self.worktree_active { fg } else { muted })
+                    .when(self.worktree_active, |el| el.bg(hover_bg))
+                    .hover(move |s| s.bg(hover_bg).text_color(fg))
+                    .on_click(cx.listener(move |composer, _, _, cx| {
+                        composer.worktree_active = next_worktree;
+                        cx.emit(ComposerEvent::WorkspaceModeSelected(next_worktree));
+                        cx.notify();
+                    }))
+                    .conn_tooltip(
+                        "Click to switch between Local checkout and new git Worktree",
+                        tokens,
+                    )
+                    .child(icons::icon(
+                        env_icon,
+                        12.0,
+                        if self.worktree_active { fg } else { muted },
+                    ))
+                    .child(env_label),
+            );
+        } else {
+            left = left.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .flex_shrink_0()
+                    .child(icons::icon(env_icon, 12.0, muted))
+                    .child(env_label),
+            );
+        }
 
         if let Some(branch) = self.thread_branch.as_deref().filter(|b| !b.is_empty()) {
             left = left.child(
@@ -1364,7 +1493,8 @@ impl Render for Composer {
             .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
         let has_sendable = (!self.textarea.read(cx).value().trim().is_empty()
             || has_ready_attachments)
-            && !is_uploading;
+            && !is_uploading
+            && !self.submitting;
         let (model_label, driver) = self.display_model_and_driver();
         let tokens = self.tokens.clone();
 
