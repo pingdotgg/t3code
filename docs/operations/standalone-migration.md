@@ -129,7 +129,8 @@ Configure the fork's `T3CODE_APP_SCHEME`, `T3CODE_APP_NAME` and `T3CODE_MOBILE_B
 same values for the server and client builds. After reviewing and merging a tested commit, push a `vX.Y.Z` tag on that
 commit. The fork's `fork-release.yml` builds Linux x64 and arm64 CLI archives, smoke-tests them,
 and attaches them with `SHA256SUMS` to a **draft** GitHub Release, together with the desktop Linux
-AppImages and their `latest-linux*.yml` update feeds. macOS DMG and zip builds and the merged
+AppImages and their `latest-linux*.yml` update feeds, and the Windows x64 NSIS installer with its
+`latest.yml` feed (unsigned unless the Azure Trusted Signing secrets are set). macOS DMG and zip builds and the merged
 `latest-mac.yml` join once the Apple signing secrets are set; until then the workflow skips them,
 because macOS refuses unsigned updates. Verify the workflow, archive names, checksums, and tested
 commit before publishing the draft. Drafts are invisible to installed

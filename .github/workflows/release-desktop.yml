@@ -886,6 +886,22 @@ jobs:
     runs-on: ${{ inputs.verify_runner }}
     timeout-minutes: 15
     steps:
+      # The verify script resolves the branded executable name from these.
+      - name: Configure standalone build
+        if: inputs.standalone
+        shell: bash
+        env:
+          APP_NAME: ${{ vars.T3CODE_APP_NAME }}
+          APP_SCHEME: ${{ vars.T3CODE_APP_SCHEME }}
+          UPDATE_REPOSITORY: ${{ github.repository }}
+        run: |
+          {
+            echo "T3CODE_STANDALONE=1"
+            echo "T3CODE_APP_NAME=$APP_NAME"
+            echo "T3CODE_APP_SCHEME=$APP_SCHEME"
+            echo "T3CODE_DESKTOP_UPDATE_REPOSITORY=$UPDATE_REPOSITORY"
+          } >> "$GITHUB_ENV"
+
       - name: Download verification inputs
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:

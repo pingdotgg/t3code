@@ -1,7 +1,7 @@
 name: Fork release
 
 # A fork's own releases. A version tag builds standalone Linux CLI archives with SHA256SUMS and
-# desktop apps with their updater feeds into a draft release; publishing the draft is the
+# desktop apps (Linux, Windows x64 and, with signing, macOS) with their updater feeds into a draft release; publishing the draft is the
 # approval. `t3 update`, auto-updating services and desktop apps never see drafts, so nothing
 # reaches an install before that. macOS builds only once the Apple signing secrets exist:
 # Squirrel.Mac refuses unsigned updates.
@@ -261,9 +261,40 @@ jobs:
       relay_url: ${{ vars.T3CODE_RELAY_URL }}
       standalone: true
 
+  # Cross-built on Linux like upstream, then verified on Windows. Unsigned without the Azure
+  # Trusted Signing secrets, which release-desktop.yml checks itself. arm64 is left out: its
+  # feed would need merging with x64's into one latest.yml, and nobody tests it yet.
+  desktop_windows:
+    name: Desktop Windows x64
+    # The installer embeds `build`'s Linux CLI archive as the WSL runtime.
+    needs: [config, build, build_bundle]
+    permissions:
+      actions: read
+      contents: read
+    uses: ./.github/workflows/release-desktop.yml
+    secrets: inherit
+    with:
+      label: Windows x64
+      runner: ubuntu-24.04
+      verify_runner: windows-2025
+      platform: win
+      target: nsis
+      arch: x64
+      rust_target: x86_64-pc-windows-msvc
+      resource_key: win32-x64
+      version: ${{ needs.config.outputs.version }}
+      ref: ${{ github.ref }}
+      release_channel: stable
+      relay_client_tracing: false
+      clerk_publishable_key: ${{ vars.T3CODE_CLERK_PUBLISHABLE_KEY }}
+      clerk_jwt_template: ${{ vars.T3CODE_CLERK_JWT_TEMPLATE }}
+      clerk_cli_oauth_client_id: ${{ vars.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID }}
+      relay_url: ${{ vars.T3CODE_RELAY_URL }}
+      standalone: true
+
   release:
     name: Draft GitHub release
-    needs: [config, build, build_bundle, desktop_linux, desktop_mac]
+    needs: [config, build, build_bundle, desktop_linux, desktop_mac, desktop_windows]
     # desktop_mac is skipped until the Apple signing secrets exist.
     if: ${{ !cancelled() && needs.config.result == 'success' && !contains(needs.*.result, 'failure') }}
     runs-on: ubuntu-24.04
@@ -310,6 +341,10 @@ jobs:
             release-assets/latest-mac.yml release-assets/latest-mac-x64.yml release-assets/latest-mac.yml
           rm release-assets/latest-mac-x64.yml
 
+      # release-desktop.yml suffixes the Windows feed with its arch; electron-updater reads latest.yml.
+      - name: Name the Windows updater manifest
+        run: mv release-assets/latest-win-x64.yml release-assets/latest.yml
+
       - name: Create draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -323,4 +358,4 @@ jobs:
           shopt -s nullglob
           gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes \
             --title "$APP_NAME $GITHUB_REF_NAME" t3-*.tar.gz SHA256SUMS \
-            *.dmg *.zip *.AppImage *.blockmap latest*.yml
+            *.dmg *.zip *.AppImage *.exe *.blockmap latest*.yml
