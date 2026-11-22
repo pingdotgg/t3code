@@ -8845,7 +8845,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const timeout = flavor.postSettleBackgroundHoldTimeout;
             if (timeout === undefined) return;
             if (!context.promptSettled || context.finalized) return;
-            if (!hasDeferredBackgroundWork(context)) return;
+            // Armed even without held work yet: a pending reply can still start the command.
             yield* Effect.gen(function* () {
               yield* Effect.sleep(timeout);
               if (context.finalized || !context.promptSettled) return;
