@@ -90,15 +90,17 @@ const make = Effect.gen(function* () {
   /** Where a key-only reference is read: the named project's tracker, or the caller's thread's. */
   const requireProjectScope = Effect.fn("IssuesToolkit.requireProjectScope")(function* (
     requested: ProjectId | undefined,
-    key?: string,
+    select?: { readonly key?: string | undefined; readonly scope?: string | undefined },
   ) {
     // A named project skips the caller's thread, so the capability is checked here too.
     yield* McpInvocationContext.requireMcpCapability("issues");
     const projectId = requested ?? (yield* callerThread())?.projectId;
     if (projectId === undefined) return yield* new IssueProjectRequiredError();
-    return yield* issues
-      .projectScope(projectId, key)
-      .pipe(Effect.mapError(() => new IssueProjectNotFoundError({ projectId })));
+    return yield* issues.projectScope(projectId, select).pipe(
+      Effect.catchTags({
+        IssueUnavailableError: () => Effect.fail(new IssueProjectNotFoundError({ projectId })),
+      }),
+    );
   });
 
   /**
@@ -116,7 +118,7 @@ const make = Effect.gen(function* () {
       return { ...resolved, url: input.url } satisfies ResolvedTarget;
     }
     if (input.key === undefined) return yield* new IssueTargetIncompleteError();
-    const scope = yield* requireProjectScope(input.projectId, input.key);
+    const scope = yield* requireProjectScope(input.projectId, { key: input.key });
     return {
       ...scope,
       key: input.key,
@@ -231,7 +233,7 @@ const make = Effect.gen(function* () {
     ),
     create_issue: McpToolAccess.writesWithCapability((input) =>
       Effect.gen(function* () {
-        const scope = yield* requireProjectScope(input.projectId);
+        const scope = yield* requireProjectScope(input.projectId, { scope: input.scope });
         const created = yield* issues.create({
           ...scope,
           title: input.title,
@@ -267,20 +269,20 @@ const make = Effect.gen(function* () {
     link_issue: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(input.threadId);
-        const target = yield* resolveTarget({
+        const target: ResolvedTarget = yield* resolveTarget({
           ...input,
           projectId: input.projectId ?? thread.projectId,
         });
         // Reading the issue proves it exists and names it for the thread's row.
-        const detail = yield* readIssue(target);
-        const url = target.url ?? detail.url;
+        const issue = target.issue ?? (yield* issues.linkMetadata(refOf(target)));
+        const url = target.url ?? issue.url;
         const { alreadyLinked } = yield* threadIssues
           .link({
             threadId: thread.id,
             ref: refOf(target),
             url,
-            displayKey: detail.displayKey,
-            title: detail.title,
+            displayKey: issue.displayKey,
+            title: issue.title,
             source: "agent",
           })
           .pipe(Effect.catchCause(linkFailure));

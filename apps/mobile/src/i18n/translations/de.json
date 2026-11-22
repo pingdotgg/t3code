@@ -3736,7 +3736,7 @@
   "b725843fd45b74aa": "Anmeldedaten",
   "b239ba3ce2899a3e": "Oder verwende deine eigenen Anmeldedaten",
   "f0e6397ab4de588e": "Token",
-  "295392927d5c8a84": "Wähle für jedes Projekt ein oder mehrere {scope}s in {tracker}. Ihre Issues erscheinen neben denen des Repositorys, und Agenten legen neue Issues im ersten an.",
+  "ed83b25c71c98a20": "Wähle für jedes Projekt ein oder mehrere {scope}s in {tracker}. Ihre Issues erscheinen neben denen des Repositorys, und Agenten legen neue Issues im ersten an, sofern kein anderes verlangt wird.",
   "ce2136b36f87b655": "Verbinde diese Umgebung, um ihre Einstellungen zu ändern.",
   "a90a441fd0e08de7": "Diese Umgebung",
   "32fb83554cfd85b4": "Transkriptionsmodelle",
