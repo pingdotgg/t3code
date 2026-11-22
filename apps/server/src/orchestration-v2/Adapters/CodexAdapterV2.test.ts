@@ -1,3 +1,4 @@
+import { knownProviderFailureMessage } from "@t3tools/provider-core/server/failure";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -35,8 +36,8 @@ import {
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import * as CodexClient from "effect-codex-app-server/client";
-import * as CodexReplay from "effect-codex-app-server/replay";
 import * as CodexError from "effect-codex-app-server/errors";
+import * as CodexReplay from "effect-codex-app-server/replay";
 import type * as CodexSchema from "effect-codex-app-server/schema";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -78,7 +79,10 @@ import * as ModelManifest from "../../provider/ModelManifest.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { resolveProviderCompatibility } from "../../provider/providerCompatibility.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
-import { withCodexReplayChildMetadata } from "./CodexAdapterV2.testkit.ts";
+import {
+  withCodexReplayChildMetadata,
+  withCodexReplayReviewedHooks,
+} from "./CodexAdapterV2.testkit.ts";
 import * as CodexAdapterV2Testkit from "./CodexAdapterV2.testkit.ts";
 
 const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
@@ -692,6 +696,59 @@ function makeCodexReplayTurn(input: {
   };
 }
 
+const errorCauseChainText = (error: unknown): string =>
+  error instanceof Error ? `${error.message} ${errorCauseChainText(error.cause)}` : String(error);
+
+// Mirrors ProviderTurnStartService's settleStartFailure, which persists only the
+// adapter error's immediate cause, so a doubly wrapped cause hides its message.
+const startFailureMessage = (error: Error): string => {
+  const nestedCause = "cause" in error ? error.cause : undefined;
+  return (
+    knownProviderFailureMessage(error) ??
+    (nestedCause instanceof Error
+      ? nestedCause.message
+      : typeof nestedCause === "string"
+        ? nestedCause
+        : error.message)
+  );
+};
+
+const codexReplayThreadResult = (input: {
+  readonly nativeThreadId: string;
+  readonly forkedFromId: string | null;
+}) => ({
+  thread: {
+    id: input.nativeThreadId,
+    sessionId: input.nativeThreadId,
+    forkedFromId: input.forkedFromId,
+    preview: "",
+    ephemeral: false,
+    modelProvider: "openai",
+    createdAt: 1782622440,
+    updatedAt: 1782622440,
+    status: { type: "idle" },
+    path: `/tmp/${input.nativeThreadId}.jsonl`,
+    cwd: "/workspace",
+    cliVersion: "0.144.0",
+    source: "vscode",
+    threadSource: null,
+    agentNickname: null,
+    agentRole: null,
+    gitInfo: null,
+    name: null,
+    turns: [],
+  },
+  model: "gpt-5.4",
+  modelProvider: "openai",
+  serviceTier: null,
+  cwd: "/workspace",
+  instructionSources: [],
+  approvalPolicy: "on-request",
+  approvalsReviewer: "user",
+  sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
+  reasoningEffort: "medium",
+});
+
 function codexReplayPreamble(input: {
   readonly nativeThreadId: string;
   readonly nativeTurnId: string;
@@ -1019,7 +1076,7 @@ describe("CodexAdapterV2 process exit", () => {
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
         settings: DEFAULT_CODEX_SETTINGS,
         environment: {},
-        clientFactory: { open: () => Effect.succeed(client) },
+        clientFactory: { open: () => Effect.succeed(withCodexReplayReviewedHooks(client)) },
         digest: yield* Digest.Digest,
         fileSystem: yield* FileSystem.FileSystem,
         idAllocator: yield* IdAllocator.IdAllocatorV2,
@@ -1175,9 +1232,19 @@ describe("CodexAdapterV2 session initialize", () => {
   const openReplaySession = (
     transcript: CodexReplay.CodexAppServerReplayTranscript,
     beforeEmitInbound?: CodexReplay.CodexAppServerReplayDriver["beforeEmitInbound"],
-    compatibility?: CodexAdapterV2.CodexAdapterV2Options["compatibility"],
+    {
+      hooksList = Effect.succeed({ data: [] }),
+      settings = DEFAULT_CODEX_SETTINGS,
+      resolveRuntime,
+      compatibility,
+    }: Partial<
+      Pick<CodexAdapterV2.CodexAdapterV2Options, "settings" | "resolveRuntime" | "compatibility">
+    > & {
+      readonly hooksList?: Effect.Effect<unknown, CodexError.CodexAppServerError>;
+    } = {},
   ) =>
     Effect.gen(function* () {
+      const requests: string[] = [];
       const driver = yield* CodexReplay.makeReplayDriver(
         withConfigReads(transcript),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
@@ -1185,7 +1252,8 @@ describe("CodexAdapterV2 session initialize", () => {
       let initializeRequests = 0;
       const adapter = yield* CodexAdapterV2.makeCodexAdapterV2({
         instanceId: CodexAdapterV2.CODEX_DEFAULT_INSTANCE_ID,
-        settings: DEFAULT_CODEX_SETTINGS,
+        settings,
+        ...(resolveRuntime === undefined ? {} : { resolveRuntime }),
         environment: {},
         ...(compatibility === undefined ? {} : { compatibility }),
         clientFactory: {
@@ -1198,8 +1266,20 @@ describe("CodexAdapterV2 session initialize", () => {
                 (client) =>
                   ({
                     ...client,
+                    raw: {
+                      ...client.raw,
+                      request: (method, params) =>
+                        Effect.sync(() => requests.push(method)).pipe(
+                          Effect.andThen(
+                            method === "hooks/list"
+                              ? hooksList
+                              : client.raw.request(method, params),
+                          ),
+                        ),
+                    },
                     request: (method, params) =>
                       Effect.sync(() => {
+                        requests.push(method);
                         if (method === "initialize") initializeRequests++;
                       }).pipe(Effect.andThen(client.request(method, params))),
                   }) satisfies CodexClient.CodexAppServerClient["Service"],
@@ -1234,7 +1314,14 @@ describe("CodexAdapterV2 session initialize", () => {
             modelSelection: CODEX_TEST_MODEL_SELECTION,
             runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
           }),
+        forkThread: (sourceProviderThread: OrchestrationV2ProviderThread, targetThreadId: string) =>
+          runtime.forkThread({
+            sourceProviderThread,
+            targetThreadId: ThreadId.make(targetThreadId),
+            runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          }),
         initializeRequests: () => initializeRequests,
+        requests: () => requests,
         events: runtime.events,
       };
     });
@@ -1308,6 +1395,340 @@ describe("CodexAdapterV2 session initialize", () => {
     ),
   );
 
+  const codexHook = (overrides: Record<string, unknown>) => ({
+    handlerType: "command",
+    command: "touch /tmp/hook-fired",
+    currentHash: "hash",
+    displayOrder: 0,
+    enabled: true,
+    eventName: "userPromptSubmit",
+    isManaged: false,
+    key: "user:userPromptSubmit:0",
+    source: "user",
+    sourcePath: "/tmp/codex-home/hooks.json",
+    timeoutSec: 60,
+    trustStatus: "trusted",
+    ...overrides,
+  });
+  const listedHooks = (hooks: ReadonlyArray<unknown>) =>
+    Effect.succeed({ data: [{ cwd: "/workspace", errors: [], warnings: [], hooks }] });
+  const hooksListError = (code: number, errorMessage: string) =>
+    Effect.fail(new CodexError.CodexAppServerRequestError({ code, errorMessage }));
+  const openHooksSession = (
+    scenario: string,
+    hooksList: Effect.Effect<unknown, CodexError.CodexAppServerError>,
+    options?: Omit<NonNullable<Parameters<typeof openReplaySession>[2]>, "hooksList">,
+  ) =>
+    openReplaySession(
+      makeCodexReplayTranscript({ scenario, entries: replayPreamble(scenario).slice(0, 5) }),
+      undefined,
+      { ...options, hooksList },
+    );
+  const hooksTestLayer = Layer.mergeAll(
+    IdAllocator.layer,
+    McpProviderSessions.layer,
+    NodeServices.layer,
+    NodeCrypto.layer,
+  );
+
+  // regression: #5024 Codex skips hooks that need review, so starting a new
+  // thread anyway silently drops the user's SessionStart and UserPromptSubmit hooks.
+  it.effect.each(["untrusted", "modified"] as const)(
+    "refuses to start a thread while an enabled hook is %s",
+    (trustStatus) =>
+      Effect.gen(function* () {
+        // A managed runtime can move Codex to a home other than the configured one,
+        // and the guidance must send the user to the home Codex actually reads.
+        const session = yield* openHooksSession(
+          `hooks-${trustStatus}`,
+          listedHooks([codexHook({ trustStatus })]),
+          {
+            settings: { ...DEFAULT_CODEX_SETTINGS, homePath: "/configured/codex-home" },
+            resolveRuntime: Effect.succeed({
+              config: { ...DEFAULT_CODEX_SETTINGS, homePath: "/managed/codex-home" },
+              environment: {},
+              revision: "managed",
+            }),
+          },
+        );
+
+        const result = yield* session
+          .ensureThread(`thread-hooks-${trustStatus}`)
+          .pipe(Effect.result);
+
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderAdapterEnsureThreadError");
+          const message = startFailureMessage(result.failure);
+          assert.include(message, "until it is reviewed (/tmp/codex-home/hooks.json)");
+          assert.include(message, "`/hooks`");
+          assert.notInclude(message, "codex /hooks");
+          assert.include(message, "CODEX_HOME=/managed/codex-home");
+          assert.notInclude(message, "/configured/codex-home");
+        }
+        assert.include(session.requests(), "hooks/list");
+        assert.notInclude(session.requests(), "thread/start");
+
+        // Source paths are arbitrary Codex output, so neither their count nor
+        // their length may push the review guidance out of the error.
+        const longPath = (index: number) =>
+          `/tmp/codex-home/${"nested/".repeat(80)}hooks-${index}.json`;
+        const crowded = yield* openHooksSession(
+          `hooks-${trustStatus}-crowded`,
+          listedHooks([
+            codexHook({ trustStatus }),
+            ...Array.from({ length: 14 }, (_, index) =>
+              codexHook({ trustStatus, sourcePath: longPath(index) }),
+            ),
+          ]),
+        );
+        const crowdedFailure = yield* crowded
+          .ensureThread(`thread-hooks-${trustStatus}-crowded`)
+          .pipe(Effect.flip);
+        const crowdedMessage = startFailureMessage(crowdedFailure);
+        assert.include(
+          crowdedMessage,
+          "15 enabled hooks until they are reviewed (/tmp/codex-home/hooks.json, ",
+        );
+        assert.include(crowdedMessage, "…, and 5 more). Open `codex`");
+        assert.include(crowdedMessage, "enter `/hooks` to review or disable them, then try again.");
+        assert.notInclude(crowdedMessage, longPath(0));
+        assert.isBelow(crowdedMessage.length, 3_000);
+        assert.notInclude(crowded.requests(), "thread/start");
+      }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
+  // regression: #5024 Codex lists no hooks when discovery fails (for example an
+  // invalid config value T3's thread config later overrides), so an empty list
+  // alone cannot prove that no hook needs review.
+  it.effect("refuses to start a thread while Codex cannot discover hooks", () =>
+    Effect.gen(function* () {
+      const session = yield* openHooksSession(
+        "hooks-discovery-errors",
+        Effect.succeed({
+          data: [
+            {
+              cwd: "/workspace",
+              errors: [
+                {
+                  path: "/tmp/codex-home/config.toml",
+                  message: 'invalid type: string "soon", expected u64',
+                },
+                // Discovery text is arbitrary Codex output that can echo
+                // config values, so only its count reaches the message.
+                ...Array.from({ length: 200 }, (_, index) => ({
+                  path: `/tmp/codex-home/hooks-${index}.json`,
+                  message: "unexpected token ".repeat(20),
+                })),
+              ],
+              warnings: [],
+              hooks: [],
+            },
+          ],
+        }),
+      );
+
+      const failed = yield* session.ensureThread("thread-hooks-discovery-errors").pipe(Effect.flip);
+
+      assert.equal(failed._tag, "ProviderAdapterEnsureThreadError");
+      const message = startFailureMessage(failed);
+      assert.include(message, "(201 errors), so T3 Code cannot check whether a hook needs review.");
+      assert.include(message, "to see the errors, fix the configuration, then try again.");
+      assert.notInclude(message, "/tmp/codex-home/config.toml");
+      assert.notInclude(message, '"soon"');
+      // The raw entries survive only as the discovery error's cause.
+      assert.notProperty(failed.cause, "details");
+      assert.nestedPropertyVal(failed.cause, "errorCount", 201);
+      assert.nestedPropertyVal(failed.cause, "cause.length", 201);
+      assert.deepNestedPropertyVal(failed.cause, "cause[0]", {
+        path: "/tmp/codex-home/config.toml",
+        message: 'invalid type: string "soon", expected u64',
+      });
+      assert.notInclude(session.requests(), "thread/start");
+    }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
+  // regression: #5024 with workspace-write permissions, Codex trusts a new
+  // project during thread/start, which only then exposes its unreviewed hooks.
+  it.effect("releases a new thread whose start exposed hooks that need review", () =>
+    Effect.gen(function* () {
+      const scenario = "hooks-trusted-by-start";
+      const hookLists = [listedHooks([]), listedHooks([codexHook({ trustStatus: "untrusted" })])];
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...replayPreamble(scenario).slice(0, 5),
+            {
+              type: "expect_outbound",
+              label: "thread/unsubscribe",
+              frame: { id: 3, method: "thread/unsubscribe", params: { threadId: scenario } },
+            },
+            {
+              type: "emit_inbound",
+              label: "thread/unsubscribe",
+              frame: { id: 3, result: { status: "unsubscribed" } },
+            },
+          ],
+        }),
+        undefined,
+        { hooksList: Effect.suspend(() => hookLists.shift() ?? listedHooks([])) },
+      );
+
+      const failed = yield* session.ensureThread(`thread-${scenario}`).pipe(Effect.flip);
+
+      assert.equal(failed._tag, "ProviderAdapterEnsureThreadError");
+      assert.include(String(failed.cause), "`/hooks`");
+      assert.deepEqual(
+        session.requests().filter((method) => method !== "initialize"),
+        ["hooks/list", "config/read", "thread/start", "hooks/list", "thread/unsubscribe"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
+  it.effect.each([
+    {
+      name: "reviewed, managed, and disabled hooks",
+      hooksList: listedHooks([
+        codexHook({}),
+        codexHook({ trustStatus: "managed", isManaged: true }),
+        codexHook({ trustStatus: "untrusted", enabled: false }),
+      ]),
+    },
+    {
+      name: "hook metadata this adapter does not read",
+      hooksList: listedHooks([
+        codexHook({ eventName: "futureEvent", source: "futureSource", handlerType: "future" }),
+      ]),
+    },
+    {
+      name: "a Codex version that lists hooks without review",
+      hooksList: listedHooks([{ enabled: true, sourcePath: "/tmp/codex-home/hooks.json" }]),
+    },
+    {
+      name: "a Codex version that lists hooks without discovery errors",
+      hooksList: Effect.succeed({ data: [{ hooks: [codexHook({})] }] }),
+    },
+    {
+      name: "a Codex version without hooks/list (method not found)",
+      hooksList: hooksListError(-32601, "Method not found"),
+    },
+    {
+      name: "a Codex version without hooks/list (unknown variant)",
+      hooksList: hooksListError(
+        -32600,
+        "Invalid request: unknown variant `hooks/list`, expected one of `initialize`, `thread/start`",
+      ),
+    },
+  ])("starts a thread with $name", ({ name, hooksList }) =>
+    Effect.gen(function* () {
+      const scenario = `hooks-start-${name.replaceAll(/\W+/g, "-")}`;
+      const session = yield* openHooksSession(scenario, hooksList);
+
+      const providerThread = yield* session.ensureThread(`thread-${scenario}`);
+
+      assert.equal(providerThread.nativeThreadRef?.nativeId, scenario);
+    }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
+  it.effect.each([
+    {
+      name: "an unrelated invalid request",
+      code: -32600,
+      errorMessage: "Invalid request: bad cwd",
+    },
+    { name: "an internal error", code: -32603, errorMessage: "hooks/list failed" },
+  ])("refuses to start a thread when hooks/list fails with $name", ({ code, errorMessage }) =>
+    Effect.gen(function* () {
+      const session = yield* openHooksSession(
+        `hooks-error-${-code}`,
+        hooksListError(code, errorMessage),
+      );
+
+      const failed = yield* session.ensureThread(`thread-hooks-error-${-code}`).pipe(Effect.flip);
+
+      assert.equal(failed._tag, "ProviderAdapterEnsureThreadError");
+      assert.notInclude(session.requests(), "thread/start");
+    }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
+  // regression: #5024 a native fork is also a new Codex thread, so it must not
+  // start while an enabled hook still needs review.
+  it.effect.each([
+    { name: "an untrusted enabled hook", hook: codexHook({ trustStatus: "untrusted" }) },
+    { name: "a modified enabled hook", hook: codexHook({ trustStatus: "modified" }) },
+    { name: "a trusted hook", hook: codexHook({}) },
+    {
+      name: "a disabled untrusted hook",
+      hook: codexHook({ trustStatus: "untrusted", enabled: false }),
+    },
+  ])("forks a thread only when hooks are reviewed, given $name", ({ name, hook }) =>
+    Effect.gen(function* () {
+      const scenario = `hooks-fork-${name.replaceAll(/\W+/g, "-")}`;
+      const blocked = hook.enabled && hook.trustStatus !== "trusted";
+      // The source thread starts before the hook needs review.
+      let hooksList = listedHooks([]);
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...replayPreamble(scenario).slice(0, 5),
+            ...(blocked
+              ? []
+              : ([
+                  {
+                    type: "expect_outbound",
+                    label: "thread/fork",
+                    frame: {
+                      id: 3,
+                      method: "thread/fork",
+                      params: {
+                        threadId: scenario,
+                        excludeTurns: true,
+                        config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                      },
+                    },
+                  },
+                  {
+                    type: "emit_inbound",
+                    label: "thread/fork",
+                    frame: {
+                      id: 3,
+                      result: codexReplayThreadResult({
+                        nativeThreadId: `${scenario}-fork`,
+                        forkedFromId: scenario,
+                      }),
+                    },
+                  },
+                ] satisfies Array<CodexReplay.CodexAppServerReplayEntry>)),
+          ],
+        }),
+        undefined,
+        { hooksList: Effect.suspend(() => hooksList) },
+      );
+      const source = yield* session.ensureThread(`thread-${scenario}`);
+      hooksList = listedHooks([hook]);
+
+      const result = yield* session
+        .forkThread(source, `thread-${scenario}-fork`)
+        .pipe(Effect.result);
+
+      if (blocked) {
+        assert.equal(result._tag, "Failure");
+        if (result._tag === "Failure") {
+          assert.equal(result.failure._tag, "ProviderAdapterForkThreadError");
+          assert.include(startFailureMessage(result.failure), "`/hooks`");
+        }
+        assert.notInclude(session.requests(), "thread/fork");
+      } else {
+        assert.equal(result._tag, "Success");
+        if (result._tag === "Success") {
+          assert.equal(result.success.nativeThreadRef?.nativeId, `${scenario}-fork`);
+        }
+      }
+    }).pipe(Effect.scoped, Effect.provide(hooksTestLayer)),
+  );
+
   // regression: #16260 one-shot initializers raced; a failed handshake must be retried
   it.effect("retries initialize after a failed handshake", () =>
     Effect.gen(function* () {
@@ -1369,14 +1790,16 @@ describe("CodexAdapterV2 session initialize", () => {
           ],
         }),
         undefined,
-        (version) =>
-          Effect.succeed(
-            resolveProviderCompatibility(
-              ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
-              CodexAdapterV2.CODEX_DRIVER_KIND,
-              version,
+        {
+          compatibility: (version) =>
+            Effect.succeed(
+              resolveProviderCompatibility(
+                ModelManifest.BUNDLED_MODEL_MANIFEST.compatibility,
+                CodexAdapterV2.CODEX_DRIVER_KIND,
+                version,
+              ),
             ),
-          ),
+        },
       ).pipe(Effect.flip);
 
       assert.instanceOf(failure, ProviderAdapter.ProviderAdapterOpenSessionError);
@@ -1412,7 +1835,7 @@ describe("CodexAdapterV2 session initialize", () => {
                 Effect.andThen(Effect.never),
               )
             : Effect.void,
-        () => Effect.die("initialize never answers"),
+        { compatibility: () => Effect.die("initialize never answers") },
       ).pipe(Effect.flip, Effect.forkChild({ startImmediately: true }));
       yield* Deferred.await(initializeAwaitingResponse);
       yield* TestClock.adjust("30 seconds");
@@ -1589,7 +2012,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             Effect.flatMap((context) =>
               Effect.service(CodexClient.CodexAppServerClient).pipe(
                 Effect.map((client) =>
-                  withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  withCodexReplayReviewedHooks(
+                    withCodexReplayChildMetadata(client, transcript, readChildMetadata),
+                  ),
                 ),
                 Effect.map(
                   (client) =>
@@ -10613,45 +11038,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
   );
-
-  const codexReplayThreadResult = (input: {
-    readonly nativeThreadId: string;
-    readonly forkedFromId: string | null;
-  }) => ({
-    thread: {
-      id: input.nativeThreadId,
-      sessionId: input.nativeThreadId,
-      forkedFromId: input.forkedFromId,
-      preview: "",
-      ephemeral: false,
-      modelProvider: "openai",
-      createdAt: 1782622440,
-      updatedAt: 1782622440,
-      status: { type: "idle" },
-      path: `/tmp/${input.nativeThreadId}.jsonl`,
-      cwd: "/workspace",
-      cliVersion: "0.144.0",
-      source: "vscode",
-      threadSource: null,
-      agentNickname: null,
-      agentRole: null,
-      gitInfo: null,
-      name: null,
-      turns: [],
-    },
-    model: "gpt-5.4",
-    modelProvider: "openai",
-    serviceTier: null,
-    cwd: "/workspace",
-    instructionSources: [],
-    approvalPolicy: "on-request",
-    approvalsReviewer: "user",
-    sandbox: { type: "workspaceWrite", writableRoots: [], networkAccess: false },
-    reasoningEffort: "medium",
-  });
-
-  const errorCauseChainText = (error: unknown): string =>
-    error instanceof Error ? `${error.message} ${errorCauseChainText(error.cause)}` : String(error);
 
   const codexReplaySourceTurn = (input: {
     readonly id: string;
