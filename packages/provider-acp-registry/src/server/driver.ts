@@ -12,6 +12,7 @@ import {
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
@@ -52,6 +53,7 @@ import {
 import {
   type AcpRegistryAvailableCommands,
   type AcpRegistryConfigurationProbe,
+  type AcpRegistryConfigurationProbeResolved,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
   deleteAcpRegistrySession,
@@ -708,26 +710,47 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
       cacheable: false,
     };
   }
+  const resolvedDuringProbeRef = yield* Ref.make<AcpRegistryConfigurationProbeResolved | undefined>(
+    undefined,
+  );
   const probed = yield* Effect.result(
     probeConfiguration({
       instanceId: input.instanceId,
       settings: input.settings,
       cwd: input.cwd,
       environment: providerProbeEnvironment(input.environment),
+      onResolved: (resolved) => Ref.set(resolvedDuringProbeRef, resolved),
     }),
   );
   if (Result.isFailure(probed)) {
+    const resolvedDuringProbe = yield* Ref.get(resolvedDuringProbeRef);
+    const failedInspection: AcpRegistrySupport.AcpRegistryInspection =
+      resolvedDuringProbe === undefined || input.settings.source === "local"
+        ? inspected.success
+        : {
+            ...inspected.success,
+            version:
+              input.settings.commandPath.trim().length > 0
+                ? null
+                : (resolvedDuringProbe.agent?.version ?? inspected.success.version),
+            ...(resolvedDuringProbe.launchIdentity === undefined
+              ? {}
+              : { launchIdentity: resolvedDuringProbe.launchIdentity }),
+          };
+    const failedLaunchIdentity =
+      resolvedDuringProbe?.launchIdentity ?? inspected.success.launchIdentity ?? null;
+    const failedIndexRevision = resolvedDuringProbe?.indexRevision ?? inspectedIndexRevision;
     return {
       provider: buildCheckedAcpRegistrySnapshot({
         ...input,
         checkedAt,
-        inspection: inspected.success,
+        inspection: failedInspection,
         probeError: probed.failure,
       }),
-      launchIdentity: null,
-      indexRevision: inspectedIndexRevision,
+      launchIdentity: failedLaunchIdentity,
+      indexRevision: failedIndexRevision,
       cacheable: false,
-      failedTargetLaunchIdentity: inspected.success.launchIdentity ?? null,
+      failedTargetLaunchIdentity: failedLaunchIdentity,
       probeFailed: true,
     };
   }
@@ -1479,6 +1502,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         }>({ inFlight: null, pending: null });
         const maybeReconcileUnmatchedRuntime = (
           incomingIdentity: string | undefined,
+          allowDefectReplay = true,
         ): Effect.Effect<void> => {
           if (incomingIdentity === undefined || !tracksRegistryIndex) return Effect.void;
           return Effect.gen(function* () {
@@ -1559,13 +1583,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 yield* maybeReconcileUnmatchedRuntime(incomingIdentity);
               }
             }).pipe(
-              Effect.onError(() =>
-                Ref.update(reconcilingState, (state) => {
-                  if (!state.has(incomingIdentity)) return state;
+              Effect.onError((cause) =>
+                Ref.modify(reconcilingState, (state) => {
+                  if (!state.has(incomingIdentity)) return [false, state] as const;
                   const next = new Map(state);
+                  const pending = next.get(incomingIdentity) === true;
                   next.delete(incomingIdentity);
-                  return next;
-                }),
+                  return [pending, next] as const;
+                }).pipe(
+                  Effect.flatMap((replayPending) =>
+                    // Replay a parked update once after an unexpected defect (not scope
+                    // interruption), bounding replay so repeated defects cannot loop.
+                    replayPending && allowDefectReplay && !Cause.hasInterruptsOnly(cause)
+                      ? maybeReconcileUnmatchedRuntime(incomingIdentity, false)
+                      : Effect.void,
+                  ),
+                ),
               ),
               Effect.withSpan("AcpRegistryDriver.reconcileUnmatchedRuntime"),
               Effect.forkIn(driverScope),
@@ -1691,7 +1724,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               persistLearnedModels: false,
                             },
                           );
-                          const nextSnapshot = isUpgradeFailure
+                          const preserveProbeFailure =
+                            isUpgradeFailure || provider.auth.status === "unauthenticated";
+                          const nextSnapshot = preserveProbeFailure
                             ? {
                                 ...nextSnapshotRaw,
                                 status: provider.status,

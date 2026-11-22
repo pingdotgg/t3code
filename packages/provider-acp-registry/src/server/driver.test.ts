@@ -3617,8 +3617,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         let failArchiveVersions = new Set<string>();
         let failProbeSpawn = false;
         let failProbeAuth = false;
-        let defectNextInspect = false;
+        let defectInspectCount = 0;
         let inspectCalls = 0;
+        let onRefreshIndex: (() => Effect.Effect<void>) | null = null;
+        let onBeforeProbeResolve: (() => Effect.Effect<void>) | null = null;
         let recordedInspectRevisions: Array<number | undefined> | null = null;
         let resolveGate: {
           readonly matchVersion: string;
@@ -3722,11 +3724,26 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         );
         const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
           ...realCatalog,
+          refreshIndex: (options) =>
+            Effect.gen(function* () {
+              if (onRefreshIndex !== null) {
+                const hook = onRefreshIndex;
+                onRefreshIndex = null;
+                yield* hook();
+              }
+              return yield* realCatalog.refreshIndex(options);
+            }),
           inspect: (settings, environment) =>
             Effect.gen(function* () {
               inspectCalls += 1;
-              if (defectNextInspect) {
-                defectNextInspect = false;
+              if (defectInspectCount > 0) {
+                defectInspectCount -= 1;
+                if (inspectGate !== null) {
+                  const gate = inspectGate;
+                  inspectGate = null;
+                  yield* Deferred.succeed(gate.started, undefined);
+                  yield* Deferred.await(gate.release);
+                }
                 return yield* Effect.die("simulated reconcile inspect defect");
               }
               const result = yield* realCatalog.inspect(settings, environment);
@@ -3745,6 +3762,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             }),
           resolve: (settings, cwd, environment) =>
             Effect.gen(function* () {
+              if (environment?.MISE_OFFLINE === "1" && onBeforeProbeResolve !== null) {
+                const hook = onBeforeProbeResolve;
+                onBeforeProbeResolve = null;
+                yield* hook();
+              }
               const resolved = yield* realCatalog.resolve(settings, cwd, environment);
               if (
                 environment?.MISE_OFFLINE === "1" &&
@@ -3876,9 +3898,18 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* fgConfigInstance.snapshot.refresh;
-        yield* fgCmdInstance.snapshot.refresh;
+        const fgConfigWarningDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgConfigWarningDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         const fgConfigWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgConfigWarning));
+        yield* Deferred.await(fgConfigWarningDone);
+        const fgCmdWarningDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgCmdWarningDone, Exit.void);
+        yield* fgCmdInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         expect(fgConfigWarningSnapshot.version).toBe("1.0.0");
         expect(fgConfigWarningSnapshot.auth.status).toBe("unknown");
         expect(fgConfigWarningSnapshot.message).toContain("API key");
@@ -3887,6 +3918,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           "fg-v1-b",
         ]);
         const fgCmdWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgCmdWarning));
+        yield* Deferred.await(fgCmdWarningDone);
         expect(fgCmdWarningSnapshot.version).toBe("1.0.0");
         expect(fgCmdWarningSnapshot.auth.status).toBe("unknown");
         expect(fgCmdWarningSnapshot.slashCommands).toEqual([{ name: "fg-v1-cmd" }]);
@@ -3912,10 +3944,72 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         );
         const warnedWithC = Option.getOrThrow(yield* Fiber.join(fgConfigUpdatedDuringWarn));
         expect(warnedWithC.message).toContain("API key");
-        // Another refresh while 2.0.0 still fails must keep 1.0.0's auth non-unauthenticated.
-        const secondAuthRefresh = yield* fgConfigInstance.snapshot.refresh;
-        expect(secondAuthRefresh.version).toBe("1.0.0");
-        expect(secondAuthRefresh.auth.status).toBe("unknown");
+        // Another refresh while 2.0.0 still fails must publish 1.0.0 with non-unauthenticated auth
+        // and the auth warning once the second probe's enrichment actually completes.
+        const secondAuthEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(secondAuthEnrichmentDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(secondAuthEnrichmentDone);
+        const secondAuthPublished = yield* fgConfigInstance.snapshot.getSnapshot;
+        expect(secondAuthPublished.version).toBe("1.0.0");
+        expect(secondAuthPublished.status).toBe("warning");
+        expect(secondAuthPublished.auth.status).toBe("unknown");
+        expect(secondAuthPublished.message).toContain("API key");
+
+        // Post-resolution authentication_failed uses the ACTUALLY RESOLVED runtime identity:
+        // (a) inspect reads 1.0.0, resolve refreshes/launches 2.0.0 which fails auth -> retained
+        //     1.0.0 stays auth.status === "unknown" (not marked unauthenticated).
+        remoteVersion = "1.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        // Ensure 1.0.0 has a valid receipted install on disk for fallback check (b) below.
+        yield* realCatalog.resolve(decodeSettings({ agentId: "test-agent" }), directory);
+        onBeforeProbeResolve = () => {
+          remoteVersion = "2.0.0";
+          return realCatalog
+            .invalidateIndex()
+            .pipe(
+              Effect.andThen(realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 })),
+              Effect.ignore,
+            );
+        };
+        const mismatchUpgradeDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(mismatchUpgradeDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(mismatchUpgradeDone);
+        const mismatchUpgradeSnapshot = yield* fgConfigInstance.snapshot.getSnapshot;
+        expect(mismatchUpgradeSnapshot.version).toBe("1.0.0");
+        expect(mismatchUpgradeSnapshot.status).toBe("warning");
+        expect(mismatchUpgradeSnapshot.auth.status).toBe("unknown");
+        expect(mismatchUpgradeSnapshot.message).toContain("API key");
+
+        // (b) inspect reads 2.0.0, resolve falls back to installed 1.0.0 (503 on 2.0.0), and
+        //     1.0.0 fails auth -> 1.0.0's OWN auth.status becomes "unauthenticated".
+        yield* fileSystem.remove(path.join(directory, "tools", "test-agent", "2.0.0"), {
+          recursive: true,
+          force: true,
+        });
+        remoteVersion = "2.0.0";
+        failArchiveVersions = new Set(["2.0.0"]);
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackAuthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackAuthDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fallbackAuthDone);
+        const fallbackAuthSnapshot = yield* fgConfigInstance.snapshot.getSnapshot;
+        expect(fallbackAuthSnapshot.version).toBe("1.0.0");
+        expect(fallbackAuthSnapshot.status).toBe("warning");
+        expect(fallbackAuthSnapshot.auth.status).toBe("unauthenticated");
+        expect(fallbackAuthSnapshot.message).toContain("API key");
+        failArchiveVersions = new Set();
+
         // Now make 2.0.0 fail with a different install_failed message and verify the earlier
         // auth warning message did not leak into lastSuccessfulRuntime.
         failProbeAuth = false;
@@ -3925,21 +4019,28 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* fgConfigInstance.snapshot.refresh;
+        const fgSwitchedDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgSwitchedDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         const fgSwitchedSnapshot = Option.getOrThrow(yield* Fiber.join(fgSwitchedWarning));
+        yield* Deferred.await(fgSwitchedDone);
         expect(fgSwitchedSnapshot.version).toBe("1.0.0");
         expect(fgSwitchedSnapshot.message).not.toContain("API key");
         expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-c");
 
         // 2. When no snapshot was ever accepted for 1.0.0 (neither probe nor live session), a failed
-        // 2.0.0 probe publishes 2.0.0's failure snapshot without attaching 1.0.0 live state AND
-        // aligns watcher identities to 2.0.0 so subsequent 1.0.0 updates cannot land on it.
+        // 2.0.0 probe discovered via recheck (with expectedRuntimeIdentity still on 1.0.0!) publishes
+        // 2.0.0's failure snapshot without attaching 1.0.0 live state AND aligns watcher identities
+        // to 2.0.0 so subsequent 1.0.0 updates cannot land on it.
         remoteVersion = "1.0.0";
         failProbeSpawn = false;
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         const coldFgStarted = yield* Deferred.make<void>();
         const releaseColdFg = yield* Deferred.make<void>();
+        const coldFgDone = yield* Deferred.make<void>();
         const coldFgFiber = yield* coordinator
           .withForegroundStartup(
             "test-agent",
@@ -3947,7 +4048,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
               Effect.andThen(Deferred.await(releaseColdFg)),
             ),
           )
-          .pipe(Effect.forkScoped({ startImmediately: true }));
+          .pipe(
+            Effect.ensuring(Deferred.succeed(coldFgDone, undefined)),
+            Effect.forkScoped({ startImmediately: true }),
+          );
         yield* Deferred.await(coldFgStarted);
         const noAcceptId = ProviderInstanceId.make("acpRegistry_no_accepted_v1");
         const noAcceptInstance = yield* AcpRegistryDriver.create({
@@ -3969,18 +4073,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
         yield* Deferred.await(noAcceptColdEnrichmentDone);
-        yield* Deferred.succeed(releaseColdFg, undefined);
-        yield* Fiber.join(coldFgFiber);
+        // Keep disk registry.json on 1.0.0 and keep coldFgFiber held during initialProbe so
+        // checkProvider sees 1.0.0 (expectedRuntimeIdentity === v1Identity), initialProbe skips,
+        // and publishEnrichment's refreshIndex releases coldFgFiber and discovers failing 2.0.0.
         remoteVersion = "2.0.0";
         failProbeSpawn = true;
         yield* realCatalog.invalidateIndex();
-        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const noAcceptV2Gate = {
-          matchVersion: "2.0.0",
-          started: yield* Deferred.make<void>(),
-          release: yield* Deferred.make<void>(),
-        };
-        resolveGate = noAcceptV2Gate;
+        onRefreshIndex = () =>
+          Deferred.succeed(releaseColdFg, undefined).pipe(
+            Effect.andThen(Deferred.await(coldFgDone)),
+          );
         const noAcceptWarning = yield* noAcceptInstance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => snapshot.status === "warning"),
           Stream.runHead,
@@ -3991,25 +4093,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         yield* noAcceptInstance.snapshot.refresh.pipe(
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
-        yield* Deferred.await(noAcceptV2Gate.started);
-        // Seed 1.0.0 commands into coordinator while 2.0.0's probe is in flight (rejected by the
-        // watcher, so lastSuccessfulRuntime stays null) to prove the failed 2.0.0 publish never
-        // attaches 1.0.0 live state onto 2.0.0's failure snapshot.
-        const v1DuringV2Handled = yield* Deferred.make<void>();
-        onCommandHandled = { matchName: "v1-during-v2-fail", done: v1DuringV2Handled };
-        yield* coordinator.publishAvailableCommands(
-          noAcceptId,
-          { slashCommands: [{ name: "v1-during-v2-fail" }], skills: [] },
-          v1Identity,
-        );
-        yield* Deferred.await(v1DuringV2Handled);
-        yield* Deferred.succeed(noAcceptV2Gate.release, undefined);
         const noAcceptSnapshot = Option.getOrThrow(yield* Fiber.join(noAcceptWarning));
         yield* Deferred.await(noAcceptFailDone);
+        yield* Fiber.join(coldFgFiber);
         expect(noAcceptSnapshot.version).toBe("2.0.0");
         expect(noAcceptSnapshot.message).toContain("2.0.0");
         expect(noAcceptSnapshot.slashCommands).toEqual([]);
-        // A subsequent 1.0.0 update must NOT land on 2.0.0's failure snapshot.
+        // A subsequent 1.0.0 update must NOT land on 2.0.0's failure snapshot (requires
+        // runProbeAndPublish to have updated expectedRuntimeIdentity from v1Identity to v2Identity).
         const lateV1AfterFailHandled = yield* Deferred.make<void>();
         onCommandHandled = { matchName: "v1-after-v2-fail", done: lateV1AfterFailHandled };
         yield* coordinator.publishAvailableCommands(
@@ -4033,8 +4124,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* noAcceptInstance.snapshot.refresh;
+        const noAcceptV2AdoptedDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(noAcceptV2AdoptedDone, Exit.void);
+        yield* noAcceptInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         expect(Option.isSome(yield* Fiber.join(noAcceptV2Adopted))).toBe(true);
+        yield* Deferred.await(noAcceptV2AdoptedDone);
 
         // 3. Fallback retirement stamps failedTarget's revision (v3), not a concurrently restored
         // v4 revision, so a new v4 session reconciles immediately even if v4 restored mid-probe.
@@ -4064,8 +4160,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
+        const v2ReadyDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(v2ReadyDone, Exit.void);
         yield* fallbackRetireInstance.snapshot.refresh;
         expect(Option.isSome(yield* Fiber.join(v2Ready))).toBe(true);
+        yield* Deferred.await(v2ReadyDone);
         const v2Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
         expect(v2Inspection.status).toBe("ready");
         const v2Identity = v2Inspection.status === "ready" ? v2Inspection.launchIdentity! : "";
@@ -4243,40 +4342,98 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(recordedInspectRevisions).toEqual([r7, r8]);
         recordedInspectRevisions = null;
 
-        // A defect inside reconciliation must still release the reconcilingState claim (Effect.onError)
-        // so a subsequent event for the same identity reconciles cleanly once the catalog recovers.
+        // A defect inside reconciliation releases the reconcilingState claim AND replays a parked
+        // pending event for the same identity once without needing a third event.
         remoteExtraAgentVersion = "10.0.2";
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        defectNextInspect = true;
-        const defectSpanDone = yield* Deferred.make<void>();
-        onReconcileEnd = () => Deferred.doneUnsafe(defectSpanDone, Exit.void);
+        const defectInspectGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        inspectGate = defectInspectGate;
+        defectInspectCount = 1;
         yield* coordinator.publishAvailableCommands(
           fallbackRetireId,
           { slashCommands: [{ name: "v4-defect-probe" }], skills: [] },
           v4Identity,
         );
-        yield* Deferred.await(defectSpanDone);
-
+        yield* Deferred.await(defectInspectGate.started);
+        // While the defecting reconcile is in flight, restore 4.0.0 and park a second v4 event.
         remoteVersion = "4.0.0";
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const v4RecoveredAfterDefect = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+        const parkedDuringDefectHandled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v4-parked-on-defect", done: parkedDuringDefectHandled };
+        const v4RecoveredByReplay = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) =>
               snapshot.version === "4.0.0" &&
               snapshot.nativeSessions !== undefined &&
-              snapshot.slashCommands.some((cmd) => cmd.name === "v4-after-defect"),
+              snapshot.slashCommands.some((cmd) => cmd.name === "v4-parked-on-defect"),
           ),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
+        const v4RecoveredEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(v4RecoveredEnrichmentDone, Exit.void);
         yield* coordinator.publishAvailableCommands(
           fallbackRetireId,
-          { slashCommands: [{ name: "v4-after-defect" }], skills: [] },
+          { slashCommands: [{ name: "v4-parked-on-defect" }], skills: [] },
           v4Identity,
         );
-        expect(Option.isSome(yield* Fiber.join(v4RecoveredAfterDefect))).toBe(true);
+        yield* Deferred.await(parkedDuringDefectHandled);
+        yield* Deferred.succeed(defectInspectGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(v4RecoveredByReplay))).toBe(true);
+        yield* Deferred.await(v4RecoveredEnrichmentDone);
+
+        // Defect replay is bounded to one retry so a parked event arriving during the replay's
+        // own defect cannot loop forever (while still releasing reconcilingState cleanly).
+        remoteExtraAgentVersion = "10.0.3";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const boundedGate1 = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        const boundedGate2 = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        inspectGate = boundedGate1;
+        defectInspectCount = 2;
+        const inspectsBeforeBounded = inspectCalls;
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-bounded-defect-1" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(boundedGate1.started);
+        const boundedParked1 = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v2-bounded-defect-2", done: boundedParked1 };
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-bounded-defect-2" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(boundedParked1);
+        inspectGate = boundedGate2;
+        yield* Deferred.succeed(boundedGate1.release, undefined);
+        yield* Deferred.await(boundedGate2.started);
+        // Park another v2 event during the replay defect; bounded replay must NOT launch a 3rd inspect.
+        const boundedParked2 = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v2-bounded-defect-3", done: boundedParked2 };
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-bounded-defect-3" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(boundedParked2);
+        const boundedSecondSpanDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(boundedSecondSpanDone, Exit.void);
+        yield* Deferred.succeed(boundedGate2.release, undefined);
+        yield* Deferred.await(boundedSecondSpanDone);
+        expect(inspectCalls).toBe(inspectsBeforeBounded + 2);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });

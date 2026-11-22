@@ -378,6 +378,7 @@ export interface AcpRegistryConfigurationProbeInput {
   readonly settings: AcpRegistrySettings;
   readonly cwd: string;
   readonly environment: NodeJS.ProcessEnv;
+  readonly onResolved?: (resolved: AcpRegistryConfigurationProbeResolved) => Effect.Effect<void>;
 }
 
 type AcpRegistryManagementInput = AcpRegistryConfigurationProbeInput;
@@ -461,6 +462,19 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
         .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
+      const resolvedMetadata: AcpRegistryConfigurationProbeResolved = {
+        ...(resolved.agent === undefined ? {} : { agent: resolved.agent }),
+        distribution: resolved.distribution,
+        ...(resolved.launchIdentity === undefined
+          ? {}
+          : { launchIdentity: resolved.launchIdentity }),
+        ...(resolved.indexRevision === undefined ? {} : { indexRevision: resolved.indexRevision }),
+        ...(resolved.fallback ? { fallback: true } : {}),
+        ...(resolved.failedTarget === undefined ? {} : { failedTarget: resolved.failedTarget }),
+      };
+      if (input.onResolved !== undefined) {
+        yield* input.onResolved(resolvedMetadata);
+      }
       return yield* Effect.gen(function* () {
         const spawn = yield* isolateDeepSeekProbeHistory(
           input.settings.commandPath,
@@ -615,6 +629,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
 
         return {
           resolved,
+          resolvedMetadata,
           started,
           commands: yield* Ref.get(commandsRef),
           liveConfiguration,
@@ -650,20 +665,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
-      resolved: {
-        ...(result.resolved.agent === undefined ? {} : { agent: result.resolved.agent }),
-        distribution: result.resolved.distribution,
-        ...(result.resolved.launchIdentity === undefined
-          ? {}
-          : { launchIdentity: result.resolved.launchIdentity }),
-        ...(result.resolved.indexRevision === undefined
-          ? {}
-          : { indexRevision: result.resolved.indexRevision }),
-        ...(result.resolved.fallback ? { fallback: true } : {}),
-        ...(result.resolved.failedTarget === undefined
-          ? {}
-          : { failedTarget: result.resolved.failedTarget }),
-      },
+      resolved: result.resolvedMetadata,
     };
   },
 );
