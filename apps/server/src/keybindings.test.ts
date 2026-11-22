@@ -521,15 +521,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
     Effect.gen(function* () {
       const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
       const keybindings = yield* Keybindings.Keybindings;
+      const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
+      const targetIndex = SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
+        (rule) => rule.command === target.command && rule.key === target.key,
+      );
+      assert.isAtLeast(targetIndex, 0);
+      const fillerCount =
+        MAX_KEYBINDINGS_COUNT - SharedKeybindings.DEFAULT_KEYBINDINGS.length + targetIndex;
       yield* writeKeybindingsConfig(
         keybindingsConfigPath,
-        Array.from({ length: 210 }, (_, index) => ({
+        Array.from({ length: fillerCount }, (_, index) => ({
           key: "mod+alt+f1",
           command: `script.filler-${index}.run` as const,
         })),
       );
 
-      const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
       const local = { ...target, key: "mod+shift+n", command: "chat.newLocal" } as const;
       const relevant = (rule: { readonly command: KeybindingCommand }) =>
         rule.command === target.command || rule.command === local.command;
@@ -554,15 +560,21 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       Effect.gen(function* () {
         const { keybindingsConfigPath } = yield* ServerConfig.ServerConfig;
         const keybindings = yield* Keybindings.Keybindings;
+        const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
+        const targetIndex = SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
+          (rule) => rule.command === target.command && rule.key === target.key,
+        );
+        assert.isAtLeast(targetIndex, 0);
+        const fillerCount =
+          MAX_KEYBINDINGS_COUNT - SharedKeybindings.DEFAULT_KEYBINDINGS.length + targetIndex;
         yield* writeKeybindingsConfig(
           keybindingsConfigPath,
-          Array.from({ length: 209 }, (_, index) => ({
+          Array.from({ length: fillerCount }, (_, index) => ({
             key: "mod+alt+f1",
             command: `script.filler-${index}.run` as const,
           })),
         );
 
-        const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
         const sibling = { ...target, key: "mod+shift+o" };
         const isChatNew = (binding: { readonly command: KeybindingCommand }) =>
           binding.command === target.command;

@@ -207,8 +207,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
     Effect.gen(function* () {
       if (command._tag !== "StandardCommand")
         return yield* Effect.die("Unexpected process pipeline.");
-      if (command.options.env?.ANTIGRAVITY_HARNESS_PATH === undefined)
-        yield* controls.beforeProfilePreparation;
+      if (!agentExecutables.has(command.command)) yield* controls.beforeProfilePreparation;
       const handle = yield* spawner.spawn(command);
       const environment = command.options.env ?? {};
       const env = (name: string) => {

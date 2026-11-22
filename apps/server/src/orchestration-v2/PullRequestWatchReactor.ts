@@ -70,9 +70,12 @@ const providerFailureReason = (cause: Cause.Cause<PullRequestService.PullRequest
   Option.match(Cause.findErrorOption(cause), {
     onNone: () => null,
     onSome: (error) =>
-      error._tag === "PullRequestOperationError" && isProviderError(error.cause)
-        ? error.cause.reason
-        : null,
+      error._tag === "PullRequestUnavailableError" &&
+      (error.reason === "cli-missing" || error.reason === "cli-unauthenticated")
+        ? error.reason
+        : error._tag === "PullRequestOperationError" && isProviderError(error.cause)
+          ? error.cause.reason
+          : null,
   });
 
 const logFailure =
@@ -673,8 +676,13 @@ export const make = Effect.gen(function* () {
         return;
       }
       const reason = providerFailureReason(detailRead.cause);
-      // Only a pull request the host denies counts toward giving up; other failures keep the watch.
-      if (reason !== "not-found" && reason !== "forbidden") {
+      // Host access or setup failures count toward giving up; transport failures keep the watch.
+      if (
+        reason !== "not-found" &&
+        reason !== "forbidden" &&
+        reason !== "cli-missing" &&
+        reason !== "cli-unauthenticated"
+      ) {
         readFailures.delete(group.key);
         if (reason === "rate-limited") return;
         return yield* Effect.failCause(detailRead.cause);

@@ -4777,14 +4777,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       for (let pass = 0; pass < 15; pass += 1) yield* reactor.sweep;
 
       const thread = yield* orchestrator.getThreadShell(threadId);
-      if (reason === "not-found") assert.isUndefined(thread?.pullRequests?.[0]?.watch);
+      const setupFailure = reason === "missing-tool" || reason === "unauthenticated";
+      const stopped = reason === "not-found" || setupFailure;
+      if (stopped) assert.isUndefined(thread?.pullRequests?.[0]?.watch);
       else assert.isDefined(thread?.pullRequests?.[0]?.watch);
       const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"]);
       assert.deepEqual(
         messages.flatMap((message) => message.notification?.summary ?? []),
-        reason === "not-found" ? ["#8: stopped watching, could not read it"] : [],
+        stopped
+          ? [
+              setupFailure
+                ? "#8: stopped watching, host not set up on the server"
+                : "#8: stopped watching, could not read it",
+            ]
+          : [],
       );
-      if (reason !== "not-found") {
+      if (!stopped) {
         recovering = true;
         yield* reactor.sweep;
         assert.equal(recoveredReads, 1);
@@ -4809,6 +4817,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     { reason: "not-found", activityFails: true },
     { reason: "forbidden", activityFails: true },
     { reason: "cli-unauthenticated", activityFails: false },
+    { reason: "cli-missing", activityFails: false },
   ] as const)(
     "handles repeated host read failures: $reason (activity fails: $activityFails)",
     ({ reason, activityFails }) =>
@@ -4853,12 +4862,16 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         let passed = false;
         let genericFailure = false;
         const activityFailures = yield* Queue.unbounded<void>();
+        const setupInstruction =
+          reason === "cli-missing"
+            ? "Install the GitHub CLI on the server."
+            : "Run `gh auth login`.";
         const readFailure = (operation: string, failure: typeof reason) =>
-          failure === "cli-unauthenticated"
+          failure === "cli-unauthenticated" || failure === "cli-missing"
             ? new PullRequestUnavailableError({
                 reason: failure,
                 provider: SourceControlProviderKind.make("github"),
-                requirement: "Run `gh auth login`.",
+                requirement: setupInstruction,
                 cause: new Error("private subprocess output"),
               })
             : new PullRequestOperationError({
@@ -4941,13 +4954,13 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           assert.deepEqual(
             stopped.map((message) => message.notification?.summary),
             [
-              reason === "cli-unauthenticated"
+              reason === "cli-unauthenticated" || reason === "cli-missing"
                 ? "#8: stopped watching, host not set up on the server"
                 : "#8: stopped watching, could not read it",
             ],
           );
-          if (reason === "cli-unauthenticated") {
-            assert.include(stopped[0]?.text, "Run `gh auth login`.");
+          if (reason === "cli-unauthenticated" || reason === "cli-missing") {
+            assert.include(stopped[0]?.text, setupInstruction);
             assert.notInclude(stopped[0]?.text, "private subprocess output");
           }
           return;
