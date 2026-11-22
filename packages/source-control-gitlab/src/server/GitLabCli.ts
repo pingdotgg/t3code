@@ -566,22 +566,32 @@ export const make = Effect.gen(function* () {
     );
 
   // glab's MR JSON names a fork's source project only by `source_project_id`.
-  const resolveSourceProjectPath = Effect.fn("GitLabCli.resolveSourceProjectPath")(function* (
+  const resolveSourceProjectPaths = Effect.fn("GitLabCli.resolveSourceProjectPaths")(function* (
     cwd: string,
-    record: NormalizedGitLabMergeRequestRecord,
+    records: ReadonlyArray<NormalizedGitLabMergeRequestRecord>,
     paths: Map<number, string | null>,
   ) {
-    const id = record.unresolvedSourceProjectId;
-    if (id === undefined) return record;
-    if (!paths.has(id)) {
-      const path = yield* execute({ cwd, args: ["api", `projects/${id}`] }).pipe(
-        Effect.flatMap((result) => decodeGitLabProjectPath(result.stdout.trim())),
-        Effect.map((project) => project.path_with_namespace),
-        Effect.orElseSucceed(() => null),
-      );
-      paths.set(id, path);
+    const ids = new Set<number>();
+    for (const record of records) {
+      const id = record.unresolvedSourceProjectId;
+      if (id !== undefined && !paths.has(id)) ids.add(id);
     }
-    return withSourceProjectPath(record, paths.get(id) ?? null);
+    yield* Effect.forEach(
+      ids,
+      (id) =>
+        execute({ cwd, args: ["api", `projects/${id}`] }).pipe(
+          Effect.flatMap((result) => decodeGitLabProjectPath(result.stdout.trim())),
+          Effect.map((project) => project.path_with_namespace),
+          Effect.orElseSucceed(() => null),
+          Effect.map((path) => void paths.set(id, path)),
+        ),
+      { concurrency: 8, discard: true },
+    );
+    return records.map((record) =>
+      record.unresolvedSourceProjectId === undefined
+        ? record
+        : withSourceProjectPath(record, paths.get(record.unresolvedSourceProjectId) ?? null),
+    );
   });
 
   return GitLabCli.of({
@@ -591,7 +601,7 @@ export const make = Effect.gen(function* () {
       let pageSize = limit;
       let page = 1;
       const items: GitLabMergeRequestSummary[] = [];
-      const sourceProjectPaths = new Map<number, string | null>();
+      const sourceProjectPaths = input.source?.owner ? new Map<number, string | null>() : null;
       while (items.length < limit) {
         const result = yield* execute({
           cwd: input.cwd,
@@ -626,9 +636,10 @@ export const make = Effect.gen(function* () {
             cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
           });
         }
-        const records = yield* Effect.forEach(decoded.success, (record) =>
-          resolveSourceProjectPath(input.cwd, record, sourceProjectPaths),
-        );
+        // Only a fork head can match a fork's merge request, so other lookups skip the API calls.
+        const records = sourceProjectPaths
+          ? yield* resolveSourceProjectPaths(input.cwd, decoded.success, sourceProjectPaths)
+          : decoded.success;
         items.push(...records.map(toSummaryWithOptionalUpdatedAt));
         // Count raw entries: the decoder drops invalid ones, which would end paging early.
         const entries = decodeJsonArray(raw);
@@ -664,8 +675,8 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return resolveSourceProjectPath(input.cwd, decoded.success, new Map()).pipe(
-                Effect.map(toSummaryWithOptionalUpdatedAt),
+              return resolveSourceProjectPaths(input.cwd, [decoded.success], new Map()).pipe(
+                Effect.map(([record]) => toSummaryWithOptionalUpdatedAt(record!)),
               );
             }),
           ),

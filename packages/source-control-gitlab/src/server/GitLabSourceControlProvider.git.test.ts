@@ -158,9 +158,18 @@ it.effect("names a fork merge request's source project from real glab list outpu
       ),
     );
 
-    const changeRequests = yield* provider.listChangeRequests({
+    const upstreamHead = yield* provider.listChangeRequests({
       cwd: "/repo",
       headSelector: branch,
+      state: "open",
+      limit: 20,
+    });
+    expect(upstreamHead[0]).not.toHaveProperty("headRepositoryNameWithOwner");
+    expect(apiCalls).toEqual([]);
+
+    const changeRequests = yield* provider.listChangeRequests({
+      cwd: "/repo",
+      headSelector: `alice:${branch}`,
       state: "open",
       limit: 20,
     });
@@ -178,10 +187,13 @@ it.effect("names a fork merge request's source project from real glab list outpu
     ]);
     expect(changeRequests[2]).not.toHaveProperty("headRepositoryNameWithOwner");
     expect(changeRequests[3]).not.toHaveProperty("headRepositoryNameWithOwner");
-    expect(apiCalls).toEqual([
-      ["api", "projects/101"],
-      ["api", "projects/102"],
-    ]);
+    expect(apiCalls).toHaveLength(2);
+    expect(apiCalls).toEqual(
+      expect.arrayContaining([
+        ["api", "projects/101"],
+        ["api", "projects/102"],
+      ]),
+    );
   }),
 );
 
