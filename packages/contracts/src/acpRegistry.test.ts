@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import {
   AcpRegistryManagedBinaryUninstallInput,
   AcpRegistryManagedBinaryUninstallResult,
+  localAcpProviderIconUrl,
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
 } from "./acpRegistry.ts";
@@ -32,6 +33,27 @@ describe("ACP Registry contracts", () => {
         "https://user@cdn.agentclientprotocol.com/registry/v1/latest/pi-acp.svg",
       ),
     ).toBeNull();
+  });
+
+  it("recognizes only a local Oh My Pi ACP command", () => {
+    expect(
+      localAcpProviderIconUrl({ source: "local", commandPath: "omp", commandArgs: ["acp"] }),
+    ).toBe("https://omp.sh/favicon.svg");
+    expect(
+      localAcpProviderIconUrl({
+        source: "local",
+        commandPath: "/opt/oh-my-pi/omp.exe",
+        commandArgs: ["acp", "--verbose"],
+      }),
+    ).toBe("https://omp.sh/favicon.svg");
+    expect(
+      localAcpProviderIconUrl({ source: "local", commandPath: "omp", commandArgs: [] }),
+    ).toBeNull();
+    expect(
+      localAcpProviderIconUrl({ source: "local", commandPath: "pi", commandArgs: ["acp"] }),
+    ).toBeNull();
+    expect(localAcpProviderIconUrl({ source: "registry", agentId: "pi-acp" })).toBeNull();
+    expect(localAcpProviderIconUrl(null)).toBeNull();
   });
 
   it("decodes managed binary uninstall payloads and rejects unsafe agent IDs", () => {

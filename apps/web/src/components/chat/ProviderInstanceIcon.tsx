@@ -2,12 +2,11 @@ import { type CSSProperties, memo } from "react";
 
 import {
   normalizeProviderAccentColor,
-  OH_MY_PI_ICON_URL,
   providerAccentForegroundColor,
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { OH_MY_PI_ICON_URL, ProviderDriverKind } from "@t3tools/contracts";
 import ompIcon from "../../assets/omp.svg";
 import {
   AnthropicIcon,

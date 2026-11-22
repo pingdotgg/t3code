@@ -160,6 +160,21 @@ describe("acpRegistrySnapshotReadiness", () => {
     ).toBeNull();
   });
 
+  it("gives a local Oh My Pi ACP command its own brand mark", () => {
+    const snapshot = (commandPath: string, commandArgs: ReadonlyArray<string>) =>
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ source: "local", commandPath, commandArgs }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: { status: "ready", agentId: "omp", version: null, distribution: "local" },
+      });
+
+    expect(snapshot("/usr/local/bin/omp", ["acp"]).iconUrl).toBe("https://omp.sh/favicon.svg");
+    expect(snapshot("C:\\tools\\omp.exe", ["acp"]).iconUrl).toBe("https://omp.sh/favicon.svg");
+    expect(snapshot("omp", []).iconUrl).toBeUndefined();
+    expect(snapshot("other", ["acp"]).iconUrl).toBeUndefined();
+  });
+
   it("treats a live empty command advertisement as an authoritative replacement", () => {
     const provider = buildCheckedAcpRegistrySnapshot({
       ...identity,
