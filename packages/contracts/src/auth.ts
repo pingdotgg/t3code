@@ -31,6 +31,7 @@ export type ServerAuthSessionMethod = typeof ServerAuthSessionMethod.Type;
 export const AuthOrchestrationReadScope = "orchestration:read" as const;
 export const AuthOrchestrationOperateScope = "orchestration:operate" as const;
 export const AuthSettingsWriteScope = "settings:write" as const;
+// Also decides where credentials go: secret providers, references, and key-bearing endpoints.
 export const AuthProvidersManageScope = "providers:manage" as const;
 export const AuthEnvironmentMaintainScope = "environment:maintain" as const;
 export const AuthPreviewOperateScope = "preview:operate" as const;
@@ -46,6 +47,7 @@ export const AuthAccessReadScope = "access:read" as const;
 export const AuthAccessWriteScope = "access:write" as const;
 export const AuthRelayReadScope = "relay:read" as const;
 export const AuthRelayWriteScope = "relay:write" as const;
+export const AuthRelayConfigureScope = "relay:configure" as const;
 export const AuthEnvironmentScope = Schema.Literals([
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
@@ -64,6 +66,7 @@ export const AuthEnvironmentScope = Schema.Literals([
   AuthAccessWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
+  AuthRelayConfigureScope,
 ]);
 export type AuthEnvironmentScope = typeof AuthEnvironmentScope.Type;
 export const AuthEnvironmentScopes = Schema.Array(AuthEnvironmentScope);
@@ -112,7 +115,10 @@ const legacyParents: Partial<Record<AuthEnvironmentScope, AuthEnvironmentScope>>
 /** Keep permission denials decodable by clients with the original scope enum. */
 export function authScopeRequiredResponse(requiredPermission: AuthEnvironmentScope) {
   return {
-    requiredScope: legacyParents[requiredPermission] ?? requiredPermission,
+    requiredScope:
+      requiredPermission === AuthRelayConfigureScope
+        ? AuthRelayWriteScope
+        : (legacyParents[requiredPermission] ?? requiredPermission),
     requiredPermission,
   };
 }
@@ -164,6 +170,11 @@ export const AuthStandardClientScopes = [
   AuthAccessReadScope,
   AuthAccessWriteScope,
   AuthRelayWriteScope,
+] as const;
+
+export const AuthAdministrativeClientScopes = [
+  ...AuthStandardClientScopes,
+  AuthRelayConfigureScope,
 ] as const;
 
 export const AuthTokenExchangeGrantType =
@@ -220,7 +231,8 @@ export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetada
 export const AuthTokenExchangeRequest = Schema.Struct({
   grant_type: Schema.Literal(AuthTokenExchangeGrantType),
   subject_token: TrimmedNonEmptyString,
-  subject_token_type: Schema.Literal(AuthEnvironmentBootstrapTokenType),
+  /** An access token renews its own session, with a DPoP proof from the key it is bound to. */
+  subject_token_type: Schema.Literals([AuthEnvironmentBootstrapTokenType, AuthAccessTokenType]),
   requested_token_type: Schema.Literal(AuthAccessTokenType),
   scope: Schema.optionalKey(TrimmedNonEmptyString),
   client_label: Schema.optionalKey(TrimmedNonEmptyString),
@@ -316,20 +328,26 @@ export const AuthPairingCredentialResult = Schema.Struct({
   credential: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
   expiresAt: Schema.DateTimeUtc,
+  purpose: Schema.optionalKey(Schema.Literal("peer-link")),
   /** Set when the code approves one agent sign-in at this level. Older servers omit it. */
   access: Schema.optionalKey(AuthMcpClientAccess),
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
-export const AuthPairingLink = Schema.Struct({
-  id: TrimmedNonEmptyString,
-  ...authScopeResponseFields,
-  subject: TrimmedNonEmptyString,
-  label: Schema.optionalKey(TrimmedNonEmptyString),
-  createdAt: Schema.DateTimeUtc,
-  expiresAt: Schema.DateTimeUtc,
-});
-export type AuthPairingLink = typeof AuthPairingLink.Type;
+const BASE64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+
+/**
+ * A short code both sides show for a T3 Connect device, read from its proof key thumbprint.
+ * The waiting device and the approver compare it so an approval lands on the device in hand.
+ */
+export function connectDeviceVerificationCode(proofKeyThumbprint: string): string {
+  let code = "";
+  for (const character of proofKeyThumbprint.slice(0, 8)) {
+    const value = Math.max(0, BASE64URL_ALPHABET.indexOf(character));
+    code += PAIRING_CODE_ALPHABET[value % PAIRING_CODE_ALPHABET.length]!;
+  }
+  return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
 
 export const AuthClientMetadata = Schema.Struct({
   label: Schema.optionalKey(TrimmedNonEmptyString),
@@ -340,6 +358,35 @@ export const AuthClientMetadata = Schema.Struct({
   browser: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
+
+/** A T3 Connect device waiting for someone on this environment to approve it. */
+export const AuthConnectDeviceRequest = Schema.Struct({
+  verificationCode: TrimmedNonEmptyString,
+  /** What the device said about itself when it first asked. Absent until it does. */
+  client: Schema.optionalKey(AuthClientMetadata),
+});
+export type AuthConnectDeviceRequest = typeof AuthConnectDeviceRequest.Type;
+
+export const AuthPairingLink = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  ...authScopeResponseFields,
+  subject: TrimmedNonEmptyString,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  createdAt: Schema.DateTimeUtc,
+  expiresAt: Schema.DateTimeUtc,
+  /** Set while a T3 Connect device waits for approval. Older servers never send it. */
+  connectDeviceRequest: Schema.optionalKey(AuthConnectDeviceRequest),
+});
+export type AuthPairingLink = typeof AuthPairingLink.Type;
+
+/** A T3 Connect device key this environment trusts to connect without asking again. */
+export const AuthConnectDevice = Schema.Struct({
+  proofKeyThumbprint: TrimmedNonEmptyString,
+  verificationCode: TrimmedNonEmptyString,
+  client: Schema.optionalKey(AuthClientMetadata),
+  approvedAt: Schema.DateTimeUtc,
+});
+export type AuthConnectDevice = typeof AuthConnectDevice.Type;
 
 export const AuthClientSession = Schema.Struct({
   sessionId: AuthSessionId,
@@ -358,6 +405,8 @@ export type AuthClientSession = typeof AuthClientSession.Type;
 export const AuthAccessSnapshot = Schema.Struct({
   pairingLinks: Schema.Array(AuthPairingLink),
   clientSessions: Schema.Array(AuthClientSession),
+  /** Older servers omit it; they have no device approval. */
+  connectDevices: Schema.optionalKey(Schema.Array(AuthConnectDevice)),
 });
 export type AuthAccessSnapshot = typeof AuthAccessSnapshot.Type;
 
@@ -442,12 +491,43 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 });
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
-export const AuthCreatePairingCredentialInput = Schema.Struct({
+export const AuthApproveConnectDeviceInput = Schema.Struct({
+  pairingLinkId: TrimmedNonEmptyString,
+});
+export type AuthApproveConnectDeviceInput = typeof AuthApproveConnectDeviceInput.Type;
+
+export const AuthApproveConnectDeviceResult = Schema.Struct({
+  approved: Schema.Boolean,
+});
+export type AuthApproveConnectDeviceResult = typeof AuthApproveConnectDeviceResult.Type;
+
+export const AuthRevokeConnectDeviceInput = Schema.Struct({
+  proofKeyThumbprint: TrimmedNonEmptyString,
+});
+export type AuthRevokeConnectDeviceInput = typeof AuthRevokeConnectDeviceInput.Type;
+
+export const AuthRevokeConnectDeviceResult = Schema.Struct({
+  revoked: Schema.Boolean,
+});
+export type AuthRevokeConnectDeviceResult = typeof AuthRevokeConnectDeviceResult.Type;
+
+const pairingCredentialFields = {
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
-  /** Binds the code to one agent sign-in at this level. The server derives the scopes from it. */
-  access: Schema.optionalKey(AuthMcpClientAccess),
-});
+};
+
+export const AuthCreatePairingCredentialInput = Schema.Union([
+  Schema.Struct({
+    ...pairingCredentialFields,
+    access: Schema.optionalKey(AuthMcpClientAccess),
+    purpose: Schema.optionalKey(Schema.Undefined),
+  }),
+  Schema.Struct({
+    ...pairingCredentialFields,
+    access: AuthMcpClientAccess,
+    purpose: Schema.Literal("peer-link"),
+  }),
+]);
 export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentialInput.Type;
 
 export const AuthSessionState = Schema.Struct({
@@ -474,6 +554,8 @@ export const AuthMcpAuthorizationServerMetadata = Schema.Struct({
   authorization_endpoint: Schema.String,
   token_endpoint: Schema.String,
   registration_endpoint: Schema.String,
+  // Older environments do not serve one.
+  revocation_endpoint: Schema.optionalKey(Schema.String),
   response_types_supported: Schema.Array(Schema.Literal("code")),
   grant_types_supported: Schema.Array(Schema.Literal("authorization_code")),
   code_challenge_methods_supported: Schema.Array(Schema.Literal("S256")),
@@ -589,6 +671,13 @@ export const AuthMcpTokenRequest = Schema.Struct({
   resource: Schema.optionalKey(Schema.String),
 }).pipe(HttpApiSchema.asFormUrlEncoded());
 export type AuthMcpTokenRequest = typeof AuthMcpTokenRequest.Type;
+
+/** RFC 7009: the holder of an access token ends its session. */
+export const AuthMcpRevokeRequest = Schema.Struct({
+  token: Schema.optionalKey(Schema.RedactedFromValue(Schema.String)),
+  token_type_hint: Schema.optionalKey(Schema.String),
+}).pipe(HttpApiSchema.asFormUrlEncoded());
+export type AuthMcpRevokeRequest = typeof AuthMcpRevokeRequest.Type;
 
 export const AuthMcpTokenResult = Schema.Struct({
   access_token: Schema.String,

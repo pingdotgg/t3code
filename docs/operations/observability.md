@@ -10,7 +10,8 @@ T3 Code has one server-side observability model:
 
 The local trace file is the persisted source of truth for normal local launches. Those launches do not
 write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`. Each managed launch starts that file
+empty, so it holds only the latest launch's output.
 
 ## Where To Find Things
 
@@ -473,6 +474,13 @@ Usually one of these is true:
 - Grafana is looking at the wrong time range or service name
 
 If the local NDJSON file is updating, local tracing is working. The problem is almost always OTLP export configuration or process startup.
+
+If metrics arrive but logs or traces have gaps, read `t3_otlp_export_attempt_failures_total` by
+`signal` and `reason` (`status_<code>`, `transport`, `encode`). The exporter drops a batch once it
+fails (transport errors and 408, 429, 500, 502, 503 and 504 after 3 retries; other statuses and
+encoding at once) and then drops that signal for 60 s, logging it only at Debug, so at the default
+log level this counter is the only record. Every retry counts, so one dropped batch reads as up to
+four.
 
 ## How To Think About Adding Tracing To Future Code
 
