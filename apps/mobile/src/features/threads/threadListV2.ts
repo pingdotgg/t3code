@@ -324,16 +324,16 @@ export function threadListV2RowAccessibilityLabel(
   },
   resolve: MessageResolver = m,
 ): string {
-  // Mirrors the row's meta line: a card shows Woke, else its status, else the time.
+  // Mirrors the row: a card shows Woke, else its status and its age; a slim row its wake or age.
   const meta =
     input.variant === "slim"
-      ? (input.snoozeWakeLabel ?? input.timeLabel)
+      ? [input.snoozeWakeLabel ?? input.timeLabel]
       : input.woke
-        ? resolve(msg("Woke", { $context: "thread came back from snooze" }))
-        : (input.statusLabel ?? input.timeLabel);
+        ? [resolve(msg("Woke", { $context: "thread came back from snooze" }))]
+        : [input.statusLabel ?? null, input.timeLabel || null];
   return [
     input.title,
-    meta,
+    ...meta,
     input.providerNameLabel,
     input.hasQueuedMessages ? resolve(msg("messages queued to send")) : null,
     input.regeneratingTitle ? resolve(msg("regenerating title")) : null,
@@ -562,13 +562,8 @@ function resolveThreadListV2ItemTimeLabel(
 ): string {
   const { thread, variant, snoozed } = item;
   if (showSnoozeWakeLabel) return "";
-  if (
-    variant === "card" &&
-    (resolveThreadListV2RowStatus(thread) !== "ready" ||
-      item.wokeAt !== null ||
-      threadHasUnseenCompletion(thread))
-  )
-    return "";
+  // Woke takes the time's place on a card; every other card keeps its age beside the title.
+  if (variant === "card" && item.wokeAt !== null) return "";
   const settledTimestamp =
     variant === "slim" && !snoozed ? resolveSettledThreadTimestamp(thread) : null;
   return relativeTime(

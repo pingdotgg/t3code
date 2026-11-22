@@ -1,6 +1,6 @@
 import { T, useGT, useMessages, Var } from "gt-react";
 import { DiffStatLabel } from "./DiffStatLabel";
-import { turnActivityClauses } from "./turnActivitySummary.logic";
+import { turnActivityClauses } from "@t3tools/client-runtime/work-log/turn-activity-summary";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";

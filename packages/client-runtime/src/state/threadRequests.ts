@@ -66,6 +66,15 @@ export interface ThreadPendingApproval {
 
 export const FULL_ACCESS_OVERRIDE_QUESTION = msg("Why am I being asked this?");
 
+/** What approving a request does, one line per kind, for the web and mobile approval cards. */
+export const APPROVAL_EFFECT = {
+  command: msg("Runs a command in the workspace"),
+  "file-change": msg("Changes files in the workspace"),
+  "file-read": msg("Reads a file in the workspace"),
+  permission: msg("Changes what the agent may do"),
+  "mcp-elicitation": msg("Gives an app access"),
+} satisfies Record<ProviderRequestKind, string>;
+
 export function fullAccessOverrideExplanation(
   override: ProviderApprovalFullAccessOverride,
   resolve: MFunctionType = mFallback,

@@ -1896,7 +1896,9 @@ function RunFoldButton({
   onToggle,
   rowSizing,
   iconColor,
+  showsDiffStat,
 }: {
+  showsDiffStat: boolean;
   entry: Extract<ThreadFeedEntry, { type: "run-fold" }>;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -1949,8 +1951,21 @@ function RunFoldButton({
           className="shrink font-t3-medium text-sm tabular-nums text-foreground-muted"
         >
           {entry.label}
+          {entry.activitySummary ? ` · ${entry.activitySummary}` : ""}
           {error ? ` · ${error}` : ""}
         </Text>
+        {showsDiffStat && entry.diffStat ? (
+          <Text
+            className="shrink-0 font-mono text-xs tabular-nums"
+            accessibilityLabel={gt("{additions} lines added, {deletions} removed", {
+              additions: entry.diffStat.additions,
+              deletions: entry.diffStat.deletions,
+            })}
+          >
+            <Text className="text-adaptive-emerald-700-300">+{entry.diffStat.additions}</Text>{" "}
+            <Text className="text-adaptive-rose-700-300">−{entry.diffStat.deletions}</Text>
+          </Text>
+        ) : null}
         <ThreadDisclosureChevron
           expanded={entry.expanded}
           collapsedDirection="right"
@@ -2095,6 +2110,8 @@ function renderFeedEntry(
             onToggle={props.onToggleTurnFold}
             rowSizing={props.workRowSizing}
             iconColor={iconSubtleColor}
+            // The checkpoint's own diffstat follows the row; item counts only stand in for it.
+            showsDiffStat={!entry.checkpointSummary}
           />
         )}
         {props.worktreeSetup && entry.id === props.setupFoldRowId ? (

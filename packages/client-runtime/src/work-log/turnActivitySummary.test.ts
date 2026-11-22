@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { WorkLogEntry } from "../../session-logic";
-import { m } from "../../i18n/messages";
+import { mFallback as m } from "gt-i18n";
 import {
   sumTurnItemDiffStat,
   summarizeTurnActivity,
   turnActivityClauses,
-} from "./turnActivitySummary.logic";
+  type TurnActivityEntry as WorkLogEntry,
+} from "./turnActivitySummary.ts";
 
 let nextId = 0;
 const entry = (fields: Partial<WorkLogEntry>): WorkLogEntry => ({

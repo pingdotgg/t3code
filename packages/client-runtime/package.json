@@ -423,6 +423,10 @@
       "types": "./src/state/threadInbox.ts",
       "default": "./src/state/threadInbox.ts"
     },
+    "./state/thread-needs-you": {
+      "types": "./src/state/threadNeedsYou.ts",
+      "default": "./src/state/threadNeedsYou.ts"
+    },
     "./state/thread-relationships": {
       "types": "./src/state/threadRelationships.ts",
       "default": "./src/state/threadRelationships.ts"
@@ -494,6 +498,10 @@
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
+    },
+    "./work-log/turn-activity-summary": {
+      "types": "./src/work-log/turnActivitySummary.ts",
+      "default": "./src/work-log/turnActivitySummary.ts"
     },
     "./work-log/tool-presentation": {
       "types": "./src/work-log/toolPresentation.ts",

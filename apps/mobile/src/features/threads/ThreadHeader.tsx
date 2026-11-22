@@ -10,6 +10,7 @@ import type { ThreadInspectorMode } from "./thread-inspector-navigation";
 import { useWorkspaceBackNavigation } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import {
   threadTerminalMenu,
+  useOpenThreadReview,
   useThreadGitMenuDefinition,
   type ThreadGitControlsProps,
 } from "./ThreadGitControls";
@@ -32,8 +33,31 @@ export function ThreadHeader(props: {
   const gitMenu = useThreadGitMenuDefinition(props.gitControls);
   const terminalMenu = threadTerminalMenu(props.gitControls, m);
   const filesVisible = props.inspectorMode === "files" && panes.auxiliaryPaneVisible;
+  const openReview = useOpenThreadReview(
+    props.gitControls.environmentId,
+    props.gitControls.threadId,
+  );
+  const gitStatus = props.gitControls.gitStatus;
+  const workingTree = gitStatus?.workingTree;
+  const changes =
+    workingTree && (workingTree.insertions > 0 || workingTree.deletions > 0)
+      ? `+${workingTree.insertions} −${workingTree.deletions}`
+      : null;
+  // Review also holds turn diffs, so the button stays after a commit; it hides only outside git.
+  const showsReview = !props.draft && gitStatus?.isRepo !== false;
   const actions: AppBarAction[] = props.hasThreadCwd
     ? [
+        ...(showsReview
+          ? [
+              {
+                accessibilityLabel: gt("Review changes"),
+                icon: "plusminus" as const,
+                ...(changes ? { subtitle: changes } : {}),
+                separateBackground: false,
+                onPress: openReview,
+              },
+            ]
+          : []),
         {
           accessibilityLabel: filesVisible ? gt("Close files") : gt("Open files"),
           icon: "folder",
@@ -49,7 +73,11 @@ export function ThreadHeader(props: {
   return (
     <AppBar
       title={props.title}
-      subtitle={props.subtitle}
+      subtitle={
+        changes && showsReview
+          ? [props.subtitle, changes].filter(Boolean).join(" · ")
+          : props.subtitle
+      }
       onBackToList={goBack}
       onCompose={props.draft ? undefined : startNewTask}
       backInSplitView={

@@ -258,9 +258,9 @@ describe("threadListV2RowAccessibilityLabel", () => {
     regeneratingTitle: false,
   } as const;
 
-  it("speaks the status or time the row shows beside its title", () => {
+  it("speaks the status and time the row shows", () => {
     expect(threadListV2RowAccessibilityLabel({ ...row, statusLabel: "Approval" })).toBe(
-      "Fix login, Approval, Codex",
+      "Fix login, Approval, 5m, Codex",
     );
     expect(threadListV2RowAccessibilityLabel(row)).toBe("Fix login, 5m, Codex");
     expect(threadListV2RowAccessibilityLabel({ ...row, woke: true, statusLabel: "Done" })).toBe(

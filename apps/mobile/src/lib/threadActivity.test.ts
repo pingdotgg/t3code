@@ -1026,6 +1026,7 @@ describe("buildThreadFeed", () => {
       type: "run-fold",
       createdAt: "2026-06-20T00:00:01.500Z",
       label: "Worked for 2s",
+      activitySummary: "Ran 1 command",
     });
 
     const expanded = deriveThreadFeedPresentation(feed, latestRun, new Set([runId]));
