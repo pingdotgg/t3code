@@ -146,6 +146,9 @@ export function RightPanelSurfaceContent(props: {
           }
           onSelectPullRequest={(reference) => {
             useRightPanelStore.getState().openPullRequest(threadRef, {
+              ...(surface.environmentId === undefined
+                ? {}
+                : { environmentId: surface.environmentId }),
               projectId: reference.projectId,
               repository: reference.repository,
               number: reference.number,
