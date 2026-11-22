@@ -15,11 +15,13 @@ import * as TestClock from "effect/testing/TestClock";
 import * as NetService from "@t3tools/shared/Net";
 import { beforeEach, expect } from "vite-plus/test";
 
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as OpenCodeRuntime from "./OpenCodeRuntime.ts";
 import * as OpenCodeServerOwner from "./OpenCodeServerOwner.ts";
 import * as OpenCodeTextGeneration from "./textGeneration.ts";
 import type { ProviderTextGeneration } from "@t3tools/provider-core/server/textGeneration";
+import { DEFAULT_VARIANT_CHOICE_ID } from "@t3tools/shared/model";
 
 const runtimeMock = {
   state: {
@@ -569,6 +571,30 @@ it.layer(layerOpenCodeTextGenerationTest)("OpenCodeTextGeneration", (it) => {
     ),
   );
 
+  it.effect(
+    "sends no variant for a custom model's Default choice and keeps a variant named default",
+    () =>
+      withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
+        Effect.gen(function* () {
+          for (const value of [DEFAULT_VARIANT_CHOICE_ID, "default"]) {
+            yield* textGeneration.generateCommitMessage({
+              ...DEFAULT_COMMIT_MESSAGE_INPUT,
+              modelSelection: {
+                ...DEFAULT_TEST_MODEL_SELECTION,
+                model: "acme/custom-chat",
+                options: [{ id: "variant", value }],
+              },
+            });
+          }
+
+          expect(runtimeMock.state.promptInputs.map((input) => input.variant)).toEqual([
+            undefined,
+            "default",
+          ]);
+        }),
+      ),
+  );
+
   it.effect("parses JSON returned as plain text output", () =>
     withOpenCodeTextGeneration(DEFAULT_OPENCODE_SETTINGS, (textGeneration) =>
       Effect.gen(function* () {
@@ -615,21 +641,28 @@ it.layer(layerOpenCodeTextGenerationExistingServerTest)(
       ),
     );
 
-    it.effect("does not create a session when the server version is unsupported", () =>
+    it.effect("does not create a session on a server version the policy rates broken", () =>
       withOpenCodeTextGeneration(EXISTING_SERVER_OPENCODE_SETTINGS, (textGeneration) =>
         Effect.gen(function* () {
-          runtimeMock.state.connectionError = new Error(
-            "OpenCode v1.14.18 is too old. Upgrade to v1.14.19 or newer.",
-          );
-
           const error = yield* textGeneration
             .generateCommitMessage(DEFAULT_COMMIT_MESSAGE_INPUT)
             .pipe(Effect.flip);
 
           expect(error).toBeInstanceOf(TextGenerationError);
-          expect(error.message).toContain("v1.14.18 is too old");
+          expect(error.message).toContain("OpenCode 1.14.19 does not work");
           expect(runtimeMock.state.sessionCreateCalls).toBe(0);
         }),
+      ).pipe(
+        Effect.updateService(ProviderHost.ProviderHost, (host) => ({
+          ...host,
+          compatibility: () =>
+            Effect.succeed({
+              status: "broken" as const,
+              message: null,
+              recommendedVersion: null,
+              recommendedRange: ">=2.0.18",
+            }),
+        })),
       ),
     );
 

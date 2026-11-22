@@ -44,7 +44,8 @@ export function providerDimensions(
 const DATED_SNAPSHOT = /-\d{8}$/u;
 
 // The bundled manifest is reviewed in this repo. Codex lists whatever its configured
-// model provider serves, so only the manifest vouches for Codex, Claude, and Antigravity.
+// model provider serves, so only the manifest vouches for Codex and Claude. Cursor, Grok,
+// and Antigravity list their vendor's catalog, which ships models before the manifest does.
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
     catalog.models.flatMap((model) =>
@@ -52,12 +53,13 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
     ),
   ),
 );
-const REGISTRY_LABEL_DRIVERS: ReadonlySet<string> = new Set(["cursor", "grok"]);
+const REGISTRY_LABEL_DRIVERS: ReadonlySet<string> = new Set(["cursor", "grok", "antigravity"]);
 
 /**
  * The vendor catalog slug that a native or routed model id names, such as
  * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside the bundled
- * manifest and the Cursor and Grok catalogs, including user-added ones, return undefined.
+ * manifest and the Cursor, Grok, and Antigravity catalogs, including user-added ones,
+ * return undefined.
  */
 export function catalogModelLabel(
   providers: ReadonlyArray<ServerProvider>,
@@ -72,7 +74,10 @@ export function catalogModelLabel(
   for (const provider of providers) {
     if (!REGISTRY_LABEL_DRIVERS.has(provider.driver)) continue;
     const match = provider.models.find(
-      (entry) => !entry.isCustom && candidates.includes(entry.slug),
+      (entry) =>
+        !entry.isCustom &&
+        (candidates.includes(entry.slug) ||
+          entry.aliases?.some((alias) => candidates.includes(alias)) === true),
     );
     if (match !== undefined) return match.slug;
   }
@@ -128,9 +133,9 @@ function callerOrigin(input: {
 }
 
 /**
- * Settings the agent chose for a handoff, read only from closed enums and
- * booleans in the tool's arguments and result. Prompts, titles, and ids are
- * never read.
+ * Settings for a handoff, recorded only as closed enums and booleans derived
+ * from the tool's arguments and result. Prompts, titles, and ids are never
+ * recorded.
  */
 export function handoffSettings(tool: string, args: unknown, result: unknown): Fields {
   const input = asFields(args);
@@ -166,8 +171,13 @@ export function handoffSettings(tool: string, args: unknown, result: unknown): F
       return defined({ delivery: stringField(output, "delivery") });
     case "t3_thread_send_attachments":
       return { delivery: "auto" };
-    case "schedule_task":
-      return { bindToCurrentThread: input.bindToCurrentThread !== false };
+    case "schedule_task": {
+      // Omitting the input lets the server decide, so read the saved task.
+      const bound = output.boundThreadId;
+      return bound === null || typeof bound === "string"
+        ? { bindToCurrentThread: bound !== null }
+        : {};
+    }
     default:
       return {};
   }

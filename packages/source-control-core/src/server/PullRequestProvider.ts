@@ -40,6 +40,7 @@ import type {
   PullRequestPreview,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
+  PullRequestVisibility,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
 import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t3tools/contracts";
@@ -75,6 +76,8 @@ export class PullRequestProviderError extends Schema.TaggedError<PullRequestProv
 export interface ProviderChangeRequestWatchFingerprint {
   readonly status: string;
   readonly remarks: string;
+  /** True when `status` changes with every check and mergeability change, so pending work needs no detail read. */
+  readonly coversDetail?: boolean;
 }
 
 export interface PullRequestProviderFailure {
@@ -95,6 +98,7 @@ export interface ProviderChangeRequest {
   readonly state: PullRequestState;
   readonly isDraft: boolean;
   readonly mergeability: PullRequestMergeability;
+  readonly rebaseRequired?: boolean | undefined;
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
@@ -105,6 +109,8 @@ export interface ProviderChangeRequest {
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
+  /** Absent where the host has no private change requests or names no visibility. */
+  readonly visibility?: PullRequestVisibility;
 }
 
 export interface ProviderChangeRequestSummary {
@@ -125,6 +131,7 @@ export interface ProviderChangeRequestSummary {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
   readonly mergeability?: PullRequestMergeability | undefined;
+  readonly rebaseRequired?: boolean | undefined;
   /** Null means no stack; absent means not requested. */
   readonly stack?: PullRequestStackMembership | null | undefined;
   readonly headSha?: string | undefined;
@@ -176,6 +183,16 @@ export interface ProviderListCursor {
   readonly resumeAfter?: string | undefined;
 }
 
+/** One search spans several repositories, so the rows seen at the boundary name theirs. */
+export interface ProviderAcrossListCursor extends Omit<ProviderListCursor, "seenAt"> {
+  readonly seenAt?: ReadonlyArray<ProviderRepositoryNumber> | undefined;
+}
+
+export interface ProviderRepositoryNumber {
+  readonly repository: string;
+  readonly number: number;
+}
+
 export interface ProviderBatchedChangeRequest extends ProviderChangeRequest {
   readonly repository: string;
 }
@@ -188,6 +205,52 @@ export interface ProviderBatchedChangeRequestPage {
    * omission rather than an empty answer, so the caller reads each on its own.
    */
   readonly unresolved?: ReadonlyArray<string>;
+}
+
+/** A check as the change request's checks name it; the host finds its log or run from the URL. */
+export interface ProviderCheckReference {
+  readonly name: string;
+  readonly url: string | null;
+}
+
+export interface ProviderCheckLog {
+  readonly name: string;
+  readonly url: string | null;
+  /** Null when the host holds no log for this check; `detail` says why. */
+  readonly log: string | null;
+  readonly truncated: boolean;
+  readonly detail: string | null;
+}
+
+export interface ProviderCheckRerun {
+  readonly name: string;
+  readonly rerun: boolean;
+  readonly detail: string | null;
+}
+
+/** The job id of a GitHub Actions check run, from its run link or its job link. */
+export function gitHubActionsJobId(url: string | null): string | null {
+  if (url === null) return null;
+  return (
+    /\/runs\/\d+\/jobs?\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
+    /^https:\/\/[^/]+\/[^/]+\/[^/]+\/runs\/(\d+)(?:[/?#]|$)/.exec(url)?.[1] ??
+    null
+  );
+}
+
+/** Keeps one minified or progress-bar line from filling the agent's context. */
+const LOG_TAIL_MAX_CHARS = 32_000;
+
+/** The last `lines` lines of a log, where a failure usually is. */
+export function tailLogLines(
+  text: string,
+  lines: number,
+): { readonly log: string; readonly truncated: boolean } {
+  const all = text.replace(/\n$/, "").split("\n");
+  const log = all.slice(-lines).join("\n");
+  return log.length > LOG_TAIL_MAX_CHARS
+    ? { log: log.slice(-LOG_TAIL_MAX_CHARS), truncated: true }
+    : { log, truncated: all.length > lines };
 }
 
 export interface ProviderChangeRequestStat {
@@ -203,6 +266,8 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly body: string;
   readonly changedFiles: number;
   readonly mergedAt: string | null;
+  readonly mergeCommitSha?: string | null;
+  readonly mergedBy?: PullRequestActor | null;
   readonly closedAt: string | null;
   readonly reviewers: ReadonlyArray<PullRequestActor>;
   readonly checks: ReadonlyArray<PullRequestCheck>;
@@ -235,6 +300,7 @@ export interface ProviderDiffSlice {
   readonly truncated: boolean;
   readonly nextCursor: string | null;
   readonly omittedFileStats?: ReadonlyArray<PullRequestOmittedFileStat>;
+  readonly withheldFilesReadable?: boolean;
 }
 
 export interface ProviderDiffFileContents {
@@ -357,7 +423,7 @@ export interface PullRequestProviderApi {
     readonly viewer: string;
     readonly limit: number;
     readonly query?: string | undefined;
-    readonly cursor?: ProviderListCursor | undefined;
+    readonly cursor?: ProviderAcrossListCursor | undefined;
     readonly filters?: PullRequestListFilters | undefined;
   }) => Effect.Effect<ProviderBatchedChangeRequestPage, PullRequestProviderError>;
 
@@ -441,6 +507,7 @@ export interface PullRequestProviderApi {
       readonly number: number;
       readonly cursor?: string | undefined;
       readonly commit?: string | undefined;
+      readonly path?: string | undefined;
     },
   ) => Effect.Effect<ProviderDiffSlice, PullRequestProviderError>;
 
@@ -498,11 +565,26 @@ export interface PullRequestProviderApi {
       readonly action: PullRequestAction;
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
+      /** Hosts that can pin a merge to a head commit do; the caller has already checked it. */
+      readonly expectedHeadSha?: string;
       readonly removeAgentCreditsOnMerge?: boolean;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     },
   ) => Effect.Effect<ProviderChangeRequestSummary | void, PullRequestProviderError>;
+
+  /** Tails of the named checks' logs. A check the host holds no log for gets a `detail`. */
+  readonly getCheckLogs?: (
+    input: ProviderRepositoryRef & {
+      readonly checks: ReadonlyArray<ProviderCheckReference>;
+      readonly tailLines: number;
+    },
+  ) => Effect.Effect<ReadonlyArray<ProviderCheckLog>, PullRequestProviderError>;
+
+  /** Re-runs the named checks' jobs. A check the host cannot re-run gets a `detail`. */
+  readonly rerunChecks?: (
+    input: ProviderRepositoryRef & { readonly checks: ReadonlyArray<ProviderCheckReference> },
+  ) => Effect.Effect<ReadonlyArray<ProviderCheckRerun>, PullRequestProviderError>;
 
   /** Requires edit capability and at least one field. */
   readonly updateChangeRequest?: (
