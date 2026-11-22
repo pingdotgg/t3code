@@ -1,7 +1,6 @@
 // A second T3 server for scenarios that need another machine: its own T3 home, the replay
 // agent, and a pairing token for Settings > Connections > Add environment.
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import type { PeerLinkCreateInput } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
 import * as Cause from "effect/Cause";
@@ -10,38 +9,12 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
-import * as Schema from "effect/Schema";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { ScenarioError } from "./shell.ts";
 import { prepareHome, SCENARIO_MACHINE_ENV, start } from "./start-app.ts";
-import { makeState, rpcClient } from "./t3.ts";
 
 export const SECOND_HOME = `${T3_HOME}-second-environment`;
-
-const decodePairing = Schema.decodeEffect(
-  Schema.fromJsonString(Schema.Struct({ credential: Schema.String })),
-);
-
-/** Enables linked environments on both servers and links the primary server to the second. */
-export const linkEnvironments = Effect.fn("scenario.linkEnvironments")(function* (
-  primaryOrigin: string,
-  secondOrigin: string,
-  options: Pick<PeerLinkCreateInput, "access" | "alternateUrls">,
-) {
-  const primary = yield* rpcClient(T3_HOME, primaryOrigin);
-  const second = yield* rpcClient(SECOND_HOME, secondOrigin);
-  for (const client of [primary, second]) {
-    yield* client["server.updateSettings"]({ patch: { linkedEnvironmentsEnabled: true } });
-  }
-  const pairing = yield* makeState(SECOND_HOME).cli(["auth", "pairing", "create", "--json"]);
-  const { credential } = yield* decodePairing(pairing.stdout);
-  yield* primary["peerLinks.link"]({
-    url: secondOrigin,
-    pairingCode: credential,
-    ...options,
-  });
-}, Effect.scoped);
 
 /** A second server on its own T3 home, running until interrupted. `--dev-url` admits the web
  * origin through CORS and registers the replay agent; `paired` gets the Add environment input. */
