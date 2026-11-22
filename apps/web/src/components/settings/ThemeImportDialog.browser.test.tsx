@@ -253,6 +253,40 @@ it("keeps the oversized replacement warning after a superseded desktop picker re
   await expect.element(chooseFiles).toBeEnabled();
 });
 
+it("waits for a desktop picker reply before allowing another selection", async () => {
+  const earlierReply = Promise.withResolvers<readonly PickedThemeFile[] | null>();
+  const laterReply = Promise.withResolvers<readonly PickedThemeFile[] | null>();
+  using _bridge = stubGlobal("desktopBridge", {
+    pickThemeFiles: vi
+      .fn()
+      .mockReturnValueOnce(earlierReply.promise)
+      .mockReturnValue(laterReply.promise),
+    getLocalEnvironmentEnabled: () => true,
+    getLocalEnvironmentBootstraps: () => [],
+  });
+  await using _screen = await render(
+    <ThemeImportDialog
+      open
+      onOpenChange={() => {}}
+      onImported={() => true}
+      onImportedMany={() => {}}
+    />,
+  );
+  const chooseFiles = page.getByRole("button", { name: "Choose files" });
+  const editor = page.getByRole("textbox", { name: "Theme JSON" });
+  await chooseFiles.click();
+  await expect.element(chooseFiles).toBeDisabled();
+
+  const earlierText = JSON.stringify(theme("Earlier"));
+  earlierReply.resolve([{ name: "Earlier.json", size: earlierText.length, text: earlierText }]);
+  await expect.element(editor).toHaveValue(earlierText);
+
+  await chooseFiles.click();
+  const laterText = JSON.stringify(theme("Later"));
+  laterReply.resolve([{ name: "Later.json", size: laterText.length, text: laterText }]);
+  await expect.element(editor).toHaveValue(laterText);
+});
+
 function themeJsonc(name: string, background: string) {
   return `{
     // VS Code themes use JSONC even with a .json extension.

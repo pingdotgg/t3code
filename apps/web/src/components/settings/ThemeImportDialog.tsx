@@ -231,6 +231,7 @@ function ThemeImportBody({
   const [fileName, setFileName] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
+  const [isPickingFiles, setIsPickingFiles] = useState(false);
   const [isDropTarget, setIsDropTarget] = useState(false);
   const [conflicts, setConflicts] = useState<ReadonlyArray<ThemeDefinition> | null>(null);
   // A new file selection supersedes a pending import even if the selection is rejected.
@@ -322,24 +323,32 @@ function ThemeImportBody({
     else void readThemeBatch(files);
   };
 
-  const openFilePicker = () => {
+  const openFilePicker = async () => {
     const bridge = window.desktopBridge;
-    if (bridge) {
-      // Opening the picker leaves pending imports active in case the user cancels.
-      const requestId = importRequestRef.current;
-      void bridge.pickThemeFiles().then((picked) => {
-        if (!isCurrentRequest(requestId) || !picked || picked.length === 0) return;
-        readThemeFiles(
-          picked.map((file) => ({
-            name: file.name,
-            size: file.size,
-            text: () => Promise.resolve(file.text),
-          })),
-        );
-      });
+    if (!bridge) {
+      fileInputRef.current?.click();
       return;
     }
-    fileInputRef.current?.click();
+    if (isPickingFiles) return;
+
+    // Opening the picker leaves pending imports active in case the user cancels.
+    const requestId = importRequestRef.current;
+    setIsPickingFiles(true);
+    const result = await settlePromise(() => bridge.pickThemeFiles());
+    setIsPickingFiles(false);
+    if (!isCurrentRequest(requestId)) return;
+    if (result._tag === "Failure") {
+      setError(gt("Could not read that file. Paste the JSON below instead."));
+      return;
+    }
+    if (!result.value) return;
+    readThemeFiles(
+      result.value.map((file) => ({
+        name: file.name,
+        size: file.size,
+        text: () => Promise.resolve(file.text),
+      })),
+    );
   };
 
   const handleFileChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -483,7 +492,12 @@ function ThemeImportBody({
           />
         );
         const chooseButton = (label = gt("Choose files")) => (
-          <Button disabled={isReading} size="sm" variant="outline" onClick={openFilePicker}>
+          <Button
+            disabled={isReading || isPickingFiles}
+            size="sm"
+            variant="outline"
+            onClick={openFilePicker}
+          >
             <DownloadIcon />
             {isReading ? gt("Reading…") : label}
           </Button>
