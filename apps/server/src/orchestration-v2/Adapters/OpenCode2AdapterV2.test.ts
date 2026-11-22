@@ -100,7 +100,9 @@ const mcpRules = [
 ];
 // OpenCode's own `browser` namespace needs its desktop app; T3's browser is preview_*.
 const browserDeny = { action: "browser", resource: "*", effect: "deny" };
-const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules, browserDeny];
+// An external server may have OpenCode Desktop attached, so its browser stays.
+const externalRules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+const t3Rules = [...externalRules, browserDeny];
 const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
@@ -351,7 +353,10 @@ const resumed = (
       [
         ...opening,
         out("session.get", { sessionID: SESSION }),
-        replyData("session.get", sessionInfo()),
+        replyData(
+          "session.get",
+          sessionInfo(options?.external === true ? { permissions: externalRules } : {}),
+        ),
         ...noOpenRequests,
         ...(options?.version === "2.2.5" || options?.version === "2.2.6"
           ? [out("rpc.call", "<any>"), reply("rpc.call", { output: null })]
@@ -3114,7 +3119,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           ...opening,
           out("session.get", { sessionID: SESSION }),
-          replyData("session.get", sessionInfo()),
+          replyData("session.get", sessionInfo({ permissions: externalRules })),
           out("permission.list", { sessionID: SESSION }),
           replyData("permission.list", [shellAsk.data]),
           out("session.form.list", { sessionID: SESSION }),
