@@ -332,10 +332,17 @@ function ProjectDetail({
   const [isSavingFavicon, setIsSavingFavicon] = useState(false);
   const savingFaviconRef = useRef(false);
   const setProjectIcon = async (input: Parameters<typeof updateAllMembers>[0]) => {
-    if (savingFaviconRef.current) return;
+    if (savingFaviconRef.current) return false;
     savingFaviconRef.current = true;
     setIsSavingFavicon(true);
-    await updateAllMembers(input, gt("Failed to update project icon"));
+    let result;
+    try {
+      result = await updateAllMembers(input, gt("Failed to update project icon"));
+    } catch (error) {
+      savingFaviconRef.current = false;
+      setIsSavingFavicon(false);
+      throw error;
+    }
     for (const member of group.memberProjects) {
       const update = typeof input === "function" ? input(member) : input;
       if (update.faviconPath === undefined || update.projectIcon) continue;
@@ -347,6 +354,7 @@ function ProjectDetail({
     }
     savingFaviconRef.current = false;
     setIsSavingFavicon(false);
+    return result._tag === "Success";
   };
 
   const hasMultipleCheckouts = group.memberProjects.length > 1;
@@ -754,7 +762,7 @@ function ProjectDetail({
             projectName={group.title}
             open
             onOpenChange={setIconPickerOpen}
-            onSelect={(icon) => void setProjectIcon({ faviconPath: null, projectIcon: icon })}
+            onSelect={(icon) => setProjectIcon({ faviconPath: null, projectIcon: icon })}
           />
         </Suspense>
       ) : null}

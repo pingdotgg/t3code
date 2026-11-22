@@ -52,15 +52,24 @@ export function ProjectIconPickerDialog({
   readonly projectName: string;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
-  readonly onSelect: (icon: ProjectIconOverride) => void;
+  /** Resolves to whether the icon was saved; the picker stays open with its draft otherwise. */
+  readonly onSelect: (icon: ProjectIconOverride) => Promise<boolean>;
 }) {
+  const [saving, setSaving] = useState(false);
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!saving) onOpenChange(nextOpen);
+      }}
+    >
       <DialogPopup className="w-full sm:w-[32rem]">
         {/* The popup mounts per open, so the draft below starts from `current` each time. */}
         <ProjectIconPickerBody
           current={current}
           projectName={projectName}
+          saving={saving}
+          onSavingChange={setSaving}
           onClose={() => onOpenChange(false)}
           onSelect={onSelect}
         />
@@ -72,13 +81,17 @@ export function ProjectIconPickerDialog({
 function ProjectIconPickerBody({
   current,
   projectName,
+  saving,
+  onSavingChange,
   onClose,
   onSelect,
 }: {
   readonly current: ProjectIconOverride | null;
   readonly projectName: string;
+  readonly saving: boolean;
+  readonly onSavingChange: (saving: boolean) => void;
   readonly onClose: () => void;
-  readonly onSelect: (icon: ProjectIconOverride) => void;
+  readonly onSelect: (icon: ProjectIconOverride) => Promise<boolean>;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -101,16 +114,24 @@ function ProjectIconPickerBody({
   const selectedColorClassName = projectIconColorClassName(color);
   const monogram = letters.normalize("NFKC").trim().toUpperCase();
   const validMonogram = isValidProjectMonogram(monogram);
-  const save = () => {
-    if (mode === "monogram" && !validMonogram) return;
-    onSelect(
-      mode === "monogram"
-        ? { kind: "monogram", text: monogram, color }
-        : mode === "lucide"
-          ? { kind: "lucide", name: iconName, color }
-          : { kind: "emoji", emoji },
-    );
-    onClose();
+  const save = async () => {
+    if (saving || (mode === "monogram" && !validMonogram)) return;
+    onSavingChange(true);
+    let saved: boolean;
+    try {
+      saved = await onSelect(
+        mode === "monogram"
+          ? { kind: "monogram", text: monogram, color }
+          : mode === "lucide"
+            ? { kind: "lucide", name: iconName, color }
+            : { kind: "emoji", emoji },
+      );
+    } catch (error) {
+      onSavingChange(false);
+      throw error;
+    }
+    onSavingChange(false);
+    if (saved) onClose();
   };
 
   return (
@@ -269,10 +290,10 @@ function ProjectIconPickerBody({
         )}
       </DialogPanel>
       <DialogFooter>
-        <Button variant="outline" onClick={onClose}>
+        <Button variant="outline" disabled={saving} onClick={onClose}>
           <T>Cancel</T>
         </Button>
-        <Button onClick={save} disabled={mode === "monogram" && !validMonogram}>
+        <Button onClick={save} disabled={saving || (mode === "monogram" && !validMonogram)}>
           <T>Save icon</T>
         </Button>
       </DialogFooter>

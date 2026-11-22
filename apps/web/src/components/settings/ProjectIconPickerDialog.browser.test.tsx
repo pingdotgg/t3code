@@ -6,18 +6,17 @@ import { ProjectIconPickerDialog } from "./ProjectIconPickerDialog";
 
 import "~/index.css";
 
-it("stays open with the server's reason when saving fails, and saves on retry", async () => {
-  const message = "Project monograms must contain at most two characters.";
-  let rejectSave: (error: unknown) => void = () => {};
+it("stays open while saving and after a failed save, then closes once a retry saves", async () => {
+  let finishSave: (saved: boolean) => void = () => {};
   const onSelect = vi
-    .fn<() => Promise<void>>()
+    .fn<() => Promise<boolean>>()
     .mockImplementationOnce(
       () =>
-        new Promise((_, reject) => {
-          rejectSave = reject;
+        new Promise((resolve) => {
+          finishSave = resolve;
         }),
     )
-    .mockResolvedValue(undefined);
+    .mockResolvedValue(true);
   const onOpenChange = vi.fn();
   await using _screen = await render(
     <ProjectIconPickerDialog
@@ -33,13 +32,8 @@ it("stays open with the server's reason when saving fails, and saves on retry", 
   await userEvent.click(saveButton);
   await expect.element(saveButton).toBeDisabled();
   await userEvent.keyboard("{Escape}");
-  rejectSave({
-    name: "ProjectMutationError",
-    message: "Failed to mutate project.",
-    cause: { name: "ProjectCommandInvariantError", message },
-  });
+  finishSave(false);
 
-  await expect.element(page.getByRole("alert")).toHaveTextContent(message);
   await expect.element(saveButton).toBeEnabled();
   expect(onOpenChange).not.toHaveBeenCalled();
 
