@@ -1,9 +1,5 @@
 /// <reference lib="dom" />
-import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect } from "e2e";
-import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
-import * as Path from "effect/Path";
 import JSZip from "jszip";
 
 import { test, WEB } from "./t3.ts";
@@ -37,19 +33,18 @@ test(
   "Two rapid right arrows advance two tabs in an Excel preview",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    const project = await t3.project("demo", { "budget.xlsx": await workbook() });
-    const archive = await JSZip.loadAsync(await workbook());
+    const budget = await workbook();
+    const archive = await JSZip.loadAsync(budget);
     const manifest = (await archive.file("xl/workbook.xml")!.async("string")).replace(
       '<sheet name="Forecast"',
       '<sheet state="hidden" name="Forecast"',
     );
     archive.file("xl/workbook.xml", manifest);
     const wraparound = await archive.generateAsync({ type: "uint8array" });
-    await Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* fs.writeFile(path.join(project, "wraparound.xlsx"), wraparound);
-    }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
+    const project = await t3.project("demo", {
+      "budget.xlsx": budget,
+      "wraparound.xlsx": wraparound,
+    });
 
     const thread = await t3.thread({ project, title: "Review budget", messages: ["Start"] });
     await t3.open(thread);
@@ -101,7 +96,7 @@ test(
     const overview = screen.getByRole("tab", "Overview");
     await overview.waitFor();
 
-    const selectedAtSecondPress = await browser.evaluate(async () => {
+    const { ok: showSucceeded, selectedAtSecondPress } = await browser.evaluate(async () => {
       const first = document.querySelector<HTMLButtonElement>(
         '[role="tablist"] [role="tab"][aria-selected="true"]',
       )!;
@@ -110,7 +105,7 @@ test(
           new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
         );
       const postMessage = Worker.prototype.postMessage;
-      return await new Promise<string | null>((resolve) => {
+      return await new Promise<{ ok: boolean; selectedAtSecondPress: string | null }>((resolve) => {
         Worker.prototype.postMessage = function (
           this: Worker,
           message: { method?: string; id?: number },
@@ -118,14 +113,18 @@ test(
         ) {
           if (message.method === "show") {
             Worker.prototype.postMessage = postMessage;
-            const onReply = (event: MessageEvent<{ id: number }>) => {
+            const onReply = (event: MessageEvent<{ id: number; ok: boolean }>) => {
               if (event.data.id !== message.id) return;
               this.removeEventListener("message", onReply);
+              if (event.data.ok !== true) {
+                resolve({ ok: false, selectedAtSecondPress: null });
+                return;
+              }
               // The worker client has queued the first layout, and React has yet to commit it.
               queueMicrotask(() => {
                 const selected = first.getAttribute("aria-selected");
                 pressRight();
-                resolve(selected);
+                resolve({ ok: true, selectedAtSecondPress: selected });
               });
             };
             this.addEventListener("message", onReply);
@@ -136,6 +135,7 @@ test(
         pressRight();
       });
     });
+    expect(showSucceeded).toBe(true);
     expect(selectedAtSecondPress).toBe("true");
     await expect(overview).toBeFocused();
     await app.screenshot("after-wrapping-to-overview");
