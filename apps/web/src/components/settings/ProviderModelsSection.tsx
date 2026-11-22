@@ -55,6 +55,10 @@ const FILTER_THRESHOLD = 8;
 const POINTER_SENSOR_OPTIONS = { activationConstraint: { distance: 4 } };
 const KEYBOARD_SENSOR_OPTIONS = { coordinateGetter: sortableKeyboardCoordinates };
 
+// Saved order only arrives via the settings push, so a drop holds its order until a push after
+// `base`, the saved order at drop time, matches it. The pre-drop snapshot cannot acknowledge it.
+type PendingOrder = { readonly order: ReadonlyArray<string>; readonly base: ReadonlyArray<string> };
+
 // Positions shift for many rows when one is starred, so only the grip reads them, not the row memo.
 const ModelPositionContext = createContext<ReadonlyMap<string, number>>(new Map());
 
@@ -199,7 +203,7 @@ export function ProviderModelsSection({
       .filter((model) => heldPlacements.get(model.slug) ?? hiddenModelSet.has(model.slug))
       .map((model) => model.slug),
   );
-  const [pendingOrder, setPendingOrder] = useState<ReadonlyArray<string> | null>(null);
+  const [pendingOrder, setPendingOrder] = useState<PendingOrder | null>(null);
   const groupWithOrder = (order: ReadonlyArray<string>) =>
     groupModelsForDisplay(listedModels, {
       favoriteModels: favoriteModelSet,
@@ -207,14 +211,13 @@ export function ProviderModelsSection({
       modelOrder: order,
     });
   const savedDisplayModels = groupWithOrder(modelOrder);
-  const pendingDisplayModels = pendingOrder === null ? null : groupWithOrder(pendingOrder);
-  const displayModels =
-    pendingDisplayModels !== null &&
-    pendingDisplayModels.some((model, index) => model !== savedDisplayModels[index])
-      ? pendingDisplayModels
-      : savedDisplayModels;
-  // Saved order only arrives via the settings push, so a dropped row holds its spot until then.
-  if (pendingOrder !== null && displayModels === savedDisplayModels) setPendingOrder(null);
+  const pendingDisplayModels = pendingOrder === null ? null : groupWithOrder(pendingOrder.order);
+  const pendingMatchesSaved =
+    pendingDisplayModels?.every((model, index) => model === savedDisplayModels[index]) ?? false;
+  if (pendingOrder !== null && pendingOrder.base !== modelOrder && pendingMatchesSaved) {
+    setPendingOrder(null);
+  }
+  const displayModels = pendingDisplayModels ?? savedDisplayModels;
   const favoriteCount = displayModels.filter((model) => favoriteModelSet.has(model.slug)).length;
   const hiddenCount = displayModels.filter(
     (model) => !model.isCustom && hiddenModelSet.has(model.slug),
@@ -357,9 +360,9 @@ export function ProviderModelsSection({
     const to = order.indexOf(String(event.over.id));
     if (from < 0 || to < 0) return;
     const next = arrayMove(order, from, to);
-    setPendingOrder(next);
+    setPendingOrder({ order: next, base: modelOrder });
     void onModelOrderChange(next).then((saved) => {
-      if (!saved) setPendingOrder((current) => (current === next ? null : current));
+      if (!saved) setPendingOrder((current) => (current?.order === next ? null : current));
     });
   };
 
