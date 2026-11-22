@@ -101,24 +101,30 @@ function loadNotificationBuffer(context: AudioContext, url: string): Promise<Aud
   return buffer;
 }
 
-/** Called from a gesture so browsers allow later background playback. */
-export function unlockNotificationAudio() {
-  const firstUnlock = audioContext === undefined;
-  audioContext ??= new AudioContext();
-  void audioContext.resume().catch(() => undefined);
-  if (!firstUnlock) return;
-  // Fetch and decode during interaction so the first alert is ready when the thread finishes.
+/** Desktop runs a context created without a gesture; browsers keep it suspended until unlocked. */
+function notificationAudioContext(): AudioContext {
+  if (audioContext) return audioContext;
+  audioContext = new AudioContext();
+  // Fetch and decode up front so the first alert is ready when the thread finishes.
   for (const url of [completionUrl, inputUrl]) {
     void loadNotificationBuffer(audioContext, url).catch(() => undefined);
   }
+  return audioContext;
+}
+
+/** Called from a gesture so browsers allow later background playback. */
+export function unlockNotificationAudio() {
+  void notificationAudioContext()
+    .resume()
+    .catch(() => undefined);
 }
 
 export async function playNotificationSound(
   kind: "completion" | "input",
   shouldPlay: () => boolean,
 ) {
-  if (!audioContext || audioContext.state !== "running") return;
-  const context = audioContext;
+  const context = notificationAudioContext();
+  if (context.state !== "running") return;
   const url = kind === "completion" ? completionUrl : inputUrl;
   try {
     const decoded = await loadNotificationBuffer(context, url);
