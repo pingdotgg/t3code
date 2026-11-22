@@ -211,14 +211,6 @@ export const Bot = Schema.Struct({
 })
 export interface Bot extends Schema.Struct.Type<typeof Bot.fields> {}
 
-/** An account on GitHub, with one or more owners, that has repositories, members and teams. */
-export const Organization = Schema.Struct({
-  __typename: Schema.Literal("Organization"),
-  /** The organization's login name. */
-  login: Schema.String
-})
-export interface Organization extends Schema.Struct.Type<typeof Organization.fields> {}
-
 /** A placeholder user for attribution of imported data on GitHub. */
 export const Mannequin = Schema.Struct({
   __typename: Schema.Literal("Mannequin"),
@@ -229,7 +221,7 @@ export interface Mannequin extends Schema.Struct.Type<typeof Mannequin.fields> {
 
 /** Types that can be assigned to reactions. */
 export const ReactorOther = Schema.Struct({
-  __typename: GraphQL.otherTypename<Shared.Typename.Reactor>()(["User", "Bot", "Organization", "Mannequin"])
+  __typename: GraphQL.otherTypename<Shared.Typename.Reactor>()(["User", "Bot", "Mannequin"])
 })
 export interface ReactorOther extends Schema.Struct.Type<typeof ReactorOther.fields> {}
 
@@ -241,7 +233,6 @@ export const ReactorConnection = Schema.Struct({
   nodes: Schema.NullOr(Schema.Array(Schema.NullOr(Schema.Union([
     ReactorsNodesUser,
     Bot,
-    Organization,
     Mannequin,
     ReactorOther
   ]))))
@@ -588,7 +579,7 @@ export const IssueDetail = GraphQL.query("IssueDetail", {
     ],
     fragments: [
       { name: "IssueRow", body: ["on Issue{number title url state stateReason createdAt updatedAt closedAt author{__typename login avatarUrl...on User{name}}}"] },
-      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
+      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Mannequin{login}}}}}"] }
     ]
   },
   variables: {
@@ -645,7 +636,7 @@ export const IssueComments = GraphQL.query("IssueComments", {
       { name: "repository", body: ["(owner:$", "owner", " name:$", "name", "){issue(number:$", "number", "){comments(last:100 before:$", "cursor", "){pageInfo{hasPreviousPage startCursor}nodes{id author{__typename login avatarUrl}body createdAt url...Reactions}}}}"] }
     ],
     fragments: [
-      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Organization{login}...on Mannequin{login}}}}}"] }
+      { name: "Reactions", body: ["on Reactable{__typename reactionGroups{content viewerHasReacted reactors(first:10){totalCount nodes{__typename...on User{login}...on Bot{login}...on Mannequin{login}}}}}"] }
     ]
   },
   variables: {
