@@ -13,6 +13,9 @@ export const PI_T3_SERVICE_TIER_COMMAND = "t3-service-tier";
 // These tools trigger file-change approvals, bypassed by Auto-accept edits.
 export const PI_FILE_CHANGE_TOOLS = ["edit", "write"] as const;
 
+// Anthropic fast mode is a top-level `speed: "fast"`, and Pi's catalog advertises no tier for it.
+export const PI_ANTHROPIC_FAST_MODE_MODEL_IDS = ["claude-opus-5-5", "claude-fable-5-2"] as const;
+
 export const PI_T3_MCP_EXTENSION_SOURCE = `\
 import { stripFrontmatter, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as NodeCrypto from "node:crypto";
@@ -30,6 +33,7 @@ const SERVICE_TIER_COMMAND = ${JSON.stringify(PI_T3_SERVICE_TIER_COMMAND)};
 const PROTOCOL = "2025-06-18";
 const READ_ONLY_TOOLS = new Set(["read", "grep", "find", "ls"]);
 const FILE_CHANGE_TOOLS = new Set(${JSON.stringify(PI_FILE_CHANGE_TOOLS)});
+const ANTHROPIC_FAST_MODE_MODEL_IDS = new Set(${JSON.stringify(PI_ANTHROPIC_FAST_MODE_MODEL_IDS)});
 
 type RuntimeMode = "approval-required" | "auto-accept-edits" | "auto" | "full-access";
 
@@ -328,13 +332,20 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
         }
       }
     }
-    const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
-    if (
-      serviceTier !== undefined &&
-      Array.isArray(tiers) &&
-      tiers.some((tier) => tier?.id === serviceTier)
-    ) {
-      replacement.service_tier = serviceTier;
+    const model = ctx.model as
+      | { id?: unknown; provider?: unknown; api?: unknown; serviceTiers?: unknown }
+      | undefined;
+    const tiers = Array.isArray(model?.serviceTiers)
+      ? model.serviceTiers
+      : model?.provider === "anthropic" &&
+          model.api === "anthropic-messages" &&
+          ANTHROPIC_FAST_MODE_MODEL_IDS.has(model.id as string)
+        ? [{ id: "fast" }]
+        : undefined;
+    if (serviceTier !== undefined && tiers?.some((tier) => tier?.id === serviceTier)) {
+      // Anthropic reads service_tier as Priority Tier; its fast mode is speed.
+      if (model?.api === "anthropic-messages" && serviceTier === "fast") replacement.speed = "fast";
+      else replacement.service_tier = serviceTier;
       changed = true;
     }
     if (changed) return replacement;

@@ -13,7 +13,12 @@ import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 type RequestHook = (
   event: { payload: unknown },
   ctx: {
-    model: { provider: string; api?: string; serviceTiers?: ReadonlyArray<{ id: string }> };
+    model: {
+      provider: string;
+      id?: string;
+      api?: string;
+      serviceTiers?: ReadonlyArray<{ id: string }>;
+    };
   },
 ) => Record<string, unknown> | undefined;
 
@@ -601,6 +606,10 @@ describe("Pi service tier", () => {
 
     await hook.setServiceTier("fast");
     assert.deepEqual(hook({ payload }, { model: opus }), { ...payload, speed: "fast" });
+    const builtInOpus = { provider: "anthropic", api: "anthropic-messages", id: "claude-opus-5-5" };
+    assert.deepEqual(hook({ payload }, { model: builtInOpus }), { ...payload, speed: "fast" });
+    const sonnet = { ...builtInOpus, id: "claude-sonnet-5-5" };
+    assert.isUndefined(hook({ payload }, { model: sonnet }));
   });
 });
 
