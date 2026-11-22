@@ -598,12 +598,13 @@ export interface ProjectionStoreV2Shape {
     readonly providerThreadId: ProviderThreadId;
     readonly ordinal: number;
   }) => Effect.Effect<number, ProjectionStoreV2Error>;
-  /** Resolve a persisted subagent row and turn item by ID, child thread, or provider thread. */
+  /** Resolve a persisted subagent row (and optional turn item) by ID, child thread, or provider thread. */
   readonly findSubagentIdentity: (input: {
     readonly threadId: ThreadId;
     readonly subagentId: NodeId;
     readonly childThreadId: ThreadId | null;
     readonly providerThreadId: ProviderThreadId | null;
+    readonly includeTurnItem?: boolean;
   }) => Effect.Effect<
     {
       readonly subagent: OrchestrationV2Subagent;
@@ -6877,6 +6878,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       const subagent = yield* decodeSubagentPayload(rows[0].payload_json).pipe(
         Effect.mapError(controlReadError(input.threadId)),
       );
+      if (input.includeTurnItem !== true) {
+        return { subagent, turnItem: null };
+      }
       const itemRows = yield* sql<{ payload_json: string }>`
         SELECT payload_json
         FROM orchestration_v2_projection_turn_items

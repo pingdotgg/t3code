@@ -114,17 +114,18 @@ function takeMatchingPendingPrompt(
   const unwrapped = text.startsWith(SUBAGENT_PROMPT_WRAPPER)
     ? text.slice(SUBAGENT_PROMPT_WRAPPER.length)
     : undefined;
-  const matchedTexts = new Set<string>();
+  let matchedText: string | undefined;
   let matchIndex = -1;
   for (let i = 0; i < pendingPrompts.length; i += 1) {
     const candidate = pendingPrompts[i]!.text;
-    if (candidate === text || (unwrapped !== undefined && candidate === unwrapped)) {
-      matchedTexts.add(candidate);
-      if (matchIndex === -1) matchIndex = i;
+    if (candidate !== text && (unwrapped === undefined || candidate !== unwrapped)) continue;
+    if (matchedText !== undefined && candidate !== matchedText) return text;
+    if (matchIndex === -1) {
+      matchedText = candidate;
+      matchIndex = i;
     }
   }
-  if (matchedTexts.size !== 1) return text;
-  return pendingPrompts.splice(matchIndex, 1)[0]!.text;
+  return matchIndex === -1 ? text : pendingPrompts.splice(matchIndex, 1)[0]!.text;
 }
 
 const NativeGoal = Schema.NullOr(
@@ -2227,6 +2228,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
     };
 
+    const refreshReusedChildRules = (child: ThreadState, call: SubagentCall) =>
+      writeRules(child, rootOf(call.state).policy).pipe(
+        Effect.timeout(REQUEST_REPLY_TIMEOUT),
+        Effect.ignore({ log: true }),
+      );
+
     const attachChild = Effect.fnUntraced(function* (call: SubagentCall, childId: string) {
       if (call.child !== undefined) return;
       const info = announced.get(childId);
@@ -2289,13 +2296,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           else yield* syncRosterAncestors(call.state);
           if (providerChanged) yield* emitProviderThread(child);
         }
-        // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
-        if (info === undefined) {
-          yield* writeRules(child, rootOf(call.state).policy).pipe(
-            Effect.timeout(REQUEST_REPLY_TIMEOUT),
-            Effect.ignore({ log: true }),
-          );
-        }
+        if (info === undefined) yield* refreshReusedChildRules(child, call);
         return;
       }
       const coldResume = info === undefined && previous?.subagent === undefined;
@@ -2398,12 +2399,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       yield* emitSubagentRow(row, child);
       yield* emitProviderThread(child);
       // Reused child sessions may retain old mode rules; refresh policy as soon as the call identifies them.
-      if (info === undefined) {
-        yield* writeRules(child, rootOf(call.state).policy).pipe(
-          Effect.timeout(REQUEST_REPLY_TIMEOUT),
-          Effect.ignore({ log: true }),
-        );
-      }
+      if (info === undefined) yield* refreshReusedChildRules(child, call);
     });
 
     const settleCall: (
@@ -3089,6 +3085,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       };
       turn.usedSubagents = true;
       state.calls.set(toolId, call);
+      return call;
     });
 
     const onTurnEvent = Effect.fnUntraced(function* (
@@ -3122,7 +3119,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         case "session.tool.input.started":
           turn.closingText = undefined;
           if (event.data.name === "question") return;
-          if (event.data.name === "subagent") return yield* startCall(state, turn, event.data.id);
+          if (event.data.name === "subagent") {
+            yield* startCall(state, turn, event.data.id);
+            return;
+          }
           turn.tools.set(event.data.id, { name: event.data.name, input: {} });
           turn.startedAt.set(event.data.id, yield* DateTime.now);
           return yield* emitTool(state, turn, event.data.id, "running");
@@ -4067,36 +4067,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                   part.state.status === "streaming"
                     ? undefined
                     : stringField(part.state.metadata, "sessionID");
-                let call = state.calls.get(part.id);
-                if (call === undefined) {
-                  yield* startCall(state, turn, part.id);
-                  call = state.calls.get(part.id);
-                }
-                if (call !== undefined) {
-                  call.prompt ||= stringField(input, "prompt") ?? "";
-                  call.title ??= stringField(input, "description") ?? null;
-                  call.agent ??= stringField(input, "agent");
-                  call.model ??= stringField(input, "model") ?? null;
-                  if (input["background"] === true) call.background = true;
-                  call.targetSessionId ??=
-                    stringField(input, "sessionID") ?? stringField(input, "session_id");
-                  if (childId !== undefined) yield* attachChild(call, childId);
-                  if (part.state.status === "completed") {
-                    if (part.state.metadata?.["status"] === "running") {
-                      if (!call.background) {
-                        call.background = true;
-                        yield* syncRosterAncestors(call.state);
-                      }
-                    } else {
-                      yield* settleCall(
-                        call,
-                        "completed",
-                        subagentOutput(textOf(part.state.content)),
-                      );
+                const call = state.calls.get(part.id) ?? (yield* startCall(state, turn, part.id));
+                call.prompt ||= stringField(input, "prompt") ?? "";
+                call.title ??= stringField(input, "description") ?? null;
+                call.agent ??= stringField(input, "agent");
+                call.model ??= stringField(input, "model") ?? null;
+                if (input["background"] === true) call.background = true;
+                call.targetSessionId ??=
+                  stringField(input, "sessionID") ?? stringField(input, "session_id");
+                if (childId !== undefined) yield* attachChild(call, childId);
+                if (part.state.status === "completed") {
+                  if (part.state.metadata?.["status"] === "running") {
+                    if (!call.background) {
+                      call.background = true;
+                      yield* syncRosterAncestors(call.state);
                     }
-                  } else if (part.state.status === "error") {
-                    yield* settleCall(call, "failed", part.state.error.message);
+                  } else {
+                    yield* settleCall(
+                      call,
+                      "completed",
+                      subagentOutput(textOf(part.state.content)),
+                    );
                   }
+                } else if (part.state.status === "error") {
+                  yield* settleCall(call, "failed", part.state.error.message);
                 }
                 continue;
               }

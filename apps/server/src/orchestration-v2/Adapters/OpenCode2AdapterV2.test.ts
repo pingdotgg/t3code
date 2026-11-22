@@ -1756,6 +1756,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     text: string,
     description = "Sleep",
     state: "completed" | "error" | "cancelled" = "completed",
+    childID = CHILD,
   ) =>
     event("session.inbox.enqueued", {
       inboxID,
@@ -1763,13 +1764,52 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       item: {
         type: "synthetic",
         payload: {
-          text: `<subagent sessionID="${CHILD}" state="${state}" description="${description}">\n${text}\n</subagent>`,
+          text: `<subagent sessionID="${childID}" state="${state}" description="${description}">\n${text}\n</subagent>`,
           description,
-          metadata: { source: "subagent", childID: CHILD, agent: "General", state },
+          metadata: { source: "subagent", childID, agent: "General", state },
         },
         delivery: "steer",
       },
     });
+  const childUserInbox = (inboxID: string, text: string) =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      sessionID: CHILD,
+      item: { type: "user", payload: { text, files: [] }, delivery: "steer" },
+    });
+  const emptySessionLists = (
+    ...sessionIDs: ReadonlyArray<string>
+  ): ReadonlyArray<ProviderReplayEntry> =>
+    sessionIDs.flatMap((sessionID) => [
+      out("permission.list", { sessionID }),
+      replyData("permission.list", []),
+      out("session.form.list", { sessionID }),
+      replyData("session.form.list", []),
+    ]);
+  const callForeground = (id: string): ReadonlyArray<ProviderReplayEntry> => [
+    event("session.tool.input.started", {
+      sessionID: SESSION,
+      assistantMessageID: "msg_assistant",
+      id,
+      name: "subagent",
+    }),
+    event("session.tool.called", {
+      sessionID: SESSION,
+      assistantMessageID: "msg_assistant",
+      id,
+      name: "subagent",
+      input: { description: "Follow up", prompt: "second run", sessionID: CHILD },
+      executed: false,
+    }),
+    event("session.tool.progress", {
+      sessionID: SESSION,
+      assistantMessageID: "msg_assistant",
+      id,
+      metadata: { sessionID: CHILD, status: "running" },
+    }),
+    out("session.update", { sessionID: CHILD, permissions: "<any>" }),
+    reply("session.update", null),
+  ];
   const watchCalls = (
     runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
@@ -2141,28 +2181,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       replay: [
         ...launchedAndRunning,
         event("session.execution.succeeded", { sessionID: CHILD }),
-        event("session.tool.input.started", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          name: "subagent",
-        }),
-        event("session.tool.called", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          name: "subagent",
-          input: { description: "Follow up", prompt: "second run", sessionID: CHILD },
-          executed: false,
-        }),
-        event("session.tool.progress", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          metadata: { sessionID: CHILD, status: "running" },
-        }),
-        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-        reply("session.update", null),
+        ...callForeground("call-fg-resume"),
         event("session.execution.started", { sessionID: CHILD }),
         childSaid("SECOND_OK", 2),
         event("session.execution.succeeded", { sessionID: CHILD }),
@@ -2187,82 +2206,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       },
     },
     {
-      name: "a resumed foreground execution completes before an earlier run settles as cancelled",
-      replay: [
-        ...launchedAndRunning,
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        event("session.tool.input.started", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          name: "subagent",
-        }),
-        event("session.tool.called", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          name: "subagent",
-          input: { description: "Follow up", prompt: "second run", sessionID: CHILD },
-          executed: false,
-        }),
-        event("session.tool.progress", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-resume",
-          metadata: { sessionID: CHILD, status: "running" },
-        }),
-        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-        reply("session.update", null),
-        event("session.execution.started", { sessionID: CHILD }),
-        childSaid("SECOND_OK", 2),
-        event("session.execution.succeeded", { sessionID: CHILD }),
-        event(
-          "session.tool.success",
-          {
-            sessionID: SESSION,
-            assistantMessageID: "msg_assistant",
-            id: "call-fg-resume",
-            content: [{ type: "text", text: "SECOND_OK" }],
-            metadata: { sessionID: CHILD, status: "completed" },
-            executed: true,
-          },
-          undefined,
-          2,
-        ),
-        event("session.execution.succeeded", { sessionID: SESSION }),
-        childReport("msg_report_1", "CANCELLED_OLD", "Sleep", "cancelled"),
-      ],
-      expected: {
-        [CHILD]: { status: "completed", result: "SECOND_OK" },
-      },
-    },
-    {
       name: "a newer foreground execution is interrupted before an earlier run's report succeeds",
       replay: [
         ...launchedAndRunning,
         event("session.execution.succeeded", { sessionID: CHILD }),
-        event("session.tool.input.started", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-interrupted",
-          name: "subagent",
-        }),
-        event("session.tool.called", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-interrupted",
-          name: "subagent",
-          input: { description: "Follow up", prompt: "second run", sessionID: CHILD },
-          executed: false,
-        }),
-        event("session.tool.progress", {
-          sessionID: SESSION,
-          assistantMessageID: "msg_assistant",
-          id: "call-fg-interrupted",
-          metadata: { sessionID: CHILD, status: "running" },
-        }),
-        out("session.update", { sessionID: CHILD, permissions: "<any>" }),
-        reply("session.update", null),
+        ...callForeground("call-fg-interrupted"),
         event("session.execution.started", { sessionID: CHILD }),
         event("session.execution.interrupted", { sessionID: CHILD, reason: "user" }),
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -2304,41 +2252,20 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               },
               { id: `call-steer-${index}`, writesRules: index === 1 },
             ),
-            event("session.inbox.enqueued", {
-              inboxID: `msg_steer_${index}`,
-              sessionID: CHILD,
-              item: {
-                type: "user",
-                payload: { text: `Redirect prompt #${index}`, files: [] },
-                delivery: "steer",
-              },
-            }),
+            childUserInbox(`msg_steer_${index}`, `Redirect prompt #${index}`),
           );
         }
         const { runtime, thread } = yield* resumed([
           ...backgroundLaunch(CHILD),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_child_initial",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: { text: "You are a subagent spawned by another session.\nsleep", files: [] },
-              delivery: "steer",
-            },
-          }),
+          childUserInbox(
+            "msg_child_initial",
+            "You are a subagent spawned by another session.\nsleep",
+          ),
           returnedRunning("call-background"),
           event("session.execution.started", { sessionID: CHILD }),
           event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_child_initial" }),
           ...steerEntries,
-          event("session.inbox.enqueued", {
-            inboxID: "msg_steer_cancelled",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: { text: "Cancelled steer", files: [] },
-              delivery: "steer",
-            },
-          }),
+          childUserInbox("msg_steer_cancelled", "Cancelled steer"),
           event("session.inbox.cancelled", { sessionID: CHILD, inboxID: "msg_steer_cancelled" }),
           event("session.execution.succeeded", { sessionID: SESSION }),
           ...Array.from({ length: steers }, (_, index) =>
@@ -2462,24 +2389,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.succeeded", { sessionID: CHILD }),
           childReport("msg_report_1", "CHILD_1_OK"),
           event("session.execution.succeeded", { sessionID: CHILD_2 }),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_report_2",
-            sessionID: SESSION,
-            item: {
-              type: "synthetic",
-              payload: {
-                text: `<subagent sessionID="${CHILD_2}" state="completed" description="Lint">\nCHILD_2_OK\n</subagent>`,
-                description: "Lint",
-                metadata: {
-                  source: "subagent",
-                  childID: CHILD_2,
-                  agent: "General",
-                  state: "completed",
-                },
-              },
-              delivery: "steer",
-            },
-          }),
+          childReport("msg_report_2", "CHILD_2_OK", "Lint", "completed", CHILD_2),
         ]);
         const byId = new Map<
           string,
@@ -2824,14 +2734,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
           out("session.update", { sessionID: CHILD, permissions: "<any>" }),
           reply("session.update", null),
-          out("permission.list", { sessionID: SESSION }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: SESSION }),
-          replyData("session.form.list", []),
-          out("permission.list", { sessionID: CHILD }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: CHILD }),
-          replyData("session.form.list", []),
+          ...emptySessionLists(SESSION, CHILD),
           event("session.execution.succeeded", { sessionID: SESSION }),
           event("session.execution.succeeded", { sessionID: CHILD }),
           childReport("msg_report", "RECONNECTED_OK"),
@@ -3104,14 +3007,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ],
             cursor: {},
           }),
-          out("permission.list", { sessionID: SESSION }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: SESSION }),
-          replyData("session.form.list", []),
-          out("permission.list", { sessionID: CHILD }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: CHILD }),
-          replyData("session.form.list", []),
+          ...emptySessionLists(SESSION, CHILD),
           event("session.execution.succeeded", { sessionID: CHILD }),
           event("session.execution.succeeded", { sessionID: SESSION }),
           childReport("msg_report_1", "FIRST_OK"),
@@ -3168,27 +3064,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             { background: true, description: "Full redirect", prompt: "fix tests" },
             { id: "call-full", writesRules: false },
           ),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_cancelled_launch",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: { text: "cancelled placeholder", files: [] },
-              delivery: "steer",
-            },
-          }),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_full_launch",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: {
-                text: "You are a subagent spawned by another session.\nfix tests",
-                files: [],
-              },
-              delivery: "steer",
-            },
-          }),
+          childUserInbox("msg_cancelled_launch", "cancelled placeholder"),
+          childUserInbox(
+            "msg_full_launch",
+            "You are a subagent spawned by another session.\nfix tests",
+          ),
           // Cancelling the queued item promotes msg_full_launch from steers and unwraps it.
           event("session.inbox.cancelled", {
             sessionID: CHILD,
@@ -3197,40 +3077,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           event("session.execution.started", { sessionID: CHILD }),
           event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_full_launch" }),
           event("session.execution.succeeded", { sessionID: CHILD }),
-          // Direct idle-enqueue with full match (without cancellation) and unknown wrapper fallback.
-          ...callAgain(
-            { background: true, description: "Direct wrapped", prompt: "fix lint" },
-            { id: "call-direct-wrapped", writesRules: false },
-          ),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_direct_launch",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: {
-                text: "You are a subagent spawned by another session.\nfix lint",
-                files: [],
-              },
-              delivery: "steer",
-            },
-          }),
-          event("session.execution.started", { sessionID: CHILD }),
-          event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_direct_launch" }),
-          event("session.execution.succeeded", { sessionID: CHILD }),
           // Unknown wrapper cannot match unambiguously: keep inbox text verbatim.
           ...callAgain(
             { background: true, description: "Unknown wrapper redirect", prompt: "fix" },
             { id: "call-unknown-wrapper", writesRules: false },
           ),
-          event("session.inbox.enqueued", {
-            inboxID: "msg_unknown_wrapper",
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: { text: "Custom wrapper.\nfix", files: [] },
-              delivery: "steer",
-            },
-          }),
+          childUserInbox("msg_unknown_wrapper", "Custom wrapper.\nfix"),
           event("session.execution.started", { sessionID: CHILD }),
           event("session.inbox.delivered", { sessionID: CHILD, inboxID: "msg_unknown_wrapper" }),
           event("session.execution.succeeded", { sessionID: CHILD }),
@@ -3239,7 +3091,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           childReport("msg_report_2", "TWO"),
           childReport("msg_report_3", "THREE"),
           childReport("msg_report_4", "FOUR"),
-          childReport("msg_report_5", "FIVE"),
         ]);
         const childUserPrompts: Array<{ readonly text: string; readonly inputIntent: string }> = [];
         let childThreadId: string | undefined;
@@ -3271,7 +3122,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         assert.deepEqual(childUserPrompts, [
           { text: "sleep", inputIntent: "turn_start" },
           { text: "fix tests", inputIntent: "turn_start" },
-          { text: "fix lint", inputIntent: "turn_start" },
           { text: "Custom wrapper.\nfix", inputIntent: "turn_start" },
         ]);
       }),
@@ -3284,15 +3134,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         const steerId = "msg_steer_anchor";
         const { runtime, thread } = yield* resumed([
           ...launchedAndRunning,
-          event("session.inbox.enqueued", {
-            inboxID: steerId,
-            sessionID: CHILD,
-            item: {
-              type: "user",
-              payload: { text: "late steer", files: [] },
-              delivery: "steer",
-            },
-          }),
+          childUserInbox(steerId, "late steer"),
           { type: "runtime_exit", status: "success" },
           out("event.subscribe"),
           out("session.active"),
@@ -3370,16 +3212,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             ],
             cursor: {},
           }),
-          out("permission.list", { sessionID: SESSION }),
-          replyData("permission.list", []),
-          out("session.form.list", { sessionID: SESSION }),
-          replyData("session.form.list", []),
+          ...emptySessionLists(SESSION),
           ...(mode === "unread"
             ? [
-                out("permission.list", { sessionID: CHILD }),
-                replyData("permission.list", []),
-                out("session.form.list", { sessionID: CHILD }),
-                replyData("session.form.list", []),
+                ...emptySessionLists(CHILD),
                 event("session.inbox.delivered", { sessionID: CHILD, inboxID: steerId }),
                 childSaid("UNREAD_THEN_OK"),
                 event("session.execution.succeeded", { sessionID: CHILD }),

@@ -655,6 +655,7 @@ export const layer: Layer.Layer<
                   subagentId: turnItem.subagentId,
                   childThreadId: turnItem.childThreadId,
                   providerThreadId: null,
+                  includeTurnItem: true,
                 });
                 if (existing !== null) {
                   turnItem = {

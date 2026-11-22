@@ -1490,14 +1490,10 @@ export const layer: Layer.Layer<
             yield* Ref.set(openRunOwnedSubagents, emptyOpenRunOwnedSubagentProjection());
             return;
           }
-          const trackedThreadIds = [
-            input.run.threadId,
-            ...[
-              ...open.subagents.values(),
-              ...open.nodes.values(),
-              ...open.childTurnItems.values(),
-            ].map((record) => record.threadId),
-          ];
+          const trackedThreadIds = new Set<ThreadId>([input.run.threadId]);
+          for (const record of open.subagents.values()) trackedThreadIds.add(record.threadId);
+          for (const record of open.nodes.values()) trackedThreadIds.add(record.threadId);
+          for (const record of open.childTurnItems.values()) trackedThreadIds.add(record.threadId);
           const maxConflictPasses = 4;
           let conflictedSubagents = 0;
           let conflictedToolCalls = 0;
@@ -1511,29 +1507,32 @@ export const layer: Layer.Layer<
                 subagentItemId === undefined ? undefined : stored.turnItems.get(subagentItemId);
               const subagentItem =
                 rawSubagentItem?.type === "subagent" ? rawSubagentItem : undefined;
-              const batchChildTurnItems = new Map(
-                [...stored.turnItems].filter(
-                  ([id, item]) =>
-                    open.childTurnItems.has(id) &&
-                    id !== subagentItem?.id &&
-                    (item.threadId === subagent.childThreadId ||
-                      (item.type === "subagent" && item.subagentId === subagent.id)) &&
-                    !(
-                      item.type === "subagent" &&
-                      item.subagentId !== subagent.id &&
-                      open.subagents.has(item.subagentId)
-                    ),
-                ),
-              );
-              const batchNodes = new Map(
-                [...stored.nodes].filter(
-                  ([id, node]) =>
-                    id === subagent.id ||
-                    (subagent.childThreadId !== null &&
-                      node.threadId === subagent.childThreadId &&
-                      !open.subagents.has(id)),
-                ),
-              );
+              const batchChildTurnItems = new Map<TurnItemId, OrchestrationV2TurnItem>();
+              for (const [id, item] of stored.turnItems) {
+                if (!open.childTurnItems.has(id) || id === subagentItem?.id) continue;
+                if (item.type === "subagent") {
+                  if (
+                    item.subagentId === subagent.id ||
+                    (item.threadId === subagent.childThreadId &&
+                      !open.subagents.has(item.subagentId))
+                  ) {
+                    batchChildTurnItems.set(id, item);
+                  }
+                } else if (item.threadId === subagent.childThreadId) {
+                  batchChildTurnItems.set(id, item);
+                }
+              }
+              const batchNodes = new Map<NodeId, OrchestrationV2ExecutionNode>();
+              for (const [id, node] of stored.nodes) {
+                if (
+                  id === subagent.id ||
+                  (subagent.childThreadId !== null &&
+                    node.threadId === subagent.childThreadId &&
+                    !open.subagents.has(id))
+                ) {
+                  batchNodes.set(id, node);
+                }
+              }
               const events = yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open: {

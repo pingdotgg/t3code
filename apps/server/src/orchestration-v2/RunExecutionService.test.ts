@@ -3636,48 +3636,42 @@ it.effect.each([
   // A Stop that already settled the subagent keeps its result.
   { ended: false, stopped: true },
   // An already-committed subagent completion survives an ingestion failure on a live root run.
-  { ended: false, rootLive: true, settledStatus: "completed" as const },
+  { ended: false, scenario: "settled" as const },
   // Moving child C to another run keeps nested subagent G owned by this run for lost-work cleanup.
-  { ended: true, rootLive: true, handedOffWithNested: true },
+  { ended: true, scenario: "handed-off-with-nested" as const },
   // Losing the runtime while both C and nested G are open isolates G from C's batch while keeping C's own child work.
-  { ended: true, rootLive: true, nestedOpen: true },
+  { ended: true, scenario: "nested-open" as const },
   // A legacy subagent claimed by a newer run under the same ID is not failed by the older run's cascade.
-  { ended: false, rootLive: true, claimedByOtherRun: true },
+  { ended: false, scenario: "claimed" as const },
   // Even if only the shared node has been claimed by a newer run, the older run skips the subagent.
-  { ended: false, rootLive: true, nodeClaimedByOtherRun: true },
+  { ended: false, scenario: "node-claimed" as const },
   // If the shared node is claimed between reload and conditional write, expectedNodes rejects the write.
-  { ended: false, rootLive: true, nodeClaimedBeforeWrite: true },
+  { ended: false, scenario: "node-claimed-before-write" as const },
   // If only the shared subagent turn item is claimed before write, expectedTurnItems rejects and retry skips the subagent.
-  { ended: false, rootLive: true, itemClaimedBeforeWrite: true },
+  { ended: false, scenario: "item-claimed-before-write" as const },
   // If the node completes before write while the subagent stays running, cleanup reloads and settles without rewriting the node.
-  { ended: true, rootLive: true, nodeCompletedBeforeWrite: true },
+  { ended: true, scenario: "node-completed-before-write" as const },
   // If a child command item completes before write, expectedTurnItems rejects the stale write and retry preserves the completed item.
-  { ended: true, rootLive: true, childItemCompletedBeforeWrite: true },
+  { ended: true, scenario: "child-item-completed-before-write" as const },
 ] as const)(
   "ends a subagent that outlived its root when the provider stream fails (%o)",
-  ({
-    ended,
-    raisedByT3,
-    stopped,
-    rootLive,
-    settledStatus,
-    handedOffWithNested,
-    nestedOpen,
-    claimedByOtherRun,
-    nodeClaimedByOtherRun,
-    nodeClaimedBeforeWrite,
-    itemClaimedBeforeWrite,
-    nodeCompletedBeforeWrite,
-    childItemCompletedBeforeWrite,
-  }) =>
+  ({ ended, raisedByT3, stopped, scenario }) =>
     Effect.gen(function* () {
       const providerInstanceId = ProviderInstanceId.make("codex");
+      const otherRunId = RunId.make("run:other-owner");
       const grandchildId = NodeId.make("node:stream-error-outlived-subagent:grandchild");
       const grandchildThreadId = ThreadId.make("thread:stream-error-outlived-subagent:grandchild");
       const grandchildItemId = TurnItemId.make(
         "turn-item:stream-error-outlived-subagent:grandchild",
       );
       const childWorkNodeId = NodeId.make("node:stream-error-outlived-subagent:child-work");
+      const rootLive = scenario !== undefined;
+      const tracksBeforeWrite =
+        scenario === "nested-open" ||
+        scenario === "node-claimed-before-write" ||
+        scenario === "item-claimed-before-write" ||
+        scenario === "node-completed-before-write" ||
+        scenario === "child-item-completed-before-write";
       let writeAttempts = 0;
       const batchWriteIds: Array<{
         readonly subagentId: NodeId;
@@ -3704,25 +3698,15 @@ it.effect.each([
             driver,
             status: "running",
           });
+          const baseNode = makeRunOwnedSubagentNodeFixture({ ids, status: "running" });
           const events: Array<ProviderAdapter.ProviderAdapterV2Event> = [
             { type: "subagent.updated", driver, subagent: baseSubagent },
             { type: "turn_item.updated", driver, turnItem: baseTurnItem },
           ];
-          if (
-            claimedByOtherRun === true ||
-            nodeClaimedByOtherRun === true ||
-            nodeClaimedBeforeWrite === true ||
-            itemClaimedBeforeWrite === true ||
-            nodeCompletedBeforeWrite === true ||
-            childItemCompletedBeforeWrite === true
-          ) {
-            events.push({
-              type: "node.updated",
-              driver,
-              node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
-            });
+          if (scenario !== undefined && scenario !== "settled") {
+            events.push({ type: "node.updated", driver, node: baseNode });
           }
-          if (childItemCompletedBeforeWrite === true) {
+          if (scenario === "child-item-completed-before-write" || scenario === "nested-open") {
             events.push({
               type: "turn_item.updated",
               driver,
@@ -3733,39 +3717,23 @@ it.effect.each([
               }),
             });
           }
-          if (handedOffWithNested === true || nestedOpen === true) {
-            events.push(
-              {
-                type: "node.updated",
-                driver,
-                node: makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+          if (scenario === "nested-open") {
+            events.push({
+              type: "node.updated",
+              driver,
+              node: {
+                ...baseNode,
+                id: childWorkNodeId,
+                threadId: ids.childThreadId,
+                runId: null,
+                kind: "root_turn",
+                parentNodeId: baseSubagent.id,
+                rootNodeId: childWorkNodeId,
               },
-              ...(nestedOpen === true
-                ? ([
-                    {
-                      type: "node.updated",
-                      driver,
-                      node: {
-                        ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
-                        id: childWorkNodeId,
-                        threadId: ids.childThreadId,
-                        runId: null,
-                        kind: "root_turn",
-                        parentNodeId: baseSubagent.id,
-                        rootNodeId: childWorkNodeId,
-                      },
-                    },
-                    {
-                      type: "turn_item.updated",
-                      driver,
-                      turnItem: makeLinkedChildTurnItemFixture({
-                        ids,
-                        driver,
-                        type: "command_execution",
-                      }),
-                    },
-                  ] as const)
-                : []),
+            });
+          }
+          if (scenario === "handed-off-with-nested" || scenario === "nested-open") {
+            events.push(
               {
                 type: "subagent.updated",
                 driver,
@@ -3782,7 +3750,7 @@ it.effect.each([
                 type: "node.updated",
                 driver,
                 node: {
-                  ...makeRunOwnedSubagentNodeFixture({ ids, status: "running" }),
+                  ...baseNode,
                   id: grandchildId,
                   threadId: ids.childThreadId,
                   runId: null,
@@ -3803,20 +3771,16 @@ it.effect.each([
                   childThreadId: grandchildThreadId,
                 },
               },
-              ...(handedOffWithNested === true
-                ? ([
-                    {
-                      type: "subagent.updated",
-                      driver,
-                      subagent: { ...baseSubagent, runId: RunId.make("run:other-owner") },
-                    },
-                  ] as const)
-                : []),
             );
+            if (scenario === "handed-off-with-nested") {
+              events.push({
+                type: "subagent.updated",
+                driver,
+                subagent: { ...baseSubagent, runId: otherRunId },
+              });
+            }
           }
-          if (rootLive !== true) {
-            events.push(rootTerminalEvent(ids, "completed"));
-          }
+          if (!rootLive) events.push(rootTerminalEvent(ids, "completed"));
           return Stream.fromIterable(events).pipe(
             Stream.concat(
               Stream.fail(
@@ -3832,11 +3796,7 @@ it.effect.each([
             ),
           );
         },
-        ...(nodeClaimedBeforeWrite === true ||
-        itemClaimedBeforeWrite === true ||
-        nodeCompletedBeforeWrite === true ||
-        childItemCompletedBeforeWrite === true ||
-        nestedOpen === true
+        ...(tracksBeforeWrite
           ? {
               beforeSubagentWrite: (payload, stored) =>
                 Effect.sync(() => {
@@ -3853,30 +3813,29 @@ it.effect.each([
                     expectedTurnItemIds: (payload.expectedTurnItems ?? []).map((item) => item.id),
                   });
                   if (writeAttempts > 1) return;
-                  if (nodeClaimedBeforeWrite === true) {
+                  if (
+                    scenario === "node-claimed-before-write" ||
+                    scenario === "node-completed-before-write"
+                  ) {
                     const node = stored.nodes.get(payload.expected.id);
                     if (node !== undefined) {
-                      stored.nodes.set(node.id, { ...node, runId: RunId.make("run:other-owner") });
+                      stored.nodes.set(
+                        node.id,
+                        scenario === "node-claimed-before-write"
+                          ? { ...node, runId: otherRunId }
+                          : { ...node, status: "completed" },
+                      );
                     }
                   }
-                  if (itemClaimedBeforeWrite === true) {
+                  if (scenario === "item-claimed-before-write") {
                     const subagentItem = [...stored.turnItems.values()].find(
                       (item) => item.type === "subagent" && item.subagentId === payload.expected.id,
                     );
                     if (subagentItem !== undefined) {
-                      stored.turnItems.set(subagentItem.id, {
-                        ...subagentItem,
-                        runId: RunId.make("run:other-owner"),
-                      });
+                      stored.turnItems.set(subagentItem.id, { ...subagentItem, runId: otherRunId });
                     }
                   }
-                  if (nodeCompletedBeforeWrite === true) {
-                    const node = stored.nodes.get(payload.expected.id);
-                    if (node !== undefined) {
-                      stored.nodes.set(node.id, { ...node, status: "completed" });
-                    }
-                  }
-                  if (childItemCompletedBeforeWrite === true) {
+                  if (scenario === "child-item-completed-before-write") {
                     const childItem = [...stored.turnItems.values()].find(
                       (item) => item.type === "command_execution",
                     );
@@ -3892,27 +3851,25 @@ it.effect.each([
             }
           : {}),
         ...(stopped === true ||
-        settledStatus !== undefined ||
-        claimedByOtherRun === true ||
-        nodeClaimedByOtherRun === true
+        scenario === "settled" ||
+        scenario === "claimed" ||
+        scenario === "node-claimed"
           ? {
               settleStored: (work) => {
-                if (claimedByOtherRun === true) {
-                  const otherRunId = RunId.make("run:other-owner");
+                if (scenario === "claimed") {
                   return {
                     subagents: work.subagents.map((row) => ({ ...row, runId: otherRunId })),
                     nodes: work.nodes.map((row) => ({ ...row, runId: otherRunId })),
                     turnItems: work.turnItems.map((row) => ({ ...row, runId: otherRunId })),
                   };
                 }
-                if (nodeClaimedByOtherRun === true) {
-                  const otherRunId = RunId.make("run:other-owner");
+                if (scenario === "node-claimed") {
                   return {
                     ...work,
                     nodes: work.nodes.map((row) => ({ ...row, runId: otherRunId })),
                   };
                 }
-                const status = settledStatus ?? "interrupted";
+                const status = scenario === "settled" ? ("completed" as const) : "interrupted";
                 return {
                   ...work,
                   subagents: work.subagents.map((row) => ({ ...row, status })),
@@ -3922,49 +3879,46 @@ it.effect.each([
             }
           : {}),
       });
-      const detailedIds =
-        handedOffWithNested === true ||
-        nestedOpen === true ||
-        nodeCompletedBeforeWrite === true ||
-        childItemCompletedBeforeWrite === true;
+      const expectedByScenario: Partial<
+        Record<NonNullable<typeof scenario>, ReadonlyArray<string>>
+      > = {
+        "handed-off-with-nested": [
+          "run.updated:failed",
+          `subagent.updated:failed:${grandchildId}`,
+          `node.updated:failed:${grandchildId}`,
+          `turn-item.updated:failed:${grandchildItemId}`,
+        ],
+        "nested-open": [
+          "run.updated:failed",
+          `subagent.updated:failed:${ids.subagentNodeId}`,
+          `node.updated:failed:${ids.subagentNodeId}`,
+          `turn-item.updated:failed:${ids.itemId}`,
+          `node.updated:failed:${childWorkNodeId}`,
+          `turn-item.updated:failed:${ids.childItemId}`,
+          `subagent.updated:failed:${grandchildId}`,
+          `node.updated:failed:${grandchildId}`,
+          `turn-item.updated:failed:${grandchildItemId}`,
+        ],
+        "node-completed-before-write": [
+          "run.updated:failed",
+          `subagent.updated:failed:${ids.subagentNodeId}`,
+          `turn-item.updated:failed:${ids.itemId}`,
+        ],
+        "child-item-completed-before-write": [
+          "run.updated:failed",
+          `subagent.updated:failed:${ids.subagentNodeId}`,
+          `node.updated:failed:${ids.subagentNodeId}`,
+          `turn-item.updated:failed:${ids.itemId}`,
+        ],
+      };
+      const detailedIds = scenario !== undefined && expectedByScenario[scenario] !== undefined;
       const expected =
-        handedOffWithNested === true
-          ? [
-              "run.updated:failed",
-              `subagent.updated:failed:${grandchildId}`,
-              `node.updated:failed:${grandchildId}`,
-              `turn-item.updated:failed:${grandchildItemId}`,
-            ]
-          : nestedOpen === true
-            ? [
-                "run.updated:failed",
-                `subagent.updated:failed:${ids.subagentNodeId}`,
-                `node.updated:failed:${ids.subagentNodeId}`,
-                `turn-item.updated:failed:${ids.itemId}`,
-                `node.updated:failed:${childWorkNodeId}`,
-                `turn-item.updated:failed:${ids.childItemId}`,
-                `subagent.updated:failed:${grandchildId}`,
-                `node.updated:failed:${grandchildId}`,
-                `turn-item.updated:failed:${grandchildItemId}`,
-              ]
-            : nodeCompletedBeforeWrite === true
-              ? [
-                  "run.updated:failed",
-                  `subagent.updated:failed:${ids.subagentNodeId}`,
-                  `turn-item.updated:failed:${ids.itemId}`,
-                ]
-              : childItemCompletedBeforeWrite === true
-                ? [
-                    "run.updated:failed",
-                    `subagent.updated:failed:${ids.subagentNodeId}`,
-                    `node.updated:failed:${ids.subagentNodeId}`,
-                    `turn-item.updated:failed:${ids.itemId}`,
-                  ]
-                : rootLive === true
-                  ? ["run.updated:failed"]
-                  : ended
-                    ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
-                    : ["run.updated:waiting"];
+        (scenario === undefined ? undefined : expectedByScenario[scenario]) ??
+        (rootLive
+          ? ["run.updated:failed"]
+          : ended
+            ? ["run.updated:waiting", "subagent.updated:failed", "turn-item.updated:failed"]
+            : ["run.updated:waiting"]);
       assert.deepEqual(
         finalEvents.flatMap((event) => {
           if (event.type === "run.updated") return [`${event.type}:${event.payload.status}`];
@@ -3976,11 +3930,8 @@ it.effect.each([
             ];
           }
           if (
-            (detailedIds ||
-              claimedByOtherRun === true ||
-              nodeClaimedByOtherRun === true ||
-              nodeClaimedBeforeWrite === true ||
-              itemClaimedBeforeWrite === true) &&
+            rootLive &&
+            scenario !== "settled" &&
             event.type === "node.updated" &&
             event.payload.id !== ids.rootNodeId
           ) {
@@ -3989,7 +3940,7 @@ it.effect.each([
           if (
             event.type === "turn-item.updated" &&
             (event.payload.type === "subagent" ||
-              ((nestedOpen === true || childItemCompletedBeforeWrite === true) &&
+              ((scenario === "nested-open" || scenario === "child-item-completed-before-write") &&
                 event.payload.type === "command_execution"))
           ) {
             return [
@@ -4002,7 +3953,7 @@ it.effect.each([
         }),
         expected,
       );
-      if (nestedOpen === true) {
+      if (scenario === "nested-open") {
         assert.deepEqual(batchWriteIds, [
           {
             subagentId: ids.subagentNodeId,
@@ -4020,16 +3971,16 @@ it.effect.each([
           },
         ]);
       }
-      if (nodeClaimedBeforeWrite === true || itemClaimedBeforeWrite === true) {
+      if (scenario === "node-claimed-before-write" || scenario === "item-claimed-before-write") {
         assert.equal(writeAttempts, 1);
         assert.equal(stored.subagents.get(ids.subagentNodeId)?.status, "running");
         assert.equal(stored.nodes.get(ids.subagentNodeId)?.status, "running");
         assert.equal(stored.turnItems.get(ids.itemId)?.status, "running");
-        if (itemClaimedBeforeWrite === true) {
-          assert.equal(stored.turnItems.get(ids.itemId)?.runId, RunId.make("run:other-owner"));
+        if (scenario === "item-claimed-before-write") {
+          assert.equal(stored.turnItems.get(ids.itemId)?.runId, otherRunId);
         }
       }
-      if (nodeCompletedBeforeWrite === true) {
+      if (scenario === "node-completed-before-write") {
         assert.equal(writeAttempts, 2);
         assert.deepEqual(batchWriteIds[1]?.nodeIds, []);
         assert.deepEqual(batchWriteIds[1]?.expectedNodeIds, [ids.subagentNodeId]);
@@ -4037,7 +3988,7 @@ it.effect.each([
         assert.equal(stored.subagents.get(ids.subagentNodeId)?.status, "failed");
         assert.equal(stored.turnItems.get(ids.itemId)?.status, "failed");
       }
-      if (childItemCompletedBeforeWrite === true) {
+      if (scenario === "child-item-completed-before-write") {
         assert.equal(writeAttempts, 2);
         assert.deepEqual(batchWriteIds[0]?.expectedTurnItemIds, [ids.itemId, ids.childItemId]);
         assert.deepEqual(batchWriteIds[1]?.turnItemIds, [ids.itemId]);
@@ -5867,319 +5818,45 @@ it.effect(
   "terminalizes a cold-resumed legacy subagent in place when the resuming run stream fails",
   () => {
     return Effect.gen(function* () {
-      const now = yield* DateTime.now;
-      const t2 = DateTime.add(now, { seconds: 5 });
-      const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
-      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-
-      const opencodeDriver = ProviderDriverKind.make("opencode");
-      const instanceId = ProviderInstanceId.make("opencode");
-      const key = "legacy-stream-fail";
-      const ids = backgroundScenarioIds(key);
-      const appThread: OrchestrationV2AppThread = {
-        ...rootAppThread(ids.threadId),
-        createdBy: "user",
-        creationSource: "web",
-        projectId: yield* idAllocator.allocate.project({ fixtureName: key }),
-        title: "Legacy stream fail parent",
-        providerInstanceId: instanceId,
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        branchPullRequest: null,
-        activeOrderKey: null,
-        activeProviderThreadId: ids.providerThreadId,
-        lineage: {
-          parentThreadId: null,
-          relationshipToParent: null,
-          rootThreadId: ids.threadId,
-        },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        lastVisitedAt: null,
-        deletedAt: null,
-      };
-      const providerSessionId = ProviderSessionId.make(`session:${key}`);
-      const childSessionId = "ses_legacy_stream_fail_child";
-      const legacyNodeId = idAllocator.derive.nodeFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: "call-legacy-launch",
+      const scenario = yield* seedLegacySubagentScenario({
+        key: "legacy-stream-fail",
+        parentTitle: "Legacy stream fail parent",
+        childSessionId: "ses_legacy_stream_fail_child",
+        legacyCallId: "call-legacy-launch",
       });
-      const legacyItemId = idAllocator.derive.turnItemFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: "call-legacy-launch",
+      const resumeTriple = scenario.makeSessionTriple({
+        runId: scenario.ids.runId,
+        parentNodeId: scenario.ids.rootNodeId,
+        providerTurnId: scenario.ids.rootProviderTurnId,
+        title: "Resume after upgrade",
+        prompt: "keep going",
+        model: null,
+        at: scenario.t2,
       });
-      const sessionNodeId = idAllocator.derive.nodeFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: childSessionId,
-      });
-      const sessionItemId = idAllocator.derive.turnItemFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: childSessionId,
-      });
-      const childThreadId = idAllocator.derive.subagentThread({
-        driver: opencodeDriver,
-        nativeThreadId: childSessionId,
-        providerInstanceId: instanceId,
-      });
-      const childProviderThreadId = idAllocator.derive.providerThread({
-        driver: opencodeDriver,
-        nativeThreadId: childSessionId,
-        providerInstanceId: instanceId,
-      });
-      const run1Id = RunId.make(`run:${key}:1`);
-      const parentTurn1Id = ProviderTurnId.make(`provider-turn:${key}:1`);
-      const parentRoot1 = NodeId.make(`node:${key}:root:1`);
-
-      yield* eventSink.write({
-        events: [
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "thread.created",
-            threadId: ids.threadId,
-            occurredAt: now,
-            payload: appThread,
-          },
-        ],
-      });
-
-      // Seed the pre-upgrade call-keyed subagent row from run 1.
-      const seedIngest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-        ingestor.ingestNormalized({
-          providerSessionId,
-          providerInstanceId: instanceId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          event,
-        });
-      const childThread = (title: string): OrchestrationV2AppThread => ({
-        ...appThread,
-        id: childThreadId,
-        title,
-        activeProviderThreadId: childProviderThreadId,
-        lineage: {
-          parentThreadId: ids.threadId,
-          relationshipToParent: "subagent",
-          rootThreadId: ids.threadId,
-        },
-        createdBy: "agent",
-        creationSource: "provider",
-      });
-      yield* seedIngest({
-        type: "app_thread.created",
-        driver: opencodeDriver,
-        appThread: childThread("Sleep"),
-      });
-      yield* seedIngest({
-        type: "node.updated",
-        driver: opencodeDriver,
-        node: {
-          id: legacyNodeId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          parentNodeId: parentRoot1,
-          rootNodeId: parentRoot1,
-          kind: "subagent",
-          status: "completed",
-          countsForRun: false,
-          providerThreadId: childProviderThreadId,
-          providerTurnId: parentTurn1Id,
-          nativeItemRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-launch",
-            strength: "strong",
-          },
-          runtimeRequestId: null,
-          checkpointScopeId: null,
-          startedAt: now,
-          completedAt: now,
-        },
-      });
-      yield* seedIngest({
-        type: "subagent.updated",
-        driver: opencodeDriver,
-        subagent: {
-          id: legacyNodeId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          parentNodeId: parentRoot1,
-          origin: "provider_native",
-          createdBy: "agent",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          providerThreadId: childProviderThreadId,
-          childThreadId,
-          nativeTaskRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-launch",
-            strength: "strong",
-          },
-          prompt: "sleep 180",
-          title: "Sleep",
-          model: "opencode/big-pickle",
-          status: "completed",
-          result: "FIRST_OK",
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-        },
-      });
-      yield* seedIngest({
-        type: "turn_item.updated",
-        driver: opencodeDriver,
-        turnItem: {
-          id: legacyItemId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          nodeId: legacyNodeId,
-          providerThreadId: ids.providerThreadId,
-          providerTurnId: parentTurn1Id,
-          nativeItemRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-launch",
-            strength: "strong",
-          },
-          parentItemId: null,
-          ordinal: 1,
-          status: "completed",
-          title: "Sleep",
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "subagent",
-          subagentId: legacyNodeId,
-          origin: "provider_native",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          childThreadId,
-          prompt: "sleep 180",
-          result: "FIRST_OK",
-        },
-      });
-
-      const rootTurn: OrchestrationV2ProviderTurn = {
-        id: ids.rootProviderTurnId,
-        providerThreadId: ids.providerThreadId,
-        nodeId: ids.rootNodeId,
-        runAttemptId: ids.attemptId,
-        nativeTurnRef: null,
-        ordinal: 2,
-        status: "running",
-        startedAt: t2,
-        completedAt: null,
-      };
       const streamEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
-        {
-          type: "provider_turn.updated",
-          driver: opencodeDriver,
-          providerTurn: rootTurn,
-        },
+        scenario.rootTurnEvent,
         {
           type: "app_thread.created",
-          driver: opencodeDriver,
+          driver: scenario.driver,
           createOnly: true,
-          appThread: childThread("Resume after upgrade"),
+          appThread: scenario.childThread("Resume after upgrade"),
         },
-        {
-          type: "node.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          node: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            rootNodeId: ids.rootNodeId,
-            kind: "subagent",
-            status: "running",
-            countsForRun: false,
-            providerThreadId: childProviderThreadId,
-            providerTurnId: ids.rootProviderTurnId,
-            nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: t2,
-            completedAt: null,
-          },
-        },
-        {
-          type: "subagent.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          subagent: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            origin: "provider_native",
-            createdBy: "agent",
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            providerThreadId: childProviderThreadId,
-            childThreadId,
-            nativeTaskRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            prompt: "keep going",
-            title: "Resume after upgrade",
-            model: null,
-            status: "running",
-            result: null,
-            startedAt: t2,
-            completedAt: null,
-            updatedAt: t2,
-          },
-        },
-        {
-          type: "turn_item.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          turnItem: {
-            id: sessionItemId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            nodeId: sessionNodeId,
-            providerThreadId: ids.providerThreadId,
-            providerTurnId: ids.rootProviderTurnId,
-            nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            parentItemId: null,
-            ordinal: 1,
-            status: "running",
-            title: "Resume after upgrade",
-            startedAt: t2,
-            completedAt: null,
-            updatedAt: t2,
-            type: "subagent",
-            subagentId: sessionNodeId,
-            origin: "provider_native",
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            childThreadId,
-            prompt: "keep going",
-            result: null,
-          },
-        },
+        ...resumeTriple,
         {
           type: "provider_thread.updated",
-          driver: opencodeDriver,
+          driver: scenario.driver,
           preserveIdentity: true,
           providerThread: {
-            id: childProviderThreadId,
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            providerSessionId,
-            appThreadId: childThreadId,
-            ownerNodeId: sessionNodeId,
+            id: scenario.childProviderThreadId,
+            driver: scenario.driver,
+            providerInstanceId: scenario.instanceId,
+            providerSessionId: scenario.providerSessionId,
+            appThreadId: scenario.childThreadId,
+            ownerNodeId: scenario.sessionNodeId,
             nativeThreadRef: {
-              driver: opencodeDriver,
-              nativeId: childSessionId,
+              driver: scenario.driver,
+              nativeId: scenario.childSessionId,
               strength: "strong",
             },
             nativeConversationHeadRef: null,
@@ -6188,243 +5865,39 @@ it.effect(
             lastRunOrdinal: null,
             handoffIds: [],
             forkedFrom: null,
-            createdAt: t2,
-            updatedAt: t2,
+            createdAt: scenario.t2,
+            updatedAt: scenario.t2,
           },
         },
         // Simulate a repeated running update (still model: null) re-emitting an unchanged node.
-        {
-          type: "node.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          node: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            rootNodeId: ids.rootNodeId,
-            kind: "subagent",
-            status: "running",
-            countsForRun: false,
-            providerThreadId: childProviderThreadId,
-            providerTurnId: ids.rootProviderTurnId,
-            nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: t2,
-            completedAt: null,
-          },
-        },
-        {
-          type: "subagent.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          subagent: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            origin: "provider_native",
-            createdBy: "agent",
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            providerThreadId: childProviderThreadId,
-            childThreadId,
-            nativeTaskRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            prompt: "keep going",
-            title: "Resume after upgrade",
-            model: null,
-            status: "running",
-            result: null,
-            startedAt: t2,
-            completedAt: null,
-            updatedAt: t2,
-          },
-        },
+        resumeTriple[0],
+        resumeTriple[1],
       ];
-
-      const ingestionDone = yield* Deferred.make<void>();
-      const parentProviderThread: OrchestrationV2ProviderThread = {
-        id: ids.providerThreadId,
-        driver: opencodeDriver,
-        providerInstanceId: instanceId,
-        providerSessionId,
-        appThreadId: ids.threadId,
-        ownerNodeId: null,
-        nativeThreadRef: { driver: opencodeDriver, nativeId: "ses_parent", strength: "strong" },
-        nativeConversationHeadRef: null,
-        status: "active",
-        firstRunOrdinal: 1,
-        lastRunOrdinal: 2,
-        handoffIds: [],
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: t2,
-      };
-      const checkpointScopeId = CheckpointScopeId.make(`checkpoint-scope:${key}`);
-      const parentRun: OrchestrationV2Run = {
-        id: ids.runId,
-        threadId: ids.threadId,
-        ordinal: 2,
-        providerInstanceId: instanceId,
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        providerThreadId: ids.providerThreadId,
-        userMessageId: MessageId.make(`message:${key}:user`),
-        rootNodeId: ids.rootNodeId,
-        activeAttemptId: ids.attemptId,
-        status: "running",
-        requestedAt: t2,
-        startedAt: t2,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
-      const parentRootNode: OrchestrationV2ExecutionNode = {
-        id: ids.rootNodeId,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        parentNodeId: null,
-        rootNodeId: ids.rootNodeId,
-        kind: "root_turn",
-        status: "running",
-        countsForRun: true,
-        providerThreadId: ids.providerThreadId,
-        providerTurnId: ids.rootProviderTurnId,
-        nativeItemRef: null,
-        runtimeRequestId: null,
-        checkpointScopeId,
-        startedAt: t2,
-        completedAt: null,
-      };
-      const parentAttempt: OrchestrationV2RunAttempt = {
-        id: ids.attemptId,
-        runId: ids.runId,
-        attemptOrdinal: 1,
-        rootNodeId: ids.rootNodeId,
-        providerInstanceId: instanceId,
-        providerThreadId: ids.providerThreadId,
-        providerTurnId: ids.rootProviderTurnId,
-        reason: "initial",
-        status: "running",
-        startedAt: t2,
-        completedAt: null,
-      };
-      const parentCheckpointScope: OrchestrationV2CheckpointScope = {
-        id: checkpointScopeId,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        nodeId: ids.rootNodeId,
-        parentScopeId: null,
-        providerThreadId: ids.providerThreadId,
-        ordinalWithinParent: 1,
-        advancesAppRunCount: true,
-        cwd: process.cwd(),
-        kind: "root_run",
-        createdAt: t2,
-      };
-      yield* eventSink.write({
-        events: [
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "run.created",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            occurredAt: t2,
-            payload: parentRun,
-          },
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "run-attempt.created",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            occurredAt: t2,
-            payload: parentAttempt,
-          },
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "node.updated",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            nodeId: ids.rootNodeId,
-            occurredAt: t2,
-            payload: parentRootNode,
-          },
-        ],
-      });
-
-      yield* runExecution.startRootRun({
-        commandId: CommandId.make(`command:${key}`),
-        appThread,
-        providerSessionId,
-        session: {
-          events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            events: Stream.fromIterable(streamEvents).pipe(
-              Stream.concat(
-                Stream.fail(
-                  new ProviderAdapter.ProviderAdapterEventStreamError({
-                    driver: opencodeDriver,
-                    providerSessionId,
-                    cause: "provider stream disconnected",
-                  }),
-                ),
-              ),
+      const ingestionDone = yield* scenario.startRun2(
+        "Resume the legacy subagent",
+        Stream.fromIterable(streamEvents).pipe(
+          Stream.concat(
+            Stream.fail(
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver: scenario.driver,
+                providerSessionId: scenario.providerSessionId,
+                cause: "provider stream disconnected",
+              }),
             ),
-            close: Deferred.succeed(ingestionDone, undefined),
-          }),
-          startTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        providerThread: parentProviderThread,
-        run: parentRun,
-        attempt: parentAttempt,
-        attemptId: ids.attemptId,
-        rootNode: parentRootNode,
-        checkpointScope: parentCheckpointScope,
-        providerTurnOrdinal: 2,
-        message: {
-          messageId: MessageId.make(`message:${key}:user`),
-          text: "Resume the legacy subagent",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
-          },
-        },
-      });
+          ),
+        ),
+      );
       yield* Deferred.await(ingestionDone);
 
-      const parentProjection = yield* projectionStore.getThreadProjection(ids.threadId);
-      const childProjection = yield* projectionStore.getThreadProjection(childThreadId);
-      const subagentNodes = parentProjection.nodes.filter((node) => node.kind === "subagent");
-      const subagentItems = parentProjection.turnItems.filter((item) => item.type === "subagent");
-      assert.lengthOf(subagentNodes, 1);
-      assert.lengthOf(parentProjection.subagents, 1);
-      assert.lengthOf(subagentItems, 1);
-      assert.equal(subagentNodes[0]?.id, legacyNodeId);
-      assert.equal(subagentNodes[0]?.status, "failed");
-      assert.equal(parentProjection.subagents[0]?.id, legacyNodeId);
-      assert.equal(parentProjection.subagents[0]?.status, "failed");
-      assert.equal(parentProjection.subagents[0]?.title, "Sleep");
-      assert.equal(parentProjection.subagents[0]?.prompt, "sleep 180");
-      assert.equal(parentProjection.subagents[0]?.model, "opencode/big-pickle");
-      assert.equal(subagentItems[0]?.id, legacyItemId);
-      assert.equal(subagentItems[0]?.nodeId, legacyNodeId);
-      assert.equal(subagentItems[0]?.subagentId, legacyNodeId);
-      assert.equal(subagentItems[0]?.status, "failed");
-      assert.equal(subagentItems[0]?.title, "Sleep");
-      assert.equal(subagentItems[0]?.prompt, "sleep 180");
-      assert.equal(childProjection.providerThreads[0]?.ownerNodeId, legacyNodeId);
+      const parentProjection = yield* projectionStore.getThreadProjection(scenario.ids.threadId);
+      const childProjection = yield* projectionStore.getThreadProjection(scenario.childThreadId);
+      assertLegacySubagentProjection(parentProjection, {
+        nodeId: scenario.legacyNodeId,
+        itemId: scenario.legacyItemId,
+        status: "failed",
+        checkMetadata: true,
+      });
+      assert.equal(childProjection.providerThreads[0]?.ownerNodeId, scenario.legacyNodeId);
     }).pipe(Effect.provide(makeLegacySubagentLayer()));
   },
 );
@@ -6433,537 +5906,54 @@ it.effect(
   "detaches a cold-resumed legacy subagent from the owning run on cross-run handoff",
   () => {
     return Effect.gen(function* () {
-      const key = "legacy-cross-run-handoff";
-      const ids = backgroundScenarioIds(key);
-      const now = yield* DateTime.now;
-      const t2 = DateTime.add(now, { seconds: 5 });
-      const t3 = DateTime.add(now, { seconds: 10 });
-      const opencodeDriver = ProviderDriverKind.make("opencode");
-      const instanceId = ProviderInstanceId.make("opencode");
-      const eventSink = yield* EventSink.EventSinkV2;
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
-      const idAllocator = yield* IdAllocator.IdAllocatorV2;
-      const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
-
-      const appThread: OrchestrationV2AppThread = {
-        ...rootAppThread(ids.threadId),
-        createdBy: "user",
-        creationSource: "web",
-        projectId: yield* idAllocator.allocate.project({ fixtureName: key }),
-        title: "Legacy handoff parent",
-        providerInstanceId: instanceId,
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        branchPullRequest: null,
-        activeOrderKey: null,
-        activeProviderThreadId: ids.providerThreadId,
-        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: ids.threadId },
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: now,
-        archivedAt: null,
-        settledOverride: null,
-        settledAt: null,
-        lastVisitedAt: null,
-        deletedAt: null,
-      };
-      yield* eventSink.write({
-        events: [
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "thread.created",
-            threadId: ids.threadId,
-            occurredAt: now,
-            payload: appThread,
-          },
-        ],
+      const scenario = yield* seedLegacySubagentScenario({
+        key: "legacy-cross-run-handoff",
+        parentTitle: "Legacy handoff parent",
+        childSessionId: "ses_legacy_handoff_child",
+        legacyCallId: "call-legacy-handoff",
       });
-
-      const providerSessionId = yield* idAllocator.allocate.providerSession({
-        providerInstanceId: instanceId,
-        threadId: ids.threadId,
-      });
-      const childSessionId = "ses_legacy_handoff_child";
-      const legacyNodeId = idAllocator.derive.nodeFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: "call-legacy-handoff",
-      });
-      const legacyItemId = idAllocator.derive.turnItemFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: "call-legacy-handoff",
-      });
-      const sessionNodeId = idAllocator.derive.nodeFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: childSessionId,
-      });
-      const sessionItemId = idAllocator.derive.turnItemFromProviderItem({
-        driver: opencodeDriver,
-        nativeItemId: childSessionId,
-      });
-      const childThreadId = idAllocator.derive.subagentThread({
-        driver: opencodeDriver,
-        nativeThreadId: childSessionId,
-        providerInstanceId: instanceId,
-      });
-      const childProviderThreadId = idAllocator.derive.providerThread({
-        driver: opencodeDriver,
-        nativeThreadId: childSessionId,
-        providerInstanceId: instanceId,
-      });
-      const run1Id = RunId.make(`run:${key}:1`);
-      const run3Id = RunId.make(`run:${key}:3`);
-      const parentTurn1Id = ProviderTurnId.make(`provider-turn:${key}:1`);
-      const parentRoot1 = NodeId.make(`node:${key}:root:1`);
-      const childThread: OrchestrationV2AppThread = {
-        ...appThread,
-        id: childThreadId,
-        title: "Sleep",
-        activeProviderThreadId: childProviderThreadId,
-        lineage: {
-          parentThreadId: ids.threadId,
-          relationshipToParent: "subagent",
-          rootThreadId: ids.threadId,
-        },
-        createdBy: "agent",
-        creationSource: "provider",
-      };
-      const seedIngest = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-        ingestor.ingestNormalized({
-          providerSessionId,
-          providerInstanceId: instanceId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          event,
-        });
-      yield* seedIngest({
-        type: "app_thread.created",
-        driver: opencodeDriver,
-        appThread: childThread,
-      });
-      yield* seedIngest({
-        type: "node.updated",
-        driver: opencodeDriver,
-        node: {
-          id: legacyNodeId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          parentNodeId: parentRoot1,
-          rootNodeId: parentRoot1,
-          kind: "subagent",
-          status: "completed",
-          countsForRun: false,
-          providerThreadId: childProviderThreadId,
-          providerTurnId: parentTurn1Id,
-          nativeItemRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-handoff",
-            strength: "strong",
-          },
-          runtimeRequestId: null,
-          checkpointScopeId: null,
-          startedAt: now,
-          completedAt: now,
-        },
-      });
-      yield* seedIngest({
-        type: "subagent.updated",
-        driver: opencodeDriver,
-        subagent: {
-          id: legacyNodeId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          parentNodeId: parentRoot1,
-          origin: "provider_native",
-          createdBy: "agent",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          providerThreadId: childProviderThreadId,
-          childThreadId,
-          nativeTaskRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-handoff",
-            strength: "strong",
-          },
-          prompt: "sleep 180",
-          title: "Sleep",
-          model: "opencode/big-pickle",
-          status: "completed",
-          result: "FIRST_OK",
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-        },
-      });
-      yield* seedIngest({
-        type: "turn_item.updated",
-        driver: opencodeDriver,
-        turnItem: {
-          id: legacyItemId,
-          threadId: ids.threadId,
-          runId: run1Id,
-          nodeId: legacyNodeId,
-          providerThreadId: ids.providerThreadId,
-          providerTurnId: parentTurn1Id,
-          nativeItemRef: {
-            driver: opencodeDriver,
-            nativeId: "call-legacy-handoff",
-            strength: "strong",
-          },
-          parentItemId: null,
-          ordinal: 1,
-          status: "completed",
-          title: "Sleep",
-          startedAt: now,
-          completedAt: now,
-          updatedAt: now,
-          type: "subagent",
-          subagentId: legacyNodeId,
-          origin: "provider_native",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          childThreadId,
-          prompt: "sleep 180",
-          result: "FIRST_OK",
-        },
-      });
-
+      const t3 = DateTime.add(scenario.now, { seconds: 10 });
+      const run3Id = RunId.make(`run:${scenario.key}:3`);
       const eventQueue = yield* Queue.unbounded<ProviderAdapter.ProviderAdapterV2Event>();
-      const ingestionDone = yield* Deferred.make<void>();
-      const parentProviderThread: OrchestrationV2ProviderThread = {
-        id: ids.providerThreadId,
-        driver: opencodeDriver,
-        providerInstanceId: instanceId,
-        providerSessionId,
-        appThreadId: ids.threadId,
-        ownerNodeId: null,
-        nativeThreadRef: { driver: opencodeDriver, nativeId: "ses_parent", strength: "strong" },
-        nativeConversationHeadRef: null,
-        status: "active",
-        firstRunOrdinal: 1,
-        lastRunOrdinal: 2,
-        handoffIds: [],
-        forkedFrom: null,
-        createdAt: now,
-        updatedAt: t2,
-      };
-      const checkpointScopeId = CheckpointScopeId.make(`checkpoint-scope:${key}`);
-      const parentRun: OrchestrationV2Run = {
-        id: ids.runId,
-        threadId: ids.threadId,
-        ordinal: 2,
-        providerInstanceId: instanceId,
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        providerThreadId: ids.providerThreadId,
-        userMessageId: MessageId.make(`message:${key}:user`),
-        rootNodeId: ids.rootNodeId,
-        activeAttemptId: ids.attemptId,
-        status: "running",
-        requestedAt: t2,
-        startedAt: t2,
-        completedAt: null,
-        checkpointId: null,
-        contextHandoffId: null,
-      };
-      const parentRootNode: OrchestrationV2ExecutionNode = {
-        id: ids.rootNodeId,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        parentNodeId: null,
-        rootNodeId: ids.rootNodeId,
-        kind: "root_turn",
-        status: "running",
-        countsForRun: true,
-        providerThreadId: ids.providerThreadId,
-        providerTurnId: ids.rootProviderTurnId,
-        nativeItemRef: null,
-        runtimeRequestId: null,
-        checkpointScopeId,
-        startedAt: t2,
-        completedAt: null,
-      };
-      const parentAttempt: OrchestrationV2RunAttempt = {
-        id: ids.attemptId,
-        runId: ids.runId,
-        attemptOrdinal: 1,
-        rootNodeId: ids.rootNodeId,
-        providerInstanceId: instanceId,
-        providerThreadId: ids.providerThreadId,
-        providerTurnId: ids.rootProviderTurnId,
-        reason: "initial",
-        status: "running",
-        startedAt: t2,
-        completedAt: null,
-      };
-      const parentCheckpointScope: OrchestrationV2CheckpointScope = {
-        id: checkpointScopeId,
-        threadId: ids.threadId,
-        runId: ids.runId,
-        nodeId: ids.rootNodeId,
-        parentScopeId: null,
-        providerThreadId: ids.providerThreadId,
-        ordinalWithinParent: 1,
-        advancesAppRunCount: true,
-        cwd: process.cwd(),
-        kind: "root_run",
-        createdAt: t2,
-      };
-      yield* eventSink.write({
-        events: [
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "run.created",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            occurredAt: t2,
-            payload: parentRun,
-          },
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "run-attempt.created",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            occurredAt: t2,
-            payload: parentAttempt,
-          },
-          {
-            id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
-            type: "node.updated",
-            threadId: ids.threadId,
-            runId: ids.runId,
-            nodeId: ids.rootNodeId,
-            occurredAt: t2,
-            payload: parentRootNode,
-          },
-        ],
-      });
+      const ingestionDone = yield* scenario.startRun2(
+        "Resume then hand off",
+        Stream.fromQueue(eventQueue),
+      );
 
-      yield* runExecution.startRootRun({
-        commandId: CommandId.make(`command:${key}`),
-        appThread,
-        providerSessionId,
-        session: {
-          events: Stream.empty,
-          subscribeEvents: Effect.succeed({
-            events: Stream.fromQueue(eventQueue),
-            close: Deferred.succeed(ingestionDone, undefined),
-          }),
-          startTurn: () => Effect.void,
-          interruptTurn: () => Effect.void,
-        } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
-        providerThread: parentProviderThread,
-        run: parentRun,
-        attempt: parentAttempt,
-        attemptId: ids.attemptId,
-        rootNode: parentRootNode,
-        checkpointScope: parentCheckpointScope,
-        providerTurnOrdinal: 2,
-        message: {
-          messageId: MessageId.make(`message:${key}:user`),
-          text: "Resume then hand off",
-          attachments: [],
-          createdBy: "user",
-          creationSource: "web",
-        },
-        modelSelection: { instanceId, model: "opencode/big-pickle" },
-        runtimePolicy: {
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          cwd: process.cwd(),
-          approvalPolicy: "never",
-          sandboxPolicy: {
-            type: "readOnly",
-            access: { type: "fullAccess" },
-            networkAccess: false,
-          },
-        },
+      const [run3ClaimNode, run3ClaimSubagent, run3ClaimTurnItem] = scenario.makeSessionTriple({
+        runId: run3Id,
+        parentNodeId: NodeId.make(`node:${scenario.key}:root:3`),
+        providerTurnId: ProviderTurnId.make(`provider-turn:${scenario.key}:3`),
+        title: "Redirect in run 3",
+        prompt: "redirect in run 3",
+        model: "opencode/big-pickle",
+        at: t3,
       });
-
-      const run3ClaimSubagent = {
-        type: "subagent.updated",
-        driver: opencodeDriver,
-        preserveIdentity: true,
-        subagent: {
-          id: sessionNodeId,
-          threadId: ids.threadId,
-          runId: run3Id,
-          parentNodeId: NodeId.make(`node:${key}:root:3`),
-          origin: "provider_native",
-          createdBy: "agent",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          providerThreadId: childProviderThreadId,
-          childThreadId,
-          nativeTaskRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-          prompt: "redirect in run 3",
-          title: "Redirect in run 3",
-          model: "opencode/big-pickle",
-          status: "running",
-          result: null,
-          startedAt: t3,
-          completedAt: null,
-          updatedAt: t3,
-        },
-      } as const;
-      const run3ClaimNode = {
-        type: "node.updated",
-        driver: opencodeDriver,
-        preserveIdentity: true,
-        node: {
-          id: sessionNodeId,
-          threadId: ids.threadId,
-          runId: run3Id,
-          parentNodeId: NodeId.make(`node:${key}:root:3`),
-          rootNodeId: NodeId.make(`node:${key}:root:3`),
-          kind: "subagent",
-          status: "running",
-          countsForRun: false,
-          providerThreadId: childProviderThreadId,
-          providerTurnId: ProviderTurnId.make(`provider-turn:${key}:3`),
-          nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-          runtimeRequestId: null,
-          checkpointScopeId: null,
-          startedAt: t3,
-          completedAt: null,
-        },
-      } as const;
-      const run3ClaimTurnItem = {
-        type: "turn_item.updated",
-        driver: opencodeDriver,
-        preserveIdentity: true,
-        turnItem: {
-          id: sessionItemId,
-          threadId: ids.threadId,
-          runId: run3Id,
-          nodeId: sessionNodeId,
-          providerThreadId: ids.providerThreadId,
-          providerTurnId: ProviderTurnId.make(`provider-turn:${key}:3`),
-          nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-          parentItemId: null,
-          ordinal: 1,
-          status: "running",
-          title: "Redirect in run 3",
-          startedAt: t3,
-          completedAt: null,
-          updatedAt: t3,
-          type: "subagent",
-          subagentId: sessionNodeId,
-          origin: "provider_native",
-          driver: opencodeDriver,
-          providerInstanceId: instanceId,
-          childThreadId,
-          prompt: "redirect in run 3",
-          result: null,
-        },
-      } as const;
 
       yield* Queue.offerAll(eventQueue, [
-        {
-          type: "provider_turn.updated",
-          driver: opencodeDriver,
-          providerTurn: {
-            id: ids.rootProviderTurnId,
-            providerThreadId: ids.providerThreadId,
-            nodeId: ids.rootNodeId,
-            runAttemptId: ids.attemptId,
-            nativeTurnRef: null,
-            ordinal: 2,
-            status: "running",
-            startedAt: t2,
-            completedAt: null,
-          },
-        },
+        scenario.rootTurnEvent,
         {
           type: "app_thread.created",
-          driver: opencodeDriver,
+          driver: scenario.driver,
           createOnly: true,
-          appThread: childThread,
+          appThread: scenario.childThread("Sleep"),
         },
-        {
-          type: "node.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          node: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            rootNodeId: ids.rootNodeId,
-            kind: "subagent",
-            status: "running",
-            countsForRun: false,
-            providerThreadId: childProviderThreadId,
-            providerTurnId: ids.rootProviderTurnId,
-            nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            runtimeRequestId: null,
-            checkpointScopeId: null,
-            startedAt: t2,
-            completedAt: null,
-          },
-        },
-        {
-          type: "subagent.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          subagent: {
-            id: sessionNodeId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            parentNodeId: ids.rootNodeId,
-            origin: "provider_native",
-            createdBy: "agent",
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            providerThreadId: childProviderThreadId,
-            childThreadId,
-            nativeTaskRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            prompt: "keep going",
-            title: "Resume after upgrade",
-            model: null,
-            status: "running",
-            result: null,
-            startedAt: t2,
-            completedAt: null,
-            updatedAt: t2,
-          },
-        },
-        {
-          type: "turn_item.updated",
-          driver: opencodeDriver,
-          preserveIdentity: true,
-          turnItem: {
-            id: sessionItemId,
-            threadId: ids.threadId,
-            runId: ids.runId,
-            nodeId: sessionNodeId,
-            providerThreadId: ids.providerThreadId,
-            providerTurnId: ids.rootProviderTurnId,
-            nativeItemRef: { driver: opencodeDriver, nativeId: childSessionId, strength: "strong" },
-            parentItemId: null,
-            ordinal: 1,
-            status: "running",
-            title: "Resume after upgrade",
-            startedAt: t2,
-            completedAt: null,
-            updatedAt: t2,
-            type: "subagent",
-            subagentId: sessionNodeId,
-            origin: "provider_native",
-            driver: opencodeDriver,
-            providerInstanceId: instanceId,
-            childThreadId,
-            prompt: "keep going",
-            result: null,
-          },
-        },
+        ...scenario.makeSessionTriple({
+          runId: scenario.ids.runId,
+          parentNodeId: scenario.ids.rootNodeId,
+          providerTurnId: scenario.ids.rootProviderTurnId,
+          title: "Resume after upgrade",
+          prompt: "keep going",
+          model: null,
+          at: scenario.t2,
+        }),
         {
           type: "turn.terminal",
-          driver: opencodeDriver,
-          providerThreadId: ids.providerThreadId,
-          providerTurnId: ids.rootProviderTurnId,
+          driver: scenario.driver,
+          providerThreadId: scenario.ids.providerThreadId,
+          providerTurnId: scenario.ids.rootProviderTurnId,
           runOrdinal: 2,
           status: "completed",
           failure: null,
@@ -6975,48 +5965,517 @@ it.effect(
 
       // Run 2 detaches the legacy row and closes its subscription while Run 3 ingests the claim.
       yield* Deferred.await(ingestionDone);
-      const beforeRun3Projection = yield* projectionStore.getThreadProjection(ids.threadId);
-      const beforeRun3Nodes = beforeRun3Projection.nodes.filter((node) => node.kind === "subagent");
-      const beforeRun3Items = beforeRun3Projection.turnItems.filter(
-        (item) => item.type === "subagent",
+      assertLegacySubagentProjection(
+        yield* projectionStore.getThreadProjection(scenario.ids.threadId),
+        {
+          nodeId: scenario.legacyNodeId,
+          itemId: scenario.legacyItemId,
+          runId: scenario.ids.runId,
+          status: "running",
+        },
       );
-      assert.lengthOf(beforeRun3Nodes, 1);
-      assert.lengthOf(beforeRun3Projection.subagents, 1);
-      assert.lengthOf(beforeRun3Items, 1);
-      assert.equal(beforeRun3Nodes[0]?.id, legacyNodeId);
-      assert.equal(beforeRun3Nodes[0]?.runId, ids.runId);
-      assert.equal(beforeRun3Nodes[0]?.status, "running");
-      assert.equal(beforeRun3Projection.subagents[0]?.id, legacyNodeId);
-      assert.equal(beforeRun3Projection.subagents[0]?.runId, ids.runId);
-      assert.equal(beforeRun3Projection.subagents[0]?.status, "running");
-      assert.equal(beforeRun3Items[0]?.id, legacyItemId);
-      assert.equal(beforeRun3Items[0]?.runId, ids.runId);
-      assert.equal(beforeRun3Items[0]?.status, "running");
 
       for (const claimEvent of [run3ClaimNode, run3ClaimSubagent, run3ClaimTurnItem]) {
         yield* ingestor.ingestNormalized({
-          providerSessionId,
-          providerInstanceId: instanceId,
-          threadId: ids.threadId,
+          providerSessionId: scenario.providerSessionId,
+          providerInstanceId: scenario.instanceId,
+          threadId: scenario.ids.threadId,
           runId: run3Id,
           event: claimEvent,
         });
       }
-      const parentProjection = yield* projectionStore.getThreadProjection(ids.threadId);
-      const subagentNodes = parentProjection.nodes.filter((node) => node.kind === "subagent");
-      const subagentItems = parentProjection.turnItems.filter((item) => item.type === "subagent");
-      assert.lengthOf(subagentNodes, 1);
-      assert.lengthOf(parentProjection.subagents, 1);
-      assert.lengthOf(subagentItems, 1);
-      assert.equal(subagentNodes[0]?.id, legacyNodeId);
-      assert.equal(subagentNodes[0]?.runId, run3Id);
-      assert.equal(subagentNodes[0]?.status, "running");
-      assert.equal(parentProjection.subagents[0]?.id, legacyNodeId);
-      assert.equal(parentProjection.subagents[0]?.runId, run3Id);
-      assert.equal(parentProjection.subagents[0]?.status, "running");
-      assert.equal(subagentItems[0]?.id, legacyItemId);
-      assert.equal(subagentItems[0]?.runId, run3Id);
-      assert.equal(subagentItems[0]?.status, "running");
+      assertLegacySubagentProjection(
+        yield* projectionStore.getThreadProjection(scenario.ids.threadId),
+        {
+          nodeId: scenario.legacyNodeId,
+          itemId: scenario.legacyItemId,
+          runId: run3Id,
+          status: "running",
+        },
+      );
     }).pipe(Effect.provide(makeLegacySubagentLayer()));
   },
 );
+
+function seedLegacySubagentScenario(input: {
+  readonly key: string;
+  readonly parentTitle: string;
+  readonly childSessionId: string;
+  readonly legacyCallId: string;
+}) {
+  return Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const t2 = DateTime.add(now, { seconds: 5 });
+    const eventSink = yield* EventSink.EventSinkV2;
+    const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+
+    const opencodeDriver = ProviderDriverKind.make("opencode");
+    const instanceId = ProviderInstanceId.make("opencode");
+    const ids = backgroundScenarioIds(input.key);
+    const providerSessionId = ProviderSessionId.make(`session:${input.key}`);
+    const legacyNodeId = idAllocator.derive.nodeFromProviderItem({
+      driver: opencodeDriver,
+      nativeItemId: input.legacyCallId,
+    });
+    const legacyItemId = idAllocator.derive.turnItemFromProviderItem({
+      driver: opencodeDriver,
+      nativeItemId: input.legacyCallId,
+    });
+    const sessionNodeId = idAllocator.derive.nodeFromProviderItem({
+      driver: opencodeDriver,
+      nativeItemId: input.childSessionId,
+    });
+    const sessionItemId = idAllocator.derive.turnItemFromProviderItem({
+      driver: opencodeDriver,
+      nativeItemId: input.childSessionId,
+    });
+    const childThreadId = idAllocator.derive.subagentThread({
+      driver: opencodeDriver,
+      nativeThreadId: input.childSessionId,
+      providerInstanceId: instanceId,
+    });
+    const childProviderThreadId = idAllocator.derive.providerThread({
+      driver: opencodeDriver,
+      nativeThreadId: input.childSessionId,
+      providerInstanceId: instanceId,
+    });
+    const run1Id = RunId.make(`run:${input.key}:1`);
+    const parentTurn1Id = ProviderTurnId.make(`provider-turn:${input.key}:1`);
+    const parentRoot1 = NodeId.make(`node:${input.key}:root:1`);
+    const appThread: OrchestrationV2AppThread = {
+      ...rootAppThread(ids.threadId),
+      createdBy: "user",
+      creationSource: "web",
+      projectId: yield* idAllocator.allocate.project({ fixtureName: input.key }),
+      title: input.parentTitle,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: "opencode/big-pickle" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      branchPullRequest: null,
+      activeOrderKey: null,
+      activeProviderThreadId: ids.providerThreadId,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: ids.threadId },
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    const childThread = (title: string): OrchestrationV2AppThread => ({
+      ...appThread,
+      id: childThreadId,
+      title,
+      activeProviderThreadId: childProviderThreadId,
+      lineage: {
+        parentThreadId: ids.threadId,
+        relationshipToParent: "subagent",
+        rootThreadId: ids.threadId,
+      },
+      createdBy: "agent",
+      creationSource: "provider",
+    });
+    const makeTriple = (row: {
+      readonly nodeId: NodeId;
+      readonly itemId: TurnItemId;
+      readonly nativeId: string;
+      readonly runId: RunId;
+      readonly parentNodeId: NodeId;
+      readonly providerTurnId: ProviderTurnId;
+      readonly status: "running" | "completed";
+      readonly title: string;
+      readonly prompt: string;
+      readonly model: string | null;
+      readonly result: string | null;
+      readonly at: DateTime.Utc;
+      readonly preserveIdentity?: boolean;
+    }) => {
+      const nativeRef = {
+        driver: opencodeDriver,
+        nativeId: row.nativeId,
+        strength: "strong" as const,
+      };
+      const completedAt = row.status === "completed" ? row.at : null;
+      const preserve = row.preserveIdentity === true ? { preserveIdentity: true as const } : {};
+      return [
+        {
+          type: "node.updated" as const,
+          driver: opencodeDriver,
+          ...preserve,
+          node: {
+            id: row.nodeId,
+            threadId: ids.threadId,
+            runId: row.runId,
+            parentNodeId: row.parentNodeId,
+            rootNodeId: row.parentNodeId,
+            kind: "subagent" as const,
+            status: row.status,
+            countsForRun: false,
+            providerThreadId: childProviderThreadId,
+            providerTurnId: row.providerTurnId,
+            nativeItemRef: nativeRef,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: row.at,
+            completedAt,
+          },
+        },
+        {
+          type: "subagent.updated" as const,
+          driver: opencodeDriver,
+          ...preserve,
+          subagent: {
+            id: row.nodeId,
+            threadId: ids.threadId,
+            runId: row.runId,
+            parentNodeId: row.parentNodeId,
+            origin: "provider_native" as const,
+            createdBy: "agent" as const,
+            driver: opencodeDriver,
+            providerInstanceId: instanceId,
+            providerThreadId: childProviderThreadId,
+            childThreadId,
+            nativeTaskRef: nativeRef,
+            prompt: row.prompt,
+            title: row.title,
+            model: row.model,
+            status: row.status,
+            result: row.result,
+            startedAt: row.at,
+            completedAt,
+            updatedAt: row.at,
+          },
+        },
+        {
+          type: "turn_item.updated" as const,
+          driver: opencodeDriver,
+          ...preserve,
+          turnItem: {
+            id: row.itemId,
+            threadId: ids.threadId,
+            runId: row.runId,
+            nodeId: row.nodeId,
+            providerThreadId: ids.providerThreadId,
+            providerTurnId: row.providerTurnId,
+            nativeItemRef: nativeRef,
+            parentItemId: null,
+            ordinal: 1,
+            status: row.status,
+            title: row.title,
+            startedAt: row.at,
+            completedAt,
+            updatedAt: row.at,
+            type: "subagent" as const,
+            subagentId: row.nodeId,
+            origin: "provider_native" as const,
+            driver: opencodeDriver,
+            providerInstanceId: instanceId,
+            childThreadId,
+            prompt: row.prompt,
+            result: row.result,
+          },
+        },
+      ] as const;
+    };
+
+    const checkpointScopeId = CheckpointScopeId.make(`checkpoint-scope:${input.key}`);
+    const parentProviderThread: OrchestrationV2ProviderThread = {
+      id: ids.providerThreadId,
+      driver: opencodeDriver,
+      providerInstanceId: instanceId,
+      providerSessionId,
+      appThreadId: ids.threadId,
+      ownerNodeId: null,
+      nativeThreadRef: { driver: opencodeDriver, nativeId: "ses_parent", strength: "strong" },
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 2,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: t2,
+    };
+    const parentRun: OrchestrationV2Run = {
+      id: ids.runId,
+      threadId: ids.threadId,
+      ordinal: 2,
+      providerInstanceId: instanceId,
+      modelSelection: { instanceId, model: "opencode/big-pickle" },
+      providerThreadId: ids.providerThreadId,
+      userMessageId: MessageId.make(`message:${input.key}:user`),
+      rootNodeId: ids.rootNodeId,
+      activeAttemptId: ids.attemptId,
+      status: "running",
+      requestedAt: t2,
+      startedAt: t2,
+      completedAt: null,
+      checkpointId: null,
+      contextHandoffId: null,
+    };
+    const parentRootNode: OrchestrationV2ExecutionNode = {
+      id: ids.rootNodeId,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      parentNodeId: null,
+      rootNodeId: ids.rootNodeId,
+      kind: "root_turn",
+      status: "running",
+      countsForRun: true,
+      providerThreadId: ids.providerThreadId,
+      providerTurnId: ids.rootProviderTurnId,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId,
+      startedAt: t2,
+      completedAt: null,
+    };
+    const parentAttempt: OrchestrationV2RunAttempt = {
+      id: ids.attemptId,
+      runId: ids.runId,
+      attemptOrdinal: 1,
+      rootNodeId: ids.rootNodeId,
+      providerInstanceId: instanceId,
+      providerThreadId: ids.providerThreadId,
+      providerTurnId: ids.rootProviderTurnId,
+      reason: "initial",
+      status: "running",
+      startedAt: t2,
+      completedAt: null,
+    };
+    const parentCheckpointScope: OrchestrationV2CheckpointScope = {
+      id: checkpointScopeId,
+      threadId: ids.threadId,
+      runId: ids.runId,
+      nodeId: ids.rootNodeId,
+      parentScopeId: null,
+      providerThreadId: ids.providerThreadId,
+      ordinalWithinParent: 1,
+      advancesAppRunCount: true,
+      cwd: process.cwd(),
+      kind: "root_run",
+      createdAt: t2,
+    };
+
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
+          type: "thread.created",
+          threadId: ids.threadId,
+          occurredAt: now,
+          payload: appThread,
+        },
+      ],
+    });
+    // Seed the pre-upgrade call-keyed subagent row from run 1.
+    for (const event of [
+      {
+        type: "app_thread.created" as const,
+        driver: opencodeDriver,
+        appThread: childThread("Sleep"),
+      },
+      ...makeTriple({
+        nodeId: legacyNodeId,
+        itemId: legacyItemId,
+        nativeId: input.legacyCallId,
+        runId: run1Id,
+        parentNodeId: parentRoot1,
+        providerTurnId: parentTurn1Id,
+        status: "completed",
+        title: "Sleep",
+        prompt: "sleep 180",
+        model: "opencode/big-pickle",
+        result: "FIRST_OK",
+        at: now,
+      }),
+    ] satisfies ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event>) {
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: instanceId,
+        threadId: ids.threadId,
+        runId: run1Id,
+        event,
+      });
+    }
+    yield* eventSink.write({
+      events: [
+        {
+          id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
+          type: "run.created",
+          threadId: ids.threadId,
+          runId: ids.runId,
+          occurredAt: t2,
+          payload: parentRun,
+        },
+        {
+          id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
+          type: "run-attempt.created",
+          threadId: ids.threadId,
+          runId: ids.runId,
+          occurredAt: t2,
+          payload: parentAttempt,
+        },
+        {
+          id: yield* idAllocator.allocate.event({ threadId: ids.threadId }),
+          type: "node.updated",
+          threadId: ids.threadId,
+          runId: ids.runId,
+          nodeId: ids.rootNodeId,
+          occurredAt: t2,
+          payload: parentRootNode,
+        },
+      ],
+    });
+
+    const rootTurnEvent: ProviderAdapter.ProviderAdapterV2Event = {
+      type: "provider_turn.updated",
+      driver: opencodeDriver,
+      providerTurn: {
+        id: ids.rootProviderTurnId,
+        providerThreadId: ids.providerThreadId,
+        nodeId: ids.rootNodeId,
+        runAttemptId: ids.attemptId,
+        nativeTurnRef: null,
+        ordinal: 2,
+        status: "running",
+        startedAt: t2,
+        completedAt: null,
+      },
+    };
+    const startRun2 = (
+      text: string,
+      events: Stream.Stream<
+        ProviderAdapter.ProviderAdapterV2Event,
+        ProviderAdapter.ProviderAdapterV2Error
+      >,
+    ) =>
+      Effect.gen(function* () {
+        const ingestionDone = yield* Deferred.make<void>();
+        yield* runExecution.startRootRun({
+          commandId: CommandId.make(`command:${input.key}`),
+          appThread,
+          providerSessionId,
+          session: {
+            events: Stream.empty,
+            subscribeEvents: Effect.succeed({
+              events,
+              close: Deferred.succeed(ingestionDone, undefined),
+            }),
+            startTurn: () => Effect.void,
+            interruptTurn: () => Effect.void,
+          } as unknown as ProviderAdapter.ProviderAdapterV2SessionRuntime,
+          providerThread: parentProviderThread,
+          run: parentRun,
+          attempt: parentAttempt,
+          attemptId: ids.attemptId,
+          rootNode: parentRootNode,
+          checkpointScope: parentCheckpointScope,
+          providerTurnOrdinal: 2,
+          message: {
+            messageId: MessageId.make(`message:${input.key}:user`),
+            text,
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+          modelSelection: { instanceId, model: "opencode/big-pickle" },
+          runtimePolicy: {
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            cwd: process.cwd(),
+            approvalPolicy: "never",
+            sandboxPolicy: {
+              type: "readOnly",
+              access: { type: "fullAccess" },
+              networkAccess: false,
+            },
+          },
+        });
+        return ingestionDone;
+      });
+
+    return {
+      key: input.key,
+      now,
+      t2,
+      ids,
+      driver: opencodeDriver,
+      instanceId,
+      providerSessionId,
+      childSessionId: input.childSessionId,
+      legacyNodeId,
+      legacyItemId,
+      sessionNodeId,
+      childThreadId,
+      childProviderThreadId,
+      childThread,
+      rootTurnEvent,
+      makeSessionTriple: (row: {
+        readonly runId: RunId;
+        readonly parentNodeId: NodeId;
+        readonly providerTurnId: ProviderTurnId;
+        readonly title: string;
+        readonly prompt: string;
+        readonly model: string | null;
+        readonly at: DateTime.Utc;
+      }) =>
+        makeTriple({
+          ...row,
+          nodeId: sessionNodeId,
+          itemId: sessionItemId,
+          nativeId: input.childSessionId,
+          status: "running",
+          result: null,
+          preserveIdentity: true,
+        }),
+      startRun2,
+    };
+  });
+}
+
+function assertLegacySubagentProjection(
+  projection: Effect.Success<
+    ReturnType<ProjectionStore.ProjectionStoreV2["Service"]["getThreadProjection"]>
+  >,
+  expected: {
+    readonly nodeId: NodeId;
+    readonly itemId: TurnItemId;
+    readonly runId?: RunId;
+    readonly status: "running" | "failed";
+    readonly checkMetadata?: boolean;
+  },
+) {
+  const subagentNodes = projection.nodes.filter((node) => node.kind === "subagent");
+  const subagentItems = projection.turnItems.filter((item) => item.type === "subagent");
+  assert.lengthOf(subagentNodes, 1);
+  assert.lengthOf(projection.subagents, 1);
+  assert.lengthOf(subagentItems, 1);
+  assert.equal(subagentNodes[0]?.id, expected.nodeId);
+  assert.equal(subagentNodes[0]?.status, expected.status);
+  assert.equal(projection.subagents[0]?.id, expected.nodeId);
+  assert.equal(projection.subagents[0]?.status, expected.status);
+  assert.equal(subagentItems[0]?.id, expected.itemId);
+  assert.equal(subagentItems[0]?.nodeId, expected.nodeId);
+  assert.equal(subagentItems[0]?.subagentId, expected.nodeId);
+  assert.equal(subagentItems[0]?.status, expected.status);
+  if (expected.runId !== undefined) {
+    assert.equal(subagentNodes[0]?.runId, expected.runId);
+    assert.equal(projection.subagents[0]?.runId, expected.runId);
+    assert.equal(subagentItems[0]?.runId, expected.runId);
+  }
+  if (expected.checkMetadata === true) {
+    assert.equal(projection.subagents[0]?.title, "Sleep");
+    assert.equal(projection.subagents[0]?.prompt, "sleep 180");
+    assert.equal(projection.subagents[0]?.model, "opencode/big-pickle");
+    assert.equal(subagentItems[0]?.title, "Sleep");
+    assert.equal(subagentItems[0]?.prompt, "sleep 180");
+  }
+}

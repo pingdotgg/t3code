@@ -10,6 +10,7 @@ import {
   ThreadId,
   TurnItemId,
   type OrchestrationV2AppThread,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
@@ -219,6 +220,52 @@ it.effect("guards writeIfSubagentUnchanged against concurrent node and turn-item
       type: "command_execution",
       input: "echo ok",
     };
+    const subagentEvent = (
+      id: string,
+      payload: OrchestrationV2Subagent,
+    ): OrchestrationV2DomainEvent => ({
+      id: EventId.make(id),
+      type: "subagent.updated",
+      threadId,
+      runId: run1Id,
+      nodeId: subagentId,
+      driver,
+      providerInstanceId,
+      occurredAt: now,
+      payload,
+    });
+    const nodeEvent = (
+      id: string,
+      payload: OrchestrationV2ExecutionNode,
+      runId: RunId = run1Id,
+    ): OrchestrationV2DomainEvent => ({
+      id: EventId.make(id),
+      type: "node.updated",
+      threadId,
+      runId,
+      nodeId: subagentId,
+      providerInstanceId,
+      occurredAt: now,
+      payload,
+    });
+    const turnItemEvent = (
+      id: string,
+      payload: OrchestrationV2TurnItem,
+    ): OrchestrationV2DomainEvent => ({
+      id: EventId.make(id),
+      type: "turn-item.updated",
+      threadId: childThreadId,
+      runId: run1Id,
+      providerInstanceId,
+      occurredAt: now,
+      payload,
+    });
+    const failedSubagent: OrchestrationV2Subagent = {
+      ...subagent,
+      status: "failed",
+      completedAt: now,
+      updatedAt: now,
+    };
     yield* sink.write({
       events: [
         {
@@ -235,79 +282,22 @@ it.effect("guards writeIfSubagentUnchanged against concurrent node and turn-item
           occurredAt: now,
           payload: childThread,
         },
-        {
-          id: EventId.make("subagent-guard:subagent"),
-          type: "subagent.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: subagent,
-        },
-        {
-          id: EventId.make("subagent-guard:node"),
-          type: "node.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          providerInstanceId,
-          occurredAt: now,
-          payload: node,
-        },
-        {
-          id: EventId.make("subagent-guard:child-item"),
-          type: "turn-item.updated",
-          threadId: childThreadId,
-          runId: run1Id,
-          providerInstanceId,
-          occurredAt: now,
-          payload: childTurnItem,
-        },
+        subagentEvent("subagent-guard:subagent", subagent),
+        nodeEvent("subagent-guard:node", node),
+        turnItemEvent("subagent-guard:child-item", childTurnItem),
       ],
     });
     const claimedNode: OrchestrationV2ExecutionNode = { ...node, runId: run2Id };
     yield* sink.write({
-      events: [
-        {
-          id: EventId.make("subagent-guard:claim-node"),
-          type: "node.updated",
-          threadId,
-          runId: run2Id,
-          nodeId: subagentId,
-          providerInstanceId,
-          occurredAt: now,
-          payload: claimedNode,
-        },
-      ],
+      events: [nodeEvent("subagent-guard:claim-node", claimedNode, run2Id)],
     });
     const nodeRejected = yield* sink.writeIfSubagentUnchanged({
       expected: subagent,
       expectedNodes: [node],
       expectedTurnItems: [childTurnItem],
       events: [
-        {
-          id: EventId.make("subagent-guard:fail-subagent"),
-          type: "subagent.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: { ...subagent, status: "failed", completedAt: now, updatedAt: now },
-        },
-        {
-          id: EventId.make("subagent-guard:fail-node"),
-          type: "node.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          providerInstanceId,
-          occurredAt: now,
-          payload: { ...node, status: "failed", completedAt: now },
-        },
+        subagentEvent("subagent-guard:fail-subagent", failedSubagent),
+        nodeEvent("subagent-guard:fail-node", { ...node, status: "failed", completedAt: now }),
       ],
     });
     assert.isFalse(nodeRejected.committed);
@@ -325,43 +315,20 @@ it.effect("guards writeIfSubagentUnchanged against concurrent node and turn-item
       updatedAt: now,
     };
     yield* sink.write({
-      events: [
-        {
-          id: EventId.make("subagent-guard:complete-child-item"),
-          type: "turn-item.updated",
-          threadId: childThreadId,
-          runId: run1Id,
-          providerInstanceId,
-          occurredAt: now,
-          payload: completedChildItem,
-        },
-      ],
+      events: [turnItemEvent("subagent-guard:complete-child-item", completedChildItem)],
     });
     const itemRejected = yield* sink.writeIfSubagentUnchanged({
       expected: subagent,
       expectedNodes: [claimedNode],
       expectedTurnItems: [childTurnItem],
       events: [
-        {
-          id: EventId.make("subagent-guard:fail-subagent-stale-item"),
-          type: "subagent.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: { ...subagent, status: "failed", completedAt: now, updatedAt: now },
-        },
-        {
-          id: EventId.make("subagent-guard:fail-child-item-stale"),
-          type: "turn-item.updated",
-          threadId: childThreadId,
-          runId: run1Id,
-          providerInstanceId,
-          occurredAt: now,
-          payload: { ...childTurnItem, status: "failed", completedAt: now, updatedAt: now },
-        },
+        subagentEvent("subagent-guard:fail-subagent-stale-item", failedSubagent),
+        turnItemEvent("subagent-guard:fail-child-item-stale", {
+          ...childTurnItem,
+          status: "failed",
+          completedAt: now,
+          updatedAt: now,
+        }),
       ],
     });
     assert.isFalse(itemRejected.committed);
@@ -373,19 +340,7 @@ it.effect("guards writeIfSubagentUnchanged against concurrent node and turn-item
       expected: subagent,
       expectedNodes: [claimedNode],
       expectedTurnItems: [completedChildItem],
-      events: [
-        {
-          id: EventId.make("subagent-guard:fail-subagent-accepted"),
-          type: "subagent.updated",
-          threadId,
-          runId: run1Id,
-          nodeId: subagentId,
-          driver,
-          providerInstanceId,
-          occurredAt: now,
-          payload: { ...subagent, status: "failed", completedAt: now, updatedAt: now },
-        },
-      ],
+      events: [subagentEvent("subagent-guard:fail-subagent-accepted", failedSubagent)],
     });
     assert.isTrue(accepted.committed);
     const afterAccept = yield* projections.getThreadProjection(threadId);
