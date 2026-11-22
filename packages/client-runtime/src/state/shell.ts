@@ -339,11 +339,14 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
               removedAt.set(delta.threadId, delta.sequence);
               break;
             case "thread.updated":
-              observeServerTime(
-                environmentId,
-                DateTime.toEpochMillis(delta.thread.updatedAt),
-                receivedAtMs,
-              );
+              // Replayed catch-up deltas may predate a backward host clock correction.
+              if (!waiting) {
+                observeServerTime(
+                  environmentId,
+                  DateTime.toEpochMillis(delta.thread.updatedAt),
+                  receivedAtMs,
+                );
+              }
               break;
             case "project.updated":
             case "project.removed":

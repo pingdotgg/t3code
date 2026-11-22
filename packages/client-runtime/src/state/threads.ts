@@ -544,7 +544,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     { kind: "event" | "unknown-event" }
   >;
   // Per-batch streaming spans add trace volume without a useful timing boundary.
-  const applyEventsLocked = Effect.fnUntraced(function* (items: ReadonlyArray<SequencedItem>) {
+  const applyEventsLocked = Effect.fnUntraced(function* (
+    items: ReadonlyArray<SequencedItem>,
+    // Replayed catch-up events may predate a backward host clock correction.
+    live: boolean,
+  ) {
     const appliedSequence = yield* SubscriptionRef.get(lastSequence);
     let sequence = appliedSequence;
     const fresh: EventItem[] = [];
@@ -568,9 +572,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     yield* SubscriptionRef.set(lastSequence, sequence);
     if (fresh.length === 0) return;
 
-    const receivedAtMs = yield* Clock.currentTimeMillis;
-    for (const item of fresh) {
-      observeServerTime(environmentId, DateTime.toEpochMillis(item.event.occurredAt), receivedAtMs);
+    if (live) {
+      const receivedAtMs = yield* Clock.currentTimeMillis;
+      for (const item of fresh) {
+        observeServerTime(
+          environmentId,
+          DateTime.toEpochMillis(item.event.occurredAt),
+          receivedAtMs,
+        );
+      }
     }
 
     const waiting = yield* Ref.get(awaitingCompletion);
@@ -709,7 +719,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       return;
     }
 
-    yield* applyEventsLocked([item]);
+    yield* applyEventsLocked([item], false);
   });
 
   // Items held until the completion marker apply together, so a replay-only resume renders once.
@@ -747,6 +757,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
         const items = catchUp;
         catchUp = [];
+        let live = !(yield* Ref.get(awaitingCompletion));
         let events: SequencedItem[] = [];
         for (const item of items) {
           if (
@@ -759,11 +770,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           // Clearing the flag first lets the events before the marker publish
           // "live", so a catch-up ending in the marker is one state change.
           if (item.kind === "synchronized") yield* Ref.set(awaitingCompletion, false);
-          yield* applyEventsLocked(events);
+          yield* applyEventsLocked(events, live);
           events = [];
           yield* applyItemLocked(item);
+          if (item.kind === "synchronized") live = true;
         }
-        yield* applyEventsLocked(events);
+        yield* applyEventsLocked(events, live);
         yield* remember;
       }),
     );
