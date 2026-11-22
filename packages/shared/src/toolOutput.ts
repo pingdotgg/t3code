@@ -89,7 +89,11 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     let data: ResultEnvelope["data"];
     let failed = false;
     for (const block of value) {
-      const text = Predicate.isObject(block) ? block.text : undefined;
+      const inner =
+        Predicate.isObject(block) && block.type === "content" && Predicate.isObject(block.content)
+          ? block.content
+          : block;
+      const text = Predicate.isObject(inner) ? inner.text : undefined;
       const result = readResult(
         Predicate.isObject(text) ? (text.text ?? text) : text,
         budget,
