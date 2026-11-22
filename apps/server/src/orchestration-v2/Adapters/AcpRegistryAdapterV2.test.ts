@@ -2949,6 +2949,95 @@ describe("AcpRegistryAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  describe("Devin /compact", () => {
+    // Devin 3000.14 answers `/compact` at once, then reports the summary through its extension.
+    const devinCompaction = (status: string) => [
+      ...claudeFrames.open.map((entry) =>
+        entry.frame.method === "initialize" && entry.type === "emit_inbound"
+          ? {
+              ...entry,
+              frame: {
+                ...entry.frame,
+                result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [] },
+              },
+            }
+          : entry,
+      ),
+      claudeFrames.update(CLAUDE_ROOT_SESSION, {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "compact", description: "Force conversation compaction" }],
+      }),
+      {
+        type: "expect_outbound",
+        frame: {
+          kind: "request",
+          method: "session/prompt",
+          params: { sessionId: CLAUDE_ROOT_SESSION, prompt: [{ type: "text", text: "/compact" }] },
+        },
+      },
+      {
+        type: "emit_inbound",
+        frame: { kind: "response", method: "session/prompt", result: { stopReason: "end_turn" } },
+      },
+      {
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "_cognition.ai/compaction",
+          params: { status: "started", sessionId: CLAUDE_ROOT_SESSION },
+        },
+      },
+      claudeMarker("compaction started"),
+      {
+        type: "emit_inbound",
+        frame: {
+          kind: "notification",
+          method: "_cognition.ai/compaction",
+          params: { status, sessionId: CLAUDE_ROOT_SESSION },
+        },
+      },
+      claudeFrames.closeRequest,
+      claudeFrames.closed,
+    ];
+
+    // Only Devin's notice can fail the turn, so the `failed` row cannot pass by settling early.
+    it.effect.each([
+      { status: "completed", terminal: "completed" },
+      { status: "failed", terminal: "failed" },
+    ])("keeps the turn running until Devin reports $status", ({ status, terminal }) =>
+      Effect.gen(function* () {
+        const session = yield* openClaudeReplaySession(
+          devinCompaction(status),
+          undefined,
+          false,
+          "devin",
+        );
+        const input = session.turnInput(1);
+        yield* session.runtime
+          .startTurn({ ...input, message: { ...input.message, text: "/compact" } })
+          .pipe(Effect.forkScoped);
+        const beforeOutcome = yield* session.throughMarker("compaction started");
+        assert.isFalse(
+          beforeOutcome.some(
+            (event) =>
+              event.type === "turn.terminal" ||
+              (event.type === "turn_item.updated" && event.turnItem.type === "compaction"),
+          ),
+          "Devin has only started compacting",
+        );
+        const afterOutcome = yield* session.until((event) => event.type === "turn.terminal");
+        const settled = afterOutcome.at(-1);
+        assert.equal(settled?.type === "turn.terminal" ? settled.status : undefined, terminal);
+        assert.equal(
+          afterOutcome.some(
+            (event) => event.type === "turn_item.updated" && event.turnItem.type === "compaction",
+          ),
+          status === "completed",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+  });
+
   it.effect("counts per-turn usage for a local glm command", () =>
     Effect.gen(function* () {
       const session = yield* openClaudeReplaySession(

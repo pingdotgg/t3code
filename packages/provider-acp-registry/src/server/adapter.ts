@@ -8,6 +8,7 @@ import {
   normalizeDevinToolCall,
   extractDevinSubagentUpdate,
   devinAnswerablePermissionOptions,
+  makeDevinCompaction,
 } from "./devinAcp.ts";
 import { extractDroidElicitationForm } from "./droidAcp.ts";
 import { makeKimiPromptOutcomeWatch } from "./kimiAcp.ts";
@@ -260,6 +261,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     ? yield* makeKimiPromptOutcomeWatch(options.environment.KIMI_CODE_HOME)
     : undefined;
   const copilotRouting = isCopilot ? makeCopilotSubagentRouting() : undefined;
+  const devinCompaction = isDevin ? yield* makeDevinCompaction : undefined;
   // Copilot CLI 1.0.105 rejects stdio MCP servers from the client, and Command Code cannot
   // start the stdio bridge on Windows (it spawns MCP commands through cmd.exe, which splits
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
@@ -321,12 +323,14 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
       isAntigravityCli || isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
       isAntigravityCli || isHermes(initializeResult),
-    ...(isDevin
+    ...(devinCompaction !== undefined
       ? {
           clientCapabilitiesMeta: {
             "cognition.ai/subagentSupport": true,
             "cognition.ai/messageGrouping": true,
           },
+          registerExtensions: devinCompaction.registerExtensions,
+          compactSession: devinCompaction.compactSession,
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
