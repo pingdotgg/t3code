@@ -612,6 +612,7 @@ export const OrchestratorMcpThreadWaitResult = Schema.Struct({
   resultRun: Schema.optional(Schema.Struct({ runId: RunId, status: OrchestrationV2RunStatus })),
   /** What the run returned against the `outputSchema` it was sent with. Absent until submitted. */
   output: Schema.optional(Schema.Json),
+  reply: Schema.optional(Schema.String),
 });
 export type OrchestratorMcpThreadWaitResult = typeof OrchestratorMcpThreadWaitResult.Type;
 

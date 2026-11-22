@@ -77,6 +77,20 @@ describe("RPC authorization scopes", () => {
     }
   });
 
+  it("requires settings authority to change bot configuration or grants", () => {
+    for (const method of [
+      WS_METHODS.botsCreate,
+      WS_METHODS.botsUpdate,
+      WS_METHODS.botSetAccess,
+      WS_METHODS.botSetGrant,
+      WS_METHODS.botDraftsReview,
+      WS_METHODS.botWorkAct,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSettingsWriteScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.botsSubscribe)).toBe(AuthOrchestrationReadScope);
+  });
+
   it("lets thread readers observe and refresh checkout branches", () => {
     for (const method of [WS_METHODS.subscribeVcsBranch, WS_METHODS.vcsRefreshBranch]) {
       expect(requiredScopeForRpcMethod(method)).toBe(AuthOrchestrationReadScope);

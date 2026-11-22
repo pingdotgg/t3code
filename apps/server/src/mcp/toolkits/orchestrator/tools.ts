@@ -1,4 +1,8 @@
 import {
+  BotAssignInput,
+  BotWorkRun,
+  BotDraft,
+  BotProposeInput,
   OrchestratorMcpCapabilitiesInput,
   OrchestratorMcpCapabilitiesResult,
   OrchestrationV2StopWorkflowInput,
@@ -362,7 +366,35 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
+const BotProposeTool = Tool.make("t3_bot_propose", {
+  description:
+    "From a persistent bot thread, propose a bot, schedule, inbound webhook, workflow, or profile update. Display changes apply directly. Activation requires owner approval or an activation grant. Role and standing instructions always require approval. Pass a stable clientRequestId on retry.",
+  parameters: BotProposeInput,
+  success: Schema.Struct({ draft: BotDraft, applied: Schema.Boolean }),
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Propose a bot change")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
+const BotAssignTool = Tool.make("t3_bot_assign", {
+  description:
+    "During a bot channel turn, assign work to one named member by thread ID. Its answer appears in the channel. Use a stable clientRequestId per assignment and do not wait for the member in this turn.",
+  parameters: BotAssignInput,
+  success: BotWorkRun,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Assign bot channel work")
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
+
 export const OrchestratorToolkit = Toolkit.make(
+  BotProposeTool,
+  BotAssignTool,
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
   TaskStatusTool,

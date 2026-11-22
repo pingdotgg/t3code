@@ -45,7 +45,7 @@ import * as Schema from "effect/Schema";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
-import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { SecretSourceCheckResult } from "./settingsSecretValue.ts";
 import { SecretReference } from "./secretReference.ts";
 import {
@@ -437,6 +437,21 @@ import {
   ScheduledTaskUpsertInput,
   ScheduledTaskMutationResult,
 } from "./scheduledTask.ts";
+import {
+  BotCreateInput,
+  BotSetAccessInput,
+  BotWorkAction,
+  BotWorkSnapshot,
+  BotConfiguration,
+  BotSetGrantInput,
+  BotDraftReviewInput,
+  BotError,
+  BotList,
+  BotProfile,
+  BotRestoreInput,
+  BotSetStateInput,
+  BotUpdateInput,
+} from "./bot.ts";
 import { SecretRequestAnswerInput, SecretRequestError } from "./secretRequest.ts";
 import {
   ProjectCloneActionInput,
@@ -616,6 +631,18 @@ export const WS_METHODS = {
   serverGetUsageSummary: "server.getUsageSummary",
   serverRefreshUsageRates: "server.refreshUsageRates",
 
+  botsSubscribe: "bots.subscribe",
+  botSetAccess: "bots.setAccess",
+  botWorkSubscribe: "bots.work.subscribe",
+  botWorkAct: "bots.work.act",
+  botDraftsSubscribe: "bots.drafts.subscribe",
+  botDraftsReview: "bots.drafts.review",
+  botSetGrant: "bots.setGrant",
+  botsCreate: "bots.create",
+  botsUpdate: "bots.update",
+  botsSetState: "bots.setState",
+  botsHistory: "bots.history",
+  botsRestore: "bots.restore",
   scheduledTasksSubscribe: "scheduledTasks.subscribe",
   scheduledTasksUpsert: "scheduledTasks.upsert",
   scheduledTasksSetEnabled: "scheduledTasks.setEnabled",
@@ -2282,6 +2309,83 @@ const WsSubscribeServerLifecycleRpc = Rpc.make(WS_METHODS.subscribeServerLifecyc
   stream: true,
 });
 
+const botRpcError = Schema.Union([BotError, EnvironmentAuthorizationError]);
+
+const WsBotDraftsSubscribeRpc = Rpc.make(WS_METHODS.botDraftsSubscribe, {
+  payload: Schema.Struct({}),
+  success: BotConfiguration,
+  error: botRpcError,
+  stream: true,
+});
+
+const WsBotDraftsReviewRpc = Rpc.make(WS_METHODS.botDraftsReview, {
+  payload: BotDraftReviewInput,
+  success: Schema.Void,
+  error: botRpcError,
+});
+
+const WsBotSetGrantRpc = Rpc.make(WS_METHODS.botSetGrant, {
+  payload: BotSetGrantInput,
+  success: Schema.Void,
+  error: botRpcError,
+});
+
+const WsBotWorkSubscribeRpc = Rpc.make(WS_METHODS.botWorkSubscribe, {
+  payload: Schema.Struct({}),
+  success: BotWorkSnapshot,
+  error: botRpcError,
+  stream: true,
+});
+
+const WsBotWorkActRpc = Rpc.make(WS_METHODS.botWorkAct, {
+  payload: BotWorkAction,
+  success: Schema.Void,
+  error: botRpcError,
+});
+
+const WsBotSetAccessRpc = Rpc.make(WS_METHODS.botSetAccess, {
+  payload: BotSetAccessInput,
+  success: Schema.Void,
+  error: botRpcError,
+});
+
+const WsBotsSubscribeRpc = Rpc.make(WS_METHODS.botsSubscribe, {
+  payload: Schema.Struct({}),
+  success: BotList,
+  error: botRpcError,
+  stream: true,
+});
+
+const WsBotsCreateRpc = Rpc.make(WS_METHODS.botsCreate, {
+  payload: BotCreateInput,
+  success: BotProfile,
+  error: botRpcError,
+});
+
+const WsBotsUpdateRpc = Rpc.make(WS_METHODS.botsUpdate, {
+  payload: BotUpdateInput,
+  success: BotProfile,
+  error: botRpcError,
+});
+
+const WsBotsSetStateRpc = Rpc.make(WS_METHODS.botsSetState, {
+  payload: BotSetStateInput,
+  success: BotProfile,
+  error: botRpcError,
+});
+
+const WsBotsHistoryRpc = Rpc.make(WS_METHODS.botsHistory, {
+  payload: Schema.Struct({ threadId: ThreadId }),
+  success: BotList,
+  error: botRpcError,
+});
+
+const WsBotsRestoreRpc = Rpc.make(WS_METHODS.botsRestore, {
+  payload: BotRestoreInput,
+  success: BotProfile,
+  error: botRpcError,
+});
+
 const WsScheduledTasksSubscribeRpc = Rpc.make(WS_METHODS.scheduledTasksSubscribe, {
   payload: ScheduledTaskListInput,
   success: ScheduledTaskListResult,
@@ -2452,6 +2556,18 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetUsageSummaryRpc,
   WsServerRefreshUsageRatesRpc,
   WsServerSignalProcessRpc,
+  WsBotDraftsSubscribeRpc,
+  WsBotDraftsReviewRpc,
+  WsBotSetGrantRpc,
+  WsBotsSubscribeRpc,
+  WsBotSetAccessRpc,
+  WsBotWorkSubscribeRpc,
+  WsBotWorkActRpc,
+  WsBotsCreateRpc,
+  WsBotsUpdateRpc,
+  WsBotsSetStateRpc,
+  WsBotsHistoryRpc,
+  WsBotsRestoreRpc,
   WsScheduledTasksSubscribeRpc,
   WsScheduledTasksUpsertRpc,
   WsScheduledTasksSetEnabledRpc,

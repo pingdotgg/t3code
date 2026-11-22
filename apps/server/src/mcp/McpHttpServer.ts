@@ -50,6 +50,8 @@ import {
 } from "../telemetry/ProviderDimensions.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
+import * as BotStore from "../bots/BotStore.ts";
+import { botRunSource } from "../bots/botTurnPolicy.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
 import * as McpToolExposure from "./McpToolExposure.ts";
 import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
@@ -1169,11 +1171,39 @@ const withToolAnalytics =
     return yield* registration.pipe(Effect.provideService(McpServer.McpServer, recordingServer));
   });
 
+const explicitBotTools = new Set([
+  McpToolExposure.TOOL_SEARCH,
+  "t3_bot_propose",
+  "t3_bot_assign",
+  "t3_submit_output",
+]);
+
 /** Each tool call gets a span named for its tool; arguments stay out, as they carry prompts and IDs. */
 const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, R>(
   registration: Effect.Effect<A, E, R>,
 ) {
   const server = yield* McpServer.McpServer;
+  const bots = yield* Effect.serviceOption(BotStore.BotStore);
+  const threads = yield* Effect.serviceOption(ThreadManagementService.ThreadManagementService);
+  const scopedBotTurn = Effect.fn("McpHttpServer.scopedBotTurn")(
+    function* (threadId: ThreadId) {
+      if (Option.isNone(threads)) return true;
+      const management = threads.value;
+      const thread = yield* management.getThreadShell(threadId);
+      if (thread?.activeRunId == null) return true;
+      const { messages } = yield* management.getThreadRecords(threadId, ["messages"], {
+        messageRunIds: [thread.activeRunId],
+        messageRoles: ["user"],
+      });
+      const first = messages[0];
+      if (!first || botRunSource(first) === "webhook" || first.linkedSender !== undefined)
+        return true;
+      if (first.senderThreadId === undefined) return false;
+      const sender = yield* management.getThreadShell(first.senderThreadId);
+      return sender?.projectId !== thread.projectId;
+    },
+    Effect.orElseSucceed(() => true),
+  );
   const tracingServer = McpServer.McpServer.of({
     ...server,
     addTool: Effect.fn("McpServer.addTool")(function (options) {
@@ -1191,7 +1221,33 @@ const withToolSpans = Effect.fn("McpHttpServer.withToolSpans")(function* <A, E, 
                 "mcp.tool.name": name,
               },
             },
-            () => options.handle(payload),
+            () =>
+              Effect.gen(function* () {
+                if (Option.isSome(bots) && !explicitBotTools.has(name)) {
+                  const invocation = yield* Effect.serviceOption(
+                    McpInvocationContext.McpInvocationContext,
+                  );
+                  const threadId = Option.getOrUndefined(invocation)?.thread?.threadId;
+                  if (threadId?.startsWith("bot:")) {
+                    const profile = yield* bots.value.find(threadId).pipe(Effect.result);
+                    const allowed =
+                      profile._tag === "Success" &&
+                      (profile.success === undefined ||
+                        ((options.tool.annotations?.readOnlyHint === true ||
+                          name === "t3_thread_send") &&
+                          !(yield* scopedBotTurn(threadId))));
+                    if (!allowed) {
+                      return new McpSchema.CallToolResult({
+                        isError: true,
+                        content: [
+                          { type: "text", text: "This tool is outside the bot's granted actions." },
+                        ],
+                      });
+                    }
+                  }
+                }
+                return yield* options.handle(payload);
+              }),
           ),
       });
     }),

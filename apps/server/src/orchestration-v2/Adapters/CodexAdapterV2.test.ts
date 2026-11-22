@@ -316,10 +316,14 @@ describe("CodexAdapterV2 runtime policy", () => {
       const withT3 = yield* CodexAdapterV2.buildCodexTurnStartParams({
         nativeThreadId: "native-app-context",
         codexInput: [{ type: "text", text: "what's on my list?" }],
-        runtimePolicy: policy,
+        runtimePolicy: { ...policy, botInstructions: ["Always return a project summary."] },
         modelSelection,
         hasT3Mcp: true,
         appContext,
+      });
+      assert.deepEqual(withT3.additionalContext?.["t3_bot_profile_0"], {
+        kind: "application",
+        value: "Always return a project summary.",
       });
       assert.deepEqual(withT3.additionalContext?.["mcp_app_todos_list_todos_item-1"], {
         kind: "untrusted",

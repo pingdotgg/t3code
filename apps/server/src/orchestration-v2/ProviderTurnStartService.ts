@@ -33,6 +33,9 @@ import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import * as Bots from "../bots/BotStore.ts";
+import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
+import { botTurnPolicy } from "../bots/botTurnPolicy.ts";
 import * as ServerConfig from "../config.ts";
 import {
   CLAUDE_PROVIDER,
@@ -275,6 +278,11 @@ export const layer: Layer.Layer<
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
+    const botStore = yield* Effect.serviceOption(Bots.BotStore);
+    const providerInstances = yield* Effect.serviceOption(
+      ProviderInstances.ProviderInstanceRegistry,
+    );
+    const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
     const eventSink = yield* EventSink.EventSinkV2;
     const turnAnalytics = yield* ProviderUsageAnalytics.ProviderTurnAnalytics;
     const contextHandoffService = yield* ContextHandoffService.ContextHandoffServiceV2;
@@ -870,7 +878,45 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const resolvedRuntimePolicy = resolvedPolicy.success;
+      const bot = Option.isSome(botStore) ? yield* botStore.value.find(input.threadId) : undefined;
+      const botSender =
+        bot === undefined || message.senderThreadId === undefined
+          ? undefined
+          : yield* projectionStore.getThread(message.senderThreadId);
+      const botCrossProject =
+        bot !== undefined && botSender !== undefined && botSender.projectId !== bot.projectId;
+      if (bot !== undefined) {
+        const provider = Option.isSome(providerInstances)
+          ? yield* providerInstances.value.getInstance(run.modelSelection.instanceId)
+          : undefined;
+        const replay =
+          Option.isSome(config) &&
+          config.value.devUrl !== undefined &&
+          run.modelSelection.instanceId === "devReplay";
+        const problem =
+          botCrossProject && !bot.access.handoffProjects.includes(botSender.projectId)
+            ? "The bot no longer accepts handoffs from this project."
+            : bot.state !== "active"
+              ? "Resume this bot before starting another turn."
+              : bot.projectId !== projection.thread.projectId
+                ? "This bot is outside its configured project."
+                : provider?.driverKind !== "codex" && !replay
+                  ? "Select a Codex model to run this bot."
+                  : undefined;
+        if (problem !== undefined) {
+          yield* settleStartFailure({
+            signal: "bot-unavailable",
+            title: "Bot could not run",
+            error: new Error(problem),
+            message: problem,
+          });
+          return;
+        }
+      }
+      const resolvedRuntimePolicy =
+        bot === undefined
+          ? resolvedPolicy.success
+          : botTurnPolicy(bot, resolvedPolicy.success, message, botCrossProject);
       if (!(yield* isCurrentAttemptInStatus("starting"))) return;
       const existingSessionProjection = projection.providerSessions.find(
         (candidate) => candidate.id === providerSessionId,

@@ -255,6 +255,7 @@ import {
   ComboboxTrigger,
   useComboboxFilter,
 } from "./ui/combobox";
+import { SidebarBots } from "./sidebar/SidebarBots";
 import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { SidebarHeaderIconButton, SidebarThreadHeader } from "./sidebar/SidebarThreadHeader";
@@ -3274,6 +3275,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           </SidebarGroup>
         }
       >
+        {!isSearchingThreads && (
+          <SidebarBots environmentIds={connectedEnvironmentIds} openThread={navigateToThread} />
+        )}
         <SidebarGroup className="flex-1" role="presentation">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (

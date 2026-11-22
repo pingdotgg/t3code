@@ -376,3 +376,20 @@ A snoozed thread keeps working and stays hidden until its wake time, even while
 its agent wakes itself for background work. It comes back early for an approval,
 a new question, a failed run, or a message or answer you send. You can snooze an existing
 question and answer when the thread wakes; the question stays unanswered.
+
+## Bots
+
+In the web or desktop sidebar, open **Bots → New bot** and choose a project and a Codex model.
+Give the bot standing instructions that should apply to each task. Chat with it in its own thread,
+or use **Settings → Scheduled tasks** to run a prompt in that thread on a schedule or from an inbound
+webhook. For a recurring task that keeps the conversation, choose **One thread, continuing the
+conversation** and select the bot’s thread.
+
+Ask a bot to set up another bot, a schedule, a workflow, or a webhook. Review its proposal in
+**Bots → Bot configuration**. An activation grant lets that bot activate the selected type of resource
+when it runs from the selected trigger. The bot’s permissions also let you opt in to workspace writes
+for unattended runs and accept handoffs from other projects.
+
+Use **Workflows** to run a sequence of bot steps and see each result. Use **Channels** to choose a
+leader and member bots for a shared conversation. Messages go to the leader by default. You can
+address another member directly, and the leader can assign work to members.

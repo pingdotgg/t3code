@@ -130,6 +130,11 @@ import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManag
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as DocumentText from "./provider/DocumentText.ts";
+import * as BotWorkService from "./bots/BotWorkService.ts";
+import * as BotDraftStore from "./bots/BotDraftStore.ts";
+import * as BotDraftService from "./bots/BotDraftService.ts";
+import * as BotStore from "./bots/BotStore.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -1491,6 +1496,11 @@ export const layerWsRpc = (
       const commandOutputHub = yield* CommandOutputHub.CommandOutputHub;
       const threadViewers = yield* ThreadViewers.ThreadViewers;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const botWork = yield* BotWorkService.BotWorkService;
+      const botDrafts = yield* BotDraftStore.BotDraftStore;
+      const botDraftService = yield* BotDraftService.BotDraftService;
+      const botProfiles = yield* BotStore.BotStore;
+      const bots = yield* BotService.BotService;
       const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const guestShares = yield* GuestShareService.GuestShareService;
@@ -2360,6 +2370,19 @@ export const layerWsRpc = (
           ),
         [ORCHESTRATION_V2_WS_METHODS.subscribePromptSuggestion]: (input) =>
           providerSessionManager.subscribePromptSuggestion(input.threadId),
+        [WS_METHODS.botWorkSubscribe]: () => botWork.subscribe(),
+        [WS_METHODS.botWorkAct]: (input) => botWork.act(input),
+        [WS_METHODS.botDraftsSubscribe]: () => botDrafts.subscribe(),
+        [WS_METHODS.botSetGrant]: (input) => botDraftService.setGrant(input),
+        [WS_METHODS.botDraftsReview]: (input) => botDraftService.review(input),
+        [WS_METHODS.botSetAccess]: ({ threadId, access }) =>
+          botProfiles.setAccess(threadId, access),
+        [WS_METHODS.botsSubscribe]: () => botProfiles.subscribe(),
+        [WS_METHODS.botsCreate]: (input) => bots.create(input),
+        [WS_METHODS.botsUpdate]: (input) => bots.update(input),
+        [WS_METHODS.botsSetState]: (input) => bots.setState(input),
+        [WS_METHODS.botsHistory]: (input) => botProfiles.history(input.threadId),
+        [WS_METHODS.botsRestore]: (input) => bots.restore(input),
         [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
           scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
         [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),

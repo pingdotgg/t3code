@@ -59,6 +59,11 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
+import * as BotWorkService from "../bots/BotWorkService.ts";
+import * as BotDraftStore from "../bots/BotDraftStore.ts";
+import * as BotDraftService from "../bots/BotDraftService.ts";
+import * as BotStore from "../bots/BotStore.ts";
+import * as BotService from "../bots/BotService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
@@ -189,6 +194,7 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      BotStore.layer,
       TurnItemPositionStore.layer,
     ),
   ),
@@ -250,6 +256,8 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       ProviderAdapterRegistry.layerFromProviderInstanceRegistry,
       // Reuse the continuation worker's layer reference so memoization shares one request queue.
       ProviderContinuationRequests.layer,
+      BotStore.layer,
+      BotDraftStore.layer,
       layerProviderEventIngestorProvided,
       layerRuntimePolicyProvided,
       layerProviderSessionManagerProvided,
@@ -313,6 +321,9 @@ const layerThreadLaunchProvided = ThreadLaunchService.layer.pipe(
 const layerSecretRequestsProvided = SecretRequests.layer.pipe(
   Layer.provide(layerThreadManagementProvided),
 );
+const layerBotWorkProvided = BotWorkService.layer.pipe(
+  Layer.provide(Layer.mergeAll(BotStore.layer, layerThreadManagementProvided, layerEventSink)),
+);
 const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
@@ -320,6 +331,8 @@ const layerScheduledTaskProvided = ScheduledTaskService.layer.pipe(
       layerThreadManagementProvided,
       layerManagedProjectFoldersProvided,
       layerSecretRequestsProvided,
+      BotStore.layer,
+      layerBotWorkProvided,
     ),
   ),
 );
@@ -409,6 +422,17 @@ export const layer = Layer.mergeAll(
   layerLegacyV1ThreadImporterProvided,
 );
 
+const layerBotServiceProvided = BotService.layer.pipe(
+  Layer.provide(
+    Layer.mergeAll(
+      BotStore.layer,
+      layerThreadLaunchProvided,
+      layerOrchestratorProvided,
+      layerScheduledTaskProvided,
+    ),
+  ),
+);
+
 export const layerProduction = Layer.mergeAll(
   WorktreeBranchSync.layer.pipe(
     Layer.provide(Layer.merge(layerThreadManagementProvided, ProjectionStore.layer)),
@@ -417,6 +441,22 @@ export const layerProduction = Layer.mergeAll(
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerScheduledTaskProvided,
+  BotStore.layer,
+  layerBotServiceProvided,
+  layerBotWorkProvided,
+  BotDraftStore.layer,
+  BotDraftService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        BotStore.layer,
+        layerBotServiceProvided,
+        layerBotWorkProvided,
+        BotDraftStore.layer,
+        layerScheduledTaskProvided,
+        layerThreadManagementProvided,
+      ),
+    ),
+  ),
   layerScratchThreadPromotionProvided,
   layerSecretRequestsProvided,
   GuestShareService.layer.pipe(

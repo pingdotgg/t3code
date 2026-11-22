@@ -1607,6 +1607,22 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:scheduled-task:webhook-delivery",
       tag: WS_METHODS.scheduledTasksGetWebhookDelivery,
     }),
+    botWorkLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:bot-work:live",
+      tag: WS_METHODS.botWorkSubscribe,
+    }),
+    botDraftsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:bot-drafts:live",
+      tag: WS_METHODS.botDraftsSubscribe,
+    }),
+    botsLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:bots:live",
+      tag: WS_METHODS.botsSubscribe,
+    }),
+    botHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:bot:history",
+      tag: WS_METHODS.botsHistory,
+    }),
     scheduledTasksLive: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:scheduled-tasks:live",
       tag: WS_METHODS.scheduledTasksSubscribe,
@@ -1872,6 +1888,38 @@ export function createServerEnvironmentAtoms<R, E>(
     signalProcess: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:signal-process",
       tag: WS_METHODS.serverSignalProcess,
+    }),
+    actOnBotWork: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot-work:act",
+      tag: WS_METHODS.botWorkAct,
+    }),
+    setBotAccess: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot-access:set",
+      tag: WS_METHODS.botSetAccess,
+    }),
+    setBotGrant: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot-grant:set",
+      tag: WS_METHODS.botSetGrant,
+    }),
+    reviewBotDraft: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot-draft:review",
+      tag: WS_METHODS.botDraftsReview,
+    }),
+    createBot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot:create",
+      tag: WS_METHODS.botsCreate,
+    }),
+    updateBot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot:update",
+      tag: WS_METHODS.botsUpdate,
+    }),
+    setBotState: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot:set-state",
+      tag: WS_METHODS.botsSetState,
+    }),
+    restoreBot: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:bot:restore",
+      tag: WS_METHODS.botsRestore,
     }),
     upsertScheduledTask: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:upsert",

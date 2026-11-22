@@ -83,6 +83,8 @@ import {
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
+import * as BotDraftStore from "../bots/BotDraftStore.ts";
+import * as BotStore from "../bots/BotStore.ts";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
@@ -1627,6 +1629,8 @@ const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subage
   );
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const bots = yield* Effect.serviceOption(BotStore.BotStore);
+  const botDrafts = yield* Effect.serviceOption(BotDraftStore.BotDraftStore);
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -2501,6 +2505,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      const bot = Option.isSome(bots)
+        ? yield* bots.value
+            .find(threadId)
+            .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })))
+        : undefined;
+      if (bot !== undefined && bot.state !== "active") return;
       let projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
@@ -2557,6 +2567,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === storedQueuedRun.userMessageId,
       );
+      if (
+        bot !== undefined &&
+        queuedMessage?.scheduledTaskId !== undefined &&
+        Option.isSome(botDrafts)
+      ) {
+        const held = yield* botDrafts.value
+          .taskHeldByRevocation(queuedMessage.scheduledTaskId)
+          .pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })));
+        if (held) {
+          yield* writeSystemEvents([
+            {
+              type: "run.updated",
+              threadId,
+              runId: storedQueuedRun.id,
+              providerInstanceId: storedQueuedRun.providerInstanceId,
+              occurredAt: yield* DateTime.now,
+              payload: { ...storedQueuedRun, queueHeld: true },
+            },
+          ]);
+          return true;
+        }
+      }
       const modelSelection = queuedRunModelSelection(projection, storedQueuedRun);
       const queuedRun = {
         ...storedQueuedRun,
@@ -7129,6 +7161,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    const bot = Option.isSome(bots)
+      ? yield* bots.value.find(command.threadId).pipe(mapDispatchError(command))
+      : undefined;
+    if (bot?.state === "archived") {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "Restore the archived bot before sending it work.",
+      });
+    }
+    let botCrossProject = false;
+    if (
+      bot !== undefined &&
+      (command.senderThreadId !== undefined || command.linkedSender !== undefined)
+    ) {
+      const sender =
+        command.senderThreadId === undefined
+          ? undefined
+          : yield* projectionStore
+              .getThread(command.senderThreadId)
+              .pipe(mapDispatchError(command));
+      botCrossProject = sender?.projectId !== bot.projectId;
+      if (
+        botCrossProject &&
+        (sender === undefined || !bot.access.handoffProjects.includes(sender.projectId))
+      ) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: "This project is outside the bot's approved handoff projects.",
+        });
+      }
+    }
     // A compacted thread reads every run, but attempts, nodes, messages, provider turns and prompts
     // only for its recent runs and the runs this command names. An idle compaction reads in full:
     // its busy check below looks for a delegated result's message under any old run.
@@ -7497,6 +7562,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         dispatchMode = { type: "start_immediately" };
       }
     }
+    if (
+      bot !== undefined &&
+      (bot.state === "paused" ||
+        command.createdBy !== "user" ||
+        command.scheduledTaskId !== undefined ||
+        command.senderThreadId !== undefined ||
+        command.linkedSender !== undefined)
+    ) {
+      dispatchMode = { type: "queue_after_active" };
+    }
     // Stop leaves the run reading as running until its provider stops. A plain
     // send in that window queues behind the stopped queue instead of steering
     // text the agent never receives, and like any user send it releases the
@@ -7538,7 +7613,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "start_immediately" };
     }
-    const freshContext = command.freshContext === true;
+    const freshContext = command.freshContext === true || botCrossProject;
     // A result is asked of one whole turn, so a send that declares one never joins a running turn.
     // A run that continues one cut short still owes that run's result.
     const continuedRunId =
@@ -7911,7 +7986,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       dispatchMode.type === "defer_start" ||
       dispatchMode.type === "start_immediately" ||
       dispatchMode.type === "queue_after_active";
-    const shouldQueue = queueBehindRun !== undefined && startsOrQueuesRun;
+    const shouldQueue =
+      (queueBehindRun !== undefined || bot?.state === "paused") && startsOrQueuesRun;
     // An explicit pick queued ahead reaches the thread only when its run starts. A goal or
     // restart command that stops the active run goes first, so nothing queued applies before it.
     // Buffered provider wakes drain output their own provider already produced.
@@ -7973,9 +8049,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const queueProviderThread =
         activeProviderThread ??
         projection.providerThreads.find(
-          (candidate) => candidate.id === queueBehindRun.providerThreadId,
+          (candidate) => candidate.id === queueBehindRun?.providerThreadId,
         );
-      if (queueProviderThread === undefined) {
+      if (queueProviderThread === undefined && queueBehindRun !== undefined) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
@@ -7987,7 +8063,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
       const targetProviderThread = freshContext
         ? undefined
-        : modelSelection.instanceId === queueProviderThread.providerInstanceId
+        : modelSelection.instanceId === queueProviderThread?.providerInstanceId
           ? queueProviderThread
           : rootProviderThreadsForProvider(projection, modelSelection.instanceId)[0];
       const queuedAdapter = yield* providerAdapters
@@ -8034,7 +8110,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const attemptId = idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 });
       const rootNodeId = idAllocator.derive.rootNode({ runId });
       const checkpointScope =
-        queueBehindRun.status === "preparing" || worktreeMissingRun !== undefined
+        queueBehindRun?.status === "preparing" || worktreeMissingRun !== undefined
           ? null
           : yield* runtimePolicy.resolve({ thread: projection.thread, modelSelection }).pipe(
               Effect.flatMap((resolvedRuntimePolicy) =>
@@ -15823,6 +15899,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.interaction-mode.set":
       case "thread.model-selection.set":
       case "provider.switch":
+        if (
+          Option.isSome(bots) &&
+          command.type === "thread.runtime-mode.set" &&
+          command.runtimeMode !== "approval-required" &&
+          (yield* bots.value.find(command.threadId).pipe(mapDispatchError(command))) !== undefined
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause: "A bot uses read-only mode with explicit approvals in direct chat.",
+          });
+        }
         yield* dispatchThreadMutation(command, events, effects);
         break;
       case "thread.metadata.update": {

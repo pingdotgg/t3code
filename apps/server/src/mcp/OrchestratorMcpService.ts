@@ -84,6 +84,10 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import type { BotProposeInput, BotDraft, BotAssignInput, BotWorkRun } from "@t3tools/contracts";
+import * as BotStore from "../bots/BotStore.ts";
+import * as BotWorkService from "../bots/BotWorkService.ts";
+import * as BotDraftService from "../bots/BotDraftService.ts";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -174,6 +178,17 @@ type TerminalTaskStatus = Extract<
 >;
 
 export interface OrchestratorMcpServiceShape {
+  readonly assignBotWork: (
+    scope: McpInvocationScope,
+    input: typeof BotAssignInput.Type,
+  ) => Effect.Effect<BotWorkRun, OrchestratorMcpFailure>;
+  readonly proposeBotChange: (
+    scope: McpInvocationScope,
+    input: typeof BotProposeInput.Type,
+  ) => Effect.Effect<
+    { readonly draft: BotDraft; readonly applied: boolean },
+    OrchestratorMcpFailure
+  >;
   readonly capabilities: (
     scope: McpInvocationScope,
     input?: OrchestratorMcpCapabilitiesInput,
@@ -1313,6 +1328,9 @@ function timelineItemsWithinBudget(
 }
 
 const make = Effect.gen(function* () {
+  const botWork = yield* Effect.serviceOption(BotWorkService.BotWorkService);
+  const botStore = yield* Effect.serviceOption(BotStore.BotStore);
+  const botDrafts = yield* Effect.serviceOption(BotDraftService.BotDraftService);
   const random = yield* SecureRandom.SecureRandom;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
@@ -1323,6 +1341,15 @@ const make = Effect.gen(function* () {
   const gitDriver = yield* GitVcsDriver.GitVcsDriver;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const remoteDelegation = yield* RemoteDelegation.RemoteDelegation;
+
+  const getBot = Effect.fn("OrchestratorMcpService.getBot")(function* (
+    threadId: ThreadId | undefined,
+  ) {
+    if (threadId === undefined || Option.isNone(botStore)) return undefined;
+    return yield* botStore.value
+      .find(threadId)
+      .pipe(Effect.mapError((error) => failure("orchestration_error", error.message)));
+  });
 
   const requireProject = (projectId: ProjectId) =>
     projects.getById(projectId).pipe(
@@ -1553,6 +1580,16 @@ const make = Effect.gen(function* () {
         scope,
         threadId,
         `Thread ${threadId} is no longer available.`,
+      );
+    }
+    if (
+      parent !== undefined &&
+      parent.thread.id !== threadId &&
+      (yield* getBot(threadId)) !== undefined
+    ) {
+      return yield* failure(
+        "invalid_request",
+        "Wait for the run you sent to this bot to read its reply.",
       );
     }
     const input = { projectId: shell.projectId, threadId };
@@ -2371,8 +2408,38 @@ const make = Effect.gen(function* () {
   });
 
   return OrchestratorMcpService.of({
+    assignBotWork: Effect.fn("OrchestratorMcpService.assignBotWork")(function* (scope, input) {
+      const { scope: caller } = yield* loadThreadCaller(scope, "t3_bot_assign");
+      if (Option.isNone(botWork)) {
+        return yield* failure("orchestration_error", "Bot channels are unavailable.");
+      }
+      return yield* botWork.value
+        .assign(caller.thread.threadId, input)
+        .pipe(
+          Effect.mapError(() =>
+            failure(
+              "invalid_request",
+              "The assignment must target a current channel member outside the active handoff chain, within the request limit.",
+            ),
+          ),
+        );
+    }),
+    proposeBotChange: Effect.fn("OrchestratorMcpService.proposeBotChange")(
+      function* (scope, input) {
+        const { scope: caller } = yield* loadThreadCaller(scope, "t3_bot_propose");
+        if (Option.isNone(botDrafts)) {
+          return yield* failure("orchestration_error", "Bot configuration is unavailable.");
+        }
+        return yield* botDrafts.value
+          .propose(caller.thread.threadId, input)
+          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
+      },
+    ),
     scheduleTask: Effect.fn("OrchestratorMcpService.scheduleTask")(function* (scope, input) {
       const { parent, limits } = yield* loadCaller(scope, ["runs"]);
+      if ((yield* getBot(parent?.thread.id)) !== undefined) {
+        return yield* failure("invalid_request", "Use t3_bot_propose to set up a bot schedule.");
+      }
       const projectId = yield* resolveProjectTarget(parent, input.projectId);
       yield* assertLiveCallerForOtherProject(scope, parent, projectId);
       const project = yield* requireProject(projectId);
@@ -2458,6 +2525,9 @@ const make = Effect.gen(function* () {
     updateScheduledTask: Effect.fn("OrchestratorMcpService.updateScheduledTask")(
       function* (scope, input) {
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
+        if ((yield* getBot(parent?.thread.id)) !== undefined) {
+          return yield* failure("invalid_request", "Manage this task through bot configuration.");
+        }
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         if (
@@ -2534,6 +2604,9 @@ const make = Effect.gen(function* () {
     deleteScheduledTask: Effect.fn("OrchestratorMcpService.deleteScheduledTask")(
       function* (scope, input) {
         const { parent, limits } = yield* loadCaller(scope, ["runs"]);
+        if ((yield* getBot(parent?.thread.id)) !== undefined) {
+          return yield* failure("invalid_request", "Manage this task through bot configuration.");
+        }
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* scheduledTasks
@@ -3647,7 +3720,32 @@ const make = Effect.gen(function* () {
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);
 
-      const mode = input.mode ?? "auto";
+      if (parent !== undefined && Option.isSome(botWork)) {
+        const active = parent.runs.find((run) => run.status === "running");
+        if (
+          active !== undefined &&
+          (yield* botWork.value
+            .managesRun(active.id)
+            .pipe(Effect.mapError((error) => failure("orchestration_error", error.message))))
+        ) {
+          return yield* failure(
+            "invalid_request",
+            "Use t3_bot_assign to send work from a bot channel.",
+          );
+        }
+      }
+      const bot = yield* getBot(target.thread.id);
+      const crossProject = bot !== undefined && parent?.thread.projectId !== bot.projectId;
+      if (
+        crossProject &&
+        (parent === undefined || !bot.access.handoffProjects.includes(parent.thread.projectId))
+      ) {
+        return yield* failure(
+          "invalid_request",
+          "The owner must allow handoffs from your project.",
+        );
+      }
+      const mode = bot !== undefined ? "queue" : (input.mode ?? "auto");
       const key = yield* requestKey(input.clientRequestId);
       const messageId = stableOperationMessageId({
         scope,
@@ -3672,7 +3770,7 @@ const make = Effect.gen(function* () {
           text: input.message,
           attachments: [],
           mode,
-          ...(input.freshContext ? { freshContext: true } : {}),
+          ...(input.freshContext || crossProject ? { freshContext: true } : {}),
           ...(input.outputSchema === undefined ? {} : { outputSchema: input.outputSchema }),
           createdBy: "agent",
           creationSource: "mcp",
@@ -3699,6 +3797,30 @@ const make = Effect.gen(function* () {
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {
       const { parent, target } = yield* loadScopedThread(scope, input.threadId, []);
+      const isBotHandoff =
+        parent !== undefined &&
+        parent.thread.id !== input.threadId &&
+        (yield* getBot(input.threadId)) !== undefined;
+      if (isBotHandoff) {
+        const runId = input.runId;
+        if (runId === undefined)
+          return yield* failure(
+            "invalid_request",
+            "Specify the bot run ID returned by the handoff.",
+          );
+        const records = yield* threadManagement
+          .getThreadRecords(input.threadId, ["messages"], {
+            messageRunIds: [runId],
+            messageRoles: ["user"],
+          })
+          .pipe(Effect.mapError(threadManagementFailure));
+        if (!records.messages.some((message) => message.senderThreadId === parent.thread.id)) {
+          return yield* failure(
+            "invalid_request",
+            "You can only wait for work you sent to this bot.",
+          );
+        }
+      }
       const result = yield* threadManagement
         .waitForThread({
           projectId: target.thread.projectId,
@@ -3708,7 +3830,9 @@ const make = Effect.gen(function* () {
             MAX_WAIT_TIMEOUT_MS,
             Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
           ),
-          ...(input.untilDelegatedWorkSettled === true ? { untilDelegatedWorkSettled: true } : {}),
+          ...(!isBotHandoff && input.untilDelegatedWorkSettled === true
+            ? { untilDelegatedWorkSettled: true }
+            : {}),
           ...(input.untilOutput === true ? { untilOutput: true } : {}),
         })
         .pipe(Effect.mapError(threadManagementFailure));
@@ -3743,8 +3867,26 @@ const make = Effect.gen(function* () {
         !childRequests.some(
           (request) => request.status === "pending" && request.responseCapability.type === "live",
         );
+      const reply =
+        isBotHandoff && result.run?.status === "completed"
+          ? yield* threadManagement
+              .getThreadRecords(input.threadId, ["messages"], {
+                messageRunIds: [result.run.id],
+                messageRoles: ["assistant"],
+              })
+              .pipe(
+                Effect.map(({ messages }) =>
+                  messages
+                    .map((message) => message.text)
+                    .join("\n\n")
+                    .slice(0, 8000),
+                ),
+                Effect.mapError(threadManagementFailure),
+              )
+          : undefined;
       return {
         threadId: input.threadId,
+        ...(reply === undefined ? {} : { reply }),
         runId: result.run?.id ?? null,
         status,
         timedOut: result.timedOut,

@@ -41,6 +41,8 @@ import * as Duration from "effect/Duration";
 import * as Metric from "effect/Metric";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as BotWorkService from "../bots/BotWorkService.ts";
+import * as BotStore from "../bots/BotStore.ts";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
@@ -512,6 +514,8 @@ export const layer = Layer.effect(
     const webhookFilteredLogWindows = yield* Ref.make<
       ReadonlyMap<ScheduledTaskId, ReadonlyArray<number>>
     >(new Map());
+    const botWork = yield* Effect.serviceOption(BotWorkService.BotWorkService);
+    const botStore = yield* Effect.serviceOption(BotStore.BotStore);
     const activeRuns = yield* Ref.make<ReadonlySet<ScheduledTaskId>>(new Set());
     // Notifications re-emit the full list; slow subscribers need only the newest dirty signal.
     const changesPubSub = yield* PubSub.sliding<void>(1);
@@ -997,6 +1001,16 @@ export const layer = Layer.effect(
             threadId: null,
             dispatchFailed: false,
           };
+        const bot =
+          active.threadId === null || Option.isNone(botStore)
+            ? undefined
+            : yield* botStore.value
+                .find(active.threadId)
+                .pipe(
+                  Effect.mapError((cause) =>
+                    taskError("Could not read the destination bot.", { taskId: active.id, cause }),
+                  ),
+                );
         const parsedNextRunAt =
           active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
@@ -1043,6 +1057,16 @@ export const layer = Layer.effect(
           if (reason !== null) return yield* new WebhookDeliverySkipped({ reason });
         }
 
+        const workflow = Option.isSome(botWork)
+          ? yield* botWork.value.workflowForTask(active.id).pipe(
+              Effect.mapError((cause) =>
+                taskError("Could not read the destination workflow.", {
+                  taskId: active.id,
+                  cause,
+                }),
+              ),
+            )
+          : undefined;
         if (webhook === undefined) yield* markRunning(active.id, startedAtIso);
         else
           yield* sql
@@ -1087,7 +1111,9 @@ export const layer = Layer.effect(
               text: prompt,
               attachments: [],
               mode: "queue",
-              ...(threadMode === "fresh_session" ? { freshContext: true } : {}),
+              ...(threadMode === "fresh_session" || (bot !== undefined && webhook !== undefined)
+                ? { freshContext: true }
+                : {}),
               createdBy: active.createdBy,
               creationSource: active.creationSource,
             })
@@ -1109,40 +1135,51 @@ export const layer = Layer.effect(
 
         // Capture defects and interrupts too so dispatch failures still reach markCompleted.
         const result =
-          active.threadId === null
+          workflow !== undefined && Option.isSome(botWork)
             ? yield* Effect.exit(
-                threadLaunch
-                  .launch({
-                    commandId,
-                    projectId: active.projectId,
-                    title: active.title,
-                    modelSelection: active.modelSelection,
-                    runtimeMode: active.runtimeMode,
-                    interactionMode: active.interactionMode,
-                    workspaceStrategy: active.workspaceStrategy,
-                    initialMessage: {
-                      messageId,
-                      scheduledTaskId: active.id,
-                      text: prompt,
-                      attachments: [],
-                    },
-                    createdBy: active.createdBy,
-                    creationSource: active.creationSource,
+                botWork.value
+                  .start({
+                    id: commandId,
+                    collectionId: workflow,
+                    text: prompt,
+                    source: webhook === undefined ? "scheduled" : "webhook",
                   })
-                  .pipe(
-                    Effect.map((launched) => launched.threadId),
-                    Effect.tap((threadId) =>
-                      threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
-                    ),
-                  ),
+                  .pipe(Effect.as(null)),
               )
-            : yield* Effect.exit(
-                // The stored selection only seeds fresh threads. A bound run
-                // follows the thread's current provider, so it passes none.
-                sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
-                  Effect.as(ThreadId.make(active.threadId)),
-                ),
-              );
+            : active.threadId === null
+              ? yield* Effect.exit(
+                  threadLaunch
+                    .launch({
+                      commandId,
+                      projectId: active.projectId,
+                      title: active.title,
+                      modelSelection: active.modelSelection,
+                      runtimeMode: active.runtimeMode,
+                      interactionMode: active.interactionMode,
+                      workspaceStrategy: active.workspaceStrategy,
+                      initialMessage: {
+                        messageId,
+                        scheduledTaskId: active.id,
+                        text: prompt,
+                        attachments: [],
+                      },
+                      createdBy: active.createdBy,
+                      creationSource: active.creationSource,
+                    })
+                    .pipe(
+                      Effect.map((launched) => launched.threadId),
+                      Effect.tap((threadId) =>
+                        threadMode === "new_thread" ? Effect.void : bindThread(active, threadId),
+                      ),
+                    ),
+                )
+              : yield* Effect.exit(
+                  // The stored selection only seeds fresh threads. A bound run
+                  // follows the thread's current provider, so it passes none.
+                  sendBound(ThreadId.make(active.threadId), active.projectId, 2).pipe(
+                    Effect.as(ThreadId.make(active.threadId)),
+                  ),
+                );
 
         const runSucceeded = result._tag === "Success";
         if (webhook !== undefined && runSucceeded) yield* Ref.set(webhook.dispatched, true);

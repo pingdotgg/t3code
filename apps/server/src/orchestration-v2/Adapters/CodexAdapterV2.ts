@@ -56,7 +56,7 @@ import {
 } from "@t3tools/shared/toolActivity";
 import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
-import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { resolveSpawnCommand, SpawnExecutableResolution } from "@t3tools/shared/shell";
 import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
 import { oauthCallbackUrl } from "@t3tools/shared/oauthCallback";
 import type {
@@ -886,12 +886,19 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       workspaceInstructions === ""
         ? undefined
         : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
+    const botContext = Object.fromEntries(
+      (input.runtimePolicy.botInstructions ?? []).map((value, index) => [
+        `t3_bot_profile_${index}`,
+        { kind: "application" as const, value },
+      ]),
+    );
     const additionalContext =
       t3Context === undefined &&
       workspaceContext === undefined &&
-      Object.keys(appContext).length === 0
+      Object.keys(appContext).length === 0 &&
+      Object.keys(botContext).length === 0
         ? undefined
-        : { ...t3Context, ...workspaceContext, ...appContext };
+        : { ...t3Context, ...workspaceContext, ...appContext, ...botContext };
     return yield* decodeCodexTurnStartParams({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -904,7 +911,10 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       // Omitting the reviewer on resume preserves the previous Auto reviewer.
       approvalsReviewer: runtimeModeDefaults.approvalsReviewer,
       ...(approvalPolicy === undefined ? {} : { approvalPolicy }),
-      ...(sandboxPolicy === undefined ? {} : { sandboxPolicy }),
+      // An explicit sandboxPolicy would replace the named workspace profile inherited by this turn.
+      ...(sandboxPolicy === undefined || input.runtimePolicy.botWorkspaceProfile !== undefined
+        ? {}
+        : { sandboxPolicy }),
       ...(effort === undefined ? {} : { effort }),
       ...(serviceTier === undefined ? {} : { serviceTier }),
       // Codex keeps no per-thread choice for this, so every turn must carry it.
@@ -1576,6 +1586,7 @@ function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly stdioMcpServers?: ReadonlyArray<string>;
+  readonly workspaceRuntimePaths?: ReadonlyArray<string>;
   readonly modelSelection?: { readonly model: string };
   readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
 }): {
@@ -1591,12 +1602,56 @@ function codexThreadRuntimeParams(input: {
           url: mcpSession.endpoint,
           tool_timeout_sec: CODEX_T3_MCP_TOOL_TIMEOUT_SEC,
           http_headers: { Authorization: mcpSession.authorizationHeader },
+          ...(input.runtimePolicy?.botInstructions === undefined
+            ? {}
+            : {
+                tools: {
+                  t3_bot_propose: { approval_mode: "approve" },
+                  t3_bot_assign: { approval_mode: "approve" },
+                  t3_submit_output: { approval_mode: "approve" },
+                },
+              }),
+        };
+  const workspaceProfile = input.runtimePolicy?.botWorkspaceProfile;
+  const workspaceRoots =
+    input.runtimePolicy?.cwd == null
+      ? []
+      : [input.runtimePolicy.cwd, ...(input.runtimePolicy.workspace?.extraRoots ?? [])];
+  const t3Servers =
+    t3Server === undefined
+      ? {}
+      : {
+          "t3-code": { ...t3Server, disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS },
+          [CODEX_T3_DIRECT_MCP_SERVER]: {
+            ...t3Server,
+            enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
+            omit_tools_from: ["code_mode", "deferred"],
+          },
         };
   return {
     ...(input.runtimePolicy?.cwd == null ? {} : { cwd: input.runtimePolicy.cwd }),
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(workspaceProfile === undefined
+        ? {}
+        : {
+            default_permissions: "t3-bot-workspace",
+            permissions: {
+              "t3-bot-workspace": {
+                filesystem: {
+                  ":minimal": "read",
+                  ...Object.fromEntries(
+                    (input.workspaceRuntimePaths ?? []).map((path) => [path, "read"]),
+                  ),
+                  ...Object.fromEntries(workspaceRoots.map((root) => [root, workspaceProfile])),
+                },
+                network: { enabled: false },
+              },
+            },
+            web_search: "disabled",
+            "features.apps": false,
+          }),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
@@ -1604,23 +1659,22 @@ function codexThreadRuntimeParams(input: {
             [`shell_environment_policy.set.${PortScanner.AGENT_THREAD_ENV}`]: input.threadId,
             // Codex starts the user's stdio MCP servers per thread, outside the shell policy.
             ...Object.fromEntries(
-              (input.stdioMcpServers ?? []).map((name) => [
+              (workspaceProfile === undefined ? (input.stdioMcpServers ?? []) : []).map((name) => [
                 `mcp_servers.${name}.env.${PortScanner.AGENT_THREAD_ENV}`,
                 input.threadId,
               ]),
             ),
           }),
-      ...(t3Server === undefined
-        ? {}
+      ...(workspaceProfile === undefined
+        ? Object.fromEntries(
+            Object.entries(t3Servers).map(([name, server]) => [`mcp_servers.${name}`, server]),
+          )
         : {
-            // Override only T3's servers so launch-argument MCP servers survive.
-            "mcp_servers.t3-code": { ...t3Server, disabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS },
-            // Code Mode runs a blocking wait or delegate wait as a nested call, and the model
-            // keeps polling it. A second, direct-only registration makes it a plain tool call.
-            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
-              ...t3Server,
-              enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
-              omit_tools_from: ["code_mode", "deferred"],
+            mcp_servers: {
+              ...Object.fromEntries(
+                (input.stdioMcpServers ?? []).map((name) => [name, { enabled: false }]),
+              ),
+              ...t3Servers,
             },
           }),
     },
@@ -2141,7 +2195,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // A failed open is discarded, so the next turn spawns the updated binary.
         if (adapterOptions.compatibility !== undefined) yield* ensureInitialized;
         // Read per thread: a workspace's project config can add its own servers.
-        const readStdioMcpServers = (cwd: string | null | undefined) =>
+        const workspaceRuntimePaths = Effect.fn("CodexAdapterV2.workspaceRuntimePaths")(function* (
+          policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
+        ) {
+          if (policy?.botWorkspaceProfile === undefined) return [];
+          const platform = yield* HostProcess.Platform;
+          const resolve = yield* SpawnExecutableResolution;
+          const settings = resolvedRuntime?.config ?? adapterOptions.settings;
+          const environment = resolvedRuntime?.environment ?? adapterOptions.environment;
+          const executable = resolve(settings.binaryPath || "codex", platform, environment);
+          if (executable === undefined) return [];
+          const physical = yield* fileSystem
+            .realPath(executable)
+            .pipe(Effect.orElseSucceed(() => executable));
+          return [...new Set([executable, physical])];
+        });
+        const readStdioMcpServers = (cwd: string | null | undefined, isolated = false) =>
           ensureInitialized.pipe(
             Effect.andThen(
               client.request("config/read", {
@@ -2149,7 +2218,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 includeLayers: false,
               }),
             ),
-            Effect.map((response) => codexStdioMcpServerNames(response.config.mcp_servers)),
+            Effect.map(({ config }) =>
+              isolated
+                ? Object.keys(config.mcp_servers ?? {})
+                : codexStdioMcpServerNames(config.mcp_servers),
+            ),
             Effect.catch(() =>
               Effect.logDebug("Codex config read failed.").pipe(
                 Effect.as<ReadonlyArray<string>>([]),
@@ -2279,6 +2352,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           nativeThreadId: string,
           context: ActiveCodexTurnContext,
         ): Set<ProviderRequestKind> => {
+          if (context.input.runtimePolicy.botInstructions !== undefined) return new Set();
           const runtimeMode = context.input.runtimePolicy.runtimeMode;
           const allowed = sessionApprovals.get(nativeThreadId);
           if (allowed?.runtimeMode === runtimeMode) return allowed.kinds;
@@ -2287,6 +2361,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           sessionApprovals.set(nativeThreadId, { runtimeMode, kinds });
           return kinds;
         };
+        const approvalForTurn = (
+          context: ActiveCodexTurnContext,
+          decision: ProviderApprovalDecision,
+        ): ProviderApprovalDecision =>
+          context.input.runtimePolicy.botInstructions !== undefined &&
+          (decision === "acceptForSession" || decision === "acceptAlways")
+            ? "accept"
+            : decision;
         /** Retain settled contexts while background commands run so late item events still project. */
         const settledTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         const runningCommandItemsByTurn = yield* Ref.make(
@@ -6032,6 +6114,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -6104,6 +6187,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -6167,6 +6251,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -6254,6 +6339,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -6318,6 +6404,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -6386,6 +6473,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             });
 
             const resolved = yield* Deferred.await(decision).pipe(
+              Effect.map((answer) => approvalForTurn(context, answer)),
               Effect.ensuring(
                 Ref.update(pendingRuntimeRequests, (current) => {
                   const updated = new Map(current);
@@ -8079,15 +8167,20 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               Effect.andThen(
                 Effect.all([
                   mcpSessions.read(threadInput.threadId),
-                  readStdioMcpServers(threadInput.runtimePolicy.cwd),
+                  readStdioMcpServers(
+                    threadInput.runtimePolicy.cwd,
+                    threadInput.runtimePolicy.botWorkspaceProfile !== undefined,
+                  ),
+                  workspaceRuntimePaths(threadInput.runtimePolicy),
                 ]),
               ),
-              Effect.flatMap(([mcpSession, stdioMcpServers]) =>
+              Effect.flatMap(([mcpSession, stdioMcpServers, sandboxPaths]) =>
                 client.request("thread/start", {
                   ...codexThreadRuntimeParams({
                     threadId: threadInput.threadId,
                     mcpSession,
                     stdioMcpServers,
+                    workspaceRuntimePaths: sandboxPaths,
                     modelSelection: threadInput.modelSelection,
                     runtimePolicy: threadInput.runtimePolicy,
                   }),
@@ -8125,7 +8218,11 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ...codexThreadRuntimeParams({
                   threadId: appThreadId,
                   mcpSession: yield* readMcpSession(appThreadId),
-                  stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),
+                  stdioMcpServers: yield* readStdioMcpServers(
+                    threadInput.runtimePolicy?.cwd,
+                    threadInput.runtimePolicy?.botWorkspaceProfile !== undefined,
+                  ),
+                  workspaceRuntimePaths: yield* workspaceRuntimePaths(threadInput.runtimePolicy),
                   ...(threadInput.modelSelection === undefined
                     ? {}
                     : { modelSelection: threadInput.modelSelection }),

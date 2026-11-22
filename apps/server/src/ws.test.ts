@@ -129,6 +129,11 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as ReviewService from "./review/ReviewService.ts";
+import * as BotWorkService from "./bots/BotWorkService.ts";
+import * as BotDraftStore from "./bots/BotDraftStore.ts";
+import * as BotDraftService from "./bots/BotDraftService.ts";
+import * as BotStore from "./bots/BotStore.ts";
+import * as BotService from "./bots/BotService.ts";
 import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import * as GuestShareService from "./guest/GuestShareService.ts";
@@ -882,6 +887,11 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(ResourceTelemetry.ResourceTelemetry)({}),
   Layer.mock(ReviewService.ReviewService)({}),
   Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
+  Layer.mock(BotDraftStore.BotDraftStore)({}),
+  Layer.mock(BotWorkService.BotWorkService)({}),
+  Layer.mock(BotDraftService.BotDraftService)({}),
+  Layer.mock(BotStore.BotStore)({}),
+  Layer.mock(BotService.BotService)({}),
   Layer.mock(SecretRequests.SecretRequests)({}),
   Layer.mock(SecretResolver.SecretResolver)({}),
   Layer.mock(GuestShareService.GuestShareService)({}),
