@@ -1163,24 +1163,35 @@ export function applyAcpRegistryLiveConfiguration(
   if (!useLiveCatalog && configuration.partialOptions === true) {
     const modelsForOverlay = (() => {
       if (tailSlotReplacement === undefined) return provider.models;
-      const partialModelOptionIds = new Set(configuration.modelOptionIds ?? []);
-      const partialOverrideModelIds = new Set(
-        configuration.configOptions
-          .filter((descriptor) => isModelSpecificDescriptor(descriptor, partialModelOptionIds))
-          .map((descriptor) => descriptor.id),
-      );
+      const partialOverrideIds = new Set<string>();
+      if (configuration.currentModelId === tailSlotReplacement.id) {
+        const partialModelOptionIds = new Set(configuration.modelOptionIds ?? []);
+        for (const descriptor of configuration.configOptions) {
+          if (isModelSpecificDescriptor(descriptor, partialModelOptionIds)) {
+            partialOverrideIds.add(descriptor.id);
+          }
+        }
+      } else {
+        const advertisedForTail = readAdvertisedReasoning(
+          configuration.advertisedReasoning,
+          tailSlotReplacement.id,
+        );
+        if (advertisedForTail !== undefined) {
+          partialOverrideIds.add(advertisedForTail.id);
+        }
+      }
       const learnedPreviousModels = previousModels
         .filter((model) => !model.isCustom)
         .map((model) => {
           if (
             model.slug !== tailSlotReplacement.id ||
-            partialOverrideModelIds.size === 0 ||
+            partialOverrideIds.size === 0 ||
             !model.capabilities?.optionDescriptors?.length
           ) {
             return model;
           }
           const kept = model.capabilities.optionDescriptors.filter(
-            (descriptor) => !partialOverrideModelIds.has(descriptor.id),
+            (descriptor) => !partialOverrideIds.has(descriptor.id),
           );
           return kept.length === model.capabilities.optionDescriptors.length
             ? model
@@ -1694,16 +1705,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               configuration.currentModelId !== null
                 ? basePrevious.filter((model) => model.slug !== configuration.currentModelId)
                 : basePrevious;
-            // Sync models array identity with acceptedCatalog when managedProvider deduplicated
-            // a structurally equal snapshot whose overflow-tail tag changed.
-            const syncedProvider =
-              accepted.probeOptions === null &&
-              accepted.models.length > 0 &&
-              Equal.equals(provider.models, accepted.models)
-                ? { ...provider, models: accepted.models }
-                : provider;
             const next = applyAcpRegistryLiveConfiguration(
-              syncedProvider,
+              provider,
               configuration,
               effectiveConfig.customModels,
               previousModels,
@@ -1791,7 +1794,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               }
               ids.add(optionId);
             };
-            if (replacedLiveModelId === null && partial.currentModelId !== null) {
+            if (partial.currentModelId !== null) {
               const partialModelOptionIds = new Set(partial.modelOptionIds ?? []);
               for (const descriptor of partial.configOptions) {
                 if (isModelSpecificDescriptor(descriptor, partialModelOptionIds)) {
@@ -1801,9 +1804,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }
             if (partial.advertisedReasoning !== undefined) {
               for (const [slug, descriptor] of Object.entries(partial.advertisedReasoning)) {
-                if (slug !== replacedLiveModelId) {
-                  add(slug, descriptor.id);
-                }
+                add(slug, descriptor.id);
               }
             }
             return byModel.size > 0 ? byModel : undefined;
@@ -2357,7 +2358,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       ) {
                         return;
                       }
-                      const current = yield* getSnapshot;
+                      const rawCurrent = yield* getSnapshot;
+                      const accepted = yield* Ref.get(acceptedCatalog);
+                      // Sync models array identity with acceptedCatalog when managedProvider
+                      // deduplicated a structurally equal snapshot whose overflow-tail tag changed.
+                      const current =
+                        accepted.probeOptions === null &&
+                        accepted.models.length > 0 &&
+                        Equal.equals(rawCurrent.models, accepted.models)
+                          ? { ...rawCurrent, models: accepted.models }
+                          : rawCurrent;
                       if (
                         !current.installed ||
                         (current.auth.status === "unauthenticated" &&

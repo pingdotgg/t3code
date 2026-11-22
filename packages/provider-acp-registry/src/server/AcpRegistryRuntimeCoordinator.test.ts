@@ -767,12 +767,14 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         });
 
         // A same-model options-only update for model-a overrides model-a's own options without
-        // discarding model-b's compatible reasoning metadata from the catalog on clear.
+        // discarding catalog reasoning for untouched models (model-c), while never carrying older
+        // catalog reasoning over a model updated at an intervening revision (model-b).
+        const lowEffort = effortOption("low");
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [
             { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
-            { id: "model-b", name: "Model B", description: null, reasoningEffort: highEffort },
-            { id: "model-c", name: "Model C", description: null, reasoningEffort: null },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: lowEffort },
+            { id: "model-c", name: "Model C", description: null, reasoningEffort: lowEffort },
           ],
           currentModelId: "model-a",
           configOptions: [effortOption("high")],
@@ -780,6 +782,14 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: true,
         });
         const sameModelCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [highEffort],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        const modelBHigherSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
           currentModelId: "model-a",
@@ -794,12 +804,24 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           }),
         ).toBe(true);
         const afterSameModelClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(afterSameModelClear.pendingOptions).toHaveLength(1);
-        expect(afterSameModelClear.pendingOptions[0]?.configuration.configOptions).toEqual([
+        expect(afterSameModelClear.pendingOptions).toHaveLength(2);
+        expect(afterSameModelClear.pendingOptions[0]).toEqual({
+          revision: modelBHigherSnap.revision,
+          configuration: {
+            models: [],
+            currentModelId: "model-b",
+            configOptions: [highEffort],
+            modelOptionIds: ["effort"],
+            modelsFromModelSelect: false,
+            partialOptions: true,
+            preserveDefault: true,
+          },
+        });
+        expect(afterSameModelClear.pendingOptions[1]?.configuration.configOptions).toEqual([
           modeOption("ask"),
         ]);
-        expect(afterSameModelClear.pendingOptions[0]?.configuration.advertisedReasoning).toEqual({
-          "model-b": highEffort,
+        expect(afterSameModelClear.pendingOptions[1]?.configuration.advertisedReasoning).toEqual({
+          "model-c": lowEffort,
         });
 
         // Earlier displaced tail updates (both overflow m256 and displaced ordinary tail m255)

@@ -16,7 +16,20 @@ import * as Ref from "effect/Ref";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
-import type { AcpRegistryAvailableCommands, AcpRegistryLiveConfiguration } from "./probe.ts";
+import {
+  extractAcpRegistryAdvertisedReasoning,
+  type AcpRegistryAvailableCommands,
+  type AcpRegistryLiveConfiguration,
+} from "./probe.ts";
+
+function extractAdvertisedReasoning(
+  configuration: AcpRegistryLiveConfiguration,
+): AcpRegistryLiveConfiguration["advertisedReasoning"] {
+  return (
+    configuration.advertisedReasoning ??
+    extractAcpRegistryAdvertisedReasoning(configuration.models, configuration.currentModelId)
+  );
+}
 
 interface AvailableCommandsUpdate {
   readonly instanceId: ProviderInstanceId;
@@ -326,32 +339,25 @@ const make = Effect.gen(function* () {
             AcpRegistryRevisionedLiveConfiguration
           > = (() => {
             if (retain === undefined) return EMPTY_OPTIONS_BY_MODEL;
-            const extractAdvertisedReasoning = (
-              configuration: AcpRegistryLiveConfiguration,
-            ): AcpRegistryLiveConfiguration["advertisedReasoning"] => {
-              if (configuration.advertisedReasoning !== undefined) {
-                return configuration.advertisedReasoning;
-              }
-              const entries: Array<
-                readonly [
-                  string,
-                  NonNullable<AcpRegistryLiveConfiguration["models"][number]["reasoningEffort"]>,
-                ]
-              > = [];
-              for (const model of configuration.models) {
-                if (model.id !== configuration.currentModelId && model.reasoningEffort != null) {
-                  entries.push([model.id, model.reasoningEffort]);
-                }
-              }
-              return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-            };
             const candidates = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             const catalogReasoning =
               current.catalog === null
                 ? undefined
                 : extractAdvertisedReasoning(current.catalog.configuration);
+            const modelsUpdatedAfterCatalog = new Set<string>();
             if (current.catalog !== null) {
               candidates.set(current.catalog.configuration.currentModelId, current.catalog);
+              for (const entry of current.optionsByModel.values()) {
+                if (entry.revision <= current.catalog.revision) continue;
+                if (entry.configuration.currentModelId !== null) {
+                  modelsUpdatedAfterCatalog.add(entry.configuration.currentModelId);
+                }
+                if (entry.configuration.advertisedReasoning !== undefined) {
+                  for (const slug of Object.keys(entry.configuration.advertisedReasoning)) {
+                    modelsUpdatedAfterCatalog.add(slug);
+                  }
+                }
+              }
             }
             for (const [key, entry] of current.optionsByModel) {
               if (
@@ -359,15 +365,23 @@ const make = Effect.gen(function* () {
                 current.catalog !== null &&
                 key === current.catalog.configuration.currentModelId
               ) {
-                const mergedAdvertisedReasoning = {
-                  ...catalogReasoning,
-                  ...entry.configuration.advertisedReasoning,
-                };
+                const preservedCatalogEntries = Object.entries(catalogReasoning).filter(
+                  ([slug]) => !modelsUpdatedAfterCatalog.has(slug),
+                );
+                const mergedAdvertisedReasoning =
+                  preservedCatalogEntries.length === 0
+                    ? entry.configuration.advertisedReasoning
+                    : {
+                        ...Object.fromEntries(preservedCatalogEntries),
+                        ...entry.configuration.advertisedReasoning,
+                      };
                 candidates.set(key, {
                   revision: entry.revision,
                   configuration: {
                     ...entry.configuration,
-                    advertisedReasoning: mergedAdvertisedReasoning,
+                    ...(mergedAdvertisedReasoning === undefined
+                      ? {}
+                      : { advertisedReasoning: mergedAdvertisedReasoning }),
                   },
                 });
                 continue;
@@ -400,8 +414,7 @@ const make = Effect.gen(function* () {
                 const keepDisplacedTailModel =
                   kept.value.cappedLastModel !== undefined &&
                   kept.value.cappedPrefixKey !== undefined &&
-                  kept.value.cappedLastModel.id === kept.value.currentModelId &&
-                  modelOnlyOptions.length > 0;
+                  kept.value.cappedLastModel.id === kept.value.currentModelId;
                 const { cappedLastModel, cappedPrefixKey, cappedTailIsOverflow, ...rest } =
                   kept.value;
                 retained.delete(kept.value.currentModelId);

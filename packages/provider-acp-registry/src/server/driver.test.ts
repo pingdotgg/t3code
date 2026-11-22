@@ -2271,6 +2271,41 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
         .find((m) => m.slug === "m255")
         ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
     ).toEqual([["variant", "v2"]]);
+    // Restoring m255 into slot 255 while a different model (m0) is current with its own
+    // `variant` option must keep m255's off-screen learned `variant=v2` intact.
+    const m0RestoringM255 = {
+      ...prepareAcpRegistryLiveConfiguration([
+        ...modelSelect("m0", choices),
+        {
+          id: "variant",
+          name: "Variant",
+          category: "model_config" as const,
+          type: "select" as const,
+          currentValue: "v1",
+          options: [{ value: "v1", name: "V1" }],
+        },
+      ]).toLiveConfiguration({ includeCatalog: false }),
+      partialOptions: true,
+    };
+    const afterM0RestoredM255 = applyAcpRegistryLiveConfiguration(
+      probeOverflowSnapshot,
+      m0RestoringM255,
+      [],
+      learnedWithEarlierOrdinaryTail,
+    );
+    expect(afterM0RestoredM255.models.at(-1)?.slug).toBe("m255");
+    expect(afterM0RestoredM255.models[0]?.isDefault).toBe(true);
+    expect(
+      afterM0RestoredM255.models[0]?.capabilities?.optionDescriptors?.map((d) => [
+        d.id,
+        d.currentValue,
+      ]),
+    ).toEqual([["variant", "v1"]]);
+    expect(
+      afterM0RestoredM255.models
+        .at(-1)
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([["variant", "v2"]]);
     // Live learning caps total entries at 256 + MAX_DISPLACED_LEARNED_MODELS, refreshes LRU
     // order when an unchanged model is observed again, and avoids rebuilding when order matches.
     const stableEffort = {
@@ -4913,12 +4948,43 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         options: [{ value: "v1", name: "V1" }],
       };
 
+      let blockOverflowWatcher = false;
+      const releaseOverflowWatcher = yield* Deferred.make<void>();
+      let afterOverflowCacheReadHook: Effect.Effect<void> | null = null;
       const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
         prefix: "acp-driver-overflow-post-probe-",
         initialModels: {
           models: modelIds,
           configOptions: [...modelSelect("m0"), effortSelect("low")],
         },
+        wrapCoordinator: (base) => ({
+          ...base,
+          runBackgroundProbe: (agentId, effect) =>
+            base.runBackgroundProbe(
+              agentId,
+              effect.pipe(
+                Effect.tap(() => {
+                  const hook = afterOverflowCacheReadHook;
+                  afterOverflowCacheReadHook = null;
+                  return hook ?? Effect.void;
+                }),
+              ),
+            ),
+          watchLiveConfiguration: (instanceId, onUpdate, options) =>
+            base.watchLiveConfiguration(
+              instanceId,
+              (configuration, revision) =>
+                blockOverflowWatcher
+                  ? Effect.sync(() => {
+                      blockOverflowWatcher = false;
+                    }).pipe(
+                      Effect.andThen(Deferred.await(releaseOverflowWatcher)),
+                      Effect.andThen(onUpdate(configuration, revision)),
+                    )
+                  : onUpdate(configuration, revision),
+              options,
+            ),
+        }),
       });
 
       const initial = yield* waitForEnriched().pipe(Effect.forkScoped({ startImmediately: true }));
@@ -5232,6 +5298,48 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         }),
       );
       expect(Option.getOrThrow(yield* Fiber.join(sawUntaggedM1)).models.at(-1)?.slug).toBe("m256");
+
+      // Non-recording replay during commitEnrichment must not revert a freshly tagged catalog
+      // back to an older untagged acceptedCatalog entry before replaying a follow-up m0 update.
+      const sawBaseM256BeforeReplay = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.at(-1)?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(
+          selectFrom("m256", withoutM255Choices),
+        ).toLiveConfiguration({ includeCatalog: true }),
+      );
+      yield* Fiber.join(sawBaseM256BeforeReplay);
+      const firstM0DuringCommit = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models[0]?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      blockOverflowWatcher = true;
+      afterOverflowCacheReadHook = coordinator
+        .publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration(selectFrom("m256", fullChoices)).toLiveConfiguration({
+            includeCatalog: true,
+          }),
+        )
+        .pipe(
+          Effect.andThen(
+            coordinator.publishLiveConfiguration(
+              identity.instanceId,
+              prepareAcpRegistryLiveConfiguration(
+                selectFrom("m0", fullChoices),
+              ).toLiveConfiguration({ includeCatalog: false }),
+            ),
+          ),
+        );
+      yield* instance.snapshot.refresh;
+      const replayedM0 = Option.getOrThrow(yield* Fiber.join(firstM0DuringCommit));
+      expect(replayedM0.models.at(-1)?.slug).toBe("m255");
+      yield* Deferred.succeed(releaseOverflowWatcher, undefined);
     }),
   );
 

@@ -235,6 +235,20 @@ export interface AcpRegistryLiveConfiguration {
   readonly cappedTailIsOverflow?: boolean;
 }
 
+export function extractAcpRegistryAdvertisedReasoning(
+  models: ReadonlyArray<AcpRegistryProbeModel>,
+  currentModelId: string | null,
+): AcpRegistryLiveConfiguration["advertisedReasoning"] {
+  const entries: Array<readonly [string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>]> =
+    [];
+  for (const model of models) {
+    if (model.id !== currentModelId && model.reasoningEffort != null) {
+      entries.push([model.id, model.reasoningEffort]);
+    }
+  }
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
 export function cappedAcpRegistryModelPrefixKey(
   modelIds: ReadonlyArray<string>,
 ): string | undefined {
@@ -323,18 +337,10 @@ export function prepareAcpRegistryLiveConfiguration(
     .map((descriptor) => descriptor.id);
   const hasModelSelect = modelOption !== undefined;
   const resolvedCurrentModelId = currentModel === undefined ? null : currentModel.id;
-  const advertisedReasoningEntries: Array<
-    readonly [string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>]
-  > = [];
-  for (const model of advertisedModels) {
-    if (model.id !== resolvedCurrentModelId && model.reasoningEffort != null) {
-      advertisedReasoningEntries.push([model.id, model.reasoningEffort]);
-    }
-  }
-  const advertisedReasoning =
-    advertisedReasoningEntries.length > 0
-      ? Object.fromEntries(advertisedReasoningEntries)
-      : undefined;
+  const advertisedReasoning = extractAcpRegistryAdvertisedReasoning(
+    advertisedModels,
+    resolvedCurrentModelId,
+  );
   const catalogKey = JSON.stringify([
     hasModelSelect,
     baseModels.map(({ id, name, description }) => [id, name, description]),

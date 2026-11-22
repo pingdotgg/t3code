@@ -2338,8 +2338,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           rootForegroundWork = undefined;
           agentRequests.clear();
           nativeChildren.clear();
-          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSessionSetup, setup);
+          yield* resetPublishedCatalogKey;
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
@@ -7254,8 +7254,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (current === null || current.sessionId !== result.sessionId) {
             return;
           }
-          yield* resetPublishedCatalogKey;
           yield* Ref.set(activeSessionSetup, result);
+          yield* resetPublishedCatalogKey;
           // The selection was configured against the provisional setup's
           // options, so the next turn re-applies it against the real ones.
           yield* Ref.set(activeSelection, null);
