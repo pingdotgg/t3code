@@ -148,7 +148,13 @@ export async function persistComposerAttachmentFile(
   const { Directory, File, FileMode, Paths } = await import("expo-file-system");
   const directory = new Directory(Paths.document, COMPOSER_ATTACHMENT_DIRECTORY);
   directory.create({ idempotent: true, intermediates: true });
-  const destination = new File(directory, `${uuidv4()}-${safeComposerAttachmentName(name)}`);
+  const prefix = `${uuidv4()}-`;
+  // The basename is ASCII. Keep its tail for the extension within the 255-byte filesystem limit.
+  const nameBudget = 255 - prefix.length;
+  const destination = new File(
+    directory,
+    prefix + safeComposerAttachmentName(name).slice(-nameBudget),
+  );
   const source = new File(uri);
   const sourceSize = source.size;
   if (
