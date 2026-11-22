@@ -36,7 +36,13 @@ pub enum OrbitTargetStatus {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum OrbitTargetKind {
     /// Host `conn-server` running directly on an Orbit Node (e.g. `beast`, `nick`, `mini`).
-    Node { node_name: String },
+    Node {
+        node_name: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        roles: Vec<String>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        is_primary_agent: bool,
+    },
     /// Isolated Orbit Instance for a project branch on a Node.
     Instance {
         instance_id: i64,
@@ -110,10 +116,44 @@ impl OrbitServerTarget {
     #[must_use]
     pub fn node_name(&self) -> Option<&str> {
         match &self.kind {
-            OrbitTargetKind::Node { node_name } => Some(node_name.as_str()),
+            OrbitTargetKind::Node { node_name, .. } => Some(node_name.as_str()),
             OrbitTargetKind::Instance { node_name, .. } => {
                 node_name.as_deref().or(self.registered_by.as_deref())
             }
+        }
+    }
+
+    /// Orbit roles attached to this Node (empty for Instances or nodes without roles).
+    #[must_use]
+    pub fn roles(&self) -> &[String] {
+        match &self.kind {
+            OrbitTargetKind::Node { roles, .. } => roles.as_slice(),
+            OrbitTargetKind::Instance { .. } => &[],
+        }
+    }
+
+    /// True when this target is an Orbit Node designated as the primary `agent` entry point.
+    #[must_use]
+    pub fn is_primary_agent(&self) -> bool {
+        matches!(
+            self.kind,
+            OrbitTargetKind::Node {
+                is_primary_agent: true,
+                ..
+            }
+        )
+    }
+
+    /// True when this target is an Orbit Node carrying the `"agent"` role (or marked primary agent).
+    #[must_use]
+    pub fn has_agent_role(&self) -> bool {
+        match &self.kind {
+            OrbitTargetKind::Node {
+                roles,
+                is_primary_agent,
+                ..
+            } => *is_primary_agent || roles.iter().any(|r| r.eq_ignore_ascii_case("agent")),
+            OrbitTargetKind::Instance { .. } => false,
         }
     }
 
@@ -257,6 +297,39 @@ impl OrbitFleet {
             .iter()
             .filter(|t| matches!(t.power_state(), Some(PowerState::Running)))
             .count()
+    }
+
+    /// All Orbit Nodes carrying the `"agent"` role (including any marked `is_primary_agent`).
+    #[must_use]
+    pub fn agent_nodes(&self) -> Vec<&OrbitServerTarget> {
+        self.nodes
+            .iter()
+            .filter(|node| node.has_agent_role())
+            .collect()
+    }
+
+    /// Preferred default Orbit Node entry point:
+    /// 1. A registered node with `is_primary_agent == true` (falling back to any `is_primary_agent`),
+    /// 2. The first registered node carrying the `"agent"` role,
+    /// 3. The local node fallback (first registered node, else `nodes.first()`, since
+    ///    [`Self::from_targets`] sorts the local node first).
+    #[must_use]
+    pub fn primary_agent_node(&self) -> Option<&OrbitServerTarget> {
+        self.nodes
+            .iter()
+            .find(|n| n.status == OrbitTargetStatus::Registered && n.is_primary_agent())
+            .or_else(|| self.nodes.iter().find(|n| n.is_primary_agent()))
+            .or_else(|| {
+                self.nodes
+                    .iter()
+                    .find(|n| n.status == OrbitTargetStatus::Registered && n.has_agent_role())
+            })
+            .or_else(|| {
+                self.nodes
+                    .iter()
+                    .find(|n| n.status == OrbitTargetStatus::Registered)
+            })
+            .or_else(|| self.nodes.first())
     }
 }
 
@@ -551,6 +624,8 @@ fn decode_target(value: &Value) -> Option<OrbitServerTarget> {
                 .or(registered_by.as_deref())
                 .unwrap_or(&label)
                 .to_owned(),
+            roles: decode_roles(obj),
+            is_primary_agent: decode_is_primary_agent(obj),
         },
     };
 
@@ -564,6 +639,63 @@ fn decode_target(value: &Value) -> Option<OrbitServerTarget> {
         cleanup_pending,
         kind,
     })
+}
+
+fn decode_roles(obj: &serde_json::Map<String, Value>) -> Vec<String> {
+    let raw = obj
+        .get("roles")
+        .or_else(|| obj.get("node_roles"))
+        .or_else(|| obj.get("node").and_then(|n| n.get("roles")));
+    let Some(value) = raw else {
+        return Vec::new();
+    };
+    let mut roles = Vec::new();
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                let role = item.as_str().or_else(|| {
+                    item.as_object().and_then(|map| {
+                        map.get("name")
+                            .or_else(|| map.get("slug"))
+                            .or_else(|| map.get("role"))
+                            .and_then(Value::as_str)
+                    })
+                });
+                if let Some(trimmed) = role.map(str::trim).filter(|s| !s.is_empty())
+                    && !roles
+                        .iter()
+                        .any(|r: &String| r.eq_ignore_ascii_case(trimmed))
+                {
+                    roles.push(trimmed.to_owned());
+                }
+            }
+        }
+        Value::String(s) => {
+            for part in s.split(',') {
+                let trimmed = part.trim();
+                if !trimmed.is_empty()
+                    && !roles
+                        .iter()
+                        .any(|r: &String| r.eq_ignore_ascii_case(trimmed))
+                {
+                    roles.push(trimmed.to_owned());
+                }
+            }
+        }
+        _ => {}
+    }
+    roles
+}
+
+fn decode_is_primary_agent(obj: &serde_json::Map<String, Value>) -> bool {
+    obj.get("is_primary_agent")
+        .or_else(|| obj.get("primary_agent"))
+        .or_else(|| {
+            obj.get("node")
+                .and_then(|n| n.get("is_primary_agent").or_else(|| n.get("primary_agent")))
+        })
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -941,5 +1073,155 @@ mod tests {
         assert_eq!(loaded.bearer_for("node-beast"), Some("tok-secret"));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn decodes_agent_roles_and_resolves_primary_agent_node() {
+        let payload = serde_json::json!({
+            "data": [
+                {
+                    "environment_id": "node-nick",
+                    "label": "nick",
+                    "url": "http://10.44.0.6:3773",
+                    "registered_by": "nick",
+                    "status": "registered",
+                    "cleanup_pending": false,
+                    "instance_id": null
+                },
+                {
+                    "environment_id": "node-beast",
+                    "label": "beast",
+                    "url": "http://10.44.0.7:3773",
+                    "registered_by": "beast",
+                    "status": "registered",
+                    "cleanup_pending": false,
+                    "instance_id": null,
+                    "node": { "roles": ["router", "agent"] }
+                },
+                {
+                    "environment_id": "node-mini",
+                    "label": "mini",
+                    "url": "http://10.44.0.8:3773",
+                    "registered_by": "mini",
+                    "status": "registered",
+                    "cleanup_pending": false,
+                    "instance_id": null,
+                    "roles": ["agent", "Agent", "  "],
+                    "primary_agent": true
+                }
+            ]
+        })
+        .to_string();
+
+        let transport = MockGateway::new(move |_| {
+            Ok(GatewayResponse {
+                status: 200,
+                body: payload.clone(),
+            })
+        });
+        let client = OrbitFleetClient::new(transport);
+        let fleet = client.list_fleet(Some("nick")).await.expect("list_fleet");
+
+        assert_eq!(fleet.nodes.len(), 3);
+        let nick = fleet.find_by_server_id("node-nick").expect("nick");
+        let beast = fleet.find_by_server_id("node-beast").expect("beast");
+        let mini = fleet.find_by_server_id("node-mini").expect("mini");
+
+        assert!(!nick.has_agent_role());
+        assert!(!nick.is_primary_agent());
+        assert!(nick.roles().is_empty());
+
+        assert!(beast.has_agent_role());
+        assert!(!beast.is_primary_agent());
+        assert_eq!(beast.roles(), ["router", "agent"]);
+
+        assert!(mini.has_agent_role());
+        assert!(mini.is_primary_agent());
+        assert_eq!(mini.roles(), ["agent"]);
+
+        let agent_ids: Vec<&str> = fleet
+            .agent_nodes()
+            .into_iter()
+            .map(|n| n.server_id.as_str())
+            .collect();
+        assert_eq!(agent_ids, vec!["node-beast", "node-mini"]);
+
+        // 1. Prefers `is_primary_agent == true`.
+        assert_eq!(
+            fleet.primary_agent_node().map(|n| n.server_id.as_str()),
+            Some("node-mini")
+        );
+
+        // 2. Without a primary agent, prefers the first registered node with `"agent"` role.
+        let without_primary =
+            OrbitFleet::from_targets(vec![nick.clone(), beast.clone()], Some("nick"));
+        assert_eq!(
+            without_primary
+                .primary_agent_node()
+                .map(|n| n.server_id.as_str()),
+            Some("node-beast")
+        );
+
+        // 3. Without any agent-role node, falls back to the local node (sorted first).
+        let mut plain_beast = beast.clone();
+        plain_beast.kind = OrbitTargetKind::Node {
+            node_name: "beast".to_owned(),
+            roles: Vec::new(),
+            is_primary_agent: false,
+        };
+        let without_agents =
+            OrbitFleet::from_targets(vec![plain_beast, nick.clone()], Some("nick"));
+        assert!(without_agents.agent_nodes().is_empty());
+        assert_eq!(
+            without_agents
+                .primary_agent_node()
+                .map(|n| n.server_id.as_str()),
+            Some("node-nick")
+        );
+
+        // 4. Empty fleet returns None.
+        assert_eq!(OrbitFleet::default().primary_agent_node(), None);
+    }
+
+    #[test]
+    fn deserializes_legacy_orbit_sessions_and_targets_without_agent_fields() {
+        let legacy_sessions_json = serde_json::json!({
+            "active_server_id": "node-nick",
+            "sessions": {
+                "node-nick": {
+                    "server_id": "node-nick",
+                    "url": "http://10.44.0.6:3773",
+                    "label": "nick",
+                    "bearer": "legacy-token",
+                    "paired_at_unix": 1_700_000_000
+                }
+            }
+        })
+        .to_string();
+        let store: OrbitSessionStore =
+            serde_json::from_str(&legacy_sessions_json).expect("legacy orbit-sessions.json");
+        assert_eq!(store.active_server_id.as_deref(), Some("node-nick"));
+        assert_eq!(store.bearer_for("node-nick"), Some("legacy-token"));
+
+        let legacy_target_json = serde_json::json!({
+            "server_id": "node-nick",
+            "label": "nick",
+            "url": "http://10.44.0.6:3773",
+            "server_version": "0.1.7",
+            "registered_by": "nick",
+            "status": "registered",
+            "cleanup_pending": false,
+            "kind": {
+                "kind": "node",
+                "node_name": "nick"
+            }
+        })
+        .to_string();
+        let target: OrbitServerTarget =
+            serde_json::from_str(&legacy_target_json).expect("legacy OrbitServerTarget");
+        assert!(target.is_node());
+        assert!(target.roles().is_empty());
+        assert!(!target.is_primary_agent());
+        assert!(!target.has_agent_role());
     }
 }

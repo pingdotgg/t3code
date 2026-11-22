@@ -1074,9 +1074,10 @@ impl SettingsModal {
                         cx.emit(SettingsEvent::OrbitConnectTarget(target_id.clone()));
                     }));
             }
-            node_rows.push(settings_row(
+            node_rows.push(orbit_node_row(
                 &title,
-                Some(&subtitle),
+                orbit_node_role_badge(node),
+                &subtitle,
                 btn.into_any_element(),
                 &self.tokens,
                 &self.geometry,
@@ -1924,4 +1925,168 @@ fn over(top: conn_theme::Rgba, below: conn_theme::Rgba) -> conn_theme::Rgba {
         top.b * a + below.b * (1.0 - a),
         1.0,
     )
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrbitNodeRoleBadge {
+    PrimaryAgent,
+    Agent,
+}
+
+impl OrbitNodeRoleBadge {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::PrimaryAgent => "Primary agent",
+            Self::Agent => "Agent",
+        }
+    }
+}
+
+fn orbit_node_role_badge(
+    node: &conn_desktop::orbit::OrbitServerTarget,
+) -> Option<OrbitNodeRoleBadge> {
+    if node.is_primary_agent() {
+        Some(OrbitNodeRoleBadge::PrimaryAgent)
+    } else if node.has_agent_role() {
+        Some(OrbitNodeRoleBadge::Agent)
+    } else {
+        None
+    }
+}
+
+/// Renders an Orbit Node row inside `Settings › Connections`, placing a subtle Conn-styled
+/// `Agent` / `Primary agent` pill badge next to the node label when applicable.
+fn orbit_node_row(
+    title: &str,
+    role_badge: Option<OrbitNodeRoleBadge>,
+    description: &str,
+    trailing: AnyElement,
+    tokens: &Tokens,
+    geometry: &ShellGeometry,
+) -> AnyElement {
+    let fg = hsla(tokens.foreground);
+    let muted_raised = hsla(tokens.muted_foreground_raised);
+
+    let mut title_row = div()
+        .flex()
+        .flex_row()
+        .flex_wrap()
+        .items_center()
+        .gap(px(8.0))
+        .child(
+            div()
+                .text_size(px(geometry.ui_font_size_px))
+                .line_height(px(geometry.ui_line_height_px))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(fg)
+                .child(title.to_owned()),
+        );
+
+    if let Some(badge) = role_badge {
+        let (badge_bg, badge_border, badge_fg) = match badge {
+            OrbitNodeRoleBadge::PrimaryAgent => (
+                hsla_alpha(tokens.info, 0.14),
+                hsla_alpha(tokens.info, 0.30),
+                hsla(tokens.info_foreground),
+            ),
+            OrbitNodeRoleBadge::Agent => (
+                hsla(tokens.shell_control_raised),
+                hsla(tokens.shell_control_raised_border),
+                muted_raised,
+            ),
+        };
+        title_row = title_row.child(
+            div()
+                .flex_shrink_0()
+                .px(px(7.0))
+                .py(px(1.0))
+                .rounded(px(9999.0))
+                .bg(badge_bg)
+                .border_1()
+                .border_color(badge_border)
+                .text_size(px(11.0))
+                .line_height(px(16.0))
+                .font_weight(FontWeight::MEDIUM)
+                .text_color(badge_fg)
+                .child(badge.label()),
+        );
+    }
+
+    let text_col = div()
+        .flex()
+        .flex_col()
+        .flex_1()
+        .min_w_0()
+        .gap(px(2.0))
+        .child(title_row)
+        .child(
+            div()
+                .text_size(px(geometry.ui_font_size_px))
+                .line_height(px(geometry.ui_line_height_px))
+                .text_color(muted_raised)
+                .child(description.to_owned()),
+        );
+
+    let slug = title.to_ascii_lowercase().replace(' ', "-");
+    div()
+        .id(SharedString::from(format!("settings-row-{slug}")))
+        .a11y_group(
+            SharedString::from(format!("settings.row.{slug}")),
+            title.to_owned(),
+        )
+        .flex()
+        .flex_row()
+        .items_start()
+        .justify_between()
+        .gap(px(16.0))
+        .w_full()
+        .px(px(14.0))
+        .py(px(12.0))
+        .child(text_col)
+        .child(div().flex_shrink_0().child(trailing))
+        .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use conn_desktop::orbit::{OrbitServerTarget, OrbitTargetKind, OrbitTargetStatus};
+
+    use super::{OrbitNodeRoleBadge, orbit_node_role_badge};
+
+    fn node_target(roles: &[&str], is_primary_agent: bool) -> OrbitServerTarget {
+        OrbitServerTarget {
+            server_id: "node-mini".to_owned(),
+            label: "mini".to_owned(),
+            url: "http://10.44.0.8:3773".to_owned(),
+            server_version: Some("0.1.7".to_owned()),
+            registered_by: Some("mini".to_owned()),
+            status: OrbitTargetStatus::Registered,
+            cleanup_pending: false,
+            kind: OrbitTargetKind::Node {
+                node_name: "mini".to_owned(),
+                roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+                is_primary_agent,
+            },
+        }
+    }
+
+    #[test]
+    fn resolves_orbit_node_role_badges() {
+        let primary = node_target(&["agent"], true);
+        assert_eq!(
+            orbit_node_role_badge(&primary),
+            Some(OrbitNodeRoleBadge::PrimaryAgent)
+        );
+        assert_eq!(OrbitNodeRoleBadge::PrimaryAgent.label(), "Primary agent");
+
+        let agent = node_target(&["router", "agent"], false);
+        assert_eq!(
+            orbit_node_role_badge(&agent),
+            Some(OrbitNodeRoleBadge::Agent)
+        );
+        assert_eq!(OrbitNodeRoleBadge::Agent.label(), "Agent");
+
+        let plain = node_target(&["router"], false);
+        assert_eq!(orbit_node_role_badge(&plain), None);
+    }
 }

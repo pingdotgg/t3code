@@ -31,6 +31,7 @@ pub mod insights;
 pub mod navigation;
 pub mod panel;
 pub mod profile;
+pub mod projects;
 pub mod realtime;
 pub mod tasks;
 
@@ -48,6 +49,10 @@ pub use profile::{
     ProfileThemeSlots, SectionMeta, SectionPatch, ThemeSlotSource, extract_section,
     merge_appearance, merge_device_section, merge_workspaces, parse_profile_appearance,
     parse_profile_device_section, same_workspaces, to_gateway_form, workspace_matches_project,
+};
+pub use projects::{
+    OrbitProject, OrbitProjectsClient, decode_projects, find_project, find_project_by_name,
+    find_project_by_slug,
 };
 pub use realtime::{
     OrbitRealtimeEvent, TasksFollower, TasksLiveStatus, follow_orbit_tasks, orbit_realtime_event,

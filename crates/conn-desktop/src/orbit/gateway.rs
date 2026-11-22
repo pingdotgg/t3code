@@ -373,12 +373,14 @@ fn is_channel_auth_body(body: Option<&str>) -> bool {
             .is_some_and(is_socket_id)
 }
 
-/// The exact calls below `/api/v1`: lifecycle reads and wake, the private Tasks channel, insights.
+/// The exact calls below `/api/v1`: projects, lifecycle reads and wake, the private Tasks channel,
+/// and insights.
 fn is_root_call(method: GatewayMethod, path: &str) -> bool {
     let Some(parts) = segments(path) else {
         return false;
     };
     match (method, parts.as_slice()) {
+        (GatewayMethod::Get, ["projects"]) => true,
         (GatewayMethod::Post, ["instances", id, "wake"]) => is_orbit_id(id),
         (GatewayMethod::Get, ["operations", id]) => is_orbit_id(id),
         (GatewayMethod::Get, ["realtime"]) => true,
@@ -697,6 +699,12 @@ mod tests {
     fn allows_the_exact_root_routes() {
         let auth = serde_json::json!({ "socket_id": "123.456", "channel_name": "private-orbit" });
         assert_eq!(
+            resolve_root_url(&root(GatewayMethod::Get, "/projects", None))
+                .map(|url| url.to_string())
+                .as_deref(),
+            Some("https://gateway.orbit/api/v1/projects")
+        );
+        assert_eq!(
             resolve_root_url(&root(GatewayMethod::Post, "/instances/41/wake", None))
                 .map(|url| url.to_string())
                 .as_deref(),
@@ -727,6 +735,7 @@ mod tests {
         use GatewayMethod::{Get, Post};
         let body = |value: serde_json::Value| Some(value);
         let cases = [
+            root(Post, "/projects", None),
             root(Get, "/instances/41/wake", None),
             root(Post, "/realtime", None),
             root(Get, "/broadcasting/auth", None),
