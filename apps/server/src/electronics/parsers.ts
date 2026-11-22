@@ -1185,7 +1185,8 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const ccwMid = normPos(am - a1);
     const ccwEnd = normPos(a2 - a1);
     const sweep = ccwMid <= ccwEnd ? ccwEnd : ccwEnd - 2 * Math.PI;
-    // Adaptively choose chord count so maximum sagitta error <= 0.004 mm (below copper tolerance)
+    // Adaptively choose chord count targeting <= 0.004 mm sagitta error (below copper tolerance),
+    // capped at 512 segments as a resource bound for extreme radii.
     const maxSagitta = 0.004;
     const maxStepAngle =
       radius > maxSagitta ? 2 * Math.acos(Math.max(-1, 1 - maxSagitta / radius)) : Math.PI / 6;

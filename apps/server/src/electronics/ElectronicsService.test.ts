@@ -241,10 +241,11 @@ it.effect(
         FileSystem.FileSystem,
         Effect.gen(function* () {
           const baseFs = yield* FileSystem.FileSystem;
+          const basePath = yield* Path.Path;
           return {
             ...baseFs,
             readFileString: (filePath: string, encoding?: string) => {
-              if (filePath.endsWith("/a.cir")) {
+              if (basePath.basename(filePath) === "a.cir") {
                 aReadCount += 1;
                 const callIdx = aReadCount;
                 return Effect.gen(function* () {

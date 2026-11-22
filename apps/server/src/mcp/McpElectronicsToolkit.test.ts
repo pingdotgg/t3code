@@ -7,7 +7,9 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -171,4 +173,112 @@ it.effect("blocks electronics MCP tools when enableAgentElectronicsAccess is fal
       expect(JSON.stringify(res.content)).toContain("turned off");
     }).pipe(Effect.provide(makeMcpTestLayer(dir, { enableAgentElectronicsAccess: false })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect(
+  "reserves navigation token before MCP workspace lookup so stalled electronics_open cannot overwrite newer open or close",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-mcp-elec-race-" });
+      yield* fs.writeFileString(
+        path.join(dir, "a.cir"),
+        "* A\nV1 in 0 5\nR1 in out 1k\nR2 out 0 1k\n.end\n",
+      );
+      yield* fs.writeFileString(
+        path.join(dir, "b.cir"),
+        "* B\nV1 in 0 3.3\nR1 in out 2k\nR2 out 0 2k\n.end\n",
+      );
+
+      const lookup1Paused = yield* Deferred.make<void>();
+      const releaseLookup1 = yield* Deferred.make<void>();
+      const lookup2Paused = yield* Deferred.make<void>();
+      const releaseLookup2 = yield* Deferred.make<void>();
+      let lookupCall = 0;
+
+      const mockSettings = ServerSettings.layerTest({});
+      const mockSpawner = Layer.succeed(
+        ChildProcessSpawner.ChildProcessSpawner,
+        ChildProcessSpawner.make(() => Effect.fail(new Error("ENOENT") as never)),
+      );
+      const gatedThreads = Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadShell: () =>
+          Effect.succeed({
+            id: ThreadId.make("thread-mcp-elec"),
+            projectId: ProjectId.make("proj-mcp-elec"),
+            worktreePath: null,
+            deletedAt: null,
+            archivedAt: null,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            linkOrigin: null,
+            activeRunId: "run-1",
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            pendingBackgroundTasks: [],
+          } as never),
+      });
+      const gatedProjects = Layer.mock(ProjectService.ProjectService)({
+        getById: () => {
+          lookupCall += 1;
+          const callIdx = lookupCall;
+          return Effect.gen(function* () {
+            if (callIdx === 1) {
+              yield* Deferred.succeed(lookup1Paused, undefined);
+              yield* Deferred.await(releaseLookup1);
+            } else if (callIdx === 2) {
+              yield* Deferred.succeed(lookup2Paused, undefined);
+              yield* Deferred.await(releaseLookup2);
+            }
+            return yield* Effect.succeedSome({ workspaceRoot: dir } as never);
+          });
+        },
+      });
+      const electronicsLayer = ElectronicsService.layer.pipe(
+        Layer.provide(mockSettings),
+        Layer.provide(mockSpawner),
+        Layer.provide(NodeServices.layer),
+      );
+      const raceLayer = McpHttpServer.layerElectronicsToolkit.pipe(
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provideMerge(electronicsLayer),
+        Layer.provide(gatedThreads),
+        Layer.provide(gatedProjects),
+        Layer.provide(mockSettings),
+        Layer.provideMerge(NodeServices.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const mcp = yield* McpServer.McpServer;
+        const service = yield* ElectronicsService.ElectronicsService;
+        const threadId = ThreadId.make("thread-mcp-elec");
+        const callOpen = (filePath: string) =>
+          mcp
+            .callTool({ name: "electronics_open", arguments: { filePath } })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, scopeForThread()),
+              Effect.provideService(McpSchema.McpServerClient, testClient),
+            );
+
+        // Case 1: MCP electronics_open(a.cir) pauses during workspace resolution; user opens b.cir;
+        // then MCP open resumes -> b.cir must remain active.
+        const slowMcpOpen1 = yield* Effect.forkChild(callOpen("a.cir"));
+        yield* Deferred.await(lookup1Paused);
+        yield* service.openPanel({ threadId, cwd: dir, filePath: "b.cir" });
+        yield* Deferred.succeed(releaseLookup1, undefined);
+        const res1 = yield* Fiber.join(slowMcpOpen1);
+        expect(res1.isError).toBe(false);
+        expect((yield* service.getThreadSession(threadId))?.filePath).toBe("b.cir");
+
+        // Case 2: MCP electronics_open(a.cir) pauses during workspace resolution; user closes panel;
+        // then MCP open resumes -> panel must remain closed.
+        const slowMcpOpen2 = yield* Effect.forkChild(callOpen("a.cir"));
+        yield* Deferred.await(lookup2Paused);
+        yield* service.closePanel(threadId);
+        yield* Deferred.succeed(releaseLookup2, undefined);
+        const res2 = yield* Fiber.join(slowMcpOpen2);
+        expect(res2.isError).toBe(false);
+        expect(yield* service.getThreadSession(threadId)).toBeUndefined();
+      }).pipe(Effect.provide(raceLayer));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

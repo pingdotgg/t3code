@@ -87,21 +87,27 @@ export class ElectronicsService extends Context.Service<
     readonly tracePath: (
       input: ElectronicsTracePathInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) => Effect.Effect<ElectronicsTracePathResult, ElectronicsError>;
     readonly validate: (
       input: ElectronicsValidateInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) => Effect.Effect<ElectronicsValidationReport, ElectronicsError>;
     readonly simulate: (
       input: ElectronicsSimulateInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) => Effect.Effect<ElectronicsSimulationResult, ElectronicsError>;
+    readonly reserveNavigationToken: (threadId: ThreadId) => Effect.Effect<number>;
+    readonly getNavigationGeneration: (threadId: ThreadId) => Effect.Effect<number>;
     readonly openPanel: (input: {
       readonly threadId: ThreadId;
       readonly cwd: string;
       readonly filePath: string;
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
+      readonly navigationToken?: number | undefined;
     }) => Effect.Effect<ElectronicsThreadSession, ElectronicsError>;
     readonly openPanelWithModel: (input: {
       readonly threadId: ThreadId;
@@ -109,6 +115,7 @@ export class ElectronicsService extends Context.Service<
       readonly filePath: string;
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
+      readonly navigationToken?: number | undefined;
     }) => Effect.Effect<
       { readonly session: ElectronicsThreadSession; readonly model: ElectronicsCircuitModel },
       ElectronicsError
@@ -128,8 +135,16 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const serverSettings = yield* ServerSettings.ServerSettingsService;
 
-    const sessionsRef = yield* Ref.make<Map<ThreadId, ElectronicsThreadSession>>(new Map());
-    const closeGenRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
+    const sessionStoreRef = yield* Ref.make<{
+      readonly sessions: ReadonlyMap<ThreadId, ElectronicsThreadSession>;
+      readonly nav: ReadonlyMap<
+        ThreadId,
+        { readonly nextSeq: number; readonly committedSeq: number }
+      >;
+    }>({
+      sessions: new Map(),
+      nav: new Map(),
+    });
     const lastUpdatedMsRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
     const externalToolSemaphore = Semaphore.makeUnsafe(2);
     const toolchainCacheRef = yield* Ref.make<{
@@ -255,7 +270,7 @@ export const layer = Layer.effect(
           checkedAt: nowIso,
         })),
       );
-      const sessions = Array.from((yield* Ref.get(sessionsRef)).values());
+      const sessions = Array.from((yield* Ref.get(sessionStoreRef)).sessions.values());
       return { toolchain, sessions } satisfies ElectronicsServiceState;
     });
 
@@ -451,8 +466,19 @@ export const layer = Layer.effect(
       return { files: found, toolchain } satisfies ElectronicsListFilesResult;
     });
 
-    const currentCloseGeneration = (threadId: ThreadId) =>
-      Ref.get(closeGenRef).pipe(Effect.map((m) => m.get(threadId) ?? 0));
+    const reserveNavigationToken = (threadId: ThreadId) =>
+      Ref.modify(sessionStoreRef, (state) => {
+        const prev = state.nav.get(threadId) ?? { nextSeq: 0, committedSeq: 0 };
+        const token = prev.nextSeq + 1;
+        const nextNav = new Map(state.nav);
+        nextNav.set(threadId, { nextSeq: token, committedSeq: prev.committedSeq });
+        return [token, { sessions: state.sessions, nav: nextNav }] as const;
+      });
+
+    const getNavigationGeneration = (threadId: ThreadId) =>
+      Ref.get(sessionStoreRef).pipe(
+        Effect.map((state) => state.nav.get(threadId)?.committedSeq ?? 0),
+      );
 
     const nextMonotonicIso = Effect.fn("ElectronicsService.nextMonotonicIso")(function* (
       threadId: ThreadId,
@@ -471,24 +497,44 @@ export const layer = Layer.effect(
     const updateThreadSession = Effect.fn("ElectronicsService.updateThreadSession")(function* (
       threadId: ThreadId,
       updater: (existing: ElectronicsThreadSession | undefined) => ElectronicsThreadSession | null,
-      expectedCloseGen?: number,
+      expectedCommittedSeq?: number,
     ) {
-      const committed = yield* Effect.gen(function* () {
-        if (expectedCloseGen !== undefined) {
-          const gen = yield* currentCloseGeneration(threadId);
-          if (gen !== expectedCloseGen) return null;
+      const committed = yield* Ref.modify(sessionStoreRef, (state) => {
+        const nav = state.nav.get(threadId) ?? { nextSeq: 0, committedSeq: 0 };
+        if (expectedCommittedSeq !== undefined && nav.committedSeq !== expectedCommittedSeq) {
+          return [null, state] as const;
         }
-        let nextSession: ElectronicsThreadSession | null = null;
-        yield* Ref.update(sessionsRef, (map) => {
-          const existing = map.get(threadId);
-          const updated = updater(existing);
-          if (updated === null) return map;
-          nextSession = updated;
-          const next = new Map(map);
-          next.set(threadId, updated);
-          return next;
+        const updated = updater(state.sessions.get(threadId));
+        if (updated === null) return [null, state] as const;
+        const nextSessions = new Map(state.sessions);
+        nextSessions.set(threadId, updated);
+        return [updated, { sessions: nextSessions, nav: state.nav }] as const;
+      });
+      if (committed !== null) {
+        yield* broadcast;
+      }
+      return committed;
+    });
+
+    const commitOpenSession = Effect.fn("ElectronicsService.commitOpenSession")(function* (
+      threadId: ThreadId,
+      token: number,
+      updater: (existing: ElectronicsThreadSession | undefined) => ElectronicsThreadSession,
+    ) {
+      const committed = yield* Ref.modify(sessionStoreRef, (state) => {
+        const nav = state.nav.get(threadId) ?? { nextSeq: 0, committedSeq: 0 };
+        if (token <= nav.committedSeq) {
+          return [null, state] as const;
+        }
+        const updated = updater(state.sessions.get(threadId));
+        const nextSessions = new Map(state.sessions);
+        nextSessions.set(threadId, updated);
+        const nextNav = new Map(state.nav);
+        nextNav.set(threadId, {
+          nextSeq: Math.max(nav.nextSeq, token),
+          committedSeq: token,
         });
-        return nextSession;
+        return [updated, { sessions: nextSessions, nav: nextNav }] as const;
       });
       if (committed !== null) {
         yield* broadcast;
@@ -508,8 +554,11 @@ export const layer = Layer.effect(
     const tracePath = Effect.fn("ElectronicsService.tracePath")(function* (
       input: ElectronicsTracePathInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) {
-      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      const startGen =
+        navigationGeneration ??
+        (threadId !== undefined ? yield* getNavigationGeneration(threadId) : undefined);
       yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const result = traceCircuitPath(loaded.model, {
@@ -566,8 +615,11 @@ export const layer = Layer.effect(
     const validate = Effect.fn("ElectronicsService.validate")(function* (
       input: ElectronicsValidateInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) {
-      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      const startGen =
+        navigationGeneration ??
+        (threadId !== undefined ? yield* getNavigationGeneration(threadId) : undefined);
       const settings = yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const builtin = runBuiltinCircuitValidation(loaded.model);
@@ -660,8 +712,11 @@ export const layer = Layer.effect(
     const simulate = Effect.fn("ElectronicsService.simulate")(function* (
       input: ElectronicsSimulateInput,
       threadId?: ThreadId,
+      navigationGeneration?: number,
     ) {
-      const startGen = threadId !== undefined ? yield* currentCloseGeneration(threadId) : undefined;
+      const startGen =
+        navigationGeneration ??
+        (threadId !== undefined ? yield* getNavigationGeneration(threadId) : undefined);
       const settings = yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const kind = input.kind ?? "dc_op";
@@ -828,15 +883,12 @@ export const layer = Layer.effect(
       readonly filePath: string;
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
+      readonly navigationToken?: number | undefined;
     }) {
-      // Atomically reserve a navigation generation BEFORE any async settings/file I/O so
-      // closePanel or a newer openPanel starting during settings/file load always wins.
-      const myGen = yield* Ref.modify(closeGenRef, (map) => {
-        const nextGen = (map.get(input.threadId) ?? 0) + 1;
-        const next = new Map(map);
-        next.set(input.threadId, nextGen);
-        return [nextGen, next] as const;
-      });
+      // Atomically reserve a monotonic navigation token BEFORE any async settings/file I/O
+      // (or use one already reserved by the caller before workspace lookup) so closePanel or a
+      // newer openPanel always wins while failed opens never invalidate concurrent valid work.
+      const myToken = input.navigationToken ?? (yield* reserveNavigationToken(input.threadId));
       yield* ensureEnabled;
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const now = yield* nextMonotonicIso(input.threadId);
@@ -865,7 +917,7 @@ export const layer = Layer.effect(
         panelOpenedAt: now,
         updatedAt: now,
       });
-      const committed = yield* updateThreadSession(input.threadId, nextSession, myGen);
+      const committed = yield* commitOpenSession(input.threadId, myToken, nextSession);
       return { session: committed ?? nextSession(undefined), model: loaded.model };
     });
 
@@ -875,24 +927,24 @@ export const layer = Layer.effect(
       readonly filePath: string;
       readonly activeTab?: ElectronicsPanelTab | undefined;
       readonly selectedNet?: string | undefined;
+      readonly navigationToken?: number | undefined;
     }) => openPanelWithModel(input).pipe(Effect.map((res) => res.session));
 
     const closePanel = Effect.fn("ElectronicsService.closePanel")(function* (threadId: ThreadId) {
-      yield* Ref.update(closeGenRef, (map) => {
-        const next = new Map(map);
-        next.set(threadId, (next.get(threadId) ?? 0) + 1);
-        return next;
-      });
-      yield* Ref.update(sessionsRef, (map) => {
-        const next = new Map(map);
-        next.delete(threadId);
-        return next;
+      yield* Ref.update(sessionStoreRef, (state) => {
+        const prev = state.nav.get(threadId) ?? { nextSeq: 0, committedSeq: 0 };
+        const closeSeq = prev.nextSeq + 1;
+        const nextNav = new Map(state.nav);
+        nextNav.set(threadId, { nextSeq: closeSeq, committedSeq: closeSeq });
+        const nextSessions = new Map(state.sessions);
+        nextSessions.delete(threadId);
+        return { sessions: nextSessions, nav: nextNav };
       });
       yield* broadcast;
     });
 
     const getThreadSession = (threadId: ThreadId) =>
-      Ref.get(sessionsRef).pipe(Effect.map((map) => map.get(threadId)));
+      Ref.get(sessionStoreRef).pipe(Effect.map((state) => state.sessions.get(threadId)));
 
     const subscribeState: Stream.Stream<ElectronicsServiceState> = Stream.unwrap(
       Effect.gen(function* () {
@@ -922,6 +974,8 @@ export const layer = Layer.effect(
       tracePath,
       validate,
       simulate,
+      reserveNavigationToken,
+      getNavigationGeneration,
       openPanel,
       openPanelWithModel,
       closePanel,

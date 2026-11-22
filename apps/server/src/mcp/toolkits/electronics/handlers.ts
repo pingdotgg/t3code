@@ -13,9 +13,15 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { ElectronicsToolkit } from "./tools.ts";
 
-const requireElectronicsAgentAccess = Effect.gen(function* () {
+const requireElectronicsThreadId = Effect.gen(function* () {
   const scope = yield* McpInvocationContext.McpInvocationContext;
   const threadScope = yield* McpInvocationContext.requireThreadScope(scope, "Electronics tools");
+  return threadScope.thread.threadId;
+});
+
+const requireElectronicsAgentAccessForThread = Effect.fn(
+  "McpElectronics.requireElectronicsAgentAccessForThread",
+)(function* (threadId: Parameters<typeof threadWorkspaceRoot>[0]) {
   const settingsService = yield* ServerSettings.ServerSettingsService;
   const settings = yield* settingsService.getSettings.pipe(
     Effect.mapError(
@@ -34,14 +40,19 @@ const requireElectronicsAgentAccess = Effect.gen(function* () {
         "Agent access to Electronics Workbench is turned off. Enable it in Settings → Electronics.",
     });
   }
-  const cwd = yield* threadWorkspaceRoot(threadScope.thread.threadId);
+  const cwd = yield* threadWorkspaceRoot(threadId);
   if (!cwd) {
     return yield* new ElectronicsError({
       code: "not_found",
       message: "This thread does not have an attached workspace root.",
     });
   }
-  return { threadId: threadScope.thread.threadId, cwd };
+  return { threadId, cwd };
+});
+
+const requireElectronicsAgentAccess = Effect.gen(function* () {
+  const threadId = yield* requireElectronicsThreadId;
+  return yield* requireElectronicsAgentAccessForThread(threadId);
 });
 
 const handlers = {
@@ -73,12 +84,17 @@ const handlers = {
 
   electronics_open: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threadId, cwd } = yield* requireElectronicsAgentAccess;
+      const threadId = yield* requireElectronicsThreadId;
       const service = yield* ElectronicsService.ElectronicsService;
+      // Reserve a monotonic navigation token as soon as the thread ID is known, BEFORE
+      // settings or workspace lookup, so a stalled open cannot clobber a newer open/close.
+      const navigationToken = yield* service.reserveNavigationToken(threadId);
+      const { cwd } = yield* requireElectronicsAgentAccessForThread(threadId);
       const { session, model } = yield* service.openPanelWithModel({
         threadId,
         cwd,
         filePath: input.filePath,
+        navigationToken,
         ...(input.activeTab !== undefined ? { activeTab: input.activeTab } : {}),
         ...(input.selectedNet !== undefined ? { selectedNet: input.selectedNet } : {}),
       });
@@ -132,8 +148,10 @@ const handlers = {
 
   electronics_trace_path: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threadId, cwd } = yield* requireElectronicsAgentAccess;
+      const threadId = yield* requireElectronicsThreadId;
       const service = yield* ElectronicsService.ElectronicsService;
+      const navigationGeneration = yield* service.getNavigationGeneration(threadId);
+      const { cwd } = yield* requireElectronicsAgentAccessForThread(threadId);
       return yield* service.tracePath(
         {
           cwd,
@@ -146,14 +164,17 @@ const handlers = {
           ...(input.maxHops !== undefined ? { maxHops: input.maxHops } : {}),
         },
         threadId,
+        navigationGeneration,
       );
     }),
   ),
 
   electronics_validate: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threadId, cwd } = yield* requireElectronicsAgentAccess;
+      const threadId = yield* requireElectronicsThreadId;
       const service = yield* ElectronicsService.ElectronicsService;
+      const navigationGeneration = yield* service.getNavigationGeneration(threadId);
+      const { cwd } = yield* requireElectronicsAgentAccessForThread(threadId);
       return yield* service.validate(
         {
           cwd,
@@ -163,14 +184,17 @@ const handlers = {
             : {}),
         },
         threadId,
+        navigationGeneration,
       );
     }),
   ),
 
   electronics_simulate: McpToolAccess.actsAsCaller((input) =>
     Effect.gen(function* () {
-      const { threadId, cwd } = yield* requireElectronicsAgentAccess;
+      const threadId = yield* requireElectronicsThreadId;
       const service = yield* ElectronicsService.ElectronicsService;
+      const navigationGeneration = yield* service.getNavigationGeneration(threadId);
+      const { cwd } = yield* requireElectronicsAgentAccessForThread(threadId);
       return yield* service.simulate(
         {
           cwd,
@@ -184,6 +208,7 @@ const handlers = {
             : {}),
         },
         threadId,
+        navigationGeneration,
       );
     }),
   ),
