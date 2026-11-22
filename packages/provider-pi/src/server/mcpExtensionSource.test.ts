@@ -12,7 +12,9 @@ import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
   event: { payload: unknown },
-  ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
+  ctx: {
+    model: { provider: string; api?: string; serviceTiers?: ReadonlyArray<{ id: string }> };
+  },
 ) => Record<string, unknown> | undefined;
 
 type CommandHandler = (args: string) => Promise<void>;
@@ -586,6 +588,19 @@ describe("Pi service tier", () => {
 
     await hook.setServiceTier("");
     assert.isUndefined(hook({ payload }, { model: sol }));
+  });
+
+  it("sends Anthropic fast mode as speed, not service_tier", async () => {
+    const hook = await loadRequestHook();
+    const opus = {
+      provider: "anthropic",
+      api: "anthropic-messages",
+      serviceTiers: [{ id: "fast" }],
+    };
+    const payload = { model: "claude-opus-5-5", max_tokens: 4096 };
+
+    await hook.setServiceTier("fast");
+    assert.deepEqual(hook({ payload }, { model: opus }), { ...payload, speed: "fast" });
   });
 });
 
