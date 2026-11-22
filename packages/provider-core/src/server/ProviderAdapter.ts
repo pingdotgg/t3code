@@ -46,6 +46,20 @@ import type {
   ProviderSelectionTransitionPlan,
 } from "./selectionTransition.ts";
 
+/** The folders of a multi-folder thread besides `cwd`. Single-folder threads omit it. */
+export const ProviderAdapterV2RuntimeWorkspace = Schema.Struct({
+  folders: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      path: Schema.String,
+      isGitRepository: Schema.Boolean,
+    }),
+  ),
+  /** Folder paths outside `cwd`. Adapters grant them as writable roots where the provider can. */
+  extraRoots: Schema.Array(Schema.String),
+});
+export type ProviderAdapterV2RuntimeWorkspace = typeof ProviderAdapterV2RuntimeWorkspace.Type;
+
 export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -57,6 +71,7 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
    * it; adapters use it to refuse native mode choices a user makes beside T3 Code's own.
    */
   maxRuntimeMode: Schema.optional(RuntimeMode),
+  workspace: Schema.optional(ProviderAdapterV2RuntimeWorkspace),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 
@@ -187,6 +202,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     failure: Schema.Null,
     reason: Schema.optional(Schema.String),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** The provider dropped this turn's request before persisting it to native history. */
+    promptDropped: Schema.optional(Schema.Literal(true)),
     retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),
   }),
   Schema.Struct({
@@ -201,6 +218,8 @@ export const ProviderAdapterV2Event = Schema.Union([
     retry: Schema.optional(OrchestrationV2ProviderRetry),
     retryStartedAt: Schema.optional(Schema.DateTimeUtc),
     threadDisposition: Schema.Literals(["reusable", "broken"]),
+    /** The provider dropped this turn's request before persisting it to native history. */
+    promptDropped: Schema.optional(Schema.Literal(true)),
     /** Child turns outlive root failure and report their own terminals; otherwise open children settle. */
     childTurnsContinue: Schema.optional(Schema.Literal(true)),
     retainedRuntimeRequestIds: Schema.optional(Schema.Array(RuntimeRequestId)),

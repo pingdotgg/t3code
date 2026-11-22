@@ -174,7 +174,6 @@ import {
   resolveThreadRouteTarget,
 } from "../threadRoutes";
 import type { SidebarThreadSummary } from "../types";
-import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
 import { ProjectRowActions } from "./ProjectComboboxRow";
 import {
@@ -1209,19 +1208,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   }, [clearSelection, revealWidensScope, setPersistedProjectScopeKeys]);
   const revealActiveRow = useActiveRowReveal(routeReveal, routeRowThreadKey, routeKeyInPlace);
   const showProjectEnvironments = projectGroupsSpanEnvironments(projectGroups);
-  const scratchMachineLabelFor = (
-    thread: Pick<SidebarThreadSummary, "environmentId" | "projectId">,
-  ) => {
-    if (!showProjectEnvironments) return null;
-    const project = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
-    if (
-      !project ||
-      !isScratchProject(project, serverConfigs.get(thread.environmentId)?.scratchWorkspaceRoot)
-    ) {
-      return null;
-    }
-    return environmentLabelById.get(thread.environmentId) ?? null;
-  };
   // Pinning from a row keeps rows in place while the menu is open.
   const projectScopeItems = useOrderWhileOpen(
     lookupProjectScopeItems,
@@ -3563,11 +3549,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           snoozeSupported={serverConfigs.has(thread.environmentId)}
                           pinningSupported={serverConfigs.has(thread.environmentId)}
                           isPinned={thread.pinnedAt != null}
-                          dropVerb={
-                            dragState?.activeKey === threadKey
-                              ? resolveSidebarDropVerb(dragState.activeSection, dragTargetSection)
-                              : null
-                          }
+                          dropVerb={dragState?.activeKey === threadKey ? dragDropVerb : null}
                           dragOverPinned={
                             dragState?.activeKey === threadKey && dragTargetSection === "pinned"
                           }
@@ -3589,12 +3571,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           isRouteThread={routeThreadKey === threadKey}
                           readOpensPullRequestsInRightPanel={readOpensPullRequestsInRightPanel}
                           jumpLabel={showJumpHints ? (jumpLabelByKey.get(threadKey) ?? null) : null}
-                          currentEnvironmentId={primaryEnvironmentId}
                           environmentLabel={environmentLabelById.get(thread.environmentId) ?? null}
                           environmentMachine={
                             environmentMachineById.get(thread.environmentId) ?? "server"
                           }
-                          scratchMachineLabel={scratchMachineLabelFor(thread)}
                           project={
                             projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null
                           }

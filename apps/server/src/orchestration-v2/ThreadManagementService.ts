@@ -1115,7 +1115,10 @@ const make = Effect.gen(function* () {
       const pending =
         isTerminalRunStatus(run.status) && (yield* orchestrator.restartContinuationPending(run));
       const owesOutput =
-        input.untilOutput === true && run.status === "completed" && run.output === undefined;
+        input.untilOutput === true &&
+        run.status === "completed" &&
+        run.outputSchema !== undefined &&
+        run.output === undefined;
       return { run, pending, settled: isTerminalRunStatus(run.status) && !pending && !owesOutput };
     });
     const untilDelegatedWorkSettled = input.untilDelegatedWorkSettled === true;

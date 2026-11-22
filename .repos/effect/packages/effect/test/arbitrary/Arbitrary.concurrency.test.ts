@@ -246,7 +246,7 @@ describe("Arbitrary concurrency", () => {
           { runs: 3, concurrency: 3, maxDiscards: 0, seed: 0 }
         )
         if (passes) {
-          assert.deepStrictEqual(result, { _tag: "Exhausted", runs: 1, discards: 1, seed: 0 })
+          assert.deepStrictEqual(result, { _tag: "Exhausted", diagnostics: [], runs: 1, discards: 1, seed: 0 })
         } else {
           assert.strictEqual(result._tag, "Falsified")
           if (result._tag === "Falsified") assert.strictEqual(result.discards, 0)
