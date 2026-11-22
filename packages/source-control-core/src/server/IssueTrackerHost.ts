@@ -38,13 +38,23 @@ export function asIssueTrackerAccount(
   if (accountId === null) return api;
   const as = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     Effect.provideService(effect, IssueTrackerAccount, accountId);
-  const { create, comment, update, setState, setReaction, listTemplates, listCandidates } = api;
+  const {
+    getIssueLink,
+    create,
+    comment,
+    update,
+    setState,
+    setReaction,
+    listTemplates,
+    listCandidates,
+  } = api;
   return {
     ...api,
     getViewer: (input) => as(api.getViewer(input)),
     listIssues: (input) => as(api.listIssues(input)),
     getIssue: (input) => as(api.getIssue(input)),
     getComments: (input) => as(api.getComments(input)),
+    ...(getIssueLink && { getIssueLink: (input) => as(getIssueLink(input)) }),
     ...(create && { create: (input) => as(create(input)) }),
     ...(comment && { comment: (input) => as(comment(input)) }),
     ...(update && { update: (input) => as(update(input)) }),
