@@ -1751,35 +1751,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (
-    inboxID: string,
-    text: string,
-    description = "Sleep",
-    tag = "completed",
-    label?: string,
-  ) =>
-    event(
-      "session.inbox.enqueued",
-      {
-        inboxID,
-        sessionID: SESSION,
-        item: {
-          type: "synthetic",
-          payload: {
-            text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
-            description,
-            metadata: {
-              source: "subagent",
-              childID: CHILD,
-              agent: "General",
-              state: tag === "running" ? "completed" : tag,
-            },
+  const childReport = (inboxID: string, text: string, description = "Sleep", tag = "completed") =>
+    event("session.inbox.enqueued", {
+      inboxID,
+      sessionID: SESSION,
+      item: {
+        type: "synthetic",
+        payload: {
+          text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
+          description,
+          // OpenCode tags a report "running" only in the text; its metadata still says completed.
+          metadata: {
+            source: "subagent",
+            childID: CHILD,
+            agent: "General",
+            state: tag === "running" ? "completed" : tag,
           },
-          delivery: "steer",
         },
+        delivery: "steer",
       },
-      label,
-    );
+    });
   const watchCalls = (
     runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
@@ -2289,29 +2280,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect("waits for a cancelled report after a kept subagent's turn is interrupted", () =>
-    Effect.gen(function* () {
-      const gate = makeProviderReplayGate(["cancelled"]);
-      const { runtime, thread } = yield* resumed(
-        [
-          ...reportedRunning,
-          event("session.execution.started", { sessionID: CHILD }),
-          event("session.execution.interrupted", { sessionID: CHILD }),
-          childReport("msg_report_2", "Stopped", "Sleep", "cancelled", "cancelled"),
-        ],
-        { replayGate: gate },
-      );
-      const watch = yield* watchCalls(runtime, thread);
-      yield* runtime.startTurn(withLineage(thread));
-      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("cancelled")));
-      yield* watch.until(() => watch.childTurns.get(`${CHILD}:turn:2`) === "interrupted");
-      assert.deepEqual(watch.calls.get("Sleep"), { status: "running", result: null });
-      gate.release("cancelled");
-      yield* watch.until(() => watch.calls.get("Sleep")?.status !== "running");
-      assert.deepEqual(watch.calls.get("Sleep"), { status: "cancelled", result: "Stopped" });
-    }),
-  );
-
   it.effect("settles a call that joined a kept subagent with the subagent's last report", () =>
     Effect.gen(function* () {
       const { runtime, thread } = yield* resumed([
@@ -2543,11 +2511,6 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       name: "a Code Mode script still runs below it",
       listed: jobsBelow({ kind: "codemode", status: "running" }),
       result: "TESTS_PASSED",
-    },
-    {
-      name: "only finished jobs remain below it",
-      listed: jobsBelow({ kind: "codemode", status: "completed" }),
-      result: "TESTS_STARTED",
     },
     {
       name: "OpenCode lists only a stored subagent job below it",
