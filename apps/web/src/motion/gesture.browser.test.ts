@@ -161,6 +161,12 @@ describe("scrollLeftByWheel", () => {
       wheelDeltaY: 0,
       timeStamp,
     }) as unknown as WheelEvent;
+  const zoomTo = (ratio: number) => {
+    Object.defineProperty(window, "devicePixelRatio", { value: ratio, configurable: true });
+    return {
+      [Symbol.dispose]: () => Reflect.deleteProperty(window, "devicePixelRatio"),
+    };
+  };
   const feed = (row: HTMLElement, events: readonly (readonly [number, number, number])[]) =>
     events.map(([time, delta, legacy]) => {
       scrollLeftByWheel(row, sideways(time, delta, legacy), delta);
@@ -199,6 +205,26 @@ describe("scrollLeftByWheel", () => {
     );
     let sum = 0;
     expect(positions).toEqual(deltas.map((delta) => (sum += delta)));
+  });
+
+  it("eases notches under browser zoom and keeps zoomed trackpad deltas direct", async () => {
+    using row = mountRow();
+    using _zoom = zoomTo(1.100000023841858);
+    expect(feed(row, [[35_000, 99.99999783255842, -109]])).toEqual([0]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(100, 0));
+    zoomTo(1.5);
+    expect(feed(row, [[36_000, 100, -80]])).toEqual([row.scrollLeft]);
+    await vi.waitFor(() => expect(row.scrollLeft).toBeCloseTo(200, 0));
+    zoomTo(1.100000023841858);
+    const deltas = [11.818181, 6.363636, 20.909091];
+    const positions = feed(
+      row,
+      deltas.map((delta, index) => [37_000 + index * 16, delta, -Math.trunc(3 * delta)] as const),
+    );
+    let sum = row.scrollLeft - deltas.reduce((total, delta) => total + delta, 0);
+    expect(positions.map((value) => Math.round(value))).toEqual(
+      deltas.map((delta) => Math.round((sum += delta))),
+    );
   });
 
   it("finishes an eased first tick without losing it when the swipe turns out direct", async () => {
