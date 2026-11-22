@@ -121,10 +121,14 @@ describe("composer attachment files", () => {
     ).toBe(true);
   });
 
-  it("leaves an image-and-text clipboard to the text path under Paste as Text", () => {
+  it("leaves a Word image-and-text clipboard to the text path, with or without Paste as Text", () => {
     const image = new File(["png"], "image.png", { type: "image/png" });
     const input = { files: [image], plainText: "Hello from Word", bypassAutoAttachment: true };
     expect(shouldHandleComposerAttachmentPaste(input)).toBe(false);
+    // A plain paste of the same Word clipboard keeps the text too.
+    expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
+      false,
+    );
   });
 
   it("preserves text when the clipboard also includes generic image files", () => {
