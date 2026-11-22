@@ -969,11 +969,22 @@ describe("ThreadSettlementServiceV2 worker", () => {
         latestUserMessageAt: DateTime.makeUnsafe(earlier),
       });
       const reused = makeThread("idle-reused", { branch: "reused" });
+      const link = persistedLink("open", DateTime.makeUnsafe("2026-06-20T00:00:00.000Z"));
+      const reusedOwner = makeThread("archived-reused-owner", {
+        branch: "reused",
+        archivedAt: DateTime.makeUnsafe("2026-07-02T00:00:00.000Z"),
+        pullRequests: [
+          {
+            ...link,
+            snapshot: { ...link.snapshot!, state: "merged", mergedAt: "2026-07-01T00:00:00.000Z" },
+          },
+        ],
+      });
       const noPr = makeThread("idle-none", { branch: "none" });
       const merged = makeThread("idle-merged", { branch: "merged" });
       const failed = makeThread("idle-failed", { branch: "failed" });
       const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([openPr, reused, noPr, merged, failed]),
+        snapshot: makeSnapshot([openPr, reused, reusedOwner, noPr, merged, failed]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleAfterDays: 3,
@@ -985,7 +996,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
             : branch === "reused"
               ? Effect.succeed(
                   options?.freshGitState === true
-                    ? makeBranchPullRequest("open")
+                    ? { ...makeBranchPullRequest("open"), number: 43 }
                     : { ...makeBranchPullRequest("merged"), mergedAt: "2026-07-01T00:00:00.000Z" },
                 )
               : branch === "merged"
