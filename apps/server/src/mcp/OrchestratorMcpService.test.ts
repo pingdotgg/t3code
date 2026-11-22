@@ -3148,6 +3148,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             }),
           ),
           Layer.provide(Layer.mock(GitVcsDriver.GitVcsDriver)({})),
+          Layer.provide(Layer.mock(CommandOutputHub.CommandOutputHub)({})),
         );
 
         yield* Effect.gen(function* () {
@@ -3954,6 +3955,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             resolveCommit: () => Effect.succeed({ commitSha: "abc123" }),
           }),
         ),
+        Layer.provide(Layer.mock(CommandOutputHub.CommandOutputHub)({})),
         Layer.provide(
           Layer.mergeAll(
             NodeServices.layer,
