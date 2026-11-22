@@ -1751,14 +1751,19 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string, description = "Sleep") =>
+  const childReport = (
+    inboxID: string,
+    text: string,
+    description = "Sleep",
+    tagState = "completed",
+  ) =>
     event("session.inbox.enqueued", {
       inboxID,
       sessionID: SESSION,
       item: {
         type: "synthetic",
         payload: {
-          text: `<subagent sessionID="${CHILD}" state="completed" description="${description}">\n${text}\n</subagent>`,
+          text: `<subagent sessionID="${CHILD}" state="${tagState}" description="${description}">\n${text}\n</subagent>`,
           description,
           metadata: { source: "subagent", childID: CHILD, agent: "General", state: "completed" },
         },
@@ -2036,6 +2041,34 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       });
       yield* watch.until(() => watch.calls.get("Again")?.status === "completed");
       assert.deepEqual(watch.calls.get("Again"), { status: "completed", result: "SECOND_OK" });
+    }),
+  );
+
+  it.effect("keeps a subagent pending while its report says its own work still runs", () =>
+    Effect.gen(function* () {
+      // OpenCode tags such a report state="running" only in its text; metadata says "completed".
+      const { runtime, thread } = yield* resumed([
+        ...launchedAndRunning,
+        event("session.execution.succeeded", { sessionID: SESSION }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport(
+          "msg_report_1",
+          "Review started.\n\nBackground work still running:\n- grandchild",
+          "Sleep",
+          "running",
+        ),
+        event("session.execution.started", { sessionID: CHILD }),
+        event("session.execution.succeeded", { sessionID: CHILD }),
+        childReport("msg_report_2", "CHILD_OK"),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.childTurns.has(`${CHILD}:turn:2`));
+      assert.deepEqual(watch.callsAtChildTurnStart.get(`${CHILD}:turn:2`), {
+        Sleep: { status: "running", result: null },
+      });
+      yield* watch.until(() => watch.calls.get("Sleep")?.status === "completed");
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_OK" });
     }),
   );
 
