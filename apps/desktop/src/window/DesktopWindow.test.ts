@@ -69,11 +69,20 @@ const environmentInput = {
   runningUnderArm64Translation: false,
 } satisfies DesktopEnvironment.MakeDesktopEnvironmentInput;
 
+let nextFakeWebContentsId = 1;
+
 function makeFakeBrowserWindow() {
   const windowListeners = new Map<string, (...args: readonly unknown[]) => void>();
   const webContentsListeners = new Map<string, (...args: readonly unknown[]) => void>();
   let zoomLevel = 0;
+  const onBeforeSendHeaders = vi.fn();
   const webContents = {
+    id: nextFakeWebContentsId++,
+    session: {
+      webRequest: {
+        onBeforeSendHeaders,
+      },
+    },
     copyImageAt: vi.fn(),
     focus: vi.fn(),
     isDestroyed: vi.fn(() => false),
@@ -158,6 +167,7 @@ function makeFakeBrowserWindow() {
     setAutoHideCursor: window.setAutoHideCursor,
     setFullScreen: window.setFullScreen,
     setOpacity: window.setOpacity,
+    onBeforeSendHeaders,
     webContentsListeners,
     webContentsOnce: webContents.once,
     windowListeners,
@@ -1751,5 +1761,30 @@ describe("DesktopWindow", () => {
         assert.equal(onReveal.mock.calls.length, 0);
       }).pipe(Effect.provide(layer));
     }),
+  );
+
+  it.effect(
+    "installs and detaches the main-window remote request header hook on window lifecycle",
+    () =>
+      Effect.gen(function* () {
+        const fakeWindow = makeFakeBrowserWindow();
+        const createCount = yield* Ref.make(0);
+        const mainWindow = yield* Ref.make<Option.Option<Electron.BrowserWindow>>(Option.none());
+        const layer = layerTest({ window: fakeWindow.window, createCount, mainWindow });
+
+        yield* Effect.gen(function* () {
+          const desktopWindow = yield* DesktopWindow.DesktopWindow;
+          yield* desktopWindow.createMain;
+
+          assert.equal(fakeWindow.onBeforeSendHeaders.mock.calls.length, 1);
+          assert.deepEqual(fakeWindow.onBeforeSendHeaders.mock.calls[0]?.[0], {
+            urls: ["http://*/*", "https://*/*", "ws://*/*", "wss://*/*"],
+          });
+
+          fakeWindow.windowListeners.get("closed")?.();
+          assert.equal(fakeWindow.onBeforeSendHeaders.mock.calls.length, 2);
+          assert.equal(fakeWindow.onBeforeSendHeaders.mock.calls[1]?.[0], null);
+        }).pipe(Effect.provide(layer));
+      }),
   );
 });
