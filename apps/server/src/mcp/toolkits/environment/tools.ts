@@ -61,7 +61,7 @@ const SettingsReadTool = Tool.make("t3_settings_read", {
 const SettingsUpdateTool = Tool.make("t3_settings_update", {
   ...shared,
   description:
-    "Change environment settings whose access is write. Live full-access or default caller thread only. Omitted keys are unchanged; objects merge, arrays replace.",
+    "Change environment settings whose access is write. Live full-access or default caller thread only. Omitted keys stay. Objects merge; arrays and `providerModelPreferences` replace.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     settings: Schema.Record(Schema.String, Schema.Json).annotate({

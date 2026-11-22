@@ -20,6 +20,7 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import { OrchestratorRuntimeModeAboveCeilingError } from "../../../orchestration-v2/Orchestrator.ts";
 import { outputRequestProblem } from "../../../orchestration-v2/runOutput.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -225,7 +226,13 @@ const withSavedProjectSettings = Effect.gen(function* () {
   };
 });
 
-// The GUI keeps these in Settings' per-project overrides; the project row's copies apply only until folded.
+// Each write replaces the project's whole override entry, so concurrent updates must not interleave.
+const projectSettingsLock = Semaphore.makeUnsafe(1);
+
+/**
+ * The GUI keeps these in Settings' per-project overrides; the project row's copies apply only until
+ * folded. Returns how to put the previous entry back.
+ */
 const saveProjectSettingsOverrides = Effect.fn("mcp.saveProjectSettingsOverrides")(function* (
   input: ProjectUpdatePayload & { readonly projectId: ProjectId },
 ) {
@@ -243,13 +250,11 @@ const saveProjectSettingsOverrides = Effect.fn("mcp.saveProjectSettingsOverrides
     ...(input.defaultModelSelection === null ? (["defaultModelSelection"] as const) : []),
     ...(input.defaultThreadEnvMode === null ? (["defaultThreadEnvMode"] as const) : []),
   ];
-  if (Object.keys(set).length === 0 && cleared.length === 0) return;
+  if (Object.keys(set).length === 0 && cleared.length === 0) return Effect.void;
   const service = yield* ServerSettings.ServerSettingsService;
   const settings = yield* service.getSettings.pipe(Effect.mapError(unavailable));
-  const next: Record<string, unknown> = {
-    ...settings.projectSettingsOverrides[input.projectId],
-    ...set,
-  };
+  const previous = settings.projectSettingsOverrides[input.projectId];
+  const next: Record<string, unknown> = { ...previous, ...set };
   for (const key of cleared) delete next[key];
   yield* service
     .updateSettings({
@@ -259,6 +264,9 @@ const saveProjectSettingsOverrides = Effect.fn("mcp.saveProjectSettingsOverrides
       },
     })
     .pipe(Effect.mapError(settingsFailure));
+  return service
+    .updateSettings({ projectSettingsOverrides: { [input.projectId]: previous ?? null } })
+    .pipe(Effect.ignoreCause({ log: true }));
 });
 
 const settingsFailure = (error: ServerSettingsError) =>
@@ -670,10 +678,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   t3_project_update: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
-      const updated = yield* projects
-        .update({ ...input, commandId: yield* newCommandId() })
-        .pipe(Effect.mapError(projectFailure));
-      yield* saveProjectSettingsOverrides(input);
+      const commandId = yield* newCommandId();
+      // Settings first: a managed lock must refuse the update before the project row changes.
+      const updated = yield* projectSettingsLock.withPermits(1)(
+        Effect.gen(function* () {
+          const restore = yield* saveProjectSettingsOverrides(input);
+          return yield* projects.update({ ...input, commandId }).pipe(
+            Effect.tapError(() => restore),
+            Effect.mapError(projectFailure),
+          );
+        }),
+      );
       return (yield* withSavedProjectSettings)(updated);
     }),
   ),

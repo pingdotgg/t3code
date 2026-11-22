@@ -72,8 +72,8 @@ const mergeTaggedObjects = (branches: ReadonlyArray<Json>): JsonObject | undefin
   return { type: "object", properties, required: [tag, ...requiredByAll] };
 };
 
-const compact = (schema: Json, optional: boolean): Json => {
-  if (Array.isArray(schema)) return schema.map((item) => compact(item, false));
+const compact = (schema: Json, optional: boolean, dropNull = true): Json => {
+  if (Array.isArray(schema)) return schema.map((item) => compact(item, false, dropNull));
   if (!Predicate.isObject(schema)) return schema;
   const required = new Set(Array.isArray(schema.required) ? schema.required : []);
   let result: JsonObject = {};
@@ -86,15 +86,17 @@ const compact = (schema: Json, optional: boolean): Json => {
         ? Object.fromEntries(
             Object.entries(value).map(([name, property]) => [
               name,
-              compact(property, !required.has(name)),
+              compact(property, !required.has(name), dropNull),
             ]),
           )
-        : compact(value, false);
+        : compact(value, false, dropNull);
   }
   if (Array.isArray(result.anyOf)) {
     const branches = result.anyOf
       .flatMap((branch) => (isBareAnyOf(branch) ? branch.anyOf : [branch]))
-      .filter((branch) => !(optional && isNullSchema(branch)) && !isJsonStringSchema(branch));
+      .filter(
+        (branch) => !(dropNull && optional && isNullSchema(branch)) && !isJsonStringSchema(branch),
+      );
     const { anyOf: _anyOf, ...rest } = result;
     const only = branches.length === 1 ? branches[0] : mergeTaggedObjects(branches);
     result = Predicate.isObject(only) ? { ...only, ...rest } : { ...rest, anyOf: branches };
@@ -111,6 +113,8 @@ const compact = (schema: Json, optional: boolean): Json => {
 export const advertisedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
 
-/** The same compaction for a schema a tool returns, so agents read it as they read tool inputs. */
+/** The same compaction for a schema a tool returns, keeping `null` where it is a value to send. */
 export const advertisedSchemaOf = (schema: Schema.Constraint) =>
-  compact(Tool.getJsonSchemaFromSchema(schema), false) as ReturnType<typeof Tool.getJsonSchema>;
+  compact(Tool.getJsonSchemaFromSchema(schema), false, false) as ReturnType<
+    typeof Tool.getJsonSchema
+  >;

@@ -3,6 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { expect, it } from "@effect/vitest";
 import {
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   GitCommandError,
   ProjectId,
@@ -14,6 +15,7 @@ import {
   type ProjectScript,
   type RuntimeMode,
   type OrchestrationV2ThreadShell,
+  ServerSettingsError,
   ThreadId,
 } from "@t3tools/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -1517,6 +1519,86 @@ it.effect("a project update saves its default model and actions where Settings r
         ),
       ),
     );
+  }),
+);
+
+it.effect("a project update changes Settings and the project together or not at all", () =>
+  Effect.gen(function* () {
+    const overrideModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet",
+    };
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      overrideModel,
+      launched: [],
+    });
+    const run = <ROut, E>(layer: Layer.Layer<ROut, E>, params: object) =>
+      Effect.gen(function* () {
+        const toolkit = yield* ProjectToolkit;
+        const result = yield* toolkit
+          .handle("t3_project_update", params as never)
+          .pipe(Stream.unwrap, Stream.runCollect);
+        const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+        return { result: result.at(-1)?.result, settings };
+      }).pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provideMerge(layer)),
+        ),
+      );
+
+    // A managed lock refuses the settings write before the project row changes.
+    const rowWrites: unknown[] = [];
+    const locked = yield* run(
+      Layer.merge(
+        Layer.merge(
+          harness.dependencies,
+          Layer.mock(Project.ProjectService)({
+            update: (input) =>
+              Effect.sync(() => rowWrites.push(input)).pipe(
+                Effect.andThen(Effect.die("unreachable")),
+              ),
+          }),
+        ),
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          managedPolicy: undefined,
+          getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+          updateSettings: () =>
+            Effect.fail(
+              new ServerSettingsError({
+                settingsPath: "settings.json",
+                operation: "write-managed-setting",
+                managedSetting: "defaultAutoPull",
+                managedBy: "Example Corp",
+              }),
+            ),
+        }),
+      ),
+      { projectId: harness.projectId, title: "Renamed", autoPull: true },
+    );
+    expect(locked.result).toMatchObject({
+      code: "capability_denied",
+      message: expect.stringContaining("Example Corp"),
+    });
+    expect(rowWrites).toEqual([]);
+
+    // A project update that fails puts the previous overrides back.
+    const refused = yield* run(
+      Layer.merge(
+        harness.dependencies,
+        Layer.mock(Project.ProjectService)({
+          update: (input) =>
+            Effect.fail(
+              new Project.ProjectInvalidError({ projectId: input.projectId, detail: "Bad icon." }),
+            ),
+        }),
+      ),
+      { projectId: harness.projectId, autoPull: true },
+    );
+    expect(refused.result).toMatchObject({ code: "invalid_request", message: "Bad icon." });
+    expect(refused.settings.projectSettingsOverrides[harness.projectId]).toEqual({
+      defaultModelSelection: overrideModel,
+    });
   }),
 );
 
