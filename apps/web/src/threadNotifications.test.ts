@@ -93,6 +93,14 @@ describe("playNotificationSound", () => {
     expect(audio.started).toBe(2);
   });
 
+  it("plays without a prior gesture where audio is allowed to run, as in the desktop app", async () => {
+    const { playNotificationSound } = await import("./threadNotifications");
+
+    await playNotificationSound("completion", () => true);
+
+    expect(audio.started).toBe(1);
+  });
+
   it("leaves the slot free when a sound is turned off before it plays", async () => {
     const { playNotificationSound } = await loadUnlocked();
     await playNotificationSound("completion", () => false);
