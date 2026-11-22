@@ -27,7 +27,16 @@ import {
 
 const providers = [
   // Codex lists whatever its configured model provider serves, including private deployments.
-  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
+  {
+    driver: "codex",
+    models: [
+      { slug: "gpt-6-sol" },
+      { slug: "gpt-6.2-sol" },
+      { slug: "gpt-6.2-astra" },
+      { slug: "gpt-6.1-terra" },
+      { slug: "acme-azure-deployment" },
+    ],
+  },
   { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
   { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
   // Antigravity ships models before the bundled manifest lists them.
@@ -337,6 +346,12 @@ describe("provider usage reporting", () => {
     expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
     expect(label("antigravity-default")).toBe("gemini-4-neon");
     expect(label("gemini-4-unlisted")).toBeUndefined();
+  });
+
+  it("reports Codex models OpenAI ships after the bundled manifest", () => {
+    expect(label("gpt-6.2-sol")).toBe("gpt-6.2-sol");
+    expect(label("gpt-6.2-astra")).toBe("gpt-6.2-astra");
+    expect(label("gpt-6.1-terra")).toBe("gpt-6.1-terra");
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
