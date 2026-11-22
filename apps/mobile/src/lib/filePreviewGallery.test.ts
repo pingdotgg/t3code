@@ -63,6 +63,17 @@ describe("image preview groups", () => {
         expect(result).toHaveLength(2);
         expect(result.map(filePreviewKey)).toEqual([...new Set(gallery.map(filePreviewKey))]);
       }
+      expect(filePreviewGallery(delivered("a"), uploaded)[1]?.actionsSource).toEqual({
+        name: "b.png",
+        mimeType: "image/png",
+        environmentId,
+        resource: {
+          _tag: "attachment",
+          attachmentId: "uploaded-b",
+          fileName: "b.png",
+          mimeType: "image/png",
+        },
+      });
       expect(composerImageGallery(attachments)).toEqual(local);
     },
   );

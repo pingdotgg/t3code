@@ -159,7 +159,10 @@ import { useResolveClassNames } from "uniwind";
 import { useReduceMotionEnabled } from "../../lib/appState";
 import { useFilePreviewGallery, FilePreviewGallery } from "../../components/ui/FilePreviewGallery";
 import { assetImageSource } from "../../lib/assetImageSource";
-import { filePreviewSourceIdentifier } from "../../lib/filePreviewGallery";
+import {
+  filePreviewSourceIdentifier,
+  remoteAttachmentImageSource,
+} from "../../lib/filePreviewGallery";
 import { composerImageGallery } from "../../lib/composerImageGallery";
 import {
   isFileBackedComposerAttachment,
@@ -171,7 +174,7 @@ import {
   sentImageHandoff,
   type SentImageHandoff,
 } from "../../lib/sentImageHandoff";
-import { messageAttachmentImageSource, messageImageGallery } from "./messageImageGallery";
+import { messageImageGallery } from "./messageImageGallery";
 import { MARKDOWN_IMAGE_MAX_WIDTH, resolveMarkdownImageDisplaySize } from "./markdownImageSize";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { inlineFilePreviewKind, isPdfFile } from "../../lib/filePreview";
@@ -617,11 +620,7 @@ function MessageAttachmentImage(props: {
 }) {
   const gt = useGT();
   const withGallery = useFilePreviewGallery();
-  const previewSource = messageAttachmentImageSource(props.environmentId, {
-    id: props.attachmentId,
-    name: props.name,
-    mimeType: props.mimeType,
-  });
+  const previewSource = remoteAttachmentImageSource(props.environmentId, props.attachmentId, props);
   const { resource } = previewSource;
   const sourceIdentifier = filePreviewSourceIdentifier(previewSource);
   const uri = useAssetUrl(props.environmentId, resource);
