@@ -592,7 +592,7 @@ export function getProviderModelSendBlockReason(
   model: string,
   resolve: MessageResolver = m,
 ): string | null {
-  if (provider?.driver !== "antigravity") return unavailableModelReason(provider, model);
+  if (provider?.driver !== "antigravity") return unavailableModelReason(provider, model, resolve);
   if (!provider.installed) {
     return resolve(msg("Install Antigravity in provider settings before sending."));
   }

@@ -11,6 +11,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderThreadId,
+  RunAttemptId,
   RunId,
   ThreadId,
   TurnItemId,
@@ -109,10 +110,15 @@ const handoff: OrchestrationV2ContextHandoff = {
 
 describe("handoff budget", () => {
   it("measures a native conversation by the turns still in it", () => {
-    const report = (ordinal: number, usedTokens: number, nativeThreadId: string) => ({
+    const report = (
+      ordinal: number,
+      usedTokens: number,
+      nativeThreadId: string,
+      promptDropped = false,
+    ) => ({
       run: {
         id: `run:${ordinal}`,
-        status: ordinal === 3 ? "rolled_back" : "completed",
+        status: ordinal === 3 ? "rolled_back" : promptDropped ? "failed" : "completed",
         modelSelection: { instanceId: "codex", model: "gpt" },
       },
       attempt: {
@@ -127,6 +133,7 @@ describe("handoff budget", () => {
         runAttemptId: `attempt:${ordinal}`,
         nodeId: `node:${ordinal}`,
         tokenUsage: { usedTokens, updatedAt: `2026-09-17T00:0${ordinal}:00Z` },
+        ...(promptDropped ? { promptDropped: true as const } : {}),
       },
     });
     const reports = [
@@ -135,6 +142,7 @@ describe("handoff budget", () => {
       // Rolled back: the conversation no longer holds this turn.
       report(3, 190_000, "native:target"),
       report(4, 300_000, "native:replaced"),
+      report(5, 400_000, "native:target", true),
     ];
     const projection = {
       runs: reports.map(({ run }) => run),
@@ -146,6 +154,13 @@ describe("handoff budget", () => {
       { used: measured?.usage.usedTokens, first: measured?.firstUsedTokens },
       { used: 80_000, first: 20_000 },
     );
+    const native = nativeContextHistory(
+      { ...projection, thread, contextHandoffs: [] },
+      providerThread,
+    );
+    assert.isFalse(native.deliveredAttemptIds.has(RunAttemptId.make("attempt:5")));
+    assert.isFalse(native.nativeInputRunIds.has(RunId.make("run:5")));
+    assert.isTrue(native.nativeInputRunIds.has(RunId.make("run:2")));
     // A fresh conversation with no report yet is unmeasured, so it cannot restart again.
     assert.isUndefined(
       latestNativeContextUsage(projection, {

@@ -1,9 +1,12 @@
 import {
+  type ExternalHistoryMatch,
   type ExternalHistorySource,
   type ExternalHistoryRequest,
   WS_METHODS,
 } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "../state/runtime.ts";
 
@@ -20,13 +23,20 @@ export function createExternalHistoryAtoms<R, E>(
   };
 }
 
-export function externalHistoryRangeLabel(source: {
-  readonly textOffset: number;
-  readonly text: string;
-  readonly totalChars: number;
-}): string {
+export function externalHistoryRangeLabel(
+  source: {
+    readonly textOffset: number;
+    readonly text: string;
+    readonly totalChars: number;
+  },
+  resolve: MFunctionType = mFallback,
+): string {
   const start = source.text.length === 0 ? source.textOffset : source.textOffset + 1;
-  return `Characters ${start.toLocaleString()}–${(source.textOffset + source.text.length).toLocaleString()} of ${source.totalChars.toLocaleString()}`;
+  return resolve(msg("Characters {start, number}–{end, number} of {total, number}"), {
+    start,
+    end: source.textOffset + source.text.length,
+    total: source.totalChars,
+  });
 }
 
 export function externalHistorySearchFilters(
@@ -41,12 +51,24 @@ export function externalHistorySearchFilters(
   };
 }
 
-export function externalHistorySourceStatusLabel(status: ExternalHistorySource["status"]): string {
-  return {
-    ready: "Ready",
-    unavailable: "Cannot read",
-    unsupported_format: "Unsupported history format",
-  }[status];
+export function externalHistorySourceStatusLabel(
+  status: ExternalHistorySource["status"],
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolve(
+    {
+      ready: msg("Ready"),
+      unavailable: msg("Cannot read"),
+      unsupported_format: msg("Unsupported history format"),
+    }[status],
+  );
+}
+
+export function externalHistoryRoleLabel(
+  role: ExternalHistoryMatch["role"],
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolve({ user: msg("User"), assistant: msg("Assistant"), tool: msg("Tool") }[role]);
 }
 
 export {

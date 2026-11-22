@@ -84,6 +84,18 @@ it("detects draft edits during upload preparation without treating upload metada
   expect(composerDraftContentChanged(draft, { ...draft, threadContexts: [localThread] })).toBe(
     true,
   );
+  const knowledge = projectKnowledgeContextRecord({
+    environmentId: local,
+    projectId: ProjectId.make("project"),
+    selections: [{ kind: "fact", factId: ProjectFactId.make("fact"), revision: 1 }],
+    maxBytes: 48000,
+  });
+  const withKnowledge = { ...draft, knowledgeContexts: [knowledge] };
+  expect(composerDraftContentChanged(draft, withKnowledge)).toBe(true);
+  expect(composerDraftContentChanged(withKnowledge, { ...draft, knowledgeContexts: [] })).toBe(
+    true,
+  );
+  expect(composerDraftContentChanged(draft, { ...draft, knowledgeContexts: [] })).toBe(false);
 });
 
 describe("referencedThreadContexts", () => {

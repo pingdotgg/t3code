@@ -22,6 +22,8 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import { connectionRoutes } from "../connection/routes.ts";
 import type * as AtomRegistry from "effect/reactivity/AtomRegistry";
 import type { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { requestGuarded } from "../rpc/client.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
@@ -48,6 +50,7 @@ interface EnableInferenceRoutingInput extends InferenceRoutingOptions {
   readonly consumer: InferenceConsumer;
   readonly driver: InferenceDriver;
   readonly environments: ReadonlyArray<InferenceFleetEnvironment>;
+  readonly resolve?: MFunctionType;
 }
 
 export function inferenceHostRoutingIssue(
@@ -57,6 +60,7 @@ export function inferenceHostRoutingIssue(
     readonly consumer: InferenceConsumer;
     readonly driver: InferenceDriver;
   },
+  resolve: MFunctionType = mFallback,
 ): string | null {
   const issue = inferenceRouteIssue(
     status,
@@ -65,7 +69,11 @@ export function inferenceHostRoutingIssue(
   if (issue !== null) return issue;
   return status?.availableDrivers.includes(input.driver)
     ? null
-    : `This host has no available ${INFERENCE_HARNESSES[input.driver].label} accounts.`;
+    : resolve(
+        msg("This host has no available {provider} accounts.", {
+          provider: INFERENCE_HARNESSES[input.driver].label,
+        }),
+      );
 }
 
 export function inferenceHostCandidates<Environment extends InferenceFleetEnvironment>(
@@ -91,15 +99,18 @@ export function inferenceHostCandidates<Environment extends InferenceFleetEnviro
 type InferenceAccount = InferenceProxyStatus["accounts"][number];
 
 const accountAvailabilityLabels = {
-  available: "Active",
-  authenticationError: "Authentication or access rejected",
-  rateLimited: "Rate limited",
-  unavailable: "Unavailable",
-  disabled: "Disabled",
+  available: msg("Active", { $context: "inference account status" }),
+  authenticationError: msg("Authentication or access rejected"),
+  rateLimited: msg("Rate limited"),
+  unavailable: msg("Unavailable", { $context: "inference account status" }),
+  disabled: msg("Disabled", { $context: "inference account status" }),
 } as const;
 
-export function inferenceAccountStatus(account: InferenceAccount): string {
-  return accountAvailabilityLabels[account.availability];
+export function inferenceAccountStatus(
+  account: InferenceAccount,
+  resolve: MFunctionType = mFallback,
+): string {
+  return resolve(accountAvailabilityLabels[account.availability]);
 }
 
 export function inferenceAccountRetryAfter(account: InferenceAccount): string | null {
@@ -329,8 +340,9 @@ export function createInferenceProxyAtoms<R, E>(
             !consumer?.environment.capabilities.inferenceRoutePreservesEnablement
           )
             return yield* new InferenceProxyError({
-              message:
-                "Update this environment to reconnect without enabling the provider globally.",
+              message: (input.resolve ?? mFallback)(
+                msg("Update this environment to reconnect without enabling the provider globally."),
+              ),
             });
         }
         const connections = yield* EnvironmentRegistry;
@@ -352,7 +364,7 @@ export function createInferenceProxyAtoms<R, E>(
                 environmentId,
                 requestGuarded(WS_METHODS.inferenceStatus, {}),
               );
-              const issue = inferenceHostRoutingIssue(status, { host, ...input });
+              const issue = inferenceHostRoutingIssue(status, { host, ...input }, input.resolve);
               if (issue) return yield* new InferenceProxyError({ message: issue });
               yield* routeThroughHost({ ...input, host, automatic: true }, registry);
               return host;
@@ -362,7 +374,11 @@ export function createInferenceProxyAtoms<R, E>(
           problems.push(`${label}: ${result.failure.message}`);
         }
         return yield* new InferenceProxyError({
-          message: problems.join(" ") || "Connect to an environment that hosts inference accounts.",
+          message:
+            problems.join(" ") ||
+            (input.resolve ?? mFallback)(
+              msg("Connect to an environment that hosts inference accounts."),
+            ),
         });
       },
       (effect, _input, registry) => withEnvironmentRpcPermissions(runtime, registry)(effect),

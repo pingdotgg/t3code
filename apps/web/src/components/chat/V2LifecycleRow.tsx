@@ -88,6 +88,7 @@ export function V2LifecycleRow(props: {
 }) {
   const { item } = props;
   const gt = useGT();
+  const m = useMessages();
   if (item.type === "run_interrupt_result") {
     return (
       <TimelineSystemDivider
@@ -99,7 +100,7 @@ export function V2LifecycleRow(props: {
     );
   }
   if (item.type === "handoff" && item.contextRestart !== undefined) {
-    const receipt = contextRestartReceipt(item.contextRestart);
+    const receipt = contextRestartReceipt(item.contextRestart, m);
     return (
       <TimelineSystemDivider label={receipt.label} detail={receipt.detail} icon={RotateCcwIcon} />
     );

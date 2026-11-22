@@ -1,3 +1,4 @@
+import { T, Var, useGT, useMessages } from "gt-react-native";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import type { MenuAction } from "@react-native-menu/menu";
 import {
@@ -52,12 +53,14 @@ export function ModelEvaluationSettings() {
   return (
     <View className="gap-4">
       <Text className="px-2 text-sm text-foreground-muted">
-        Scores completed tasks to build project guidance. Model and provider labels are removed
-        before judging.
+        <T>
+          Scores completed tasks to build project guidance. Model and provider labels are removed
+          before judging.
+        </T>
       </Text>
       {supported.length !== selectedTargets.length || supported.length === 0 ? (
         <Text className="px-2 text-sm text-foreground-muted">
-          Connect or update an environment to use model evaluations.
+          <T>Connect or update an environment to use model evaluations.</T>
         </Text>
       ) : null}
       {supported.map((target) => (
@@ -83,6 +86,7 @@ function EnvironmentEvaluationSettings(props: {
   scopedProjectId: ProjectId | null;
   projectSelected: boolean;
 }) {
+  const gt = useGT();
   const { environmentId, label } = props;
   const config = useEnvironmentServerConfig(environmentId);
   const canWrite = useAtomValue(serverEnvironment.updateSettings.permissionAtom(environmentId));
@@ -169,26 +173,29 @@ function EnvironmentEvaluationSettings(props: {
     const result = await update({ environmentId, input: { patch } });
     setSaving(false);
     if (result._tag === "Failure")
-      Dialog.alert("Could not save model evaluations", String(squashAtomCommandFailure(result)));
+      Dialog.alert(
+        gt("Could not save model evaluations"),
+        String(squashAtomCommandFailure(result)),
+      );
   };
   const disabledFor = (key: string) => readOnly || isManagedSettingPath(config.managedPolicy, key);
   const actions: MenuAction[] = [
     {
       id: "default",
-      title: "Use text generation model",
+      title: gt("Use text generation model"),
       state: settings.modelEvaluationModelSelection === null ? "on" : undefined,
     },
     ...buildModelMenuActions(groupByProvider(models), selection),
   ];
   return (
-    <SettingsSection title={`Model evaluations · ${label}`}>
+    <SettingsSection title={gt("Model evaluations · {environment}", { environment: label })}>
       <SettingsSwitchRow
         icon="flask"
-        label="Blind model evaluations"
+        label={gt("Blind model evaluations")}
         subtitle={
           props.projectSelected
-            ? "Environment-wide setting. Select all projects to change it."
-            : "Each evaluation uses an additional model call."
+            ? gt("Environment-wide setting. Select all projects to change it.")
+            : gt("Each evaluation uses an additional model call.")
         }
         value={settings.enableModelEvaluations}
         disabled={
@@ -200,7 +207,7 @@ function EnvironmentEvaluationSettings(props: {
         }}
       />
       <EvaluationMenu
-        label="Judge model"
+        label={gt("Judge model")}
         value={modelEvaluationSelectionLabel(selection)}
         disabled={disabledFor("modelEvaluationModelSelection")}
         actions={actions}
@@ -217,11 +224,13 @@ function EnvironmentEvaluationSettings(props: {
         <View className="gap-2 px-4 py-2">
           {failedApis.length > 0 ? (
             <Text className="text-sm text-foreground-muted">
-              Could not load models from {failedApis.join(", ")}.
+              <T>
+                Could not load models from <Var>{failedApis.join(", ")}</Var>.
+              </T>
             </Text>
           ) : null}
           <Button
-            label={apiModelsLoading ? "Loading API models…" : "Refresh API models"}
+            label={apiModelsLoading ? gt("Loading API models…") : gt("Refresh API models")}
             tone="text"
             disabled={apiModelsLoading}
             onPress={refreshApiModels}
@@ -230,12 +239,12 @@ function EnvironmentEvaluationSettings(props: {
       ) : null}
       {!judgeAvailable ? (
         <Text className="px-4 py-2 text-sm text-foreground-muted">
-          Choose an available judge before enabling.
+          <T>Choose an available judge before enabling.</T>
         </Text>
       ) : null}
       <EvaluationMenu
-        label="Project guidance"
-        value={project?.title ?? "Choose a project"}
+        label={gt("Project guidance")}
+        value={project?.title ?? gt("Choose a project")}
         disabled={props.projectSelected || projects.length === 0}
         actions={projects.map((item) => ({
           id: item.id,
@@ -257,7 +266,7 @@ function EnvironmentEvaluationSettings(props: {
         />
       ) : (
         <Text className="px-4 py-3 text-sm text-foreground-muted">
-          Choose a project to view its evaluations and guidance.
+          <T>Choose a project to view its evaluations and guidance.</T>
         </Text>
       )}
     </SettingsSection>
@@ -298,6 +307,7 @@ function ProjectEvaluationReport(props: {
   projectTitle: string;
   enabled: boolean;
 }) {
+  const gt = useGT();
   const query = useEnvironmentQuery(
     modelEvaluations.list({
       environmentId: props.environmentId,
@@ -316,26 +326,26 @@ function ProjectEvaluationReport(props: {
     });
     setClearing(false);
     if (result._tag === "Failure")
-      Dialog.alert("Could not clear evaluations", String(squashAtomCommandFailure(result)));
+      Dialog.alert(gt("Could not clear evaluations"), String(squashAtomCommandFailure(result)));
   };
   return (
     <View className="gap-3 px-4 py-3">
       <View className="flex-row flex-wrap gap-2">
         <Button
-          label="Refresh"
+          label={gt("Refresh")}
           tone="secondary"
           disabled={clearing || query.isPending}
           onPress={query.refresh}
         />
         <Button
-          label="Clear history"
+          label={gt("Clear history")}
           tone="text"
           disabled={!canClear || clearing || query.isPending || !query.data?.records.length}
           onPress={() =>
             Dialog.confirm({
-              title: `Clear evaluations for ${props.projectTitle}?`,
-              message: "This deletes this project's saved scores and learned guidance.",
-              confirmText: "Clear history",
+              title: gt("Clear evaluations for {project}?", { project: props.projectTitle }),
+              message: gt("This deletes this project's saved scores and learned guidance."),
+              confirmText: gt("Clear history"),
               destructive: true,
               onConfirm: () => void clearHistory(),
             })
@@ -348,17 +358,27 @@ function ProjectEvaluationReport(props: {
         </Text>
       ) : null}
       {query.isPending || clearing ? (
-        <Text className="text-sm text-foreground-muted">Loading evaluations…</Text>
+        <Text className="text-sm text-foreground-muted">
+          <T>Loading evaluations…</T>
+        </Text>
       ) : query.data && !query.error ? (
         <>
           <Text className="text-sm text-foreground-muted">
-            Up to {query.data.windowLimit} evaluations from the past 90 days. Scores use 0–4;
-            unknown dimensions stay unscored. Small samples and judge opinions are advisory.
-            {!props.enabled ? " Evaluations are off; saved history is still available." : ""}
+            <T>
+              Up to <Var>{query.data.windowLimit}</Var> evaluations from the past 90 days. Scores
+              use 0–4; unknown dimensions stay unscored. Small samples and judge opinions are
+              advisory.
+            </T>
+            {!props.enabled ? (
+              <>
+                {" "}
+                <T>Evaluations are off; saved history is still available.</T>
+              </>
+            ) : null}
           </Text>
           {query.data.records.length === 0 ? (
             <Text className="text-sm text-foreground-muted">
-              No evaluations yet. Complete a task with evaluations enabled to collect scores.
+              <T>No evaluations yet. Complete a task with evaluations enabled to collect scores.</T>
             </Text>
           ) : null}
           {query.data.guidance.map((guidance) => (
@@ -366,7 +386,11 @@ function ProjectEvaluationReport(props: {
           ))}
           {query.data.records.length > 0 ? (
             <Button
-              label={`${showHistory ? "Hide" : "Show"} recent evaluations (${query.data.records.length})`}
+              label={
+                showHistory
+                  ? gt("Hide recent evaluations ({count})", { count: query.data.records.length })
+                  : gt("Show recent evaluations ({count})", { count: query.data.records.length })
+              }
               tone="text"
               onPress={() => setShowHistory(!showHistory)}
             />
@@ -382,8 +406,10 @@ function ProjectEvaluationReport(props: {
                     {new Date(record.at).toLocaleString()}
                   </Text>
                   <Text className="text-xs text-foreground-muted">
-                    Judge: {modelEvaluationSelectionLabel(record.evaluatorSelection)} ·{" "}
-                    {record.rubricVersion}
+                    <T>
+                      Judge: <Var>{modelEvaluationSelectionLabel(record.evaluatorSelection)}</Var> ·{" "}
+                      <Var>{record.rubricVersion}</Var>
+                    </T>
                   </Text>
                   {record.verdict ? (
                     <Text className="text-sm text-foreground">{record.verdict.rationale.text}</Text>
@@ -401,6 +427,8 @@ function ProjectEvaluationReport(props: {
 }
 
 function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [expanded, setExpanded] = useState(false);
   return (
     <View className="rounded-xl border border-border-subtle">
@@ -415,34 +443,49 @@ function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
           {guidance.scope}
         </Text>
         <Text className="text-xs text-foreground-muted">
-          {guidance.sampleCount} scored · {guidance.confidence}
+          {gt("{count} scored · {confidence}", {
+            count: guidance.sampleCount,
+            confidence: guidance.confidence,
+          })}
         </Text>
       </RowPressable>
       {expanded ? (
         <View className="gap-3 px-3 pb-3">
           <Text className="text-xs text-foreground-muted">
-            Judge: {modelEvaluationSelectionLabel(guidance.evaluatorSelection)} ·{" "}
-            {guidance.rubricVersion}
+            <T>
+              Judge: <Var>{modelEvaluationSelectionLabel(guidance.evaluatorSelection)}</Var> ·{" "}
+              <Var>{guidance.rubricVersion}</Var>
+            </T>
           </Text>
-          {modelEvaluationScoreRows(guidance).map((score) => (
+          {modelEvaluationScoreRows(guidance, messages).map((score) => (
             <Text key={score.key} className="text-sm text-foreground">
-              {score.label}: {score.value} ({score.count} scored)
+              {gt("{label}: {value} ({count} scored)", {
+                label: score.label,
+                value: score.value,
+                count: score.count,
+              })}
             </Text>
           ))}
           <Text className="text-xs text-foreground-muted">
-            {guidance.insufficientEvidenceCount} observations lacked sufficient evidence.
+            {gt("{count} observations lacked sufficient evidence.", {
+              count: guidance.insufficientEvidenceCount,
+            })}
           </Text>
           {guidance.sampleCount > 0 ? (
             <Text className="text-xs text-foreground-muted">
-              Observed prompt lengths: {guidance.promptChars.min.toLocaleString()}–
-              {guidance.promptChars.max.toLocaleString()} characters (median{" "}
-              {Math.round(guidance.promptChars.median).toLocaleString()}); this is not a
-              context-window limit.
+              {gt(
+                "Observed prompt lengths: {min}–{max} characters (median {median}); this is not a context-window limit.",
+                {
+                  min: guidance.promptChars.min.toLocaleString(),
+                  max: guidance.promptChars.max.toLocaleString(),
+                  median: Math.round(guidance.promptChars.median).toLocaleString(),
+                },
+              )}
             </Text>
           ) : null}
-          <ObservationList title="Observed strengths" items={guidance.strengths} />
-          <ObservationList title="Observed limitations" items={guidance.weaknesses} />
-          <ObservationList title="Prompting guidance" items={guidance.promptAdvice} />
+          <ObservationList title={gt("Observed strengths")} items={guidance.strengths} />
+          <ObservationList title={gt("Observed limitations")} items={guidance.weaknesses} />
+          <ObservationList title={gt("Prompting guidance")} items={guidance.promptAdvice} />
         </View>
       ) : null}
     </View>

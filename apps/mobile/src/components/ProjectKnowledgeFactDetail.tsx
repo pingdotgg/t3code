@@ -1,4 +1,5 @@
 import { View } from "react-native";
+import { T, useGT, useMessages } from "gt-react-native";
 import type {
   KnowledgeConflictHint,
   KnowledgeMessageRef,
@@ -17,6 +18,8 @@ import type {
 import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  KNOWLEDGE_FACT_KIND_LABEL,
+  KNOWLEDGE_FACT_STATUS_LABEL,
   canRestoreFactToRecall,
   isSupersededFact,
   knowledgeConflictHintLabel,
@@ -45,14 +48,16 @@ export function ConflictHintRow(props: {
   readonly hint: KnowledgeConflictHint;
   readonly onOpenFact: OpenFact | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <View className="gap-1 rounded-xl bg-subtle p-2">
       <AppText className="text-sm">
-        {knowledgeConflictHintLabel(props.hint)}: “{props.hint.excerpt}”
+        {knowledgeConflictHintLabel(props.hint, m)}: “{props.hint.excerpt}”
       </AppText>
       {props.onOpenFact ? (
         <Button
-          label="Open that fact"
+          label={gt("Open that fact")}
           tone="text"
           onPress={() => props.onOpenFact?.(props.hint.factId)}
         />
@@ -63,17 +68,24 @@ export function ConflictHintRow(props: {
 
 function SummaryRow(props: {
   readonly label: string;
+  readonly openLabel: string;
   readonly summary: ProjectFactSummary;
   readonly onOpenFact: OpenFact;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <View className="gap-1">
       <AppText className="text-sm">
-        {props.label}: {props.summary.excerpt ?? "Forgotten fact"} (revision{" "}
-        {props.summary.revision}, {props.summary.status})
+        {gt("{label}: {excerpt} (revision {revision}, {status})", {
+          label: props.label,
+          excerpt: props.summary.excerpt ?? gt("Forgotten fact"),
+          revision: props.summary.revision,
+          status: m(KNOWLEDGE_FACT_STATUS_LABEL[props.summary.status]),
+        })}
       </AppText>
       <Button
-        label={`Open ${props.label.toLowerCase()}`}
+        label={props.openLabel}
         tone="text"
         onPress={() => props.onOpenFact(props.summary.id)}
       />
@@ -82,6 +94,8 @@ function SummaryRow(props: {
 }
 
 function HistoryRow(props: { readonly entry: ProjectFactHistoryEntry }) {
+  const gt = useGT();
+  const m = useMessages();
   const { entry } = props;
   const content =
     (entry.event === "created" || entry.event === "edited") && entry.content !== null
@@ -89,13 +103,16 @@ function HistoryRow(props: { readonly entry: ProjectFactHistoryEntry }) {
       : null;
   return (
     <View className="gap-1 border-l-2 border-border pl-3">
-      <AppText className="font-t3-medium">{projectFactHistoryLabel(entry)}</AppText>
+      <AppText className="font-t3-medium">{projectFactHistoryLabel(entry, m)}</AppText>
       <AppText className="text-xs text-foreground-muted">
-        {knowledgeOriginLabel(entry.actor)} · {historyTimeFormatter.format(new Date(entry.at))}
+        {knowledgeOriginLabel(entry.actor, m)} · {historyTimeFormatter.format(new Date(entry.at))}
       </AppText>
       {entry.event === "feedback" && entry.trustBefore !== null ? (
         <AppText className="text-xs">
-          Trust {entry.trustBefore.toFixed(2)} → {entry.trustAfter.toFixed(2)}
+          {gt("Trust {before} → {after}", {
+            before: entry.trustBefore.toFixed(2),
+            after: entry.trustAfter.toFixed(2),
+          })}
         </AppText>
       ) : null}
       {entry.reason ? (
@@ -110,7 +127,7 @@ function HistoryRow(props: { readonly entry: ProjectFactHistoryEntry }) {
       ) : null}
       {entry.sourceUnavailable !== null ? (
         <AppText className="text-xs text-warning-foreground">
-          {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[entry.sourceUnavailable]}
+          {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[entry.sourceUnavailable])}
         </AppText>
       ) : null}
     </View>
@@ -139,6 +156,8 @@ export function ProjectFactInspector(props: {
   readonly onFeedback: (helpful: boolean) => void;
   readonly onDismissHints: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { fact, detail } = props;
   const superseded = isSupersededFact(fact);
   const active = fact.status !== "forgotten";
@@ -155,44 +174,54 @@ export function ProjectFactInspector(props: {
               onOpenFact={props.history ? props.onOpenFact : null}
             />
           ))}
-          <Button label="Dismiss" tone="text" onPress={props.onDismissHints} />
+          <Button label={gt("Dismiss")} tone="text" onPress={props.onDismissHints} />
         </View>
       ) : null}
       <View className="gap-2">
         {superseded ? (
-          <AppText className="text-xs font-t3-medium text-foreground-muted">Superseded</AppText>
+          <AppText className="text-xs font-t3-medium text-foreground-muted">
+            <T context="project fact status">Superseded</T>
+          </AppText>
         ) : null}
         <AppText selectable className="text-base">
-          {fact.content ?? "Forgotten fact"}
+          {fact.content ?? gt("Forgotten fact")}
         </AppText>
         <AppText className="text-xs text-foreground-muted">
-          {fact.kind} · {fact.status} · {knowledgeOriginLabel(fact.origin)}
+          {m(KNOWLEDGE_FACT_KIND_LABEL[fact.kind])} · {m(KNOWLEDGE_FACT_STATUS_LABEL[fact.status])}{" "}
+          · {knowledgeOriginLabel(fact.origin, m)}
         </AppText>
         {fact.verdict ? (
           <AppText className="text-xs text-foreground-muted">
-            {projectFactVerdictLabel(fact.verdict)}{" "}
+            {projectFactVerdictLabel(fact.verdict, m)}{" "}
             {historyTimeFormatter.format(new Date(fact.verdict.at))}
           </AppText>
         ) : null}
         <AppText className="text-xs text-foreground-muted">
-          Trust signal {fact.trust.toFixed(2)} · revision {fact.revision}
+          {gt("Trust signal {trust} · revision {revision}", {
+            trust: fact.trust.toFixed(2),
+            revision: fact.revision,
+          })}
         </AppText>
       </View>
 
       <View className="gap-2">
-        <AppText className="text-sm font-t3-medium">Evidence</AppText>
+        <AppText className="text-sm font-t3-medium">
+          <T context="project fact evidence">Evidence</T>
+        </AppText>
         {props.sourceUnavailable !== null ? (
           <AppText className="text-xs text-warning-foreground">
-            {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[props.sourceUnavailable]}
+            {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[props.sourceUnavailable])}
           </AppText>
         ) : null}
         {citations.length === 0 ? (
-          <AppText className="text-sm text-foreground-muted">No cited source</AppText>
+          <AppText className="text-sm text-foreground-muted">
+            <T>No cited source</T>
+          </AppText>
         ) : null}
         {citations.map((ref) => (
           <Button
             key={`${ref.threadId}:${ref.messageId}`}
-            label="Read source message"
+            label={gt("Read source message")}
             tone="text"
             onPress={() => props.onReadSource(ref)}
           />
@@ -212,7 +241,7 @@ export function ProjectFactInspector(props: {
         <View className="flex-row flex-wrap gap-2">
           {props.curation && canRestoreFactToRecall(fact) ? (
             <Button
-              label="Restore to recall"
+              label={gt("Restore to recall")}
               tone="secondary"
               disabled={!mutable}
               onPress={props.onRestore}
@@ -220,7 +249,7 @@ export function ProjectFactInspector(props: {
           ) : null}
           {!superseded ? (
             <Button
-              label="Edit"
+              label={gt("Edit", { $context: "edit a project fact" })}
               tone="secondary"
               disabled={!mutable}
               onPress={() => props.onEdit("edit")}
@@ -228,30 +257,35 @@ export function ProjectFactInspector(props: {
           ) : null}
           {props.history && !superseded ? (
             <Button
-              label="Supersede"
+              label={gt("Supersede", { $context: "replace a project fact" })}
               tone="text"
               disabled={!mutable}
               onPress={() => props.onEdit("supersede")}
             />
           ) : null}
           <Button
-            label="Helpful"
+            label={gt("Helpful", { $context: "project fact feedback" })}
             tone="text"
             disabled={!mutable}
             onPress={() => props.onFeedback(true)}
           />
           <Button
-            label="Unhelpful"
+            label={gt("Unhelpful", { $context: "project fact feedback" })}
             tone="text"
             disabled={!mutable}
             onPress={() => props.onFeedback(false)}
           />
-          <Button label="Forget" tone="danger" disabled={!mutable} onPress={props.onForget} />
+          <Button
+            label={gt("Forget", { $context: "permanently forget a project fact" })}
+            tone="danger"
+            disabled={!mutable}
+            onPress={props.onForget}
+          />
         </View>
       ) : null}
       {!props.canMutate && active ? (
         <AppText className="text-xs text-foreground-muted">
-          This connection can read project memory but not change it.
+          <T>This connection can read project memory but not change it.</T>
         </AppText>
       ) : null}
 
@@ -262,17 +296,25 @@ export function ProjectFactInspector(props: {
               {props.detailError}
             </AppText>
           ) : null}
-          {detail === null && !props.detailError ? <AppText>Reading fact history…</AppText> : null}
+          {detail === null && !props.detailError ? (
+            <AppText>
+              <T>Reading fact history…</T>
+            </AppText>
+          ) : null}
           {detail?.supersedes ? (
             <SummaryRow
-              label="Supersedes"
+              label={gt("Supersedes", { $context: "project fact relation" })}
+              openLabel={gt("Open supersedes", { $context: "open the fact replaced by this fact" })}
               summary={detail.supersedes}
               onOpenFact={props.onOpenFact}
             />
           ) : null}
           {detail?.supersededBy ? (
             <SummaryRow
-              label="Superseded by"
+              label={gt("Superseded by", { $context: "project fact relation" })}
+              openLabel={gt("Open superseded by", {
+                $context: "open the fact that replaced this fact",
+              })}
               summary={detail.supersededBy}
               onOpenFact={props.onOpenFact}
             />
@@ -282,10 +324,12 @@ export function ProjectFactInspector(props: {
           ))}
           {detail ? (
             <>
-              <AppText className="text-sm font-t3-medium">History</AppText>
+              <AppText className="text-sm font-t3-medium">
+                <T context="project fact history">History</T>
+              </AppText>
               {detail.historyTruncated ? (
                 <AppText className="text-xs text-foreground-muted">
-                  Earlier history not shown
+                  <T>Earlier history not shown</T>
                 </AppText>
               ) : null}
               {detail.history.map((entry) => (
@@ -310,6 +354,8 @@ export function ProjectKnowledgeSourceInspector(props: {
   readonly onRefreshSelection: (selection: KnowledgeSelection) => void;
   readonly onSaveAsFact: (text: string, source: KnowledgeMessageRef) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { source } = props;
   return (
     <View className="gap-3">
@@ -321,18 +367,24 @@ export function ProjectKnowledgeSourceInspector(props: {
           {props.error}
         </AppText>
       ) : null}
-      {source === null && !props.error ? <AppText>Reading source…</AppText> : null}
+      {source === null && !props.error ? (
+        <AppText>
+          <T>Reading source…</T>
+        </AppText>
+      ) : null}
       {source?.state === "unavailable" ? (
         <AppText>
-          This message is unavailable ({KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[source.reason]}).
+          {gt("This message is unavailable ({reason}).", {
+            reason: m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[source.reason]),
+          })}
         </AppText>
       ) : null}
       {source?.state === "available" ? (
         <>
           <AppText className="text-xs text-foreground-muted">
-            {source.title} · {messageAuthorLabel(source.role, source.speaker, source.provenance)} ·{" "}
-            {source.createdAt}
-            {source.archived ? " · archived" : ""}
+            {source.title} · {messageAuthorLabel(source.role, source.speaker, source.provenance, m)}{" "}
+            · {source.createdAt}
+            {source.archived ? gt(" · archived", { $context: "source thread status suffix" }) : ""}
           </AppText>
           <AppText selectable>{source.text}</AppText>
           <SelectForDraftControl
@@ -342,7 +394,7 @@ export function ProjectKnowledgeSourceInspector(props: {
             onRefresh={props.onRefreshSelection}
           />
           <Button
-            label="Save as fact"
+            label={gt("Save as fact")}
             tone="text"
             disabled={!props.canMutate}
             onPress={() => props.onSaveAsFact(source.text, source.source)}
@@ -357,18 +409,27 @@ export function KnowledgeHealthRow(props: {
   readonly status: ProjectKnowledgeStatus;
   readonly onShowUnavailable: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { status } = props;
   const lost = status.unavailableSources;
   return (
     <View className="gap-1">
       <AppText className="text-xs text-foreground-muted">
-        {status.counts.saved} saved · {status.counts.superseded} superseded ·{" "}
-        {status.belowRecallThreshold} below recall · {status.feedback.helpful} helpful ·{" "}
-        {status.feedback.unhelpful} unhelpful
+        {gt(
+          "{saved} saved · {superseded} superseded · {belowRecall} below recall · {helpful} helpful · {unhelpful} unhelpful",
+          {
+            saved: status.counts.saved,
+            superseded: status.counts.superseded,
+            belowRecall: status.belowRecallThreshold,
+            helpful: status.feedback.helpful,
+            unhelpful: status.feedback.unhelpful,
+          },
+        )}
       </AppText>
       {status.curation ? (
         <AppText className="text-xs text-foreground-muted">
-          {memoryCurationRunLabel(status.curation)}
+          {memoryCurationRunLabel(status.curation, m)}
           {status.curation.completedAt
             ? ` · ${historyTimeFormatter.format(new Date(status.curation.completedAt))}`
             : ""}
@@ -376,9 +437,10 @@ export function KnowledgeHealthRow(props: {
       ) : null}
       {lost > 0 ? (
         <Button
-          label={`${status.unavailableSourcesCoverage === "partial" ? "At least " : ""}${
-            lost === 1 ? "1 fact lost its source" : `${lost} facts lost their source`
-          }`}
+          label={gt(
+            "{coverage, select, partial {At least } other {}}{count, plural, one {1 fact lost its source} other {{count} facts lost their source}}",
+            { coverage: status.unavailableSourcesCoverage, count: lost },
+          )}
           tone="text"
           onPress={props.onShowUnavailable}
         />

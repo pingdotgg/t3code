@@ -7,6 +7,7 @@ import { useRef, useState } from "react";
 import { useEnvironments } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { m } from "../../i18n/messages";
 
 const { inferenceProxy } = serverEnvironment;
 
@@ -30,6 +31,7 @@ export function useEnableInferenceRouting(environmentId: EnvironmentId, environm
       consumer: { environmentId, label: environmentLabel },
       driver,
       environments,
+      resolve: m,
       ...options,
     });
     inFlight.current = false;

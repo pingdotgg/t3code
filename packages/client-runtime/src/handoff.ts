@@ -15,6 +15,8 @@ import {
 } from "@t3tools/shared/model";
 
 import { formatTokens } from "@t3tools/shared/usageFormat";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { isReasoningSelect } from "./modelTraits.ts";
 import type { ThreadStructure } from "./state/models.ts";
@@ -56,10 +58,16 @@ export function resolvePendingHandoff(
 }
 
 /** The timeline receipt for a conversation T3 restarted from summaries. */
-export function contextRestartReceipt(restart: OrchestrationV2ContextRestart) {
+export function contextRestartReceipt(
+  restart: OrchestrationV2ContextRestart,
+  resolve: MFunctionType = mFallback,
+) {
   return {
-    label: "Restarted from summaries",
-    detail: `${formatTokens(restart.usedTokens)} tokens passed the ${formatTokens(restart.aboveTokens)} limit`,
+    label: resolve(msg("Restarted from summaries")),
+    detail: resolve(msg("{used} tokens passed the {limit} limit"), {
+      used: formatTokens(restart.usedTokens),
+      limit: formatTokens(restart.aboveTokens),
+    }),
   };
 }
 

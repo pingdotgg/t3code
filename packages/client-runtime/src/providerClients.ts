@@ -16,6 +16,8 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 // OpenRouter's Ink and Cloud glyphs from https://openrouter.ai/brand.
 export const openRouterIcon: ProviderIcon = {
@@ -67,14 +69,21 @@ export function getProviderClient(driver: string | null | undefined) {
 export function unavailableModelReason(
   provider: Pick<ServerProvider, "models" | "requiresListedModel"> | null | undefined,
   slug: string,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   const model = provider?.models.find(
     (entry) => entry.slug === slug || entry.aliases?.includes(slug),
   );
   if (provider?.requiresListedModel && !model)
-    return "This model is no longer available from this provider. Choose another model.";
+    return resolve(
+      msg("This model is no longer available from this provider. Choose another model."),
+    );
   return model?.isUnavailable
-    ? `${model.name} is temporarily unavailable. Choose another model or try again later.`
+    ? resolve(
+        msg("{model} is temporarily unavailable. Choose another model or try again later.", {
+          model: model.name,
+        }),
+      )
     : null;
 }
 

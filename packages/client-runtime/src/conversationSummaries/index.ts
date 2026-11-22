@@ -6,6 +6,8 @@ import {
   type OrchestrationV2MessageProvenance,
 } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "../state/runtime.ts";
 
@@ -30,18 +32,26 @@ export function createConversationSummariesAtoms<R, E>(
   };
 }
 
-export function conversationSummaryPassLabel(pass: ConversationSummaryPass): string {
+export function conversationSummaryPassLabel(
+  pass: ConversationSummaryPass,
+  resolve: MFunctionType = mFallback,
+): string {
   const waiting =
     pass.waitingMessages === 0
       ? ""
-      : ` ${pass.waitingMessages} older ${pass.waitingMessages === 1 ? "source waits" : "sources wait"} for a summary.`;
+      : ` ${resolve(
+          msg(
+            "{count, plural, one {# older source waits for a summary.} other {# older sources wait for a summary.}}",
+          ),
+          { count: pass.waitingMessages },
+        )}`;
   switch (pass.result) {
     case "ran":
-      return `Last pass wrote ${pass.generated} ${pass.generated === 1 ? "summary" : "summaries"}.${pass.reason ? ` ${pass.reason}` : ""}${waiting}`;
+      return `${resolve(msg("Last pass wrote {count, plural, one {# summary} other {# summaries}}."), { count: pass.generated })}${pass.reason ? ` ${pass.reason}` : ""}${waiting}`;
     case "skipped":
-      return `Last pass wrote nothing. ${pass.reason ?? ""}${waiting}`.trim();
+      return `${resolve(msg("Last pass wrote nothing."))} ${pass.reason ?? ""}${waiting}`.trim();
     case "failed":
-      return `Last pass failed. ${pass.reason ?? ""}${waiting}`.trim();
+      return `${resolve(msg("Last pass failed."))} ${pass.reason ?? ""}${waiting}`.trim();
   }
 }
 
@@ -55,15 +65,21 @@ export function messageAuthorLabel(
   role: "user" | "assistant",
   speaker?: { readonly label: string; readonly model: string },
   provenance?: OrchestrationV2MessageProvenance,
+  resolve: MFunctionType = mFallback,
 ): string {
   if (provenance?.linkedSender !== undefined) {
     const sender = provenance.linkedSender;
-    return `Agent: ${sender.title || sender.threadId} (${sender.environmentId})`;
+    return resolve(msg("Agent: {title} ({environment})"), {
+      title: sender.title || sender.threadId,
+      environment: sender.environmentId,
+    });
   }
-  if (provenance?.senderThreadId !== undefined) return `Agent (${provenance.senderThreadId})`;
-  if (provenance !== undefined) return provenance.createdBy === "system" ? "System" : "Agent";
-  if (role === "user") return "User";
-  if (speaker === undefined) return "Assistant";
+  if (provenance?.senderThreadId !== undefined)
+    return resolve(msg("Agent ({thread})"), { thread: provenance.senderThreadId });
+  if (provenance !== undefined)
+    return resolve(provenance.createdBy === "system" ? msg("System") : msg("Agent"));
+  if (role === "user") return resolve(msg("User"));
+  if (speaker === undefined) return resolve(msg("Assistant"));
   // A seat without a label is named by its model.
   return speaker.label === speaker.model ? speaker.label : `${speaker.label} (${speaker.model})`;
 }
@@ -72,22 +88,26 @@ export function messageAuthorLabel(
 export function conversationSummarySourceLabel(
   ref: ConversationSummarySourceRef,
   result: ConversationSummarySourceResult,
+  resolve: MFunctionType = mFallback,
 ): string {
-  if (result.state !== "available") return "Unavailable";
+  if (result.state !== "available") return resolve(msg("Unavailable"));
   switch (result.role) {
     case "user":
     case "assistant":
-      return messageAuthorLabel(result.role, result.speaker, result.provenance);
+      return messageAuthorLabel(result.role, result.speaker, result.provenance, resolve);
     case "tool":
-      return "Tool";
+      return resolve(msg("Tool"));
     case "summary":
-      return ref.kind === "summary" ? `Summary ${ref.summaryId}` : "Summary";
+      return ref.kind === "summary"
+        ? resolve(msg("Summary {id}"), { id: ref.summaryId })
+        : resolve(msg("Summary"));
   }
 }
 
 export function conversationSummarySourceRangeLabel(
   ref: ConversationSummarySourceRef,
   result: ConversationSummarySourceResult,
+  resolve: MFunctionType = mFallback,
 ): string | null {
   if (result.state !== "available" || result.text.length === 0) return null;
   const textOffset = result.textOffset ?? 0;
@@ -97,5 +117,9 @@ export function conversationSummarySourceRangeLabel(
   const start = (range?.start ?? 0) + textOffset;
   const end = start + result.text.length;
   const total = range?.total ?? totalChars;
-  return `Characters ${(start + 1).toLocaleString()}–${end.toLocaleString()} of ${total.toLocaleString()}`;
+  return resolve(msg("Characters {start, number}–{end, number} of {total, number}"), {
+    start: start + 1,
+    end,
+    total,
+  });
 }

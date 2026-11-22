@@ -1,5 +1,6 @@
 import { uuidv4 } from "../lib/uuid";
 import { useState } from "react";
+import { T, useGT, useMessages } from "gt-react-native";
 import { Pressable, Switch, View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -17,6 +18,8 @@ import {
 } from "@t3tools/contracts";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  KNOWLEDGE_FACT_KIND_LABEL,
+  KNOWLEDGE_FACT_STATUS_LABEL,
   assistedLearningRunLabel,
   isSupersededFact,
   knowledgeOriginLabel,
@@ -211,28 +214,35 @@ export function ProjectKnowledgeFactList(props: {
   readonly onReadMessage: (ref: KnowledgeMessageRef) => void;
   readonly onNewFact: () => void;
 }) {
+  const gt = useGT();
   const { browse } = props;
   const { list, health, search, searchInput } = browse;
   return (
     <View className="gap-4">
       <View className="gap-2">
         <AppTextInput
-          accessibilityLabel="Search project knowledge"
+          accessibilityLabel={gt("Search project knowledge")}
           value={browse.searchText}
           onChangeText={browse.setSearchText}
-          placeholder="Search facts and conversations"
+          placeholder={gt("Search facts and conversations")}
           maxLength={200}
           returnKeyType="search"
           onSubmitEditing={browse.startSearch}
         />
         <View className="flex-row flex-wrap gap-2">
-          <Button label="Search" tone="secondary" onPress={browse.startSearch} />
-          <Button label="Refresh" tone="text" onPress={browse.refresh} />
+          <Button
+            label={gt("Search", { $context: "search project memory" })}
+            tone="secondary"
+            onPress={browse.startSearch}
+          />
+          <Button label={gt("Refresh")} tone="text" onPress={browse.refresh} />
         </View>
         <View className="flex-row items-center gap-3">
-          <AppText className="flex-1 text-sm">Include archived conversations</AppText>
+          <AppText className="flex-1 text-sm">
+            <T>Include archived conversations</T>
+          </AppText>
           <Switch
-            accessibilityLabel="Include archived conversations"
+            accessibilityLabel={gt("Include archived conversations")}
             value={browse.includeArchived}
             onValueChange={browse.setIncludeArchived}
           />
@@ -244,7 +254,9 @@ export function ProjectKnowledgeFactList(props: {
           (value) => (
             <Button
               key={value}
-              label={value}
+              label={gt("{status, select, saved {saved} automatic {automatic} other {forgotten}}", {
+                status: value,
+              })}
               tone={
                 browse.status === value && !searchInput && !browse.lostSourcesOnly
                   ? "primary"
@@ -257,9 +269,11 @@ export function ProjectKnowledgeFactList(props: {
       </View>
       {browse.history ? (
         <View className="flex-row items-center gap-3">
-          <AppText className="flex-1 text-sm">Show superseded facts</AppText>
+          <AppText className="flex-1 text-sm">
+            <T>Show superseded facts</T>
+          </AppText>
           <Switch
-            accessibilityLabel="Show superseded facts"
+            accessibilityLabel={gt("Show superseded facts")}
             value={browse.showSuperseded}
             onValueChange={browse.setShowSuperseded}
           />
@@ -270,8 +284,10 @@ export function ProjectKnowledgeFactList(props: {
       ) : null}
       {browse.history && browse.lostSourcesOnly ? (
         <View className="flex-row flex-wrap items-center gap-2">
-          <AppText className="text-sm">Showing facts that lost their source</AppText>
-          <Button label="Show all facts" tone="text" onPress={browse.showAllFacts} />
+          <AppText className="text-sm">
+            <T>Showing facts that lost their source</T>
+          </AppText>
+          <Button label={gt("Show all facts")} tone="text" onPress={browse.showAllFacts} />
         </View>
       ) : null}
       {props.assisted ? (
@@ -287,20 +303,24 @@ export function ProjectKnowledgeFactList(props: {
           {list.error ?? search.error}
         </AppText>
       ) : null}
-      {list.isPending || search.isPending ? <AppText>Reading project memory…</AppText> : null}
+      {list.isPending || search.isPending ? (
+        <AppText>
+          <T>Reading project memory…</T>
+        </AppText>
+      ) : null}
       {search.data?.facts.state === "unavailable" ? (
         <AppText className="text-sm text-foreground-muted">
-          Fact ranking is unavailable. Conversation search and saved facts remain available.
+          <T>Fact ranking is unavailable. Conversation search and saved facts remain available.</T>
         </AppText>
       ) : null}
       {search.data?.facts.state === "available" && search.data.facts.coverage === "partial" ? (
         <AppText className="text-sm text-foreground-muted">
-          Partial coverage. Narrow the query to reach more facts.
+          <T>Partial coverage. Narrow the query to reach more facts.</T>
         </AppText>
       ) : null}
 
       <Button
-        label="Save project fact"
+        label={gt("Save project fact")}
         icon="plus"
         tone="secondary"
         disabled={!props.canMutate || props.busy}
@@ -324,17 +344,21 @@ export function ProjectKnowledgeFactList(props: {
       ))}
       {!searchInput && list.data?.nextCursor ? (
         <Button
-          label="Next facts"
+          label={gt("Next facts")}
           tone="secondary"
           onPress={() => browse.setAfterId(list.data?.nextCursor ?? undefined)}
         />
       ) : null}
       {browse.afterId ? (
-        <Button label="First facts" tone="text" onPress={() => browse.setAfterId(undefined)} />
+        <Button
+          label={gt("First facts")}
+          tone="text"
+          onPress={() => browse.setAfterId(undefined)}
+        />
       ) : null}
       {searchInput && search.data?.facts.state === "available" && search.data.facts.nextCursor ? (
         <Button
-          label="Next fact matches"
+          label={gt("Next fact matches")}
           tone="secondary"
           disabled={search.isPending}
           onPress={browse.pageFactMatches}
@@ -342,13 +366,15 @@ export function ProjectKnowledgeFactList(props: {
       ) : null}
 
       {browse.messages.length > 0 ? (
-        <AppText className="text-sm font-t3-medium">Conversations</AppText>
+        <AppText className="text-sm font-t3-medium">
+          <T>Conversations</T>
+        </AppText>
       ) : null}
       {browse.messages.map(({ ref, snippet }) => (
         <View key={`${ref.threadId}:${ref.messageId}`} className="gap-2 rounded-2xl bg-subtle p-3">
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Read message: ${snippet}`}
+            accessibilityLabel={gt("Read message: {snippet}", { snippet })}
             onPress={() => props.onReadMessage(ref)}
           >
             <AppText numberOfLines={4}>{snippet}</AppText>
@@ -363,7 +389,7 @@ export function ProjectKnowledgeFactList(props: {
       ))}
       {searchInput && search.data?.messages.nextCursor ? (
         <Button
-          label="Next conversations"
+          label={gt("Next conversations")}
           tone="secondary"
           disabled={search.isPending}
           onPress={browse.pageConversations}
@@ -381,6 +407,8 @@ function FactRow(props: {
   readonly onToggleSelection: (selection: KnowledgeSelection) => void;
   readonly onRefreshSelection: (selection: KnowledgeSelection) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { fact } = props;
   const superseded = isSupersededFact(fact);
   return (
@@ -393,23 +421,28 @@ function FactRow(props: {
     >
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`Inspect fact: ${fact.content ?? "Forgotten fact"}`}
+        accessibilityLabel={gt("Inspect fact: {content}", {
+          content: fact.content ?? gt("Forgotten fact"),
+        })}
         className="gap-1"
         onPress={props.onInspect}
       >
         {superseded ? (
-          <AppText className="text-xs font-t3-medium text-foreground-muted">Superseded</AppText>
+          <AppText className="text-xs font-t3-medium text-foreground-muted">
+            <T context="project fact status">Superseded</T>
+          </AppText>
         ) : null}
         {props.unavailable ? (
           <AppText className="text-xs text-warning-foreground">
-            {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[props.unavailable]}
+            {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[props.unavailable])}
           </AppText>
         ) : null}
         <AppText className="text-base" numberOfLines={3}>
-          {fact.content ?? "Forgotten fact"}
+          {fact.content ?? gt("Forgotten fact")}
         </AppText>
         <AppText className="text-xs text-foreground-muted">
-          {fact.kind} · {fact.status} · {knowledgeOriginLabel(fact.origin)}
+          {m(KNOWLEDGE_FACT_KIND_LABEL[fact.kind])} · {m(KNOWLEDGE_FACT_STATUS_LABEL[fact.status])}{" "}
+          · {knowledgeOriginLabel(fact.origin, m)}
         </AppText>
       </Pressable>
       {fact.status !== "forgotten" ? (
@@ -429,6 +462,8 @@ function AssistedLearningRow(props: {
   readonly projectId: ProjectId;
   readonly lastRun: AssistedLearningRun | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canWrite = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -459,20 +494,24 @@ function AssistedLearningRow(props: {
   return (
     <View className="gap-1 rounded-2xl bg-subtle p-3">
       <View className="flex-row items-center gap-3">
-        <AppText className="flex-1">Save facts from finished runs</AppText>
+        <AppText className="flex-1">
+          <T>Save facts from finished runs</T>
+        </AppText>
         <Switch
-          accessibilityLabel="Save facts from finished runs"
+          accessibilityLabel={gt("Save facts from finished runs")}
           value={enabled}
           disabled={!canWrite || busy}
           onValueChange={(value) => void toggle(value)}
         />
       </View>
       <AppText className="text-xs text-foreground-muted">
-        Completed runs are grouped into background learning batches. Your text generation model
-        saves up to three cited facts per batch; eligible batches use at most one model call.
+        <T>
+          Completed runs are grouped into background learning batches. Your text generation model
+          saves up to three cited facts per batch; eligible batches use at most one model call.
+        </T>
       </AppText>
       {props.lastRun ? (
-        <AppText className="text-xs">{assistedLearningRunLabel(props.lastRun)}</AppText>
+        <AppText className="text-xs">{assistedLearningRunLabel(props.lastRun, m)}</AppText>
       ) : null}
       {error ? (
         <AppText accessibilityRole="alert" className="text-xs text-danger">

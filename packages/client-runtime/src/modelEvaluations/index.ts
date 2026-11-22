@@ -8,6 +8,8 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import type { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
@@ -84,20 +86,28 @@ export function modelEvaluationSelectionLabel(selection: ModelSelection): string
 }
 
 const SCORE_LABELS = {
-  taskCompletion: "Task completion",
-  correctness: "Correctness",
-  instructionFollowing: "Instruction following",
-  verification: "Verification",
+  taskCompletion: msg("Task completion", { $context: "model evaluation score dimension" }),
+  correctness: msg("Correctness", { $context: "model evaluation score dimension" }),
+  instructionFollowing: msg("Instruction following", {
+    $context: "model evaluation score dimension",
+  }),
+  verification: msg("Verification", { $context: "model evaluation score dimension" }),
 } as const;
 
-export function modelEvaluationScoreRows(guidance: ModelEvaluationGuidance) {
+export function modelEvaluationScoreRows(
+  guidance: ModelEvaluationGuidance,
+  resolve: MFunctionType = mFallback,
+) {
   return Object.entries(SCORE_LABELS).map(([key, label]) => {
     const dimension = key as keyof typeof SCORE_LABELS;
     const score = guidance.meanScores[dimension];
     return {
       key,
-      label,
-      value: score === null ? "Not established" : `${score.toFixed(1)} / 4`,
+      label: resolve(label),
+      value:
+        score === null
+          ? resolve(msg("Not established", { $context: "model evaluation score without evidence" }))
+          : `${score.toFixed(1)} / 4`,
       count: guidance.scoreCounts[dimension],
     };
   });

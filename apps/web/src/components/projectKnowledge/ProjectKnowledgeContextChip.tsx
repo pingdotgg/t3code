@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { MessageId, ProjectKnowledgeContextRecord, ThreadId } from "@t3tools/contracts";
 import {
@@ -33,6 +34,7 @@ export function ProjectKnowledgeContextChip({
   record: ProjectKnowledgeContextRecord;
   sent?: { readonly threadId: ThreadId; readonly messageId: MessageId } | undefined;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [preview, setPreview] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export function ProjectKnowledgeContextChip({
       <ContextChip
         render={<button type="button" />}
         onClick={() => void inspect()}
-        aria-label="Inspect selected project knowledge"
+        aria-label={gt("Inspect selected project knowledge")}
       >
         <BookOpenIcon />
         {record.label}
@@ -68,17 +70,23 @@ export function ProjectKnowledgeContextChip({
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>Selected project knowledge</DialogTitle>
+                <DialogTitle>
+                  <T>Selected project knowledge</T>
+                </DialogTitle>
                 <DialogDescription>
-                  Current source material for this reference. Changed or forgotten selections are
-                  unavailable.
+                  <T>
+                    Current source material for this reference. Changed or forgotten selections are
+                    unavailable.
+                  </T>
                 </DialogDescription>
               </DialogHeader>
               <DialogPanel>
                 {error ? (
                   <p role="alert">{error}</p>
                 ) : preview === null ? (
-                  <p>Reading sources…</p>
+                  <p>
+                    <T>Reading sources…</T>
+                  </p>
                 ) : (
                   <pre className="whitespace-pre-wrap text-sm">{preview}</pre>
                 )}
@@ -98,6 +106,8 @@ function DeliveredKnowledge({
   record: ProjectKnowledgeContextRecord;
   sent: { readonly threadId: ThreadId; readonly messageId: MessageId };
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(record.knowledge.environmentId));
   const supportsDeliveries = config?.environment?.capabilities.projectKnowledgeDeliveries === true;
   const query = useEnvironmentQuery(
@@ -112,30 +122,42 @@ function DeliveredKnowledge({
   return (
     <>
       <DialogHeader>
-        <DialogTitle>Project knowledge as sent</DialogTitle>
+        <DialogTitle>
+          <T>Project knowledge as sent</T>
+        </DialogTitle>
         <DialogDescription>
-          The copy T3 delivered with this message. It does not show whether the agent used it.
+          <T>
+            The copy T3 delivered with this message. It does not show whether the agent used it.
+          </T>
         </DialogDescription>
       </DialogHeader>
       <DialogPanel>
         {!supportsDeliveries ? (
-          <p>This server can't show what was sent</p>
+          <p>
+            <T>This server can't show what was sent</T>
+          </p>
         ) : query.error ? (
           <p role="alert">{query.error}</p>
         ) : query.data === null ? (
-          <p>Reading delivery record…</p>
+          <p>
+            <T>Reading delivery record…</T>
+          </p>
         ) : snapshot === null ? (
-          <p>No delivery was recorded for this reference.</p>
+          <p>
+            <T>No delivery was recorded for this reference.</T>
+          </p>
         ) : (
           <>
-            {deliveredKnowledgeNotes(snapshot).map((note) => (
+            {deliveredKnowledgeNotes(snapshot, m).map((note) => (
               <p key={note} className="text-muted-foreground text-sm">
                 {note}
               </p>
             ))}
             {snapshot.omission ? (
               <p className="text-sm">
-                Not sent: {KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason]}
+                {gt("Not sent: {reason}", {
+                  reason: m(KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason]),
+                })}
               </p>
             ) : snapshot.item.contentRemoved ? null : (
               <pre className="whitespace-pre-wrap text-sm">{snapshot.item.text}</pre>

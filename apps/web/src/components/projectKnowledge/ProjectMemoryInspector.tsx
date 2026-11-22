@@ -9,8 +9,10 @@ import type {
   ProjectKnowledgeSource,
 } from "@t3tools/contracts";
 import { messageAuthorLabel } from "@t3tools/client-runtime/conversationSummaries";
+import { T, useGT, useMessages } from "gt-react";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  KNOWLEDGE_FACT_KIND_LABEL,
   canRestoreFactToRecall,
   isSupersededFact,
   knowledgeOriginLabel,
@@ -79,9 +81,11 @@ function InspectorHeading(props: { readonly children: ReactNode }) {
 export function InspectorEmpty() {
   return (
     <div className="flex h-full min-h-48 flex-col items-center justify-center gap-1 p-6 text-center">
-      <p className="font-medium text-sm">Select a fact to inspect</p>
+      <p className="font-medium text-sm">
+        <T>Select a fact to inspect</T>
+      </p>
       <p className="max-w-64 text-muted-foreground text-xs">
-        Read its evidence and history here. Inspecting a fact does not add it to the draft.
+        <T>Read its evidence and history here. Inspecting a fact does not add it to the draft.</T>
       </p>
     </div>
   );
@@ -108,6 +112,8 @@ export function FactInspector(props: {
   readonly onOpenFact: (factId: ProjectFactId) => void;
   readonly onBackToResults: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   // One readFact per inspected fact: history, supersede links and hints are never read per row.
   const detailQuery = useEnvironmentQuery(
     props.historyAvailable
@@ -125,22 +131,30 @@ export function FactInspector(props: {
       : props.listedFact;
   if (!fact) {
     if (props.historyAvailable && !detailQuery.error) {
-      return <p role="status">Reading fact…</p>;
+      return (
+        <p role="status">
+          <T>Reading fact…</T>
+        </p>
+      );
     }
     return (
       <div className="flex flex-col items-start gap-2">
-        <InspectorHeading>Fact not in these results</InspectorHeading>
+        <InspectorHeading>
+          <T>Fact not in these results</T>
+        </InspectorHeading>
         {detailQuery.error ? <p role="alert">{detailQuery.error}</p> : null}
         <p className="text-muted-foreground text-sm">
-          Fact {shortFactId(props.factId)} is not part of the current list or search.
+          {gt("Fact {factId} is not part of the current list or search.", {
+            factId: shortFactId(props.factId),
+          })}
         </p>
         <Button size="sm" variant="outline" onClick={props.onBackToResults}>
-          Back to results
+          <T>Back to results</T>
         </Button>
       </div>
     );
   }
-  const status = factStatusBadge(fact);
+  const status = factStatusBadge(fact, m);
   const superseded = isSupersededFact(fact);
   const sourceUnavailable = props.unavailableReason ?? detail?.sourceUnavailable ?? null;
   const locked = !props.canMutate || props.busy;
@@ -150,31 +164,37 @@ export function FactInspector(props: {
       <div className="flex flex-col gap-2">
         <InspectorHeading>
           <Badge variant={status.variant}>{status.label}</Badge>
-          <span>{fact.kind}</span>
+          <span>{m(KNOWLEDGE_FACT_KIND_LABEL[fact.kind])}</span>
         </InspectorHeading>
         <div className="flex flex-wrap gap-1.5">
           {sourceUnavailable ? (
-            <Badge variant="warning">{KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[sourceUnavailable]}</Badge>
+            <Badge variant="warning">
+              {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[sourceUnavailable])}
+            </Badge>
           ) : null}
           {fact.supersededBy ? (
-            <Badge variant="secondary">Superseded by {shortFactId(fact.supersededBy)}</Badge>
+            <Badge variant="secondary">
+              {gt("Superseded by {factId}", { factId: shortFactId(fact.supersededBy) })}
+            </Badge>
           ) : null}
           {fact.supersedes ? (
-            <Badge variant="outline">Supersedes {shortFactId(fact.supersedes)}</Badge>
+            <Badge variant="outline">
+              {gt("Supersedes {factId}", { factId: shortFactId(fact.supersedes) })}
+            </Badge>
           ) : null}
         </div>
       </div>
       <p className="whitespace-pre-wrap text-base leading-relaxed">
-        {fact.content ?? "Forgotten fact"}
+        {fact.content ?? gt("Forgotten fact")}
       </p>
       {fact.verdict ? (
         <p className="text-muted-foreground text-sm">
-          {projectFactVerdictLabel(fact.verdict)}{" "}
+          {projectFactVerdictLabel(fact.verdict, m)}{" "}
           <time dateTime={fact.verdict.at}>{dateFormatter.format(new Date(fact.verdict.at))}</time>
         </p>
       ) : null}
       {fact.entities.length + fact.tags.length > 0 ? (
-        <ul aria-label="Entities and tags" className="flex flex-wrap gap-1.5">
+        <ul aria-label={gt("Entities and tags")} className="flex flex-wrap gap-1.5">
           {[...new Set([...fact.entities, ...fact.tags])].map((label) => (
             <li key={label}>
               <Badge variant="outline">{label}</Badge>
@@ -192,7 +212,7 @@ export function FactInspector(props: {
                 variant="outline"
                 onClick={() => props.onRevise(fact, "restore")}
               >
-                Restore to recall
+                <T>Restore to recall</T>
               </Button>
             ) : null}
             {/* The server rejects revisions of a superseded fact; its replacement is the one to change. */}
@@ -204,7 +224,7 @@ export function FactInspector(props: {
                 data-inspector-edit
                 onClick={() => props.onEdit(fact, false)}
               >
-                Edit
+                <T context="edit a project fact">Edit</T>
               </Button>
             ) : null}
             {props.historyAvailable && !superseded ? (
@@ -214,7 +234,7 @@ export function FactInspector(props: {
                 variant="outline"
                 onClick={() => props.onEdit(fact, true)}
               >
-                Supersede
+                <T context="replace a project fact">Supersede</T>
               </Button>
             ) : null}
             <Button
@@ -223,7 +243,7 @@ export function FactInspector(props: {
               variant="ghost"
               onClick={() => props.onRevise(fact, "feedback", true)}
             >
-              Helpful
+              <T context="project fact feedback">Helpful</T>
             </Button>
             <Button
               disabled={locked}
@@ -231,7 +251,7 @@ export function FactInspector(props: {
               variant="ghost"
               onClick={() => props.onRevise(fact, "feedback", false)}
             >
-              Unhelpful
+              <T context="project fact feedback">Unhelpful</T>
             </Button>
             <Button
               disabled={locked}
@@ -239,21 +259,21 @@ export function FactInspector(props: {
               variant="ghost-destructive"
               onClick={() => props.onRevise(fact, "forget")}
             >
-              Forget
+              <T context="permanently forget a project fact">Forget</T>
             </Button>
           </div>
           {!props.canMutate ? (
             <p className="text-muted-foreground text-xs">
-              This environment grants read access only.
+              <T>This environment grants read access only.</T>
             </p>
           ) : null}
         </div>
       ) : null}
       <section aria-labelledby="project-fact-evidence" className="flex flex-col gap-1.5">
         <h4 id="project-fact-evidence" className="font-medium text-sm">
-          Evidence
+          <T context="project fact evidence">Evidence</T>
         </h4>
-        <p className="text-muted-foreground text-sm">{knowledgeOriginLabel(fact.origin)}</p>
+        <p className="text-muted-foreground text-sm">{knowledgeOriginLabel(fact.origin, m)}</p>
         {citations.length > 0 ? (
           <div className="flex flex-wrap items-center gap-2">
             {citations.map((ref) => (
@@ -263,7 +283,7 @@ export function FactInspector(props: {
                 size="sm"
                 onClick={() => props.onOpenSource(ref)}
               >
-                Message {ref.messageId}
+                {gt("Message {messageId}", { messageId: ref.messageId })}
               </Button>
             ))}
           </div>
@@ -273,33 +293,52 @@ export function FactInspector(props: {
       {detailQuery.error ? <p role="alert">{detailQuery.error}</p> : null}
       {detail ? <ProjectFactHistory detail={detail} onOpenSource={props.onOpenSource} /> : null}
       {props.score ? (
-        <Disclosure label="Why this matched">
+        <Disclosure label={gt("Why this matched")}>
           <p className="text-sm">
-            Holographic {props.score.holographic.toFixed(3)} · Text {props.score.lexical.toFixed(3)}{" "}
-            · Overlap {props.score.tokenOverlap.toFixed(3)} · Age{" "}
-            {props.score.temporalDecay.toFixed(3)} · Use {props.score.reinforcement.toFixed(3)} ·
-            Trust signal {props.score.trust.toFixed(2)} · Match score{" "}
-            {props.score.combined.toFixed(6)}
+            {gt(
+              "Holographic {holographic} · Text {text} · Overlap {overlap} · Age {age} · Use {use} · Trust signal {trust} · Match score {score}",
+              {
+                holographic: props.score.holographic.toFixed(3),
+                text: props.score.lexical.toFixed(3),
+                overlap: props.score.tokenOverlap.toFixed(3),
+                age: props.score.temporalDecay.toFixed(3),
+                use: props.score.reinforcement.toFixed(3),
+                trust: props.score.trust.toFixed(2),
+                score: props.score.combined.toFixed(6),
+              },
+            )}
           </p>
           <p className="text-muted-foreground text-xs">
-            Ranking combines lexical evidence and deterministic holographic similarity. It does not
-            establish truth.
+            <T>
+              Ranking combines lexical evidence and deterministic holographic similarity. It does
+              not establish truth.
+            </T>
           </p>
         </Disclosure>
       ) : null}
-      <Disclosure label="Technical details">
+      <Disclosure label={gt("Technical details")}>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-          <dt className="text-muted-foreground">Revision</dt>
+          <dt className="text-muted-foreground">
+            <T context="project fact revision">Revision</T>
+          </dt>
           <dd>{fact.revision}</dd>
-          <dt className="text-muted-foreground">Trust signal</dt>
+          <dt className="text-muted-foreground">
+            <T>Trust signal</T>
+          </dt>
           <dd>{fact.trust.toFixed(2)}</dd>
-          <dt className="text-muted-foreground">Retrievals</dt>
+          <dt className="text-muted-foreground">
+            <T context="project fact retrieval count">Retrievals</T>
+          </dt>
           <dd>{fact.retrievalCount}</dd>
-          <dt className="text-muted-foreground">Updated</dt>
+          <dt className="text-muted-foreground">
+            <T context="project fact update time">Updated</T>
+          </dt>
           <dd>
             <time dateTime={fact.updatedAt}>{dateFormatter.format(new Date(fact.updatedAt))}</time>
           </dd>
-          <dt className="text-muted-foreground">Fact ID</dt>
+          <dt className="text-muted-foreground">
+            <T>Fact ID</T>
+          </dt>
           <dd className="break-all font-mono">{fact.id}</dd>
         </dl>
       </Disclosure>
@@ -317,36 +356,40 @@ export function SourceInspector(props: {
   readonly onToggleSelect: (ref: KnowledgeMessageRef) => void;
   readonly onSaveAsFact: (text: string, ref: KnowledgeMessageRef) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { data } = props;
   return (
     <article className="flex flex-col gap-3">
       {props.onBack ? (
         <Button className="self-start" size="sm" variant="ghost" onClick={props.onBack}>
-          Back to fact
+          <T>Back to fact</T>
         </Button>
       ) : null}
-      <InspectorHeading>Exact source</InspectorHeading>
+      <InspectorHeading>
+        <T>Exact source</T>
+      </InspectorHeading>
       <p className="break-all text-muted-foreground text-xs">
         {props.source.threadId}/{props.source.messageId}
-        {props.source.digest ? ` · sha256:${props.source.digest}` : null}
+        {props.source.digest ? <code>{` · sha256:${props.source.digest}`}</code> : null}
       </p>
       {props.error ? (
         <p role="alert">{props.error}</p>
       ) : data?.state === "unavailable" ? (
-        <p>Source unavailable. {data.reason}</p>
+        <p>{gt("Source unavailable. {reason}", { reason: data.reason })}</p>
       ) : data?.state === "available" ? (
         <>
           <p className="text-muted-foreground text-xs">
-            {data.title} · {messageAuthorLabel(data.role, data.speaker, data.provenance)} ·{" "}
+            {data.title} · {messageAuthorLabel(data.role, data.speaker, data.provenance, m)} ·{" "}
             {dateFormatter.format(new Date(data.createdAt))}
-            {data.archived ? " · archived" : ""}
+            {data.archived ? gt(" · archived", { $context: "source thread status suffix" }) : ""}
           </p>
           <pre className="whitespace-pre-wrap border-s-2 ps-3 font-sans text-sm leading-relaxed">
             {data.text}
           </pre>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" onClick={() => props.onToggleSelect(data.source)}>
-              {props.selected ? "Remove message from draft" : "Select message for draft"}
+              {props.selected ? gt("Remove message from draft") : gt("Select message for draft")}
             </Button>
             <Button
               disabled={!props.canMutate}
@@ -354,12 +397,14 @@ export function SourceInspector(props: {
               variant="outline"
               onClick={() => props.onSaveAsFact(data.text, data.source)}
             >
-              Save as fact
+              <T>Save as fact</T>
             </Button>
           </div>
         </>
       ) : (
-        <p role="status">Reading source…</p>
+        <p role="status">
+          <T>Reading source…</T>
+        </p>
       )}
     </article>
   );

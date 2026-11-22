@@ -10,7 +10,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronRightIcon, XIcon } from "lucide-react";
-import { useGT } from "gt-react";
+import { useGT, useMessages } from "gt-react";
 
 import { tickTextContent } from "~/lib/tickTextContent";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -28,6 +28,7 @@ import { Button } from "../ui/button";
 /** Mounted only while the seat has an open run, so it holds a thread subscription no longer. */
 function SeatLiveRow(props: { parentRef: ScopedThreadRef; seat: ThreadGroupSeat }) {
   const gt = useGT();
+  const m = useMessages();
   const { parentRef, seat } = props;
   const seatRef = scopeThreadRef(parentRef.environmentId, seat.threadId);
   const shell = useQuietThreadShell(seatRef);
@@ -35,7 +36,7 @@ function SeatLiveRow(props: { parentRef: ScopedThreadRef; seat: ThreadGroupSeat 
   const canOperate = useEnvironmentScope(parentRef.environmentId, AuthOrchestrationOperateScope);
   const interrupt = useAtomCommand(threadEnvironment.interruptTurn);
   const startedAt = shell === null ? null : resolveThreadWorkingStartedAt(shell);
-  const activity = seatActivityLabel(projection?.turnItems ?? [], shell?.runtime?.activeRunId);
+  const activity = seatActivityLabel(projection?.turnItems ?? [], shell?.runtime?.activeRunId, m);
   return (
     <div className="chat-content-lane flex min-w-0 items-center gap-2 py-0.5 text-xs text-muted-foreground">
       <span className="shrink-0 font-medium text-foreground/85">{seat.label}</span>

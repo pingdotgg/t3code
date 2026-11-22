@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m } from "../../i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -53,7 +55,7 @@ export function reportGroupCommandFailure(
     stackedThreadToast({
       type: "error",
       title,
-      description: error instanceof Error ? error.message : "An error occurred.",
+      description: error instanceof Error ? error.message : m(msg("An error occurred.")),
     }),
   );
 }

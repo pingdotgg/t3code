@@ -1,3 +1,4 @@
+import { T, Var, useGT } from "gt-react";
 import {
   inferenceRouteIssue,
   type InferenceRouting,
@@ -16,7 +17,7 @@ import {
   type InferenceDriver,
   type InferenceProxyAction,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
@@ -35,6 +36,7 @@ function InferenceRoute({
   host: EnvironmentPresentation;
   consumer: EnvironmentPresentation;
 }) {
+  const gt = useGT();
   const canGrant = useAtomValue(inferenceProxy.canGrant(host.environmentId));
   const canConnect = useAtomValue(inferenceProxy.canConnect(consumer.environmentId));
   const status = useEnvironmentQuery(
@@ -43,16 +45,25 @@ function InferenceRoute({
   const issue = inferenceRouteIssue(status.data, host.environmentId === consumer.environmentId);
   const route = useAtomCommand(inferenceProxy.routeInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   async function add(driver: InferenceDriver) {
     setBusy(true);
     setNotice("");
     const result = await route({ host, consumer, driver });
     setBusy(false);
     setNotice(
-      result._tag === "Failure"
-        ? String(squashAtomCommandFailure(result))
-        : `Select ${INFERENCE_HARNESSES[driver].label}${host.environmentId === consumer.environmentId ? "" : ` via ${host.label}`} in the model picker.`,
+      result._tag === "Failure" ? (
+        String(squashAtomCommandFailure(result))
+      ) : host.environmentId === consumer.environmentId ? (
+        <T>
+          Select <Var>{INFERENCE_HARNESSES[driver].label}</Var> in the model picker.
+        </T>
+      ) : (
+        <T>
+          Select <Var>{INFERENCE_HARNESSES[driver].label}</Var> via <Var>{host.label}</Var> in the
+          model picker.
+        </T>
+      ),
     );
   }
   return (
@@ -61,8 +72,8 @@ function InferenceRoute({
       description={
         issue ??
         (host.environmentId === consumer.environmentId
-          ? "Use accounts on this environment."
-          : "Use this host’s accounts over Tailscale or your trusted LAN.")
+          ? gt("Use accounts on this environment.")
+          : gt("Use this host’s accounts over Tailscale or your trusted LAN."))
       }
       status={notice || undefined}
       control={
@@ -98,14 +109,17 @@ function InferenceRoutingControls({
   disabled: boolean;
   run: (action: InferenceProxyAction) => Promise<InferenceProxyActionResult | undefined>;
 }) {
+  const gt = useGT();
   return (
-    <SettingsSection title="Account routing">
+    <SettingsSection title={gt("Account routing")}>
       <SettingsRow
-        title="Round-robin routing"
-        description="Distribute requests across eligible credentials. Turn off to use the first available credential."
+        title={gt("Round-robin routing")}
+        description={gt(
+          "Distribute requests across eligible credentials. Turn off to use the first available credential.",
+        )}
         control={
           <Switch
-            aria-label="Round-robin routing"
+            aria-label={gt("Round-robin routing")}
             checked={routing.strategy === "round-robin"}
             disabled={disabled}
             onCheckedChange={(enabled) =>
@@ -118,11 +132,11 @@ function InferenceRoutingControls({
         }
       />
       <SettingsRow
-        title="Keep sessions on one account"
-        description="Reuse the same credential for a conversation while it is available."
+        title={gt("Keep sessions on one account")}
+        description={gt("Reuse the same credential for a conversation while it is available.")}
         control={
           <Switch
-            aria-label="Keep sessions on one account"
+            aria-label={gt("Keep sessions on one account")}
             checked={routing.sessionAffinity}
             disabled={disabled}
             onCheckedChange={(sessionAffinity) =>
@@ -136,6 +150,7 @@ function InferenceRoutingControls({
 }
 
 export function InferenceSettings({ environmentId }: { environmentId: EnvironmentId }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const current = environments.find((e) => e.environmentId === environmentId);
   const canManage = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
@@ -165,18 +180,28 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
   }
   return (
     <SettingsPageContainer className="gap-8">
-      <SettingsSection id="inference" title="Inference hosting">
+      <SettingsSection id="inference" title={gt("Inference hosting")}>
         {!canManage ? (
-          <SettingsRow title="Provider management access is required." />
+          <SettingsRow title={gt("Provider management access is required.")} />
         ) : host ? (
           <>
             <SettingsRow
-              title="Host accounts on this environment"
-              description={`T3 Code installs CLIProxyAPI ${host.version} and keeps account logins here.`}
-              status={busy ? "Working…" : (host.problem ?? (host.running ? "Running" : "Stopped"))}
+              title={gt("Host accounts on this environment")}
+              description={gt(
+                "T3 Code installs CLIProxyAPI {version} and keeps account logins here.",
+                { version: host.version },
+              )}
+              status={
+                busy
+                  ? gt("Working…")
+                  : (host.problem ??
+                    (host.running
+                      ? gt("Running", { $context: "inference host status" })
+                      : gt("Stopped", { $context: "inference host status" })))
+              }
               control={
                 <Switch
-                  aria-label="Host inference accounts"
+                  aria-label={gt("Host inference accounts")}
                   checked={host.enabled}
                   disabled={busy}
                   onCheckedChange={(enabled) =>
@@ -193,12 +218,15 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
             {host.enabled && (
               <>
                 <SettingsRow
-                  title="CLIProxyAPI updates"
+                  title={gt("CLIProxyAPI updates")}
                   description={
                     updateQuery.error ??
                     (available
-                      ? `Version ${available} is available. Updating restarts the inference host.`
-                      : `Installed version: ${host.version}`)
+                      ? gt(
+                          "Version {version} is available. Updating restarts the inference host.",
+                          { version: available },
+                        )
+                      : gt("Installed version: {version}", { version: host.version }))
                   }
                   control={
                     <Button
@@ -209,16 +237,20 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                         available ? void run({ operation: "update" }) : updateQuery.refresh()
                       }
                     >
-                      {available ? "Update" : "Check for updates"}
+                      {available
+                        ? gt("Update", { $context: "verb, update the inference host" })
+                        : gt("Check for updates")}
                     </Button>
                   }
                 />
                 <SettingsRow
-                  title="Share inference with paired environments"
-                  description="Use Tailscale HTTPS or enable LAN access on a trusted network. LAN HTTP sends requests and route keys unencrypted. Turning sharing off revokes remote access."
+                  title={gt("Share inference with paired environments")}
+                  description={gt(
+                    "Use Tailscale HTTPS or enable LAN access on a trusted network. LAN HTTP sends requests and route keys unencrypted. Turning sharing off revokes remote access.",
+                  )}
                   control={
                     <Switch
-                      aria-label="Share inference with paired environments"
+                      aria-label={gt("Share inference with paired environments")}
                       checked={host.sharing}
                       disabled={busy}
                       onCheckedChange={(sharing) =>
@@ -236,7 +268,7 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                   <SettingsRow
                     key={c.environmentId}
                     title={c.label}
-                    description="Authorized for inference"
+                    description={gt("Authorized for inference")}
                     control={
                       <Button
                         size="sm"
@@ -246,7 +278,7 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                           void run({ operation: "revoke", environmentId: c.environmentId })
                         }
                       >
-                        Revoke
+                        <T>Revoke</T>
                       </Button>
                     }
                   />
@@ -255,11 +287,11 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
             )}
           </>
         ) : (
-          <SettingsRow title={query.error ?? "Loading host status…"} />
+          <SettingsRow title={query.error ?? gt("Loading host status…")} />
         )}
       </SettingsSection>
       {host?.enabled && (
-        <SettingsSection title="Hosted accounts">
+        <SettingsSection title={gt("Hosted accounts")}>
           <InferenceProviderAccounts environmentId={environmentId} />
         </SettingsSection>
       )}
@@ -272,16 +304,18 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
         </p>
       )}
       {current && canManage && (
-        <SettingsSection title="Route requests through an environment">
+        <SettingsSection title={gt("Route requests through an environment")}>
           <SettingsRow
-            title={`Run agents on ${current.label}`}
-            description="Choose a host and provider below. Tools and files stay on this environment. Choosing a host changes where this provider sends inference. That host manages the accounts."
+            title={gt("Run agents on {environment}", { environment: current.label })}
+            description={gt(
+              "Choose a host and provider below. Tools and files stay on this environment. Choosing a host changes where this provider sends inference. That host manages the accounts.",
+            )}
           />
           {host?.routes.map((route) => (
             <SettingsRow
               key={route.instanceId}
               title={route.label}
-              description="Using an inference host on this environment"
+              description={gt("Using an inference host on this environment")}
               control={
                 <Button
                   size="sm"
@@ -291,7 +325,7 @@ export function InferenceSettings({ environmentId }: { environmentId: Environmen
                     void run({ operation: "removeRoute", instanceId: route.instanceId })
                   }
                 >
-                  Use native provider
+                  <T>Use native provider</T>
                 </Button>
               }
             />

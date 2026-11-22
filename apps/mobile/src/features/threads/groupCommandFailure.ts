@@ -1,3 +1,5 @@
+import { msg } from "gt-react-native";
+import { m } from "../../i18n/messages";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -12,5 +14,5 @@ export function alertGroupCommandFailure(
 ) {
   if (result._tag === "Success" || isAtomCommandInterrupted(result)) return;
   const failure = squashAtomCommandFailure(result);
-  Alert.alert(title, failure instanceof Error ? failure.message : "An error occurred.");
+  Alert.alert(title, failure instanceof Error ? failure.message : m(msg("An error occurred.")));
 }

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import type { KnowledgeSelection } from "@t3tools/contracts";
+import { T, useGT } from "gt-react-native";
 
 import {
   MAX_KNOWLEDGE_SELECTIONS,
@@ -13,9 +14,6 @@ import { Button } from "./ui/Button";
 
 type SelectionState = ReturnType<typeof knowledgeSelectionState>;
 
-const changedLabel = (selection: KnowledgeSelection) =>
-  selection.kind === "fact" ? "Fact changed since you selected it" : "Source changed";
-
 /**
  * Draft selection, kept apart from inspection: pressing a fact or message reads it, and only this
  * control changes what the draft will reference.
@@ -26,10 +24,11 @@ export function SelectForDraftControl(props: {
   readonly onToggle: (selection: KnowledgeSelection) => void;
   readonly onRefresh: (selection: KnowledgeSelection) => void;
 }) {
+  const gt = useGT();
   return (
     <View className="flex-row flex-wrap items-center gap-2">
       <Button
-        label={props.state === "unselected" ? "Select for draft" : "Selected for draft"}
+        label={props.state === "unselected" ? gt("Select for draft") : gt("Selected for draft")}
         icon={props.state === "unselected" ? "plus" : "checkmark.circle.fill"}
         tone={props.state === "unselected" ? "secondary" : "primary"}
         onPress={() => props.onToggle(props.current)}
@@ -37,10 +36,12 @@ export function SelectForDraftControl(props: {
       {props.state === "changed" ? (
         <>
           <AppText className="text-xs text-warning-foreground">
-            {changedLabel(props.current)}
+            {props.current.kind === "fact"
+              ? gt("Fact changed since you selected it")
+              : gt("Source changed")}
           </AppText>
           <Button
-            label="Use current version"
+            label={gt("Use current version")}
             tone="text"
             onPress={() => props.onRefresh(props.current)}
           />
@@ -69,6 +70,7 @@ export function ProjectKnowledgeDraftFooter(props: {
   readonly onAttach: () => void;
   readonly onRemoveAttached: () => void;
 }) {
+  const gt = useGT();
   const insets = useSafeAreaInsets();
   const [expanded, setExpanded] = useState(false);
   const changed = props.selections.filter(
@@ -84,10 +86,10 @@ export function ProjectKnowledgeDraftFooter(props: {
       {props.mismatched ? (
         <View className="gap-1">
           <AppText className="text-sm">
-            Attached evidence belongs to another project or environment.
+            <T>Attached evidence belongs to another project or environment.</T>
           </AppText>
           <Button
-            label="Remove mismatched reference"
+            label={gt("Remove mismatched reference")}
             tone="secondary"
             onPress={props.onRemoveAttached}
           />
@@ -95,24 +97,32 @@ export function ProjectKnowledgeDraftFooter(props: {
       ) : props.attachedLabel ? (
         <View className="flex-row flex-wrap items-center gap-2">
           <AppText className="flex-1 text-sm">
-            {props.attachedLabel} is attached to this draft.
+            {gt("{label} is attached to this draft.", { label: props.attachedLabel })}
           </AppText>
-          <Button label="Remove from draft" tone="text" onPress={props.onRemoveAttached} />
+          <Button label={gt("Remove from draft")} tone="text" onPress={props.onRemoveAttached} />
         </View>
       ) : props.detached ? (
         <AppText accessibilityRole="alert" className="text-sm">
-          The selection changed, so the earlier reference was removed from the draft. Attach to add
-          the new selection.
+          <T>
+            The selection changed, so the earlier reference was removed from the draft. Attach to
+            add the new selection.
+          </T>
         </AppText>
       ) : null}
       <View className="flex-row flex-wrap items-center gap-2">
         <AppText className="flex-1 text-xs text-foreground-muted">
-          {props.selections.length} selected · up to {MAX_KNOWLEDGE_SELECTIONS}
-          {changed > 0 ? ` · ${changed} changed since selected` : ""}
+          {gt(
+            "{count} selected · up to {maximum}{changed, plural, =0 {} other { · {changed} changed since selected}}",
+            {
+              count: props.selections.length,
+              maximum: MAX_KNOWLEDGE_SELECTIONS,
+              changed,
+            },
+          )}
         </AppText>
         {props.selections.length > 0 ? (
           <Button
-            label={expanded ? "Hide selection" : "Review selection"}
+            label={expanded ? gt("Hide selection") : gt("Review selection")}
             tone="text"
             onPress={() => setExpanded((value) => !value)}
           />
@@ -136,21 +146,28 @@ export function ProjectKnowledgeDraftFooter(props: {
               {item.current &&
               knowledgeSelectionState([item.selection], item.current) === "changed" ? (
                 <Button
-                  label="Use current version"
+                  label={gt("Use current version")}
                   tone="text"
                   onPress={() => props.onRefresh(item.current!)}
                 />
               ) : null}
-              <Button label="Remove" tone="text" onPress={() => props.onToggle(item.selection)} />
+              <Button
+                label={gt("Remove", { $context: "remove a project knowledge selection" })}
+                tone="text"
+                onPress={() => props.onToggle(item.selection)}
+              />
             </View>
           ))}
           <AppText className="text-xs text-foreground-muted">
-            The draft keeps references and revision numbers. Current evidence is reloaded when sent.
+            <T>
+              The draft keeps references and revision numbers. Current evidence is reloaded when
+              sent.
+            </T>
           </AppText>
         </ScrollView>
       ) : null}
       <Button
-        label="Attach to draft"
+        label={gt("Attach to draft")}
         tone="primary"
         disabled={props.disabled || props.busy || props.selections.length === 0 || props.mismatched}
         loading={props.busy}

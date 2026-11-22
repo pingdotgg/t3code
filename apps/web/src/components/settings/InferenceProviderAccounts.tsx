@@ -1,3 +1,4 @@
+import { T, Var, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
@@ -13,7 +14,7 @@ import {
   type InferenceUpstream,
 } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { serverEnvironment } from "../../state/server";
 import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -40,6 +41,8 @@ export function InferenceProviderAccounts({
   readonly enableLocalHosting?: boolean;
   readonly onAccountsChanged?: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const permitted = useAtomValue(inferenceProxy.manageInference.permissionAtom(environmentId));
   const canManage = permitted && !readOnly;
   const supportsHostingGuard = useAtomValue(
@@ -52,7 +55,7 @@ export function InferenceProviderAccounts({
   );
   const command = useAtomCommand(inferenceProxy.manageInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const [login, setLogin] = useState<{ url: string; state: string } | null>(null);
   const [callback, setCallback] = useState("");
   const host = query.data;
@@ -85,39 +88,41 @@ export function InferenceProviderAccounts({
       setCallback("");
     }
     if (result.value.status === "wait")
-      setNotice("Waiting for sign-in to finish. Check status after completing sign-in.");
+      setNotice(<T>Waiting for sign-in to finish. Check status after completing sign-in.</T>);
     if (result.value.status === "error") {
       setLogin(null);
       setCallback("");
-      setNotice("Sign-in failed or expired. Start a new sign-in.");
+      setNotice(<T>Sign-in failed or expired. Start a new sign-in.</T>);
     }
     if (result.value.status === "ok" || (input.operation === "configure" && input.enabled))
       onAccountsChanged?.();
   }
-  const hostName = hostLabel || "the inference host";
+  const hostName = hostLabel || gt("the inference host");
   const harness = driver ? INFERENCE_HARNESSES[driver] : undefined;
   if (!permitted)
     return (
       <SettingsRow
-        title={`Connect to ${hostName} to manage its accounts`}
-        description="This client needs a connection to that environment with provider management access."
+        title={gt("Connect to {host} to manage its accounts", { host: hostName })}
+        description={gt(
+          "This client needs a connection to that environment with provider management access.",
+        )}
         control={
           <Button size="sm" variant="outline" render={<Link to="/settings/connections" />}>
-            Connections
+            <T>Connections</T>
           </Button>
         }
       />
     );
-  if (readOnly) return <SettingsRow title="Accounts cannot be changed from this view." />;
-  if (!host) return <SettingsRow title={query.error ?? "Loading accounts…"} />;
+  if (readOnly) return <SettingsRow title={gt("Accounts cannot be changed from this view.")} />;
+  if (!host) return <SettingsRow title={query.error ?? gt("Loading accounts…")} />;
   if (!host.enabled)
     return (
       <SettingsRow
-        title={`Inference hosting is off on ${hostName}`}
+        title={gt("Inference hosting is off on {host}", { host: hostName })}
         description={
           canStartHosting
-            ? "Install and start CLIProxyAPI on this environment to use its accounts."
-            : "Turn hosting on there to add and share accounts."
+            ? gt("Install and start CLIProxyAPI on this environment to use its accounts.")
+            : gt("Turn hosting on there to add and share accounts.")
         }
         status={notice || undefined}
         control={
@@ -135,7 +140,7 @@ export function InferenceProviderAccounts({
                 })
               }
             >
-              Start hosting here
+              <T>Start hosting here</T>
             </Button>
           ) : (
             <Button
@@ -143,7 +148,7 @@ export function InferenceProviderAccounts({
               variant="outline"
               render={<Link to="/settings/inference" search={{ machine: environmentId }} />}
             >
-              Inference accounts
+              <T>Inference accounts</T>
             </Button>
           )
         }
@@ -161,17 +166,19 @@ export function InferenceProviderAccounts({
               title={
                 <RedactedSensitiveText
                   value={account.name}
-                  ariaLabel="Toggle account name visibility"
-                  revealTooltip="Click to reveal account name"
-                  hideTooltip="Click to hide account name"
+                  ariaLabel={gt("Toggle account name visibility")}
+                  revealTooltip={gt("Click to reveal account name")}
+                  hideTooltip={gt("Click to hide account name")}
                   className="max-w-full wrap-anywhere text-left"
                 />
               }
-              description={`${account.provider} · ${inferenceAccountStatus(account)}`}
+              description={`${account.provider} · ${inferenceAccountStatus(account, messages)}`}
               status={
                 retryAfter ? (
                   <time dateTime={retryAfter}>
-                    Retry after {new Date(retryAfter).toLocaleString()}
+                    <T>
+                      Retry after <Var>{new Date(retryAfter).toLocaleString()}</Var>
+                    </T>
                   </time>
                 ) : undefined
               }
@@ -182,7 +189,7 @@ export function InferenceProviderAccounts({
                   disabled={busy}
                   onClick={() => void run({ operation: "removeAccount", name: account.name })}
                 >
-                  Remove
+                  <T>Remove</T>
                 </Button>
               }
             />
@@ -191,21 +198,23 @@ export function InferenceProviderAccounts({
       {login ? (
         <>
           <SettingsRow
-            title="Finish signing in"
-            description="Open the provider sign-in page and paste the final localhost URL here, even if the browser cannot load it."
+            title={gt("Finish signing in")}
+            description={gt(
+              "Open the provider sign-in page and paste the final localhost URL here, even if the browser cannot load it.",
+            )}
             control={
               <Button
                 size="sm"
                 variant="outline"
                 render={<a href={login.url} target="_blank" rel="noreferrer" />}
               >
-                Open sign-in
+                <T>Open sign-in</T>
               </Button>
             }
           />
           <Input
-            aria-label="Sign-in callback URL"
-            placeholder="Paste callback URL"
+            aria-label={gt("Sign-in callback URL")}
+            placeholder={gt("Paste callback URL")}
             type="password"
             value={callback}
             onChange={(event) => setCallback(event.target.value)}
@@ -216,7 +225,7 @@ export function InferenceProviderAccounts({
               disabled={busy || !callback}
               onClick={() => void run({ operation: "callback", state: login.state, callback })}
             >
-              Submit
+              <T>Submit</T>
             </Button>
             <Button
               size="sm"
@@ -224,7 +233,7 @@ export function InferenceProviderAccounts({
               disabled={busy}
               onClick={() => void run({ operation: "check", state: login.state })}
             >
-              Check status
+              <T>Check status</T>
             </Button>
             <Button
               size="sm"
@@ -232,14 +241,14 @@ export function InferenceProviderAccounts({
               disabled={busy}
               onClick={() => void run({ operation: "cancel", state: login.state })}
             >
-              Cancel
+              <T>Cancel</T>
             </Button>
           </div>
         </>
       ) : (
         <SettingsRow
-          title="Add an account"
-          description="Sign in once for each account this host should use."
+          title={gt("Add an account")}
+          description={gt("Sign in once for each account this host should use.")}
           control={
             <div className="flex flex-wrap justify-end gap-2">
               {(harness?.upstreams ?? everyUpstream).map((upstream) => (

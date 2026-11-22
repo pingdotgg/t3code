@@ -44,6 +44,7 @@ import {
   composerMathRanges,
   type ComposerInlineToken,
 } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 
 const isMessageContext = Schema.is(OrchestrationMessageContext);
 const decodeMessageContext = Schema.decodeUnknownOption(OrchestrationMessageContext);
@@ -77,7 +78,7 @@ export function composerMentionPath(source: string, context?: OrchestrationMessa
     const record = context?.records.find((entry) => entry.contextId === reference.contextId);
     return record?.kind === "mention" && "path" in record ? record.path : null;
   }
-  const token = collectComposerInlineTokens(`${source} `)[0];
+  const token = collectComposerInlineTokens(`${source} `, { findMath: markdownMathRanges })[0];
   return token?.type === "mention" && token.source === source ? token.value : null;
 }
 
@@ -220,7 +221,7 @@ export function composerContextEditorTokens(
 ) {
   const references = collectComposerContextReferences(text);
   const citations = collectAssistantCitations(text);
-  const math = composerMathRanges(text);
+  const math = composerMathRanges(text, markdownMathRanges);
   const overlaps = (start: number, end: number, range: { start: number; end: number }) =>
     start < range.end && end > range.start;
   const groupMentions = groupMentionOccurrences(text, group, { seatedOnly: true }).filter(

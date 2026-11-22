@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthSettingsWriteScope,
@@ -52,6 +53,7 @@ interface Scope {
 
 /** The project opt-in. Summaries cost model calls, so it starts off. */
 function SummariesToggle(props: Scope) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canWrite = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -82,24 +84,27 @@ function SummariesToggle(props: Scope) {
   };
   return (
     <section
-      aria-label="Summarize older messages"
+      aria-label={m(msg("Summarize older messages"))}
       className="flex flex-col gap-1 rounded-md border p-3"
     >
       <div className="flex items-center justify-between gap-3 font-medium text-sm">
-        <span>Summarize older messages</span>
+        <span>{m(msg("Summarize older messages"))}</span>
         <Switch
-          aria-label="Summarize older messages"
+          aria-label={m(msg("Summarize older messages"))}
           checked={enabled}
           disabled={!canWrite || busy}
           onCheckedChange={(checked) => void toggle(checked)}
         />
       </div>
       <p className="text-muted-foreground text-xs">
-        After turns complete in this project, your text generation model summarizes settled
-        stretches of older messages and tool output. Each summary costs one model call.
+        {m(
+          msg(
+            "After turns complete in this project, your text generation model summarizes settled stretches of older messages and tool output. Each summary costs one model call.",
+          ),
+        )}
       </p>
       {!canWrite ? (
-        <p className="text-xs">This connection cannot change project settings.</p>
+        <p className="text-xs">{m(msg("This connection cannot change project settings."))}</p>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
     </section>
@@ -113,6 +118,7 @@ function SummarySourcePage(props: {
   readonly onPrevious: () => void;
   readonly onNext: (cursor: ConversationSummarySourceCursor) => void;
 }) {
+  const m = useMessages();
   const { sources, nextOffset, nextTextOffset } = props.data;
   return (
     <div className="flex flex-col gap-2">
@@ -120,18 +126,18 @@ function SummarySourcePage(props: {
         {sources.map(({ ref, result }, index) => (
           <li key={conversationSummarySourceKey(ref)} className="rounded-md border p-2 text-sm">
             <p className="text-muted-foreground text-xs break-all">
-              #{props.cursor.offset + index + 1} · {conversationSummarySourceLabel(ref, result)}
+              #{props.cursor.offset + index + 1} · {conversationSummarySourceLabel(ref, result, m)}
             </p>
-            {conversationSummarySourceRangeLabel(ref, result) ? (
+            {conversationSummarySourceRangeLabel(ref, result, m) ? (
               <p className="text-muted-foreground text-xs">
-                {conversationSummarySourceRangeLabel(ref, result)}
+                {conversationSummarySourceRangeLabel(ref, result, m)}
               </p>
             ) : null}
             {result.state === "available" ? (
               <p className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap">{result.text}</p>
             ) : (
               <p className="mt-1 text-muted-foreground">
-                {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[result.reason]}.
+                {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[result.reason])}.
               </p>
             )}
           </li>
@@ -145,7 +151,7 @@ function SummarySourcePage(props: {
             disabled={!props.hasPrevious}
             onClick={props.onPrevious}
           >
-            Previous sources
+            {m(msg("Previous sources"))}
           </Button>
           <Button
             variant="outline"
@@ -156,7 +162,7 @@ function SummarySourcePage(props: {
                 props.onNext({ offset: nextOffset, textOffset: nextTextOffset ?? 0 });
             }}
           >
-            Next sources
+            {m(msg("Next sources"))}
           </Button>
         </div>
       ) : null}
@@ -183,6 +189,7 @@ function SummaryStatements(props: { readonly summary: ConversationSummary }) {
 }
 
 function SummaryCard(props: Scope & { readonly read: ConversationSummaryRead }) {
+  const m = useMessages();
   const [showSources, setShowSources] = useState(false);
   const [sourceCursors, setSourceCursors] =
     useState<ReadonlyArray<ConversationSummarySourceCursor> | null>(null);
@@ -212,20 +219,25 @@ function SummaryCard(props: Scope & { readonly read: ConversationSummaryRead }) 
   return (
     <article className="flex flex-col gap-2 rounded-md border p-3">
       <p className="text-muted-foreground text-xs">
-        {sourceCount} sources · written {new Date(createdAt).toLocaleString()}
+        {m(msg("{count, plural, one {# source} other {# sources}} · written {date}"), {
+          count: sourceCount,
+          date: new Date(createdAt).toLocaleString(),
+        })}
       </p>
       {read === null ? (
         <p className="text-muted-foreground text-sm">
           {expansion.error
-            ? "Summary unavailable until its sources can be checked."
-            : "Checking sources…"}
+            ? m(msg("Summary unavailable until its sources can be checked."))
+            : m(msg("Checking sources…"))}
         </p>
       ) : read.state === "available" ? (
         <SummaryStatements summary={read.summary} />
       ) : (
         <p className="text-sm">
-          Outdated: {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[read.reason].toLowerCase()}. The summary
-          text is hidden and agents no longer receive it.
+          {m(
+            msg("Outdated: {reason}. The summary text is hidden and agents no longer receive it."),
+            { reason: m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[read.reason]) },
+          )}
         </p>
       )}
       <div>
@@ -237,7 +249,7 @@ function SummaryCard(props: Scope & { readonly read: ConversationSummaryRead }) 
             setShowSources((value) => !value);
           }}
         >
-          {showSources ? "Hide sources" : "Show sources"}
+          {showSources ? m(msg("Hide sources")) : m(msg("Show sources"))}
         </Button>
       </div>
       {showSources ? (
@@ -246,7 +258,7 @@ function SummaryCard(props: Scope & { readonly read: ConversationSummaryRead }) 
             {expansion.error}
           </p>
         ) : expansion.data === null ? (
-          <p className="text-muted-foreground text-sm">Loading sources…</p>
+          <p className="text-muted-foreground text-sm">{m(msg("Loading sources…"))}</p>
         ) : (
           <SummarySourcePage
             data={expansion.data}
@@ -262,6 +274,7 @@ function SummaryCard(props: Scope & { readonly read: ConversationSummaryRead }) 
 }
 
 function SummaryList(props: Scope & { readonly searchSupported: boolean }) {
+  const m = useMessages();
   const [cursors, setCursors] = useState<ReadonlyArray<ConversationSummaryId>>([]);
   const [searchText, setSearchText] = useState("");
   const [query, setQuery] = useState("");
@@ -277,14 +290,14 @@ function SummaryList(props: Scope & { readonly searchSupported: boolean }) {
           }}
         >
           <Input
-            aria-label="Search summaries"
-            placeholder="Search summary text"
+            aria-label={m(msg("Search summaries"))}
+            placeholder={m(msg("Search summary text"))}
             maxLength={256}
             value={searchText}
             onChange={(event) => setSearchText(event.target.value)}
           />
           <Button type="submit" variant="outline" size="sm">
-            Search
+            {m(msg("Search"))}
           </Button>
           {searchText || query ? (
             <Button
@@ -297,12 +310,14 @@ function SummaryList(props: Scope & { readonly searchSupported: boolean }) {
                 setCursors([]);
               }}
             >
-              Clear
+              {m(msg("Clear"))}
             </Button>
           ) : null}
         </form>
       ) : (
-        <p className="text-muted-foreground text-xs">Update this server to search summaries.</p>
+        <p className="text-muted-foreground text-xs">
+          {m(msg("Update this server to search summaries."))}
+        </p>
       )}
       <SummaryListPage
         key={JSON.stringify([query, cursors.at(-1)])}
@@ -324,6 +339,7 @@ function SummaryListPage(
     readonly onLater: (cursor: ConversationSummaryId) => void;
   },
 ) {
+  const m = useMessages();
   const cursor = props.cursors.at(-1);
   const list = useEnvironmentQuery(
     conversationSummaries.list({
@@ -343,21 +359,27 @@ function SummaryListPage(
         {list.error}
       </p>
     );
-  if (!list.data) return <p className="text-muted-foreground text-sm">Loading summaries…</p>;
+  if (!list.data)
+    return <p className="text-muted-foreground text-sm">{m(msg("Loading summaries…"))}</p>;
   const { lastPass, summaries, nextCursor, enabled } = list.data;
   return (
     <div className="flex flex-col gap-3">
       {lastPass ? (
-        <p className="text-muted-foreground text-xs">{conversationSummaryPassLabel(lastPass)}</p>
+        <p className="text-muted-foreground text-xs">{conversationSummaryPassLabel(lastPass, m)}</p>
       ) : enabled ? (
         <p className="text-muted-foreground text-xs">
-          The first summary is written after a turn completes and enough older messages have
-          settled.
+          {m(
+            msg(
+              "The first summary is written after a turn completes and enough older messages have settled.",
+            ),
+          )}
         </p>
       ) : null}
       {summaries.length === 0 ? (
         <p className="text-muted-foreground text-sm">
-          {props.query ? "No summaries match your search." : "This thread has no summaries yet."}
+          {props.query
+            ? m(msg("No summaries match your search."))
+            : m(msg("This thread has no summaries yet."))}
         </p>
       ) : (
         summaries.map((read) => (
@@ -376,7 +398,7 @@ function SummaryListPage(
             disabled={props.cursors.length === 0}
             onClick={props.onEarlier}
           >
-            Earlier
+            {m(msg("Earlier"))}
           </Button>
           <Button
             variant="ghost"
@@ -386,7 +408,7 @@ function SummaryListPage(
               if (nextCursor !== null) props.onLater(nextCursor);
             }}
           >
-            Later
+            {m(msg("Later"))}
           </Button>
         </div>
       ) : null}
@@ -397,6 +419,7 @@ function SummaryListPage(
 export function ConversationSummariesDialog(
   props: Scope & { readonly open: boolean; readonly onOpenChange: (open: boolean) => void },
 ) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const project = useProject({ environmentId: props.environmentId, projectId: props.projectId });
   const searchSupported = config?.environment.capabilities.conversationSummarySourceFormat === 2;
@@ -404,11 +427,13 @@ export function ConversationSummariesDialog(
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Conversation summaries</DialogTitle>
+          <DialogTitle>{m(msg("Conversation summaries"))}</DialogTitle>
           <DialogDescription>
-            Model-written summaries of this thread's older messages and tool output. When the thread
-            moves to another provider or is forked, agents receive them in place of messages that no
-            longer fit, and can open the exact sources behind each one.
+            {m(
+              msg(
+                "Model-written summaries of this thread's older messages and tool output. When the thread moves to another provider or is forked, agents receive them in place of messages that no longer fit, and can open the exact sources behind each one.",
+              ),
+            )}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>

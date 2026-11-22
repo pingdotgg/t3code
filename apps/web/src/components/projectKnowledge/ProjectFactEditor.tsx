@@ -1,4 +1,6 @@
 import { useId, useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
+import { KNOWLEDGE_FACT_KIND_LABEL } from "@t3tools/client-runtime/projectKnowledge";
 import {
   CommandId,
   ProjectFactId,
@@ -46,6 +48,8 @@ export function ProjectFactEditor(props: {
   readonly onSubmit: (input: ProjectKnowledgeMutation) => void;
   readonly onCancel: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { seed } = props;
   const base = seed.mode === "create" ? null : seed.base;
   const [superseding, setSuperseding] = useState(seed.mode === "supersede");
@@ -63,7 +67,7 @@ export function ProjectFactEditor(props: {
     : seed.mode === "create" && seed.sources.length
       ? seed.sources
       : [{ kind: "user" }];
-  const title = base ? (superseding ? "Supersede fact" : "Edit fact") : "Save a fact";
+  const title = base ? (superseding ? gt("Supersede fact") : gt("Edit fact")) : gt("Save a fact");
   return (
     <form
       aria-label={title}
@@ -99,11 +103,11 @@ export function ProjectFactEditor(props: {
       <h3 className="font-medium text-sm">{title}</h3>
       {base && superseding ? (
         <p className="text-muted-foreground text-sm">
-          The original stays readable but is no longer recalled once replaced.
+          <T>The original stays readable but is no longer recalled once replaced.</T>
         </p>
       ) : null}
       <Textarea
-        aria-label="Fact content"
+        aria-label={gt("Fact content")}
         autoFocus
         value={content}
         maxLength={12000}
@@ -111,19 +115,21 @@ export function ProjectFactEditor(props: {
         required
       />
       <Input
-        aria-label="Entities, comma separated"
-        placeholder="Entities, comma separated"
+        aria-label={gt("Entities, comma separated")}
+        placeholder={gt("Entities, comma separated")}
         value={entities}
         onChange={(event) => setEntities(event.target.value)}
       />
       <Input
-        aria-label="Tags, comma separated"
-        placeholder="Tags, comma separated"
+        aria-label={gt("Tags, comma separated")}
+        placeholder={gt("Tags, comma separated")}
         value={tags}
         onChange={(event) => setTags(event.target.value)}
       />
       <div className="flex items-center gap-2 text-sm">
-        <span id={kindLabelId}>Kind</span>
+        <span id={kindLabelId}>
+          <T context="project fact kind">Kind</T>
+        </span>
         <Select
           value={kind}
           onValueChange={(value) => {
@@ -136,7 +142,7 @@ export function ProjectFactEditor(props: {
           <SelectPopup alignItemWithTrigger={false}>
             {FACT_KINDS.map((value) => (
               <SelectItem hideIndicator key={value} value={value}>
-                {value}
+                {m(KNOWLEDGE_FACT_KIND_LABEL[value])}
               </SelectItem>
             ))}
           </SelectPopup>
@@ -144,11 +150,13 @@ export function ProjectFactEditor(props: {
       </div>
       <p className="text-muted-foreground text-sm">
         {sources.some((ref) => ref.kind === "message")
-          ? "Saved with the selected message citation."
-          : "Saved as your assertion."}
+          ? gt("Saved with the selected message citation.")
+          : gt("Saved as your assertion.")}
       </p>
       {!props.canMutate ? (
-        <p className="text-sm">This environment grants read access only.</p>
+        <p className="text-sm">
+          <T>This environment grants read access only.</T>
+        </p>
       ) : null}
       <div className="flex flex-wrap gap-2">
         <Button
@@ -156,15 +164,15 @@ export function ProjectFactEditor(props: {
           size="sm"
           type="submit"
         >
-          {base ? (superseding ? "Save replacement" : "Save edit") : "Save fact"}
+          {base ? (superseding ? gt("Save replacement") : gt("Save edit")) : gt("Save fact")}
         </Button>
         {base && props.historyAvailable ? (
           <Button size="sm" variant="ghost" onClick={() => setSuperseding((value) => !value)}>
-            {superseding ? "Edit instead" : "Supersede instead"}
+            {superseding ? gt("Edit instead") : gt("Supersede instead")}
           </Button>
         ) : null}
         <Button size="sm" variant="ghost" onClick={props.onCancel}>
-          Cancel
+          <T>Cancel</T>
         </Button>
       </div>
     </form>

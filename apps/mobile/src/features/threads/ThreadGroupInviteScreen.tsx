@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -16,6 +17,7 @@ import { ThreadSettingsPickerScreen } from "./ThreadSettingsSheet";
 export function ThreadGroupInviteScreen({
   route,
 }: StaticScreenProps<{ environmentId: EnvironmentId; threadId: ThreadId }>) {
+  const m = useMessages();
   const ref = route.params;
   const navigation = useNavigation();
   const thread = useQuietThreadShell(ref);
@@ -37,10 +39,13 @@ export function ThreadGroupInviteScreen({
     return (
       <View className="flex-1 gap-4 bg-sheet p-5">
         <Text className="text-sm text-foreground-muted">
-          Invite models from a main thread with Group conversations enabled in Settings, Labs, Zack
-          on this environment.
+          {m(
+            msg(
+              "Invite models from a main thread with Group conversations enabled in Settings, Labs, Zack on this environment.",
+            ),
+          )}
         </Text>
-        <Button label="Close" onPress={() => navigation.goBack()} />
+        <Button label={m(msg("Close"))} onPress={() => navigation.goBack()} />
       </View>
     );
   }
@@ -58,7 +63,7 @@ export function ThreadGroupInviteScreen({
         void invite({
           environmentId: ref.environmentId,
           input: { threadId: ref.threadId, modelSelection: option.selection },
-        }).then((result) => alertGroupCommandFailure("Could not invite that model", result))
+        }).then((result) => alertGroupCommandFailure(m(msg("Could not invite that model")), result))
       }
       optionDescriptors={[]}
       onUpdateOptionSelections={() => {}}

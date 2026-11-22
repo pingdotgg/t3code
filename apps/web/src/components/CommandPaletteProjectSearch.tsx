@@ -11,8 +11,10 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { BrainIcon, BracesIcon, MessageSquareIcon, NetworkIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
+import { msg, T, useMessages } from "gt-react";
 
 import { useHandleNewThread } from "~/hooks/useHandleNewThread";
+import type { MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useProjects, useThreadShells } from "~/state/entities";
@@ -112,13 +114,14 @@ function Snippet(props: { readonly children: ReactNode }) {
 }
 
 const FACT_KIND_LABEL = {
-  decision: "Decision",
-  constraint: "Constraint",
-  convention: "Convention",
-  note: "Note",
+  decision: msg("Decision"),
+  constraint: msg("Constraint"),
+  convention: msg("Convention"),
+  note: msg("Note"),
 } as const;
 
 function useFactGroup(target: ProjectSearchTarget, query: string | null): GroupState {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(target.environmentId));
   const available = config?.environment.capabilities.projectKnowledge === true;
   const openProjectMemory = useOpenProjectMemory();
@@ -142,14 +145,21 @@ function useFactGroup(target: ProjectSearchTarget, query: string | null): GroupS
           },
         })
       : null,
+    m,
   );
   if (!available) {
-    return { status: "unavailable", message: "Project memory is not available on this server." };
+    return {
+      status: "unavailable",
+      message: m(msg("Project memory is not available on this server.")),
+    };
   }
   if (search.error) return { status: "error", message: search.error };
   if (!search.data || search.isPending) return { status: "pending" };
   if (search.data.facts.state === "unavailable") {
-    return { status: "unavailable", message: "Fact ranking is unavailable on this server." };
+    return {
+      status: "unavailable",
+      message: m(msg("Fact ranking is unavailable on this server.")),
+    };
   }
   const terms = queryTerms(active?.query ?? "");
   return {
@@ -163,7 +173,11 @@ function useFactGroup(target: ProjectSearchTarget, query: string | null): GroupS
               value: `fact:${fact.id}`,
               searchTerms: [],
               title: <HighlightedTerms text={fact.content} terms={terms} />,
-              description: `${FACT_KIND_LABEL[fact.kind]} · ${fact.status} · trust ${fact.trust.toFixed(2)}`,
+              description: m(msg("{kind} · {status} · trust {trust}"), {
+                kind: m(FACT_KIND_LABEL[fact.kind]),
+                status: fact.status,
+                trust: fact.trust.toFixed(2),
+              }),
               icon: <BrainIcon className={ITEM_ICON_CLASS} />,
               run: async () => {
                 openProjectMemory({
@@ -179,6 +193,7 @@ function useFactGroup(target: ProjectSearchTarget, query: string | null): GroupS
 }
 
 function useConversationGroup(target: ProjectSearchTarget, query: string | null): GroupState {
+  const m = useMessages();
   const navigate = useNavigate();
   const threads = useThreadShells();
   const config = useAtomValue(serverEnvironment.configValueAtom(target.environmentId));
@@ -189,6 +204,7 @@ function useConversationGroup(target: ProjectSearchTarget, query: string | null)
           environmentId: target.environmentId,
           input: { query, projectId: target.projectId, limit: GROUP_LIMIT },
         }),
+    m,
   );
   if (search.error) return { status: "error", message: search.error };
   if (!search.data || search.isPending) return { status: "pending" };
@@ -204,13 +220,13 @@ function useConversationGroup(target: ProjectSearchTarget, query: string | null)
       kind: "action" as const,
       value: `conversation:${match.threadId}:${match.messageId ?? index}`,
       searchTerms: [],
-      title: titleById.get(match.threadId) || "Untitled thread",
+      title: titleById.get(match.threadId) || m(msg("Untitled thread")),
       description: (
         <Snippet>
           <span
             className={match.source === "user" ? "text-info-foreground" : "text-success-foreground"}
           >
-            {match.source === "user" ? "You:" : "Agent:"}
+            {match.source === "user" ? m(msg("You:")) : m(msg("Agent:"))}
           </span>{" "}
           <HighlightedTerms text={match.snippet} terms={terms} />
         </Snippet>
@@ -233,16 +249,17 @@ function useConversationGroup(target: ProjectSearchTarget, query: string | null)
 
 // Project code errors are tagged data, not Errors, so the generic message would say nothing.
 const PROJECT_CODE_ERROR_MESSAGE: Partial<Record<ProjectCodeError["_tag"], string>> = {
-  "project-not-found": "This project is no longer available.",
-  "thread-project-mismatch": "This thread belongs to another project.",
-  "authority-failed": "The code index could not read this workspace.",
-  "path-outside-checkout": "A symbol path is outside this checkout.",
-  "analysis-failed": "Code analysis failed for this workspace.",
+  "project-not-found": msg("This project is no longer available."),
+  "thread-project-mismatch": msg("This thread belongs to another project."),
+  "authority-failed": msg("The code index could not read this workspace."),
+  "path-outside-checkout": msg("A symbol path is outside this checkout."),
+  "analysis-failed": msg("Code analysis failed for this workspace."),
 };
 
-function projectCodeErrorMessage(failure: unknown): string | undefined {
+function projectCodeErrorMessage(failure: unknown, resolve: MessageResolver): string | undefined {
   if (typeof failure !== "object" || failure === null || !("_tag" in failure)) return undefined;
-  return PROJECT_CODE_ERROR_MESSAGE[failure._tag as ProjectCodeError["_tag"]];
+  const message = PROJECT_CODE_ERROR_MESSAGE[failure._tag as ProjectCodeError["_tag"]];
+  return message === undefined ? undefined : resolve(message);
 }
 
 interface SymbolGroups {
@@ -251,6 +268,7 @@ interface SymbolGroups {
 }
 
 function useSymbolGroups(target: ProjectSearchTarget, query: string | null): SymbolGroups {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(target.environmentId));
   const canQuery = useAtomValue(projectCode.query.permissionAtom(target.environmentId));
   const openExplorer = useOpenCodeExplorer();
@@ -266,25 +284,32 @@ function useSymbolGroups(target: ProjectSearchTarget, query: string | null): Sym
           },
         })
       : null,
+    m,
   );
   const only = (symbols: GroupState): SymbolGroups => ({ symbols, explore: [] });
   if (!available) {
-    return only({ status: "unavailable", message: "Code search is not available on this server." });
+    return only({
+      status: "unavailable",
+      message: m(msg("Code search is not available on this server.")),
+    });
   }
   if (!canQuery) {
-    return only({ status: "unavailable", message: "This connection cannot read project files." });
+    return only({
+      status: "unavailable",
+      message: m(msg("This connection cannot read project files.")),
+    });
   }
   if (search.error) {
     return only({
       status: "error",
-      message: projectCodeErrorMessage(search.failure) ?? search.error,
+      message: projectCodeErrorMessage(search.failure, m) ?? search.error,
     });
   }
   if (!search.data || search.isPending) return only({ status: "pending" });
   if (search.data.coverage.state === "unavailable") {
     return only({
       status: "unavailable",
-      message: "The code index is not ready for this project.",
+      message: m(msg("The code index is not ready for this project.")),
     });
   }
   const terms = queryTerms(query ?? "");
@@ -312,8 +337,10 @@ function useSymbolGroups(target: ProjectSearchTarget, query: string | null): Sym
       kind: "action" as const,
       value: `explore:${symbol.id}`,
       searchTerms: [],
-      title: `Explore ${symbol.name}`,
-      description: <Snippet>Callers and callees · {symbol.path}</Snippet>,
+      title: m(msg("Explore {name}"), { name: symbol.name }),
+      description: (
+        <Snippet>{m(msg("Callers and callees · {path}"), { path: symbol.path })}</Snippet>
+      ),
       icon: <NetworkIcon className={ITEM_ICON_CLASS} />,
       run: async () => {
         openExplorer({
@@ -329,9 +356,9 @@ function useSymbolGroups(target: ProjectSearchTarget, query: string | null): Sym
 }
 
 const EMPTY_MESSAGE = {
-  facts: "No matching facts.",
-  conversations: "No matching messages.",
-  symbols: "No matching symbols.",
+  facts: msg("No matching facts."),
+  conversations: msg("No matching messages."),
+  symbols: msg("No matching symbols."),
 } as const;
 
 function toGroup(
@@ -339,6 +366,7 @@ function toGroup(
   label: string,
   icon: ReactNode,
   state: GroupState,
+  resolve: MessageResolver,
 ): CommandPaletteGroup {
   if (state.status === "ready" && state.items.length > 0) {
     return { value, label, items: state.items };
@@ -346,9 +374,9 @@ function toGroup(
   // Status rows are disabled so keyboard navigation only lands on real results.
   const message =
     state.status === "ready"
-      ? EMPTY_MESSAGE[value]
+      ? resolve(EMPTY_MESSAGE[value])
       : state.status === "pending"
-        ? "Searching…"
+        ? resolve(msg("Searching…"))
         : state.message;
   return {
     value,
@@ -371,6 +399,7 @@ export function OpenProjectSearchPalette(props: {
   readonly target: ProjectSearchTarget;
   readonly setOpen: (open: boolean) => void;
 }) {
+  const m = useMessages();
   const [query, setQuery] = useState("");
   const [highlightedItemValue, setHighlightedItemValue] = useState<string | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
@@ -387,36 +416,41 @@ export function OpenProjectSearchPalette(props: {
     ? [
         toGroup(
           "facts",
-          "Facts",
+          m(msg("Facts")),
           <BrainIcon className={ITEM_ICON_CLASS} />,
           settled ? facts : pending,
+          m,
         ),
         toGroup(
           "conversations",
-          "Conversations",
+          m(msg("Conversations")),
           <MessageSquareIcon className={ITEM_ICON_CLASS} />,
           settled ? conversations : pending,
+          m,
         ),
         toGroup(
           "symbols",
-          "Symbols",
+          m(msg("Symbols")),
           <BracesIcon className={ITEM_ICON_CLASS} />,
           settled ? symbols : pending,
+          m,
         ),
         ...(settled && explore.length > 0
-          ? [{ value: "explore", label: "Code explorer", items: explore }]
+          ? [{ value: "explore", label: m(msg("Code explorer")), items: explore }]
           : []),
       ]
     : [];
 
   return (
     <CommandPaletteContent
-      aria-label="Project search"
+      aria-label={m(msg("Project search"))}
       autoHighlight="always"
-      escapeLabel="Back"
-      footerActionLabel="Open"
+      escapeLabel={m(msg("Back"))}
+      footerActionLabel={m(msg("Open"))}
       inputProps={{
-        placeholder: `Search ${props.target.projectName} facts, conversations, and symbols…`,
+        placeholder: m(msg("Search {project} facts, conversations, and symbols…"), {
+          project: props.target.projectName,
+        }),
         maxLength: MAX_QUERY_LENGTH,
       }}
       mode="none"
@@ -432,7 +466,7 @@ export function OpenProjectSearchPalette(props: {
       value={query}
     >
       <CommandPaletteResults
-        emptyStateMessage="Type at least two characters to search this project."
+        emptyStateMessage={m(msg("Type at least two characters to search this project."))}
         groups={groups}
         highlightedItemValue={highlightedItemValue}
         isActionsOnly={false}
@@ -448,19 +482,20 @@ export function OpenProjectSearchPalette(props: {
 }
 
 export function ProjectSearchPalette(props: { readonly setOpen: (open: boolean) => void }) {
+  const m = useMessages();
   const target = useProjectSearchTarget();
   if (!target) {
     return (
       <CommandPaletteContent
-        aria-label="Project search"
-        escapeLabel="Back"
-        inputProps={{ disabled: true, placeholder: "Search project…" }}
+        aria-label={m(msg("Project search"))}
+        escapeLabel={m(msg("Back"))}
+        inputProps={{ disabled: true, placeholder: m(msg("Search project…")) }}
         mode="none"
         testId="project-search"
         value=""
       >
         <div className="py-10 text-center text-sm text-muted-foreground">
-          Open a project to search its facts, conversations, and symbols.
+          <T>Open a project to search its facts, conversations, and symbols.</T>
         </div>
       </CommandPaletteContent>
     );

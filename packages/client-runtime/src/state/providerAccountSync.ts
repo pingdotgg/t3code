@@ -18,6 +18,8 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import type { Atom } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
@@ -71,8 +73,16 @@ export type ProviderAccountSyncCell = CellKey &
         readonly stage: "export" | "import";
         /** Safe text from the typed error. */
         readonly message: string;
+        readonly clientMessage?: true;
       }
   );
+
+export function providerAccountSyncFailureMessage(
+  cell: Extract<ProviderAccountSyncCell, { status: "failed" }>,
+  resolve: MFunctionType = mFallback,
+): string {
+  return cell.clientMessage ? resolve(cell.message) : cell.message;
+}
 
 /** One cell per (instanceId x destination), in request order. */
 export interface ProviderAccountSyncReport {
@@ -118,7 +128,11 @@ function cellFromFailure(
       ...key,
       status: "failed",
       stage,
-      message: `The connection to the ${end} device was interrupted. Sync again.`,
+      message:
+        end === "source"
+          ? msg("The connection to the source device was interrupted. Sync again.")
+          : msg("The connection to the destination device was interrupted. Sync again."),
+      clientMessage: true,
     };
   const error = Cause.squash(cause);
   if (isAuthorizationError(error))
@@ -127,7 +141,13 @@ function cellFromFailure(
     return { ...key, status: "skipped", end, reason: "not-connected" };
   if (isProviderAccountTransferError(error) || isSetupError(error) || isSettingsError(error))
     return { ...key, status: "failed", stage, message: error.message };
-  return { ...key, status: "failed", stage, message: "Couldn't sync this account. Try again." };
+  return {
+    ...key,
+    status: "failed",
+    stage,
+    message: msg("Couldn't sync this account. Try again."),
+    clientMessage: true,
+  };
 }
 
 // A failed decode echoes the payload, and the payload is plaintext.

@@ -295,7 +295,7 @@ export function describeUnavailableModelSelection(
     (candidate) => candidate.instanceId === selection.instanceId,
   );
   const driver = selectionDriver(config, selection.instanceId);
-  const modelReason = unavailableModelReason(provider, selection.model);
+  const modelReason = unavailableModelReason(provider, selection.model, m);
   if (modelReason) return { title: m(msg("Model unavailable")), detail: modelReason };
   if (isDriverDisallowed(config, driver)) {
     const label = providerDisplayLabel({

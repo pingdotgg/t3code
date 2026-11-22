@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { WaypointsIcon } from "lucide-react";
+import { T } from "gt-react";
 
 import { cn } from "../../lib/utils";
 import { projectCode } from "../../state/projectCode";
@@ -33,7 +34,9 @@ export function ThreadCodeIndexRow(props: {
       )}
     >
       <WaypointsIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
-      <span className="min-w-0 flex-1 truncate">Code index</span>
+      <span className="min-w-0 flex-1 truncate">
+        <T>Code index</T>
+      </span>
       <CodeIndexBadge
         environmentId={props.environmentId}
         projectId={props.projectId}

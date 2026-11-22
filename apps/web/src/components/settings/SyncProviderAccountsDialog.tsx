@@ -10,6 +10,7 @@ import {
   type AccountSyncEnvironment,
   planProviderAccountSync,
   type ProviderAccountSyncCell,
+  providerAccountSyncFailureMessage,
   type ProviderAccountSyncPlan,
   type ProviderAccountSyncReport,
   supportsProviderAccountSync,
@@ -165,7 +166,9 @@ function SyncedAccountRow({
     return <SettingsRow title={title} description={blockNote(cell.reason, device, messages)} />;
   }
   if (cell.status === "failed") {
-    return <SettingsRow title={title} description={cell.message} />;
+    return (
+      <SettingsRow title={title} description={providerAccountSyncFailureMessage(cell, messages)} />
+    );
   }
   const state = syncedAccountState(
     providers.find((candidate) => candidate.instanceId === cell.instanceId),

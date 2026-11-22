@@ -1,4 +1,6 @@
 import type { SkillsLibraryStatus } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 export interface SkillsLibraryIssue {
   readonly key: string;
@@ -8,42 +10,65 @@ export interface SkillsLibraryIssue {
   readonly guidance: string;
 }
 
-export function skillsLibraryIssues(status: SkillsLibraryStatus): SkillsLibraryIssue[] {
+export function skillsLibraryIssues(
+  status: SkillsLibraryStatus,
+  resolve: MFunctionType = mFallback,
+): SkillsLibraryIssue[] {
   return [
     ...status.conflicts.map((conflict) =>
       conflict.reason === "outsideLink"
         ? {
             key: `conflict:${conflict.name}`,
             name: conflict.name,
-            kind: "Link outside the skill",
+            kind: resolve(msg("Link outside the skill")),
             paths: conflict.paths,
-            guidance:
-              "The second path is a link inside the skill whose target lies outside it. Replace the link with the file before refreshing.",
+            guidance: resolve(
+              msg(
+                "The second path is a link inside the skill whose target lies outside it. Replace the link with the file before refreshing.",
+              ),
+            ),
           }
         : {
             key: `conflict:${conflict.name}`,
             name: conflict.name,
-            kind: "Copies differ",
+            kind: resolve(msg("Copies differ")),
             paths: conflict.paths,
-            guidance: "These copies differ. Keep one copy before refreshing.",
+            guidance: resolve(msg("These copies differ. Keep one copy before refreshing.")),
           },
     ),
     ...status.nameMismatches.map((mismatch) => ({
       key: `name:${mismatch.name}`,
       name: mismatch.name,
-      kind: `Named "${mismatch.frontmatterName}" in SKILL.md`,
+      kind: resolve(msg('Named "{name}" in SKILL.md', { name: mismatch.frontmatterName })),
       paths: [],
-      guidance: `Some providers use the folder name and others use "${mismatch.frontmatterName}".`,
+      guidance: resolve(
+        msg('Some providers use the folder name and others use "{name}".', {
+          name: mismatch.frontmatterName,
+        }),
+      ),
     })),
   ];
 }
 
-export function skillsLibraryIssueSummary(status: SkillsLibraryStatus): string | null {
-  const plural = (count: number, one: string, many: string) =>
-    count === 0 ? null : `${count} ${count === 1 ? one : many}`;
+export function skillsLibraryIssueSummary(
+  status: SkillsLibraryStatus,
+  resolve: MFunctionType = mFallback,
+): string | null {
   const parts = [
-    plural(status.conflicts.length, "conflict", "conflicts"),
-    plural(status.nameMismatches.length, "name mismatch", "name mismatches"),
+    status.conflicts.length === 0
+      ? null
+      : resolve(
+          msg("{count, plural, one {{count} conflict} other {{count} conflicts}}", {
+            count: status.conflicts.length,
+          }),
+        ),
+    status.nameMismatches.length === 0
+      ? null
+      : resolve(
+          msg("{count, plural, one {{count} name mismatch} other {{count} name mismatches}}", {
+            count: status.nameMismatches.length,
+          }),
+        ),
   ].filter((part) => part !== null);
   return parts.length === 0 ? null : parts.join(" · ");
 }

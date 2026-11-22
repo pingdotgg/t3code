@@ -3,7 +3,13 @@ import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
 
+import {
+  composerTargetKey,
+  type ComposerThreadTarget,
+  useComposerDraftStore,
+} from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
+import { composerDraftContentChanged } from "./composerSend.logic";
 
 export interface PreparingComposerImage {
   readonly id: string;
@@ -69,6 +75,9 @@ export function addPreparingComposerImages(
   targetKey: string,
   images: ReadonlyArray<PreparingComposerImage>,
 ): void {
+  if (images.length > 0) {
+    heldSends.get(targetKey)?.({ status: "cancelled" });
+  }
   usePreparingComposerImageStore.setState((state) => ({
     byTargetKey: {
       ...state.byTargetKey,
@@ -116,8 +125,89 @@ export function removePreparingComposerImages(
 // Bumped on cancel so a send held for the cancelled images is dropped rather than released.
 const cancelGenerations = new Map<string, number>();
 
+export type HeldComposerSendResult =
+  | { readonly status: "ready" }
+  | { readonly status: "cancelled" };
+
+const heldSends = new Map<string, (result: HeldComposerSendResult) => void>();
+const useHeldSendStore = create<{ readonly targetKeys: Readonly<Record<string, true>> }>(() => ({
+  targetKeys: {},
+}));
+let preparedImagesJoiningDraft = false;
+
 function invalidatePendingSubmit(targetKey: string) {
   cancelGenerations.set(targetKey, (cancelGenerations.get(targetKey) ?? 0) + 1);
+  heldSends.get(targetKey)?.({ status: "cancelled" });
+}
+
+/** Whether a send from the target's draft is waiting on its images to finish preparing. */
+export function useComposerSendHeld(targetKey: string): boolean {
+  return useHeldSendStore((state) => state.targetKeys[targetKey] === true);
+}
+
+export function cancelHeldComposerSend(targetKey: string): void {
+  heldSends.get(targetKey)?.({ status: "cancelled" });
+}
+
+/** Inserts finished images into the draft without counting as an edit to a held send. */
+export function joinPreparedImagesToDraft<T>(insert: () => T): T {
+  preparedImagesJoiningDraft = true;
+  try {
+    return insert();
+  } finally {
+    preparedImagesJoiningDraft = false;
+  }
+}
+
+/**
+ * Holds a send made while the draft still has images compressing. Resolves ready once they join
+ * the draft, or cancelled if the draft is edited or the send cancelled. Null means nothing needs
+ * to wait. Lives outside the composer so leaving the thread still completes the send.
+ */
+export function holdComposerSend(
+  draftTarget: ComposerThreadTarget,
+): Promise<HeldComposerSendResult> | null {
+  const targetKey = composerTargetKey(draftTarget);
+  if (countPreparingComposerImages(targetKey) === 0) return null;
+  if (heldSends.has(targetKey)) return Promise.resolve({ status: "cancelled" });
+  return new Promise((resolve) => {
+    let draft = useComposerDraftStore.getState().getComposerDraft(draftTarget);
+    const settle = (result: HeldComposerSendResult) => {
+      if (heldSends.get(targetKey) !== settle) return;
+      heldSends.delete(targetKey);
+      stopWatchingImages();
+      stopWatchingDraft();
+      useHeldSendStore.setState((state) => {
+        const targetKeys = { ...state.targetKeys };
+        delete targetKeys[targetKey];
+        return { targetKeys };
+      });
+      resolve(result);
+    };
+    heldSends.set(targetKey, settle);
+    const stopWatchingImages = usePreparingComposerImageStore.subscribe((state) => {
+      if (state.byTargetKey[targetKey]) return;
+      // Let joinPreparedImagesToDraft finish inserting compressed images in this tick first.
+      queueMicrotask(() => settle({ status: "ready" }));
+    });
+    const stopWatchingDraft = useComposerDraftStore.subscribe((state) => {
+      const next = state.getComposerDraft(draftTarget);
+      if (
+        !preparedImagesJoiningDraft &&
+        (composerDraftContentChanged(draft, next) ||
+          draft?.modelSelectionByProvider !== next?.modelSelectionByProvider ||
+          draft?.activeProvider !== next?.activeProvider ||
+          draft?.runtimeMode !== next?.runtimeMode ||
+          draft?.interactionMode !== next?.interactionMode)
+      ) {
+        settle({ status: "cancelled" });
+      }
+      draft = next;
+    });
+    useHeldSendStore.setState((state) => ({
+      targetKeys: { ...state.targetKeys, [targetKey]: true },
+    }));
+  });
 }
 
 /** Drops every image still preparing for the target, so its compression result is discarded. */

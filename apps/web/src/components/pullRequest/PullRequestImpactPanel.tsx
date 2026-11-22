@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { ChevronRightIcon } from "lucide-react";
 import { useState } from "react";
+import { msg, T, useMessages } from "gt-react";
 
 import { resolveFileDiffPath } from "~/lib/diffRendering";
 import { cn } from "~/lib/utils";
@@ -62,13 +63,16 @@ function changedLineRanges(fileDiff: FileDiffMetadata) {
 }
 
 function AffectedSymbols(props: { readonly result: ProjectCodeQueryResult }) {
+  const m = useMessages();
   const nodes = new Map(props.result.nodes.map((node) => [node.id, node]));
   const gradeOf = (callerId: string, symbolId: string) =>
     props.result.edges.find((edge) => edge.source === callerId && edge.target === symbolId)
       ?.evidenceGrade;
   const groups = props.result.symbolGroups ?? [];
   if (groups.length === 0) {
-    return <EmptyNote>No indexed declarations overlap this file's changed hunks.</EmptyNote>;
+    return (
+      <EmptyNote>{m(msg("No indexed declarations overlap this file's changed hunks."))}</EmptyNote>
+    );
   }
   return (
     <ul className="flex flex-col gap-1.5">
@@ -80,11 +84,11 @@ function AffectedSymbols(props: { readonly result: ProjectCodeQueryResult }) {
             <span className="px-2 font-mono text-xs text-foreground">
               {symbol.name}
               <span className="ms-2 font-sans text-2xs text-muted-foreground">
-                {symbol.kind} · line {symbol.startLine}
+                {m(msg("{kind} · line {line}"), { kind: symbol.kind, line: symbol.startLine })}
               </span>
             </span>
             {group.callers.length === 0 && group.tests.length === 0 ? (
-              <EmptyNote>No static callers or reaching tests found.</EmptyNote>
+              <EmptyNote>{m(msg("No static callers or reaching tests found."))}</EmptyNote>
             ) : null}
             {group.callers.map((id) => {
               const caller = nodes.get(id);
@@ -92,14 +96,16 @@ function AffectedSymbols(props: { readonly result: ProjectCodeQueryResult }) {
               const grade = gradeOf(id, group.symbol);
               return (
                 <span key={id} className="flex min-w-0 items-baseline gap-2 ps-5 pe-2 text-xs">
-                  <span className="shrink-0 text-2xs text-muted-foreground">caller</span>
+                  <span className="shrink-0 text-2xs text-muted-foreground">
+                    <T>caller</T>
+                  </span>
                   <span className="min-w-0 truncate font-mono">{caller.name}</span>
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">
                     {caller.path}:{caller.startLine}
                   </span>
                   {grade ? (
                     <Badge variant={GRADE_VARIANT[grade]} size="sm">
-                      {GRADE_LABEL[grade]}
+                      {m(GRADE_LABEL[grade])}
                     </Badge>
                   ) : null}
                 </span>
@@ -110,13 +116,15 @@ function AffectedSymbols(props: { readonly result: ProjectCodeQueryResult }) {
               if (test === undefined) return null;
               return (
                 <span key={id} className="flex min-w-0 items-baseline gap-2 ps-5 pe-2 text-xs">
-                  <span className="shrink-0 text-2xs text-muted-foreground">likely test</span>
+                  <span className="shrink-0 text-2xs text-muted-foreground">
+                    <T>likely test</T>
+                  </span>
                   <span className="min-w-0 truncate font-mono">{test.name}</span>
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">
                     {test.path}:{test.startLine}
                   </span>
                   <Badge variant="secondary" size="sm">
-                    static reachability
+                    <T>static reachability</T>
                   </Badge>
                 </span>
               );
@@ -151,7 +159,11 @@ function AffectedFile(props: {
           )}
         />
         <span className="min-w-0 flex-1 truncate">{path}</span>
-        {deleted ? <span className="shrink-0 text-2xs text-muted-foreground">deleted</span> : null}
+        {deleted ? (
+          <span className="shrink-0 text-2xs text-muted-foreground">
+            <T>deleted</T>
+          </span>
+        ) : null}
       </CollapsibleTrigger>
       <CollapsiblePanel animate={false}>
         {open ? (
@@ -173,6 +185,7 @@ function AffectedFileResult(props: {
   readonly path: string;
   readonly fileDiff: FileDiffMetadata;
 }) {
+  const m = useMessages();
   const ranges = changedLineRanges(props.fileDiff);
   const affected = useEnvironmentQuery(
     projectCode.query({
@@ -188,6 +201,7 @@ function AffectedFileResult(props: {
         },
       },
     }),
+    m,
   );
   if (affected.data === null) {
     return <QueryState pending error={affected.error} onRetry={affected.refresh} />;
@@ -206,6 +220,7 @@ function ImpactBody(props: {
   readonly detail: PullRequestDetailView;
   readonly fileDiffs: ReadonlyArray<FileDiffMetadata>;
 }) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canReadFreshness = config?.environment.capabilities.projectCodeFreshness === true;
   const shells = useThreadShellsForProjectRefs([
@@ -224,6 +239,7 @@ function ImpactBody(props: {
             query: { operation: "freshness" },
           },
         }),
+    m,
   );
   const checkoutHead = freshness.data?.index?.headCommit ?? null;
   const headSha = props.detail.headSha ?? null;
@@ -235,7 +251,12 @@ function ImpactBody(props: {
   if (checkout === null) {
     return (
       <EmptyNote>
-        {`No thread here has ${props.detail.headBranch} checked out, so there is no checkout to analyze. Check out this pull request in a thread to see callers and likely tests.`}
+        {m(
+          msg(
+            "No thread here has {branch} checked out, so there is no checkout to analyze. Check out this pull request in a thread to see callers and likely tests.",
+          ),
+          { branch: props.detail.headBranch },
+        )}
       </EmptyNote>
     );
   }
@@ -243,7 +264,12 @@ function ImpactBody(props: {
     <div className="flex flex-col gap-1">
       <div className="flex items-center gap-2 px-2 text-2xs text-muted-foreground">
         <span className="min-w-0 flex-1">
-          {`Static candidates from the ${props.detail.headBranch} checkout in “${checkout.title}”. Callers and tests are graph reachability, not proof of impact or coverage.`}
+          {m(
+            msg(
+              "Static candidates from the {branch} checkout in “{title}”. Callers and tests are graph reachability, not proof of impact or coverage.",
+            ),
+            { branch: props.detail.headBranch, title: checkout.title },
+          )}
         </span>
         <CodeIndexBadge
           environmentId={props.environmentId}
@@ -253,7 +279,12 @@ function ImpactBody(props: {
       </div>
       {behind ? (
         <p className="px-2 text-2xs text-warning-foreground">
-          {`This checkout is at ${checkoutHead.slice(0, 7)}, but the pull request head is ${headSha.slice(0, 7)}. Results describe the checkout, not the latest push.`}
+          {m(
+            msg(
+              "This checkout is at {checkout}, but the pull request head is {head}. Results describe the checkout, not the latest push.",
+            ),
+            { checkout: checkoutHead.slice(0, 7), head: headSha.slice(0, 7) },
+          )}
         </p>
       ) : null}
       {props.fileDiffs.slice(0, MAX_FILES).map((fileDiff) => (
@@ -265,7 +296,9 @@ function ImpactBody(props: {
         />
       ))}
       {props.fileDiffs.length > MAX_FILES ? (
-        <EmptyNote>{`Showing the first ${MAX_FILES} changed files.`}</EmptyNote>
+        <EmptyNote>
+          {m(msg("Showing the first {count} changed files."), { count: MAX_FILES })}
+        </EmptyNote>
       ) : null}
     </div>
   );
@@ -281,6 +314,7 @@ export function PullRequestImpactPanel(props: {
   readonly detail: PullRequestDetailView;
   readonly fileDiffs: ReadonlyArray<FileDiffMetadata>;
 }) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canQuery = useAtomValue(projectCode.query.permissionAtom(props.environmentId));
   const [open, setOpen] = useState(false);
@@ -291,7 +325,9 @@ export function PullRequestImpactPanel(props: {
       <Collapsible open={open} onOpenChange={setOpen}>
         <h2>
           <CollapsibleTrigger className="flex w-full items-center gap-1.5 px-4 py-2 text-left text-xs text-muted-foreground">
-            <span>Potentially affected</span>
+            <span>
+              <T>Potentially affected</T>
+            </span>
             <ChevronRightIcon
               aria-hidden
               className={cn("size-3.5 transition-transform", open && "rotate-90")}
@@ -309,7 +345,9 @@ export function PullRequestImpactPanel(props: {
                   fileDiffs={props.fileDiffs}
                 />
               ) : (
-                <EmptyNote>Update the server to use potentially affected symbols.</EmptyNote>
+                <EmptyNote>
+                  {m(msg("Update the server to use potentially affected symbols."))}
+                </EmptyNote>
               )}
             </div>
           ) : null}
