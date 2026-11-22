@@ -3288,6 +3288,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       const host = yield* ProviderHost.ProviderHost;
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: options.prefix });
       const statusCacheDir = path.join(directory, "status-cache");
+      yield* fileSystem.makeDirectory(statusCacheDir);
       const agentPath = path.join(directory, "agent.mjs");
       const modelsPath = path.join(directory, "models.json");
       yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
@@ -4950,6 +4951,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* instance.snapshot.refresh;
         expect(Option.getOrThrow(yield* Fiber.join(initial)).auth.status).toBe("unknown");
+        expect(yield* readPersistedAuthConfirmed()).toBeNull();
 
         // Confirmed sign-in invalidates a still-valid enrichment cache so the post-sign-in refresh
         // probes newly available models instead of serving stale cached entries, and persists
