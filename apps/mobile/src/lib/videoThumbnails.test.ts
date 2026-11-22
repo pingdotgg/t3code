@@ -138,4 +138,81 @@ describe("video thumbnails", () => {
     expect(file.dispose).toHaveBeenCalledTimes(1);
     expect(await next).toBe(frame);
   });
+
+  it("aborts and releases an active extraction when no reader remains", async () => {
+    const started = Promise.withResolvers<void>();
+    const first = player();
+    first.replaceAsync.mockImplementation(() => {
+      started.resolve();
+      return new Promise(() => {});
+    });
+    mocks.createPlayer.mockReturnValueOnce(first);
+    const file = source();
+    const controller = new AbortController();
+    const stalled = thumbnails.loadVideoThumbnail("stalled", async () => file, controller.signal);
+    const next = thumbnails.loadVideoThumbnail(
+      "next",
+      async () => source(),
+      new AbortController().signal,
+    );
+    await started.promise;
+    controller.abort();
+    expect(await stalled).toBeNull();
+    expect(first.release).toHaveBeenCalledTimes(1);
+    expect(file.dispose).toHaveBeenCalledTimes(1);
+    expect(await next).toBe(frame);
+    expect(thumbnails.cachedVideoThumbnail("stalled")).toBeNull();
+  });
+
+  it("deduplicates concurrent requests for the same key even when extraction fails", async () => {
+    const started = Promise.withResolvers<void>();
+    const rejectReplace = Promise.withResolvers<void>();
+    const first = player();
+    first.replaceAsync.mockImplementation(() => {
+      started.resolve();
+      return rejectReplace.promise;
+    });
+    mocks.createPlayer.mockReturnValueOnce(first);
+    const secondSource = vi.fn(async () => source());
+    const firstReq = thumbnails.loadVideoThumbnail(
+      "same",
+      async () => source(),
+      new AbortController().signal,
+    );
+    const secondReq = thumbnails.loadVideoThumbnail(
+      "same",
+      secondSource,
+      new AbortController().signal,
+    );
+    await started.promise;
+    rejectReplace.reject(new Error("network stalled"));
+    expect(await firstReq).toBeNull();
+    expect(await secondReq).toBeNull();
+    expect(mocks.createPlayer).toHaveBeenCalledTimes(1);
+    expect(secondSource).not.toHaveBeenCalled();
+  });
+
+  it("swallows late native rejections after releasing an aborted player", async () => {
+    const started = Promise.withResolvers<void>();
+    const replace = Promise.withResolvers<void>();
+    const first = player();
+    first.replaceAsync.mockImplementation(() => {
+      started.resolve();
+      return replace.promise;
+    });
+    first.release.mockImplementation(() => {
+      replace.reject(new Error("player released"));
+    });
+    mocks.createPlayer.mockReturnValueOnce(first);
+    const controller = new AbortController();
+    const request = thumbnails.loadVideoThumbnail(
+      "aborted",
+      async () => source(),
+      controller.signal,
+    );
+    await started.promise;
+    controller.abort();
+    expect(await request).toBeNull();
+    expect(first.release).toHaveBeenCalledTimes(1);
+  });
 });
