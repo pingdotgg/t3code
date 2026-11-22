@@ -10,6 +10,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import type {
@@ -3434,64 +3435,21 @@ it.effect("reads the fresh diff when detail or summary discovers a changed revis
   }),
 );
 
-it.effect("tells a held detail reader about a check change only when the refresh finds one", () =>
+it.effect("notifies readers of a held detail only when its refresh finds a change", () =>
   Effect.gen(function* () {
     let status: "pending" | "success" = "pending";
-    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
-    const service = yield* makeService({
-      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
-      providers: [
-        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
-          // Hosts do not always move `updatedAt` when CI finishes.
-          getChangeRequest: () =>
-            Effect.sync(() => ({
-              ...hostedChangeRequest("body"),
-              checks: [{ name: "ci", status, description: null, url: null }],
-            })),
-        }),
-      ],
-    });
-    const nextNotice = <A, E>(then: Effect.Effect<A, E>) =>
-      service.subscribeRefreshes.pipe(
-        Stream.take(1),
-        Stream.mapEffect(() => then),
-        Stream.runHead,
-        Effect.timeoutOption("1 minute"),
-        Effect.forkChild({ startImmediately: true }),
-      );
-
-    yield* service.detail(reference);
-    yield* TestClock.adjust("61 seconds");
-    const quiet = yield* nextNotice(Effect.void);
-    yield* service.detail(reference);
-    yield* TestClock.adjust("1 minute");
-    assert.isTrue(Option.isNone(Option.flatten(yield* Fiber.join(quiet))));
-
-    status = "success";
-    yield* TestClock.adjust("1 second");
-    const reread = yield* nextNotice(service.detail(reference));
-    yield* service.detail(reference);
-    yield* TestClock.adjust("1 minute");
-    assert.deepStrictEqual(
-      Option.flatten(yield* Fiber.join(reread)).pipe(
-        Option.map((detail) => detail.checks.map((check) => check.status)),
-      ),
-      Option.some(["success"]),
-    );
-  }),
-);
-
-it.effect("a held detail's change notice does not leave checks readers on the cached list", () =>
-  Effect.gen(function* () {
-    let status: "pending" | "success" = "pending";
+    const fetches = yield* Queue.unbounded<void>();
     const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
     const checks = () => [{ name: "ci", status, description: null, url: null }];
     const service = yield* makeService({
       projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
       providers: [
         fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          // Hosts do not always move `updatedAt` when CI finishes.
           getChangeRequest: () =>
-            Effect.sync(() => ({ ...hostedChangeRequest("body"), checks: checks() })),
+            Queue.offer(fetches, undefined).pipe(
+              Effect.as({ ...hostedChangeRequest("body"), checks: checks() }),
+            ),
           getChangeRequestChecks: () =>
             Effect.sync(() => ({ state: "open" as const, checks: checks() })),
         }),
@@ -3499,24 +3457,25 @@ it.effect("a held detail's change notice does not leave checks readers on the ca
     });
 
     yield* service.detail(reference);
+    yield* Queue.take(fetches);
+    yield* TestClock.adjust("61 seconds");
+    yield* service.detail(reference);
+    yield* Queue.take(fetches);
+
     yield* TestClock.adjust("61 seconds");
     yield* service.checks(reference);
     status = "success";
-    // The panel refetches checks on the notice, well inside the checks cache's lifetime.
-    const reread = yield* service.subscribeRefreshes.pipe(
-      Stream.take(1),
-      Stream.mapEffect(() => service.checks(reference)),
-      Stream.runHead,
-      Effect.timeoutOption("1 second"),
-      Effect.forkChild({ startImmediately: true }),
-    );
     yield* service.detail(reference);
-    yield* TestClock.adjust("1 second");
+    // The unchanged refresh above stayed quiet, so this is the first notice.
+    assert.strictEqual(Option.getOrThrow(yield* Stream.runHead(service.subscribeRefreshes)), 1);
+    // Readers refetch on the notice, well inside the checks cache's lifetime.
     assert.deepStrictEqual(
-      Option.flatten(yield* Fiber.join(reread)).pipe(
-        Option.map((result) => result?.checks.map((check) => check.status).join()),
-      ),
-      Option.some("success"),
+      (yield* service.detail(reference)).checks.map((check) => check.status),
+      ["success"],
+    );
+    assert.deepStrictEqual(
+      (yield* service.checks(reference))?.checks.map((check) => check.status),
+      ["success"],
     );
   }),
 );
