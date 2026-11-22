@@ -573,7 +573,7 @@ describe("rendered Markdown task saves", () => {
     using _fetch = vi
       .spyOn(globalThis, "fetch")
       .mockImplementation((input, init) =>
-        String(input).startsWith("/assets/tasks.md")
+        new URL(String(input), location.href).pathname === "/assets/tasks.md"
           ? Promise.resolve(
               new Response("- [ ] Keep the rest of this file\n\nPast the first megabyte\n"),
             )

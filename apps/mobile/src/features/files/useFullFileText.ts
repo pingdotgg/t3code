@@ -1,10 +1,41 @@
 import type { AssetResource, EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect, useMemo, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import { AsyncResult, Atom } from "effect/reactivity";
+import { useMemo } from "react";
 
+import { connectionAtomRuntime } from "../../connection/runtime";
 import { useAssetUrlState } from "../../state/assets";
 
 // Whole-file reads past this stay on the 1 MB RPC preview; a phone lays out every source row.
 export const MOBILE_FULL_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+// Switching back to a recently closed file reuses its text instead of downloading it again.
+const RECENT_FILE_TTL_MS = 60_000;
+
+/** A refresh can keep the URL, so the key also carries the revision it downloads for. */
+const fullFileTextAtom = Atom.family((key: string) => {
+  const [uri] = JSON.parse(key) as [string, string];
+  return connectionAtomRuntime
+    .atom(
+      HttpClient.get(uri).pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap((response) => {
+          // The file can grow after the preview read; never buffer past the cap. React Native's
+          // fetch buffers the whole body, so a response without a length is refused, not trusted.
+          const length = Number(response.headers["content-length"] ?? Number.NaN);
+          return Number.isFinite(length) && length <= MOBILE_FULL_FILE_MAX_BYTES
+            ? response.text
+            : Effect.succeed(null);
+        }),
+        Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+      ),
+    )
+    .pipe(Atom.setIdleTTL(RECENT_FILE_TTL_MS), Atom.withLabel(`full-file-text:${key}`));
+});
+
+const noFullFileTextAtom = Atom.make(AsyncResult.success(null));
 
 /**
  * Downloads a thread file's full text past the 1 MB RPC preview; null while loading, after a
@@ -27,34 +58,9 @@ export function useFullFileText(input: {
   );
   const assetUrl = useAssetUrlState(input.environmentId, resource, input.revision);
   const uri = resource !== null && assetUrl._tag === "Success" ? assetUrl.url : null;
-  // A refresh can keep the URL, so a result counts only for the revision it was downloaded for.
-  const [result, setResult] = useState<{
-    readonly uri: string;
-    readonly revision: string;
-    readonly text: string;
-  } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the full-file download and cancels it when the URL changes or the screen closes.
-  useEffect(() => {
-    if (uri === null) return;
-    const controller = new AbortController();
-    fetch(uri, { cache: "no-store", signal: controller.signal })
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        // The file can grow after the preview read; never buffer past the cap. React Native's fetch
-        // buffers the whole body, so a response without a length is refused rather than trusted.
-        const length = Number(response.headers.get("content-length") ?? Number.NaN);
-        if (!Number.isFinite(length) || length > MOBILE_FULL_FILE_MAX_BYTES) {
-          controller.abort();
-          throw new Error("File too large");
-        }
-        return response.text();
-      })
-      .then((text) => setResult({ uri, revision: input.revision, text }))
-      // The caller keeps showing the 1 MB preview and its partial-file notice.
-      .catch(() => undefined);
-    return () => controller.abort();
-  }, [uri, input.revision]);
-  return uri !== null && result?.uri === uri && result.revision === input.revision
-    ? result.text
-    : null;
+  const result = useAtomValue(
+    uri === null ? noFullFileTextAtom : fullFileTextAtom(JSON.stringify([uri, input.revision])),
+  );
+  // The caller keeps showing the 1 MB preview and its partial-file notice.
+  return AsyncResult.isSuccess(result) ? result.value : null;
 }

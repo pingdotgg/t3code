@@ -1,9 +1,23 @@
-import { useEffect, useState } from "react";
+import { useAtomValue } from "@effect/atom-react";
+import { splitMarkdown, type SplitMarkdown } from "@t3tools/shared/markdownChunks";
+import * as Effect from "effect/Effect";
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
+import * as Stream from "effect/Stream";
+import { AsyncResult, Atom } from "effect/reactivity";
+
+import { connectionAtomRuntime } from "~/connection/runtime";
 
 import { FULL_TEXT_MAX_BYTES, RENDERED_MAX_LINES } from "./largeTextProtocol";
 
 // A slow download swaps in what has arrived this often, so the reader is not left at 1 MB.
-const SWAP_INTERVAL_MS = 1000;
+const SWAP_INTERVAL = "1 second";
+// Switching back to a recently closed file reuses its text instead of downloading it again.
+const RECENT_FILE_TTL_MS = 60_000;
+
+interface Downloaded {
+  readonly text: string;
+  readonly lines: number;
+}
 
 function countNewlines(text: string): number {
   let lines = 0;
@@ -13,166 +27,64 @@ function countNewlines(text: string): number {
   return lines;
 }
 
-// The range starts this far before the preview's end, so the overlap shows it is the same file.
-const OVERLAP_BYTES = 4096;
-const UTF8_BOM = [0xef, 0xbb, 0xbf];
+// Past either cap the main thread cannot hold or lay the text out.
+const tooLarge = (file: Downloaded) =>
+  file.lines > RENDERED_MAX_LINES || file.text.length > FULL_TEXT_MAX_BYTES;
 
-type ByteReader = ReadableStreamDefaultReader<Uint8Array<ArrayBuffer>>;
+/** A file's text so far, at most once per interval, ending at its whole text or past a cap. */
+export const downloadText = (src: string) =>
+  HttpClient.get(src).pipe(
+    Effect.flatMap(HttpClientResponse.filterStatusOk),
+    Effect.map((response) => response.stream),
+    Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
+    Stream.unwrap,
+    // Drops a leading BOM, as the 1 MB preview read does.
+    Stream.decodeText,
+    Stream.scan(
+      (): Downloaded => ({ text: "", lines: 1 }),
+      (file, chunk) => ({ text: file.text + chunk, lines: file.lines + countNewlines(chunk) }),
+    ),
+    Stream.takeUntil(tooLarge),
+    Stream.groupedWithin(Number.MAX_SAFE_INTEGER, SWAP_INTERVAL),
+    Stream.map((swaps) => swaps[swaps.length - 1]!),
+  );
 
-/** Reads until at least `count` bytes arrived or the body ended. */
-async function readAtLeast(reader: ByteReader, count: number): Promise<Uint8Array> {
-  const parts: Uint8Array[] = [];
-  let length = 0;
-  while (length < count) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    parts.push(value);
-    length += value.byteLength;
-  }
-  const bytes = new Uint8Array(length);
-  let at = 0;
-  for (const part of parts) {
-    bytes.set(part, at);
-    at += part.byteLength;
-  }
-  return bytes;
-}
-
-function startsWithAt(bytes: Uint8Array, expected: Uint8Array, at: number): boolean {
-  if (bytes.byteLength < at + expected.byteLength) return false;
-  for (let index = 0; index < expected.byteLength; index += 1) {
-    if (bytes[at + index] !== expected[index]) return false;
-  }
-  return true;
-}
-
-/**
- * Streams the rest of the file after the bytes already read, handing over the text so far at
- * most once per interval. Resolves the whole text, or "too-large" past the line or byte cap.
- */
-export async function downloadRest(input: {
-  readonly src: string;
-  readonly preview: string;
-  readonly sizeBytes: number;
-  readonly signal: AbortSignal;
-  readonly onProgress: (text: string) => void;
-}): Promise<string | "too-large"> {
-  // The server decodes the first megabyte strictly, drops a character the cut split and strips a
-  // leading BOM, so the preview's UTF-8 length is where the rest begins, give or take that BOM.
-  const previewBytes = new TextEncoder().encode(input.preview);
-  const overlap = previewBytes.subarray(Math.max(0, previewBytes.byteLength - OVERLAP_BYTES));
-  const rangeStart = previewBytes.byteLength - overlap.byteLength;
-  let response = await fetch(input.src, {
-    cache: "no-store",
-    signal: input.signal,
-    headers: { Range: `bytes=${rangeStart}-` },
-  });
-  if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-  let reader: ByteReader = response.body.getReader();
-  let text = input.preview;
-  let pending: Uint8Array = new Uint8Array();
-  const total = Number(response.headers.get("content-range")?.split("/")[1]);
-  let resumed = false;
-  if (response.status === 206 && total === input.sizeBytes) {
-    const head = await readAtLeast(reader, overlap.byteLength + UTF8_BOM.length);
-    // Shifted by three bytes when the file starts with a BOM the preview read dropped. Repetitive
-    // text can match at both shifts; then the position is ambiguous and the file downloads whole.
-    const shifts = [0, UTF8_BOM.length].filter((shift) => startsWithAt(head, overlap, shift));
-    if (shifts.length === 1) {
-      pending = head.subarray(shifts[0]! + overlap.byteLength);
-      resumed = true;
-    }
-  }
-  if (!resumed) {
-    // No range support, or the file changed since the preview was read: start over.
-    await reader.cancel();
-    response = await fetch(input.src, { cache: "no-store", signal: input.signal });
-    if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
-    reader = response.body.getReader();
-    text = "";
-  }
-  // A file that grew since the preview was read must still stay within the main-thread ceiling.
-  let bytes = resumed ? previewBytes.byteLength : 0;
-  // Only the file's own start may drop a BOM, as the preview read did; mid-file U+FEFF is text.
-  const decoder = new TextDecoder("utf-8", { ignoreBOM: resumed });
-  let lines = countNewlines(text) + 1;
-  let lastSwap = performance.now();
-  for (let chunk: Uint8Array | null = pending; ; chunk = null) {
-    if (chunk === null) {
-      const { done, value } = await reader.read();
-      if (done) return text + decoder.decode();
-      chunk = value;
-    }
-    bytes += chunk.byteLength;
-    const value = decoder.decode(chunk, { stream: true });
-    text += value;
-    lines += countNewlines(value);
-    if (lines > RENDERED_MAX_LINES || bytes > FULL_TEXT_MAX_BYTES) {
-      await reader.cancel();
-      return "too-large";
-    }
-    if (performance.now() - lastSwap > SWAP_INTERVAL_MS) {
-      lastSwap = performance.now();
-      // Hand over whole lines only, so the last row does not flicker as it fills in.
-      input.onProgress(text.slice(0, text.lastIndexOf("\n") + 1));
-    }
-  }
-}
+/** `src` is the asset URL with its revision, so a changed file downloads again. */
+const fullFileTextAtom = Atom.family((src: string) =>
+  connectionAtomRuntime
+    .atom(downloadText(src))
+    .pipe(Atom.setIdleTTL(RECENT_FILE_TTL_MS), Atom.withLabel(`full-file-text:${src}`)),
+);
 
 export type FullFileText =
   | { readonly text: string; readonly done: boolean }
   | "too-large"
   | "failed";
 
-// Switching back to a recently opened file reuses its text instead of downloading it again.
-const RECENT_FILES = 4;
-const RECENT_FILE_MAX_CHARS = 16 * 1024 * 1024;
-const recentFiles = new Map<string, string>();
-
-function rememberFile(src: string, text: string) {
-  if (text.length > RECENT_FILE_MAX_CHARS) return;
-  recentFiles.delete(src);
-  recentFiles.set(src, text);
-  if (recentFiles.size > RECENT_FILES) recentFiles.delete(recentFiles.keys().next().value!);
+/** A file past the 1 MB read: the preview at once, then the full file as it downloads. */
+export function useFullFileText(src: string, preview: string): FullFileText {
+  const result = useAtomValue(fullFileTextAtom(src));
+  if (AsyncResult.isFailure(result)) return "failed";
+  if (!AsyncResult.isSuccess(result)) return { text: preview, done: false };
+  if (tooLarge(result.value)) return "too-large";
+  if (!result.waiting) return { text: result.value.text, done: true };
+  // Whole lines only, so the last row does not flicker as it fills in; the first swap can still
+  // hold less than the preview already shows.
+  const text = result.value.text.slice(0, result.value.text.lastIndexOf("\n") + 1);
+  return { text: text.length >= preview.length ? text : preview, done: false };
 }
 
-/**
- * The whole text of a file past the 1 MB read: the preview at once, then the full file as it
- * downloads. A new `src` (the asset URL with its revision) downloads again.
- */
-export function useFullFileText(input: {
-  readonly src: string;
-  readonly preview: string;
-  readonly sizeBytes: number;
-}): FullFileText {
-  const [state, setState] = useState<{ readonly src: string; readonly file: FullFileText } | null>(
-    () => {
-      const cached = recentFiles.get(input.src);
-      return cached === undefined ? null : { src: input.src, file: { text: cached, done: true } };
-    },
-  );
-  const { src, preview, sizeBytes } = input;
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the full-file download and cancels it when the source changes or the preview closes.
-  useEffect(() => {
-    if (recentFiles.has(src)) return;
-    const controller = new AbortController();
-    downloadRest({
-      src,
-      preview,
-      sizeBytes,
-      signal: controller.signal,
-      onProgress: (text) => setState({ src, file: { text, done: false } }),
-    })
-      .then((result) => {
-        if (result !== "too-large") rememberFile(src, result);
-        setState({ src, file: result === "too-large" ? result : { text: result, done: true } });
-      })
-      .catch(() => {
-        if (!controller.signal.aborted) setState({ src, file: "failed" });
-      });
-    return () => controller.abort();
-  }, [src, preview, sizeBytes]);
-  const cached = state?.src === src ? undefined : recentFiles.get(src);
-  if (cached !== undefined) return { text: cached, done: true };
-  return state?.src === src ? state.file : { text: preview, done: false };
+/** The finished text's Markdown pieces, kept as long as its text; splitting 12 MB takes 0.5 s. */
+const fullFileMarkdownAtom = Atom.family((src: string) =>
+  Atom.make((get) => {
+    const result = get(fullFileTextAtom(src));
+    return AsyncResult.isSuccess(result) && !result.waiting && !tooLarge(result.value)
+      ? splitMarkdown(result.value.text)
+      : null;
+  }).pipe(Atom.setIdleTTL(RECENT_FILE_TTL_MS), Atom.withLabel(`full-file-markdown:${src}`)),
+);
+
+/** Markdown pieces of the text so far; a finished file's are split once and kept. */
+export function useFullFileMarkdown(src: string, text: string): SplitMarkdown {
+  return useAtomValue(fullFileMarkdownAtom(src)) ?? splitMarkdown(text);
 }

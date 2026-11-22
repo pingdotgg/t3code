@@ -4,10 +4,9 @@ import type { FileOptions } from "@pierre/diffs/react";
 import { useGT } from "gt-react";
 import { lazy, Suspense, useImperativeHandle, type RefObject } from "react";
 
-import { type SplitMarkdown, splitMarkdown } from "@t3tools/shared/markdownChunks";
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
 import { FileSurfaceLoading } from "./fileSurfaceChrome";
-import { useFullFileText } from "./fullFileText";
+import { useFullFileMarkdown, useFullFileText } from "./fullFileText";
 import { FULL_TEXT_MAX_BYTES } from "./largeTextProtocol";
 import SourceFilePreview from "./ReadOnlySourcePreview";
 
@@ -50,24 +49,8 @@ function estimatedLines(preview: string, sizeBytes: number): number {
   return (lines / Math.max(1, new TextEncoder().encode(preview).length)) * sizeBytes;
 }
 
-// Reopening a recent file reuses its pieces; splitting 12 MB again blocks for about half a second.
-const recentSplits = new Map<string, SplitMarkdown>();
-
-// The cache keeps each text and its pieces alive, so only files this small are kept.
-const RECENT_SPLIT_MAX_CHARS = 16 * 1024 * 1024;
-
-function splitFinishedMarkdown(text: string): SplitMarkdown {
-  if (text.length > RECENT_SPLIT_MAX_CHARS) return splitMarkdown(text);
-  const cached = recentSplits.get(text);
-  if (cached) return cached;
-  const split = splitMarkdown(text);
-  recentSplits.set(text, split);
-  if (recentSplits.size > 4) recentSplits.delete(recentSplits.keys().next().value!);
-  return split;
-}
-
 function FullTextPreview(props: Parameters<typeof LargeFilePreview>[0]) {
-  const file = useFullFileText(props);
+  const file = useFullFileText(props.src, props.preview);
   // Deciding from the full text would highlight the preview, then drop it once the file arrives.
   const highlight = estimatedLines(props.preview, props.sizeBytes) <= HIGHLIGHT_MAX_LINES;
   if (file === "too-large" || file === "failed") return <PlainViewer {...props} />;
@@ -75,14 +58,7 @@ function FullTextPreview(props: Parameters<typeof LargeFilePreview>[0]) {
     <>
       <CopyText copyContents={props.copyContents} text={file.done ? file.text : null} />
       {props.markdownCwd !== null ? (
-        <ChunkedMarkdown
-          {...(file.done ? splitFinishedMarkdown(file.text) : splitMarkdown(file.text))}
-          loading={!file.done}
-          cwd={props.markdownCwd}
-          relativePath={props.name}
-          threadRef={props.threadRef}
-          workspaceMutationId={props.workspaceMutationId}
-        />
+        <MarkdownText {...props} markdownCwd={props.markdownCwd} file={file} />
       ) : (
         <SourceFilePreview
           name={props.name}
@@ -93,6 +69,24 @@ function FullTextPreview(props: Parameters<typeof LargeFilePreview>[0]) {
         />
       )}
     </>
+  );
+}
+
+function MarkdownText(
+  props: Parameters<typeof LargeFilePreview>[0] & {
+    readonly markdownCwd: string;
+    readonly file: { readonly text: string; readonly done: boolean };
+  },
+) {
+  return (
+    <ChunkedMarkdown
+      {...useFullFileMarkdown(props.src, props.file.text)}
+      loading={!props.file.done}
+      cwd={props.markdownCwd}
+      relativePath={props.name}
+      threadRef={props.threadRef}
+      workspaceMutationId={props.workspaceMutationId}
+    />
   );
 }
 
