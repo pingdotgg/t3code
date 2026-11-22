@@ -2051,14 +2051,14 @@ const make = Effect.gen(function* () {
             operation: acknowledgementOperation,
           }),
           parentThreadId: scope.thread.threadId,
-          taskId,
+          taskId: task.id,
           observedByRunId: observingRun?.id ?? null,
         })
         .pipe(
           Effect.mapError((error) =>
             failure(
               "orchestration_error",
-              `Unable to acknowledge delegated task ${taskId}: ${errorMessage(error)}`,
+              `Unable to acknowledge delegated task ${task.id}: ${errorMessage(error)}`,
             ),
           ),
         );

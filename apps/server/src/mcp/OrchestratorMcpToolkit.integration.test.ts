@@ -396,6 +396,15 @@ describe("orchestrator MCP toolkit", () => {
               }),
             ),
           );
+        // A compacted parent often keeps only the child thread link, so the child id resolves and acknowledges too.
+        const byChildThread = yield* invoke("task_status", {
+          taskId: delegatedStart.childThreadId,
+        });
+        expect(byChildThread.isError).not.toBe(true);
+        expect(
+          (yield* decodeDelegateTaskResult(byChildThread.structuredContent).pipe(Effect.orDie))
+            .taskId,
+        ).toBe(delegatedStart.taskId);
         const delegatedStatusCall = yield* invoke("task_status", {
           taskId: delegatedStart.taskId,
         });
@@ -414,15 +423,6 @@ describe("orchestrator MCP toolkit", () => {
         });
         expect(delegated.resultContextTransferId).not.toBeNull();
 
-        // A compacted parent often keeps only the child thread link, so the child id resolves too.
-        const byChildThread = yield* invoke("task_status", {
-          taskId: delegatedStart.childThreadId,
-        });
-        expect(byChildThread.isError).not.toBe(true);
-        expect(
-          (yield* decodeDelegateTaskResult(byChildThread.structuredContent).pipe(Effect.orDie))
-            .taskId,
-        ).toBe(delegatedStart.taskId);
         // An id that matches nothing is not an ownership problem; name the caller's real tasks.
         const unknown = yield* invoke("task_status", {
           taskId: "node:delegated-task:does-not-exist",
