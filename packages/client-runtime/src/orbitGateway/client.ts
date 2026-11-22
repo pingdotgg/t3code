@@ -609,7 +609,10 @@ export function createOrbitGatewayClient(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? Date.now;
-  /** Operations only Orbit's own read serves (`instance.finalize`), so polls skip the Conn read. */
+  /**
+   * Operations the Conn read answered 404 for: a Gateway before release 2203 serves no
+   * `instance.finalize` there, so later polls of one go to Orbit's own read at once.
+   */
   const rootReadOperations = new Set<number>();
   const call = async (request: OrbitGatewayRequest): Promise<unknown> =>
     (await callEnvelope(request)).data;
@@ -796,14 +799,14 @@ export function createOrbitGatewayClient(
     },
     operation: async (operationId) => {
       const path = `/operations/${operationId}`;
-      // A finalize is read through Orbit's own read at once: the Conn read would answer 404 first.
+      // Learned from a 404 below: this Gateway's Conn read does not serve this Operation.
       if (rootReadOperations.has(operationId)) {
         return operation(await call({ method: "GET", path, root: true }), path);
       }
       try {
         return operation(await call({ method: "GET", path }), path);
       } catch (error) {
-        // The Conn read serves no `instance.finalize` (release 2201); Orbit's own read does.
+        // Before release 2203 the Conn read served no `instance.finalize`; Orbit's own read does.
         if (!isOrbitGatewayError(error) || error.status !== 404) throw error;
         const read = operation(await call({ method: "GET", path, root: true }), path);
         rootReadOperations.add(operationId);
@@ -891,7 +894,7 @@ export function createOrbitGatewayClient(
     },
     finalizeReservation: async (reservationId, name, idempotencyKey, branch) => {
       const path = `${reservationPath(reservationId)}/finalize`;
-      const admitted = operation(
+      return operation(
         await call({
           method: "POST",
           path,
@@ -901,8 +904,6 @@ export function createOrbitGatewayClient(
         }),
         path,
       );
-      rootReadOperations.add(admitted.id);
-      return admitted;
     },
   };
 }

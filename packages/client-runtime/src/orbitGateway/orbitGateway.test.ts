@@ -996,7 +996,7 @@ describe("createOrbitGatewayClient", () => {
     ]);
   });
 
-  it("polls a finalize it admitted through Orbit's read only", async () => {
+  it("polls a finalize it admitted through the Conn read (Gateway release 2203)", async () => {
     const requests: OrbitGatewayRequest[] = [];
     const client = createOrbitGatewayClient(async (request) => {
       requests.push(request);
@@ -1009,9 +1009,11 @@ describe("createOrbitGatewayClient", () => {
     });
     await client.finalizeReservation("r1", "fix-login", "key-1");
     await client.operation(32060);
+    await client.operation(32060);
     expect(requests.map((request) => [request.path, request.root ?? false])).toEqual([
       ["/reservations/r1/finalize", false],
-      ["/operations/32060", true],
+      ["/operations/32060", false],
+      ["/operations/32060", false],
     ]);
   });
 });
