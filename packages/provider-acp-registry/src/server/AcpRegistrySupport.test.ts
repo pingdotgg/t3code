@@ -1002,15 +1002,20 @@ describe("AcpRegistrySupport", () => {
       expect(registryRequests).toBe(1);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
 
+      // Refreshing after maxAgeMs when upstream is unchanged renews freshness without advancing indexRevision.
+      yield* TestClock.adjust("15 minutes");
+      expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
+      expect(registryRequests).toBe(2);
+
       upstream = makeBinaryAgent("1.2.5");
       yield* TestClock.adjust("14 minutes");
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
-      expect(registryRequests).toBe(1);
+      expect(registryRequests).toBe(2);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
 
       yield* TestClock.adjust("1 minute");
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(2);
-      expect(registryRequests).toBe(2);
+      expect(registryRequests).toBe(3);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
 
       // Explicit invalidation clears the reuse window without discarding the in-memory index.
@@ -1018,7 +1023,7 @@ describe("AcpRegistrySupport", () => {
       yield* resolver.invalidateIndex();
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
-      expect(registryRequests).toBe(3);
+      expect(registryRequests).toBe(4);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
       // An offline refresh prefers the in-memory index over a stale disk cache and backs off background retries.
@@ -1029,18 +1034,18 @@ describe("AcpRegistrySupport", () => {
       online = false;
       yield* resolver.invalidateIndex();
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
-      expect(registryRequests).toBe(4);
+      expect(registryRequests).toBe(5);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
       online = true;
       upstream = makeBinaryAgent("1.2.7");
       yield* TestClock.adjust("59 seconds");
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
-      expect(registryRequests).toBe(4);
+      expect(registryRequests).toBe(5);
 
       yield* TestClock.adjust("1 second");
       expect(yield* resolver.refreshIndex(refreshOptions)).toBe(4);
-      expect(registryRequests).toBe(5);
+      expect(registryRequests).toBe(6);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
     }).pipe(
       Effect.scoped,
@@ -1064,6 +1069,16 @@ describe("AcpRegistrySupport", () => {
     "backs off queued and subsequent background refreshes when uncached and offline while keeping prepare eligible",
     () => {
       const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+      const newAgent = {
+        ...makeAgent({
+          binary: {
+            "darwin-aarch64": { archive: archiveUrl, cmd: "new-agent" },
+          },
+        }),
+        id: "new-agent",
+        name: "New Agent",
+      } satisfies AcpRegistrySupport.AcpRegistryAgent;
+      let upstreamAgents: ReadonlyArray<AcpRegistrySupport.AcpRegistryAgent> = [agent];
       let online = false;
       let registryRequests = 0;
       let gate: {
@@ -1100,52 +1115,125 @@ describe("AcpRegistrySupport", () => {
         expect((yield* Fiber.join(queuedRefresh)).reason).toBe("registry_unavailable");
         expect(registryRequests).toBe(1);
 
-        // Subsequent background refreshes during the backoff window fail fast without hitting the network.
-        gate = null;
+        // Subsequent background refreshes during the backoff window fail fast before acquiring the semaphore.
         yield* TestClock.adjust("59 seconds");
+        const prepareHoldGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = prepareHoldGate;
+        online = true;
+        const holdingPrepare = yield* resolver
+          .prepare({ agentId: "missing-agent" })
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(prepareHoldGate.started);
         expect((yield* resolver.refreshIndex(refreshOptions).pipe(Effect.flip)).reason).toBe(
           "registry_unavailable",
         );
-        expect(registryRequests).toBe(1);
-
-        // The first background retry after backoff expires fetches again and recovers.
-        online = true;
-        yield* TestClock.adjust("1 second");
-        expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
+        expect(holdingPrepare.pollUnsafe()).toBeUndefined();
         expect(registryRequests).toBe(2);
+        yield* Deferred.succeed(prepareHoldGate.release, undefined);
+        expect((yield* Fiber.join(holdingPrepare)).reason).toBe("agent_not_found");
 
-        // Explicit prepare remains eligible to fetch immediately even during a cold offline backoff window.
-        const secondCacheDir = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "t3-acp-registry-cold-backoff-prepare-",
+        // Clock moving backwards below failedAtMs disables backoff suppression on both fast and semaphore paths.
+        const clockBackDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-clock-back-",
         });
-        const secondResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-          cacheDir: secondCacheDir,
-          toolsDir: `${secondCacheDir}/tools`,
+        const clockBackResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: clockBackDir,
+          toolsDir: `${clockBackDir}/tools`,
           registryUrl,
         });
+        gate = null;
         online = false;
-        expect((yield* secondResolver.refreshIndex(refreshOptions).pipe(Effect.flip)).reason).toBe(
-          "registry_unavailable",
-        );
-        expect(registryRequests).toBe(3);
-
-        online = true;
+        yield* TestClock.adjust("10 minutes");
         expect(
-          (yield* secondResolver.prepare({ agentId: "missing-agent" }).pipe(Effect.flip)).reason,
-        ).toBe("agent_not_found");
-        expect(registryRequests).toBe(4);
+          (yield* clockBackResolver.refreshIndex(refreshOptions).pipe(Effect.flip)).reason,
+        ).toBe("registry_unavailable");
+        const requestsAfterClockFailure = registryRequests;
+        online = true;
+        yield* TestClock.setTime(0);
+        expect(yield* clockBackResolver.refreshIndex(refreshOptions)).toBe(1);
+        expect(registryRequests).toBe(requestsAfterClockFailure + 1);
+
+        // Concurrent cold uncached inspect() calls coalesce behind one failing network fetch.
+        const coldInspectDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cold-inspect-coalesce-",
+        });
+        const coldInspectResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: coldInspectDir,
+          toolsDir: `${coldInspectDir}/tools`,
+          registryUrl,
+        });
+        const coldInspectGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = coldInspectGate;
+        online = false;
+        const requestsBeforeColdInspect = registryRequests;
+        const firstInspect = yield* coldInspectResolver
+          .inspect(settings())
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(coldInspectGate.started);
+        const secondInspect = yield* coldInspectResolver
+          .inspect(settings())
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(coldInspectGate.release, undefined);
+        expect((yield* Fiber.join(firstInspect)).reason).toBe("registry_unavailable");
+        expect((yield* Fiber.join(secondInspect)).reason).toBe("registry_unavailable");
+        expect(registryRequests).toBe(requestsBeforeColdInspect + 1);
+
+        // A queued prepare() must not reuse a cached fallback from a failing background refresh.
+        const queuedPrepareDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-queued-prepare-",
+        });
+        yield* fileSystem.makeDirectory(`${queuedPrepareDir}/acp-registry`, { recursive: true });
+        yield* fileSystem.writeFileString(
+          `${queuedPrepareDir}/acp-registry/registry.json`,
+          makeRegistry({ ...agent, id: "older-agent" }),
+        );
+        const queuedPrepareResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: queuedPrepareDir,
+          toolsDir: `${queuedPrepareDir}/tools`,
+          registryUrl,
+        });
+        const fallbackGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = fallbackGate;
+        online = false;
+        upstreamAgents = [agent, newAgent];
+        const requestsBeforeQueuedPrepare = registryRequests;
+        const failingBackground = yield* queuedPrepareResolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(fallbackGate.started);
+        const queuedPrepare = yield* queuedPrepareResolver
+          .prepare({ agentId: newAgent.id })
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        expect(queuedPrepare.pollUnsafe()).toBeUndefined();
+        // Flip online after the background refresh already captured 503 so only the queued prepare retries online.
+        online = true;
+        gate = null;
+        yield* Deferred.succeed(fallbackGate.release, undefined);
+        expect(yield* Fiber.join(failingBackground)).toBe(0);
+        // Reaching unsupported_distribution (instead of agent_not_found from older-agent) proves prepare retried.
+        expect((yield* Fiber.join(queuedPrepare)).reason).toBe("unsupported_distribution");
+        expect(registryRequests).toBe(requestsBeforeQueuedPrepare + 2);
       }).pipe(
         Effect.scoped,
         Effect.provide(
           layerResolver((request) => {
             registryRequests += 1;
             const activeGate = gate;
+            const shouldSucceed = online;
+            const body = JSON.stringify({ version: "1.0.0", agents: upstreamAgents });
             const respond = Effect.sync(() =>
               HttpClientResponse.fromWeb(
                 request,
-                online
-                  ? new Response(makeRegistry(agent))
-                  : new Response("unavailable", { status: 503 }),
+                shouldSucceed ? new Response(body) : new Response("unavailable", { status: 503 }),
               ),
             );
             return activeGate === null
@@ -1245,6 +1333,7 @@ describe("AcpRegistrySupport", () => {
         const queuedPostInvalidation = yield* resolver
           .refreshIndex(refreshOptions)
           .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(queuedPostInvalidation.pollUnsafe()).toBeUndefined();
         yield* Deferred.succeed(secondWriteGate.release, undefined);
 
         expect(yield* Fiber.join(secondRefresh)).toBe(2);
@@ -1279,6 +1368,91 @@ describe("AcpRegistrySupport", () => {
         expect(yield* resolver.refreshIndex(refreshOptions)).toBe(4);
         expect(registryRequests).toBe(5);
         expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
+
+        // 4. An uncached cold failure started before invalidation also does not record backoff.
+        const coldCacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cold-invalidate-race-",
+        });
+        const coldResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: coldCacheDir,
+          toolsDir: `${coldCacheDir}/tools`,
+          registryUrl,
+        });
+        online = false;
+        const coldOfflineGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        fetchGate = coldOfflineGate;
+        const coldFailedRefresh = yield* coldResolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(coldOfflineGate.started);
+        yield* coldResolver.invalidateIndex();
+        yield* Deferred.succeed(coldOfflineGate.release, undefined);
+        expect((yield* Fiber.join(coldFailedRefresh)).reason).toBe("registry_unavailable");
+
+        online = true;
+        fetchGate = null;
+        expect(yield* coldResolver.refreshIndex(refreshOptions)).toBe(1);
+        expect(registryRequests).toBe(7);
+
+        // 5. Same-version package swaps change launchIdentity while documentation-only updates keep it identical.
+        const packageSwapDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-launch-identity-",
+        });
+        const swapResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: packageSwapDir,
+          toolsDir: `${packageSwapDir}/tools`,
+          registryUrl,
+        });
+        const toolchain = yield* makeFakeNpmToolchain(packageSwapDir);
+        upstream = {
+          ...makeAgent({ npx: { package: "@example/old@1.0.0" } }),
+          version: "1.0.0",
+          website: "https://example.test/docs-a",
+        };
+        yield* swapResolver.refreshIndex(refreshOptions);
+        const oldPackageInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        expect(oldPackageInspection).toMatchObject({
+          status: "ready",
+          version: "1.0.0",
+          documentationUrl: "https://example.test/docs-a",
+        });
+
+        upstream = {
+          ...makeAgent({ npx: { package: "@example/new@1.0.0" } }),
+          version: "1.0.0",
+          website: "https://example.test/docs-a",
+        };
+        yield* swapResolver.invalidateIndex();
+        yield* swapResolver.refreshIndex(refreshOptions);
+        const newPackageInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        expect(newPackageInspection).toMatchObject({ status: "ready", version: "1.0.0" });
+        expect(
+          oldPackageInspection.status === "ready" &&
+            newPackageInspection.status === "ready" &&
+            oldPackageInspection.launchIdentity !== newPackageInspection.launchIdentity,
+        ).toBe(true);
+
+        upstream = {
+          ...makeAgent({ npx: { package: "@example/new@1.0.0" } }),
+          version: "1.0.0",
+          website: "https://example.test/docs-b",
+        };
+        yield* swapResolver.invalidateIndex();
+        yield* swapResolver.refreshIndex(refreshOptions);
+        const docsOnlyInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        expect(docsOnlyInspection).toMatchObject({
+          status: "ready",
+          version: "1.0.0",
+          documentationUrl: "https://example.test/docs-b",
+        });
+        expect(
+          newPackageInspection.status === "ready" &&
+            docsOnlyInspection.status === "ready" &&
+            newPackageInspection.launchIdentity === docsOnlyInspection.launchIdentity,
+        ).toBe(true);
       }).pipe(
         Effect.scoped,
         Effect.provide(

@@ -668,7 +668,7 @@ describe("makeManagedServerProvider", () => {
   it.effect("ignores stale enrichment callbacks after a newer refresh advances generation", () =>
     Effect.scoped(
       Effect.gen(function* () {
-        const publishCallbacks: Array<(snapshot: ServerProvider) => Effect.Effect<void>> = [];
+        const publishCallbacks: Array<(snapshot: ServerProvider) => Effect.Effect<boolean>> = [];
         const refreshCount = yield* Ref.make(0);
         const firstCallbackReady = yield* Deferred.make<void>();
         const secondCallbackReady = yield* Deferred.make<void>();
@@ -686,9 +686,9 @@ describe("makeManagedServerProvider", () => {
                 : Effect.succeed(refreshedSnapshotSecond),
             ),
           ),
-          enrichSnapshot: ({ publishSnapshot }) =>
+          enrichSnapshot: ({ tryPublishSnapshot }) =>
             Effect.gen(function* () {
-              publishCallbacks.push(publishSnapshot);
+              publishCallbacks.push(tryPublishSnapshot);
               if (publishCallbacks.length === 1) {
                 yield* Deferred.succeed(firstCallbackReady, undefined).pipe(Effect.ignore);
               } else if (publishCallbacks.length === 2) {
@@ -710,8 +710,9 @@ describe("makeManagedServerProvider", () => {
         yield* provider.refresh;
         yield* Deferred.await(secondCallbackReady);
 
-        yield* publishCallbacks[0]!(enrichedSnapshot);
-        yield* publishCallbacks[1]!(enrichedSnapshotSecond);
+        assert.strictEqual(yield* publishCallbacks[0]!(enrichedSnapshot), false);
+        assert.strictEqual(yield* publishCallbacks[1]!(enrichedSnapshotSecond), true);
+        assert.strictEqual(yield* publishCallbacks[1]!(enrichedSnapshotSecond), true);
 
         const updates = Array.from(yield* Fiber.join(updatesFiber));
         const latest = yield* provider.getSnapshot;

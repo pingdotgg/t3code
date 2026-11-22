@@ -46,13 +46,16 @@ connect through `app.t3.codes`, T3 Connect, or a relay.
 
 Agents install under `tools/<agent-id>/<version>/` inside T3 home. T3 Code verifies SHA-256 when the Registry entry
 provides one; entries without a checksum retain the Registry's HTTPS distribution guarantee.
-T3 Code refreshes the Registry index in the background so installed agents pick up new Registry
-versions. Refreshing providers in **Settings → Providers** clears cached data. An installed agent's
-Registry check runs after its probe finishes.
 Registry `npx` and `uvx` packages use T3-owned npm prefixes and Python tool directories at the exact
 version published by the Registry. Their commands are available in a new server terminal for
 sign-in and direct use. Removing an agent's last provider instance removes T3-managed binary files
 but keeps package installs. To use an existing local binary, set **Executable override** explicitly.
+
+T3 Code refreshes the Registry index in the background and automatically installs new versions of
+enabled Registry agents alongside earlier versions, deferring background updates while that agent is
+starting a session. Refreshing providers (in **Settings → Providers** on web and desktop, or
+**Refresh providers** in environment settings on mobile) requests a fresh Registry check once the
+installed agent finishes its status check.
 
 ## Signing in
 

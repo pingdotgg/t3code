@@ -69,6 +69,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     readonly snapshot: ServerProvider;
     readonly getSnapshot: Effect.Effect<ServerProvider>;
     readonly publishSnapshot: (snapshot: ServerProvider) => Effect.Effect<void>;
+    readonly tryPublishSnapshot: (snapshot: ServerProvider) => Effect.Effect<boolean>;
   }) => Effect.Effect<void>;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
@@ -101,30 +102,41 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const publishEnrichedSnapshot = Effect.fn("publishEnrichedSnapshot")(function* (
     generation: number,
     nextSnapshot: ServerProvider,
-  ) {
-    const snapshotToPublish = yield* Ref.modify(snapshotStateRef, (state) => {
-      if (state.enrichmentGeneration !== generation) {
-        return [null, state] as const;
-      }
-      // Enrichment must not revert usage updates newer than its input snapshot.
-      const merged = withUsageLimits(
-        state.usageAuthLabel === undefined
-          ? nextSnapshot
-          : {
-              ...nextSnapshot,
-              auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
-            },
-        state.snapshot.usageLimits,
-      );
-      if (Equal.equals(state.snapshot, merged)) {
-        return [null, state] as const;
-      }
-      return [merged, { ...state, snapshot: merged }] as const;
-    });
-    if (snapshotToPublish === null) {
-      return;
+  ): Effect.fn.Return<boolean> {
+    const outcome = yield* Ref.modify(
+      snapshotStateRef,
+      (
+        state,
+      ): readonly [
+        { readonly applied: boolean; readonly snapshot: ServerProvider | null },
+        ProviderSnapshotState,
+      ] => {
+        if (state.enrichmentGeneration !== generation) {
+          return [{ applied: false, snapshot: null }, state];
+        }
+        // Enrichment must not revert usage updates newer than its input snapshot.
+        const merged = withUsageLimits(
+          state.usageAuthLabel === undefined
+            ? nextSnapshot
+            : {
+                ...nextSnapshot,
+                auth: { ...nextSnapshot.auth, label: state.usageAuthLabel ?? undefined },
+              },
+          state.snapshot.usageLimits,
+        );
+        if (Equal.equals(state.snapshot, merged)) {
+          return [{ applied: true, snapshot: null }, state];
+        }
+        return [
+          { applied: true, snapshot: merged },
+          { ...state, snapshot: merged },
+        ];
+      },
+    );
+    if (outcome.snapshot !== null) {
+      yield* PubSub.publish(changesPubSub, outcome.snapshot);
     }
-    yield* PubSub.publish(changesPubSub, snapshotToPublish);
+    return outcome.applied;
   });
 
   const restartSnapshotEnrichment = Effect.fn("restartSnapshotEnrichment")(function* (
@@ -146,7 +158,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         settings,
         snapshot,
         getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
-        publishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
+        publishSnapshot: (nextSnapshot) =>
+          publishEnrichedSnapshot(generation, nextSnapshot).pipe(Effect.asVoid),
+        tryPublishSnapshot: (nextSnapshot) => publishEnrichedSnapshot(generation, nextSnapshot),
       })
       .pipe(Effect.ignoreCause({ log: true }), Effect.forkIn(scope));
 
