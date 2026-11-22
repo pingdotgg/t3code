@@ -2,11 +2,13 @@ import { type CSSProperties, memo } from "react";
 
 import {
   normalizeProviderAccentColor,
+  OH_MY_PI_ICON_URL,
   providerAccentForegroundColor,
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
 
 import { ProviderDriverKind } from "@t3tools/contracts";
+import ompIcon from "../../assets/omp.svg";
 import {
   AnthropicIcon,
   AntigravityIcon,
@@ -130,7 +132,9 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
       style={accentStyle}
       data-provider-accent-color={accentColor}
     >
-      {isAcpRegistry ? (
+      {isAcpRegistry && props.acpRegistryIconUrl === OH_MY_PI_ICON_URL ? (
+        <img src={ompIcon} alt="" className={cn("size-5", iconClassName)} />
+      ) : isAcpRegistry ? (
         <AcpRegistryAgentIcon
           className={cn("size-5 rounded-none bg-transparent", iconClassName)}
           fallbackClassName="size-full"

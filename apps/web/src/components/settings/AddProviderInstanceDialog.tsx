@@ -34,6 +34,7 @@ import { normalizeProviderAccentColor } from "../../providerInstances";
 import { managedInstanceLocks, useManagedPolicy } from "../../state/managedPolicy";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
 import { Button } from "../ui/button";
+import ompIcon from "../../assets/omp.svg";
 import { ChatGptConnectionButton } from "./ChatGptConnectionButton";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
@@ -154,6 +155,8 @@ interface AddProviderInstanceDialogProps {
   /** Opens with "Show more" expanded, so the ACP Registry search is in view. */
   readonly showMoreProviders?: boolean;
 }
+
+const OMP_LABEL = "Oh My Pi (OMP)";
 
 export function AddProviderInstanceDialog({
   open,
@@ -361,17 +364,17 @@ export function AddProviderInstanceDialog({
     setHasAttemptedSubmit(false);
   };
 
-  const handleLocalAcpConfiguration = () => {
+  const configureLocalAcp = (label: string, commandPath = "", commandArgs: string[] = []) => {
     setDriver(ACP_REGISTRY_DRIVER_KIND);
     setSelectedAcp(null);
     setIsManualAcpConfiguration(true);
     setConfigByDriver((existing) => ({
       ...existing,
-      [ACP_REGISTRY_DRIVER_KIND]: { source: "local", commandArgs: [] },
+      [ACP_REGISTRY_DRIVER_KIND]: { source: "local", commandPath, commandArgs },
     }));
     setIdentityByDriver((existing) =>
       updateProviderIdentityDraft(existing, ACP_REGISTRY_DRIVER_KIND, {
-        label: gt("Local ACP"),
+        label,
         instanceIdOverride: null,
       }),
     );
@@ -590,13 +593,23 @@ export function AddProviderInstanceDialog({
                         </div>
                       ) : (
                         <>
+                          <Button
+                            disabled={isPreparingRegistryAgent}
+                            onClick={() => configureLocalAcp(OMP_LABEL, "omp", ["acp"])}
+                            size="sm"
+                            type="button"
+                            variant="outline"
+                          >
+                            <img src={ompIcon} alt="" className="size-4" />
+                            {OMP_LABEL}
+                          </Button>
                           <AcpRegistrySearchStep
                             environmentId={environmentId}
                             registry={registry}
                             providerInstances={settings.providerInstances}
                             onPrepared={handleAcpPrepared}
                             onManualConfiguration={handleManualAcpConfiguration}
-                            onLocalConfiguration={handleLocalAcpConfiguration}
+                            onLocalConfiguration={() => configureLocalAcp(gt("Local ACP"))}
                           />
                           {isAcpRegistry && hasAttemptedSubmit && acpSelectionError ? (
                             <p className="mt-2 text-2xs text-destructive">{acpSelectionError}</p>

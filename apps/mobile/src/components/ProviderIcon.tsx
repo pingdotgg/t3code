@@ -3,6 +3,7 @@ import { Defs, LinearGradient, Path, Stop, Svg } from "react-native-svg";
 import { View } from "react-native";
 import {
   normalizeProviderAccentColor,
+  OH_MY_PI_ICON_URL,
   providerAccentForegroundColor,
   providerInstanceInitials,
 } from "@t3tools/client-runtime/state/provider-instance-display";
@@ -85,6 +86,16 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
   if (props.provider === "acpRegistry") {
+    if (props.iconUrl === OH_MY_PI_ICON_URL) {
+      return (
+        <Image
+          source={{ uri: OH_MY_PI_ICON_URL }}
+          style={{ width: size, height: size }}
+          contentFit="contain"
+          cachePolicy="memory-disk"
+        />
+      );
+    }
     return <AcpRegistryProviderIcon color={mono} iconUrl={props.iconUrl} size={size} />;
   }
 
