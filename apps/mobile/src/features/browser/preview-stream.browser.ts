@@ -157,8 +157,8 @@ export function start(configuration: PreviewStreamConfiguration) {
 
   const connect = () => {
     // The server releases control with the old socket, and agent tabs never hand it back.
-    let retake = interactive && control?.controller === "you";
-    let retakeGeneration: number | null = null;
+    const heldGeneration = interactive && control?.controller === "you" ? control.generation : null;
+    let retake = heldGeneration !== null;
     if (client) reportStatus("connecting");
     client?.stop();
     control = null;
@@ -209,14 +209,18 @@ export function start(configuration: PreviewStreamConfiguration) {
           const previous = control;
           control = nextControl;
           if (retake) {
-            if (nextControl.controller === "another-viewer") {
-              // Our old socket until its release bumps the generation; showing it would flash.
-              retakeGeneration ??= nextControl.generation;
-              if (nextControl.generation === retakeGeneration) {
-                clearInput();
-                return;
-              }
-            } else if (nextControl.controller !== "you" && nextControl.canOperate) {
+            // At our held generation, the other viewer is our old socket; showing it would flash.
+            if (
+              nextControl.controller === "another-viewer" &&
+              nextControl.generation === heldGeneration
+            ) {
+              clearInput();
+              return;
+            }
+            if (
+              (nextControl.controller === "agent" || nextControl.controller === "unclaimed") &&
+              nextControl.canOperate
+            ) {
               retake = false;
               clearInput();
               next.send({ type: "takeControl" });
