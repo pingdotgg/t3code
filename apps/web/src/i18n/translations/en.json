@@ -12463,5 +12463,7 @@
   "105662117ba549f3": "Changes files in the workspace",
   "26db0b226248d366": "Reads a file in the workspace",
   "3aa325f821903367": "Changes what the agent may do",
-  "02c3655884511fbb": "Gives an app access"
+  "02c3655884511fbb": "Gives an app access",
+  "276021e98139f901": "All turns",
+  "19fb237712d6e387": "Panel sections"
 }

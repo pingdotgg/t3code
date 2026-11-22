@@ -65,7 +65,7 @@ composer as a thread chip.
 
 ## Find in a diff
 
-Click into a diff in the Diff panel or a pull request's Code tab, then press
+Click into a diff in the Changes tab or a pull request's Code tab, then press
 `mod+f` to search every file in it, including folded files and unchanged lines
 hidden between changes. Enter and `Shift+Enter` move between matches, and a
 match in a folded file opens it. Escape closes the search. This shortcut is not

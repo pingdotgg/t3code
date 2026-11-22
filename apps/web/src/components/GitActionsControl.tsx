@@ -145,6 +145,8 @@ interface GitActionsControlProps {
   showChanges?: boolean;
   onOpenChanges?: () => void;
   workspaceMutationId?: string | null;
+  /** `footer` shows Commit and the change request action as buttons, for the Changes panel. */
+  presentation?: "details" | "footer";
 }
 
 interface PendingDefaultBranchAction {
@@ -975,6 +977,7 @@ function CheckoutGitActionsControl({
   showChanges = true,
   onOpenChanges,
   workspaceMutationId = null,
+  presentation = "details",
 }: GitActionsControlProps) {
   const gt = useGT();
   const messages = useMessages();
@@ -1628,9 +1631,64 @@ function CheckoutGitActionsControl({
 
   if (!gitCwd) return null;
 
+  const footerActions = (
+    <>
+      {gitActionProgress ? (
+        <span className="flex min-w-0 flex-1 text-xs text-muted-foreground">
+          <GitActionProgressButtonContent id={progressLabelId} progress={gitActionProgress} />
+        </span>
+      ) : visibleInlineSuccess ? (
+        <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground" role="status">
+          {visibleInlineSuccess.title}
+        </span>
+      ) : (
+        <span className="flex-1" />
+      )}
+      {gitActionMenuItems
+        .filter((item) => item.id !== "push")
+        .map((item) => {
+          const disabledReason = !canWriteSourceControl
+            ? gt("This connection cannot change source control.")
+            : getMenuActionDisabledReason(
+                {
+                  item,
+                  gitStatus: gitStatusForActions,
+                  isBusy: isGitActionRunning,
+                  hasPrimaryRemote,
+                },
+                messages,
+              );
+          const button = (
+            <Button
+              size="xs"
+              variant={item.id === "pr" ? "default" : "outline"}
+              disabled={!canWriteSourceControl || item.disabled}
+              onClick={() => openDialogForMenuItem(item)}
+            >
+              <GitActionItemIcon icon={item.icon} SourceControlIcon={SourceControlIcon} />
+              {item.label}
+            </Button>
+          );
+          if (!(item.disabled || !canWriteSourceControl) || !disabledReason) {
+            return <span key={item.id}>{button}</span>;
+          }
+          return (
+            <Tooltip key={item.id}>
+              <TooltipTrigger render={<span className="inline-flex" />}>{button}</TooltipTrigger>
+              <TooltipPopup side="top">{disabledReason}</TooltipPopup>
+            </Tooltip>
+          );
+        })}
+    </>
+  );
+
   return (
     <>
-      {!showActions ? null : !isRepo ? (
+      {presentation === "footer" ? (
+        isRepo && !quietEmptyDraft ? (
+          footerActions
+        ) : null
+      ) : !showActions ? null : !isRepo ? (
         <ThreadDetailsControl
           size="xs"
           variant="ghost"
@@ -2050,7 +2108,7 @@ function CheckoutGitActionsControl({
       </Dialog>
 
       {/* Its discovery query should stop when the Git actions row that opens it is hidden. */}
-      {showActions ? (
+      {showActions && presentation !== "footer" ? (
         <PublishRepositoryDialog
           open={isPublishDialogOpen}
           onOpenChange={setIsPublishDialogOpen}

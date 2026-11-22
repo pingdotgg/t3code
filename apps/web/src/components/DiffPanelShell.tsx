@@ -21,6 +21,7 @@ function getDiffPanelHeaderRowClassName(mode: DiffPanelMode) {
 export function DiffPanelShell(props: {
   mode: DiffPanelMode;
   header: ReactNode;
+  footer?: ReactNode;
   children: ReactNode;
 }) {
   const shouldUseDragRegion = isElectron && props.mode !== "sheet" && props.mode !== "embedded";
@@ -42,6 +43,11 @@ export function DiffPanelShell(props: {
         </div>
       )}
       {props.children}
+      {props.footer ? (
+        <div className="flex min-h-11 shrink-0 items-center gap-2 border-t border-border px-3 py-2">
+          {props.footer}
+        </div>
+      ) : null}
     </div>
   );
 }
