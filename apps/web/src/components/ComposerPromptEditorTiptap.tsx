@@ -18,7 +18,7 @@ import { Paragraph } from "@tiptap/extension-paragraph";
 import StarterKit from "@tiptap/starter-kit";
 import { useGT } from "gt-react";
 import { newlineInCode, splitBlockKeepMarks } from "@tiptap/pm/commands";
-import { isHistoryTransaction } from "@tiptap/pm/history";
+import { isHistoryTransaction, undoDepth } from "@tiptap/pm/history";
 import {
   type EditorState,
   NodeSelection,
@@ -170,6 +170,11 @@ export interface ComposerPromptEditorHandle {
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
+export interface ComposerPromptHistoryChange {
+  readonly depth: number;
+  readonly direction: "undo" | "redo" | null;
+}
+
 export interface ComposerPromptEditorProps {
   draftKey?: string;
   value: string;
@@ -203,8 +208,8 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
-    /** True when ProseMirror history (undo or redo) produced this change. */
-    isHistory?: boolean,
+    /** ProseMirror history depth and direction for this change. */
+    history?: ComposerPromptHistoryChange,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1046,6 +1051,7 @@ function ComposerPromptEditorTiptapInner(
   });
   const selectionRangeRef = useRef({ start: initialExpandedCursor, end: initialExpandedCursor });
   const isApplyingControlledUpdateRef = useRef(false);
+  const historyDepthRef = useRef(0);
   const hasAppliedControlledSelectionRef = useRef(false);
   const citationRequestRef = useRef<ComposerCitationCommentRequest | null>(null);
   const [openCitation, setOpenCitation] = useState<OpenCitationComment | null>(null);
@@ -1122,14 +1128,27 @@ function ComposerPromptEditorTiptapInner(
       [updated.state.selection.$from.nodeBefore, updated.state.selection.$from.nodeAfter].some(
         (node) => node?.isInline && node.isAtom && !node.isText && node.type.name !== "hardBreak",
       );
+    const textChanged = previousSnapshot.value !== nextValue;
+    const nextHistoryDepth = Number(undoDepth(updated.state));
+    const previousHistoryDepth = historyDepthRef.current;
+    const historyDirection: ComposerPromptHistoryChange["direction"] = isHistoryTransaction(
+      transaction,
+    )
+      ? nextHistoryDepth < previousHistoryDepth
+        ? "undo"
+        : nextHistoryDepth > previousHistoryDepth
+          ? "redo"
+          : null
+      : null;
+    if (textChanged) historyDepthRef.current = nextHistoryDepth;
     readCallbacks().onChange(
       nextValue,
       nextCursor,
       nextExpandedCursor,
       suppressTrigger,
       contextIds,
-      previousSnapshot.value !== nextValue,
-      isHistoryTransaction(transaction),
+      textChanged,
+      { depth: nextHistoryDepth, direction: historyDirection },
     );
   };
 
@@ -1707,6 +1726,7 @@ function ComposerPromptEditorTiptapInner(
           emitUpdate: false,
         },
       );
+      historyDepthRef.current = Number(undoDepth(editor.state));
     }
     selectMarkdownOffset(editor, value, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);

@@ -168,6 +168,7 @@ import {
 import {
   type ComposerCitationCommentRequest,
   type ComposerPromptEditorHandle,
+  type ComposerPromptHistoryChange,
   ComposerPromptEditorTiptap as ComposerPromptEditor,
 } from "../ComposerPromptEditorTiptap";
 import {
@@ -1490,7 +1491,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     removedQueuedAttachments: removedEditingQueuedAttachments,
     onRestoreQueuedAttachment: (attachment) => {
       if (isQueuedImageAttachment(attachment)) {
-        retainedContextPayloads.restoredQueuedImageIds.add(attachment.id);
+        const boundary = retainedContextPayloads.queuedImageHistory.get(attachment.id) ?? {};
+        boundary.pendingPaste = true;
+        retainedContextPayloads.queuedImageHistory.set(attachment.id, boundary);
       }
       onRestoreEditingQueuedAttachment?.(attachment);
     },
@@ -1699,7 +1702,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
     textChanged: boolean,
-    isHistory = false,
+    history?: ComposerPromptHistoryChange,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
     const trigger = cursorAdjacentToMention
@@ -1815,7 +1818,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         contextIds: contextIds ?? [],
       })),
       removedQueuedAttachments: removedEditingQueuedAttachments ?? [],
-      isHistory,
+      history,
+      textChanged,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,

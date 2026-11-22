@@ -46,7 +46,7 @@ function retention(): RetainedAttachmentContextPayloads {
   return {
     files: new Map(),
     previewAnnotations: new Map(),
-    restoredQueuedImageIds: new Set(),
+    queuedImageHistory: new Map(),
   };
 }
 
@@ -143,7 +143,7 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(removed.queuedAttachmentIdsToRemove).toEqual([chipFile.id]);
     expect(removed.queuedAttachmentsToRestore).toEqual([]);
 
-    // Undoing restores both a keyboard-deleted file and a row-removed image when their chips return.
+    // Undoing restores both a keyboard-deleted file and a row-removed image (depth 1 -> 0).
     const restored = reconcileAttachmentContextReferences({
       referencedContextIds: new Set([chipContextId, imageContextId]),
       files: [],
@@ -152,7 +152,8 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: chipFile, contextIds: [chipContextId] },
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
-      isHistory: true,
+      history: { depth: 0, direction: "undo" },
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -160,26 +161,7 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(restored.queuedAttachmentIdsToRemove).toEqual([]);
     expect(restored.queuedAttachmentsToRestore).toEqual([chipFile, rowRemovedImage]);
 
-    // Typing around a restored image chip (non-history change while chip stays referenced)
-    // does not lose history-undo tracking when a subsequent Undo removes the pasted/restored chip.
-    const typed = reconcileAttachmentContextReferences({
-      referencedContextIds: new Set([chipContextId, imageContextId]),
-      files: [],
-      queuedAttachments: [
-        { attachment: chipFile, contextIds: [chipContextId] },
-        { attachment: plainFile, contextIds: [] },
-        { attachment: rowRemovedImage, contextIds: [imageContextId] },
-      ],
-      removedQueuedAttachments: [],
-      isHistory: false,
-      images: [],
-      previewAnnotations: [],
-      retained,
-    });
-    expect(typed.queuedAttachmentIdsToRemove).toEqual([]);
-
-    // Redoing or undoing past the restoration removes both the file and the restored image,
-    // while keeping an unreferenced file intact.
+    // Redoing back to depth 1 removes both the file and the row-removed image.
     const redone = reconcileAttachmentContextReferences({
       referencedContextIds: new Set(),
       files: [],
@@ -189,7 +171,8 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
       removedQueuedAttachments: [],
-      isHistory: true,
+      history: { depth: 1, direction: "redo" },
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -197,14 +180,15 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(redone.queuedAttachmentIdsToRemove).toEqual([chipFile.id, rowRemovedImage.id]);
     expect(redone.queuedAttachmentsToRestore).toEqual([]);
 
-    // Undoing again and then deleting the image chip directly via Backspace (non-history edit)
-    // keeps the image on the thumbnail shelf and clears its history-removal flag.
+    // Undoing again and deleting the image chip with Backspace (non-history edit at depth 1)
+    // keeps the image on the shelf and clears the overwritten × redo entry.
     reconcileAttachmentContextReferences({
       referencedContextIds: new Set([imageContextId]),
       files: [],
       queuedAttachments: [{ attachment: plainFile, contextIds: [] }],
       removedQueuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
-      isHistory: true,
+      history: { depth: 0, direction: "undo" },
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -217,13 +201,93 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
       removedQueuedAttachments: [],
-      isHistory: false,
+      history: { depth: 1, direction: null },
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(backspaced.queuedAttachmentIdsToRemove).toEqual([]);
     expect(backspaced.queuedAttachmentsToRestore).toEqual([]);
-    expect(retained.restoredQueuedImageIds.size).toBe(0);
+
+    // Paste after × (depth 2) -> Backspace (depth 3, keeps image) -> Undo (depth 2, keeps) ->
+    // Undo (depth 1, undoes paste -> removes image) -> Redo (depth 2, restores) ->
+    // Redo (depth 3, redoes Backspace -> keeps image on shelf).
+    retained.queuedImageHistory.set(rowRemovedImage.id, { pendingPaste: true });
+    reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([imageContextId]),
+      files: [],
+      queuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      removedQueuedAttachments: [],
+      history: { depth: 2, direction: null },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    const backspaceAfterPaste = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      files: [],
+      queuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      removedQueuedAttachments: [],
+      history: { depth: 3, direction: null },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(backspaceAfterPaste.queuedAttachmentIdsToRemove).toEqual([]);
+
+    const undoBackspace = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([imageContextId]),
+      files: [],
+      queuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      removedQueuedAttachments: [],
+      history: { depth: 2, direction: "undo" },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(undoBackspace.queuedAttachmentIdsToRemove).toEqual([]);
+
+    const undoPaste = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      files: [],
+      queuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      removedQueuedAttachments: [],
+      history: { depth: 1, direction: "undo" },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(undoPaste.queuedAttachmentIdsToRemove).toEqual([rowRemovedImage.id]);
+
+    const redoPaste = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([imageContextId]),
+      files: [],
+      queuedAttachments: [],
+      removedQueuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      history: { depth: 2, direction: "redo" },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(redoPaste.queuedAttachmentsToRestore).toEqual([rowRemovedImage]);
+
+    const redoBackspace = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      files: [],
+      queuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      removedQueuedAttachments: [],
+      history: { depth: 3, direction: "redo" },
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(redoBackspace.queuedAttachmentIdsToRemove).toEqual([]);
   });
 });

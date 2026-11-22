@@ -11,6 +11,7 @@ import type { ComposerFileAttachment, ComposerImageAttachment } from "../../comp
 import { fileContextReference, previewAnnotationContextId } from "../../lib/composerContextRecords";
 import type { TerminalContextDraft } from "../../lib/terminalContext";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import type { ComposerPromptHistoryChange } from "../ComposerPromptEditorTiptap";
 import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 
 interface RetainedPreviewAnnotation {
@@ -23,10 +24,16 @@ export interface QueuedAttachmentContextBinding {
   readonly contextIds: ReadonlyArray<ComposerContextId>;
 }
 
+export interface QueuedImageHistoryBoundary {
+  pastedAtDepth?: number | undefined;
+  rowRemovedAtDepth?: number | undefined;
+  pendingPaste?: true | undefined;
+}
+
 export interface RetainedAttachmentContextPayloads {
   files: Map<string, ComposerFileAttachment>;
   previewAnnotations: Map<string, RetainedPreviewAnnotation>;
-  restoredQueuedImageIds: Set<string>;
+  queuedImageHistory: Map<string, QueuedImageHistoryBoundary>;
 }
 
 export interface RetainedContextPayloads extends RetainedAttachmentContextPayloads {
@@ -44,7 +51,7 @@ function createRetainedContextPayloads(): RetainedContextPayloads {
     environments: new Map(),
     files: new Map(),
     previewAnnotations: new Map(),
-    restoredQueuedImageIds: new Set(),
+    queuedImageHistory: new Map(),
   };
 }
 
@@ -73,7 +80,8 @@ export function reconcileAttachmentContextReferences(input: {
   files: ReadonlyArray<ComposerFileAttachment>;
   queuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
   removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
-  isHistory?: boolean;
+  history?: ComposerPromptHistoryChange | undefined;
+  textChanged?: boolean;
   images: ReadonlyArray<ComposerImageAttachment>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   retained: RetainedAttachmentContextPayloads;
@@ -101,6 +109,24 @@ export function reconcileAttachmentContextReferences(input: {
     return file ? [file] : [];
   });
 
+  const history = input.history;
+  if (history && history.direction === null && input.textChanged) {
+    // Any non-history edit drops ProseMirror's redo branch while keeping earlier undo steps.
+    for (const [imageId, boundary] of input.retained.queuedImageHistory) {
+      boundary.rowRemovedAtDepth = undefined;
+      if (boundary.pendingPaste) {
+        boundary.pastedAtDepth = history.depth;
+        boundary.pendingPaste = undefined;
+      }
+      if (boundary.pastedAtDepth !== undefined && boundary.pastedAtDepth > history.depth) {
+        boundary.pastedAtDepth = undefined;
+      }
+      if (boundary.pastedAtDepth === undefined && boundary.rowRemovedAtDepth === undefined) {
+        input.retained.queuedImageHistory.delete(imageId);
+      }
+    }
+  }
+
   const liveQueuedAttachments = input.queuedAttachments ?? [];
   const liveQueuedAttachmentIds = new Set<string>(
     liveQueuedAttachments.map((entry) => entry.attachment.id),
@@ -111,12 +137,16 @@ export function reconcileAttachmentContextReferences(input: {
     if (entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
     if (isQueuedFileAttachment(entry.attachment)) {
       queuedAttachmentIdsToRemove.push(entry.attachment.id);
-    } else if (
-      isQueuedImageAttachment(entry.attachment) &&
-      input.retained.restoredQueuedImageIds.has(entry.attachment.id)
-    ) {
-      input.retained.restoredQueuedImageIds.delete(entry.attachment.id);
-      if (input.isHistory === true) {
+    } else if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
+      const boundary = input.retained.queuedImageHistory.get(entry.attachment.id);
+      if (
+        (history.direction === "undo" &&
+          boundary?.pastedAtDepth !== undefined &&
+          history.depth < boundary.pastedAtDepth) ||
+        (history.direction === "redo" &&
+          boundary?.rowRemovedAtDepth !== undefined &&
+          history.depth >= boundary.rowRemovedAtDepth)
+      ) {
         queuedAttachmentIdsToRemove.push(entry.attachment.id);
       }
     }
@@ -133,8 +163,14 @@ export function reconcileAttachmentContextReferences(input: {
     }
     if (!entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
     restoredQueuedAttachmentIds.add(entry.attachment.id);
-    if (isQueuedImageAttachment(entry.attachment)) {
-      input.retained.restoredQueuedImageIds.add(entry.attachment.id);
+    if (isQueuedImageAttachment(entry.attachment) && history?.direction) {
+      const boundary = input.retained.queuedImageHistory.get(entry.attachment.id) ?? {};
+      if (history.direction === "undo") {
+        boundary.rowRemovedAtDepth = history.depth + 1;
+      } else {
+        boundary.pastedAtDepth = history.depth;
+      }
+      input.retained.queuedImageHistory.set(entry.attachment.id, boundary);
     }
     queuedAttachmentsToRestore.push(entry.attachment);
   }
