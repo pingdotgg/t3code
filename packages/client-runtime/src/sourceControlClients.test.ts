@@ -38,6 +38,19 @@ describe("sourceControlClients.parseChangeRequestUrl", () => {
     });
   });
 
+  it("reads a TanStack Source pull request under its @owner path, not as GitHub's /pull/", () => {
+    const url = "https://source.tanstack.com/@TanStack/router/pull/8882/files";
+    expect(parse(url)).toEqual({
+      host: "source.tanstack.com",
+      repository: "tanstack/router",
+      number: 8882,
+    });
+    expect(kindOf(url)).toBe("tanstack-source");
+    expect(sourceControlClients.parseChangeRequestUrl(url)?.link.repositoryUrl).toBe(
+      "https://source.tanstack.com/@TanStack/router",
+    );
+  });
+
   it("reads a Cursor Origin pull request under Origin's git host, not as GitHub's /pull/", () => {
     for (const url of [
       "https://cursor.com/codebase/Acme.Team/Web-App/pull/42",
@@ -276,6 +289,9 @@ describe("sourceControlClients.recognizeRemote", () => {
     expect(kindOfRemote("https://bitbucket.visualstudio.com/p/_git/r")).toBe("azure-devops");
     expect(kindOfRemote("git@git.cafe:pingdotgg/t3code.git")).toBe("gitcafe");
     expect(kindOfRemote("https://origin.cursor.com/acme/web.git")).toBe("cursor-origin");
+    expect(kindOfRemote("https://source.tanstack.com/@TanStack/router.git")).toBe(
+      "tanstack-source",
+    );
   });
 
   it("reads a remote no host claims as an unknown host, and a local path as no host", () => {
@@ -317,6 +333,8 @@ describe("sourceControlClients repository keys", () => {
     ["git@ssh.dev.azure.com:v3/o/p", "ssh.dev.azure.com/v3/o/p"],
     ["ssh.dev.azure.com/v3/o/p/r", "ssh.dev.azure.com/v3/o/p/r"],
     ["C:/repos/project", "c:/repos/project"],
+    // The owner's `@` is the web's spelling; the API and every key name it without.
+    ["https://source.tanstack.com/@TanStack/router.git", "source.tanstack.com/tanstack/router"],
   ])("keys %s as %s", (remote, key) => {
     expect(sourceControlClients.repositoryKeyFromRemote(remote)).toBe(key);
   });

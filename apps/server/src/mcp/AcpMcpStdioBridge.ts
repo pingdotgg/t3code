@@ -350,6 +350,14 @@ export function runAcpMcpStdioBridge(options: AcpMcpStdioBridgeOptions): Effect.
   });
 }
 
+async function readStdin(): Promise<string> {
+  const chunks: Array<Buffer> = [];
+  for await (const chunk of process.stdin) {
+    chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 /** Avoid heavy imports on the ACP first-message path. */
 export async function runAcpMcpCliFastPath(
   command: "acp-mcp-bridge" | "acp-mcp-call",
@@ -373,12 +381,16 @@ export async function runAcpMcpCliFastPath(
     );
     return;
   }
-  const [tool, argumentsJson] = args;
-  if (tool === undefined || argumentsJson === undefined) {
-    process.stderr.write("acp-mcp-call requires <tool> and <arguments-json>.\n");
+  const [tool, argumentsArg] = args;
+  if (tool === undefined || argumentsArg === undefined) {
+    process.stderr.write(
+      "acp-mcp-call requires <tool> and <arguments-json>, or - to read it from stdin.\n",
+    );
     process.exitCode = 2;
     return;
   }
+  // Windows PowerShell 5.1 strips the quotes from JSON passed as an argument; stdin keeps them.
+  const argumentsJson = argumentsArg === "-" ? await readStdin() : argumentsArg;
   let parsed: unknown;
   try {
     parsed = JSON.parse(argumentsJson);
