@@ -101,9 +101,21 @@ export function PullRequestGuideTab({
         {running ? gt("Reading the change...") : label}
       </Button>
     ) : null;
+  const refreshError =
+    query.error === null ? null : (
+      <Alert variant="error">
+        <TriangleAlertIcon />
+        <AlertDescription>{query.error}</AlertDescription>
+        <AlertAction>
+          <Button size="xs" variant="outline" disabled={query.isPending} onClick={query.refresh}>
+            {gt("Try again")}
+          </Button>
+        </AlertAction>
+      </Alert>
+    );
 
   if (guide === null) {
-    if (query.isPending && data === null) {
+    if (query.isPending && data === null && refreshError === null) {
       return (
         <div
           tabIndex={-1}
@@ -120,33 +132,37 @@ export function PullRequestGuideTab({
         data-workspace-focus-default
         className="scrollbar-gutter-both flex h-full flex-col items-center justify-center-safe gap-2 overflow-y-auto px-4 py-10 text-center outline-none"
       >
-        <p className="text-sm font-medium text-foreground">
-          {running
-            ? gt("Writing a review guide")
-            : failure === null
-              ? gt("No review guide yet")
-              : gt("Could not write a review guide")}
-        </p>
-        <p className="max-w-md text-xs text-muted-foreground">
-          {running
-            ? gt(
-                "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready.",
-              )
-            : failure === null
-              ? (query.error ??
-                gt(
-                  "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.",
-                ))
-              : resolve(FAILURE_HINT)}
-        </p>
-        {writeButton(failure === null ? gt("Write guide") : gt("Try again"), "sm")}
-        {failure === null || running ? null : <FailureDetails detail={failure} />}
+        {refreshError ?? (
+          <>
+            <p className="text-sm font-medium text-foreground">
+              {running
+                ? gt("Writing a review guide")
+                : failure === null
+                  ? gt("No review guide yet")
+                  : gt("Could not write a review guide")}
+            </p>
+            <p className="max-w-md text-xs text-muted-foreground">
+              {running
+                ? gt(
+                    "An agent is reading the change. A large one takes a few minutes. You can leave; you will be told when it is ready.",
+                  )
+                : failure === null
+                  ? gt(
+                      "A guide is a tour of the change: stops through the code in reading order, with the calls only a maintainer can make.",
+                    )
+                  : resolve(FAILURE_HINT)}
+            </p>
+            {writeButton(failure === null ? gt("Write guide") : gt("Try again"), "sm")}
+            {failure === null || running ? null : <FailureDetails detail={failure} />}
+          </>
+        )}
       </div>
     );
   }
 
   const banner =
-    stale || failure !== null || running ? (
+    refreshError ??
+    (stale || failure !== null || running ? (
       <Alert variant={running ? "info" : "warning"}>
         {running ? <Spinner /> : <TriangleAlertIcon />}
         <AlertDescription>
@@ -167,7 +183,7 @@ export function PullRequestGuideTab({
           <AlertAction>{writeButton(gt("Rewrite"), "xs")}</AlertAction>
         ) : null}
       </Alert>
-    ) : null;
+    ) : null);
 
   return (
     <GuideProseContext value={{ environmentId, cwd: workspaceRoot }}>
