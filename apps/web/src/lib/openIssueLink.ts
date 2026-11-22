@@ -55,10 +55,10 @@ export function useOpenIssueLink(
       key: target.ref.key,
       url: targetUrl,
     };
-    // A list page's panel is the Issues page's: its pull request tabs render this markdown too,
-    // and the pull request list's own panel shows pull requests only. Opening the tab here, not
-    // only through the URL, also brings back one that is already open.
-    if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
+    // A list page's panel is the Issues page's: the pull request list's own panel shows pull
+    // requests only. Opening the tab here, not only through the URL, also brings back one that
+    // is already open.
+    if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF || resolvedPanelRef === ISSUES_PANEL_REF) {
       useRightPanelStore.getState().openIssue(ISSUES_PANEL_REF, { ...surface, environmentId });
       const selection = {
         selectedEnvironmentId: environmentId,

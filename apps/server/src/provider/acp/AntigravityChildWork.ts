@@ -80,7 +80,7 @@ export function describeAntigravitySubagentLaunches(
 }
 
 /** Length-delimited fields only; varints and fixed values are skipped. */
-function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
+export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
   const fields: Array<readonly [number, Uint8Array]> = [];
   let offset = 0;
   const varint = () => {
@@ -405,14 +405,20 @@ async function readChildTranscript(
   try {
     const stat = await handle.stat();
     if (!stat.isFile()) return undefined;
-    const length = Math.min(stat.size, byteCap);
-    const buffer = Buffer.alloc(length);
-    const { bytesRead } = await handle.read(buffer, 0, length, stat.size - length);
-    const truncated = stat.size > length;
-    let contents = buffer.subarray(0, bytesRead).toString("utf8");
-    // A tail read starts mid-line.
-    if (truncated) contents = contents.slice(contents.indexOf("\n") + 1);
-    return { steps: transcriptSteps(contents, prompt), truncated };
+    const tailStart = Math.max(0, stat.size - byteCap);
+    // One extra byte tells whether the retained tail starts on a line boundary.
+    const readStart = Math.max(0, tailStart - 1);
+    const buffer = Buffer.alloc(stat.size - readStart);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, readStart);
+    const bytes = buffer.subarray(0, bytesRead);
+    let lineStart = 0;
+    if (tailStart > 0) {
+      const newline = bytes.indexOf(0x0a);
+      if (newline === -1) return { steps: [], truncated: true };
+      lineStart = newline + 1;
+    }
+    const contents = bytes.toString("utf8", lineStart);
+    return { steps: transcriptSteps(contents, prompt), truncated: tailStart > 0 };
   } finally {
     await handle.close();
   }
@@ -520,6 +526,7 @@ const decodeDetachedSubagent = Schema.decodeUnknownOption(
   Schema.fromJsonString(
     Schema.Struct({
       conversationId: Schema.optional(Schema.String),
+      state: Schema.optional(Schema.String),
       subagentDescriptor: Schema.optional(
         Schema.Struct({
           role: Schema.optional(Schema.String),
@@ -644,10 +651,136 @@ async function findDetachedInvokeRecord(
   return matches.length === 1 ? match : undefined;
 }
 
+const PENDING_REPLY_TAIL_BYTES = 64 * 1024;
+const HIGH_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_HIGH";
+const LOW_PRIORITY_MESSAGE = "MESSAGE_PRIORITY_LOW";
+
+const decodeReadReceipts = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Record(Schema.String, Schema.Boolean)),
+);
+
+const decodeInboxPriorityMessage = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.String),
+      priority: Schema.optional(Schema.String),
+    }),
+  ),
+);
+
+async function hasUnreadWakingInboxMessage(
+  profileRoot: string,
+  sessionId: string,
+): Promise<boolean> {
+  const directory = ["antigravity-acp", "brain", sessionId, ".system_generated", "messages"];
+  const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
+  if (inbox === undefined) return false;
+  const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
+  if (entries === undefined) return false;
+  const messageNames = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
+  if (messageNames.length === 0 || messageNames.length > MAX_MESSAGE_FILES) return false;
+  let readReceipts: Readonly<Record<string, boolean>> = {};
+  if (entries.includes("read.json")) {
+    const receiptFile = await antigravityManagedPath(
+      profileRoot,
+      [...directory, "read.json"],
+      "file",
+    );
+    if (receiptFile === undefined || receiptFile.info.size > MAX_STEP_BYTES) return false;
+    const rawReceipts = await NodeFSP.readFile(receiptFile.path, "utf8").catch(() => undefined);
+    if (rawReceipts === undefined) return false;
+    const decodedReceipts = decodeReadReceipts(rawReceipts);
+    if (Option.isNone(decodedReceipts)) return false;
+    readReceipts = decodedReceipts.value;
+  }
+  for (const name of messageNames) {
+    const fileId = name.slice(0, -5);
+    if (readReceipts[fileId] === true) continue;
+    const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file === undefined || file.info.size > MAX_STEP_BYTES) continue;
+    const raw = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
+    if (raw === undefined) continue;
+    const decoded = decodeInboxPriorityMessage(raw);
+    if (Option.isNone(decoded)) continue;
+    if (decoded.value.id !== undefined && readReceipts[decoded.value.id] === true) continue;
+    if (decoded.value.priority === HIGH_PRIORITY_MESSAGE) return true;
+  }
+  return false;
+}
+
+async function readLastTranscriptLine(
+  profileRoot: string,
+  sessionId: string,
+): Promise<Schema.Schema.Type<typeof TranscriptLine> | undefined> {
+  const transcript = await antigravityManagedPath(
+    profileRoot,
+    ["antigravity-acp", "brain", sessionId, ".system_generated", "logs", "transcript.jsonl"],
+    "file",
+  );
+  if (transcript === undefined) return undefined;
+  const handle = await NodeFSP.open(
+    transcript.path,
+    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size === 0) return undefined;
+    for (const byteCap of [PENDING_REPLY_TAIL_BYTES, TRANSCRIPT_BYTE_CAP]) {
+      const start = Math.max(0, stat.size - byteCap);
+      const buffer = Buffer.alloc(stat.size - start);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, start);
+      let end = bytesRead;
+      while (end > 0 && (buffer[end - 1] === 0x0a || buffer[end - 1] === 0x0d)) {
+        end -= 1;
+      }
+      if (end === 0) {
+        if (start === 0) return undefined;
+        continue;
+      }
+      const trimmed = buffer.subarray(0, end);
+      const lastNewline = trimmed.lastIndexOf(0x0a);
+      if (lastNewline === -1 && start > 0) continue;
+      const line = trimmed.toString("utf8", lastNewline + 1);
+      return Option.getOrUndefined(decodeTranscriptLine(line));
+    }
+    return undefined;
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
+ * True when `agy` has a high-priority wake queued in the session's inbox or already dequeued as
+ * the trailing `SYSTEM_MESSAGE` step in `transcript.jsonl` with no `PLANNER_RESPONSE` yet.
+ * Fails closed when records are missing, linked, or unreadable.
+ */
+export const readAntigravityPendingReply = Effect.fn("readAntigravityPendingReply")(
+  function* (input: { readonly profileDirectory: string; readonly sessionId: string }) {
+    if (!NATIVE_ID.test(input.sessionId)) return false;
+    const read = async (): Promise<boolean> => {
+      const profileRoot = await antigravityProfileRoot(input.profileDirectory);
+      if (profileRoot === undefined) return false;
+      if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
+      const lastStep = await readLastTranscriptLine(profileRoot, input.sessionId);
+      if (lastStep === undefined || lastStep.type !== "SYSTEM_MESSAGE") return false;
+      return (
+        lastStep.content === undefined ||
+        lastStep.content.includes(`priority=${HIGH_PRIORITY_MESSAGE}`) ||
+        !lastStep.content.includes(`priority=${LOW_PRIORITY_MESSAGE}`)
+      );
+    };
+    return yield* Effect.tryPromise({
+      try: read,
+      catch: (cause) => new AntigravityChildWorkReadError({ cause }),
+    }).pipe(Effect.orElseSucceed(() => false));
+  },
+);
+
 /**
  * agy 1.5 children outlive their `invoke_subagent` call and the agent reports no end for them:
- * a child is done, or waits for guidance, once its message is in the parent's inbox. Returns the
- * launching tool call ids of children with no message yet; none when the records prove nothing.
+ * a child is done, or waits for guidance, once its message is in the parent's inbox or its record
+ * says it was killed. Returns the launching tool call ids of children with neither; none when the
+ * records prove nothing.
  */
 export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenAtWork")(
   function* (input: {
@@ -669,6 +802,9 @@ export const readAntigravityChildrenAtWork = Effect.fn("readAntigravityChildrenA
       const atWork: Array<string> = [];
       for (const childId of childIds) {
         if (reported.has(childId)) continue;
+        // `manage_subagents` kill only marks the record; a killed child never reports.
+        const subagent = await readDetachedSubagent(profileRoot, input.rootSessionId, childId);
+        if (subagent?.state === "SUBAGENT_STATE_KILLED") continue;
         for (const message of await readInbox(profileRoot, childId)) {
           const launch = detachedLaunchCall(message, input.rootSessionId);
           if (launch !== undefined && input.toolCallIds.includes(launch.id)) {

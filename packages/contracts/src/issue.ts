@@ -150,6 +150,14 @@ export const IssueEventKind = Schema.Literals([
 ]);
 export type IssueEventKind = typeof IssueEventKind.Type;
 
+export const IssueEventReference = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  kind: Schema.Literals(["issue", "pull-request"]),
+  url: TrimmedNonEmptyString,
+});
+export type IssueEventReference = typeof IssueEventReference.Type;
+
 export const IssueEvent = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: IssueEventKind,
@@ -157,6 +165,8 @@ export const IssueEvent = Schema.Struct({
   createdAt: IsoDateTime,
   /** What the event was about, where it has a subject: a label name, a login, a new title. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The issue or change request a `referenced` event came from, so a surface can open it. */
+  reference: Schema.optional(IssueEventReference),
 });
 export type IssueEvent = typeof IssueEvent.Type;
 
@@ -256,10 +266,16 @@ export const IssueListCursors = Schema.Record(
 );
 export type IssueListCursors = typeof IssueListCursors.Type;
 
+export const ISSUE_LIST_MAX_EXCLUDED_PROJECTS = 1_000;
+
 export const IssueListInput = Schema.Struct({
   state: IssueListState,
   involvement: Schema.optional(IssueInvolvement),
   projectId: Schema.optional(ProjectId),
+  /** Projects left out of the listing, as the issues page hides them. */
+  excludeProjectIds: Schema.optional(
+    Schema.Array(ProjectId).check(Schema.isMaxLength(ISSUE_LIST_MAX_EXCLUDED_PROJECTS)),
+  ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */
@@ -566,12 +582,27 @@ export const StandaloneIssueTrackerDescriptor = Schema.Struct({
 });
 export type StandaloneIssueTrackerDescriptor = typeof StandaloneIssueTrackerDescriptor.Type;
 
-/** Which standalone tracker scope a project's issues come from, beside its git host's own. */
+export const MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES = 250;
+
+/**
+ * Which standalone tracker scopes a project's issues come from, beside its git host's own.
+ * `scope` is where agents file new issues; `additionalScopes` are listed and written too.
+ */
 export const IssueTrackerProjectBinding = Schema.Struct({
   tracker: IssueTrackerKind,
   scope: TrimmedNonEmptyString,
+  additionalScopes: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString).check(
+      Schema.isMaxLength(MAX_ISSUE_TRACKER_ADDITIONAL_SCOPES),
+    ),
+  ),
 });
 export type IssueTrackerProjectBinding = typeof IssueTrackerProjectBinding.Type;
+
+export const issueTrackerBindingScopes = (binding: IssueTrackerProjectBinding) => [
+  binding.scope,
+  ...(binding.additionalScopes ?? []),
+];
 
 /** One container the connected account can read, offered when a project is bound. */
 export const IssueTrackerScope = Schema.Struct({
@@ -600,7 +631,7 @@ export type IssueTrackerConnection = typeof IssueTrackerConnection.Type;
 
 export const IssueTrackerConnectionList = Schema.Struct({
   trackers: Schema.Array(IssueTrackerConnection),
-  /** Which standalone tracker scope each bound project reads; a project absent here reads none. */
+  /** Which standalone tracker scopes each bound project reads; a project absent here reads none. */
   bindings: Schema.Record(ProjectId, IssueTrackerProjectBinding),
 });
 export type IssueTrackerConnectionList = typeof IssueTrackerConnectionList.Type;

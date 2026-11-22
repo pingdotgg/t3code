@@ -21,6 +21,7 @@ import {
 
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
+const COMMAND_LINE_TRUNCATED = "\n\n[Command truncated]";
 const QUESTION_LABEL_LIMIT = 512;
 
 const NativeToolFields = Schema.Struct({
@@ -45,11 +46,15 @@ const decodeSingleAnswer = Schema.decodeUnknownOption(
 );
 const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallContent);
 
+// agy keeps its own `schedule` call in progress until the wake fires, then replies by itself.
+const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]);
+
 /**
- * The agent goes on running a command after its prompt ends, and replies by itself when the
- * command finishes. A daemon may never finish.
+ * The agent goes on running a command or a scheduled wake after its prompt ends, and replies by
+ * itself when it finishes. A daemon may never finish.
  */
-export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
   const input = toolCall.data.rawInput;
   return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
 }
@@ -179,7 +184,7 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
-function boundCommandOutput(text: string, limit = TOOL_TEXT_LIMIT): string {
+function boundCommandText(text: string, limit = TOOL_TEXT_LIMIT): string {
   if (
     text.length <= limit ||
     (text.length <= limit + TOOL_TEXT_TRUNCATED.length && text.startsWith(TOOL_TEXT_TRUNCATED))
@@ -190,8 +195,27 @@ function boundCommandOutput(text: string, limit = TOOL_TEXT_LIMIT): string {
   return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
 }
 
-// 1.5 runtimes report command output as `output` and repeat it as content `text`.
-const OUTPUT_TEXT_FIELDS = new Set(["combinedOutput", "combined_output", "output", "text"]);
+// A command line's program and target are at its start, so it keeps its head.
+function boundCommandLine(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + COMMAND_LINE_TRUNCATED.length && text.endsWith(COMMAND_LINE_TRUNCATED))
+  ) {
+    return text;
+  }
+  const head = text.slice(0, limit).replace(/[\uD800-\uDBFF]$/u, "");
+  return copyBoundedText(`${head}${COMMAND_LINE_TRUNCATED}`);
+}
+
+const COMMAND_LINE_FIELDS = new Set(["CommandLine", "command_line", "commandLine", "command"]);
+
+const COMMAND_TEXT_FIELDS = new Set([
+  "aggregatedOutput",
+  "combinedOutput",
+  "combined_output",
+  "output",
+  "text",
+]);
 
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
 export { boundText as boundAntigravityToolText };
@@ -218,7 +242,13 @@ function sanitizeToolValue(
       return undefined;
     }
     const bound =
-      field !== undefined && OUTPUT_TEXT_FIELDS.has(field) ? boundCommandOutput : boundText;
+      field === undefined
+        ? boundText
+        : COMMAND_LINE_FIELDS.has(field)
+          ? boundCommandLine
+          : COMMAND_TEXT_FIELDS.has(field)
+            ? boundCommandText
+            : boundText;
     const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
@@ -455,7 +485,7 @@ export function normalizeAntigravityToolCall(
     output?.commandLine ??
     output?.command_line ??
     toolCall.command;
-  const command = nativeCommand?.trim() ? boundText(nativeCommand.trim()) : undefined;
+  const command = nativeCommand?.trim() ? boundCommandLine(nativeCommand.trim()) : undefined;
   const nativeCwd =
     input?.Cwd ??
     input?.WorkingDirectory ??
@@ -466,8 +496,7 @@ export function normalizeAntigravityToolCall(
     output?.working_dir;
   const cwd = nativeCwd?.trim() ? boundText(nativeCwd.trim()) : undefined;
   const nativeOutput = output?.combinedOutput ?? output?.combined_output;
-  const aggregatedOutput =
-    nativeOutput === undefined ? undefined : boundCommandOutput(nativeOutput);
+  const aggregatedOutput = nativeOutput === undefined ? undefined : boundCommandText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);

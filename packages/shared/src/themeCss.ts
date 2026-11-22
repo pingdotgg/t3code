@@ -9,19 +9,25 @@ const URL_NOT_LOCAL = /url\((?![ \t\n\f\r]*["']?(?:data:|#))/i;
 const ESCAPE = String.raw`\\(?:(?:[0-9a-fA-F]{6}|[0-9a-fA-F]{1,5}(?![0-9a-fA-F]))(?:\r\n|[\n\r\f])?|\r\n|[^0-9a-fA-F])`;
 const STRING = String.raw`"(?:${ESCAPE}|[^"\\\n\r\f])*"|'(?:${ESCAPE}|[^'\\\n\r\f])*'`;
 const URL_OR_STRING = String.raw`url\((?![ \t\n\f\r]*["'])([^)]*)|url\([ \t\n\f\r]*(${STRING})|${STRING}|${ESCAPE}`;
-const VALUE_TOKENS = new RegExp(URL_OR_STRING, "gi");
-const STYLESHEET_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi");
+const CSS_TOKENS = new RegExp(String.raw`\/\*[\s\S]*?\*\/|${URL_OR_STRING}`, "gi");
 
 /**
- * The code with its strings removed, keeping `url(` where a quoted url() can load a file. A
- * stylesheet also loses its comments, and an unquoted url() there is judged by its address too.
+ * The code with its strings and comments removed, keeping `url(` where a quoted url() can load a
+ * file. A declaration value keeps a comment or quoted url() that holds an escape. In a stylesheet
+ * an unquoted url() is judged by its address too.
  */
 function withoutStrings(code: string, stylesheet: boolean): string {
-  const tokens = stylesheet ? STYLESHEET_TOKENS : VALUE_TOKENS;
-  return code.replace(tokens, (token, address?: string, urlString?: string) => {
+  return code.replace(CSS_TOKENS, (token, address?: string, urlString?: string) => {
     const url = stylesheet ? (address ?? urlString) : urlString;
-    if (url !== undefined) return /^[ \t\n\f\r]*["']?(?:data:|#)/i.test(url) ? "" : "url(";
-    return /^["'/]/.test(token) ? "" : token;
+    if (url !== undefined) {
+      if (!stylesheet && url.includes("\\")) return token;
+      return /^[ \t\n\f\r]*["']?(?:data:|#)/i.test(url) ? "" : "url(";
+    }
+    if (token.startsWith("/*")) {
+      if (stylesheet) return "";
+      return token.includes("\\") ? token : " ";
+    }
+    return /^["']/.test(token) ? "" : token;
   });
 }
 
@@ -31,11 +37,12 @@ function fetchesOutsideStrings(code: string): boolean {
 
 /**
  * Whether one declaration value can load a remote file. Clients drop those declarations.
- * A value with var() stays unparsed until use, and an escape can spell `var` or `url` in it,
- * so every value that still has a backslash is refused.
+ * Values with var() can keep escapes that spell `var` or `url`. Refuse escapes that survive
+ * removing plain strings, including escapes in URL addresses.
  */
 export function themeCssValueFetches(value: string): boolean {
-  return value.includes("\\") || fetchesOutsideStrings(withoutStrings(value, false));
+  const code = withoutStrings(value, false);
+  return code.includes("\\") || fetchesOutsideStrings(code);
 }
 
 /** A text check for early feedback. CSS escapes can dodge it; the client check is the guard. */
