@@ -55,6 +55,7 @@ const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
   search: () => Effect.die("unused"),
   prepare: () => Effect.die("unused"),
   refreshIndex: () => Effect.die("unused"),
+  currentIndexRevision: () => Effect.succeed(0),
   invalidateIndex: () => Effect.die("unused"),
   uninstallManagedBinary: () => Effect.die("unused"),
 };

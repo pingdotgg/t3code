@@ -1266,7 +1266,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       effectiveConfig.enabled &&
       effectiveConfig.source !== "local" &&
       effectiveConfig.agentId.length > 0;
-    const currentCatalogIndexRevision = catalog.currentIndexRevision?.() ?? Effect.succeed(0);
+    const currentCatalogIndexRevision = catalog.currentIndexRevision();
     const lastSeenIndexRevision = yield* Ref.make(0);
     const acknowledgeRevision = (revision: number) =>
       Ref.update(lastSeenIndexRevision, (seen) => Math.max(seen, revision));
@@ -1431,7 +1431,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         captured,
       };
     });
-    const reconcilingRuntimeIdentity = yield* Ref.make<string | null>(null);
+    const reconcilingState = yield* Ref.make<ReadonlyMap<string, boolean>>(new Map());
     const refreshTarget = yield* Deferred.make<Effect.Effect<void>>();
     const triggerSnapshotRefresh = Deferred.await(refreshTarget).pipe(Effect.flatten);
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
@@ -1478,9 +1478,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             ? runtimeIdentityFor(initialReadiness.snapshot, initialReadiness.launchIdentity)
             : null,
         );
-        const inFlightProbeIdentity = yield* Ref.make<string | null>(null);
-        const pendingReconcileIdentity = yield* Ref.make<string | null>(null);
-        const maybeReconcileUnmatchedRuntime = (incomingIdentity: string | undefined) => {
+        const probeReconcileState = yield* Ref.make<{
+          readonly inFlight: string | null;
+          readonly pending: string | null;
+        }>({ inFlight: null, pending: null });
+        const maybeReconcileUnmatchedRuntime = (
+          incomingIdentity: string | undefined,
+        ): Effect.Effect<void> => {
           if (incomingIdentity === undefined || !tracksRegistryIndex) return Effect.void;
           return Effect.gen(function* () {
             const retiredAtRevision = (yield* Ref.get(retiredRuntimeIdentities)).get(
@@ -1495,25 +1499,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             ) {
               return;
             }
-            if ((yield* Ref.get(inFlightProbeIdentity)) === incomingIdentity) {
-              yield* Ref.set(pendingReconcileIdentity, incomingIdentity);
-              return;
-            }
-            const claimed = yield* Ref.modify(reconcilingRuntimeIdentity, (current) =>
-              current === incomingIdentity
-                ? ([false, current] as const)
-                : ([true, incomingIdentity] as const),
+            const parkedOnProbe = yield* Ref.modify(probeReconcileState, (state) =>
+              state.inFlight === incomingIdentity
+                ? ([true, { ...state, pending: incomingIdentity }] as const)
+                : ([false, state] as const),
             );
+            if (parkedOnProbe) return;
+            const claimed = yield* Ref.modify(reconcilingState, (state) => {
+              const next = new Map(state);
+              if (state.has(incomingIdentity)) {
+                next.set(incomingIdentity, true);
+                return [false, next] as const;
+              }
+              next.set(incomingIdentity, false);
+              return [true, next] as const;
+            });
             if (!claimed) return;
             yield* Effect.gen(function* () {
               const inspected = yield* Effect.result(
                 catalog.inspect(readinessInput.settings, readinessInput.environment),
               );
+              let matched = false;
               if (
                 Result.isSuccess(inspected) &&
                 inspected.success.status === "ready" &&
                 inspected.success.launchIdentity === incomingIdentity
               ) {
+                matched = true;
                 yield* Ref.update(activeFallback, (current) =>
                   current?.targetLaunchIdentity === incomingIdentity ? null : current,
                 );
@@ -1529,7 +1541,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 const stampRevision =
                   "indexRevision" in inspected.success &&
                   typeof inspected.success.indexRevision === "number"
-                    ? Math.max(currentRevision, inspected.success.indexRevision)
+                    ? inspected.success.indexRevision
                     : currentRevision;
                 yield* Ref.update(retiredRuntimeIdentities, (retired) => {
                   if (!retired.has(incomingIdentity)) return retired;
@@ -1538,11 +1550,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return next;
                 });
               }
+              const replayPending = yield* Ref.modify(reconcilingState, (state) => {
+                if (!state.has(incomingIdentity)) return [false, state] as const;
+                const next = new Map(state);
+                const pending = next.get(incomingIdentity) === true;
+                next.delete(incomingIdentity);
+                return [pending, next] as const;
+              });
+              if (!matched && replayPending) {
+                yield* maybeReconcileUnmatchedRuntime(incomingIdentity);
+              }
             }).pipe(
-              Effect.ensuring(
-                Ref.update(reconcilingRuntimeIdentity, (current) =>
-                  current === incomingIdentity ? null : current,
-                ),
+              Effect.onInterrupt(() =>
+                Ref.update(reconcilingState, (state) => {
+                  if (!state.has(incomingIdentity)) return state;
+                  const next = new Map(state);
+                  next.delete(incomingIdentity);
+                  return next;
+                }),
               ),
               Effect.forkIn(driverScope),
             );
@@ -1594,7 +1619,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 enrichProviderCached(target),
               )
             : enrichProviderCached(target).pipe(Effect.asSome);
-          return Ref.set(inFlightProbeIdentity, targetIdentity).pipe(
+          let drainedPending: string | null = null;
+          return Ref.update(probeReconcileState, (state) => ({
+            ...state,
+            inFlight: targetIdentity,
+          })).pipe(
             Effect.andThen(probeEffect),
             Effect.flatMap(
               Option.match({
@@ -1633,72 +1662,84 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         };
                       }
                       if (probeFailed && provider.installed && previousIdentity !== null) {
-                        // The new runtime failed before resolving/starting; keep the last known
-                        // working runtime's identity, version, models, and live state intact so
-                        // running sessions survive across repeated refreshes.
+                        // The new runtime failed before resolving/starting; preserve the last
+                        // accepted snapshot only when one exists for previousIdentity so we never
+                        // overlay A's live models/commands onto B's failure snapshot.
                         const lastRuntime = yield* Ref.get(lastSuccessfulRuntime);
                         const isUpgradeFailure =
                           failedTargetLaunchIdentity !== null &&
                           failedTargetLaunchIdentity !== previousIdentity;
-                        const preservedBase: ServerProvider =
-                          lastRuntime !== null && lastRuntime.identity === previousIdentity
-                            ? (() => {
-                                const { message: _previousMessage, ...base } = lastRuntime.provider;
-                                return {
-                                  ...base,
-                                  checkedAt: provider.checkedAt,
-                                  status: provider.status,
-                                  auth:
-                                    provider.auth.status === "unauthenticated"
-                                      ? provider.auth
-                                      : base.auth,
-                                  ...(provider.message !== undefined
-                                    ? { message: provider.message }
-                                    : {}),
-                                };
-                              })()
-                            : provider;
-                        const { provider: nextSnapshotRaw } = yield* withLiveRuntimeState(
-                          preservedBase,
-                          {
-                            sessionRuntimeIdentity: previousIdentity,
-                            requireMatchingRuntimeIdentity: false,
-                            useLearnedModels: true,
-                            persistLearnedModels: false,
-                          },
-                        );
-                        const nextSnapshot = isUpgradeFailure
-                          ? {
-                              ...nextSnapshotRaw,
-                              status: provider.status,
-                              ...(provider.message !== undefined
-                                ? { message: provider.message }
-                                : {}),
+                        if (lastRuntime !== null && lastRuntime.identity === previousIdentity) {
+                          const { message: _previousMessage, ...base } = lastRuntime.provider;
+                          const preservedBase: ServerProvider = {
+                            ...base,
+                            checkedAt: provider.checkedAt,
+                            status: provider.status,
+                            auth:
+                              provider.auth.status === "unauthenticated"
+                                ? provider.auth
+                                : base.auth,
+                            ...(provider.message !== undefined
+                              ? { message: provider.message }
+                              : {}),
+                          };
+                          const { provider: nextSnapshotRaw } = yield* withLiveRuntimeState(
+                            preservedBase,
+                            {
+                              sessionRuntimeIdentity: previousIdentity,
+                              requireMatchingRuntimeIdentity: false,
+                              useLearnedModels: true,
+                              persistLearnedModels: false,
+                            },
+                          );
+                          const nextSnapshot = isUpgradeFailure
+                            ? {
+                                ...nextSnapshotRaw,
+                                status: provider.status,
+                                ...(provider.message !== undefined
+                                  ? { message: provider.message }
+                                  : {}),
+                              }
+                            : nextSnapshotRaw;
+                          const published = yield* tryPublishSnapshot(nextSnapshot);
+                          if (published) {
+                            yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
+                            if (isUpgradeFailure) {
+                              yield* Ref.set(failedUpgradeTarget, {
+                                targetLaunchIdentity: failedTargetLaunchIdentity,
+                                status: provider.status,
+                                auth: provider.auth,
+                                message: provider.message,
+                              });
                             }
-                          : nextSnapshotRaw;
-                        const published = yield* tryPublishSnapshot(nextSnapshot);
-                        if (published) {
-                          yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
-                          if (isUpgradeFailure) {
-                            yield* Ref.set(failedUpgradeTarget, {
-                              targetLaunchIdentity: failedTargetLaunchIdentity,
-                              status: provider.status,
-                              auth: provider.auth,
-                              message: provider.message,
-                            });
                           }
+                          return {
+                            published,
+                            readiness: published
+                              ? {
+                                  snapshot: nextSnapshot,
+                                  launchIdentity: previousIdentity,
+                                  indexRevision,
+                                  probeFailed: true,
+                                }
+                              : null,
+                            publishedIdentity: published ? previousIdentity : null,
+                          };
                         }
+                        // No accepted snapshot exists for previousIdentity; publish the failure
+                        // snapshot directly without attaching previousIdentity's live state.
+                        const published = yield* tryPublishSnapshot(provider);
                         return {
                           published,
                           readiness: published
                             ? {
-                                snapshot: nextSnapshot,
-                                launchIdentity: previousIdentity,
+                                snapshot: provider,
+                                launchIdentity,
                                 indexRevision,
                                 probeFailed: true,
                               }
                             : null,
-                          publishedIdentity: published ? previousIdentity : null,
+                          publishedIdentity: null,
                         };
                       }
                       const existingFallback = fallback ? yield* Ref.get(activeFallback) : null;
@@ -1774,7 +1815,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           if (runtimeChanged) {
                             yield* clearLiveState({ preserveRuntimeIdentity: resolvedIdentity });
                             const retiredAtRevision =
-                              indexRevision ?? (yield* currentCatalogIndexRevision);
+                              (fallback ? fallbackTargetIndexRevision : indexRevision) ??
+                              (yield* currentCatalogIndexRevision);
                             yield* Ref.update(retiredRuntimeIdentities, (retired) => {
                               const next = new Map(retired);
                               // Retire only a runtime that actually succeeded; a never-installed
@@ -1839,18 +1881,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               }),
             ),
             Effect.ensuring(
-              Ref.update(inFlightProbeIdentity, (current) =>
-                current === targetIdentity ? null : current,
+              Ref.modify(probeReconcileState, (state) =>
+                state.inFlight === targetIdentity
+                  ? ([state.pending, { inFlight: null, pending: null }] as const)
+                  : ([null, state] as const),
+              ).pipe(
+                Effect.tap((pending) =>
+                  Effect.sync(() => {
+                    drainedPending = pending;
+                  }),
+                ),
+                Effect.asVoid,
               ),
             ),
             Effect.tap(({ publishedIdentity }) =>
-              Ref.getAndSet(pendingReconcileIdentity, null).pipe(
-                Effect.flatMap((pending) =>
-                  pending !== null && pending !== publishedIdentity
-                    ? maybeReconcileUnmatchedRuntime(pending)
-                    : Effect.void,
-                ),
-              ),
+              drainedPending !== null && drainedPending !== publishedIdentity
+                ? maybeReconcileUnmatchedRuntime(drainedPending)
+                : Effect.void,
             ),
             Effect.map(({ published, readiness }) => ({ published, readiness })),
           );
@@ -1876,13 +1923,26 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     if (published && !gate.runtimeTransitioning) {
                       const activeId = yield* Ref.get(activeRuntimeIdentity);
                       if (activeId !== null) {
+                        const { message: _transientMsg, ...currentClean } = current;
                         yield* Ref.update(lastSuccessfulRuntime, (prev) =>
                           prev !== null && prev.identity === activeId
                             ? {
                                 identity: prev.identity,
                                 provider: { ...prev.provider, slashCommands, skills },
                               }
-                            : prev,
+                            : prev === null
+                              ? {
+                                  identity: activeId,
+                                  provider: {
+                                    ...currentClean,
+                                    status: current.enabled
+                                      ? ("ready" as const)
+                                      : ("disabled" as const),
+                                    slashCommands,
+                                    skills,
+                                  },
+                                }
+                              : prev,
                         );
                       }
                     }
@@ -1938,10 +1998,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       yield* Ref.set(learnedModels, next.models);
                     }
                     if (!gate.runtimeTransitioning && activeId !== null) {
+                      const { message: _transientMsg, ...appliedClean } = applied;
                       yield* Ref.update(lastSuccessfulRuntime, (prev) =>
                         prev !== null && prev.identity === activeId
-                          ? { identity: prev.identity, provider: applied }
-                          : prev,
+                          ? { identity: prev.identity, provider: appliedClean }
+                          : prev === null
+                            ? {
+                                identity: activeId,
+                                provider: {
+                                  ...appliedClean,
+                                  status: current.enabled
+                                    ? ("ready" as const)
+                                    : ("disabled" as const),
+                                },
+                              }
+                            : prev,
                       );
                     }
                     const now = yield* Clock.currentTimeMillis;

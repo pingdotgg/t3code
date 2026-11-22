@@ -55,8 +55,8 @@ T3 Code refreshes the Registry index in the background and automatically install
 prepared, T3-managed Registry agents alongside earlier versions, deferring background updates while
 that agent is starting a session. If a newly published version of a T3-managed binary agent fails
 to download, verify, or unpack, T3 Code keeps running the newest previously installed version until
-the update succeeds (agent versions installed by T3 Code releases before this fallback existed
-cannot be used as fallback). Agents using **Executable override** keep running the configured executable—update those
+the update succeeds (versions installed before T3 Code added this fallback can't be used for it).
+Agents using **Executable override** keep running the configured executable—update those
 overrides directly on the server—while Registry refreshes can still pick up updated Registry
 metadata, arguments, and environment variables. Refreshing providers (in **Settings → Providers** on
 web and desktop, or **Refresh providers** in environment settings on mobile) requests a fresh

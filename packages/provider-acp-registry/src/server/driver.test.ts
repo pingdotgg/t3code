@@ -70,6 +70,7 @@ function catalogWithInspection(
     search: () => Effect.die("unused search"),
     prepare: () => Effect.die("unused prepare"),
     refreshIndex: () => Effect.succeed(0),
+    currentIndexRevision: () => Effect.succeed(0),
     invalidateIndex: () => Effect.void,
     inspect: () => Effect.succeed(inspection),
     resolve: () => Effect.die("unused resolve"),
@@ -2862,6 +2863,10 @@ describe("AcpRegistryDriver registry recovery", () => {
           readonly release: Deferred.Deferred<void>;
         } | null = null;
         let onInspectCallback: (() => Effect.Effect<void>) | null = null;
+        let onCommandHandled: {
+          readonly matchName: string;
+          readonly done: Deferred.Deferred<void>;
+        } | null = null;
         let queuedStaleConfigGate: {
           readonly entered: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
@@ -2870,6 +2875,22 @@ describe("AcpRegistryDriver registry recovery", () => {
         const coordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"] =
           {
             ...baseCoordinator,
+            watchAvailableCommands: (instanceId, onUpdate) =>
+              baseCoordinator.watchAvailableCommands(instanceId, (commands, meta) =>
+                onUpdate(commands, meta).pipe(
+                  Effect.tap(() => {
+                    if (
+                      onCommandHandled !== null &&
+                      commands.slashCommands.some((cmd) => cmd.name === onCommandHandled!.matchName)
+                    ) {
+                      const handled = onCommandHandled;
+                      onCommandHandled = null;
+                      return Deferred.succeed(handled.done, undefined).pipe(Effect.asVoid);
+                    }
+                    return Effect.void;
+                  }),
+                ),
+              ),
             watchLiveConfiguration: (instanceId, onUpdate) =>
               baseCoordinator.watchLiveConfiguration(instanceId, (configuration, meta) => {
                 const activeGate =
@@ -3496,11 +3517,15 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         yield* instance.snapshot.refresh;
         yield* Deferred.await(v4ParkedGate.started);
+        const v4ParkedHandled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v4-parked-after-fail", done: v4ParkedHandled };
         yield* coordinator.publishAvailableCommands(
           identity.instanceId,
           { slashCommands: [{ name: "v4-parked-after-fail" }], skills: [] },
           v4Identity,
         );
+        // Wait for the watcher to park v4Identity in pendingReconcileIdentity while the probe is still blocked.
+        yield* Deferred.await(v4ParkedHandled);
         yield* Deferred.succeed(v4ParkedGate.release, undefined);
         const reconciledFromParked = Option.getOrThrow(yield* Fiber.join(v4ReconciledFromParked));
         expect(reconciledFromParked.version).toBe("4.0.0");
@@ -3546,6 +3571,492 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         expect(yield* disposedMeta!.isCurrent).toBe(false);
         yield* Fiber.interrupt(disposedWatcher);
+      }).pipe(Effect.scoped, Effect.provide(driverLayer)),
+  );
+
+  it.effect(
+    "preserves foreground-only live runtimes on upgrade failure, stamps fallback retirements at the failed target revision, and drains events arriving during in-flight reconciliation",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseCoordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const { directory, agentPath, modelsPath } = yield* seedInstalledBinaryAgent(
+          "acp-driver-reconcile-edge-",
+        );
+
+        let remoteVersion = "1.0.0";
+        let remoteExtraAgentVersion: string | undefined = undefined;
+        let failArchiveVersions = new Set<string>();
+        let failProbeSpawn = false;
+        let inspectCalls = 0;
+        let resolveGate: {
+          readonly matchVersion: string;
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let inspectGate: {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let onCommandHandled: {
+          readonly matchName: string;
+          readonly done: Deferred.Deferred<void>;
+        } | null = null;
+        let onInspectCallback: (() => Effect.Effect<void>) | null = null;
+        let onEnrichmentEnd: (() => void) | null = null;
+        const enrichmentTracer: Tracer.Tracer = {
+          span(options) {
+            const inner = Tracer.nativeTracer.span(options);
+            if (options.name !== "AcpRegistryDriver.publishEnrichment") return inner;
+            const origEnd = inner.end.bind(inner);
+            inner.end = (endTime, exit) => {
+              origEnd(endTime, exit);
+              if (Exit.isSuccess(exit)) {
+                const cb = onEnrichmentEnd;
+                onEnrichmentEnd = null;
+                cb?.();
+              }
+            };
+            return inner;
+          },
+        };
+        const coordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"] =
+          {
+            ...baseCoordinator,
+            watchAvailableCommands: (instanceId, onUpdate) =>
+              baseCoordinator.watchAvailableCommands(instanceId, (commands, meta) =>
+                onUpdate(commands, meta).pipe(
+                  Effect.tap(() => {
+                    if (
+                      onCommandHandled !== null &&
+                      commands.slashCommands.some((cmd) => cmd.name === onCommandHandled!.matchName)
+                    ) {
+                      const handled = onCommandHandled;
+                      onCommandHandled = null;
+                      return Deferred.succeed(handled.done, undefined).pipe(Effect.asVoid);
+                    }
+                    return Effect.void;
+                  }),
+                ),
+              ),
+          };
+        const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: directory,
+          toolsDir: path.join(directory, "tools"),
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, testHostPlatform),
+          Effect.provideService(HostProcess.Architecture, "x64"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              if (request.url === registryUrl) {
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(
+                      makeBinaryRegistry(
+                        remoteVersion,
+                        compatibleRegistryTarget,
+                        remoteExtraAgentVersion
+                          ? { extraAgentVersion: remoteExtraAgentVersion }
+                          : undefined,
+                      ),
+                    ),
+                  ),
+                );
+              }
+              const failDownload = Array.from(failArchiveVersions).some((version) =>
+                request.url.includes(`-${version}.bin`),
+              );
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  failDownload
+                    ? new Response("unavailable", { status: 503 })
+                    : new Response(`#!/bin/sh\necho ${remoteVersion}\n`),
+                ),
+              );
+            }),
+          ),
+        );
+        const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+          ...realCatalog,
+          inspect: (settings, environment) =>
+            Effect.gen(function* () {
+              inspectCalls += 1;
+              const result = yield* realCatalog.inspect(settings, environment);
+              if (inspectGate !== null) {
+                const gate = inspectGate;
+                inspectGate = null;
+                yield* Deferred.succeed(gate.started, undefined);
+                yield* Deferred.await(gate.release);
+              }
+              if (onInspectCallback !== null) {
+                yield* onInspectCallback();
+              }
+              return result;
+            }),
+          resolve: (settings, cwd, environment) =>
+            Effect.gen(function* () {
+              const resolved = yield* realCatalog.resolve(settings, cwd, environment);
+              if (
+                environment?.MISE_OFFLINE === "1" &&
+                resolveGate !== null &&
+                resolved.agent?.version === resolveGate.matchVersion
+              ) {
+                const gate = resolveGate;
+                resolveGate = null;
+                yield* Deferred.succeed(gate.started, undefined);
+                yield* Deferred.await(gate.release);
+              }
+              if (environment?.MISE_OFFLINE === "1" && failProbeSpawn) {
+                return yield* new AcpRegistrySupport.AcpRegistryError({
+                  reason: "install_failed",
+                  detail: `Simulated probe install failure for ${resolved.agent?.version ?? "unknown"}.`,
+                });
+              }
+              return {
+                ...resolved,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              };
+            }),
+        };
+
+        // 1. Foreground startup skips initial 1.0.0 probe while live 1.0.0 session publishes models
+        // and commands; when 2.0.0 later fails to probe, snapshot must stay on 1.0.0 (not 2.0.0).
+        const fgInstanceId = ProviderInstanceId.make("acpRegistry_fg_only_v1");
+        const fgStarted = yield* Deferred.make<void>();
+        const releaseFg = yield* Deferred.make<void>();
+        const fgFiber = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(fgStarted, undefined).pipe(Effect.andThen(Deferred.await(releaseFg))),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(fgStarted);
+
+        const fgInstance = yield* AcpRegistryDriver.create({
+          instanceId: fgInstanceId,
+          displayName: "FG Only",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+        );
+        const v1Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v1Inspection.status).toBe("ready");
+        const v1Identity = v1Inspection.status === "ready" ? v1Inspection.launchIdentity! : "";
+        const fgLiveReady = yield* fgInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "1.0.0" &&
+              snapshot.models.some((model) => model.slug === "fg-v1-a") &&
+              snapshot.slashCommands.some((cmd) => cmd.name === "fg-v1-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* fgInstance.snapshot.refresh;
+        yield* coordinator.publishLiveConfiguration(
+          fgInstanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-a",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-b", name: "fg-v1-b" },
+            ],
+          }),
+          v1Identity,
+        );
+        yield* coordinator.publishAvailableCommands(
+          fgInstanceId,
+          { slashCommands: [{ name: "fg-v1-cmd" }], skills: [] },
+          v1Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(fgLiveReady))).toBe(true);
+
+        // End foreground startup, move index to failing 2.0.0, and verify 1.0.0 is preserved cleanly.
+        yield* Deferred.succeed(releaseFg, undefined);
+        yield* Fiber.join(fgFiber);
+        remoteVersion = "2.0.0";
+        failProbeSpawn = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fgWarning = yield* fgInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "warning"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* fgInstance.snapshot.refresh;
+        const fgWarningSnapshot = Option.getOrThrow(yield* Fiber.join(fgWarning));
+        expect(fgWarningSnapshot.version).toBe("1.0.0");
+        expect(fgWarningSnapshot.message).toContain("2.0.0");
+        expect(fgWarningSnapshot.models.map((model) => model.slug)).toEqual(["fg-v1-a", "fg-v1-b"]);
+        expect(fgWarningSnapshot.slashCommands).toEqual([{ name: "fg-v1-cmd" }]);
+
+        // 2. When no snapshot was ever accepted for 1.0.0 (neither probe nor live session), a failed
+        // 2.0.0 probe publishes 2.0.0's failure snapshot directly without attaching 1.0.0 live state.
+        remoteVersion = "1.0.0";
+        failProbeSpawn = false;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const coldFgStarted = yield* Deferred.make<void>();
+        const releaseColdFg = yield* Deferred.make<void>();
+        const coldFgFiber = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(coldFgStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseColdFg)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(coldFgStarted);
+        const noAcceptId = ProviderInstanceId.make("acpRegistry_no_accepted_v1");
+        const noAcceptInstance = yield* AcpRegistryDriver.create({
+          instanceId: noAcceptId,
+          displayName: "No Accepted V1",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+        );
+        const noAcceptColdEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(noAcceptColdEnrichmentDone, Exit.void);
+        yield* noAcceptInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(noAcceptColdEnrichmentDone);
+        yield* Deferred.succeed(releaseColdFg, undefined);
+        yield* Fiber.join(coldFgFiber);
+        remoteVersion = "2.0.0";
+        failProbeSpawn = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const noAcceptWarning = yield* noAcceptInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.status === "warning"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* noAcceptInstance.snapshot.refresh;
+        const noAcceptSnapshot = Option.getOrThrow(yield* Fiber.join(noAcceptWarning));
+        expect(noAcceptSnapshot.version).toBe("2.0.0");
+        expect(noAcceptSnapshot.message).toContain("2.0.0");
+        expect(noAcceptSnapshot.slashCommands).toEqual([]);
+
+        // 3. Fallback retirement stamps failedTarget's revision (v3), not a concurrently restored
+        // v4 revision, so a new v4 session reconciles immediately even if v4 restored mid-probe.
+        failProbeSpawn = false;
+        const fallbackRetireId = ProviderInstanceId.make("acpRegistry_fallback_retire_rev");
+        remoteVersion = "2.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackRetireInstance = yield* AcpRegistryDriver.create({
+          instanceId: fallbackRetireId,
+          displayName: "Fallback Retire Rev",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        const v2Ready = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "2.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* fallbackRetireInstance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(v2Ready))).toBe(true);
+        const v2Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v2Inspection.status).toBe("ready");
+        const v2Identity = v2Inspection.status === "ready" ? v2Inspection.launchIdentity! : "";
+
+        remoteVersion = "4.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const v4Ready = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "4.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const v4InitialDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(v4InitialDone, Exit.void);
+        yield* fallbackRetireInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        expect(Option.isSome(yield* Fiber.join(v4Ready))).toBe(true);
+        yield* Deferred.await(v4InitialDone);
+        const v4Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v4Inspection.status).toBe("ready");
+        const v4Identity = v4Inspection.status === "ready" ? v4Inspection.launchIdentity! : "";
+
+        // Move upstream to failing 3.0.0 while keeping disk cache on 4.0.0 and only 2.0.0 on disk:
+        // enrichment's index refresh discovers 3.0.0 (R3), fails download, and falls back to 2.0.0.
+        // Pause during 2.0.0 fallback resolve while another caller restores 4.0.0 at R4 > R3.
+        yield* fileSystem.remove(path.join(directory, "tools", "test-agent", "4.0.0"), {
+          recursive: true,
+          force: true,
+        });
+        remoteVersion = "3.0.0";
+        failArchiveVersions = new Set(["3.0.0"]);
+        yield* realCatalog.invalidateIndex();
+        const v2FallbackGate = {
+          matchVersion: "2.0.0",
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        resolveGate = v2FallbackGate;
+        const v2FallbackPublished = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "2.0.0" && Boolean(snapshot.message?.includes("3.0.0")),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const fallbackEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackEnrichmentDone, Exit.void);
+        yield* fallbackRetireInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(v2FallbackGate.started);
+        remoteVersion = "4.0.0";
+        failArchiveVersions = new Set();
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* Deferred.succeed(v2FallbackGate.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(v2FallbackPublished))).toBe(true);
+        yield* Deferred.await(fallbackEnrichmentDone);
+
+        // Because v4 was retired at R3 (not R4), a new v4 live update at R4 reconciles immediately.
+        const v4Restored = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "4.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((cmd) => cmd.name === "v4-restored-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const v4RestoredEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(v4RestoredEnrichmentDone, Exit.void);
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-restored-cmd" }], skills: [] },
+          v4Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(v4Restored))).toBe(true);
+        yield* Deferred.await(v4RestoredEnrichmentDone);
+
+        // 4. An event arriving while a reconciliation inspect for the same identity is in flight
+        // is parked and drained once the older inspection finishes, and unrelated revision bumps
+        // re-stamp retirement so subsequent late updates do not repeat catalog.inspect.
+        remoteExtraAgentVersion = "9.9.9";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const staleReconcileInspect = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        inspectGate = staleReconcileInspect;
+        // First retired v2 event at unrelated revision R5 triggers a coalesced inspect (paused on gate).
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-stale-at-r5" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(staleReconcileInspect.started);
+        // While inspect #1 (at R5 = 4.0.0) is in flight, roll catalog back to 2.0.0 at R6 and send a new v2 update.
+        remoteVersion = "2.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const v2ParkedHandled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v2-during-reconcile", done: v2ParkedHandled };
+        const v2DrainedReconciled = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "2.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((cmd) => cmd.name === "v2-during-reconcile"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const v2RestoredEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(v2RestoredEnrichmentDone, Exit.void);
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-during-reconcile" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(v2ParkedHandled);
+        yield* Deferred.succeed(staleReconcileInspect.release, undefined);
+        expect(Option.isSome(yield* Fiber.join(v2DrainedReconciled))).toBe(true);
+        yield* Deferred.await(v2RestoredEnrichmentDone);
+
+        // Verify re-stamping on an unrelated revision bump suppresses repeated inspects for retired v4.
+        remoteExtraAgentVersion = "10.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const firstRestampDone = yield* Deferred.make<void>();
+        onInspectCallback = () => Deferred.succeed(firstRestampDone, undefined).pipe(Effect.asVoid);
+        const inspectsBeforeRestamp = inspectCalls;
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-late-1" }], skills: [] },
+          v4Identity,
+        );
+        yield* Deferred.await(firstRestampDone);
+        onInspectCallback = null;
+        expect(inspectCalls).toBe(inspectsBeforeRestamp + 1);
+
+        // A second late v4 event at the same revision must NOT call catalog.inspect again,
+        // while a subsequent unrelated revision bump inspects once more (total +2, not +3).
+        const secondLateHandled = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v4-late-2", done: secondLateHandled };
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-late-2" }], skills: [] },
+          v4Identity,
+        );
+        yield* Deferred.await(secondLateHandled);
+        expect(inspectCalls).toBe(inspectsBeforeRestamp + 1);
+
+        remoteExtraAgentVersion = "10.0.1";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const secondRestampDone = yield* Deferred.make<void>();
+        onInspectCallback = () =>
+          Deferred.succeed(secondRestampDone, undefined).pipe(Effect.asVoid);
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v4-late-3" }], skills: [] },
+          v4Identity,
+        );
+        yield* Deferred.await(secondRestampDone);
+        onInspectCallback = null;
+        expect(inspectCalls).toBe(inspectsBeforeRestamp + 2);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });
