@@ -12460,5 +12460,10 @@
   "b7df38b7d8792d78": "Leitfaden öffnen",
   "9e91e9a77b664e4e": "Review-Leitfaden konnte nicht gestartet werden",
   "d8aaf932f90429c4": "Diesen Befehl an den Anfang der Warteschlange verschieben ({shortcut})",
-  "425ab15036aec8a4": "Diesen Befehl an den Anfang der Warteschlange verschieben"
+  "425ab15036aec8a4": "Diesen Befehl an den Anfang der Warteschlange verschieben",
+  "35934ab67a435d71": "Sitzung",
+  "ddef80b526009cfc": "Wöchentlich",
+  "1611b63d626f63c3": "Monatlich",
+  "d070d05a7761f7f4": "Monatliches Kreditlimit",
+  "4633d5b11e248ed6": "Wöchentlich · {model}"
 }
