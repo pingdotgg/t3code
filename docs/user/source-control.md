@@ -353,6 +353,8 @@ Use **Link pull request** in the command palette or **Linked items** panel, or r
 pull request link in the conversation. Creating a pull request from Git actions links it automatically,
 and so does an agent creating one with `gh pr create` or `glab mr create`. Agents can link other
 pull requests with the `link_pull_request` tool.
+For a custom review URL, give the agent the full URL, repository path, and numeric review ID.
+Without a supported hosting integration, the link is saved but its status cannot be tracked.
 
 Agents can also read, open, update, reply on, and merge pull requests in the thread's repository
 through T3 Code's own tools, which use the same sign-in as the Pull requests page. An agent merges
