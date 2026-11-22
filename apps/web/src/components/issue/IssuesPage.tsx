@@ -419,7 +419,7 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = (entry: IssueRowTarget) => {
+  const selectEntry = (entry: Omit<IssueRowTarget, "host"> & { readonly host?: string }) => {
     if (rightPanelRef === null) return;
     useRightPanelStore.getState().openIssue(rightPanelRef, entry);
     updateSearch({
@@ -864,6 +864,13 @@ export function IssuesPage() {
                       environmentId: panelEnvironmentId,
                     });
                   }}
+                  onSelectIssue={({ host, ...reference }) =>
+                    selectEntry({
+                      ...reference,
+                      ...(host === undefined ? {} : { host }),
+                      environmentId: panelEnvironmentId,
+                    })
+                  }
                 />
               ) : (
                 <PullRequestDetailPanel

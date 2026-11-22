@@ -150,6 +150,14 @@ export const IssueEventKind = Schema.Literals([
 ]);
 export type IssueEventKind = typeof IssueEventKind.Type;
 
+export const IssueEventReference = Schema.Struct({
+  repository: TrimmedNonEmptyString,
+  number: PositiveInt,
+  kind: Schema.Literals(["issue", "pull-request"]),
+  url: TrimmedNonEmptyString,
+});
+export type IssueEventReference = typeof IssueEventReference.Type;
+
 export const IssueEvent = Schema.Struct({
   id: TrimmedNonEmptyString,
   kind: IssueEventKind,
@@ -157,6 +165,8 @@ export const IssueEvent = Schema.Struct({
   createdAt: IsoDateTime,
   /** What the event was about, where it has a subject: a label name, a login, a new title. */
   detail: Schema.NullOr(TrimmedNonEmptyString),
+  /** The issue or change request a `referenced` event came from, so a surface can open it. */
+  reference: Schema.optional(IssueEventReference),
 });
 export type IssueEvent = typeof IssueEvent.Type;
 

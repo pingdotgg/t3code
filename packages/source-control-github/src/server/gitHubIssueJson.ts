@@ -5,7 +5,6 @@ import type {
   IssueActor,
   IssueComment,
   IssueEvent,
-  IssueEventKind,
   IssueLabel,
   IssueLinkedPullRequest,
   IssueState,
@@ -137,7 +136,7 @@ function toLinkedPullRequest(
 /** The change GitHub recorded, or null for a kind this page has no vocabulary for. */
 function toEventFields(
   raw: TimelineItem,
-): { readonly kind: IssueEventKind; readonly detail: string | null } | null {
+): Pick<IssueEvent, "kind" | "detail" | "reference"> | null {
   switch (raw.__typename) {
     case "ClosedEvent":
       return { kind: "closed", detail: null };
@@ -164,15 +163,28 @@ function toEventFields(
     case "RenamedTitleEvent":
       return { kind: "renamed", detail: trimmed(raw.currentTitle) };
     case "CrossReferencedEvent": {
-      const repository = trimmed(
-        raw.source != null && "repository" in raw.source
-          ? raw.source.repository.nameWithOwner
-          : null,
-      );
-      const number = raw.source != null && "number" in raw.source ? raw.source.number : 0;
+      const source =
+        raw.source.__typename === "PullRequest" || raw.source.__typename === "Issue"
+          ? raw.source
+          : null;
+      const repository = trimmed(source?.repository.nameWithOwner);
+      const url = trimmed(source?.url);
+      if (source === null || repository === null || source.number <= 0) {
+        return { kind: "referenced", detail: null };
+      }
       return {
         kind: "referenced",
-        detail: repository === null || number <= 0 ? null : `${repository}#${number}`,
+        detail: `${repository}#${source.number}`,
+        ...(url === null
+          ? {}
+          : {
+              reference: {
+                repository,
+                number: source.number,
+                kind: source.__typename === "PullRequest" ? "pull-request" : "issue",
+                url,
+              },
+            }),
       };
     }
     default:
