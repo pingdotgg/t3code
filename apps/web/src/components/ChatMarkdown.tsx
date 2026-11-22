@@ -175,7 +175,6 @@ import {
   workspaceLinkLookupQuery,
 } from "@t3tools/client-runtime/workspace-basename-lookup";
 import { resolvePullRequestPreviewTarget } from "@t3tools/client-runtime/change-request-links";
-import { pullRequestLinkProject } from "@t3tools/client-runtime/pull-request-link-input";
 import {
   mayContainStandaloneIssueLink,
   resolveIssueLinkTarget,
@@ -869,26 +868,6 @@ function useChatMarkdownState(
       openPreview,
     });
   };
-  // A change request's description cites paths in its own repository, whichever project the
-  // thread is in, so that repository's checkouts settle a path other projects also contain.
-  const changeRequestRepositoryMatch = (
-    relativePath: string,
-    own: Parameters<typeof pickProjectLinkMatch>[1][number],
-    projectSearches: Parameters<typeof pickProjectLinkMatch>[1],
-  ) => {
-    const repository = sourceControlMediaRepository?.toLowerCase();
-    if (!repository) return null;
-    const repositoryRoots = new Set(
-      projects.flatMap((project) =>
-        project.environmentId === environmentId &&
-        pullRequestLinkProject(project.repositoryIdentity)?.repository.toLowerCase() === repository
-          ? [project.workspaceRoot]
-          : [],
-      ),
-    );
-    const searches = projectSearches.filter((search) => repositoryRoots.has(search.root));
-    return searches.length === 0 ? null : pickProjectLinkMatch(relativePath, [own, ...searches]);
-  };
   const findWorkspaceFileMatch = async (fileLinkMeta: MarkdownFileLinkMeta) => {
     const workspaceRelativePath = fileLinkMeta.workspaceLookupPath;
     if (
@@ -947,9 +926,7 @@ function useChatMarkdownState(
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
     const projectSearches = await Promise.all(otherRoots.map(searchRoot));
-    const projectMatch =
-      pickProjectLinkMatch(workspaceRelativePath, [own, ...projectSearches]) ??
-      changeRequestRepositoryMatch(workspaceRelativePath, own, projectSearches);
+    const projectMatch = pickProjectLinkMatch(workspaceRelativePath, [own, ...projectSearches]);
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
     // An unresolved project lookup falls back to the agent's working directories.
     const agentPaths = agentRoots.map((root) =>
@@ -965,8 +942,24 @@ function useChatMarkdownState(
   };
   const openFileInPanel = (fileLinkMeta: MarkdownFileLinkMeta, panelPath: string) => {
     if (!threadRef) return;
+    // The panel reads relative paths from the thread's folder. A pull request body's `cwd` is the
+    // checkout of its repository, which can be another folder.
+    const shell = readThreadShell(threadRef);
+    const panelRoot =
+      shell?.worktreePath ??
+      projects.find(
+        (project) => project.environmentId === environmentId && project.id === shell?.projectId,
+      )?.workspaceRoot;
     const openAt = (path: string) =>
-      useRightPanelStore.getState().openFile(threadRef, path, fileLinkMeta.line);
+      useRightPanelStore
+        .getState()
+        .openFile(
+          threadRef,
+          cwd && panelRoot !== undefined && cwd !== panelRoot
+            ? resolveWorkspaceFilePath(path, cwd)
+            : path,
+          fileLinkMeta.line,
+        );
     if (
       fileLinkMeta.workspaceLookupPath === null ||
       !cwd ||
