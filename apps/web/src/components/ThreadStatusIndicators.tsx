@@ -17,7 +17,7 @@ import {
   type ThreadPullRequestLink,
   type VcsStatusResult,
 } from "@t3tools/contracts";
-import { msg, T, useGT, useMessages, Var } from "gt-react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { TerminalIcon } from "lucide-react";
 import { m, type MessageResolver } from "../i18n/messages";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -51,7 +51,6 @@ import {
 } from "./Sidebar.logic";
 
 import type { SidebarThreadSummary } from "../types";
-import { InlineButton } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   PULL_REQUEST_STATE_PRESENTATION,
@@ -493,8 +492,6 @@ function PullRequestBadge({
             <ThreadPullRequestsMiniList
               pullRequests={pullRequests}
               onOpenPullRequest={onOpenPullRequest}
-              maxItems={8}
-              onViewAll={onOpenList}
             />
           ) : number !== undefined && url !== undefined ? (
             <ul className="flex flex-col gap-1">
@@ -516,26 +513,15 @@ function PullRequestBadge({
 export function ThreadPullRequestsMiniList({
   pullRequests,
   onOpenPullRequest,
-  maxItems,
-  onViewAll,
 }: {
   pullRequests: ReadonlyArray<ThreadPullRequestLink>;
   onOpenPullRequest?: (event: MouseEvent<HTMLAnchorElement>, url: string) => void;
-  maxItems?: number;
-  onViewAll?: () => void;
 }) {
   const lines = pullRequestListLines(resolveThreadPullRequestChains(pullRequests));
   if (lines.length === 0) return null;
-  const preview = maxItems === undefined ? lines : lines.slice(0, maxItems);
-  const remaining = lines.length - preview.length;
-  const moreLabel = (
-    <T>
-      +<Var>{remaining}</Var> more
-    </T>
-  );
   return (
     <ul className="flex flex-col gap-1">
-      {preview.map((line) => {
+      {lines.map((line) => {
         const snapshot = line.link.snapshot;
         const presentation =
           snapshot === null
@@ -564,25 +550,6 @@ export function ThreadPullRequestsMiniList({
           </ThreadPullRequestMiniListItem>
         );
       })}
-      {remaining > 0 ? (
-        <li className="px-1 text-xs text-muted-foreground">
-          {onViewAll ? (
-            <InlineButton
-              tone="muted"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                onViewAll();
-              }}
-            >
-              {moreLabel}
-            </InlineButton>
-          ) : (
-            moreLabel
-          )}
-        </li>
-      ) : null}
     </ul>
   );
 }

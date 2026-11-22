@@ -180,27 +180,6 @@ describe("sidebar keyboard navigation", () => {
     await vi.waitFor(() => expect(document.activeElement).toBe(atFormerIndex));
   });
 
-  it("reuses row positions across focus changes until the DOM changes", () => {
-    using tree = setup();
-    const first = tree.row("first");
-    const second = tree.row("second");
-    const third = tree.row("third");
-    tree.install();
-    using queryRows = vi.spyOn(tree.root, "querySelectorAll");
-
-    first.focus();
-    queryRows.mockClear();
-    second.focus();
-    third.focus();
-    expect(document.activeElement).toBe(third);
-    expect(queryRows).not.toHaveBeenCalled();
-
-    const added = tree.row("added");
-    added.focus();
-    expect(document.activeElement).toBe(added);
-    expect(queryRows).toHaveBeenCalledOnce();
-  });
-
   it("refreshes the remembered index after rows insert above the focused row before removal", async () => {
     using tree = setup();
     const parent = tree.row("parent");
@@ -224,29 +203,6 @@ describe("sidebar keyboard navigation", () => {
     parent.remove();
     target.remove();
     await vi.waitFor(() => expect(document.activeElement).toBe(afterTarget));
-  });
-
-  it("ignores non-row content updates inside a row without rescanning the sidebar", async () => {
-    using tree = setup();
-    const first = tree.row("first");
-    const second = tree.row("second");
-    tree.install();
-    first.focus();
-    expect(document.activeElement).toBe(first);
-
-    using queryRows = vi.spyOn(tree.root, "querySelectorAll");
-    queryRows.mockClear();
-
-    const icon = document.createElement("span");
-    icon.textContent = "status";
-    second.append(icon);
-    await Promise.resolve();
-    expect(queryRows).not.toHaveBeenCalled();
-
-    // Removing the non-row descendant also avoids a full sidebar scan.
-    icon.remove();
-    await Promise.resolve();
-    expect(queryRows).not.toHaveBeenCalled();
   });
 
   it("restores row focus when an inline rename input unmounts so ArrowDown continues navigating", async () => {

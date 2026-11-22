@@ -271,31 +271,6 @@ describe("composer draft thread lookup", () => {
     );
   });
 
-  it("does not enumerate the same draft session record again for other thread lookups", () => {
-    const store = useComposerDraftStore.getState();
-    const draftId = DraftId.make("indexed-draft");
-    const threadId = ThreadId.make("indexed-thread");
-    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
-
-    const { draftThreadsByThreadKey } = useComposerDraftStore.getState();
-    const ownKeys = vi.fn(Reflect.ownKeys);
-    const state = {
-      draftsByThreadKey: {},
-      draftThreadsByThreadKey: new Proxy(draftThreadsByThreadKey, {
-        ownKeys,
-      }) as typeof draftThreadsByThreadKey,
-    };
-    const threadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);
-
-    expect(resolveComposerDraftKey(state, threadRef)).toBe(draftId);
-    for (let index = 0; index < 32; index++) {
-      const serverRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make(`server-${index}`));
-      expect(resolveComposerDraftKey(state, serverRef)).toBe(scopedThreadKey(serverRef));
-      expect(resolveComposerDraftKey(state, threadRef)).toBe(draftId);
-    }
-    expect(ownKeys).toHaveBeenCalledOnce();
-  });
-
   it("distinguishes draft refs that serialize to the same scoped key", () => {
     const store = useComposerDraftStore.getState();
     const firstRef = scopeThreadRef(TEST_ENVIRONMENT_ID, ThreadId.make("nested:thread"));

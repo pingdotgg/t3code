@@ -374,7 +374,7 @@ function SidebarThreadTooltip({
       footer={
         supportsMultiplePullRequests && thread.pullRequests.length > 0 ? (
           <div className="border-t border-border/60 pt-2 pl-0.5 text-xs text-muted-foreground">
-            <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} maxItems={8} />
+            <ThreadPullRequestsMiniList pullRequests={thread.pullRequests} />
           </div>
         ) : null
       }
@@ -1638,7 +1638,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
               {/* Left of the status slot, the pin would slide when hover swaps the
-                  label for the wider row controls. */}
+                label for the wider row controls. */}
               {pinIndicator}
               {props.projectDisplayName ? (
                 <span
@@ -1700,8 +1700,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         >
                           <TopStatusIcon icon={topStatus.icon} className="size-4" />
                           {/* Not a live region: a collapsed sidebar is inert, so
-                              BackgroundThreadAnnouncer and the open thread's
-                              timeline speak status changes instead. */}
+                            BackgroundThreadAnnouncer and the open thread's
+                            timeline speak status changes instead. */}
                           {topStatus.label}
                           {status === "preparing" || status === "working" ? (
                             <span aria-hidden>
