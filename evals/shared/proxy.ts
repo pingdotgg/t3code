@@ -11,8 +11,8 @@ const decodeProxyConfig = Schema.decodeUnknownSync(
   ]),
 );
 /**
- * Reads the CLIProxyAPI provider from `$CODEX_HOME/config.toml` (default `~/.codex`): the
- * configured `model_provider` when it is a custom provider, otherwise `vibeproxy`.
+ * Reads the CLIProxyAPI provider from `$CODEX_HOME/config.toml` (default `~/.codex`): the one
+ * `T3CODE_EVAL_MODEL_PROVIDER` names, else `model_provider` when it is custom, else `vibeproxy`.
  */
 export const proxyConfig = () => {
   const config = decodeProxyConfig(
@@ -31,7 +31,9 @@ path = home / 'config.toml'
 if not path.is_file(): fail(f'No Codex config at {path}.')
 config = tomllib.loads(path.read_text())
 providers = config.get('model_providers', {})
-name = config.get('model_provider') if config.get('model_provider') in providers else 'vibeproxy'
+override = os.environ.get('T3CODE_EVAL_MODEL_PROVIDER')
+name = override or (config.get('model_provider') if config.get('model_provider') in providers else 'vibeproxy')
+if override and name not in providers: fail(f'T3CODE_EVAL_MODEL_PROVIDER names {name!r}, but {path} has no [model_providers.{name}].')
 if name not in providers: fail(f'{path} has no custom model provider to use (model_provider is {config.get("model_provider", "unset")!r}).')
 p = providers[name]
 if not p.get('base_url'): fail(f'[model_providers.{name}] in {path} has no base_url.')
@@ -40,6 +42,7 @@ h.update({k: os.environ[v] for k,v in p.get('env_http_headers', {}).items()})
 key = os.environ.get(p['env_key']) if p.get('env_key') else p.get('experimental_bearer_token')
 if p.get('env_key') and not key: fail(f'[model_providers.{name}] in {path} reads its key from {p["env_key"]}, which is not set.')
 if not key and p.get('requires_openai_auth') and (home / 'auth.json').is_file(): key = json.loads((home / 'auth.json').read_text()).get('OPENAI_API_KEY')
+if not key and p.get('requires_openai_auth'): fail(f'[model_providers.{name}] in {path} sets requires_openai_auth, but {home / "auth.json"} has no OPENAI_API_KEY.')
 if key: h['Authorization'] = 'Bearer ' + key
 print(json.dumps({'url': p['base_url'].rstrip('/'), 'headers': h}))
 `,

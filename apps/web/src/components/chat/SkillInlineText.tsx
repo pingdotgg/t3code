@@ -55,7 +55,7 @@ function SkillInlineText(props: {
           onOpenWork={
             member === "primary" || threadRef === undefined
               ? undefined
-              : () => useRightPanelStore.getState().openSideChat(threadRef, member)
+              : () => useRightPanelStore.getState().openThread(threadRef, member)
           }
         />
       ),

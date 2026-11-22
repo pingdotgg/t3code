@@ -65,6 +65,7 @@ const layerTest = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     const settings = yield* ServerSettings.ServerSettingsService;
     return ProviderHost.ProviderHost.of({
+      compatibility: () => Effect.undefined,
       paths: config,
       settings: {
         get: settings.getSettings,

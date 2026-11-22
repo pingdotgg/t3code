@@ -17,6 +17,10 @@ const state = vi.hoisted(() => ({
 
 // The banner under test shows no background work, and the real details pull in theme state.
 vi.mock("./BackgroundWorkDetails", () => ({ BackgroundWorkDetails: () => null }));
+vi.mock("../../hooks/useSettings", async () => {
+  const { DEFAULT_CLIENT_SETTINGS } = await import("@t3tools/contracts/settings");
+  return { getClientSettings: () => DEFAULT_CLIENT_SETTINGS };
+});
 vi.mock("../../rpc/atomRegistry", () => ({
   appAtomRegistry: {
     get: (atom: { kind: string; environmentId: string }) =>

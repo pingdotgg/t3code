@@ -10,6 +10,7 @@ import {
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { ChevronRightIcon, XIcon } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { tickTextContent } from "~/lib/tickTextContent";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -26,6 +27,7 @@ import { Button } from "../ui/button";
 
 /** Mounted only while the seat has an open run, so it holds a thread subscription no longer. */
 function SeatLiveRow(props: { parentRef: ScopedThreadRef; seat: ThreadGroupSeat }) {
+  const gt = useGT();
   const { parentRef, seat } = props;
   const seatRef = scopeThreadRef(parentRef.environmentId, seat.threadId);
   const shell = useQuietThreadShell(seatRef);
@@ -56,16 +58,16 @@ function SeatLiveRow(props: { parentRef: ScopedThreadRef; seat: ThreadGroupSeat 
         <Button
           variant="ghost-muted"
           size="compact"
-          aria-label={`Open ${seat.label}'s work`}
-          onClick={() => useRightPanelStore.getState().openSideChat(parentRef, seat.threadId)}
+          aria-label={gt("Open {label}'s work", { label: seat.label })}
+          onClick={() => useRightPanelStore.getState().openThread(parentRef, seat.threadId)}
         >
-          work
+          {gt("work", { $context: "noun, opens the group member's work" })}
           <ChevronRightIcon />
         </Button>
         <Button
           variant="ghost-destructive"
           size="icon-xs"
-          aria-label={`Stop ${seat.label}`}
+          aria-label={gt("Stop {label}", { label: seat.label })}
           disabled={!canOperate}
           onClick={() =>
             void interrupt({

@@ -19,6 +19,7 @@ import {
   threadLinkCandidates,
   threadLinkRefs,
 } from "@t3tools/shared/threadLinks";
+import { hasPendingBackgroundSubagent } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
 
@@ -219,10 +220,7 @@ export const isLiveCallerShell = (
   shell.archivedAt === null &&
   shell.providerInstanceId === providerInstanceId &&
   (shell.activeRunId !== null ||
-    (shell.pendingBackgroundTasks?.some(
-      (task) => task.kind === "subagent" && task.providerInstanceId === providerInstanceId,
-    ) ??
-      false));
+    hasPendingBackgroundSubagent(shell.pendingBackgroundTasks, providerInstanceId));
 
 /**
  * A thread caller acts only while it owns a live run, or a background

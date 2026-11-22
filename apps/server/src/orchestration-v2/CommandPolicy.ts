@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isSlashCommand } from "@t3tools/shared/composerTrigger";
 import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -109,6 +110,12 @@ export function parseNativeGoalCommand(message: NativeMessageCommand) {
   return allowsNativeMessageCommand(message) ? parseGoalCommand(message) : null;
 }
 
+export function isNativeSlashCommand(
+  message: NativeMessageCommand & Pick<OrchestrationV2ConversationMessage, "attachments">,
+): boolean {
+  return allowsNativeMessageCommand(message) && isSlashCommand(message);
+}
+
 export function isNativeCompactionCommand(
   message: NativeMessageCommand & { readonly role: string },
 ) {
@@ -149,6 +156,26 @@ export function goalCommandStopsActiveRun(
   }
 }
 
+export function resolveMessageDispatch(
+  projection: OrchestrationV2ThreadProjection,
+  message: NativeMessageCommand &
+    Pick<
+      Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+      "dispatchMode" | "deliveryIntent" | "attachments"
+    >,
+): MessageDispatchMode {
+  const mode = resolveMessageDispatchIntent(
+    projection,
+    message.dispatchMode,
+    message.deliveryIntent,
+  );
+  // A provider runs a steered command in place of the turn's task, so commands wait.
+  return mode.type === "steer_active" && isNativeSlashCommand(message)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+/** How a message joins active work when it is free to steer. */
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,

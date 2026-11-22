@@ -469,6 +469,8 @@ export function useThreadLifecycle(input: ThreadLifecycleInput) {
     environmentId,
     routeThreadKey,
     currentRouteThreadKeyRef,
+    panelRef: activeThreadRef,
+    parentThreadId: activeThread?.lineage.parentThreadId ?? null,
   });
   const onOpenRelatedThreadStable = useStableCallback(onOpenRelatedThread);
   // A seat's own row already says it is waiting, and it is not a side chat to the user.

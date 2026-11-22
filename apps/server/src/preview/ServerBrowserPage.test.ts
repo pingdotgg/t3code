@@ -61,7 +61,6 @@ describe("snapshot deadline diagnostics", () => {
           title: "",
           loading: false,
           visibleText: "",
-          interactiveElements: [],
         }),
         ariaSnapshot: async () => "",
         ...options.page,
@@ -274,6 +273,23 @@ describe("server browser element refs", () => {
     return locator!;
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
+
+  it("does not report an empty interactiveElements list beside a tree full of controls", async () => {
+    await page.setContent(
+      `<a href="#signin">Sign in</a><button>Open menu</button><button>Dismiss local database notice</button>`,
+    );
+    const result = await takeSnapshot();
+    expect(buttonLocator(result.accessibilityTree, "Open menu")).toBeDefined();
+    expect(String(result.accessibilityTree)).toContain('link "Sign in"');
+    const elements = (
+      result as { readonly interactiveElements?: ReadonlyArray<{ readonly name: string }> }
+    ).interactiveElements;
+    if (elements !== undefined) {
+      expect(elements.map((element) => element.name)).toEqual(
+        expect.arrayContaining(["Sign in", "Open menu", "Dismiss local database notice"]),
+      );
+    }
+  });
 
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);

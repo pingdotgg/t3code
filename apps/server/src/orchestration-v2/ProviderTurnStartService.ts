@@ -1,4 +1,5 @@
 import * as PstackPack from "../pstack/PstackPack.ts";
+import { classifyCodexManagedError } from "../provider/CodexManagedErrors.ts";
 import { projectComposerContextForProvider } from "@t3tools/shared/composerContextReferences";
 import { expandAssistantCitationsForProvider } from "@t3tools/shared/assistantCitations";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
@@ -49,6 +50,7 @@ import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeRestoreMissingWorktree } from "../workspace/restoreMissingWorktree.ts";
+import type * as TaskFolders from "../workspace/TaskFolders.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProviderUsageAnalytics from "../telemetry/ProviderUsageAnalytics.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -83,6 +85,7 @@ import {
   refreshHistoricalMessageSources,
   withInlineContext,
 } from "./ContextHandoffDelivery.ts";
+import { isProviderCommand, outputInstructions } from "./runOutput.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import {
@@ -300,6 +303,7 @@ export const layer: Layer.Layer<
   | RunExecutionService.RunExecutionServiceV2
   | RuntimePolicy.RuntimePolicyV2
   | TurnItemPositionStore.TurnItemPositionStoreV2
+  | TaskFolders.TaskFolders
 > = Layer.effect(
   ProviderTurnStartServiceV2,
   Effect.gen(function* () {
@@ -1063,10 +1067,15 @@ export const layer: Layer.Layer<
       const goalCommand = goalDriver && parseNativeGoalCommand(providerMessage) !== null;
       const provenance = messageProvenance(providerMessage);
       const purpose = liveMessagePurpose(providerMessage, projection.thread);
-      const renderMessage = (text: string) =>
-        isNativeMaintenanceCommand(providerMessage) || goalCommand
-          ? text
-          : formatMessageWithProvenance(text, provenance, purpose);
+      const renderMessage = (text: string) => {
+        const rendered =
+          isNativeMaintenanceCommand(providerMessage) || goalCommand
+            ? text
+            : formatMessageWithProvenance(text, provenance, purpose);
+        return run.outputSchema === undefined || goalCommand || isProviderCommand(providerMessage)
+          ? rendered
+          : `${rendered}\n\n${outputInstructions(run.outputSchema)}`;
+      };
       let userText = renderMessage(
         projectComposerContextForProvider({
           text: providerMessage.text,
@@ -1687,6 +1696,71 @@ export const layer: Layer.Layer<
               handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
               handoff.delivery?.status === "pending",
           );
+        const rejectedHistory = yield* Effect.gen(function* () {
+          if (session.driver !== "codex") return false;
+          const acceptedAttemptIds = new Set(
+            projection.providerTurns.map((turn) => turn.runAttemptId),
+          );
+          const previous = projection.runs.findLast(
+            (source) =>
+              source.providerThreadId === providerThread.id &&
+              source.ordinal < run.ordinal &&
+              source.activeAttemptId !== null &&
+              acceptedAttemptIds.has(source.activeAttemptId),
+          );
+          if (
+            previous === undefined ||
+            (previous.status !== "failed" &&
+              previous.status !== "interrupted" &&
+              previous.status !== "cancelled")
+          )
+            return false;
+          const previousAttempt = projection.attempts.find(
+            (source) => source.id === previous.activeAttemptId,
+          );
+          if (previousAttempt === undefined) return false;
+          if (previousAttempt.nativeThreadId !== undefined) {
+            if (previousAttempt.nativeThreadId !== providerThread.nativeThreadRef?.nativeId)
+              return false;
+          } else if (
+            projection.contextHandoffs.some(
+              (handoff) =>
+                handoff.toProviderThreadId === providerThread.id &&
+                handoff.strategy === "full_thread_summary" &&
+                handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
+                handoff.coveredRunOrdinals.to >= previous.ordinal,
+            )
+          )
+            return false;
+          // The native resume RPC can succeed while persisted input still rejects every turn.
+          return (yield* projectionStore.getTurnStartHistory(input.threadId, [previous.id])).some(
+            (item) =>
+              item.type === "error" &&
+              item.nodeId === previous.rootNodeId &&
+              (item.failure.code === "invalid_encrypted_content" ||
+                classifyCodexManagedError(item.failure.message)?.code ===
+                  "invalid_encrypted_content"),
+          );
+        });
+        // A fresh session would orphan background work still running on the native thread.
+        const hasPendingWork = (thread: OrchestrationV2ProviderThread) =>
+          session.hasPendingBackgroundWorkForThread?.(thread, { includeSubagents: true }) ??
+          session.hasPendingBackgroundWork ??
+          Effect.succeed(false);
+        const failForPendingWork = loadFromProvider(
+          Effect.fail(
+            new ProviderAdapter.ProviderAdapterTurnStartError({
+              driver: session.driver,
+              threadId: projection.thread.id,
+              providerThreadId: providerThread.id,
+              runId,
+              cause: new ContextHandoffBackgroundWorkError(),
+            }),
+          ),
+        );
+        if (rejectedHistory && (yield* hasPendingWork(providerThread))) {
+          return yield* failForPendingWork;
+        }
         // A provider that cannot truncate rolls back into a fresh native session holding none of the kept turns.
         const nativeSessionLacksKeptTurns =
           !session.providerSession.capabilities.checkpointing.providerCanRollbackConversation &&
@@ -1701,7 +1775,7 @@ export const layer: Layer.Layer<
               handoff.strategy === "manual_context",
           );
         const resumed = yield* Effect.result(
-          uncertainDelivery || nativeSessionLacksKeptTurns
+          uncertainDelivery || nativeSessionLacksKeptTurns || rejectedHistory
             ? Effect.fail(
                 new ProviderAdapter.ProviderAdapterTurnStartError({
                   driver: session.driver,
@@ -1710,7 +1784,9 @@ export const layer: Layer.Layer<
                   runId,
                   cause: uncertainDelivery
                     ? "Uncertain native history injection"
-                    : "Native session holds none of the kept conversation",
+                    : nativeSessionLacksKeptTurns
+                      ? "Native session holds none of the kept conversation"
+                      : "Rejected native history",
                 }),
               )
             : session.resumeThread({
@@ -1756,13 +1832,7 @@ export const layer: Layer.Layer<
             Effect.catchTags({ ContextHandoffBudgetError: () => Effect.succeedNone }),
           );
           if (Option.isNone(freshDelivery)) return resumed.success;
-          const hasPendingWork = yield* (
-            session.hasPendingBackgroundWorkForThread?.(resumed.success, {
-              includeSubagents: true,
-            }) ??
-              session.hasPendingBackgroundWork ??
-              Effect.succeed(false)
-          );
+          const pendingBackgroundWork = yield* hasPendingWork(resumed.success);
           if (restartDue !== undefined) {
             const refusal = contextRestartRefusal({
               controlMessage:
@@ -1774,7 +1844,7 @@ export const layer: Layer.Layer<
               summaryPassPending: yield* conversationSummaries.hasPendingPass({
                 threadId: projection.thread.id,
               }),
-              pendingBackgroundWork: hasPendingWork,
+              pendingBackgroundWork,
               uncoveredItems: freshDelivery.value.uncoveredItems,
             });
             if (refusal !== null) {
@@ -1786,18 +1856,8 @@ export const layer: Layer.Layer<
               return resumed.success;
             }
             contextRestart = restartDue;
-          } else if (hasPendingWork) {
-            return yield* loadFromProvider(
-              Effect.fail(
-                new ProviderAdapter.ProviderAdapterTurnStartError({
-                  driver: session.driver,
-                  threadId: projection.thread.id,
-                  providerThreadId: providerThread.id,
-                  runId,
-                  cause: new ContextHandoffBackgroundWorkError(),
-                }),
-              ),
-            );
+          } else if (pendingBackgroundWork) {
+            return yield* failForPendingWork;
           }
         }
         resumedHandoffContext = undefined;
@@ -1822,9 +1882,11 @@ export const layer: Layer.Layer<
               ? "context_restart"
               : nativeSessionLacksKeptTurns
                 ? "native_session_lacks_kept_turns"
-                : resumed._tag === "Success"
-                  ? "handoff_budget_exhausted"
-                  : "resume_failed",
+                : rejectedHistory
+                  ? "rejected_native_history"
+                  : resumed._tag === "Success"
+                    ? "handoff_budget_exhausted"
+                    : "resume_failed",
           errorTag: resumed._tag === "Failure" ? resumed.failure._tag : "ContextHandoffBudgetError",
         });
         const replacement = yield* loadFromProvider(

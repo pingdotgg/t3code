@@ -8,6 +8,7 @@ import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
@@ -73,7 +74,7 @@ const removedEnvironmentKeys = new Set([
   "AGY_ACP_ENABLE_OAUTH",
   "GEMINI_HOME",
   "AGY_ACP_FORCE_FILE_STORAGE",
-  "ANTIGRAVITY_HARNESS_PATH",
+  "AGY_CLI_DISABLE_AUTO_UPDATE",
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
@@ -227,8 +228,14 @@ function antigravityEnvironment(
     baseEnv.SSL_CERT_DIR === undefined
       ? { SSL_CERT_FILE: profile.caBundlePath }
       : {}),
+    // The 1.5 CLI ignores AGY_ACP_FORCE_FILE_STORAGE and keeps Google sign-ins in one OS keyring
+    // entry for every profile, unless it believes it runs over SSH. Sign-in then uses `--login`.
+    ...(auth.authMethod === "oauth-personal"
+      ? { SSH_CONNECTION: baseEnv.SSH_CONNECTION || "127.0.0.1 0 127.0.0.1 0" }
+      : {}),
     GEMINI_HOME: profile.geminiHome,
     AGY_ACP_FORCE_FILE_STORAGE: "1",
+    AGY_CLI_DISABLE_AUTO_UPDATE: "1",
     BROWSER: profile.browserCommand,
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
@@ -243,23 +250,42 @@ class AntigravitySkillLinkError extends Schema.TaggedError<AntigravitySkillLinkE
   { link: Schema.String, cause: Schema.Defect() },
 ) {
   override get message(): string {
-    return `Could not link Antigravity user skills at ${this.link}.`;
+    return `Could not link Antigravity user configuration at ${this.link}.`;
   }
 }
 
-/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills from the real ~/.gemini. */
-const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(function* (input: {
+const antigravityUserConfigFiles = [
+  ["AGENTS.md"],
+  ["GEMINI.md"],
+  ["config", "skills.json"],
+] as const;
+
+/** Private GEMINI_HOME isolates credentials/hooks/MCP; link global skills and rules from the real ~/.gemini. */
+const linkAntigravityUserConfig = Effect.fn("linkAntigravityUserConfig")(function* (input: {
   readonly profileDirectory: string;
   readonly userHome: string;
   readonly platform: NodeJS.Platform;
 }): Effect.fn.Return<void, AcpErrors.AcpTransportError, FileSystem.FileSystem | Path.Path> {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const userGemini = path.join(input.userHome, ".gemini");
   const links = antigravityUserSkillDirectories(path, input.profileDirectory);
-  const targets = antigravityUserSkillDirectories(path, path.join(input.userHome, ".gemini"));
-  for (const [link, target] of [
-    [links[0], targets[0]],
-    [links[1], targets[1]],
+  const targets = antigravityUserSkillDirectories(path, userGemini);
+  const directoryType = input.platform === "win32" ? "junction" : "dir";
+  for (const [link, target, type] of [
+    [links[0], targets[0], directoryType],
+    [links[1], targets[1], directoryType],
+    // File symlinks need elevation or Developer Mode on Windows, so config files are copied there.
+    ...(input.platform === "win32"
+      ? []
+      : antigravityUserConfigFiles.map(
+          (segments) =>
+            [
+              path.join(input.profileDirectory, ...segments),
+              path.join(userGemini, ...segments),
+              "file",
+            ] as const,
+        )),
   ] as const) {
     const snapshotDirectory = path.join(
       input.profileDirectory,
@@ -277,7 +303,7 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
       });
       if (!(yield* fs.exists(target))) {
         if (existing?.isSymbolicLink()) yield* fs.remove(link);
-        yield* fs.remove(snapshotDirectory, { recursive: true, force: true });
+        if (type !== "file") yield* fs.remove(snapshotDirectory, { recursive: true, force: true });
         return;
       }
       // Preserve private skills; only an empty harness placeholder is replaceable.
@@ -288,12 +314,15 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
           catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
         });
       }
-      const readableTarget = yield* prepareAntigravitySkillSnapshot({
-        sourceDirectory: target,
-        snapshotDirectory,
-        libraryDirectory: path.join(input.userHome, ".agents", "skills"),
-        platform: input.platform,
-      });
+      const readableTarget =
+        type === "file"
+          ? target
+          : yield* prepareAntigravitySkillSnapshot({
+              sourceDirectory: target,
+              snapshotDirectory,
+              libraryDirectory: path.join(input.userHome, ".agents", "skills"),
+              platform: input.platform,
+            });
       const current = existing?.isSymbolicLink()
         ? path.resolve(path.dirname(link), yield* fs.readLink(link))
         : undefined;
@@ -301,25 +330,90 @@ const linkAntigravityUserSkills = Effect.fn("linkAntigravityUserSkills")(functio
         if (existing?.isSymbolicLink()) yield* fs.remove(link);
         yield* fs.makeDirectory(path.dirname(link), { recursive: true });
         yield* Effect.tryPromise({
-          try: () =>
-            NodeFSP.symlink(readableTarget, link, input.platform === "win32" ? "junction" : "dir"),
+          try: () => NodeFSP.symlink(readableTarget, link, type),
           catch: (cause) => new AntigravitySkillLinkError({ link, cause }),
         });
       }
-      if (readableTarget !== snapshotDirectory)
+      if (type !== "file" && readableTarget !== snapshotDirectory)
         yield* fs.remove(snapshotDirectory, { recursive: true, force: true });
     }).pipe(
-      Effect.mapError((cause) =>
-        isAcpTransportError(cause)
-          ? cause
-          : new AcpErrors.AcpTransportError({
-              detail: "Antigravity could not prepare its user skill directories.",
-              cause,
-            }),
+      Effect.catch((cause) =>
+        type === "file"
+          ? Effect.logWarning("Antigravity user configuration is not linked into the profile.", {
+              link,
+              target,
+              error: cause,
+            })
+          : Effect.fail(
+              isAcpTransportError(cause)
+                ? cause
+                : new AcpErrors.AcpTransportError({
+                    detail: "Antigravity could not prepare its user skill directories.",
+                    cause,
+                  }),
+            ),
       ),
     );
   }
 });
+
+const RuleCopiesJson = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+const decodeRuleCopies = Schema.decodeUnknownOption(RuleCopiesJson);
+const encodeRuleCopies = Schema.encodeSync(RuleCopiesJson);
+
+/** Copies refresh each launch; the recorded copy keeps a file the profile owns or edited untouched. */
+const copyAntigravityUserConfigFiles = Effect.fn("copyAntigravityUserConfigFiles")(
+  function* (input: {
+    readonly profileDirectory: string;
+    readonly userHome: string;
+  }): Effect.fn.Return<void, never, FileSystem.FileSystem | Path.Path> {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const manifestPath = path.join(input.profileDirectory, ".t3-rule-copies.json");
+    const readOptional = (file: string) =>
+      fs.readFileString(file).pipe(Effect.orElseSucceed((): string | undefined => undefined));
+    const manifestText = yield* readOptional(manifestPath);
+    const copies: Record<string, string> = {
+      ...Option.getOrElse(decodeRuleCopies(manifestText), () => ({})),
+    };
+    for (const segments of antigravityUserConfigFiles) {
+      const key = segments.join("/");
+      const link = path.join(input.profileDirectory, ...segments);
+      const target = path.join(input.userHome, ".gemini", ...segments);
+      yield* Effect.gen(function* () {
+        const current = yield* readOptional(link);
+        if (current !== undefined && current !== copies[key]) {
+          delete copies[key];
+          return;
+        }
+        const source = yield* readOptional(target);
+        if (source === undefined) {
+          if (current !== undefined) yield* fs.remove(link);
+          delete copies[key];
+          return;
+        }
+        yield* fs.makeDirectory(path.dirname(link), { recursive: true });
+        yield* fs.writeFileString(link, source);
+        copies[key] = source;
+      }).pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Antigravity user configuration is not copied into the profile.", {
+            link,
+            target,
+            error,
+          }),
+        ),
+      );
+    }
+    yield* fs
+      .writeFileString(manifestPath, encodeRuleCopies(copies))
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("Antigravity rule copy record could not be written.", { error }),
+        ),
+      );
+  },
+);
 
 export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(function* (input: {
   readonly profileDirectory: string;
@@ -467,15 +561,15 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
         authSupportError("The Antigravity profile settings could not be written."),
       ),
     );
-  yield* linkAntigravityUserSkills({ profileDirectory: geminiHome, userHome, platform });
+  yield* linkAntigravityUserConfig({ profileDirectory: geminiHome, userHome, platform });
+  if (platform === "win32") {
+    yield* copyAntigravityUserConfigFiles({ profileDirectory: geminiHome, userHome });
+  }
   return profile;
 });
 
 export function buildAntigravityAcpSpawnInput(input: {
-  readonly installation: {
-    readonly executablePath: string;
-    readonly harnessPath: string | null;
-  };
+  readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
@@ -484,32 +578,21 @@ export function buildAntigravityAcpSpawnInput(input: {
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
-    // The agy CLI has no harness sibling and serves ACP through its `acp` subcommand.
-    // The harness can survive a failed local agent and return end_turn; its native
-    // logs are the failure signal, so the transport must receive them.
-    args:
-      input.installation.harnessPath === null
-        ? [
-            "acp",
-            "--gemini-dir",
-            input.profile.geminiHome,
-            "--app-data-dir",
-            // The CLI joins this beneath gemini-dir, including when the value is absolute.
-            "antigravity-acp",
-          ]
-        : [...(input.profile.platform === "linux" ? ["--uid="] : []), "--alsologtostderr"],
+    args: [
+      "acp",
+      "--gemini-dir",
+      input.profile.geminiHome,
+      "--app-data-dir",
+      // The CLI joins this beneath gemini-dir, including when the value is absolute.
+      "antigravity-acp",
+    ],
     cwd: input.cwd,
-    env: {
-      ...antigravityEnvironment(
-        input.profile,
-        input.baseEnv ?? process.env,
-        input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
-        input.runtimeTempDirectory,
-      ),
-      ...(input.installation.harnessPath === null
-        ? {}
-        : { ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath }),
-    },
+    env: antigravityEnvironment(
+      input.profile,
+      input.baseEnv ?? process.env,
+      input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
+      input.runtimeTempDirectory,
+    ),
     extendEnv: false,
   };
 }
@@ -651,10 +734,6 @@ export function makeAntigravityStdoutTransform(
     });
 }
 
-// glog records from the managed harness after which its ACP process can no longer run a turn.
-const ANTIGRAVITY_HARNESS_FAILURE_LOG =
-  /^[IWEF]\d{4} \d{2}:\d{2}:\d{2}\.\d+ +\d+ (?:local_connection\.py:\d+\] harness stderr: Agent run failed:|server\.py:\d+\] (?:Failed to rebuild agent for session |Agent connection lost for session ))/;
-
 export function makeAntigravityStderrHandler(
   input: {
     readonly onAuthorizationUrl?: (
@@ -663,18 +742,10 @@ export function makeAntigravityStderrHandler(
   } = {},
 ) {
   let pending = "";
-  // Untraced: with native logs on stderr this runs for every harness log line.
+  // Untraced: this runs for every stderr line.
   const handleLine = Effect.fnUntraced(function* (line: string) {
     const message = line.endsWith("\r") ? line.slice(0, -1) : line;
     if (message.length > maxBrowserHelperLineLength) return;
-    if (ANTIGRAVITY_HARNESS_FAILURE_LOG.test(message)) {
-      return yield* new AcpErrors.AcpTransportError({
-        method: "session/prompt",
-        detail:
-          "Antigravity's local agent connection failed. Send a follow-up to resume with a fresh process.",
-        cause: undefined,
-      });
-    }
     const url = message.startsWith(ANTIGRAVITY_AUTH_STDOUT_PREFIX)
       ? Effect.succeed(message.slice(ANTIGRAVITY_AUTH_STDOUT_PREFIX.length))
       : message.startsWith(ANTIGRAVITY_AUTH_BROWSER_MARKER)

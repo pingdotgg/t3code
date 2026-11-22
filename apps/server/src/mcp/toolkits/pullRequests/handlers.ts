@@ -5,6 +5,7 @@ import {
   PullRequestListCursors,
   type PullRequestRef,
   type PullRequestReviewCommentDraft,
+  type PullRequestCheck,
   type PullRequestReviewThread,
   type OrchestrationProjectShell,
   type PullRequestState,
@@ -66,14 +67,16 @@ import {
   PullRequestGuideFailedError,
   PullRequestsToolkit,
   type ThreadPullRequestEntry,
+  alreadyEndedWatchNext,
   CHILD_PULL_REQUEST_REPORT_NEXT,
 } from "./tools.ts";
 
 const ReadCursor = Schema.Union([
   Schema.Struct({ diff: TrimmedNonEmptyString }),
+  // Null marks a list the read did not ask for.
   Schema.Struct({
-    threads: NonNegativeInt,
-    comments: NonNegativeInt,
+    threads: Schema.NullOr(NonNegativeInt),
+    comments: Schema.NullOr(NonNegativeInt),
     includeResolved: Schema.Boolean,
   }),
 ]);
@@ -117,7 +120,7 @@ const REVIEW_DIFF_PAGES = 10;
 
 function conversationPage(
   activity: PullRequestActivity,
-  start: { readonly threads: number; readonly comments: number },
+  start: { readonly threads: number | null; readonly comments: number | null },
   includeResolved: boolean,
 ) {
   // Offsets index the unfiltered lists, whose order resolving a thread does not change.
@@ -125,8 +128,8 @@ function conversationPage(
   const pageThreads: Array<PullRequestReviewThread> = [];
   const pageComments: Array<PullRequestActivity["comments"][number]> = [];
   let size = 0;
-  let thread = Math.min(start.threads, reviewThreads.length);
-  let comment = Math.min(start.comments, comments.length);
+  let thread = start.threads === null ? null : Math.min(start.threads, reviewThreads.length);
+  let comment = start.comments === null ? null : Math.min(start.comments, comments.length);
   const fits = (item: unknown) => {
     const next = size + JSON.stringify(item).length;
     if (next > CONVERSATION_PAGE_CHARS && pageThreads.length + pageComments.length > 0) {
@@ -136,7 +139,7 @@ function conversationPage(
     return true;
   };
   // Review threads come first: they hold the feedback an agent acts on.
-  while (thread < reviewThreads.length) {
+  while (thread !== null && thread < reviewThreads.length) {
     const next = reviewThreads[thread]!;
     if (includeResolved || !next.isResolved) {
       if (!fits(next)) break;
@@ -144,20 +147,32 @@ function conversationPage(
     }
     thread += 1;
   }
-  if (thread === reviewThreads.length) {
-    while (comment < comments.length && fits(comments[comment])) {
+  const threadsDone = thread === null || thread === reviewThreads.length;
+  if (threadsDone) {
+    while (comment !== null && comment < comments.length && fits(comments[comment])) {
       pageComments.push(comments[comment++]!);
     }
   }
-  const done = thread === reviewThreads.length && comment === comments.length;
+  const done = threadsDone && (comment === null || comment === comments.length);
   return {
     threads: pageThreads,
     comments: pageComments,
-    hiddenResolvedThreads: includeResolved
-      ? 0
-      : reviewThreads.filter((candidate) => candidate.isResolved).length,
     next: done ? null : { threads: thread, comments: comment, includeResolved },
   };
+}
+
+function checksSummary(checks: ReadonlyArray<PullRequestCheck>) {
+  let passed = 0;
+  let pending = 0;
+  let incomplete = false;
+  const failed: Array<string> = [];
+  for (const check of checks) {
+    if (check.placeholder === true) incomplete = true;
+    else if (check.status === "failure" || check.status === "cancelled") failed.push(check.name);
+    else if (check.status === "pending" || check.status === "action-required") pending += 1;
+    else passed += 1;
+  }
+  return { passed, pending, failed, ...(incomplete ? { incomplete: true as const } : {}) };
 }
 
 function entryOf(
@@ -298,6 +313,11 @@ const make = Effect.gen(function* () {
     return yield* watches
       .setWatching({ threadId, target: input, watching, until: input.until })
       .pipe(
+        Effect.map((result) =>
+          result.state === undefined
+            ? result
+            : { ...result, next: alreadyEndedWatchNext(result.state) },
+        ),
         Effect.catchTags({
           PullRequestWatchThreadNotFoundError: (error) =>
             threadNotFound(engine, scope, error.threadId, error.message),
@@ -366,7 +386,13 @@ const make = Effect.gen(function* () {
     const expectedStackHeads: Array<{ readonly number: number; readonly headSha: string }> = [];
     for (const layer of stack.layers.slice(0, end + 1)) {
       if (layer.state === "merged") continue;
-      const headSha = layer.number === ref.number ? input.expectedHeadSha : layer.headSha;
+      const headSha =
+        layer.number !== ref.number
+          ? layer.headSha
+          : layer.headSha !== undefined &&
+              PullRequestService.isHeadSha(layer.headSha, input.expectedHeadSha)
+            ? layer.headSha
+            : input.expectedHeadSha;
       if (headSha === undefined)
         return yield* new PullRequestForgeError({
           detail: `The host did not report PR #${layer.number}'s head, so the stack cannot be pinned. Try again.`,
@@ -515,10 +541,8 @@ const make = Effect.gen(function* () {
     const [detail, activity, diff] = yield* Effect.all(
       [
         // Agents pin merges to this headSha, so it must not come from a stale snapshot.
-        wants("summary") || wants("checks")
-          ? pullRequests.detail({ ...ref, allowStale: false }).pipe(Effect.asSome)
-          : Effect.succeedNone,
-        wants("conversation") ? pullRequests.activity(ref).pipe(Effect.asSome) : Effect.succeedNone,
+        pullRequests.detail({ ...ref, allowStale: false }),
+        pullRequests.activity(ref),
         wants("diff")
           ? pullRequests
               .diff({ ...ref, ...(diffCursor === undefined ? {} : { cursor: diffCursor }) })
@@ -527,70 +551,79 @@ const make = Effect.gen(function* () {
       ],
       { concurrency: "unbounded" },
     ).pipe(Effect.mapError(forgeFailure));
-    const page = Option.map(activity, (value) =>
-      conversationPage(
-        value,
-        cursor !== undefined && "threads" in cursor ? cursor : { threads: 0, comments: 0 },
-        includeResolved,
-      ),
-    );
+    const wantsThreads = wants("threads");
+    const wantsComments = wants("comments");
+    const page =
+      wantsThreads || wantsComments
+        ? Option.some(
+            conversationPage(
+              activity,
+              cursor !== undefined && "threads" in cursor
+                ? cursor
+                : { threads: wantsThreads ? 0 : null, comments: wantsComments ? 0 : null },
+              includeResolved,
+            ),
+          )
+        : Option.none();
     const threadRests = Option.isSome(page)
       ? yield* Effect.forEach(page.value.threads, (thread) => restOfThread(ref, thread), {
           concurrency: 4,
         })
       : [];
     const result: Omit<ReadPullRequestResult, "host" | "repository" | "number" | "url"> = {
-      ...(Option.isSome(detail) && wants("summary")
-        ? {
-            summary: {
-              title: detail.value.title,
-              body: detail.value.body,
-              state: detail.value.state,
-              isDraft: detail.value.isDraft,
-              author: detail.value.author?.login ?? null,
-              headBranch: detail.value.headBranch,
-              baseBranch: detail.value.baseBranch,
-              headSha: detail.value.headSha ?? null,
-              mergeability: detail.value.mergeability,
-              behindBy: detail.value.behindBy ?? null,
-              autoMergeEnabled: detail.value.autoMergeEnabled ?? null,
-              additions: detail.value.additions,
-              deletions: detail.value.deletions,
-              changedFiles: detail.value.changedFiles,
-              labels: detail.value.labels.map((label) => label.name),
-              reviewers: detail.value.reviewers.map((reviewer) => reviewer.login),
-            },
-          }
-        : {}),
-      ...(Option.isSome(detail) && wants("checks") ? { checks: detail.value.checks } : {}),
-      ...(Option.isSome(activity) && Option.isSome(page)
+      title: detail.title,
+      state: detail.state,
+      isDraft: detail.isDraft,
+      author: detail.author?.login ?? null,
+      headBranch: detail.headBranch,
+      baseBranch: detail.baseBranch,
+      headSha: detail.headSha ?? null,
+      mergeability: detail.mergeability,
+      behindBy: detail.behindBy ?? null,
+      autoMergeEnabled: detail.autoMergeEnabled ?? null,
+      checks: checksSummary(detail.checks),
+      unresolvedThreads: activity.reviewThreads.filter((thread) => !thread.isResolved).length,
+      ...(activity.reviewThreadsTruncated === true ? { unresolvedThreadsTruncated: true } : {}),
+      ...(wants("body") ? { body: detail.body } : {}),
+      ...(wants("checks") ? { checkRuns: detail.checks } : {}),
+      ...(Option.isSome(page)
         ? {
             conversation: {
-              comments: page.value.comments.map((comment) => ({
-                id: comment.id,
-                kind: comment.kind,
-                author: comment.author?.login ?? null,
-                body: comment.body,
-                createdAt: comment.createdAt,
-                path: comment.path,
-                reviewState: comment.reviewState,
-              })),
-              reviewThreads: page.value.threads.map((thread, index) => ({
-                id: thread.id,
-                path: thread.path,
-                line: thread.line,
-                isResolved: thread.isResolved,
-                isOutdated: thread.isOutdated,
-                comments: [...thread.comments, ...threadRests[index]!.comments].map((comment) => ({
-                  author: comment.author?.login ?? null,
-                  body: comment.body,
-                  createdAt: comment.createdAt,
-                })),
-                moreComments: threadRests[index]!.moreComments,
-              })),
-              hiddenResolvedThreads: page.value.hiddenResolvedThreads,
+              ...(wantsThreads
+                ? {
+                    reviewThreads: page.value.threads.map((thread, index) => ({
+                      id: thread.id,
+                      path: thread.path,
+                      line: thread.line,
+                      isResolved: thread.isResolved,
+                      isOutdated: thread.isOutdated,
+                      comments: [...thread.comments, ...threadRests[index]!.comments].map(
+                        (comment) => ({
+                          author: comment.author?.login ?? null,
+                          body: comment.body,
+                          createdAt: comment.createdAt,
+                        }),
+                      ),
+                      moreComments: threadRests[index]!.moreComments,
+                    })),
+                  }
+                : {}),
+              ...(wantsComments
+                ? {
+                    comments: page.value.comments.map((comment) => ({
+                      id: comment.id,
+                      kind: comment.kind,
+                      author: comment.author?.login ?? null,
+                      body: comment.body,
+                      createdAt: comment.createdAt,
+                      path: comment.path,
+                      reviewState: comment.reviewState,
+                    })),
+                  }
+                : {}),
               truncated:
-                activity.value.commentsTruncated || activity.value.reviewThreadsTruncated === true,
+                (wantsComments && activity.commentsTruncated) ||
+                (wantsThreads && activity.reviewThreadsTruncated === true),
               nextCursor: page.value.next === null ? null : readCursors.encode(page.value.next),
             },
           }
@@ -920,10 +953,13 @@ const make = Effect.gen(function* () {
         // A cursor continues the one section it came from, with that read's options.
         const sections: ReadonlyArray<PullRequestReadSection> =
           cursor === undefined
-            ? (input.sections ?? ["summary", "checks"])
+            ? (input.include ?? [])
             : "diff" in cursor
               ? ["diff"]
-              : ["conversation"];
+              : [
+                  ...(cursor.threads === null ? [] : (["threads"] as const)),
+                  ...(cursor.comments === null ? [] : (["comments"] as const)),
+                ];
         const includeResolved =
           cursor !== undefined && "includeResolved" in cursor
             ? cursor.includeResolved

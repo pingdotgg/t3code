@@ -8,6 +8,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointRef,
   CheckpointScopeId,
   GitCommandError,
   MessageId,
@@ -180,6 +181,7 @@ it.effect.each(["workspace refresh", "evaluation enqueue", "branch sync"] as con
                   });
               }).pipe(Effect.ensuring(Deferred.succeed(refreshed, undefined))),
             refreshAfterTurn: () => Effect.void,
+            refreshRepositories: () => Effect.void,
           }),
           Layer.mock(ModelEvaluations.ModelEvaluations)({
             enqueueRun: (request) =>
@@ -210,8 +212,18 @@ const finalizationLayer = (
   runId: RunId,
   steps: string[],
   refresh: (typeof RunFinalization.RunFinalizationObserver)["Service"]["refresh"],
-) =>
-  RunFinalization.layer.pipe(
+) => {
+  const usedRepositoryScopeId = CheckpointScopeId.make(`${scopeId}_api`);
+  const idleRepositoryScopeId = CheckpointScopeId.make(`${scopeId}_docs`);
+  const repositoryCheckpoint = (repositoryScopeId: CheckpointScopeId, checkpointRunId: RunId) => ({
+    scopeId: repositoryScopeId,
+    runId: checkpointRunId,
+    ordinalWithinScope: 1,
+    appRunOrdinal: null,
+    status: "ready" as const,
+    ref: CheckpointRef.make(`refs/t3/test/${repositoryScopeId}`),
+  });
+  return RunFinalization.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({
@@ -224,8 +236,27 @@ const finalizationLayer = (
           getCheckpointContext: () =>
             Effect.succeed({
               runs: [],
-              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
-              checkpoints: [],
+              checkpointScopes: [
+                { id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" },
+                {
+                  id: usedRepositoryScopeId,
+                  runId,
+                  kind: "manual" as const,
+                  cwd: "/api",
+                  repositoryPath: "/api",
+                },
+                {
+                  id: idleRepositoryScopeId,
+                  runId,
+                  kind: "manual" as const,
+                  cwd: "/docs",
+                  repositoryPath: "/docs",
+                },
+              ],
+              checkpoints: [
+                repositoryCheckpoint(usedRepositoryScopeId, runId),
+                repositoryCheckpoint(idleRepositoryScopeId, RunId.make("run_before")),
+              ],
             }),
           getThreadShell: () =>
             Effect.succeed({ worktreePath: null } as OrchestrationV2ThreadShell),
@@ -235,10 +266,40 @@ const finalizationLayer = (
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,
           refreshAfterTurn: () => Effect.void,
+          refreshRepositories: ({ cwds }) =>
+            Effect.sync(() => {
+              steps.push(`repositories:${cwds.join(",")}`);
+            }),
         }),
       ),
     ),
   );
+};
+
+it.effect("completes finalization when the post-checkpoint workspace refresh fails", () => {
+  const threadId = ThreadId.make("thread_refresh_failure");
+  const runId = RunId.make("run_refresh_failure");
+  const scopeId = CheckpointScopeId.make("scope_refresh_failure");
+  const captured: string[] = [];
+  const refreshed = Deferred.makeUnsafe<void>();
+  const layer = finalizationLayer(scopeId, runId, captured, () =>
+    Effect.gen(function* () {
+      captured.push("refresh");
+      yield* Deferred.succeed(refreshed, undefined);
+      return yield* new RunFinalization.RunFinalizationRefreshError({
+        cwd: "/repo",
+        cause: new Error("Git command timed out"),
+      });
+    }),
+  );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+    yield* Deferred.await(refreshed);
+    // Only the tracked repository this run checkpointed is refreshed.
+    assert.sameMembers(captured, ["checkpoint", "refresh", "repositories:/api"]);
+  }).pipe(Effect.provide(layer));
+});
 
 it.effect("completes finalization without waiting for the display refresh", () => {
   const threadId = ThreadId.make("thread_slow_refresh");

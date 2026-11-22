@@ -66,6 +66,7 @@ const layerTest = (input: {
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
+  readonly existingPaths?: ReadonlyArray<string>;
 }) => {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -92,8 +93,21 @@ const layerTest = (input: {
         Layer.mergeAll(
           NodeServices.layer,
           layerSpawner,
-          input.fileSystem ? Layer.succeed(FileSystem.FileSystem, input.fileSystem) : Layer.empty,
           input.path ? Layer.succeed(Path.Path, input.path) : Layer.empty,
+          // Reveal fixtures name paths that do not exist on the test host.
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (nodeFileSystem) => {
+              const fileSystem = input.fileSystem ?? nodeFileSystem;
+              return {
+                ...fileSystem,
+                exists: (path: string) =>
+                  input.existingPaths?.includes(path)
+                    ? Effect.succeed(true)
+                    : fileSystem.exists(path),
+              };
+            }),
+          ).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),
@@ -573,6 +587,7 @@ for (const [replacement, verb, handler, target, expected] of [
             layerTest({
               platform: "win32",
               env: { PATH: "C:\\Windows", PATHEXT: ".EXE" },
+              existingPaths: [target],
               onSpawn: (command) => {
                 spawned = command;
               },
@@ -607,16 +622,13 @@ it.effect.skipIf(windowsHost)(
         yield* fileSystem.chmod(filePath, 0o755);
       }
 
+      const target = "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4";
       let spawned: ChildProcess.StandardCommand | undefined;
       const result = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         const kind = yield* launcher.resolveFileManagerRevealKind();
         const editors = yield* launcher.resolveAvailableEditors();
-        yield* launcher.launchEditor({
-          editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4",
-          reveal: true,
-        });
+        yield* launcher.launchEditor({ editor: "file-manager", cwd: target, reveal: true });
         return { kind, editors };
       }).pipe(
         Effect.provide(
@@ -627,6 +639,7 @@ it.effect.skipIf(windowsHost)(
               WSL_DISTRO_NAME: "Ubuntu-24.04",
               WSL_INTEROP: "/run/WSL/1_interop",
             },
+            existingPaths: [target],
             onSpawn: (command) => {
               spawned = command;
             },
@@ -689,6 +702,7 @@ it.effect.each([
         layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          existingPaths: ["C:/Users/t3/my project/a,b.ts"],
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.command.endsWith("reg.exe") ? registry : undefined),
         }),
@@ -717,6 +731,45 @@ it.effect.each([
         );
       }
     }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Explorer answers /select of a missing path by opening its default folder, not the parent.
+it.effect("does not ask Explorer to select a file that does not exist", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+    const missing = path.join(binDir, "CLAUDE.md");
+    const verbatim: Array<readonly [string, ReadonlyArray<string>]> = [];
+    const exit = yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      return yield* launcher
+        .launchEditor({ editor: "file-manager", cwd: missing, reveal: true })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provideService(WindowsVerbatimSpawn, (command, args) =>
+        Effect.sync(() => verbatim.push([command, args])),
+      ),
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          spawnResult: (command) =>
+            command.command.endsWith("reg.exe") ? { stdout: STOCK_FOLDER_VERB } : undefined,
+        }),
+      ),
+    );
+
+    assert.isTrue(Exit.isFailure(exit));
+    if (Exit.isFailure(exit)) {
+      assert.instanceOf(
+        Cause.squash(exit.cause),
+        ExternalLauncher.ExternalLauncherRevealTargetMissingError,
+      );
+    }
+    assert.deepEqual(verbatim, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -749,6 +802,7 @@ for (const wsl of [false, true]) {
                   ? { WSL_DISTRO_NAME: "Ubuntu-24.04", WSL_INTEROP: "/run/WSL/1_interop" }
                   : {}),
               },
+              existingPaths: [target],
               onSpawn: (command) => spawnedCommands.push(command),
               spawnResult: (command) =>
                 command.command === "xdg-mime"

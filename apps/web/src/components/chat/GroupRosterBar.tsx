@@ -2,6 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import type { ThreadGroup, ThreadGroupSeat } from "@t3tools/client-runtime/state/thread-group";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { PlusIcon, StarIcon, UsersIcon } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { useRightPanelStore } from "~/rightPanelStore";
 import { orchestrationEnvironment } from "~/state/orchestration";
@@ -16,6 +17,7 @@ import {
 } from "./groupAvailability";
 
 function SeatChip(props: { threadRef: ScopedThreadRef; seat: ThreadGroupSeat }) {
+  const gt = useGT();
   const { threadRef, seat } = props;
   const canRemove = useAtomValue(
     orchestrationEnvironment.removeFromGroup.permissionAtom(threadRef.environmentId),
@@ -25,16 +27,20 @@ function SeatChip(props: { threadRef: ScopedThreadRef; seat: ThreadGroupSeat }) 
     <Menu>
       <MenuTrigger
         render={
-          <Button variant="ghost" size="compact" aria-label={`${seat.label}, group member`} />
+          <Button
+            variant="ghost"
+            size="compact"
+            aria-label={gt("{label}, group member", { label: seat.label })}
+          />
         }
       >
         {seat.label}
       </MenuTrigger>
       <MenuPopup align="start">
         <MenuItem
-          onClick={() => useRightPanelStore.getState().openSideChat(threadRef, seat.threadId)}
+          onClick={() => useRightPanelStore.getState().openThread(threadRef, seat.threadId)}
         >
-          Open work
+          {gt("Open work")}
         </MenuItem>
         <MenuItem
           disabled={!canRemove}
@@ -42,10 +48,15 @@ function SeatChip(props: { threadRef: ScopedThreadRef; seat: ThreadGroupSeat }) 
             void removeFromGroup({
               environmentId: threadRef.environmentId,
               input: { threadId: threadRef.threadId, seatThreadId: seat.threadId },
-            }).then((result) => reportGroupCommandFailure(`Could not remove ${seat.label}`, result))
+            }).then((result) =>
+              reportGroupCommandFailure(
+                gt("Could not remove {label}", { label: seat.label }),
+                result,
+              ),
+            )
           }
         >
-          Remove
+          {gt("Remove")}
         </MenuItem>
       </MenuPopup>
     </Menu>
@@ -57,6 +68,7 @@ function SeatChip(props: { threadRef: ScopedThreadRef; seat: ThreadGroupSeat }) 
  * while Group conversations is off, so nobody is stranded in a group they cannot end.
  */
 export function GroupRosterBar(props: { threadRef: ScopedThreadRef; group: ThreadGroup }) {
+  const gt = useGT();
   const { threadRef, group } = props;
   const canInvite = useCanInviteToGroup(threadRef.environmentId);
   const canEnd = useAtomValue(
@@ -74,8 +86,10 @@ export function GroupRosterBar(props: { threadRef: ScopedThreadRef; group: Threa
         <ComposerBanner.Content>
           <span className="inline-flex shrink-0 items-center gap-1 px-1.5 text-xs font-medium sm:text-sm">
             <StarIcon className="size-3 fill-current" aria-hidden />
-            {group.primary.label}
-            <span className="sr-only">, primary</span>
+            <span aria-hidden>{group.primary.label}</span>
+            <span className="sr-only">
+              {gt("{label}, primary", { label: group.primary.label })}
+            </span>
           </span>
           {seats.map((seat) => (
             <SeatChip key={seat.threadId} threadRef={threadRef} seat={seat} />
@@ -84,7 +98,7 @@ export function GroupRosterBar(props: { threadRef: ScopedThreadRef; group: Threa
             <Button
               variant="ghost-muted"
               size="icon-xs"
-              aria-label="Invite a model"
+              aria-label={gt("Invite a model")}
               onClick={() => requestGroupInvite(threadRef)}
             >
               <PlusIcon />
@@ -100,16 +114,16 @@ export function GroupRosterBar(props: { threadRef: ScopedThreadRef; group: Threa
               void endGroup({
                 environmentId: threadRef.environmentId,
                 input: { threadId: threadRef.threadId },
-              }).then((result) => reportGroupCommandFailure("Could not end the group", result))
+              }).then((result) => reportGroupCommandFailure(gt("Could not end the group"), result))
             }
           >
-            End group · Continue with {group.primary.label}
+            {gt("End group · Continue with {label}", { label: group.primary.label })}
           </Button>
         </ComposerBanner.Actions>
       </ComposerBanner.Row>
       {unanswered ? (
         <p className="px-2 pb-1 text-muted-foreground" role="status">
-          A member has unanswered replies. Any message continues.
+          {gt("A member has unanswered replies. Any message continues.")}
         </p>
       ) : null}
     </ComposerBanner.Root>

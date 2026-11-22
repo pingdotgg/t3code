@@ -74,7 +74,7 @@ import {
   ThreadWorktreeRestore,
 } from "../workspace/restoreMissingWorktree.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
-import { layerRealGit } from "./ProviderTurnStartService.testkit.ts";
+import { layerNoTaskFolders, layerRealGit } from "./ProviderTurnStartService.testkit.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
@@ -207,6 +207,7 @@ function startWithMissingWorktree(
                 ),
         } as never),
         layerWorktreeLocation(),
+        layerNoTaskFolders,
         Layer.mock(GitWorkflow.GitWorkflowService)({
           pruneWorktrees,
           createWorktree,
@@ -327,6 +328,7 @@ const restoreLeaseCreateWorktree = vi.fn(() => Effect.succeed({} as never));
 const layerRestoreLeaseTest = layerThreadWorktreeRestore.pipe(
   Layer.provide(
     Layer.mergeAll(
+      layerNoTaskFolders,
       Layer.succeed(FileSystem.FileSystem, {
         exists: restoreLeaseExists,
         realPath: (target: string) => Effect.succeed(normalize(target)),
@@ -405,6 +407,7 @@ effectIt.effect.each(["unchanged", "user file", "git directory", "missing folder
         layerThreadWorktreeRestore.pipe(
           Layer.provide(
             Layer.mergeAll(
+              layerNoTaskFolders,
               Layer.succeed(FileSystem.FileSystem, {
                 exists: (target: string) =>
                   Effect.sync(() =>
@@ -478,6 +481,7 @@ it.each([
       layerThreadWorktreeRestore.pipe(
         Layer.provide(
           Layer.mergeAll(
+            layerNoTaskFolders,
             Layer.succeed(FileSystem.FileSystem, {
               exists: () => Effect.succeed(false),
               realPath: (target: string) => Effect.succeed(target),
@@ -1528,6 +1532,7 @@ function makeLocalCommandHarness(input: {
           allocate: ({ runOrdinal }) => Effect.succeed((runOrdinal ?? 0) * 100 - 1),
         }),
         layerWorktreeLocation(input.worktreesDir),
+        layerNoTaskFolders,
         input.fileSystem === undefined
           ? FileSystem.layerNoop({ exists: () => Effect.succeed(true) })
           : Layer.succeed(FileSystem.FileSystem, input.fileSystem),

@@ -1,7 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, settingsSecretLiteral, TextGenerationError } from "@t3tools/contracts";
+import {
+  NonNegativeInt,
+  ProviderDriverKind,
+  settingsSecretLiteral,
+  TextGenerationError,
+} from "@t3tools/contracts";
+import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility";
 import type { OpenCodeSettings } from "../settings.ts";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
@@ -229,6 +235,15 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         >,
         directory: string = input.cwd,
       ) {
+        // Text generation does not open a session, so the shared session check never sees it.
+        const broken = brokenVersionDetail({
+          name: "OpenCode",
+          version: server.version,
+          advisory: yield* host.compatibility(ProviderDriverKind.make("opencode"), server.version),
+        });
+        if (broken !== undefined) {
+          return yield* new TextGenerationError({ operation: input.operation, detail: broken });
+        }
         const client = openCodeRuntime.createOpenCodeSdkClient({
           baseUrl: server.url,
           directory,
@@ -267,10 +282,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
           ).pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: "Warn" })),
         );
         const selectedAgent = getModelSelectionStringOptionValue(input.modelSelection, "agent");
-        const requestedVariant = getModelSelectionStringOptionValue(
-          input.modelSelection,
-          "variant",
-        );
+        const requestedVariant = OpenCodeRuntime.openCodeVariant(input.modelSelection);
         const selectedVariant = yield* OpenCodeRuntime.resolveOpenCodeVariant(
           client,
           parsedModel,

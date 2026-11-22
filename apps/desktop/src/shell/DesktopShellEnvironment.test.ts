@@ -995,11 +995,13 @@ describe("DesktopShellEnvironment", () => {
         USERPROFILE: "C:\\Users\\testuser",
       };
 
+      const scripts: Array<string> = [];
       const prepared = yield* runShellEnvironment({
         env,
         platform: "win32",
         handler: (command) => {
           if (command._tag !== "StandardCommand") return "";
+          scripts.push(String(command.args.at(-1)));
           const loadProfile = !command.args.includes("-NoProfile");
           return loadProfile
             ? envOutput({
@@ -1033,6 +1035,13 @@ describe("DesktopShellEnvironment", () => {
         env.FNM_MULTISHELL_PATH,
         "C:\\Users\\testuser\\AppData\\Local\\fnm_multishells\\123",
       );
+      assert.isNotEmpty(scripts);
+      for (const script of scripts) {
+        assert.include(
+          script,
+          "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)",
+        );
+      }
     }),
   );
 

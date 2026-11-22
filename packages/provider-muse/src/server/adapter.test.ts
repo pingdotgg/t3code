@@ -586,6 +586,7 @@ describe("MuseAdapterV2", () => {
       const policy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
         ...runtimePolicy,
         cwd: "C:\\work\\repo",
+        workspace: { folders: [], extraRoots: ["C:\\work\\api"] },
       });
       const harness = yield* makeHarness(
         fake,
@@ -604,7 +605,10 @@ describe("MuseAdapterV2", () => {
       yield* startConversation(harness, fake);
       const turnStart = fake.calls.find((call) => call.method === "turn/start");
       // Muse 1.4.3 accepts only verbatim canonical roots.
-      assert.deepStrictEqual(turnStart?.params.workspaceRoots, ["\\\\?\\C:\\work\\repo"]);
+      assert.deepStrictEqual(turnStart?.params.workspaceRoots, [
+        "\\\\?\\C:\\work\\repo",
+        "\\\\?\\C:\\work\\api",
+      ]);
       // The muse.cmd launcher runs under cmd.exe, which cannot start in a verbatim directory.
       assert.strictEqual(hostCwd, "C:\\work\\repo");
     }).pipe(

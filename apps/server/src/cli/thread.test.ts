@@ -25,6 +25,7 @@ import {
 } from "../serverRuntimeState.ts";
 import {
   messageHeading,
+  latestRunError,
   launchModelSelection,
   readLatestMessages,
   resolveProject,
@@ -241,6 +242,8 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
           status: "completed",
           timedOut: false,
           resultRun: { runId: wakeRun, status: "completed" },
+          // The wake run submits the result the first run owes, which the server stores there.
+          output: { head: "abc" },
         },
       ],
       // The wake run starts from a notification, which the messages view leaves out.
@@ -256,7 +259,12 @@ it.effect("--wait lasts until background work the agent waits on wakes it and th
         { threadId, runId, timeoutMs: 15_000, untilDelegatedWorkSettled: true },
       ],
     );
-    assert.deepStrictEqual(outcome, { type: "ended", runId: wakeRun, status: "completed" });
+    assert.deepStrictEqual(outcome, {
+      type: "ended",
+      runId: wakeRun,
+      status: "completed",
+      output: { head: "abc" },
+    });
   }),
 );
 
@@ -329,6 +337,7 @@ it.effect(
             status: "completed",
             timedOut: false,
             resultRun: { runId: sentRun, status: "failed" },
+            output: { head: "abc" },
           },
         ],
         t3_thread_read: laterRunReads(sentRun, [{ runId: sentRun, type: "user_message" }]),
@@ -338,6 +347,7 @@ it.effect(
         type: "ended",
         runId,
         status: "completed",
+        output: { head: "abc" },
       });
     }),
 );
@@ -509,6 +519,32 @@ it.effect("show returns a --messages count larger than one call can spread", () 
       messages.map((item) => item.itemId),
       latest(200_000),
     );
+  }),
+);
+
+it.effect("show gives the latest run's last error only when that run did not complete", () =>
+  Effect.gen(function* () {
+    const page = {
+      thread: {},
+      items: [
+        { itemId: "item-0", runId: RunId.make("run-0"), type: "error", text: "earlier run" },
+        { itemId: "item-1", runId, type: "error", text: "first try" },
+        { itemId: "item-2", runId, type: "error", text: "Usage limit reached" },
+      ],
+      nextPosition: null,
+      hasMore: false,
+    };
+    const { tools, calls } = scriptedTools({ t3_thread_read: [page] });
+
+    assert.strictEqual(
+      yield* latestRunError(tools, { threadId, status: "failed", latestRunId: runId }),
+      "Usage limit reached",
+    );
+    assert.deepInclude(calls[0]?.args, { view: "activity" });
+    for (const status of ["completed", "running", "queued", "idle"] as const) {
+      assert.isNull(yield* latestRunError(tools, { threadId, status, latestRunId: runId }), status);
+    }
+    assert.lengthOf(calls, 1);
   }),
 );
 

@@ -12,7 +12,7 @@ import * as Path from "effect/Path";
 
 import { APP_DIR, T3_HOME } from "../e2e.config.ts";
 import { ScenarioError } from "./shell.ts";
-import { prepareHome, start } from "./start-app.ts";
+import { prepareHome, SCENARIO_MACHINE_ENV, start } from "./start-app.ts";
 
 export const SECOND_HOME = `${T3_HOME}-second-environment`;
 
@@ -54,6 +54,7 @@ const runSecondServer = Effect.fn("scenario.secondServer")(function* (
       PATH: `${path.join(SECOND_HOME, "bin")}:${hostEnvironment.PATH ?? ""}`,
       HOME: hostEnvironment.HOME,
       T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+      ...SCENARIO_MACHINE_ENV,
       ...extraEnvironment,
     },
     onLine: (line) => {

@@ -16,7 +16,7 @@ export type ProviderSetupInput = typeof ProviderSetupInput.Type;
 
 const SetupOperationId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
 // Environments supply these and clients open them, so a `javascript:` URL would run as the client.
-const SignInUrl = TrimmedNonEmptyString.check(
+export const SignInUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(16_384),
   Schema.isPattern(/^https?:\/\//i),
 );

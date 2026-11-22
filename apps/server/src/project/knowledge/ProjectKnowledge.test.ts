@@ -50,6 +50,7 @@ import * as ProjectStore from "../../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../../orchestration-v2/ProjectionStore.ts";
 import * as EventStore from "../../orchestration-v2/EventStore.ts";
 import * as EventSink from "../../orchestration-v2/EventSink.ts";
+import * as ThreadViewers from "../../orchestration-v2/ThreadViewers.ts";
 import * as EffectOutbox from "../../orchestration-v2/EffectOutbox.ts";
 import * as EffectWorker from "../../orchestration-v2/EffectWorker.ts";
 import * as CommandReceiptStore from "../../orchestration-v2/CommandReceiptStore.ts";
@@ -119,7 +120,7 @@ const receiptExecutor = Layer.succeed(EffectWorker.OrchestrationEffectExecutorV2
   execute: () => Effect.die("Unexpected effect"),
 });
 const receiptTestLayer = Layer.mergeAll(
-  EventSink.layerFromStores,
+  EventSink.layerFromStores.pipe(Layer.provide(ThreadViewers.layer)),
   EffectWorker.layer.pipe(Layer.provide(receiptExecutor)),
 ).pipe(
   Layer.provideMerge(receiptStores),

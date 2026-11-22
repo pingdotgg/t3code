@@ -4,7 +4,7 @@ import * as Schema from "effect/Schema";
 
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
 import { type PullRequestTarget, resolveTarget, type ResolvedTarget } from "./pullRequestTarget.ts";
-import { pullRequestSyncKey } from "./pullRequestSyncKey.ts";
+import { ownPullRequestRepositories, pullRequestSyncKey } from "./pullRequestSyncKey.ts";
 
 export type { PullRequestTargetError } from "./pullRequestTarget.ts";
 
@@ -44,18 +44,6 @@ export function projectForPullRequest(
       { projectId: project.id, host: target.host, repository: target.repository, number: 1 },
       project.repositoryIdentity ?? undefined,
     );
-    const projectKey =
-      project.repositoryIdentity == null
-        ? null
-        : pullRequestSyncKey(
-            {
-              projectId: project.id,
-              repository:
-                sourceControlDefinitions.repositorySelector(project.repositoryIdentity) ?? "",
-              number: 1,
-            },
-            project.repositoryIdentity,
-          );
     const origin = project.repositoryIdentity?.origin;
     if (
       origin !== undefined &&
@@ -66,9 +54,9 @@ export function projectForPullRequest(
       return true;
     return (
       own !== null &&
-      projectKey !== null &&
-      own.host === projectKey.host &&
-      own.repository === projectKey.repository
+      ownPullRequestRepositories(project.repositoryIdentity).some(
+        ({ key }) => own.host === key.host && own.repository === key.repository,
+      )
     );
   };
   if (preferred !== undefined && matches(preferred)) return preferred;

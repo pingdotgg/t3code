@@ -204,7 +204,13 @@ export function ComposerEditor({
           return {
             // Android taps only known token types; a model chip opens like a skill chip.
             type:
-              token.type === "model" ? "skill" : token.type === "group" ? "mention" : token.type,
+              token.type === "model"
+                ? "skill"
+                : token.type === "group"
+                  ? "mention"
+                  : token.type === "citation"
+                    ? "context"
+                    : token.type,
             source: token.source,
             start: token.start,
             end: token.end,
@@ -224,7 +230,7 @@ export function ComposerEditor({
                       ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
                       : token.type === "citation"
                         ? token.value
-                        : basename(token.value),
+                        : basename(token.value).normalize("NFC"),
             detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
             iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
             tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",

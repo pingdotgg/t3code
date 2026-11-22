@@ -67,6 +67,9 @@ const ISOLATED_OPERATIONS: ReadonlySet<TextGenerationOperations.Operation> = new
 ]);
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
+// Only a rejection of images as such marks a model text-only, not a size or count limit.
+const IMAGES_UNSUPPORTED =
+  /image[^\n]*(?:not support|unsupported)|(?:not support|unsupported)[^\n]*image/i;
 
 const ClaudeResultStatus = {
   subtype: Schema.optionalKey(Schema.String),
@@ -136,6 +139,8 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
+  // Models that failed with images and then succeeded without them; later runs skip the image attempt.
+  const textOnlyModels = new Set<string>();
 
   const readStreamAsString = <E>(
     operation: string,
@@ -290,22 +295,26 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     );
 
     // `claude -p` accepts images only as content blocks of a stream-json user message.
-    const imageBlocks = yield* readImageBlocks(attachments);
-    const streamJson = imageBlocks.length > 0;
-    const stdin = streamJson
-      ? `${yield* encodeJsonForOperation(
-          operation,
-          {
-            type: "user",
-            message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
-          },
-          "Failed to encode Claude CLI input.",
-        )}\n`
-      : prompt;
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
+    const imageBlocks = textOnlyModels.has(apiModelId) ? [] : yield* readImageBlocks(attachments);
+    const imageStdin =
+      imageBlocks.length > 0
+        ? `${yield* encodeJsonForOperation(
+            operation,
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
+            },
+            "Failed to encode Claude CLI input.",
+          )}\n`
+        : undefined;
 
     const runClaudeCommand = Effect.fn("runClaudeJson.runClaudeCommand")(function* (
       noSessionPersistence: boolean,
+      withImages: boolean,
     ) {
+      const streamJson = withImages && imageStdin !== undefined;
+      const stdin = streamJson ? imageStdin : prompt;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
       const spawnCommand = yield* resolveSpawnCommand(
         claudeSettings.binaryPath || "claude",
@@ -317,7 +326,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          apiModelId,
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
@@ -385,11 +394,30 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       };
     });
 
-    const rawStdout = yield* runClaudeCommand(true).pipe(
+    const runClaudeAttempt = (withImages: boolean) =>
+      runClaudeCommand(true, withImages).pipe(
+        Effect.filterOrElse(
+          (result) =>
+            result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+          () => runClaudeCommand(false, withImages),
+        ),
+      );
+
+    const rawStdout = yield* runClaudeAttempt(true).pipe(
+      // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
       Effect.filterOrElse(
-        (result) =>
-          result.exitCode === 0 || !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
-        () => runClaudeCommand(false),
+        (result) => result.exitCode === 0 || imageStdin === undefined,
+        (imageResult) =>
+          runClaudeAttempt(false).pipe(
+            Effect.tap((result) =>
+              Effect.sync(() => {
+                const imageFailure = `${imageResult.stdout}\n${imageResult.stderr}`;
+                if (result.exitCode === 0 && IMAGES_UNSUPPORTED.test(imageFailure)) {
+                  textOnlyModels.add(apiModelId);
+                }
+              }),
+            ),
+          ),
       ),
       Effect.flatMap(({ stdout, stderr, exitCode }) => {
         if (exitCode === 0) return Effect.succeed(stdout);

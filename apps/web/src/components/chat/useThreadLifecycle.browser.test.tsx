@@ -49,7 +49,17 @@ function setup() {
 
 function threadInput(threadId: string, branch: string) {
   const ref = scopeThreadRef(environmentId, ThreadId.make(threadId));
-  const thread = { id: ref.threadId, environmentId, branch, worktreePath: null };
+  const thread = {
+    id: ref.threadId,
+    environmentId,
+    branch,
+    worktreePath: null,
+    lineage: {
+      rootThreadId: ref.threadId,
+      parentThreadId: null,
+      relationshipToParent: null,
+    } satisfies EnvironmentThreadShell["lineage"],
+  };
   return {
     routeThreadKey: scopedThreadKey(ref),
     activeThread: thread as never,
