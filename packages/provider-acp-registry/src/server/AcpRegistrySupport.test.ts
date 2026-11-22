@@ -1,4 +1,6 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import { sha256 } from "@noble/hashes/sha2.js";
+import * as Hex from "effect/encoding/Hex";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
@@ -756,62 +758,111 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs and reuses a registry binary in the managed cache", () => {
-    const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
-    const agent = makeAgent({
-      binary: {
-        "linux-x86_64": {
-          archive: archiveUrl,
-          cmd: "./bin/example-agent",
-          args: ["acp"],
-          sha256: "97b29a636d7ddf7bf3567ae4d48c0f2a9b03943fd808b6efbf74f1dd3db131b7",
+  it.effect(
+    "installs, reuses, and replaces a registry binary in the managed cache when the artifact changes",
+    () => {
+      const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
+      const replacementBytes = new TextEncoder().encode("#!/bin/sh\necho example-repackaged\n");
+      const replacementArchiveUrl = "https://registry.test/example-agent-repackaged.bin";
+      const replacementSha256 = Hex.encode(sha256(replacementBytes));
+      let currentAgent = makeAgent({
+        binary: {
+          "linux-x86_64": {
+            archive: archiveUrl,
+            cmd: "./bin/example-agent",
+            args: ["acp"],
+            sha256: "97b29a636d7ddf7bf3567ae4d48c0f2a9b03943fd808b6efbf74f1dd3db131b7",
+          },
         },
-      },
-    });
-    const requests: Array<string> = [];
-    return Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-acp-registry-install-",
       });
-      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-        cacheDir,
-        toolsDir: `${cacheDir}/tools`,
-        registryUrl,
-      });
-      const first = yield* resolver.resolve(settings(), "/workspace");
-      const second = yield* resolver.resolve(settings(), "/workspace");
+      const requests: Array<string> = [];
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-install-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const first = yield* resolver.resolve(settings(), "/workspace");
+        const second = yield* resolver.resolve(settings(), "/workspace");
 
-      expect(first.spawn.command).toBe(second.spawn.command);
-      expect(first.spawn.command).toContain(
-        "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        expect(first.spawn.command).toBe(second.spawn.command);
+        expect(first.spawn.command).toContain(
+          "/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent",
+        );
+        expect(yield* fileSystem.readFileString(first.spawn.command)).toBe(
+          "#!/bin/sh\necho example\n",
+        );
+        expect(requests).toEqual([registryUrl, archiveUrl]);
+
+        // Repackaging at the same version and cmd path downloads, verifies sha256, replaces the binary, and caches the new receipt.
+        currentAgent = makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: replacementArchiveUrl,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+              sha256: replacementSha256,
+            },
+          },
+        });
+        yield* resolver.invalidateIndex();
+        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const third = yield* resolver.resolve(settings(), "/workspace");
+        const fourth = yield* resolver.resolve(settings(), "/workspace");
+        expect(third.spawn.command).toBe(first.spawn.command);
+        expect(fourth.spawn.command).toBe(first.spawn.command);
+        expect(third.launchIdentity).not.toBe(first.launchIdentity);
+        expect(yield* fileSystem.readFileString(third.spawn.command)).toBe(
+          "#!/bin/sh\necho example-repackaged\n",
+        );
+        expect(requests).toEqual([registryUrl, archiveUrl, registryUrl, replacementArchiveUrl]);
+
+        // A failed replacement (checksum mismatch) leaves the existing installed binary intact.
+        currentAgent = makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: replacementArchiveUrl,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+              sha256: "0".repeat(64),
+            },
+          },
+        });
+        yield* resolver.invalidateIndex();
+        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const checksumError = yield* resolver.resolve(settings(), "/workspace").pipe(Effect.flip);
+        expect(checksumError.reason).toBe("checksum_mismatch");
+        expect(yield* fileSystem.readFileString(third.spawn.command)).toBe(
+          "#!/bin/sh\necho example-repackaged\n",
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            requests.push(request.url);
+            const payload = request.url === replacementArchiveUrl ? replacementBytes : binaryBytes;
+            const response =
+              request.url === registryUrl
+                ? new Response(makeRegistry(currentAgent))
+                : new Response(
+                    new ReadableStream<Uint8Array>({
+                      start(controller) {
+                        controller.enqueue(payload.slice(0, 8));
+                        controller.enqueue(payload.slice(8));
+                        controller.close();
+                      },
+                    }),
+                  );
+            return Effect.succeed(HttpClientResponse.fromWeb(request, response));
+          }),
+        ),
       );
-      expect(yield* fileSystem.readFileString(first.spawn.command)).toBe(
-        "#!/bin/sh\necho example\n",
-      );
-      expect(requests).toEqual([registryUrl, archiveUrl]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        layerResolver((request) => {
-          requests.push(request.url);
-          const response =
-            request.url === registryUrl
-              ? new Response(makeRegistry(agent))
-              : new Response(
-                  new ReadableStream<Uint8Array>({
-                    start(controller) {
-                      controller.enqueue(binaryBytes.slice(0, 8));
-                      controller.enqueue(binaryBytes.slice(8));
-                      controller.close();
-                    },
-                  }),
-                );
-          return Effect.succeed(HttpClientResponse.fromWeb(request, response));
-        }),
-      ),
-    );
-  });
+    },
+  );
 
   it.effect("gives Antigravity a T3-owned temp directory that is removed with the process", () => {
     const agent = {
@@ -1111,7 +1162,9 @@ describe("AcpRegistrySupport", () => {
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
 
         yield* Deferred.succeed(firstGate.release, undefined);
-        expect((yield* Fiber.join(firstRefresh)).reason).toBe("registry_unavailable");
+        const firstRefreshError = yield* Fiber.join(firstRefresh);
+        expect(firstRefreshError.reason).toBe("registry_unavailable");
+        expect(firstRefreshError.stage).toBe("http_request");
         expect((yield* Fiber.join(queuedRefresh)).reason).toBe("registry_unavailable");
         expect(registryRequests).toBe(1);
 
@@ -1160,11 +1213,23 @@ describe("AcpRegistrySupport", () => {
         const coldInspectDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-cold-inspect-coalesce-",
         });
+        const coldCachePath = `${coldInspectDir}/acp-registry/registry.json`;
+        const missingColdCacheError = yield* fileSystem
+          .readFileString(coldCachePath)
+          .pipe(Effect.flip);
+        // Fail the missing cache read synchronously so the second inspect parks on the refresh semaphore before release.
+        const coldInspectFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          readFileString: (filePath, encoding) =>
+            filePath === coldCachePath
+              ? Effect.fail(missingColdCacheError)
+              : fileSystem.readFileString(filePath, encoding),
+        };
         const coldInspectResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: coldInspectDir,
           toolsDir: `${coldInspectDir}/tools`,
           registryUrl,
-        });
+        }).pipe(Effect.provideService(FileSystem.FileSystem, coldInspectFs));
         const coldInspectGate = {
           started: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
@@ -1179,6 +1244,7 @@ describe("AcpRegistrySupport", () => {
         const secondInspect = yield* coldInspectResolver
           .inspect(settings())
           .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        expect(secondInspect.pollUnsafe()).toBeUndefined();
         yield* Deferred.succeed(coldInspectGate.release, undefined);
         expect((yield* Fiber.join(firstInspect)).reason).toBe("registry_unavailable");
         expect((yield* Fiber.join(secondInspect)).reason).toBe("registry_unavailable");
@@ -1369,7 +1435,52 @@ describe("AcpRegistrySupport", () => {
         expect(registryRequests).toBe(5);
         expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
 
-        // 4. An uncached cold failure started before invalidation also does not record backoff.
+        // 4. A cold inspect() queued behind an invalidated in-flight fetch accepts the resulting index without refetching.
+        const coldAcceptedDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cold-accept-",
+        });
+        const coldAcceptedCachePath = `${coldAcceptedDir}/acp-registry/registry.json`;
+        const missingAcceptedCacheError = yield* fileSystem
+          .readFileString(coldAcceptedCachePath)
+          .pipe(Effect.flip);
+        const coldAcceptedFs: FileSystem.FileSystem = {
+          ...fileSystem,
+          readFileString: (filePath, encoding) =>
+            filePath === coldAcceptedCachePath
+              ? Effect.fail(missingAcceptedCacheError)
+              : fileSystem.readFileString(filePath, encoding),
+        };
+        const coldAcceptedResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: coldAcceptedDir,
+          toolsDir: `${coldAcceptedDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, coldAcceptedFs));
+        const coldFetchGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        fetchGate = coldFetchGate;
+        upstream = makeNpxAgent("1.2.8");
+        const requestsBeforeColdAccept = registryRequests;
+        const inFlightRefresh = yield* coldAcceptedResolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(coldFetchGate.started);
+        yield* coldAcceptedResolver.invalidateIndex();
+        const queuedColdInspect = yield* coldAcceptedResolver
+          .inspect(settings())
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        expect(queuedColdInspect.pollUnsafe()).toBeUndefined();
+        fetchGate = null;
+        yield* Deferred.succeed(coldFetchGate.release, undefined);
+        expect(yield* Fiber.join(inFlightRefresh)).toBe(1);
+        expect(yield* Fiber.join(queuedColdInspect)).toMatchObject({
+          version: "1.2.8",
+          indexRevision: 1,
+        });
+        expect(registryRequests).toBe(requestsBeforeColdAccept + 1);
+
+        // 5. An uncached cold failure started before invalidation also does not record backoff.
         const coldCacheDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-cold-invalidate-race-",
         });
@@ -1395,9 +1506,9 @@ describe("AcpRegistrySupport", () => {
         online = true;
         fetchGate = null;
         expect(yield* coldResolver.refreshIndex(refreshOptions)).toBe(1);
-        expect(registryRequests).toBe(7);
+        expect(registryRequests).toBe(8);
 
-        // 5. Same-version package swaps change launchIdentity while documentation-only updates keep it identical.
+        // 6. launchIdentity tracks effective launch inputs for npx, commandOverride, and binary distributions.
         const packageSwapDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-launch-identity-",
         });
@@ -1453,6 +1564,131 @@ describe("AcpRegistrySupport", () => {
             docsOnlyInspection.status === "ready" &&
             newPackageInspection.launchIdentity === docsOnlyInspection.launchIdentity,
         ).toBe(true);
+
+        // commandOverride ignores version/package bumps it does not launch, while tracking args and env changes.
+        const overridePath = `${packageSwapDir}/override-agent`;
+        yield* fileSystem.writeFileString(overridePath, "#!/bin/sh\necho override\n");
+        yield* fileSystem.chmod(overridePath, 0o755);
+        const overrideSettings = settings({ commandPath: overridePath });
+        const overrideBase = yield* swapResolver.inspect(overrideSettings, toolchain.environment);
+        upstream = {
+          ...makeAgent({ npx: { package: "@example/other@2.0.0" } }),
+          version: "2.0.0",
+        };
+        yield* swapResolver.invalidateIndex();
+        yield* swapResolver.refreshIndex(refreshOptions);
+        const overrideBumped = yield* swapResolver.inspect(overrideSettings, toolchain.environment);
+        expect(overrideBase.status === "ready" && overrideBumped.status === "ready").toBe(true);
+        expect(
+          overrideBase.status === "ready" && overrideBumped.status === "ready"
+            ? overrideBase.launchIdentity === overrideBumped.launchIdentity
+            : false,
+        ).toBe(true);
+
+        upstream = {
+          ...makeAgent({
+            npx: { package: "@example/other@2.0.0", args: ["--flag"], env: { MODE: "acp" } },
+          }),
+          version: "2.0.0",
+        };
+        yield* swapResolver.invalidateIndex();
+        yield* swapResolver.refreshIndex(refreshOptions);
+        const overrideArgsChanged = yield* swapResolver.inspect(
+          overrideSettings,
+          toolchain.environment,
+        );
+        expect(
+          overrideBumped.status === "ready" &&
+            overrideArgsChanged.status === "ready" &&
+            overrideBumped.launchIdentity !== overrideArgsChanged.launchIdentity,
+        ).toBe(true);
+
+        // Binary launchIdentity tracks archive, sha256, cmd, args, and env while ignoring website/icon changes.
+        const binaryExe = `${packageSwapDir}/tools/example-agent/1.0.0/linux-x86_64/bin/agent`;
+        yield* fileSystem.makeDirectory(
+          `${packageSwapDir}/tools/example-agent/1.0.0/linux-x86_64/bin`,
+          {
+            recursive: true,
+          },
+        );
+        yield* fileSystem.writeFileString(binaryExe, "#!/bin/sh\necho bin\n");
+        yield* fileSystem.chmod(binaryExe, 0o755);
+        const inspectBinary = (
+          target: {
+            readonly archive: string;
+            readonly cmd: string;
+            readonly sha256?: string;
+            readonly args?: ReadonlyArray<string>;
+            readonly env?: Readonly<Record<string, string>>;
+          },
+          meta?: { readonly website?: string; readonly icon?: string },
+        ) =>
+          Effect.gen(function* () {
+            upstream = {
+              ...makeAgent({ binary: { "linux-x86_64": target } }),
+              version: "1.0.0",
+              ...(meta?.website ? { website: meta.website } : {}),
+              ...(meta?.icon ? { icon: meta.icon } : {}),
+            };
+            yield* swapResolver.invalidateIndex();
+            yield* swapResolver.refreshIndex(refreshOptions);
+            const inspected = yield* swapResolver.inspect(settings(), toolchain.environment);
+            expect(inspected.status).toBe("ready");
+            return inspected.status === "ready" ? inspected.launchIdentity : undefined;
+          });
+        const baseBinId = yield* inspectBinary(
+          { archive: archiveUrl, cmd: "./bin/agent", sha256: "a".repeat(64) },
+          {
+            website: "https://example.test/a",
+            icon: "https://cdn.agentclientprotocol.com/registry/v1/latest/a.svg",
+          },
+        );
+        expect(
+          yield* inspectBinary(
+            { archive: archiveUrl, cmd: "./bin/agent", sha256: "a".repeat(64) },
+            {
+              website: "https://example.test/b",
+              icon: "https://cdn.agentclientprotocol.com/registry/v1/latest/b.svg",
+            },
+          ),
+        ).toBe(baseBinId);
+        expect(
+          yield* inspectBinary({
+            archive: "https://registry.test/other.bin",
+            cmd: "./bin/agent",
+            sha256: "a".repeat(64),
+          }),
+        ).not.toBe(baseBinId);
+        expect(
+          yield* inspectBinary({
+            archive: archiveUrl,
+            cmd: "./bin/agent",
+            sha256: "b".repeat(64),
+          }),
+        ).not.toBe(baseBinId);
+        expect(
+          yield* inspectBinary({
+            archive: archiveUrl,
+            cmd: "./bin/agent-v2",
+            sha256: "a".repeat(64),
+          }),
+        ).not.toBe(baseBinId);
+        expect(
+          yield* inspectBinary({
+            archive: archiveUrl,
+            cmd: "./bin/agent",
+            sha256: "a".repeat(64),
+            args: ["--extra"],
+          }),
+        ).not.toBe(baseBinId);
+        expect(
+          yield* inspectBinary({
+            archive: archiveUrl,
+            cmd: "./bin/agent",
+            sha256: "a".repeat(64),
+            env: { EXTRA: "1" },
+          }),
+        ).not.toBe(baseBinId);
       }).pipe(
         Effect.scoped,
         Effect.provide(

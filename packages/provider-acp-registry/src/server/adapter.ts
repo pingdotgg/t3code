@@ -139,6 +139,10 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
 function makeAcpRegistryRuntime(
   options: AcpRegistryAdapterV2Options,
   catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"],
+  onResolvedRuntime?: (
+    runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+    resolved: AcpRegistrySupport.ResolvedAcpRegistryAgent,
+  ) => void,
 ) {
   return (
     input: AcpAdapterV2RuntimeInput,
@@ -176,9 +180,11 @@ function makeAcpRegistryRuntime(
           ),
         }),
       );
-      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
         Effect.provide(context),
       );
+      onResolvedRuntime?.(runtime, resolved);
+      return runtime;
     });
 }
 
@@ -262,6 +268,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   // the unquoted "T3 Code (Beta).exe" path). Both take T3's MCP endpoint over ACP HTTP.
   const useHttpMcpServers =
     copilotRouting !== undefined || prefersHttpMcpTransport(options.settings);
+  const runtimeIdentityByRuntime = new WeakMap<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    string
+  >();
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
     // Cancelling a Copilot prompt also kills the background agents it started.
@@ -343,14 +353,22 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
           alwaysSetModel: true,
         }),
     mcpOverHttp: useHttpMcpServers,
-    makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(runtimeOptions, catalog),
+    makeRuntime:
+      options.makeRuntime ??
+      makeAcpRegistryRuntime(runtimeOptions, catalog, (runtime, resolved) => {
+        const runtimeIdentity = resolved.launchIdentity ?? resolved.agent?.version;
+        if (runtimeIdentity !== undefined) {
+          runtimeIdentityByRuntime.set(runtime, runtimeIdentity);
+        }
+      }),
     ...(runtimeCoordinator === undefined
       ? {}
       : {
-          onAvailableCommandsUpdate: (commands) =>
+          onAvailableCommandsUpdate: (commands, runtime) =>
             runtimeCoordinator.publishAvailableCommands(
               options.instanceId,
               normalizeAcpRegistryCommands(commands),
+              runtime === undefined ? undefined : runtimeIdentityByRuntime.get(runtime),
             ),
           // A new Copilot session starts at its own effort, not the one the composer shows.
           ...(isCopilot
@@ -374,10 +392,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                   ),
               }
             : {}),
-          onSessionConfigurationUpdate: (configOptions, modeState, modelState) =>
+          onSessionConfigurationUpdate: (configOptions, modeState, modelState, runtime) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,
               normalizeAcpRegistryLiveConfiguration(configOptions, modeState, modelState),
+              runtime === undefined ? undefined : runtimeIdentityByRuntime.get(runtime),
             ),
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);

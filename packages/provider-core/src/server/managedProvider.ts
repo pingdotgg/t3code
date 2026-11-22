@@ -103,17 +103,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     generation: number,
     nextSnapshot: ServerProvider,
   ): Effect.fn.Return<boolean> {
-    const outcome = yield* Ref.modify(
-      snapshotStateRef,
-      (
-        state,
-      ): readonly [
-        { readonly applied: boolean; readonly snapshot: ServerProvider | null },
-        ProviderSnapshotState,
-      ] => {
-        if (state.enrichmentGeneration !== generation) {
-          return [{ applied: false, snapshot: null }, state];
-        }
+    const outcome = yield* Ref.modify(snapshotStateRef, (state) => {
+      let applied = true;
+      let snapshot: ServerProvider | null = null;
+      let nextState = state;
+      if (state.enrichmentGeneration !== generation) {
+        applied = false;
+      } else {
         // Enrichment must not revert usage updates newer than its input snapshot.
         const merged = withUsageLimits(
           state.usageAuthLabel === undefined
@@ -124,15 +120,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
               },
           state.snapshot.usageLimits,
         );
-        if (Equal.equals(state.snapshot, merged)) {
-          return [{ applied: true, snapshot: null }, state];
+        if (!Equal.equals(state.snapshot, merged)) {
+          snapshot = merged;
+          nextState = { ...state, snapshot: merged };
         }
-        return [
-          { applied: true, snapshot: merged },
-          { ...state, snapshot: merged },
-        ];
-      },
-    );
+      }
+      return [{ applied, snapshot }, nextState] as const;
+    });
     if (outcome.snapshot !== null) {
       yield* PubSub.publish(changesPubSub, outcome.snapshot);
     }

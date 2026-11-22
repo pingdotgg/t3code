@@ -382,10 +382,18 @@ export interface AcpRegistryConfigurationProbeInput {
 
 type AcpRegistryManagementInput = AcpRegistryConfigurationProbeInput;
 
+export interface AcpRegistryConfigurationProbeResolved {
+  readonly agent?: AcpRegistrySupport.AcpRegistryAgent;
+  readonly distribution: AcpRegistrySupport.ResolvedAcpRegistryAgent["distribution"];
+  readonly launchIdentity?: string;
+  readonly indexRevision?: number;
+}
+
 export interface AcpRegistryConfigurationProbeResult {
   readonly probe: AcpRegistryProbeResult;
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
+  readonly resolved?: AcpRegistryConfigurationProbeResolved;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -635,6 +643,16 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       ),
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
+      resolved: {
+        ...(result.resolved.agent === undefined ? {} : { agent: result.resolved.agent }),
+        distribution: result.resolved.distribution,
+        ...(result.resolved.launchIdentity === undefined
+          ? {}
+          : { launchIdentity: result.resolved.launchIdentity }),
+        ...(result.resolved.indexRevision === undefined
+          ? {}
+          : { indexRevision: result.resolved.indexRevision }),
+      },
     };
   },
 );
