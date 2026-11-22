@@ -2284,9 +2284,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
-        // Track the model catalog last published per session so mid-session option
-        // updates do not re-advertise a frozen catalog over a newer periodic probe;
-        // cache invalidation relies on the follow-up probe rather than session replay.
+        // Track the last published catalog key per session so mid-session option updates
+        // do not re-advertise an unchanged model list over a fresher catalog.
         const lastPublishedCatalogKey = yield* Ref.make<{
           readonly epoch: number;
           readonly key: string | null;

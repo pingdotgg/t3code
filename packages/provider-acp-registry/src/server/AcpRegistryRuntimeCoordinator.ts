@@ -328,14 +328,7 @@ const make = Effect.gen(function* () {
             if (retain === undefined) return EMPTY_OPTIONS_BY_MODEL;
             const candidates = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             if (current.catalog !== null) {
-              candidates.set(current.catalog.configuration.currentModelId, {
-                configuration: {
-                  ...current.catalog.configuration,
-                  models: [],
-                  modelsFromModelSelect: false,
-                },
-                revision: current.catalog.revision,
-              });
+              candidates.set(current.catalog.configuration.currentModelId, current.catalog);
             }
             for (const [key, entry] of current.optionsByModel) {
               candidates.set(key, entry);
@@ -349,15 +342,20 @@ const make = Effect.gen(function* () {
               });
               if (Option.isNone(kept)) continue;
               if (entry.revision < current.revision) {
-                // Earlier models keep only model-specific options without stealing default selection or shared options.
+                // Earlier models keep only model-specific options and advertised reasoning
+                // without stealing default selection or shared options.
                 const modelOptionIds = new Set(kept.value.modelOptionIds ?? []);
                 const modelOnlyOptions = kept.value.configOptions.filter((descriptor) =>
                   modelOptionIds.has(descriptor.id),
                 );
-                if (modelOnlyOptions.length === 0) continue;
+                const hasAdvertisedReasoning =
+                  kept.value.advertisedReasoning !== undefined &&
+                  Object.keys(kept.value.advertisedReasoning).length > 0;
+                if (modelOnlyOptions.length === 0 && !hasAdvertisedReasoning) continue;
                 const {
                   cappedLastModel: _droppedOverflow,
                   cappedPrefixKey: _droppedPrefix,
+                  cappedTailIsOverflow: _droppedOverflowFlag,
                   ...rest
                 } = kept.value;
                 retained.delete(kept.value.currentModelId);

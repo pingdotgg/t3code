@@ -74,6 +74,40 @@ const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
 // Cache only successful authenticated probes so sign-in changes remain visible.
 const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
+export const MAX_DISPLACED_LEARNED_MODELS = 64;
+
+const cappedOverflowTailByModels = new WeakMap<ReadonlyArray<ServerProviderModel>, string>();
+
+function markCappedOverflowTail(
+  models: ReadonlyArray<ServerProviderModel>,
+  slug: string | undefined,
+): ReadonlyArray<ServerProviderModel> {
+  if (slug !== undefined) {
+    cappedOverflowTailByModels.set(models, slug);
+  }
+  return models;
+}
+
+function preserveCappedOverflowTail(
+  source: ReadonlyArray<ServerProviderModel>,
+  target: ReadonlyArray<ServerProviderModel>,
+): ReadonlyArray<ServerProviderModel> {
+  const slug = cappedOverflowTailByModels.get(source);
+  if (slug !== undefined && target !== source) {
+    const builtInTail = target.filter((model) => !model.isCustom)[ACP_REGISTRY_MAX_MODELS - 1];
+    if (builtInTail?.slug === slug) {
+      cappedOverflowTailByModels.set(target, slug);
+    }
+  }
+  return target;
+}
+
+function hasCappedOverflowTail(
+  models: ReadonlyArray<ServerProviderModel>,
+  tailSlug: string | undefined,
+): boolean {
+  return tailSlug !== undefined && cappedOverflowTailByModels.get(models) === tailSlug;
+}
 
 function acpRegistryProbeTtlMs(provider: ServerProvider): number {
   const discoveredModels = provider.models.filter((model) => !model.isCustom);
@@ -93,6 +127,7 @@ interface AcpRegistryProbeOptionSchema {
   readonly currentModelId: string | null;
   readonly configOptions: ReadonlyArray<ProviderOptionDescriptor>;
   readonly modelOptionIds: ReadonlySet<string>;
+  readonly cappedTailIsOverflow?: boolean;
 }
 
 interface AcceptedAcpRegistryCatalog {
@@ -320,9 +355,17 @@ function updateLearnedModelsFromLive(
     }
     const updated = modelWithSpecificOptions(model, specific);
     if (previous === undefined || !Equal.equals(previous.capabilities, updated.capabilities)) {
+      learnedBySlug.delete(model.slug);
       learnedBySlug.set(model.slug, updated);
       changed = true;
     }
+  }
+  const maxLearnedModels = ACP_REGISTRY_MAX_MODELS + MAX_DISPLACED_LEARNED_MODELS;
+  while (learnedBySlug.size > maxLearnedModels) {
+    const oldestKey = learnedBySlug.keys().next().value;
+    if (oldestKey === undefined) break;
+    learnedBySlug.delete(oldestKey);
+    changed = true;
   }
   return changed ? Array.from(learnedBySlug.values()) : learned;
 }
@@ -356,19 +399,28 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
   probe: AcpRegistryProbeOptionSchema,
 ): Option.Option<AcpRegistryLiveConfiguration> {
   const probedModelById = new Map(probe.models.map((model) => [model.id, model]));
-  const matchingCappedOverflow =
+  const matchingCappedTail =
     live.cappedLastModel !== undefined &&
     live.cappedPrefixKey !== undefined &&
-    live.currentModelId === live.cappedLastModel.id &&
     cappedAcpRegistryModelPrefixKey(probe.models.map((model) => model.id)) ===
       live.cappedPrefixKey &&
-    probe.models[ACP_REGISTRY_MAX_MODELS - 1]?.id !== live.cappedLastModel.id
-      ? { cappedPrefixKey: live.cappedPrefixKey, cappedLastModel: live.cappedLastModel }
+    probe.models[ACP_REGISTRY_MAX_MODELS - 1]?.id !== live.cappedLastModel.id &&
+    (live.cappedTailIsOverflow === true
+      ? live.currentModelId === live.cappedLastModel.id
+      : probe.cappedTailIsOverflow === true)
+      ? {
+          cappedPrefixKey: live.cappedPrefixKey,
+          cappedLastModel: live.cappedLastModel,
+          ...(live.cappedTailIsOverflow === true ? { cappedTailIsOverflow: true } : {}),
+        }
       : undefined;
   const currentProbedModel =
     live.currentModelId === null
       ? undefined
-      : (probedModelById.get(live.currentModelId) ?? matchingCappedOverflow?.cappedLastModel);
+      : (probedModelById.get(live.currentModelId) ??
+        (matchingCappedTail?.cappedLastModel.id === live.currentModelId
+          ? matchingCappedTail.cappedLastModel
+          : undefined));
   const liveById = new Map(live.configOptions.map((descriptor) => [descriptor.id, descriptor]));
   const liveModelOptionIds = new Set(live.modelOptionIds ?? []);
 
@@ -463,7 +515,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     }
   }
 
-  const overflowFields = matchingCappedOverflow ?? {};
+  const overflowFields = matchingCappedTail ?? {};
   const advertisedReasoningFields =
     retainedAdvertisedReasoning === undefined
       ? {}
@@ -473,7 +525,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     // Keep the running session's model selection, overflow swap, or advertised reasoning
     // even when no active config options survive, unless nothing differs from probe default.
     if (
-      matchingCappedOverflow === undefined &&
+      matchingCappedTail === undefined &&
       retainedAdvertisedReasoning === undefined &&
       (currentProbedModel === undefined || currentProbedModel.id === probe.currentModelId)
     ) {
@@ -481,7 +533,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     }
     return Option.some({
       models: [],
-      currentModelId: currentProbedModel?.id ?? live.currentModelId,
+      currentModelId: live.currentModelId,
       configOptions: [],
       modelOptionIds: [],
       modelsFromModelSelect: false,
@@ -578,10 +630,10 @@ function mergeLearnedModelOptions(
       }),
     };
   });
-  return changed ? merged : models;
+  return changed ? preserveCappedOverflowTail(models, merged) : models;
 }
 
-function updateLearnedModelsFromProbe(
+export function updateAcpRegistryLearnedModelsFromProbe(
   learned: ReadonlyArray<ServerProviderModel>,
   probedModels: ReadonlyArray<ServerProviderModel>,
   options: {
@@ -623,13 +675,21 @@ function updateLearnedModelsFromProbe(
     const combined = [...probedReasoning, ...kept];
     if (combined.length > 0) next.push(modelWithSpecificOptions(model, combined));
   }
-  // When the probe hits the 256-model cap, keep learned options for displaced models (e.g. m255
-  // displaced when the probe started on an overflow model like m256).
+  // When the probe hits the 256-model cap, keep a bounded window of displaced learned models
+  // (oldest first so models seen in this probe stay newest on subsequent rotations).
   if (probedBuiltInCount >= ACP_REGISTRY_MAX_MODELS) {
+    const displaced: Array<ServerProviderModel> = [];
     for (const [slug, previous] of learnedBySlug) {
       if (!probedSlugs.has(slug)) {
-        next.push(previous);
+        displaced.push(previous);
       }
+    }
+    const retainedDisplaced =
+      displaced.length > MAX_DISPLACED_LEARNED_MODELS
+        ? displaced.slice(displaced.length - MAX_DISPLACED_LEARNED_MODELS)
+        : displaced;
+    if (retainedDisplaced.length > 0) {
+      return [...retainedDisplaced, ...next];
     }
   }
   return next;
@@ -812,7 +872,12 @@ function baseSnapshot(
             : input.settings.agentId.length > 0),
     },
     ...(input.message ? { message: input.message } : {}),
-    models: modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+    models: markCappedOverflowTail(
+      modelsFromDiscovery(input.probe?.probe, input.settings.customModels),
+      input.probe?.cappedTailIsOverflow === true
+        ? (input.probe.probe.currentModelId ?? undefined)
+        : undefined,
+    ),
     ...(input.probe === undefined
       ? {}
       : {
@@ -861,7 +926,7 @@ function stripReasoningForDisabledModels(
           : createModelCapabilities({ optionDescriptors: filtered }),
     };
   });
-  return changed ? next : models;
+  return changed ? preserveCappedOverflowTail(models, next) : models;
 }
 
 function overlayPartialLiveOptions(
@@ -936,22 +1001,10 @@ function overlayPartialLiveOptions(
           : createModelCapabilities({ optionDescriptors: nextDescriptors }),
     };
   });
+  const overlaid = preserveCappedOverflowTail(models, updated);
   return configuration.preserveDefault === true
-    ? updated
-    : withAcpRegistryDefaultModel(updated, selectedProbedModelId);
-}
-
-function replaceLastCappedBuiltInModel(
-  models: ReadonlyArray<ServerProviderModel>,
-  replacement: ServerProviderModel,
-): ReadonlyArray<ServerProviderModel> {
-  let builtInIndex = 0;
-  return models.map((model) => {
-    if (model.isCustom) return model;
-    const isTarget = builtInIndex === ACP_REGISTRY_MAX_MODELS - 1;
-    builtInIndex += 1;
-    return isTarget ? replacement : model;
-  });
+    ? overlaid
+    : withAcpRegistryDefaultModel(overlaid, selectedProbedModelId);
 }
 
 export function applyAcpRegistryLiveConfiguration(
@@ -964,6 +1017,7 @@ export function applyAcpRegistryLiveConfiguration(
     readonly reasoningDisabledModelSlugs?: ReadonlySet<string> | undefined;
     readonly hasDiscoveredCatalog?: boolean | undefined;
     readonly probeSharedDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
+    readonly probeConfigOptions?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
   },
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
@@ -992,13 +1046,27 @@ export function applyAcpRegistryLiveConfiguration(
       configuration.cappedPrefixKey
       ? configuration.cappedLastModel
       : undefined;
+  const currentTailSlug = probedModels[ACP_REGISTRY_MAX_MODELS - 1]?.slug;
+  const providerHasOverflowTail = hasCappedOverflowTail(provider.models, currentTailSlug);
   const tailSlotReplacement =
     cappedLastModel !== undefined &&
-    probedModels[ACP_REGISTRY_MAX_MODELS - 1]?.slug !== cappedLastModel.id &&
-    (configuration.currentModelId === cappedLastModel.id ||
-      probedModels[ACP_REGISTRY_MAX_MODELS - 1]?.isDefault === true)
+    currentTailSlug !== cappedLastModel.id &&
+    (configuration.cappedTailIsOverflow === true
+      ? configuration.currentModelId === cappedLastModel.id
+      : providerHasOverflowTail)
       ? cappedLastModel
       : undefined;
+  const nextOverflowTailSlug = useLiveCatalog
+    ? configuration.cappedTailIsOverflow === true
+      ? (configuration.currentModelId ?? undefined)
+      : undefined
+    : tailSlotReplacement !== undefined
+      ? configuration.cappedTailIsOverflow === true
+        ? tailSlotReplacement.id
+        : undefined
+      : providerHasOverflowTail
+        ? currentTailSlug
+        : undefined;
   const liveCurrentModelInProbed =
     (tailSlotReplacement !== undefined &&
       configuration.currentModelId === tailSlotReplacement.id) ||
@@ -1008,21 +1076,31 @@ export function applyAcpRegistryLiveConfiguration(
     ? configuration.currentModelId
     : (probedModels.find((model) => model.isDefault)?.slug ?? null);
   if (!useLiveCatalog && configuration.partialOptions === true) {
-    const modelsForOverlay =
-      tailSlotReplacement !== undefined
-        ? replaceLastCappedBuiltInModel(
-            provider.models,
-            modelsFromDiscovery(
-              {
-                models: [tailSlotReplacement],
-                currentModelId: null,
-                configOptions: options?.probeSharedDescriptors ?? [],
-              },
-              [],
-              previousModels.filter((model) => !model.isCustom),
-            )[0]!,
-          )
-        : provider.models;
+    const modelsForOverlay = (() => {
+      if (tailSlotReplacement === undefined) return provider.models;
+      const replacementBuiltIn = modelsFromDiscovery(
+        {
+          models: [tailSlotReplacement],
+          currentModelId: null,
+          configOptions: options?.probeSharedDescriptors ?? [],
+        },
+        [],
+        previousModels.filter((model) => !model.isCustom),
+      )[0]!;
+      const nextBuiltInModels = probedModels.map((model, index) =>
+        index === ACP_REGISTRY_MAX_MODELS - 1 ? replacementBuiltIn : model,
+      );
+      const customModelCapabilities =
+        options?.probeConfigOptions !== undefined
+          ? options.probeConfigOptions.length === 0
+            ? EMPTY_CAPABILITIES
+            : createModelCapabilities({ optionDescriptors: options.probeConfigOptions })
+          : (provider.models.find((model) => model.isCustom)?.capabilities ??
+            (options?.probeSharedDescriptors && options.probeSharedDescriptors.length > 0
+              ? createModelCapabilities({ optionDescriptors: options.probeSharedDescriptors })
+              : EMPTY_CAPABILITIES));
+      return providerModelsFromSettings(nextBuiltInModels, customModels, customModelCapabilities);
+    })();
     const partialDisabledReasoning =
       tailSlotReplacement?.reasoningEffort === null
         ? new Set([...disabledReasoningSlugs, tailSlotReplacement.id])
@@ -1030,11 +1108,14 @@ export function applyAcpRegistryLiveConfiguration(
     return {
       ...snapshot,
       status: provider.enabled ? "ready" : provider.status,
-      models: overlayPartialLiveOptions(
-        modelsForOverlay,
-        configuration,
-        selectedProbedModelId,
-        partialDisabledReasoning,
+      models: markCappedOverflowTail(
+        overlayPartialLiveOptions(
+          modelsForOverlay,
+          configuration,
+          selectedProbedModelId,
+          partialDisabledReasoning,
+        ),
+        nextOverflowTailSlug,
       ),
     };
   }
@@ -1108,10 +1189,12 @@ export function applyAcpRegistryLiveConfiguration(
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
-    models:
+    models: markCappedOverflowTail(
       dropUnmatchedModelOptions && (effectiveConfigOptions.length > 0 || hasAdvertisedReasoning)
         ? withAcpRegistryDefaultModel(nextModels, selectedProbedModelId)
         : nextModels,
+      nextOverflowTailSlug,
+    ),
   };
 }
 
@@ -1129,7 +1212,7 @@ function withAcpRegistryDefaultModel(
     const { isDefault: _previous, ...rest } = model;
     return isDefault ? { ...rest, isDefault: true } : rest;
   });
-  return changed ? next : models;
+  return changed ? preserveCappedOverflowTail(models, next) : models;
 }
 
 function applyAcpRegistryUrlAuthAction(
@@ -1233,6 +1316,7 @@ interface DetailedAcpRegistryProviderStatus {
   readonly probedConfigOptions: ReadonlyArray<ProviderOptionDescriptor>;
   readonly probedModelCount: number;
   readonly probedModelsFromModelSelect: boolean;
+  readonly probedCappedTailIsOverflow: boolean;
   readonly probedCurrentModelId: string | null;
   readonly probedModelOptionIds: ReadonlySet<string>;
   readonly reasoningDisabledModelSlugs: ReadonlySet<string>;
@@ -1259,6 +1343,7 @@ const checkAcpRegistryProviderStatusDetailed = Effect.fn(
     probedConfigOptions: [],
     probedModelCount: 0,
     probedModelsFromModelSelect: false,
+    probedCappedTailIsOverflow: false,
     probedCurrentModelId: null,
     probedModelOptionIds: EMPTY_SLUG_SET,
     reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
@@ -1317,6 +1402,7 @@ const checkAcpRegistryProviderStatusDetailed = Effect.fn(
         probedConfigOptions: probed.success.probe.configOptions,
         probedModelCount: probed.success.probe.models.length,
         probedModelsFromModelSelect: probed.success.modelsFromModelSelect === true,
+        probedCappedTailIsOverflow: probed.success.cappedTailIsOverflow === true,
         probedCurrentModelId: probed.success.probe.currentModelId,
         probedModelOptionIds: new Set(probed.success.probe.modelOptionIds ?? []),
         reasoningDisabledModelSlugs: new Set(
@@ -1483,6 +1569,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         readonly hasDiscoveredCatalog?: boolean | undefined;
         readonly replaceCurrentLearnedOptions?: boolean | undefined;
         readonly probeSharedDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
+        readonly probeConfigOptions?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
       },
     ) =>
       Ref.get(acceptedCatalog).pipe(
@@ -1512,6 +1599,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 reasoningDisabledModelSlugs,
                 hasDiscoveredCatalog,
                 probeSharedDescriptors: options?.probeSharedDescriptors,
+                probeConfigOptions: options?.probeConfigOptions,
               },
             );
             return [
@@ -1571,7 +1659,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 configuration.cappedPrefixKey !== undefined &&
                 cappedAcpRegistryModelPrefixKey(probeOptions.models.map((model) => model.id)) ===
                   configuration.cappedPrefixKey &&
-                configuration.currentModelId === configuration.cappedLastModel.id))
+                configuration.currentModelId === configuration.cappedLastModel.id &&
+                (configuration.cappedTailIsOverflow === true ||
+                  probeOptions.cappedTailIsOverflow === true)))
               ? configuration.currentModelId
               : null;
           const skipModelSlugs =
@@ -1618,6 +1708,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 hasDiscoveredCatalog,
                 replaceCurrentLearnedOptions: replacedLiveModelId !== null,
                 probeSharedDescriptors,
+                probeConfigOptions: probeOptions.configOptions,
               }),
           });
           if (options.updateAcceptedAndCache === true) {
@@ -1852,6 +1943,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           probedConfigOptions: [],
           probedModelCount: 0,
           probedModelsFromModelSelect: false,
+          probedCappedTailIsOverflow: false,
           probedCurrentModelId: null,
           probedModelOptionIds: EMPTY_SLUG_SET,
           reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
@@ -1870,6 +1962,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         probedConfigOptions: enriched.probedConfigOptions,
         probedModelCount: enriched.probedModelCount,
         probedModelsFromModelSelect: enriched.probedModelsFromModelSelect,
+        probedCappedTailIsOverflow: enriched.probedCappedTailIsOverflow,
         probedCurrentModelId: enriched.probedCurrentModelId,
         probedModelOptionIds: enriched.probedModelOptionIds,
         reasoningDisabledModelSlugs: enriched.reasoningDisabledModelSlugs,
@@ -1901,6 +1994,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           probedConfigOptions,
           probedModelCount,
           probedModelsFromModelSelect,
+          probedCappedTailIsOverflow,
           probedCurrentModelId,
           probedModelOptionIds,
           reasoningDisabledModelSlugs,
@@ -1961,6 +2055,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     currentModelId: probedCurrentModelId,
                     configOptions: probedConfigOptions,
                     modelOptionIds: probedModelOptionIds,
+                    cappedTailIsOverflow: probedCappedTailIsOverflow,
                   };
                   // A fresh non-provisional probe supersedes any live session catalog observed before it started.
                   const cleared = probeSupersedesLiveCatalog
@@ -1988,7 +2083,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         reasoningDisabledModelSlugs,
                       });
                       const nextLearned = cleared
-                        ? updateLearnedModelsFromProbe(learned, provider.models, {
+                        ? updateAcpRegistryLearnedModelsFromProbe(learned, provider.models, {
                             currentModelId: probedCurrentModelId,
                             modelOptionIds: probedModelOptionIds,
                             reasoningDisabledModelSlugs,

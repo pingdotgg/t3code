@@ -658,6 +658,84 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         expect(clearedEarlierOnly.pendingOptions).toHaveLength(255);
         expect(clearedEarlierOnly.pendingOptions.at(-1)?.configuration.currentModelId).toBe("m255");
         expect(clearedEarlierOnly.pendingOptions.at(-1)?.configuration.preserveDefault).toBe(true);
+
+        // An earlier update with no current-model options still survives clear when it carries
+        // retained advertisedReasoning (stripping shared options and preserving default).
+        const advertisedC = effortOption("low");
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null },
+            { id: "model-c", name: "Model C", description: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const advertisedCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-c": advertisedC },
+        });
+        const bAdvSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: advertisedCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterAdvClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(afterAdvClear.pendingOptions).toEqual([
+          {
+            revision: bAdvSnap.revision,
+            configuration: {
+              models: [],
+              currentModelId: "model-b",
+              configOptions: [],
+              modelOptionIds: [],
+              modelsFromModelSelect: false,
+              partialOptions: true,
+              preserveDefault: true,
+              advertisedReasoning: { "model-c": advertisedC },
+            },
+          },
+          {
+            revision: afterAdvClear.revision,
+            configuration: {
+              models: [],
+              currentModelId: "model-a",
+              configOptions: [modeOption("ask")],
+              modelOptionIds: [],
+              modelsFromModelSelect: false,
+              partialOptions: true,
+            },
+          },
+        ]);
+        // If retain strips advertisedReasoning (e.g. probe disabled reasoning for model-c)
+        // and model-b has no model-specific options, the earlier entry is dropped.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: advertisedCatalog.catalogRevision,
+            retain: (live) => {
+              const { advertisedReasoning: _dropped, ...rest } = live;
+              return Option.some({ ...rest, partialOptions: true });
+            },
+          }),
+        ).toBe(true);
+        const afterDisabledClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(afterDisabledClear.pendingOptions).toHaveLength(1);
+        expect(afterDisabledClear.pendingOptions[0]?.configuration.currentModelId).toBe("model-a");
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

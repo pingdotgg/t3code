@@ -228,9 +228,11 @@ export interface AcpRegistryLiveConfiguration {
   >;
   // Stable prefix key (first ACP_REGISTRY_MAX_MODELS - 1 models) for capped overflow updates.
   readonly cappedPrefixKey?: string;
-  // Last visible model slot when candidates exceed ACP_REGISTRY_MAX_MODELS, carrying either
-  // an overflow selection or the restored tail model when returning to the stable prefix.
+  // Last visible model slot when the catalog hits ACP_REGISTRY_MAX_MODELS and a current model
+  // is resolved, carrying either an overflow selection or the base tail model.
   readonly cappedLastModel?: AcpRegistryProbeModel;
+  // True when cappedLastModel was promoted into slot ACP_REGISTRY_MAX_MODELS - 1 from beyond the cap.
+  readonly cappedTailIsOverflow?: boolean;
 }
 
 export function cappedAcpRegistryModelPrefixKey(
@@ -305,6 +307,7 @@ export function prepareAcpRegistryLiveConfiguration(
     currentModel !== undefined && baseModels.length === ACP_REGISTRY_MAX_MODELS
       ? advertisedModels[ACP_REGISTRY_MAX_MODELS - 1]
       : undefined;
+  const cappedTailIsOverflow = cappedLastModel !== undefined && !currentInBase;
   const stripCurrentReasoning = currentModel?.reasoningEffort === null;
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
     (descriptor) =>
@@ -354,8 +357,12 @@ export function prepareAcpRegistryLiveConfiguration(
         modelOptionIds,
         modelsFromModelSelect: includeCatalog && hasModelSelect,
         ...(!includeCatalog && advertisedReasoning !== undefined ? { advertisedReasoning } : {}),
-        ...(!includeCatalog && cappedLastModel !== undefined && cappedPrefixKey !== undefined
-          ? { cappedPrefixKey, cappedLastModel }
+        ...(cappedLastModel !== undefined && cappedPrefixKey !== undefined
+          ? {
+              cappedPrefixKey,
+              cappedLastModel,
+              ...(cappedTailIsOverflow ? { cappedTailIsOverflow: true } : {}),
+            }
           : {}),
       };
     },
@@ -498,6 +505,7 @@ export interface AcpRegistryConfigurationProbeResult {
   readonly slashCommands: ReadonlyArray<ServerProviderSlashCommand>;
   readonly skills: ReadonlyArray<ServerProviderSkill>;
   readonly modelsFromModelSelect?: boolean;
+  readonly cappedTailIsOverflow?: boolean;
 }
 
 export type AcpRegistryConfigurationProbe<Requirements = never> = (
@@ -748,6 +756,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
       slashCommands: result.commands.slashCommands,
       skills: result.commands.skills,
       modelsFromModelSelect: result.liveConfiguration.modelsFromModelSelect === true,
+      cappedTailIsOverflow: result.liveConfiguration.cappedTailIsOverflow === true,
     };
   },
 );
