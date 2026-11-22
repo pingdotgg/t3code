@@ -6,6 +6,20 @@ import { type AiError, LanguageModel, type Response, Tool, Toolkit } from "effec
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 
 describe("Generated", () => {
+  it("preserves composed reasoning options", () => {
+    const reasoning = { effort: "high", enabled: true } as const
+
+    deepStrictEqual(Schema.decodeUnknownSync(Generated.ReasoningConfig)(reasoning), reasoning)
+  })
+
+  it("preserves alignment calls in response error metadata", () => {
+    const metadata = {
+      alignment: { calls: [{ call: 1, outcome: "unavailable", reason: "evaluator_error" }] }
+    } as const
+
+    deepStrictEqual(Schema.decodeUnknownSync(Generated.OpenResponsesErrorMetadata)(metadata), metadata)
+  })
+
   it.effect("sends audio transcriptions as JSON with structured provider options", () =>
     Effect.gen(function*() {
       const payload: typeof Generated.CreateAudioTranscriptionsRequestJson.Encoded = {
@@ -84,7 +98,8 @@ describe("Generated", () => {
         session_id: null,
         provider_responses: null,
         user_agent: null,
-        web_search_engine: null
+        web_search_engine: null,
+        workspace_id: null
       }
     }
 

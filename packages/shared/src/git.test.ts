@@ -27,6 +27,28 @@ describe("normalizeGitRemoteUrl", () => {
     expect(normalizeGitRemoteUrl("ssh://git@github.com/T3Tools/T3Code")).toBe(
       "github.com/t3tools/t3code",
     );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git?view=compact")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://code.example.test/team/%C3%84pp.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:team/Äpp.git"),
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@code.example.test/owner/repo.git.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:owner/repo.git.git"),
+    );
+  });
+
+  it.each([
+    "git@[2001:db8::1]:team/repo.git",
+    "[2001:db8::1]:team/repo.git",
+    "git@[2001:DB8:0::1]:team/repo.git",
+  ])("canonicalizes an IPv6 SCP remote like its SSH URL: %s", (remote) => {
+    expect(normalizeGitRemoteUrl(remote)).toBe(
+      normalizeGitRemoteUrl("ssh://git@[2001:db8::1]/team/repo.git"),
+    );
   });
 
   it("preserves nested group paths for providers like GitLab", () => {
@@ -142,6 +164,20 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(
       parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = "git@github.com:acme/repo.git"\n'),
     ).toBe("git@github.com:acme/repo.git");
+    for (const newline of ["\n", "\r\n"]) {
+      for (const comment of ["#", ";"]) {
+        const config = [
+          '[remote "upstream"]',
+          `url = https://github.com/other/repo.git ${comment} ignored backslash \\`,
+          '[remote "origin"]',
+          `url = https://github.com/acme/repo.git ${comment} ignored backslash \\`,
+          `${comment} ignored backslash \\`,
+          '[remote "fork"]',
+          "url = https://github.com/me/repo.git",
+        ].join(newline);
+        expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+      }
+    }
   });
 
   it("accepts legacy dotted headers, header comments, and line continuations", () => {
@@ -163,7 +199,7 @@ describe("parseOriginUrlFromGitConfig", () => {
       parseOriginUrlFromGitConfig(
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
-    ).toBe("https://github.com/acme/repo.git");
+    ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
   it("reads settings on the remote header line", () => {
@@ -325,6 +361,16 @@ describe("sanitizeFeatureBranchName", () => {
   it("keeps accented letters as their plain letters", () => {
     expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
       "fix/anadir-validacion-del-cafe",
+    );
+  });
+
+  it("keeps words with letters that have no Unicode decomposition whole", () => {
+    expect(sanitizeFeatureBranchName("Größe der Straße korrigieren")).toBe(
+      "feature/grosse-der-strasse-korrigieren",
+    );
+    expect(sanitizeFeatureBranchName("fix/Đặt tên")).toBe("fix/dat-ten");
+    expect(sanitizeFeatureBranchName("Napraw błąd w żółtym przycisku")).toBe(
+      "feature/napraw-blad-w-zoltym-przycisku",
     );
   });
 });
