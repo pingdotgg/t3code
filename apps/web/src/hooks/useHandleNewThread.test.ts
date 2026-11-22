@@ -187,6 +187,7 @@ vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
   useRouter: () => testState.router,
 }));
+vi.mock("react-dom", () => ({ flushSync: (update: () => void) => update() }));
 vi.mock("react", () => ({
   useCallback: <T>(callback: T) => callback,
   useMemo: <T>(factory: () => T) => factory(),
@@ -257,7 +258,11 @@ vi.mock("../uiStateStore", () => ({
 }));
 vi.mock("./useSettings", () => ({ getClientSettings: () => ({}) }));
 
-import { resolveDefaultProjectRef, useNewThreadHandler } from "./useHandleNewThread";
+import {
+  readPendingWorkspaceDefault,
+  resolveDefaultProjectRef,
+  useNewThreadHandler,
+} from "./useHandleNewThread";
 
 describe.each([
   ["new", null],
@@ -288,8 +293,12 @@ describe.each([
     testState.draftStore.setDraftThreadContext.mockClear();
 
     testState.discoverBranch("main");
+    const pendingDefault = readPendingWorkspaceDefault(opened!.draftId);
+    expect(pendingDefault).not.toBeNull();
     testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
-    await testState.projectFileRead;
+    await pendingDefault;
+
+    expect(readPendingWorkspaceDefault(opened!.draftId)).toBeNull();
 
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(opened?.draftId, {
       envMode: "worktree",
@@ -299,13 +308,14 @@ describe.each([
 
   it("keeps a branch the user picked while the project file loaded", async () => {
     testState.reset(draft, { envMode: null, startFromOrigin: false });
-    await useNewThreadHandler()({
+    const opened = await useNewThreadHandler()({
       environmentId: "environment-ssh",
       projectId: "project-remote",
     } as never);
     testState.draftStore.setDraftThreadContext.mockClear();
 
     testState.pickBranch("feature");
+    expect(readPendingWorkspaceDefault(opened!.draftId)).toBeNull();
     testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
     await testState.projectFileRead;
 
