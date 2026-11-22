@@ -4356,9 +4356,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
 
         // Background tools and subagents are `hasDeferredBackgroundWork`'s, which skips
         // persistent tasks that never end.
-        const isForegroundTool = (tool: AcpToolCallState) =>
+        const isForegroundTool = (
+          tool: AcpToolCallState & { readonly backgroundCommandTaskId?: string },
+        ) =>
+          tool.backgroundCommandTaskId === undefined &&
           flavor.extractBackgroundTaskId?.(tool) === undefined &&
-          extractSubagentUpdate(tool) === undefined;
+          extractSubagentUpdate(tool) === undefined &&
+          flavor.toolOutlivesPrompt?.(tool) !== true;
 
         const blocksDeferredFinalize = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
           if (hasDeferredBackgroundWork(context)) return true;
@@ -8534,12 +8538,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "failed" = "completed",
-          options?: { readonly unstartedOnly?: boolean },
+          options?: { readonly unstartedOnly?: boolean; readonly keepOutliving?: boolean },
         ) {
           for (const tool of context.tools.values()) {
             if (!acpCompletedTurnShouldTerminalizeTool(tool, { ...flavor, extractSubagentUpdate }))
               continue;
             if (options?.unstartedOnly === true && tool.status !== "pending") continue;
+            if (options?.keepOutliving === true && flavor.toolOutlivesPrompt?.(tool) === true)
+              continue;
             // Store the status too, so the deferred finalize stops counting the tool as open.
             yield* emitTool(context, { ...tool, status }, status);
           }
@@ -9260,7 +9266,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (deferredBackgroundWork || pendingReply) {
                     // A foreground tool still open at end_turn is stale; left open it would
                     // hold the deferred finalize until Stop.
-                    if (deferredBackgroundWork) yield* terminalizeOpenForegroundTools(context);
+                    if (deferredBackgroundWork)
+                      yield* terminalizeOpenForegroundTools(context, "completed", {
+                        keepOutliving: true,
+                      });
                     yield* closeTextStreams(context);
                     if (pendingReply) {
                       context.replyOpen = true;
