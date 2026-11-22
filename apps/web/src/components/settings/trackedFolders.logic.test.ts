@@ -4,11 +4,11 @@ import { resolveTrackedFolderInput, trackedFolderDisplayPath } from "./trackedFo
 
 describe("trackedFolderDisplayPath", () => {
   it.each([
-    ["/work/app/api", "/work/app", "api"],
-    ["/work/app/packages/web", "/work/app/", "packages/web"],
+    ["/work/app/api", "/work/app", "./api"],
+    ["/work/app/packages/web", "/work/app/", "./packages/web"],
     ["/work/other", "/work/app", "/work/other"],
     ["/work/app-two", "/work/app", "/work/app-two"],
-    ["C:\\Work\\App\\api", "c:\\work\\app", "api"],
+    ["C:\\Work\\App\\api", "c:\\work\\app", "./api"],
   ])("shows %s under %s as %s", (path, root, expected) => {
     expect(trackedFolderDisplayPath(path, root)).toBe(expected);
   });

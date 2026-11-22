@@ -15,7 +15,8 @@ import {
   type ProjectTrackedFolder,
   type WorkspaceFolderState,
 } from "@t3tools/contracts";
-import { FolderIcon, PlusIcon } from "lucide-react";
+import { fileDisplayName } from "@t3tools/shared/path";
+import { FolderGit2Icon, FolderIcon, PlusIcon, Trash2Icon, TriangleAlertIcon } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useId, useState } from "react";
 
@@ -25,7 +26,7 @@ import { useEnvironments } from "../../state/environments";
 import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { getEnvironmentBrowsePlatform } from "../CommandPalette.logic";
 import { resolveTrackedFolderInput, trackedFolderDisplayPath } from "./trackedFolders.logic";
@@ -42,7 +43,10 @@ import {
 } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { Menu, MenuGroup, MenuGroupLabel, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { SettingsNote, SettingsRow, SettingsSection } from "./settingsLayout";
 
 const NO_TRACKED_FOLDERS: ReadonlyArray<ProjectTrackedFolder> = [];
 const BROWSE_SUGGESTION_LIMIT = 100;
@@ -53,6 +57,181 @@ const FOLDER_STATE_LABELS: Record<WorkspaceFolderState, string> = {
   missing: msg("Missing", { $context: "folder state: not found on disk" }),
 };
 
+function PathWithTooltip({ display, fullPath }: { display: string; fullPath: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<span className="block truncate font-mono" tabIndex={0} />}>
+        {display}
+      </TooltipTrigger>
+      <TooltipPopup>{fullPath}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function FolderErrorIndicator({ message }: { message: string }) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            role="alert"
+            tabIndex={0}
+            aria-label={message}
+            className="inline-flex size-5 shrink-0 items-center justify-center rounded-badge text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+          />
+        }
+      >
+        <TriangleAlertIcon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{message}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+function SingleCheckoutAddButton({
+  member,
+  isSaving,
+  onOpen,
+}: {
+  member: SidebarProjectGroupMember;
+  isSaving: boolean;
+  onOpen: () => void;
+}) {
+  const { environments } = useEnvironments();
+  const environment = environments.find((entry) => entry.environmentId === member.environmentId);
+  const isConnected = environment?.connection.phase === "connected";
+  const canEdit = useEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope);
+  const access = useFilesystemReadAccess(member.environmentId);
+  const tracked = member.trackedFolders ?? NO_TRACKED_FOLDERS;
+  const listQuery = useEnvironmentQuery(
+    access.canReadFiles
+      ? filesystemEnvironment.listFolders({
+          environmentId: member.environmentId,
+          input: { projectId: member.id },
+        })
+      : null,
+  );
+  const folders = listQuery.data?.folders ?? tracked;
+  const disabled =
+    !canEdit ||
+    !isConnected ||
+    isSaving ||
+    listQuery.isPending ||
+    folders.length >= PROJECT_TRACKED_FOLDERS_MAX;
+
+  return (
+    <Button size="xs" variant="secondary" disabled={disabled} onClick={onOpen}>
+      <PlusIcon />
+      <T>Add folder</T>
+    </Button>
+  );
+}
+
+function MultiCheckoutAddMenuItem({
+  member,
+  spansEnvironments,
+  isSaving,
+  onSelect,
+}: {
+  member: SidebarProjectGroupMember;
+  spansEnvironments: boolean;
+  isSaving: boolean;
+  onSelect: () => void;
+}) {
+  const gt = useGT();
+  const { environments } = useEnvironments();
+  const environment = environments.find((entry) => entry.environmentId === member.environmentId);
+  const isConnected = environment?.connection.phase === "connected";
+  const canEdit = useEnvironmentScope(member.environmentId, AuthOrchestrationOperateScope);
+  const access = useFilesystemReadAccess(member.environmentId);
+  const tracked = member.trackedFolders ?? NO_TRACKED_FOLDERS;
+  const listQuery = useEnvironmentQuery(
+    access.canReadFiles
+      ? filesystemEnvironment.listFolders({
+          environmentId: member.environmentId,
+          input: { projectId: member.id },
+        })
+      : null,
+  );
+  const folders = listQuery.data?.folders ?? tracked;
+  const disabled =
+    !canEdit ||
+    !isConnected ||
+    isSaving ||
+    listQuery.isPending ||
+    folders.length >= PROJECT_TRACKED_FOLDERS_MAX;
+  const folderName = fileDisplayName(member.workspaceRoot);
+
+  return (
+    <MenuItem disabled={disabled} onClick={onSelect}>
+      <FolderIcon className="size-4 shrink-0" />
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="min-w-0 truncate text-label">{folderName}</span>
+          {spansEnvironments ? (
+            <span className="shrink-0 text-meta text-muted-foreground">
+              {member.environmentLabel ?? gt("Environment")}
+            </span>
+          ) : null}
+        </div>
+        <div className="truncate font-mono text-meta text-muted-foreground">
+          {member.workspaceRoot}
+        </div>
+      </div>
+    </MenuItem>
+  );
+}
+
+function MultiCheckoutAddMenu({
+  checkouts,
+  spansEnvironments,
+  savingMemberKey,
+  onSelect,
+}: {
+  checkouts: ReadonlyArray<SidebarProjectGroupMember>;
+  spansEnvironments: boolean;
+  savingMemberKey: string | null;
+  onSelect: (memberKey: string) => void;
+}) {
+  const { environments } = useEnvironments();
+  const editableIds = useEnvironmentsWithScope(checkouts, AuthOrchestrationOperateScope);
+  const anyAvailable = checkouts.some((member) => {
+    const environment = environments.find((entry) => entry.environmentId === member.environmentId);
+    return (
+      editableIds.has(member.environmentId) &&
+      environment?.connection.phase === "connected" &&
+      savingMemberKey !== member.physicalProjectKey
+    );
+  });
+
+  return (
+    <Menu>
+      <MenuTrigger
+        render={<Button size="xs" variant="secondary" disabled={!anyAvailable} type="button" />}
+      >
+        <PlusIcon />
+        <T>Add folder</T>
+      </MenuTrigger>
+      <MenuPopup align="end">
+        <MenuGroup>
+          <MenuGroupLabel>
+            <T>Add folder</T>
+          </MenuGroupLabel>
+          {checkouts.map((member) => (
+            <MultiCheckoutAddMenuItem
+              key={member.physicalProjectKey}
+              member={member}
+              spansEnvironments={spansEnvironments}
+              isSaving={savingMemberKey === member.physicalProjectKey}
+              onSelect={() => onSelect(member.physicalProjectKey)}
+            />
+          ))}
+        </MenuGroup>
+      </MenuPopup>
+    </Menu>
+  );
+}
+
 /** Tracked folder paths belong to one checkout's machine, so each checkout has its own list. */
 export function ProjectRepositoriesSettings({
   members,
@@ -61,17 +240,69 @@ export function ProjectRepositoriesSettings({
 }) {
   const checkouts = members.filter((member) => !member.isScratch);
   const gt = useGT();
+  const [addingMemberKey, setAddingMemberKey] = useState<string | null>(null);
+  const [savingMemberKey, setSavingMemberKey] = useState<string | null>(null);
   if (checkouts.length === 0) return null;
+  const spansEnvironments = new Set(checkouts.map((member) => member.environmentId)).size > 1;
+  const onlyCheckout = checkouts.length === 1 ? checkouts[0]! : null;
+
   return (
-    <SettingsSection id="project-repositories" title={gt("Repositories")}>
+    <SettingsSection
+      id="project-repositories"
+      title={gt("Repositories")}
+      headerAction={
+        onlyCheckout ? (
+          <SingleCheckoutAddButton
+            member={onlyCheckout}
+            isSaving={savingMemberKey === onlyCheckout.physicalProjectKey}
+            onOpen={() => setAddingMemberKey(onlyCheckout.physicalProjectKey)}
+          />
+        ) : (
+          <MultiCheckoutAddMenu
+            checkouts={checkouts}
+            spansEnvironments={spansEnvironments}
+            savingMemberKey={savingMemberKey}
+            onSelect={setAddingMemberKey}
+          />
+        )
+      }
+    >
+      <SettingsNote>
+        <T>
+          Repositories inside this folder are part of the project as soon as they are there. Add a
+          folder to bring in one from somewhere else.
+        </T>
+      </SettingsNote>
       {checkouts.map((member) => (
-        <CheckoutRepositories key={member.physicalProjectKey} member={member} />
+        <CheckoutRepositories
+          key={member.physicalProjectKey}
+          member={member}
+          spansEnvironments={spansEnvironments}
+          isAdding={addingMemberKey === member.physicalProjectKey}
+          isSaving={savingMemberKey === member.physicalProjectKey}
+          onSavingChange={(saving) => setSavingMemberKey(saving ? member.physicalProjectKey : null)}
+          onCloseAdd={() => setAddingMemberKey(null)}
+        />
       ))}
     </SettingsSection>
   );
 }
 
-function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember }) {
+function CheckoutRepositories({
+  member,
+  spansEnvironments,
+  isAdding,
+  isSaving,
+  onSavingChange,
+  onCloseAdd,
+}: {
+  member: SidebarProjectGroupMember;
+  spansEnvironments: boolean;
+  isAdding: boolean;
+  isSaving: boolean;
+  onSavingChange: (saving: boolean) => void;
+  onCloseAdd: () => void;
+}) {
   const environmentId = member.environmentId;
   const { environments } = useEnvironments();
   const environment = environments.find((entry) => entry.environmentId === environmentId);
@@ -100,8 +331,6 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     reportFailure: false,
   });
-  const [isSaving, setIsSaving] = useState(false);
-  const [isAddingFolder, setIsAddingFolder] = useState(false);
   // A save builds on the listed folders, so it waits for the list that follows the last one.
   const disabled = !canEdit || !isConnected || isSaving || listQuery.isPending;
   const gt = useGT();
@@ -114,7 +343,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
     failureTitle: string,
   ) => {
     if (checkProjectAccess([member], failureTitle)) return false;
-    setIsSaving(true);
+    onSavingChange(true);
     const result = await updateProject({
       environmentId,
       input: {
@@ -124,7 +353,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
           : { untrackFolders: [change.untrack] }),
       },
     });
-    setIsSaving(false);
+    onSavingChange(false);
     if (result._tag === "Failure") {
       reportProjectFailure(failureTitle, result);
       return false;
@@ -134,106 +363,135 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
   };
 
   const addFolder = async (folder: ProjectTrackedFolder) => {
-    if (await save({ track: folder }, gt("Failed to add folder"))) setIsAddingFolder(false);
+    if (await save({ track: folder }, gt("Failed to add folder"))) onCloseAdd();
   };
+
+  const folderName = fileDisplayName(member.workspaceRoot);
+  const environmentLabel = member.environmentLabel ?? gt("Environment");
+  const rootState: WorkspaceFolderState | null = scanQuery.data
+    ? scanQuery.data.isGitRepository
+      ? "git"
+      : "plain"
+    : member.repositoryIdentity
+      ? "git"
+      : null;
+  const hasChildren = folders.length > 0 || suggested.length > 0;
 
   return (
     <>
       <SettingsRow
-        title={member.environmentLabel ?? gt("Environment")}
-        description={member.workspaceRoot}
-        control={
-          <Button
-            size="xs"
-            variant="secondary"
-            disabled={disabled || folders.length >= PROJECT_TRACKED_FOLDERS_MAX}
-            onClick={() => setIsAddingFolder(true)}
-          >
-            <PlusIcon className="size-3.5" />
-            <T>Add folder</T>
-          </Button>
+        leading={rootState === "git" ? <FolderGit2Icon /> : <FolderIcon />}
+        title={folderName}
+        description={
+          spansEnvironments ? (
+            <>
+              <span className="block truncate">{environmentLabel}</span>
+              <PathWithTooltip display={member.workspaceRoot} fullPath={member.workspaceRoot} />
+            </>
+          ) : (
+            <PathWithTooltip display={member.workspaceRoot} fullPath={member.workspaceRoot} />
+          )
         }
-      />
-      {folders.length === 0 ? (
-        <p className="px-3 py-2 text-body text-muted-foreground sm:px-4">
-          <T>
-            Repositories inside this folder are part of the project as soon as they are there. Add a
-            folder to bring in one from somewhere else.
-          </T>
-        </p>
-      ) : (
-        folders.map((folder) => (
-          <SettingsRow
-            key={folder.path}
-            className="py-2"
-            title={
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="min-w-0 truncate">{folder.name}</span>
-                {folder.state ? (
-                  <Badge size="sm" variant={folder.state === "missing" ? "warning" : "outline"}>
-                    {m(FOLDER_STATE_LABELS[folder.state])}
-                  </Badge>
-                ) : null}
-              </span>
-            }
-            description={
-              <code className="block max-w-full truncate font-mono">
-                {trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
-              </code>
-            }
-            control={
-              // A repository inside the project folder is there for as long as it is on disk.
-              folder.discovered === true ? null : (
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  disabled={disabled}
-                  aria-label={gt("Remove {name} from the project", { name: folder.name })}
-                  onClick={() => void save({ untrack: folder.path }, gt("Failed to remove folder"))}
-                >
-                  <T>Remove</T>
-                </Button>
-              )
-            }
-          />
-        ))
-      )}
-      {suggested.map((folder) => (
-        <SettingsRow
-          key={folder.path}
-          className="py-2"
-          title={
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="min-w-0 truncate text-muted-foreground">{folder.name}</span>
-              <Badge size="sm" variant="secondary">
-                <T>In workspace file</T>
-              </Badge>
-            </span>
-          }
-          description={
-            <code className="block max-w-full truncate font-mono">
-              {trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
-            </code>
-          }
-          control={
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={disabled}
-              aria-label={gt("Add {name} to the project", { name: folder.name })}
-              onClick={() => void save({ track: folder }, gt("Failed to add folder"))}
-            >
-              <T>Add</T>
-            </Button>
-          }
-        />
-      ))}
-      {listQuery.error ? (
-        <p role="alert" className="px-3 py-2 text-meta text-warning-foreground sm:px-4">
-          {listQuery.error}
-        </p>
-      ) : null}
-      {isAddingFolder ? (
+        control={
+          listQuery.error || (listQuery.isPending && listQuery.data === null) || rootState ? (
+            <>
+              {listQuery.error ? <FolderErrorIndicator message={listQuery.error} /> : null}
+              {listQuery.isPending && listQuery.data === null ? (
+                <Spinner size="xs" tone="muted" aria-label={gt("Loading…")} />
+              ) : null}
+              {rootState ? (
+                <Badge variant="secondary">{m(FOLDER_STATE_LABELS[rootState])}</Badge>
+              ) : null}
+            </>
+          ) : undefined
+        }
+      >
+        {hasChildren ? (
+          <div className="mt-2 mb-1 ms-4 border-s border-divider ps-3 sm:ps-4 *:not-first:border-t *:not-first:border-divider">
+            {folders.map((folder) => (
+              <SettingsRow
+                key={folder.path}
+                className="rounded-none px-0 py-2 sm:px-0"
+                leading={folder.state === "git" ? <FolderGit2Icon /> : <FolderIcon />}
+                title={folder.name}
+                description={
+                  <PathWithTooltip
+                    display={trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
+                    fullPath={folder.path}
+                  />
+                }
+                control={
+                  folder.state || folder.discovered !== true ? (
+                    <>
+                      {folder.state ? (
+                        <Badge variant={folder.state === "missing" ? "warning" : "secondary"}>
+                          {m(FOLDER_STATE_LABELS[folder.state])}
+                        </Badge>
+                      ) : null}
+                      {folder.discovered === true ? null : (
+                        <Tooltip>
+                          <TooltipTrigger
+                            render={
+                              <Button
+                                size="icon-sm"
+                                variant="ghost-destructive"
+                                disabled={disabled}
+                                aria-label={gt("Remove {name} from the project", {
+                                  name: folder.name,
+                                })}
+                                onClick={() =>
+                                  void save({ untrack: folder.path }, gt("Failed to remove folder"))
+                                }
+                              >
+                                <Trash2Icon />
+                              </Button>
+                            }
+                          />
+                          <TooltipPopup side="top">
+                            <T>Remove</T>
+                          </TooltipPopup>
+                        </Tooltip>
+                      )}
+                    </>
+                  ) : undefined
+                }
+              />
+            ))}
+            {suggested.map((folder) => (
+              <SettingsRow
+                key={folder.path}
+                className="rounded-none px-0 py-2 sm:px-0"
+                leading={<FolderIcon />}
+                title={<span className="text-muted-foreground">{folder.name}</span>}
+                description={
+                  <PathWithTooltip
+                    display={trackedFolderDisplayPath(folder.path, member.workspaceRoot)}
+                    fullPath={folder.path}
+                  />
+                }
+                control={
+                  <>
+                    <Badge variant="outline">
+                      <T>In workspace file</T>
+                    </Badge>
+                    <Button
+                      size="xs"
+                      variant="secondary"
+                      disabled={disabled}
+                      aria-label={gt("Add {name} to the project", { name: folder.name })}
+                      onClick={() => void save({ track: folder }, gt("Failed to add folder"))}
+                    >
+                      <PlusIcon />
+                      <T>Add</T>
+                    </Button>
+                  </>
+                }
+              />
+            ))}
+          </div>
+        ) : null}
+      </SettingsRow>
+      {isAdding ? (
         <AddTrackedFolderDialog
           environmentId={environmentId}
           workspaceRoot={member.workspaceRoot}
@@ -243,7 +501,7 @@ function CheckoutRepositories({ member }: { member: SidebarProjectGroupMember })
           canBrowse={access.canReadFiles}
           busy={isSaving || listQuery.isPending}
           onAdd={(folder) => void addFolder(folder)}
-          onClose={() => setIsAddingFolder(false)}
+          onClose={onCloseAdd}
         />
       ) : null}
     </>
