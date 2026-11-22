@@ -9,16 +9,21 @@ import { shouldCheckoutNewTaskBranch } from "./new-task-context-presentation";
 import type { VcsRef } from "@t3tools/client-runtime/state/vcs";
 import {
   AuthSourceControlWriteScope,
+  repositoryGroupingDisplayNameOf,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
 } from "@t3tools/contracts";
+import {
+  canCreateProjectInEnvironment,
+  getCloneDirectoryName,
+} from "@t3tools/client-runtime/operations/projects";
 import { LegendList } from "@legendapp/list/react-native";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import * as Haptics from "expo-haptics";
-import { useNavigation } from "@react-navigation/native";
+import { StackActions, useNavigation } from "@react-navigation/native";
 import { T, useGT, useMessages, Var } from "gt-react-native";
 import { m } from "../../i18n/messages";
 import { useRef, useState, type ReactNode } from "react";
@@ -33,7 +38,8 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import { ThemedSwitch } from "../../components/ui/ThemedSwitch";
 import { cn } from "../../lib/cn";
-import { useEnvironmentScope } from "../../state/session";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
+import { useServerConfigs } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
 import { useRefreshBranchesOnFocus } from "./use-refresh-branches-on-focus";
@@ -46,7 +52,10 @@ import { useDebouncedValue, usePaginatedBranches } from "../../state/queries";
 import { setPendingConnectionError } from "../../state/use-remote-environment-registry";
 
 import { useEnvironmentPresentation } from "../../state/presentation";
-import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import {
+  useRemoteConnectionStatus,
+  useRemoteConnections,
+} from "../../state/use-remote-environment-registry";
 import { ConnectionStatusDot } from "../connection/ConnectionStatusDot";
 import {
   ConnectionDiagnosisDetails,
@@ -188,11 +197,79 @@ function PickerSurface(props: { readonly children: ReactNode }) {
   );
 }
 
+function AddToMachineRow(props: {
+  readonly environmentId: EnvironmentId;
+  readonly title: string;
+  readonly isLast: boolean;
+  readonly onPress: () => void;
+}) {
+  const gt = useGT();
+  const { presentation } = useEnvironmentPresentation(props.environmentId);
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={gt("Add project to {title}", { title: props.title })}
+      onPress={props.onPress}
+      className={cn(
+        "min-h-14 flex-row items-center gap-3 bg-grouped-card px-4 py-3 active:bg-subtle",
+        !props.isLast && "border-b border-border-subtle",
+      )}
+    >
+      <EnvironmentMachineSymbol
+        kind={resolveEnvironmentMachineKind(presentation?.serverConfig ?? null)}
+        size={20}
+        tintColorClassName="accent-icon-muted"
+      />
+      <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground" numberOfLines={1}>
+        {props.title}
+      </Text>
+      <SymbolView name="plus" size={15} tintColorClassName="accent-icon-muted" />
+    </Pressable>
+  );
+}
+
+/** Connected machines without the selected repository that can clone it. */
+function useAddProjectTargets() {
+  const flow = useNewTaskFlow();
+  const { connectedEnvironments } = useRemoteConnectionStatus();
+  const serverConfigs = useServerConfigs();
+  const canClone = useEnvironmentsWithScope(connectedEnvironments, AuthSourceControlWriteScope);
+  if (flow.isScratchDraft || !flow.selectedProject?.repositoryIdentity?.locator.remoteUrl) {
+    return [];
+  }
+  const hasProject = new Set(flow.environments.map((environment) => environment.environmentId));
+  return connectedEnvironments
+    .filter(
+      (environment) =>
+        !hasProject.has(environment.environmentId) &&
+        canClone.has(environment.environmentId) &&
+        canCreateProjectInEnvironment(environment.connectionState) &&
+        serverConfigs.has(environment.environmentId),
+    )
+    .sort((a, b) => a.environmentLabel.localeCompare(b.environmentLabel));
+}
+
 export function NewTaskEnvironmentPickerRouteScreen() {
   const gt = useGT();
   const flow = useNewTaskFlow();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  const addTargets = useAddProjectTargets();
+  const addToMachine = (environmentId: EnvironmentId) => {
+    const identity = flow.selectedProject?.repositoryIdentity;
+    const remoteUrl = identity?.origin?.remoteUrl ?? identity?.locator.remoteUrl;
+    if (!identity || !remoteUrl) return;
+    navigation.dispatch(
+      StackActions.push("AddProjectDestination", {
+        environmentId,
+        remoteUrl,
+        repositoryTitle:
+          repositoryGroupingDisplayNameOf(identity) ?? flow.selectedProject?.title ?? remoteUrl,
+        repositoryName: getCloneDirectoryName(remoteUrl),
+        ...(flow.prompt.trim() ? { prompt: flow.prompt } : {}),
+      }),
+    );
+  };
   return (
     <View className="flex-1 bg-sheet" collapsable={false}>
       <AppBar title={gt("Environment")} hideBottomBorder onBack={() => navigation.goBack()} />
@@ -224,6 +301,30 @@ export function NewTaskEnvironmentPickerRouteScreen() {
               />
             ))}
           </PickerSurface>
+          {addTargets.length > 0 ? (
+            <View className="mt-6 gap-2">
+              <Text
+                className={
+                  Platform.OS === "android"
+                    ? "px-4 text-sm font-t3-medium text-primary-text"
+                    : "px-1 text-2xs font-t3-bold tracking-[0.7px] uppercase text-foreground-muted"
+                }
+              >
+                {gt("Add to another machine")}
+              </Text>
+              <PickerSurface>
+                {addTargets.map((environment, index) => (
+                  <AddToMachineRow
+                    key={String(environment.environmentId)}
+                    environmentId={environment.environmentId}
+                    title={environment.environmentLabel}
+                    isLast={index === addTargets.length - 1}
+                    onPress={() => addToMachine(environment.environmentId)}
+                  />
+                ))}
+              </PickerSurface>
+            </View>
+          ) : null}
         </ScrollView>
       </ScreenContent>
     </View>
