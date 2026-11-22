@@ -149,17 +149,29 @@ ss -ltn 'sport = :3773'
 sudo ufw status verbose
 ```
 
-If the listener is only `127.0.0.1` or `::1`, stop the terminal server and restart
-it with `t3 serve --lan`. If it listens on the LAN but UFW denies incoming traffic,
-allow the T3 port from your trusted LAN. For example, for a `192.168.1.0/24` LAN:
+If the listener is only `127.0.0.1` or `::1`:
+
+- For a desktop host, enable **Settings → Sharing & access → Network access**.
+- For a terminal server, stop it and restart with `t3 serve --lan`. Remove any
+  loopback `--host` argument or `T3CODE_HOST` environment override first: an
+  explicit host takes precedence over `--lan`.
+
+If it listens on the LAN but UFW denies incoming traffic, allow the T3 port from
+your trusted LAN. For example, for a `192.168.1.0/24` LAN:
 
 ```bash
 sudo ufw allow from 192.168.1.0/24 to any port 3773 proto tcp comment 'T3 Code LAN'
 ```
 
+Check existing rules with `sudo ufw status numbered`. UFW uses the first matching
+rule, so an earlier deny can still block the connection. If you intend to allow
+this LAN traffic through that deny, replace `ufw allow` in the command above with
+`ufw insert N allow`, where `N` is the deny rule's number, to insert the allow
+before it.
+
 Use your own LAN subnet and server port. Keep the firewall enabled; no router port
-forwarding is needed. To remove this rule later, run the same command with
-`ufw delete allow` instead of `ufw allow`.
+forwarding is needed. To remove this rule later, use the command above with
+`ufw delete allow` instead of `ufw allow`, without an insertion position.
 
 A successful request from the host to its own LAN address does not prove that
 the phone can reach it through the firewall. Retry from the mobile app with the
