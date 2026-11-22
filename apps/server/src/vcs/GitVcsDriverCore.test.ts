@@ -8353,6 +8353,28 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         yield* refused("locked", true, "cannot remove a locked working tree");
 
         assert.deepEqual(cleared, []);
+
+        // What a provider writes while it is being stopped is not deleted with the folder.
+        const written = pathService.join(worktreesRoot, "written");
+        yield* driver.createWorktree({
+          cwd,
+          path: written,
+          refName: initialBranch,
+          newRefName: "feature/written",
+        });
+        const result = yield* Effect.result(
+          driver.removeWorktree({ cwd, path: written }).pipe(
+            Effect.provideService(HostProcess.Platform, "win32"),
+            Effect.provideService(WorktreeRemoval.BeforeWorktreeDelete, (target) =>
+              writeTextFile(target, "last-words.txt", "draft\n").pipe(Effect.orDie),
+            ),
+          ),
+        );
+        assert.include(
+          Result.isFailure(result) ? result.failure.detail : "removed",
+          "contains modified or untracked files",
+        );
+        assert.isTrue(NodeFS.existsSync(pathService.join(written, "last-words.txt")));
       }),
     );
 

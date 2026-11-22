@@ -4708,41 +4708,60 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         { type: "expect_outbound", label: `${method}-${id}`, frame: { id, method, params } },
         { type: "emit_inbound", label: `${method}-${id}-result`, frame: { id, result } },
       ];
+      const preamble = codexReplayPreamble({
+        nativeThreadId: "removed-thread",
+        nativeTurnId: "running-turn",
+        prompt: "keep working",
+      }).slice(0, 8);
+      const start = preamble[4];
+      const started = (start?.type === "emit_inbound" ? start.frame : undefined) as {
+        readonly result: { readonly thread: Record<string, unknown> };
+      };
+      const startedThread = started.result.thread;
       const read = (id: number, threadId: string, cwd: string) =>
         exchange(
           id,
           "thread/read",
           { threadId, includeTurns: false },
-          { thread: { id: threadId, cwd } },
+          { thread: { ...startedThread, id: threadId, sessionId: threadId, cwd } },
         );
       const harness = yield* makeCodexReplayHarness(
         makeCodexReplayTranscript({
           scenario: "codex-unload-removed-workspace",
           entries: [
-            ...codexReplayPreamble({
-              nativeThreadId: "kept-thread",
-              nativeTurnId: "unused-turn",
-              prompt: "unused-prompt",
-            }).slice(0, 5),
-            ...exchange(3, "thread/loaded/list", {}, { data: ["kept-thread"], nextCursor: "next" }),
-            ...exchange(4, "thread/loaded/list", { cursor: "next" }, { data: ["removed-thread"] }),
-            ...read(5, "kept-thread", "/repo"),
-            ...read(6, "removed-thread", "/worktrees/removed"),
-            ...exchange(7, "thread/archive", { threadId: "removed-thread" }, {}),
+            ...preamble,
+            ...exchange(4, "thread/loaded/list", {}, { data: ["kept-thread"], nextCursor: "next" }),
+            ...exchange(5, "thread/loaded/list", { cursor: "next" }, { data: ["removed-thread"] }),
+            ...read(6, "kept-thread", "/repo"),
+            ...read(7, "removed-thread", "/workspace"),
+            ...exchange(8, "thread/archive", { threadId: "removed-thread" }, {}),
             ...exchange(
-              8,
+              9,
               "thread/unarchive",
               { threadId: "removed-thread" },
               {
-                thread: { id: "removed-thread" },
+                thread: { ...startedThread, id: "removed-thread" },
               },
             ),
           ],
         }),
       );
-      yield* harness.runtime.unloadThreadsIn!({
-        inWorkspace: (cwd) => cwd === "/worktrees/removed",
-      });
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-codex-unload-removed-workspace"),
+          text: "keep working",
+        }),
+      );
+      yield* harness.runtime.unloadThreadsIn!({ inWorkspace: (cwd) => cwd === "/workspace" });
+      // Codex sends no turn/completed for a thread it unloaded.
+      yield* harness.firstTerminal;
+      assert.deepEqual(
+        harness.terminalEvents().map((event) => event.status),
+        ["interrupted"],
+      );
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

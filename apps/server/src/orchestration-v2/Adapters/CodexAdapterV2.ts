@@ -8438,6 +8438,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 if (Option.isNone(read) || !inWorkspace(read.value.thread.cwd)) continue;
                 sessionApprovals.delete(threadId);
                 yield* client.request("thread/archive", { threadId });
+                // No turn/completed arrives for an unloaded thread, so a turn still running
+                // there would stay open for the life of the session.
+                const completedAt = yield* DateTime.now;
+                for (const context of (yield* Ref.get(activeTurns)).values()) {
+                  if (context.providerThread.nativeThreadRef?.nativeId !== threadId) continue;
+                  yield* finalizeCodexTurn({
+                    context,
+                    nativeTurnId: context.nativeTurnId,
+                    status: "interrupted",
+                    completedAt,
+                  });
+                }
                 yield* client.request("thread/unarchive", { threadId });
               }
             },
