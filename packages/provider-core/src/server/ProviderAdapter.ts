@@ -8,6 +8,7 @@ import {
   OrchestrationV2AppThread,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
+  OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderSession,
   OrchestrationV2PlanArtifact,
   OrchestrationV2ProviderCapabilities,
@@ -175,6 +176,14 @@ export const ProviderAdapterV2Event = Schema.Union([
     driver: ProviderDriverKind,
     providerTurnId: ProviderTurnId,
     pending: Schema.Boolean,
+  }),
+  // The query process exited under a live session before this work reported back.
+  Schema.Struct({
+    type: Schema.Literal("background_work.lost"),
+    driver: ProviderDriverKind,
+    threadId: ThreadId,
+    providerThreadId: ProviderThreadId,
+    tasks: Schema.Array(OrchestrationV2PendingBackgroundTask),
   }),
   /** Unpersisted deltas go only to clients showing the row; final output arrives in turn_item.updated. */
   Schema.Struct({
