@@ -1,7 +1,9 @@
 # Run with Blender 4.5.9:
 # blender --background --python scripts/convert-device-model.py -- <model-id> <source.usdz> <output.glb>
 # Then optimize using @gltf-transform/cli 4.2.1 with --compress false --simplify false
-# --join false --palette false --flatten false --texture-size 1024 --texture-compress webp.
+# --join false --palette false --flatten false --texture-size 1024 --texture-compress webp,
+# then `weld` and `meshopt --quantization-volume scene --quantize-position 16`. Per-mesh grids
+# move coincident layers apart and z-fight; see docs/internals/devices.md#3d-device-models.
 import hashlib
 import json
 import sys
@@ -28,6 +30,9 @@ screen = bpy.data.objects[screen_name]
 objects = [o for o in body.children_recursive if o.type == "MESH"]
 if body.type == "MESH":
     objects.append(body)
+# Some sources stack every colour variant's back glass; keep one. Hidden nodes never reach a pixel.
+skipped = set(model.get("excludeNodes", [])) | set(model.get("hiddenNodes", []))
+objects = [o for o in objects if o.name not in skipped]
 uv = screen.data.uv_layers.active
 points = []
 coords = []
@@ -61,6 +66,12 @@ for o in objects:
     o.data.transform(matrix)
     # Blender is Z-up; glTF export converts to Y-up. Store canonical Y-up geometry as Blender Z-up.
     o.data.transform(Matrix.Rotation(np.pi / 2, 4, "X"))
+    # A shell that crosses the layer beneath it z-fights in WebGL; keep it in front.
+    offset = model.get("surfaceOffsets", {}).get(o.name)
+    if offset:
+        normals = [v.normal.copy() for v in o.data.vertices]
+        for v, n in zip(o.data.vertices, normals):
+            v.co += n * offset
     if o == screen:
         o.name = "device-screen"
         o.data.name = "device-screen"
