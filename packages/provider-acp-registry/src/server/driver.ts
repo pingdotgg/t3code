@@ -1694,9 +1694,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // enrichment or provisional probes do not regress the snapshot.
     const acceptedCatalog = yield* Ref.make<AcceptedAcpRegistryCatalog>(EMPTY_ACCEPTED_CATALOG);
     const clearAcceptedCatalog = Ref.set(acceptedCatalog, EMPTY_ACCEPTED_CATALOG);
-    // Tracks the coordinator revision through which live state was explicitly reset (sign-out or
-    // full cache clear), excluding invalidateCaches which preserves coordinator state.
-    const liveSessionResetRevision = yield* Ref.make(0);
+    // Tracks the coordinator revision through which live state was explicitly reset (instance
+    // creation, sign-out, or full cache clear), excluding invalidateCaches which preserves
+    // coordinator state.
+    const liveSessionResetRevision = yield* Ref.make(
+      Option.isSome(runtimeCoordinator)
+        ? yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(instanceId)
+        : 0,
+    );
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
     const lastAppliedLiveRevision = yield* Ref.make(0);
@@ -2247,12 +2252,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   }
                   let clearedThroughRevision = 0;
                   if (cleared) {
-                    const afterClear = Option.isSome(runtimeCoordinator)
-                      ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
-                      : liveSnapshot;
-                    clearedThroughRevision = afterClear.clearedThroughRevision;
+                    clearedThroughRevision = Option.isSome(runtimeCoordinator)
+                      ? yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
+                          instanceId,
+                        )
+                      : 0;
                     const supersededLiveSession =
-                      afterClear.revision > (yield* Ref.get(liveSessionResetRevision));
+                      clearedThroughRevision > (yield* Ref.get(liveSessionResetRevision));
                     yield* resetAppliedLiveRevisions;
                     yield* Ref.set(acceptedCatalog, {
                       models: resolved.models,

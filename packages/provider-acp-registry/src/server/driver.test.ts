@@ -2421,25 +2421,68 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     );
     expect(clearedDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
     // Even without replacement intent, an empty displaced-tail update strips reasoning when
-    // reasoning is disabled on that model.
+    // reasoning is disabled on that model while preserving unrelated learned options, and removes
+    // the entry once no descriptors remain.
+    const emptyDisabledM255Update = {
+      ...prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
+        includeCatalog: false,
+      }),
+      cappedLastModel: {
+        id: "m255",
+        name: "Model 255",
+        description: null,
+        reasoningEffort: null,
+      },
+      partialOptions: true,
+      preserveDefault: true,
+    };
+    const disabledReasoningPreservingVariant = updateAcpRegistryLearnedModelsFromLive(
+      mergedDisplacedTail,
+      afterEarlierOrdinaryTail.models,
+      emptyDisabledM255Update,
+    );
+    expect(
+      disabledReasoningPreservingVariant
+        .find((m) => m.slug === "m255")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([["variant", "v2"]]);
     const disabledReasoningDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
       replacedDisplacedTail,
+      afterEarlierOrdinaryTail.models,
+      emptyDisabledM255Update,
+    );
+    expect(disabledReasoningDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
+    // An unchanged empty displaced-tail update still refreshes the model's MRU position.
+    const m255MergedLearned = mergedDisplacedTail.find((m) => m.slug === "m255")!;
+    const learnedWithLaterOther = [
+      ...mergedDisplacedTail,
+      {
+        slug: "m999",
+        name: "Model 999",
+        isCustom: false,
+        capabilities: m255MergedLearned.capabilities,
+      },
+    ];
+    const touchedDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
+      learnedWithLaterOther,
       afterEarlierOrdinaryTail.models,
       {
         ...prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
           includeCatalog: false,
         }),
-        cappedLastModel: {
-          id: "m255",
-          name: "Model 255",
-          description: null,
-          reasoningEffort: null,
-        },
         partialOptions: true,
         preserveDefault: true,
       },
     );
-    expect(disabledReasoningDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
+    expect(touchedDisplacedTail.at(-1)?.slug).toBe("m255");
+    expect(
+      touchedDisplacedTail
+        .find((m) => m.slug === "m255")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["variant", "v2"],
+      ["effort", "high"],
+    ]);
     // Restoring m255 into slot 255 while a different model (m0) is current with its own
     // `variant` option must keep m255's off-screen learned `variant=v2` intact.
     const m0RestoringM255 = {
@@ -3866,8 +3909,20 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const signOutRejected = yield* Deferred.make<void>();
         const unauthLiveProcessed = yield* Deferred.make<void>();
         let gateNextResolve = false;
+        let injectModeAfterInitialClear = true;
         let injectCatalogBeforeSignOutClear = false;
         let trackUnauthLiveUpdate = false;
+        // Pre-populate the shared coordinator before create() to simulate a rebuilt driver instance:
+        // create() must seed liveSessionResetRevision from its clear so the first probe does not
+        // treat the prior instance's cleared publications as an active superseded live session.
+        const sharedCoordinator =
+          yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        yield* sharedCoordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [{ id: "prior-instance-model", name: "Prior Instance Model", description: null }],
+          currentModelId: "prior-instance-model",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
         const {
           directory,
           coordinator,
@@ -3910,7 +3965,32 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
                   yield* Deferred.succeed(signOutRejected, undefined);
                   return cleared;
                 }
-                return yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+                const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+                // Publish an options-only update right after the clear returns (before the driver
+                // reads clearedThroughRevision) to verify supersession checks clearedThroughRevision
+                // rather than the post-clear live revision.
+                if (cleared && injectModeAfterInitialClear && options.retain !== undefined) {
+                  injectModeAfterInitialClear = false;
+                  yield* base.publishLiveConfiguration(instanceId, {
+                    models: [],
+                    currentModelId: null,
+                    configOptions: [
+                      {
+                        id: "mode",
+                        label: "Mode",
+                        type: "select",
+                        currentValue: "plan",
+                        options: [
+                          { id: "plan", label: "Plan" },
+                          { id: "code", label: "Code" },
+                        ],
+                      },
+                    ],
+                    modelOptionIds: [],
+                    modelsFromModelSelect: false,
+                  });
+                }
+                return cleared;
               }),
           }),
           onResolve: () =>
@@ -3923,11 +4003,48 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             }),
         });
 
+        // Neither the prior instance's cleared state nor an options-only publish arriving right
+        // after the clear should mark the rebuilt driver's first probe as superseding a live session.
         const initial = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.snapshot.refresh;
-        yield* Fiber.join(initial);
+        const initialSnap = Option.getOrThrow(yield* Fiber.join(initial));
+        expect(
+          initialSnap.models
+            .find((m) => m.slug === "new-model")
+            ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue,
+        ).toBe("plan");
+        const sawPostStartModeUpdate = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "new-model")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue ===
+              "code",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: null,
+          configOptions: [
+            {
+              id: "mode",
+              label: "Mode",
+              type: "select",
+              currentValue: "code",
+              options: [
+                { id: "plan", label: "Plan" },
+                { id: "code", label: "Code" },
+              ],
+            },
+          ],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(Option.isSome(yield* Fiber.join(sawPostStartModeUpdate))).toBe(true);
 
         // Unauthenticated post-TTL probe racing an options-only live update must still keep
         // status: warning, auth: unauthenticated, sign-in message, and models: ["default"].
@@ -4455,6 +4572,39 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* Deferred.await(unauthLiveProcessed);
         trackUnauthLiveUpdate = false;
         expect((yield* instance.snapshot.getSnapshot).models).toEqual(unauthSnap.models);
+
+        // A full live catalog arriving while unauthenticated must still apply and be saved to
+        // acceptedCatalog so a subsequent readiness refresh without live coordinator state keeps it.
+        const sawUnauthCatalog = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models.map((m) => m.slug).join() === "unauth-live-a,unauth-live-b",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "unauth-live-a", name: "Unauth Live A", description: null },
+            { id: "unauth-live-b", name: "Unauth Live B", description: null },
+          ],
+          currentModelId: "unauth-live-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        expect(
+          Option.getOrThrow(yield* Fiber.join(sawUnauthCatalog)).models.map((m) => m.slug),
+        ).toEqual(["unauth-live-a", "unauth-live-b"]);
+        yield* coordinator.clearLiveConfiguration(identity.instanceId);
+        yield* withBlockedForegroundStartup(
+          Effect.gen(function* () {
+            yield* instance.snapshot.refresh;
+            expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
+              "unauth-live-a",
+              "unauth-live-b",
+            ]);
+          }),
+        );
       }),
   );
 
