@@ -689,6 +689,37 @@ it("does not outline the line under a click made with the node-select modifier h
   expect(getComputedStyle(paragraph).outlineStyle).toBe("none");
 });
 
+it("lets a click reach a button in the placeholder suffix over a short placeholder", async () => {
+  const onAccept = vi.fn();
+  await using screen = await render(
+    <ComposerPromptEditor
+      editorRef={createRef<ComposerPromptEditorHandle>()}
+      value=""
+      cursor={0}
+      richTextEnabled
+      contextRecords={new Map()}
+      skills={[]}
+      disabled={false}
+      placeholder="Run the tests"
+      placeholderSuffix={
+        <button
+          type="button"
+          className="pointer-events-auto ml-2"
+          onPointerDown={(event) => event.preventDefault()}
+          onClick={onAccept}
+        >
+          Tab
+        </button>
+      }
+      onChange={() => {}}
+      onPaste={() => {}}
+      onCommandKeyDown={() => false}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Tab" }), { timeout: 2000 });
+  expect(onAccept).toHaveBeenCalledOnce();
+});
+
 describe("Markdown markers around styled text", () => {
   it.each([
     { keys: "{Backspace}", expected: "**** after" },
