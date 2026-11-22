@@ -3221,7 +3221,11 @@ export function attachSwitchHandoffs(
 function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
   return rows.map((row, index) => {
     const next = rows[index + 1];
-    if (timelineRowIsWorkLog(row) || row.kind === "background-activity") {
+    if (
+      timelineRowIsWorkLog(row) ||
+      row.kind === "background-activity" ||
+      (row.kind === "message" && row.command?.standalone === true)
+    ) {
       const precedesPrompt =
         (row.kind !== "background-activity" || !row.expanded) && timelineRowIsUserPrompt(next);
       const isWorkLog = timelineRowIsWorkLog(row);

@@ -6772,12 +6772,12 @@ describe("slash command prompts", () => {
     updatedAt: at,
     status: "completed" as const,
   };
-  const prompt = (text: string): OrchestrationV2TurnItem => ({
+  const prompt = (text: string, id = "prompt", ordinal = 0): OrchestrationV2TurnItem => ({
     ...base,
-    id: TurnItemId.make("prompt"),
-    ordinal: 0,
+    id: TurnItemId.make(id),
+    ordinal,
     type: "user_message",
-    messageId: MessageId.make("prompt"),
+    messageId: MessageId.make(id),
     createdBy: "user",
     creationSource: "web",
     inputIntent: "turn_start",
@@ -6838,6 +6838,13 @@ describe("slash command prompts", () => {
       target: "182K → 24.1K tokens",
     });
     expect(commandOf(rowsFor([prompt("/compact")], "running"))?.state).toBe("running");
+    const withNext = rowsFor([
+      prompt("/compact"),
+      compaction,
+      prompt("continue", "prompt-next", 2),
+    ]);
+    expect(withNext[0]).toMatchObject({ kind: "message", precedesPrompt: true });
+    expect(rows[0]?.precedesPrompt).toBeFalsy();
   });
 
   it("keeps a running /compact's compaction out of the working window", () => {
