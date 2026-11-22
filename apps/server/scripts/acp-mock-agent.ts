@@ -78,6 +78,7 @@ const modeNotifiedBeforeDelayedLoadReply = process.env.T3_ACP_NOTIFY_MODE_BEFORE
 const holdSetConfigOptionUntilLoadReply =
   process.env.T3_ACP_HOLD_SET_CONFIG_OPTION_UNTIL_LOAD_REPLY === "1";
 const loadReplyDelayMs = Number(process.env.T3_ACP_LOAD_REPLY_DELAY_MS ?? "0");
+const initializeNeverReplies = process.env.T3_ACP_INITIALIZE_NEVER_REPLIES === "1";
 const loadNeverReplies = process.env.T3_ACP_LOAD_NEVER_REPLIES === "1";
 const rejectPromptUntilLoaded = process.env.T3_ACP_REJECT_PROMPT_UNTIL_LOADED === "1";
 const failPrompt = process.env.T3_ACP_FAIL_PROMPT === "1";
@@ -549,6 +550,9 @@ const program = Effect.gen(function* () {
               process.stderr.write("stderr".repeat(350_000), () => resolve());
             }),
         );
+      }
+      if (initializeNeverReplies) {
+        return yield* Effect.never;
       }
       parameterizedModelPicker = request.capabilities?._meta?.parameterizedModelPicker === true;
       return {

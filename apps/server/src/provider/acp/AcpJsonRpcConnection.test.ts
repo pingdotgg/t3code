@@ -459,6 +459,25 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
+  it.effect("fails initialize when the agent never responds", () =>
+    Effect.gen(function* () {
+      const runtime = yield* AcpSessionRuntime.make({
+        ...mockRuntimeOptions,
+        spawn: {
+          ...mockRuntimeOptions.spawn,
+          env: { T3_ACP_INITIALIZE_NEVER_REPLIES: "1" },
+        },
+        initializeTimeout: "100 millis",
+      });
+      const initialize = yield* runtime.initialize().pipe(Effect.flip, Effect.forkChild);
+      yield* TestClock.adjust("100 millis");
+      expect(yield* Fiber.join(initialize)).toMatchObject({
+        _tag: "AcpTransportError",
+        detail: "initialize timed out after 100ms waiting for agent response",
+      });
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
   it.effect.each([
     { name: "exit code", terminate: "process.exit(1)", code: 1, signal: undefined },
     ...(HostProcess.Platform.defaultValue() === "win32"

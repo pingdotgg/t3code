@@ -84,6 +84,7 @@ export type AcpSessionRuntimeEvent =
       readonly result: AcpSessionRuntimeStartResult;
     };
 
+const defaultInitializeTimeout = Duration.seconds(90);
 const defaultSessionLoadTimeout = Duration.seconds(90);
 const defaultSessionLoadReplayIdleGap = Duration.seconds(2);
 const defaultCancelTimeout = Duration.seconds(15);
@@ -105,6 +106,7 @@ export interface AcpSessionRuntimeOptions {
   readonly cwd: string;
   readonly resumeSessionId?: string;
   readonly resumeMethod?: "load" | "resume";
+  readonly initializeTimeout?: Duration.Input;
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   // Treat replay going quiet as loaded, for agents whose session/load may never reply.
@@ -2294,10 +2296,32 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
       ...(options.initializeMeta === undefined ? {} : { _meta: options.initializeMeta }),
     } satisfies EffectAcpSchema.InitializeRequest;
 
+    const initializeTimeout = Duration.fromInputUnsafe(
+      options.initializeTimeout ?? defaultInitializeTimeout,
+    );
     const initializeResult = yield* runLoggedRequest(
       "initialize",
       initializePayload,
-      acp.agent.initialize(initializePayload),
+      acp.agent.initialize(initializePayload).pipe(
+        Effect.timeoutOption(initializeTimeout),
+        Effect.flatMap((result) =>
+          Option.isSome(result)
+            ? Effect.succeed(result.value)
+            : terminateProcessGroup.pipe(
+                Effect.ignore,
+                Effect.andThen(
+                  Effect.fail(
+                    new EffectAcpErrors.AcpTransportError({
+                      operation: "call-rpc",
+                      method: "initialize",
+                      detail: `initialize timed out after ${Duration.toMillis(initializeTimeout)}ms waiting for agent response`,
+                      cause: undefined,
+                    }),
+                  ),
+                ),
+              ),
+        ),
+      ),
     );
     yield* options.onInitialized?.(initializeResult) ?? Effect.void;
     return initializeResult;
