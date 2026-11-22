@@ -2394,7 +2394,15 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["running", "exited", "timeout", "held", "sync", "stopped"] as const)(
+  it.effect.each([
+    "running",
+    "exited",
+    "timeout",
+    "held",
+    "sync",
+    "stopped",
+    "unremovable",
+  ] as const)(
     "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
     (shell) =>
       Effect.gen(function* () {
@@ -2471,14 +2479,21 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
           }),
-          ...(shell === "stopped"
+          ...(shell === "stopped" || shell === "unremovable"
             ? [
                 out("shell.remove", { id: shellID, "location[directory]": WORK }),
-                reply("shell.remove", null),
+                reply("shell.remove", shell === "stopped" ? null : { status: 500, body: {} }),
               ]
             : []),
           ...Array.from(
-            { length: shell === "held" ? 2 : shell === "sync" || shell === "stopped" ? 0 : 1 },
+            {
+              length:
+                shell === "held"
+                  ? 2
+                  : shell === "sync" || shell === "stopped" || shell === "unremovable"
+                    ? 0
+                    : 1,
+            },
             () => [
               out("shell.output", "<any>"),
               reply("shell.output", {
@@ -2531,17 +2546,26 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          { matched: shell === "running" || shell === "stopped" ? [shellID] : [] },
+          {
+            matched:
+              shell === "running" || shell === "stopped" || shell === "unremovable"
+                ? [shellID]
+                : [],
+          },
         );
         if (shell === "sync") return;
-        if (shell === "stopped") {
+        if (shell === "stopped" || shell === "unremovable") {
           // Stop discards the held wake, so the launch it holds must be removed before it goes.
           yield* runtime.interruptTurn({
             providerThread: thread,
             providerTurnId: yield* providerTurnId,
             requestRuntimeRestart: true,
           });
-          return assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+          // A shell that would not stop outlives its wake and stays pending.
+          return assert.equal(
+            yield* runtime.hasPendingBackgroundWorkForThread!(thread),
+            shell === "unremovable",
+          );
         }
         yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
         if (shell === "running") return assert.isTrue(yield* Deferred.await(marked));

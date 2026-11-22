@@ -4696,6 +4696,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const awaitEnds = (sessionIds: Iterable<string>) =>
         Effect.forEach(sessionIds, awaitIdle, { concurrency: "unbounded", discard: true });
       const attempted = new Set<string>();
+      const unremovedHeld: Array<{ readonly id: string; readonly session: ThreadState }> = [];
       const unremoved = () =>
         [
           ...[...shells]
@@ -4717,7 +4718,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
                     session.stoppedChildren.add(id);
                     return client.shell
                       .remove({ id: Shell.ID.make(id), location: { directory: session.directory } })
-                      .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore({ log: true }));
+                      .pipe(
+                        Effect.timeout(INVENTORY_TIMEOUT),
+                        Effect.tapCause((cause) =>
+                          Effect.logWarning("Could not stop an OpenCode shell.", cause),
+                        ),
+                        Effect.catchCause(() =>
+                          Effect.sync(() => {
+                            unremovedHeld.push({ id, session });
+                          }),
+                        ),
+                      );
                   }),
             { concurrency: "unbounded", discard: true },
           );
@@ -4749,6 +4760,19 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             }
             // Interrupted above but not yet ended: its end must not finish the thread's next turn.
             if (state.wakes.some((wake) => wake.running)) markUnsettled(state);
+            // Its wake is discarded below, so a held shell that would not stop is tracked from here on.
+            for (const { id, session } of unremovedHeld) {
+              session.stoppedChildren.delete(id);
+              if (shells.has(id)) continue;
+              shells.set(id, {
+                state: session,
+                recoveredRunId: null,
+                command: shellInfo.get(id)?.command ?? "Shell command",
+                running: true,
+                output: "",
+                cursor: 0,
+              });
+            }
             discardWakes(state, state.wakes.splice(0));
             yield* syncRosterAncestors(state);
             return true;
