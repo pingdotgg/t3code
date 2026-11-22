@@ -565,6 +565,11 @@ const layerTestNodeServices = Layer.mergeAll(
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
     getEnvironmentId: Effect.succeed(EnvironmentId.make("00000000-0000-4000-8000-000000000001")),
   }),
+  // A login shell that prints nothing, so refreshes never take PATH from the developer's profile.
+  Layer.effect(
+    HostProcess.Environment,
+    Effect.sync(() => ({ ...process.env, SHELL: "/usr/bin/true" })),
+  ),
   // An empty home, so the developer's own Claude settings never reach provider probes.
   Layer.effect(
     HostProcess.HomeDirectory,
