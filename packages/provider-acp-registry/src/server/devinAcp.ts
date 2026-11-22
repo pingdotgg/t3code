@@ -80,6 +80,16 @@ const DevinCompactionNotice = Schema.Struct({ sessionId: Schema.String, status: 
 const DEVIN_COMPACTION_START_WAIT: Duration.Input = "2 seconds";
 // Nothing ends the wait if Devin's process dies after `started`, so the turn fails here instead.
 const DEVIN_COMPACTION_LIMIT: Duration.Input = "10 minutes";
+// The status comes from the agent, so error data keeps only known values.
+const DEVIN_COMPACTION_FAILURES: ReadonlySet<string> = new Set([
+  "failed",
+  "timeout",
+  "cancelled",
+  "refusal",
+  "max_tokens",
+  "max_turn_requests",
+  "error",
+]);
 
 /**
  * Devin answers `/compact` before it summarizes and reports the outcome through
@@ -109,7 +119,7 @@ export const makeDevinCompaction = Effect.gen(function* () {
           ? "Devin did not report the end of the compaction."
           : "Devin could not compact the conversation.",
       method: DEVIN_COMPACTION_METHOD,
-      data: { status },
+      data: { status: DEVIN_COMPACTION_FAILURES.has(status) ? status : "unknown" },
     });
   const compact = Effect.fn("DevinCompaction.compact")(function* (
     runtime: AcpSessionRuntime.AcpSessionRuntime["Service"],
