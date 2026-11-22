@@ -15,6 +15,7 @@ import {
 import { resolveSelfInvocation } from "@t3tools/shared/nodeRuntime";
 import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
+import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import type * as Duration from "effect/Duration";
@@ -1871,6 +1872,65 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.notInclude(subagentStatuses, "interrupted");
       assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // agy answers a prompt sent while ask_question waits with "Can't add this prompt to session
+  // ...: the running prompt is waiting for a permission or question answer".
+  it.effect("declines a delegated completion steer while the agent waits on a question", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({}, undefined, {
+        agentVersion: "1.5.13",
+        holdsFirstPrompt: true,
+      });
+      const { session, providerThread, command, startTurn, until, requestPermission } = opened;
+      yield* startTurn(1, false);
+      const started = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      const providerTurnId = started.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+      const answer = yield* requestPermission(
+        {
+          ...permissionRequest("interaction_1", [
+            { optionId: "red", name: "Red", kind: "allow_once" },
+            { optionId: "blue", name: "Blue", kind: "allow_once" },
+          ]),
+          sessionId: "mock-session-1",
+        },
+        { requestId: "question-1", method: "session/request_permission" },
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* until(
+        (event) =>
+          event.type === "turn_item.updated" && event.turnItem.type === "user_input_request",
+      );
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-1"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-delegated-completion"),
+            text: "Delegated task finished: review complete.",
+            attachments: [],
+            createdBy: "system",
+            creationSource: "server",
+          },
+        })
+        .pipe(Effect.exit);
+      assert.lengthOf(opened.prompts, 1, "the steer must not reach the waiting agent");
+      assert.isTrue(
+        Exit.isFailure(steer) &&
+          Cause.squash(steer.cause) instanceof ProviderAdapter.ProviderAdapterSteerDeclinedError,
+        "the steer is declined so the orchestrator queues it",
+      );
+      assert.equal(opened.cancels(), 0, "a declined steer must not cancel the question");
+      assert.isUndefined(answer.pollUnsafe(), "the question stays open for the user");
     }).pipe(Effect.provide(layerSession)),
   );
 
