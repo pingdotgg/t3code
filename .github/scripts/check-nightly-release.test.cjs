@@ -247,18 +247,32 @@ const atomFeed = (tags) => new Response(`<feed>${tags.map(atomEntry).join("")}</
 const NEWEST = "v1.0.1-nightly.20260905.123";
 const OLDER = "v1.0.1-nightly.20260905.100";
 
+// `feed` is one response for every read, or a list read in order whose last entry repeats.
 function updateFeedFixture({ feed, pointer }) {
   const { options } = fixture({
     releases: [nightly(1), nightly(0, { tagName: "v1.0.2-preview.1" })],
   });
+  const feeds = [feed].flat();
   options.fetch = async (url) =>
     url === "https://github.com/example/app/releases.atom"
-      ? feed
+      ? (feeds.length > 1 ? feeds.shift() : feeds[0]).clone()
       : url === "https://github.com/example/app/releases/download/update-feed/nightly.json"
         ? pointer
         : assert.fail(`unexpected fetch ${url}`);
+  options.sleeps = [];
+  options.sleep = async (ms) => void options.sleeps.push(ms);
   return options;
 }
+
+test("update feed check waits for a nightly published moments ago to reach the feed", async () => {
+  const options = updateFeedFixture({
+    feed: [atomFeed([OLDER]), atomFeed([NEWEST, OLDER])],
+    pointer: Response.json({ tag_name: NEWEST }),
+  });
+  const { feedNightly } = await readNightlyUpdateFeed(options);
+  assert.equal(feedNightly, NEWEST);
+  assert.deepEqual(options.sleeps, [30_000]);
+});
 
 const missing = () => new Response("Not Found", { status: 404 });
 // HTTP 200, then the connection drops before the body arrives.

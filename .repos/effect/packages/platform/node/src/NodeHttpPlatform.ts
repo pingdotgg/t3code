@@ -22,6 +22,7 @@ import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Fs from "node:fs"
 import { pipeline, Readable } from "node:stream"
+import { type ReadableStream, TransformStream } from "node:stream/web"
 import * as NodeFileSystem from "./NodeFileSystem.ts"
 import * as NodeStream from "./NodeStream.ts"
 
@@ -105,6 +106,8 @@ const compression = NodeHttpCompression.make({
   }
 })
 
+const clampBytes = (value: number, max: number) => Math.min(max, Math.max(0, Math.trunc(value) || 0))
+
 /**
  * Creates the Node `HttpPlatform`, serving file responses from Node readable
  * streams and adding MIME type and content-length headers when needed.
@@ -133,9 +136,31 @@ export const make = Platform.make({
       statusText
     })
   },
-  fileWebResponse(file, status, statusText, headers, _options) {
+  fileWebResponse(file, status, statusText, headers, options) {
+    const offset = clampBytes(options?.offset ?? 0, file.size)
+    const length = clampBytes(options?.bytesToRead ?? Infinity, file.size - offset)
     return ServerResponse.raw(
-      lazyReadable(() => Readable.fromWeb(file.stream() as any)),
+      lazyReadable(() => {
+        if (length === 0) return Readable.from([])
+        const source = file.stream() as ReadableStream<Uint8Array>
+        if (length === file.size) return Readable.fromWeb(source)
+
+        let skip = offset
+        let remaining = length
+        return Readable.fromWeb(source.pipeThrough(
+          new TransformStream<Uint8Array, Uint8Array>({
+            transform(chunk, controller) {
+              const start = Math.min(skip, chunk.length)
+              skip -= start
+              const count = Math.min(remaining, chunk.length - start)
+              if (count === 0) return
+              controller.enqueue(chunk.subarray(start, start + count))
+              remaining -= count
+              if (remaining === 0) controller.terminate()
+            }
+          })
+        ))
+      }),
       {
         headers: Headers.merge(
           headers,
@@ -144,7 +169,7 @@ export const make = Platform.make({
               (file.type === ""
                 ? Option.getOrElse(Mime.getType(file.name), () => "application/octet-stream")
                 : file.type),
-            "content-length": file.size.toString()
+            "content-length": length.toString()
           })
         ),
         status,
