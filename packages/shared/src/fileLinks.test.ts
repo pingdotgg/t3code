@@ -87,10 +87,21 @@ describe("parseFileUrlHref", () => {
       "D:/Programme/t3code/OpenInPicker.tsx",
       "#L69",
     ],
-    ["file://server/share/workspace-image.svg", "\\\\server\\share\\workspace-image.svg", ""],
+    [
+      "file://server/share/workspace-image.svg",
+      "\\\\server\\share\\workspace-image.svg",
+      "",
+      "box-node",
+    ],
     ["file://localhost/home/me/notes.md", "/home/me/notes.md", ""],
-  ])("parses %s", (href, path, hash) => {
-    expect(parseFileUrlHref(href)).toEqual({ path, hash });
+    // GNU `ls --hyperlink` names the machine's own hostname.
+    ["file://box-node/var/tmp/report.txt", "/var/tmp/report.txt", "", "Box-Node"],
+    ["file://1234/var/tmp/report.txt", "/var/tmp/report.txt", "", "1234"],
+    ["file://böx/var/tmp/report.txt", "/var/tmp/report.txt", "", "böx"],
+    ["file://server/share/report.txt", "\\\\server\\share\\report.txt", "", "09"],
+    ["file://a/share/report.txt", "\\\\a\\share\\report.txt", "", "a#b"],
+  ])("parses %s", (href, path, hash, localHostname?: string) => {
+    expect(parseFileUrlHref(href, localHostname)).toEqual({ path, hash });
   });
 
   it("keeps percent-encoding so the caller decodes once", () => {
@@ -173,7 +184,16 @@ describe("fileLinkLabel", () => {
   it.each([
     [{ path: "/repo/src/http.ts", line: 42, column: 7 }, "http.ts · L42:C7"],
     [{ path: "/repo/src/http.ts", line: 42, endLine: 64 }, "http.ts · L42–64"],
+    // macOS file names can be NFD (decomposed Hangul jamo); the label shows composed syllables.
+    [{ path: "/repo/\u1109\u1175\u110b\u1161\u11ab" }, "\uc2dc\uc548"],
   ])("labels %o", (file, label) => {
     expect(fileLinkLabel(file, new Map())).toBe(label);
+  });
+
+  it("composes an NFD parent-folder suffix", () => {
+    const path = "/repo/\u1109\u1175\u110b\u1161\u11ab/a.txt";
+    expect(
+      fileLinkLabel({ path }, buildFileLinkParentSuffixByPath([path, "/repo/other/a.txt"])),
+    ).toBe("a.txt · repo/\uc2dc\uc548");
   });
 });

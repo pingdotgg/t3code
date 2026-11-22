@@ -1,7 +1,17 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens, composerMathRanges } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens as collectWithoutMath,
+  type CollectComposerInlineTokensOptions,
+  composerMathRanges,
+} from "./composerInlineTokens.ts";
+import { markdownMathRanges } from "./markdownMath.ts";
 import { serializeComposerFileLink } from "./composerTrigger.ts";
+
+const collectComposerInlineTokens = (
+  text: string,
+  options: CollectComposerInlineTokensOptions = {},
+) => collectWithoutMath(text, { findMath: markdownMathRanges, ...options });
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {
@@ -215,8 +225,8 @@ describe("collectComposerInlineTokens", () => {
 
   it("still finds a formula after a mention that starts the line", () => {
     const link = serializeComposerFileLink("app/routes/posts.$postId.tsx");
-    expect(composerMathRanges(`${link} sets $x_i$`).map((formula) => formula.source)).toEqual([
-      "$x_i$",
-    ]);
+    expect(
+      composerMathRanges(`${link} sets $x_i$`, markdownMathRanges).map((formula) => formula.source),
+    ).toEqual(["$x_i$"]);
   });
 });

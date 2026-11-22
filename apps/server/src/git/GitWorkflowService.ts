@@ -51,6 +51,7 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusResult, GitManagerServiceError>;
     readonly localStatus: (
       input: VcsStatusInput,
+      options?: GitManager.GitLocalStatusOptions,
     ) => Effect.Effect<VcsStatusLocalResult, GitManagerServiceError>;
     readonly currentBranch: (cwd: string) => Effect.Effect<string | null, GitManagerServiceError>;
     readonly upstreamDivergence: (cwd: string) => Effect.Effect<
@@ -58,6 +59,7 @@ export class GitWorkflowService extends Context.Service<
         readonly refName: string;
         readonly aheadCount: number;
         readonly behindCount: number;
+        readonly details: GitVcsDriver.GitRemoteStatusDetails;
       } | null,
       GitManagerServiceError
     >;
@@ -67,7 +69,8 @@ export class GitWorkflowService extends Context.Service<
     ) => Effect.Effect<VcsStatusRemoteResult | null, GitManagerServiceError>;
     readonly invalidateLocalStatus: (cwd: string) => Effect.Effect<void, never>;
     readonly invalidateRemoteStatus: (cwd: string) => Effect.Effect<void, never>;
-    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    readonly readLocalStatusRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readLocalStatusRefSnapshot"];
+    readonly readRefSnapshot: GitVcsDriver.GitVcsDriver["Service"]["readRefSnapshot"];
     readonly invalidateStatus: (cwd: string) => Effect.Effect<void, never>;
     /** The checkout's own HEAD file, inside a linked worktree's admin directory when there is one. */
     readonly headPath: (cwd: string) => Effect.Effect<string | null, never>;
@@ -341,11 +344,11 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
-    localStatus: Effect.fn("GitWorkflowService.localStatus")(function (input) {
+    localStatus: Effect.fn("GitWorkflowService.localStatus")(function (input, options) {
       return detectGitRepositoryForStatus("GitWorkflowService.localStatus", input.cwd).pipe(
         Effect.flatMap((isGitRepository) =>
           isGitRepository
-            ? gitManager.localStatus(input)
+            ? gitManager.localStatus(input, options)
             : Effect.succeed(nonRepositoryLocalStatus()),
         ),
       );
@@ -383,6 +386,7 @@ export const make = Effect.gen(function* () {
             refName: details.branch,
             aheadCount: details.aheadCount,
             behindCount: details.behindCount,
+            details,
           }
         : null;
     }),
@@ -395,10 +399,13 @@ export const make = Effect.gen(function* () {
     }),
     invalidateLocalStatus: gitManager.invalidateLocalStatus,
     invalidateRemoteStatus: gitManager.invalidateRemoteStatus,
+    readLocalStatusRefSnapshot: git.readLocalStatusRefSnapshot,
     readRefSnapshot: git.readRefSnapshot,
     invalidateStatus: gitManager.invalidateStatus,
-    headPath: Effect.fn("GitWorkflowService.headPath")(function (cwd) {
-      return git
+    headPath: Effect.fn("GitWorkflowService.headPath")(function* (cwd) {
+      // Clients keep watching threads whose worktree was removed; spawning there fails noisily.
+      if (!(yield* fileSystem.exists(cwd).pipe(Effect.orElseSucceed(() => true)))) return null;
+      return yield* git
         .execute({
           operation: "GitWorkflowService.headPath",
           cwd,

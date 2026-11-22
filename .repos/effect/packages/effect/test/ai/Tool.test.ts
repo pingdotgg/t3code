@@ -46,6 +46,68 @@ describe("Tool", () => {
         strictEqual(results[0]?.result, 42)
       }))
 
+    it.effect("decodes parameters from their JSON encoding", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(Tool.make("Schedule", {
+          parameters: Schema.Struct({ at: Schema.Date }),
+          success: Schema.Number
+        }))
+        const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({
+          Schedule: ({ at }) => Effect.succeed(at.getTime())
+        })))
+        const results = yield* handlers.handle("Schedule", { at: "2026-01-01T00:00:00.000Z" }).pipe(
+          Effect.flatMap(Stream.runCollect)
+        )
+        strictEqual(results[0]?.result, 1767225600000)
+      }))
+
+    it.effect("encodes results to their JSON encoding", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(
+          Tool.make("Schedule", {
+            success: Schema.Struct({ at: Schema.Date, count: Schema.BigInt })
+          }),
+          Tool.make("Reject", {
+            failure: Schema.Struct({ at: Schema.Date }),
+            failureMode: "return"
+          })
+        )
+        const at = new Date("2026-01-01T00:00:00.000Z")
+        const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({
+          Schedule: () => Effect.succeed({ at, count: 1n }),
+          Reject: () => Effect.fail({ at })
+        })))
+        const success = yield* handlers.handle("Schedule", {}).pipe(Effect.flatMap(Stream.runCollect))
+        const failure = yield* handlers.handle("Reject", {}).pipe(Effect.flatMap(Stream.runCollect))
+
+        deepStrictEqual(success[0]?.result, { at, count: 1n })
+        deepStrictEqual(success[0]?.encodedResult, { at: "2026-01-01T00:00:00.000Z", count: "1" })
+        deepStrictEqual(failure[0]?.result, { at })
+        deepStrictEqual(failure[0]?.encodedResult, { at: "2026-01-01T00:00:00.000Z" })
+      }))
+
+    it.effect("encodes a void result to null", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(Tool.make("Notify"))
+        const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({ Notify: () => Effect.void })))
+        const results = yield* handlers.handle("Notify", {}).pipe(Effect.flatMap(Stream.runCollect))
+
+        strictEqual(results[0]?.result, undefined)
+        strictEqual(results[0]?.encodedResult, null)
+      }))
+
+    it.effect("rejects a non-JSON result for a dynamic tool without a success schema", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(Tool.dynamic("Now"))
+        const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({
+          Now: () => Effect.succeed(new Date("2026-01-01T00:00:00.000Z"))
+        })))
+        const error = yield* handlers.handle("Now", {}).pipe(Effect.flatMap(Stream.runCollect), Effect.flip)
+
+        strictEqual(error._tag, "AiError")
+        strictEqual(error.reason._tag, "ToolResultEncodingError")
+      }))
+
     it.effect("should return tool call handler successes", () =>
       Effect.gen(function*() {
         const toolkit = Toolkit.make(FailureModeReturn)
@@ -452,6 +514,32 @@ describe("Tool", () => {
           )
           strictEqual(results.length, 1)
           assertTrue(Latch.isOpen(interrupted))
+        }))
+
+      it.effect("should die with every handler finalizer defect on early stop", () =>
+        Effect.gen(function*() {
+          const toolkit = Toolkit.make(Tool.make("Progress", { success: Schema.Number }))
+          const handlers = yield* toolkit.pipe(Effect.provide(toolkit.toLayer({
+            Progress: Effect.fnUntraced(
+              function*(_, ctx) {
+                yield* ctx.preliminary(0)
+                return yield* Effect.never
+              },
+              Effect.onInterrupt(() => Effect.die("first")),
+              Effect.onInterrupt(() => Effect.die("second"))
+            )
+          })))
+
+          const exit = yield* handlers.handle("Progress", {}).pipe(
+            Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
+            Effect.exit
+          )
+
+          assertTrue(Exit.isFailure(exit))
+          deepStrictEqual(
+            exit.cause.reasons.map((reason) => Cause.isDieReason(reason) ? reason.defect : reason._tag),
+            ["first", "second"]
+          )
         }))
 
       it.effect("should buffer preliminary results without limit by default", () =>

@@ -1,9 +1,13 @@
 import { Dialog as DialogPrimitive } from "@base-ui/react/dialog";
+import { T, useGT } from "gt-react";
 import { XIcon } from "lucide-react";
 import { useRef, useState, type CSSProperties, type ReactNode } from "react";
 
+import { getCommandPaletteOpener } from "../commandPaletteStore";
 import { useNativeTitlebarHeight } from "../lib/windowControlsOverlay";
+import { requestWorkspaceFocus } from "../lib/workspaceFocus";
 import { useCloseAppModal } from "./sidebar/mainAppLocation";
+import { GlobalVoiceInputIndicator } from "./chat/GlobalVoiceInputIndicator";
 import { Button } from "./ui/button";
 import { DialogBackdrop } from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -19,8 +23,14 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
   // Text selection that ends on the backdrop is not a dismissal.
   const backdropPressRef = useRef(false);
   // Focus the surface, not its first control: no stray focus ring, no phone keyboard.
-  // On close, leave focus alone; returning it to the opener paints a focus ring.
+  // On close, return focus to the opener only after a keyboard close; after a pointer close it
+  // would paint a focus ring.
   const popupRef = useRef<HTMLDivElement>(null);
+  const [opener] = useState(
+    () =>
+      getCommandPaletteOpener() ??
+      (document.activeElement instanceof HTMLElement ? document.activeElement : null),
+  );
   // Clear the native window controls (macOS traffic lights, the Windows and Linux caption
   // buttons). Below sm the modal fills the window and leaves that strip empty; up to lg its
   // 1.5rem inset is shorter than the strip.
@@ -31,8 +41,18 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
       open={open}
       // Portaled layers outside this tree (toasts, Clerk, confirm dialogs) are not backdrop presses.
       disablePointerDismissal
-      onOpenChange={(nextOpen) => {
+      onOpenChange={(nextOpen, eventDetails) => {
         if (nextOpen) return;
+        // Esc from a layer outside Base UI (Clerk's modals) is that layer's to handle.
+        const target = eventDetails.event.target;
+        if (
+          eventDetails.reason === "escape-key" &&
+          target !== document.body &&
+          target instanceof Node &&
+          !popupRef.current?.contains(target)
+        ) {
+          return eventDetails.cancel();
+        }
         // Closing unmounts a focused field without a blur, so commit-on-blur rows would
         // drop what was typed. Blur first so they commit.
         const focused = document.activeElement;
@@ -67,7 +87,16 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
           <DialogPrimitive.Popup
             ref={popupRef}
             initialFocus={popupRef}
-            finalFocus={false}
+            finalFocus={(closeType) => {
+              if (closeType !== "keyboard" || !opener?.isConnected) return false;
+              if (!opener.closest("[inert]")) return opener;
+              // The thread behind the modal stays inert until the route closes, so its area
+              // takes focus once it is usable again.
+              const area = opener.closest<HTMLElement>("[data-workspace-area]");
+              if (area?.dataset.workspaceArea)
+                requestWorkspaceFocus({ area: area.dataset.workspaceArea });
+              return false;
+            }}
             aria-label={label}
             data-slot="dialog-popup"
             data-app-modal=""
@@ -79,6 +108,7 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
               className="absolute inset-x-0 top-0 hidden h-(--app-modal-titlebar-height) [-webkit-app-region:drag] max-sm:block"
             />
             {children}
+            <GlobalVoiceInputIndicator />
           </DialogPrimitive.Popup>
         </DialogPrimitive.Viewport>
       </DialogPrimitive.Portal>
@@ -87,19 +117,22 @@ export function AppRouteModal({ label, children }: { label: string; children: Re
 }
 
 export function AppRouteModalClose() {
+  const gt = useGT();
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <DialogPrimitive.Close
-            aria-label="Close"
+            aria-label={gt("Close")}
             render={<Button size="icon-sm" variant="ghost" />}
           />
         }
       >
         <XIcon />
       </TooltipTrigger>
-      <TooltipPopup side="bottom">Close (Esc)</TooltipPopup>
+      <TooltipPopup side="bottom">
+        <T>Close (Esc)</T>
+      </TooltipPopup>
     </Tooltip>
   );
 }

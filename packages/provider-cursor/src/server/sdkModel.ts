@@ -1,4 +1,8 @@
-import type { ModelSelection as CursorSdkModelSelection, ModelParameterValue } from "@cursor/sdk";
+import type {
+  ModelSelection as CursorSdkModelSelection,
+  ModelParameterValue,
+  SDKModel,
+} from "@cursor/sdk";
 import type { ModelSelection, ServerProviderModel } from "@t3tools/contracts";
 import { getProviderOptionCurrentValue } from "@t3tools/shared/model";
 
@@ -55,9 +59,27 @@ export function cursorContextWindowTokens(
   return Number.isSafeInteger(tokens) && tokens > 0 ? tokens : undefined;
 }
 
+// The SDK infers Max Mode from a model list it never refreshes, so pass it from T3's fresher catalog.
+function cursorSdkMaxMode(
+  sdkModel: SDKModel | undefined,
+  params: ReadonlyArray<ModelParameterValue>,
+): boolean {
+  if (params.length === 0) return false;
+  const variants = (sdkModel?.variants ?? []).filter((variant) =>
+    params.every((param) =>
+      variant.params.some(
+        (candidate) =>
+          candidate.id.trim() === param.id.trim() && candidate.value.trim() === param.value.trim(),
+      ),
+    ),
+  );
+  return variants.length > 0 && variants.every((variant) => variant.isMaxMode === true);
+}
+
 export function cursorSdkModelSelection(
   modelSelection: ModelSelection,
   models: ReadonlyArray<ServerProviderModel> = [],
+  sdkModels: ReadonlyArray<SDKModel> = [],
 ): CursorSdkModelSelection {
   const explicit = modelSelection.options ?? [];
   const descriptors =
@@ -69,16 +91,16 @@ export function cursorSdkModelSelection(
     const value = descriptor.id === "fastMode" ? false : getProviderOptionCurrentValue(descriptor);
     return value === undefined ? [] : [{ id: descriptor.id, value }];
   });
-  const options = [...explicit, ...defaults];
+  const params = [...explicit, ...defaults].map((option): ModelParameterValue => ({
+    id: cursorSdkParameterId(option.id),
+    value: String(option.value),
+  }));
+  const sdkModel = sdkModels.find(
+    (model) => model.id === modelSelection.model || model.aliases?.includes(modelSelection.model),
+  );
   return {
     id: modelSelection.model === "auto" ? "default" : modelSelection.model,
-    ...(options.length === 0
-      ? {}
-      : {
-          params: options.map((option): ModelParameterValue => ({
-            id: cursorSdkParameterId(option.id),
-            value: String(option.value),
-          })),
-        }),
+    ...(params.length === 0 ? {} : { params }),
+    ...(cursorSdkMaxMode(sdkModel, params) ? { maxMode: true } : {}),
   };
 }
