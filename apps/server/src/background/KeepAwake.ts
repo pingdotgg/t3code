@@ -125,7 +125,7 @@ const retryWithBackoff =
       Effect.retry(backoff),
     );
 
-class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
+export class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExited>()(
   "KeepAwakeInhibitorExited",
   { exitCode: Schema.Number, stderr: Schema.String },
 ) {
@@ -133,6 +133,38 @@ class KeepAwakeInhibitorExited extends Schema.TaggedError<KeepAwakeInhibitorExit
     return `sleep inhibitor exited with code ${this.exitCode}${this.stderr ? `: ${this.stderr}` : ""}`;
   }
 }
+
+// logind refuses the lock through polkit when the server has no interactive session (e.g. a
+// systemd user service); that does not change while the process runs.
+const isInhibitorExit = Schema.is(KeepAwakeInhibitorExited);
+const isPermissionDenied = <E>(
+  error: E | KeepAwakeInhibitorExited,
+): error is KeepAwakeInhibitorExited =>
+  isInhibitorExit(error) &&
+  /access denied|interactive authentication|not authorized/i.test(error.stderr);
+
+/**
+ * Retries `holdOnce` under backoff until interrupted, except after a permission denial, which
+ * makes this and every later hold a no-op.
+ */
+export const makeHold = <E, R>(holdOnce: Effect.Effect<never, E | KeepAwakeInhibitorExited, R>) =>
+  Ref.make(false).pipe(
+    Effect.map((denied) =>
+      holdOnce.pipe(
+        Effect.catchIf(isPermissionDenied<E>, (error) =>
+          Ref.set(denied, true).pipe(
+            Effect.andThen(
+              Effect.logWarning(`keep-awake disabled until restart: ${error.message}`),
+            ),
+          ),
+        ),
+        retryWithBackoff("keep-awake sleep inhibitor stopped"),
+        Effect.ignore,
+        Effect.when(Effect.map(Ref.get(denied), (isDenied) => !isDenied)),
+        Effect.asVoid,
+      ),
+    ),
+  );
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
@@ -238,10 +270,7 @@ export const layer = Layer.effectDiscard(
         stderr: (yield* Fiber.join(stderr)).trim(),
       });
     }).pipe(Effect.scoped);
-    const hold = holdOnce.pipe(
-      retryWithBackoff("keep-awake sleep inhibitor stopped"),
-      Effect.ignore,
-    );
+    const hold = yield* makeHold(holdOnce);
 
     yield* forkParked(
       holdWhileWanted(
