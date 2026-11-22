@@ -1,11 +1,12 @@
-import type { PluggableList } from "unified";
-import type { Root, RootContent } from "mdast";
+import { msg } from "gt-react";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 import {
   resolveWorkEntryToolPresentation,
   toolGroupAction,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
 import { type WorkEntryIconName } from "./TimelineToolActivityIcon";
 
@@ -95,6 +96,7 @@ export function buildToolCallExpandedBody(
   workspaceRoot: string | undefined,
   visibleLabel: string,
   viewedImagePath: string | null,
+  resolve: MessageResolver = m,
 ): string | null {
   const blocks: string[] = [];
   const seen = new Set<string>([visibleLabel.trim()]);
@@ -113,7 +115,9 @@ export function buildToolCallExpandedBody(
             "input" in workEntry.toolData
           ? workEntry.toolData.input
           : undefined;
-    if (input !== undefined) addBlock(`Tool input\n${JSON.stringify(input, null, 2)}`);
+    if (input !== undefined) {
+      addBlock(resolve(msg("Tool input\n{input}", { input: JSON.stringify(input, null, 2) })));
+    }
   }
   const command = workEntry.command?.trim();
   const raw = workEntryRawCommand(workEntry);
@@ -167,6 +171,12 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
         return "zap";
     }
   }
+  if (workEntry.itemType === "system_notice") {
+    return workEntry.structuredPayload?.type === "system_notice" &&
+      workEntry.structuredPayload.level === "info"
+      ? "zap"
+      : "circle-alert";
+  }
   if (workEntry.itemType === "user_input_request" || workEntry.itemType === "approval_request") {
     return "message-circle";
   }
@@ -177,7 +187,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
     isJavaScriptReplTool(workEntry.structuredPayload.toolName)
   )
     return "code";
-  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry, undefined, m);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
@@ -192,57 +202,20 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
   return workToneIcon(workEntry.tone).iconName;
 }
 
-/** Compact reasoning keeps formulas while flattening other Markdown into label text. */
-export function remarkThoughtPreview(fallback: string) {
-  return (tree: Root) => {
-    const children: RootContent[] = [];
-    let run: string[] = [];
-    const append = (value: string) => {
-      run.push(value);
-    };
-    const flush = () => {
-      if (run.length === 0) return;
-      children.push({ type: "text", value: run.join("").replace(/\s+/g, " ") });
-      run = [];
-    };
-    const visit = (node: Root | RootContent) => {
-      if (node.type === "html" || node.type === "definition") return;
-      if (node.type === "math" || node.type === "inlineMath") {
-        flush();
-        children.push({
-          type: "inlineMath",
-          value: node.value,
-          position: node.position,
-          data: {
-            hName: "code",
-            hProperties: { className: ["language-math", "math-inline"] },
-            hChildren: [{ type: "text", value: node.value }],
-          },
-        });
-      } else if ("alt" in node) append(node.alt ?? "");
-      else if ("value" in node) append(node.value);
-      else if ("children" in node) {
-        node.children.forEach((child, index) => {
-          if (
-            index &&
-            ["root", "blockquote", "list", "listItem", "table", "tableRow"].includes(node.type)
-          )
-            append(" ");
-          visit(child);
-        });
-      } else if (node.type === "break") append(" ");
-    };
-    visit(tree);
-    flush();
-    const first = children[0];
-    const last = children.at(-1);
-    if (first?.type === "text") first.value = first.value.trimStart();
-    if (last?.type === "text") last.value = last.value.trimEnd();
-    tree.children = children.some((child) => child.type !== "text" || child.value)
-      ? children
-      : [{ type: "text", value: fallback }];
-  };
-}
+// Look past the visible label so long destinations and inline delimiters can close.
+// This is bounded lookahead, not document-wide Markdown parity: a closing delimiter
+// or reference definition beyond this prefix remains unresolved by the parser.
+export const THOUGHT_PREVIEW_SOURCE_MAX_LENGTH = 8_192;
+export const THOUGHT_PREVIEW_MAX_LENGTH = 2_048;
 
-export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
-export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];
+const thoughtPreviews = new Map<string, MarkdownExtensions>();
+
+/** Compact reasoning keeps formulas while flattening other Markdown into label text. */
+export function thoughtPreviewMarkdown(fallback: string): MarkdownExtensions {
+  let extensions = thoughtPreviews.get(fallback);
+  if (!extensions) {
+    extensions = { preview: { fallback, maxLength: THOUGHT_PREVIEW_MAX_LENGTH } };
+    thoughtPreviews.set(fallback, extensions);
+  }
+  return extensions;
+}

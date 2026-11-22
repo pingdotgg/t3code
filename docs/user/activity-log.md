@@ -41,3 +41,10 @@ short. The reply that closes the turn is not read, so you can read it yourself w
 are spaced out, so a quick step can be skipped for a newer one.
 The agent's reasoning text is never read. The setting follows the agent's real activity, whatever
 **Tool calls in chat** hides, and applies to this browser or device only.
+
+To hear the open thread and what it's doing when you switch to T3 Code, turn on **Screen reader
+window title** in the same section. The window title then starts with the thread's status
+(**Working**, **Needs approval**, or **Needs your input**) and its name, then the project, so a
+screen reader says them first. When the turn ends, only the status goes away.
+Anyone who can see your taskbar, window switcher, or shared screen sees it too, and time trackers
+that group by window title count each status separately.
