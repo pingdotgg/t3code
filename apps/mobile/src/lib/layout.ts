@@ -77,6 +77,11 @@ export interface Layout {
   readonly shellPadding: number;
 }
 
+/** The iOS split's preferred sidebar column width, which the tab bar over a page also takes. */
+export function nativeSidebarColumnWidth(layout: Layout) {
+  return (layout.listPaneWidth ?? 320) + (layout.listPaneGap ?? 0) / 2;
+}
+
 export interface WorkspacePaneLayout {
   readonly primarySidebarVisible: boolean;
   /** Whether the sidebar shows once a collapsed split expands; independent of the current width. */
@@ -151,7 +156,13 @@ export function deriveLayout(input: {
     usesSplitView: true,
     listPaneWidth:
       division?.x ??
-      clamp(Math.round(width * 0.32), SPLIT_SIDEBAR_MIN_WIDTH, SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH),
+      (input.nativeWorkspace === true && variant === "medium"
+        ? 350
+        : clamp(
+            Math.round(width * 0.32),
+            SPLIT_SIDEBAR_MIN_WIDTH,
+            SPLIT_SIDEBAR_DEFAULT_MAX_WIDTH,
+          )),
     ...(division ? { listPaneGap: division.width } : {}),
     shellPadding: 0,
   };

@@ -1,11 +1,4 @@
-import {
-  formatFilePathPosition,
-  parseFileUrlHref,
-  resolvePathLinkTarget,
-  splitFilePathPosition,
-} from "@t3tools/shared/fileLinks";
-import { safeDecodeURIComponent } from "@t3tools/shared/markdownLinks";
-import { stripSlashPrefixedWindowsDrive } from "@t3tools/shared/path";
+import { parseFileUrlHref, resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -39,10 +32,10 @@ const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const POWERSHELL_PROMPT_PATH_PATTERN = /^PS ((?:[A-Za-z]:[\\/]|\\\\|\/)[^>\r\n]*)>/u;
 // Bare paths start only at a segment boundary: hover detection runs this on
 // every frame, so separator-free output must not be rescanned at every suffix.
-// For the same reason `]` needs its `[`: trimming a long run of `]` is quadratic.
 // Parenthesized path segments need a following slash to distinguish compiler locations.
+// A bare `name.ext` needs `:line:col` or a TS location after it, so prose and `host:port` stay text.
 const FILE_PATH_PATTERN =
-  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._-])[\p{L}\p{M}\p{N}._-]+(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|(?<![\p{L}\p{M}\p{N}._$+@-])[\p{L}\p{M}\p{N}._$+@-]+(?:(?:[\\/](?:[\p{L}\p{M}\p{N}._$+@-]|\[{1,2}[\p{L}\p{M}\p{N}._-]+\]{1,2}|\([\p{L}\p{M}\p{N}._-]+\)(?=[\\/]))+)+|\.\p{L}[\p{L}\p{M}\p{N}_-]*(?=:\d+:\d|\(\d+,\d+\):\s+(?:error|warning) TS\d+:))(?:(?::\d+){1,2}|\(\d+,\d+\)(?=:\s+(?:error|warning) TS\d+:))?/gu;
 const QUOTED_FILE_PATH_PATTERN =
   /(["'`])(?<path>(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\|[\p{L}\p{M}\p{N}._ -]+[\\/])[^\r\n]*?|[\p{L}\p{M}\p{N}._ -]+\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2})\1(?<position>(?::\d+){0,2})/gu;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
@@ -59,25 +52,26 @@ const SCHEME_URL_PATTERN = /(?<![A-Za-z\d+.-])[+-]?[A-Za-z][A-Za-z\d+.-]+:\/\/[^
 const SCP_REMOTE_PATTERN = /(?<![\w.@-])[\w.-]+@[\w.-]+:[^\s"'`<>]+/gu;
 
 function trimClosingDelimiters(value: string, kind: TerminalLinkKind): string {
-  let output = value.replace(
+  const output = value.replace(
     kind === "path" ? TRAILING_PATH_PUNCTUATION_PATTERN : TRAILING_PUNCTUATION_PATTERN,
     "",
   );
   if (output.length === 0) return output;
+  let end = output.length;
 
   const trimUnbalanced = (open: string, close: string) => {
-    while (output.endsWith(close)) {
-      const opens = output.split(open).length - 1;
-      const closes = output.split(close).length - 1;
-      if (opens >= closes) return;
-      output = output.slice(0, -1);
+    if (output[end - 1] !== close) return;
+    let excess = output.split(close).length - output.split(open).length;
+    while (excess > 0 && output[end - 1] === close) {
+      end -= 1;
+      excess -= 1;
     }
   };
 
   trimUnbalanced("(", ")");
   trimUnbalanced("[", "]");
   trimUnbalanced("{", "}");
-  return output;
+  return output.slice(0, end);
 }
 
 function overlaps(a: { start: number; end: number }, b: { start: number; end: number }): boolean {
@@ -161,16 +155,18 @@ export function isTerminalUrl(value: string): boolean {
   return /^https?:\/\//iu.test(value);
 }
 
-/** Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`. */
-export function resolveTerminalLinkTarget(text: string, cwd: string): string {
-  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text) : null;
+/**
+ * Explicit OSC 8 targets may be `file://` URIs; everything else is a path relative to `cwd`.
+ * `hostname` is the terminal's environment's, which producers such as GNU `ls` put in the URI.
+ * A URI's path is the exact filename, so only its `#L12C3` hash is a position.
+ */
+export function resolveTerminalLinkTarget(text: string, cwd: string, hostname?: string): string {
+  const fileUrl = /^file:\/\//iu.test(text) ? parseFileUrlHref(text, hostname) : null;
   if (!fileUrl) return resolvePathLinkTarget(text, cwd);
-  return formatFilePathPosition(
-    splitFilePathPosition(
-      stripSlashPrefixedWindowsDrive(safeDecodeURIComponent(fileUrl.path)),
-      fileUrl.hash,
-    ),
-  );
+  // Keep URI identity until consumers decode the filename, separately from its position.
+  const uri = new URL(text);
+  if (!fileUrl.path.startsWith("\\")) uri.hostname = "";
+  return uri.href;
 }
 
 export function collectWrappedTerminalLinkLine(
