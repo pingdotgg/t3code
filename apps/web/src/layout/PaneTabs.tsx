@@ -402,8 +402,11 @@ function markJoinFoot(entry: PaneStrip, scrollLeft: number): void {
   }
   entry.footNotch = footed ? notch : null;
   if (!footed) return;
-  notch.style.setProperty("--pane-join-foot-x", `${footOffset + left}px`);
-  notch.style.setProperty("--pane-join-foot-w", `${right - left}px`);
+  // Not inherited (index.css): the notch's cut and the foot each take their own.
+  for (const element of [notch, entry.foot]) {
+    setPaneLitProperty(element, "--pane-join-foot-x", `${footOffset + left}px`);
+    setPaneLitProperty(element, "--pane-join-foot-w", `${right - left}px`);
+  }
   if (!notch.hasAttribute("data-pane-join-footed")) notch.setAttribute("data-pane-join-footed", "");
 }
 

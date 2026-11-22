@@ -6765,6 +6765,14 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --pane-join-foot-x {
+  syntax: "*";
+  inherits: false;
+}
+@property --pane-join-foot-w {
+  syntax: "*";
+  inherits: false;
+}
 @property --strip-fade-start-shown {
   syntax: "<number>";
   inherits: false;
@@ -7152,13 +7160,16 @@ body {
        apart from the bar, and at a fractional zoom showed its last row or
        covered a row of content (PaneTabs.tsx, markJoinFoot). */
     & [data-pane-notch=""][data-pane-join-footed] {
-      --e: var(--pane-join-ear);
-      --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
-      --pane-join-foot-r: calc(
-        100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
-      );
-
+      /* Only the foot and the bar's cut read where the foot is: set on the
+         notch, it restyled every tab in the bar on each tab press. */
       &::before {
+        --e: var(--pane-join-ear);
+        --pane-join-foot-x: inherit;
+        --pane-join-foot-w: inherit;
+        --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
+        --pane-join-foot-r: calc(
+          100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
+        );
         clip-path: polygon(
           0 -10px,
           100% -10px,
@@ -7178,6 +7189,7 @@ body {
       }
 
       & > [data-layout-tab-strip-slot] > [data-pane-join-foot] {
+        --e: var(--pane-join-ear);
         /* Inside the ear fill's edge, which still draws it. */
         --ear-in: transparent calc(var(--e) + 0.5px), var(--pane-join-fill) calc(var(--e) + 1.5px);
         display: block;
