@@ -422,6 +422,9 @@ it.effect("lists GitHub Enterprise PRs for a stored unknown repository after hos
       result.entries.map(({ host, number }) => [host, number]),
       [["code.example.test", 42]],
     );
+    // Agents get the forge tools only where the host is one T3 reads.
+    assert.isTrue(yield* service.servesProject("p1" as ProjectId));
+    assert.isFalse(yield* service.servesProject("p2" as ProjectId));
   }),
 );
 
@@ -1428,6 +1431,152 @@ it.effect(
     }),
 );
 
+it.effect(
+  "reads logs of the failing checks, or of the one named, and names the checks it lacks",
+  () =>
+    Effect.gen(function* () {
+      const asked: Array<ReadonlyArray<string>> = [];
+      let failing = 0;
+      const check = (name: string, status: "success" | "failure" | "cancelled") => ({
+        name,
+        status,
+        description: null,
+        url: `https://github.com/acme/web/runs/${name.length}`,
+      });
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open",
+                checks: [
+                  check("Lint", "success"),
+                  check("Test", "failure"),
+                  check("E2E", "cancelled"),
+                  ...Array.from({ length: failing }, (_, index) =>
+                    check(`Shard ${index}`, "failure"),
+                  ),
+                ],
+              }),
+            getCheckLogs: (input) =>
+              Effect.sync(() => {
+                asked.push(input.checks.map((entry) => entry.name));
+                return input.checks.map((entry) => ({
+                  ...entry,
+                  log: "boom",
+                  truncated: false,
+                  detail: null,
+                }));
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      yield* service.checkLogs({ ...reference, tailLines: 50 });
+      yield* service.checkLogs({ ...reference, check: "lint", tailLines: 50 });
+      const missing = yield* Effect.flip(
+        service.checkLogs({ ...reference, check: "Deploy", tailLines: 50 }),
+      );
+      assert.deepStrictEqual(asked, [["Test", "E2E"], ["Lint"]]);
+      assert.include(missing.message, "Lint, Test, E2E");
+
+      failing = 6;
+      asked.length = 0;
+      const many = yield* service.checkLogs({ ...reference, tailLines: 50 });
+      // The host is asked for five; the other three come back unread, by name.
+      assert.lengthOf(asked[0] ?? [], 5);
+      assert.deepStrictEqual(
+        many.map((log) => [log.name, log.log]),
+        [
+          ["Test", "boom"],
+          ["E2E", "boom"],
+          ["Shard 0", "boom"],
+          ["Shard 1", "boom"],
+          ["Shard 2", "boom"],
+          ["Shard 3", null],
+          ["Shard 4", null],
+          ["Shard 5", null],
+        ],
+      );
+      assert.include(many.at(-1)?.detail ?? "", "Ask for this check by name");
+    }),
+);
+
+it.effect.each([false, true])(
+  "re-reads checks after a rerun instead of serving the failed ones (rerun fails: %s)",
+  (failAfterRerun) =>
+    Effect.gen(function* () {
+      let rerun = false;
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" }),
+        ],
+        providers: [
+          fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+            getChangeRequestChecks: () =>
+              Effect.succeed({
+                state: "open" as const,
+                checks: [
+                  {
+                    name: "Test",
+                    status: rerun ? ("pending" as const) : ("failure" as const),
+                    description: null,
+                    url: null,
+                  },
+                ],
+              }),
+            // A failure can come after one run already restarted.
+            rerunChecks: (input) =>
+              Effect.suspend(() => {
+                rerun = true;
+                return failAfterRerun
+                  ? Effect.fail(requestFailed)
+                  : Effect.succeed(
+                      input.checks.map((check) => ({ ...check, rerun: true, detail: null })),
+                    );
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "failure");
+      yield* service.rerunChecks(reference).pipe(Effect.ignore);
+      assert.equal((yield* service.checks(reference))?.checks[0]?.status, "pending");
+    }),
+);
+
+it.effect("refuses a merge whose head moved past expectedHeadSha and pins the host merge", () =>
+  Effect.gen(function* () {
+    const head = "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567";
+    const pinned: Array<string | undefined> = [];
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("github"), {
+          getChangeRequest: () => Effect.succeed({ ...hostedChangeRequest("Body"), headSha: head }),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-09-03T00:00:00Z")),
+          runAction: (input) => Effect.sync(() => void pinned.push(input.expectedHeadSha)),
+        }),
+      ],
+    });
+    const reference = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const refused = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c4" }),
+    );
+    assert.include(refused.message, head);
+    const tooShort = yield* Effect.flip(
+      service.runAction({ ...reference, action: "merge", expectedHeadSha: "0a1b2c" }),
+    );
+    assert.include(tooShort.message, head);
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: head });
+    yield* service.runAction({ ...reference, action: "merge", expectedHeadSha: "0A1B2C3D4" });
+    assert.deepStrictEqual(pinned, [head, head]);
+  }),
+);
+
 it.effect("publishes a merge for immediate settlement only after host confirmation", () =>
   Effect.gen(function* () {
     const mergedAt = "2026-09-03T02:00:00.000Z";
@@ -2416,6 +2565,34 @@ it.effect.each([
         message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
       });
     }
+  }),
+);
+
+// regression: #37633 any checkout on the host routes the read, so name the host, not the repository
+it.effect("names the host when no project has a checkout on it for a host-routed read", () =>
+  Effect.gen(function* () {
+    const service = yield* makeService({
+      projects: [project({ id: "wrapper", title: "Wrapper", workspaceRoot: "/work" })],
+      providers: [
+        fakePullRequestProvider(SourceControlProviderKind.make("gitlab"), {
+          getChangeRequestSummary: () => Effect.die("no checkout to read through"),
+        }),
+      ],
+    });
+    const error = yield* Effect.flip(
+      service.summary(
+        {
+          projectId: "wrapper" as ProjectId,
+          host: "gitlab.com",
+          repository: "acme/web",
+          number: 7,
+        },
+        { recoverTransientFailure: false },
+      ),
+    );
+    assert.strictEqual(error._tag, "PullRequestUnavailableError");
+    expect(error.message).not.toContain("acme/web is not a project");
+    expect(error.message).toContain("gitlab.com");
   }),
 );
 

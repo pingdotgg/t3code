@@ -50,9 +50,8 @@ describe("comment reaction permissions", () => {
 });
 
 describe("pending reactions", () => {
-  const pending = (
-    entries: ReadonlyArray<readonly [PullRequestReactionContent, boolean]>,
-  ): ReadonlyMap<PullRequestReactionContent, boolean> => new Map(entries);
+  const pending = (entries: ReadonlyArray<readonly [PullRequestReactionContent, boolean]>) =>
+    new Map(entries.map(([content, reacted]) => [content, { reacted }] as const));
 
   it("adds a reaction nobody had yet, in picker order", () => {
     const applied = applyPendingPullRequestReactions(

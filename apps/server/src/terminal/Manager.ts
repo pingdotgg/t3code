@@ -43,7 +43,7 @@ import { makeKeyedCoalescingWorker } from "@t3tools/shared/KeyedCoalescingWorker
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import { mergePathEntries } from "@t3tools/shared/shell";
+import { SpawnExecutableResolution, mergePathEntries } from "@t3tools/shared/shell";
 
 import { acpRegistryManagedBinaryDirectories } from "@t3tools/provider-acp-registry/server";
 import { getTerminalLabel } from "@t3tools/shared/terminalLabels";
@@ -241,6 +241,8 @@ export class TerminalManager extends Context.Service<
       readonly threadId: string;
       readonly terminalId?: string;
     }) => Effect.Effect<void>;
+
+    readonly hasActiveSubprocess: (input: { readonly threadId: string }) => Effect.Effect<boolean>;
 
     readonly subscribe: (
       listener: (event: TerminalEvent) => Effect.Effect<void>,
@@ -601,6 +603,9 @@ function shellCandidateFromCommand(
   if (platform === "win32" && (shellName === "pwsh.exe" || shellName === "powershell.exe")) {
     return { shell: command, args: ["-NoLogo", "-NoExit", "-Command", POWERSHELL_UTF8_SETUP] };
   }
+  if (platform === "win32" && (shellName === "bash.exe" || shellName === "bash")) {
+    return { shell: command, args: ["--login", "-i"] };
+  }
   if (platform !== "win32" && shellName === "zsh") {
     return { shell: command, args: ["-o", "nopromptsp"] };
   }
@@ -651,7 +656,10 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   shellResolver: () => string,
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
+  terminalShell: string | undefined,
 ) {
+  // This is an executable path, not a command line; spaces belong to the path.
+  const configured = shellCandidateFromCommand(terminalShell?.trim() || null, platform);
   const requested = shellCandidateFromCommand(
     yield* normalizeShellCommand(shellResolver(), platform),
     platform,
@@ -659,6 +667,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
 
   if (platform === "win32") {
     return uniqueShellCandidates([
+      configured,
       requested,
       shellCandidateFromCommand("pwsh.exe", platform),
       shellCandidateFromCommand(windowsPowerShellPath(env), platform),
@@ -670,6 +679,7 @@ const resolveShellCandidates = Effect.fn("terminal.resolveShellCandidates")(func
   }
 
   return uniqueShellCandidates([
+    configured,
     requested,
     shellCandidateFromCommand(yield* normalizeShellCommand(env.SHELL, platform), platform),
     shellCandidateFromCommand("/bin/zsh", platform),
@@ -1264,6 +1274,19 @@ function shouldStripOscSequence(content: string): boolean {
   return /^(10|11|12);(?:\?|rgb:)/.test(content);
 }
 
+// An OSC 4 whose every colour is "?" reports palette entries and sets none. Ghostty skips C0
+// controls inside an OSC, runs one that CAN or SUB ends, and reads the pairs past empty fields.
+function isOscPaletteQuery(content: string): boolean {
+  if (!/^[\0-\x1f]*4/.test(content) || !content.includes("?")) return false;
+  const [code, ...pairs] = content
+    .replace(/[\0-\x1f]+/g, "")
+    .split(";")
+    .filter((field) => field !== "");
+  return (
+    code === "4" && pairs.length > 1 && pairs.every((field, at) => at % 2 === 0 || field === "?")
+  );
+}
+
 function stripStringTerminator(value: string): string {
   if (value.endsWith("\u001b\\")) {
     return value.slice(0, -2);
@@ -1478,6 +1501,18 @@ function sanitizeTerminalHistoryChunk(
         const content = stripStringTerminator(
           prefix.slice(2) + input.slice(contentStart, c1?.index ?? end),
         );
+        // ST ends what the query's ESC cut short and leaves ground state, as the query does when it
+        // has its own terminator. Without one, the query ends at the next ESC, which history may
+        // strip, so ST would not replay the same and the query stays.
+        if (
+          nextCodePoint === 0x5d &&
+          isOscPaletteQuery(content) &&
+          /[\x07\x18\x1a]$|\x1b\\$/.test(input.slice(index, end))
+        ) {
+          append("\u001b\\");
+          index = end;
+          continue;
+        }
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
@@ -1598,6 +1633,7 @@ function createTerminalSpawnEnv(
   runtimeEnv: Record<string, string> | null | undefined,
   platform: NodeJS.Platform,
   home: string,
+  threadId: string,
 ): NodeJS.ProcessEnv {
   const spawnEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
@@ -1626,6 +1662,7 @@ function createTerminalSpawnEnv(
       );
     }
   }
+  spawnEnv[PortScanner.AGENT_THREAD_ENV] = threadId;
   if (!spawnEnv.COLORTERM && runtimeEnv?.COLORTERM === undefined) {
     spawnEnv.COLORTERM = "truecolor";
   }
@@ -1781,6 +1818,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
   const agentScope = yield* AgentScope;
+  const resolveExecutable = yield* SpawnExecutableResolution;
   // Inherit the full environment minus createTerminalSpawnEnv's blocklist; allowlists silently drop user tooling variables.
   const baseEnv = options.env ?? process.env;
   const shellResolver = options.shellResolver ?? (() => defaultShellResolver(platform, baseEnv));
@@ -1920,6 +1958,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
 
   yield* fileSystem.makeDirectory(logsDir, { recursive: true }).pipe(Effect.orDie);
 
+  const managerId = NodeCrypto.randomUUID();
   const managerStateRef = yield* SynchronizedRef.make<TerminalManagerState>({
     sessions: new Map(),
     killFibers: new Map(),
@@ -2155,6 +2194,17 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       Deferred.doneUnsafe(exited, Effect.void);
     });
     yield* Effect.gen(function* () {
+      // Interactive shells ignore SIGTERM but pass SIGHUP to their background jobs, skipping nohup'd and disowned ones.
+      // Windows ignores the signal and node-pty kills the whole tree there.
+      if (platform !== "win32") {
+        yield* Effect.sync(() => {
+          try {
+            process.kill("SIGHUP");
+          } catch {
+            // The SIGTERM below reports a shell that can no longer be signalled.
+          }
+        });
+      }
       const terminated = yield* Effect.try({
         try: () => process.kill("SIGTERM"),
         catch: (cause) =>
@@ -2728,8 +2778,41 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       );
     }
 
+    // PATH lookup must use the child's working directory, not the server's.
+    const lookupEnv =
+      platform === "win32"
+        ? spawnEnv
+        : {
+            ...spawnEnv,
+            PATH: (spawnEnv.PATH ?? spawnEnv.Path ?? spawnEnv.path ?? "")
+              .split(":")
+              // An empty entry means the working directory, which resolve("") yields.
+              .map((entry) => path.resolve(session.cwd, entry.replace(/^"+|"+$/g, "")))
+              .join(":"),
+          };
+    // POSIX node-pty can return a PTY before exec fails, so validate before accepting a candidate.
+    const executable =
+      platform !== "win32"
+        ? resolveExecutable(
+            candidate.shell.includes("/")
+              ? path.resolve(session.cwd, candidate.shell)
+              : candidate.shell,
+            platform,
+            lookupEnv,
+          )
+        : candidate.shell;
+    if (executable === undefined) {
+      return yield* trySpawn(
+        shellCandidates,
+        spawnEnv,
+        session,
+        index + 1,
+        new PtyAdapter.PtySpawnError({ adapter: "terminal-manager", shell: candidate.shell }),
+      );
+    }
+
     const launch = yield* agentScope.wrap({
-      command: candidate.shell,
+      command: executable,
       args: candidate.args ?? [],
       name: "terminal",
       env: spawnEnv,
@@ -2806,12 +2889,14 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
               shellResolver,
               platform,
               baseEnv,
+              session.runtimeEnv?.T3CODE_TERMINAL_SHELL ?? baseEnv.T3CODE_TERMINAL_SHELL,
             ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
             const terminalEnv = createTerminalSpawnEnv(
               baseEnv,
               session.runtimeEnv,
               platform,
               yield* HostProcess.HomeDirectory,
+              session.threadId,
             );
             // Append managed install directories so agent commands resolve without shadowing user/system tools.
             if (
@@ -3687,6 +3772,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       yield* listener({
         type: "snapshot",
         terminals,
+        managerId,
       });
 
       for (const event of bufferedEvents) {
@@ -3879,6 +3965,29 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     yield* closeIdle(input);
   });
 
+  const hasActiveSubprocess = Effect.fn("terminal.hasActiveSubprocess")(function* (input: {
+    readonly threadId: string;
+  }) {
+    // Settling closes stopOnSettle sessions, so their work must not hold settlement back.
+    const running = (yield* sessionsForThread(input.threadId)).filter(
+      (session): session is TerminalSessionState & { pid: number } =>
+        session.status === "running" && Number.isInteger(session.pid) && !session.stopOnSettle,
+    );
+    if (running.length === 0) return false;
+    const { inspector } = yield* acquireSubprocessInspector(
+      platform === "win32" ? CLOSE_IDLE_QUERY_TIMEOUT.win32 : CLOSE_IDLE_QUERY_TIMEOUT.posix,
+    );
+    // A failed process query falls back to the last poll's answer.
+    const isActive = (session: (typeof running)[number]) =>
+      Result.isFailure(inspector)
+        ? Effect.succeed(session.hasRunningSubprocess)
+        : inspector.success(session.pid, session.shell).pipe(
+            Effect.map((result) => result.hasRunningSubprocess),
+            Effect.orElseSucceed(() => session.hasRunningSubprocess),
+          );
+    return Option.isSome(yield* Effect.findFirst(running, isActive));
+  });
+
   return TerminalManager.of({
     open,
     getShell,
@@ -3892,6 +4001,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     close,
     closeIdle,
     closeOnSettle,
+    hasActiveSubprocess,
     subscribe,
     subscribeMetadata,
   });
