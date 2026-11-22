@@ -66,12 +66,22 @@ vi.mock("node:child_process", async (importOriginal) => {
   };
 });
 
+// A child that cannot start emits `error` and never `exit`.
 const exitOf = (child: NodeChildProcess.ChildProcess) =>
   child.exitCode !== null || child.signalCode !== null
     ? Promise.resolve({ code: child.exitCode, signal: child.signalCode })
-    : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) =>
-        child.once("exit", (code, signal) => resolve({ code, signal })),
-      );
+    : new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+          child.off("error", onError);
+          resolve({ code, signal });
+        };
+        const onError = (error: Error) => {
+          child.off("exit", onExit);
+          reject(error);
+        };
+        child.once("exit", onExit);
+        child.once("error", onError);
+      });
 
 const withWindowsEnvironmentMocks = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
