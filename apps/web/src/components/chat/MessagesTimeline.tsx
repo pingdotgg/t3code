@@ -2166,6 +2166,10 @@ function ContextCompactionTimelineRow({
       {row.failure ? <span className="min-w-0 truncate opacity-80">{row.failure}</span> : null}
     </span>
   );
+  const rule = cn(
+    "h-px flex-1",
+    row.failed ? "surface-divider-rule-danger" : "surface-divider-rule",
+  );
   return (
     <div
       role="separator"
@@ -2175,7 +2179,7 @@ function ContextCompactionTimelineRow({
         row.failed ? "text-destructive" : "text-muted-foreground",
       )}
     >
-      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border")} />
+      <span className={rule} />
       <span
         ref={row.active ? observeVisibleAnimation : undefined}
         className="relative min-w-0 overflow-hidden"
@@ -2183,7 +2187,7 @@ function ContextCompactionTimelineRow({
         {content}
         {row.active ? <ActivityShimmerOverlay>{content}</ActivityShimmerOverlay> : null}
       </span>
-      <span className={cn("h-px flex-1", row.failed ? "bg-destructive/30" : "bg-border")} />
+      <span className={rule} />
     </div>
   );
 }

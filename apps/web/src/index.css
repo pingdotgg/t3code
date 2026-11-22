@@ -1520,6 +1520,13 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     color-mix(in oklab, var(--contrast-border) 70%, transparent)
   );
 }
+/* Inline divider hairlines, in neutral or danger tone. */
+@utility surface-divider-rule {
+  background-color: var(--divider-rule, var(--contrast-border));
+}
+@utility surface-divider-rule-danger {
+  background-color: var(--divider-rule-danger, color-mix(in srgb, var(--error) 30%, transparent));
+}
 @utility surface-floating-hover {
   background: var(--floating-hover-background, var(--floating-fill, var(--background)));
   border-color: var(--floating-hover-border, var(--floating-stroke, var(--contrast-border)));

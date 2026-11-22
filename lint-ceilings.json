@@ -261,7 +261,7 @@
     "apps/web/src/components/chat/MarkdownDetails.tsx": 2,
     "apps/web/src/components/chat/MarkdownExternalLink.tsx": 1,
     "apps/web/src/components/chat/McpAppFrame.tsx": 4,
-    "apps/web/src/components/chat/MessagesTimeline.tsx": 4,
+    "apps/web/src/components/chat/MessagesTimeline.tsx": 2,
     "apps/web/src/components/chat/ModelPickerContent.tsx": 2,
     "apps/web/src/components/chat/ProviderInstanceIcon.tsx": 4,
     "apps/web/src/components/chat/ProviderModelPicker.tsx": 1,
