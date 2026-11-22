@@ -5268,6 +5268,122 @@ describe("AcpAdapterV2", () => {
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
+  it.effect(
+    "deduplicates unchanged config_option_update catalogs and re-advertises on changed choices or new sessions",
+    () =>
+      Effect.gen(function* () {
+        const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const selfInvocation = yield* resolveSelfInvocation();
+        const mockAgentPath = yield* bundledMockAgentPath;
+        type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let sessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
+        let activeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
+        const publications: Array<{ readonly includeCatalog: boolean | undefined }> = [];
+        const instanceId = ProviderInstanceId.make("acp-test-catalog-dedupe");
+        const makeModelSelect = (
+          currentValue: string,
+          choices: ReadonlyArray<{ readonly value: string; readonly name: string }>,
+        ): ReadonlyArray<EffectAcpSchema.SessionConfigOption> => [
+          {
+            id: "model",
+            name: "Model",
+            category: "model",
+            type: "select",
+            currentValue,
+            options: [...choices],
+          },
+        ];
+        const initialChoices = [
+          { value: "default", name: "Default" },
+          { value: "composer-2", name: "Composer 2" },
+        ] as const;
+        const adapter = yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: {
+            driver: ACP_TEST_DRIVER,
+            capabilities: AcpProviderCapabilitiesV2,
+            onSessionConfigurationUpdate: (
+              _configOptions,
+              _modeState,
+              _modelState,
+              updateOptions,
+            ) =>
+              Effect.sync(() => {
+                publications.push({ includeCatalog: updateOptions?.includeCatalog });
+              }),
+            makeRuntime: makeMockRuntime({
+              childProcessSpawner,
+              mockAgentPath,
+              wrapRuntime: (runtime) => ({
+                ...runtime,
+                getConfigOptions:
+                  activeConfigOptions === undefined
+                    ? runtime.getConfigOptions
+                    : Effect.sync(() => activeConfigOptions!),
+                handleSessionUpdate: (next) =>
+                  Effect.sync(() => {
+                    sessionUpdate = next;
+                  }).pipe(Effect.andThen(runtime.handleSessionUpdate(next))),
+              }),
+            }),
+          },
+          selfInvocation,
+        });
+        const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        });
+        const open = (suffix: string) =>
+          adapter.openSession({
+            threadId: ThreadId.make(`thread-acp-catalog-dedupe-${suffix}`),
+            providerSessionId: ProviderSessionId.make(`provider-session-acp-dedupe-${suffix}`),
+            modelSelection: { instanceId, model: "default" },
+            runtimePolicy,
+          });
+
+        activeConfigOptions = makeModelSelect("default", initialChoices);
+        yield* open("first");
+        assert.deepEqual(
+          publications.map((entry) => entry.includeCatalog),
+          [true],
+          "initial session setup publishes its catalog",
+        );
+
+        // config_option_update with unchanged model choices sets includeCatalog: false.
+        activeConfigOptions = makeModelSelect("composer-2", initialChoices);
+        yield* sessionUpdate!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate: "config_option_update", configOptions: [] },
+        });
+        assert.deepEqual(
+          publications.map((entry) => entry.includeCatalog),
+          [true, false],
+        );
+
+        // config_option_update with changed model choices sets includeCatalog: true.
+        activeConfigOptions = makeModelSelect("composer-2", [
+          ...initialChoices,
+          { value: "composer-3", name: "Composer 3" },
+        ]);
+        yield* sessionUpdate!({
+          sessionId: "mock-session-1",
+          update: { sessionUpdate: "config_option_update", configOptions: [] },
+        });
+        assert.deepEqual(
+          publications.map((entry) => entry.includeCatalog),
+          [true, false, true],
+        );
+
+        // Opening a new session resets the deduplication key even when choices match.
+        yield* open("second");
+        assert.deepEqual(
+          publications.map((entry) => entry.includeCatalog),
+          [true, false, true, true],
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
   // Adoption either reaches the adapter after openSession configured the
   // provisional setup, or before it, so openSession configures the adopted one.
   it.live.each([false, true])(

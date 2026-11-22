@@ -1,9 +1,10 @@
 import type { ProviderOptionChoice, ProviderOptionDescriptor } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
-import type { AcpSessionModeState } from "./runtimeModel.ts";
+import { findModelConfigOption, type AcpSessionModeState } from "./runtimeModel.ts";
 
 export const ACP_SESSION_MODE_OPTION_ID = "_t3/session-mode";
+export const ACP_MAX_CATALOG_MODELS = 256;
 
 /** Encodes a valid empty ACP choice as a non-empty T3 ID; map back before applying. */
 export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
@@ -11,6 +12,8 @@ export const ACP_EMPTY_OPTION_VALUE = "_t3/empty";
 const MAX_OPTION_DESCRIPTORS = 16;
 const MAX_OPTION_CHOICES = 64;
 const MAX_TEXT_LENGTH = 256;
+const MAX_MODEL_ID_LENGTH = 128;
+const MAX_MODEL_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
 
 const boundedText = (value: string | null | undefined, maximumLength: number): string =>
@@ -31,6 +34,65 @@ export function flattenSelectChoices(
   options: EffectAcpSchema.SessionConfigSelectOptions,
 ): ReadonlyArray<EffectAcpSchema.SessionConfigSelectOption> {
   return options.flatMap((candidate) => ("value" in candidate ? [candidate] : candidate.options));
+}
+
+/**
+ * Stable key for the effective model catalog advertised by a session, mirroring
+ * normalization's 256-model cap and overflow-selected retention while ignoring
+ * ordinary selection changes within the retained catalog.
+ */
+export function acpSessionCatalogKey(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  modelState: EffectAcpSchema.SessionModelState | null | undefined,
+): string {
+  const modelOption = findModelConfigOption(configOptions);
+  const kind = modelOption?.type === "select" ? "select" : "models";
+  const selectedId =
+    modelOption?.type === "select"
+      ? boundedOpaqueValue(modelOption.currentValue, MAX_MODEL_ID_LENGTH)
+      : modelState?.currentModelId === undefined
+        ? undefined
+        : boundedOpaqueValue(modelState.currentModelId, MAX_MODEL_ID_LENGTH);
+  const candidates: ReadonlyArray<readonly [string, string, string | null]> =
+    modelOption?.type === "select"
+      ? flattenSelectChoices(modelOption.options).map((choice) => [
+          choice.value,
+          choice.name,
+          choice.description ?? null,
+        ])
+      : (modelState?.availableModels ?? []).map((model) => [
+          model.modelId,
+          model.name,
+          model.description ?? null,
+        ]);
+  const normalizeEntry = (
+    id: string,
+    candidate: readonly [string, string, string | null],
+  ): readonly [string, string, string | null] => [
+    id,
+    boundedText(candidate[1], MAX_MODEL_NAME_LENGTH) || id,
+    candidate[2] === null ? null : boundedText(candidate[2], MAX_DESCRIPTION_LENGTH) || null,
+  ];
+  const seen = new Set<string>();
+  const retained: Array<readonly [string, string, string | null]> = [];
+  for (const candidate of candidates) {
+    if (retained.length === ACP_MAX_CATALOG_MODELS) break;
+    const id = boundedOpaqueValue(candidate[0], MAX_MODEL_ID_LENGTH);
+    if (id === undefined || seen.has(id)) continue;
+    seen.add(id);
+    retained.push(normalizeEntry(id, candidate));
+  }
+  if (
+    selectedId !== undefined &&
+    retained.length === ACP_MAX_CATALOG_MODELS &&
+    !seen.has(selectedId)
+  ) {
+    const selected = candidates.find((candidate) => candidate[0] === selectedId);
+    if (selected !== undefined) {
+      retained[ACP_MAX_CATALOG_MODELS - 1] = normalizeEntry(selectedId, selected);
+    }
+  }
+  return JSON.stringify([kind, retained]);
 }
 
 function selectChoices(

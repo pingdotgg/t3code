@@ -8,6 +8,7 @@ import * as Deferred from "effect/Deferred";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -35,7 +36,7 @@ export interface AcpRegistryLiveConfigurationSnapshot {
   readonly clearedThroughRevision: number;
 }
 
-const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
+export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
   configuration: Option.none(),
   revision: 0,
   catalogRevision: 0,
@@ -85,7 +86,13 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly clearLiveConfigurationIfRevision: (
       instanceId: ProviderInstanceId,
       revision: number,
-      options?: { readonly catalogRevision?: number },
+      options?: {
+        readonly catalogRevision?: number;
+        readonly clearOptions?: boolean;
+        readonly retainPreProbeConfiguration?: (
+          configuration: AcpRegistryLiveConfiguration,
+        ) => Option.Option<AcpRegistryLiveConfiguration>;
+      },
     ) => Effect.Effect<boolean>;
     readonly publishLiveConfiguration: (
       instanceId: ProviderInstanceId,
@@ -258,39 +265,47 @@ const make = Effect.gen(function* () {
       function* (instanceId, revision, options) {
         return yield* Ref.modify(liveConfigurations, (state) => {
           const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
-          if (Option.isSome(current.configuration) && current.revision !== revision) {
-            // If only an options-only live update arrived after revision, keep those newer
-            // options while advancing clearedThroughRevision so the probe catalog can commit.
-            if (
-              options?.catalogRevision !== undefined &&
-              current.catalogRevision === options.catalogRevision &&
-              current.configuration.value.models.length === 0
-            ) {
-              const nextCleared = Math.max(current.clearedThroughRevision, revision);
-              if (nextCleared === current.clearedThroughRevision) {
-                return [true, state] as const;
-              }
-              const next = new Map(state);
-              next.set(instanceId, {
-                ...current,
-                clearedThroughRevision: nextCleared,
-              });
-              return [true, next] as const;
+          const catalogScoped = options?.catalogRevision !== undefined;
+          if (catalogScoped) {
+            if (current.catalogRevision !== options.catalogRevision) {
+              return [false, state] as const;
             }
+          } else if (Option.isSome(current.configuration) && current.revision !== revision) {
             return [false, state] as const;
           }
-          const nextCleared = Math.max(current.clearedThroughRevision, revision);
+          const clearAll = !catalogScoped || options.clearOptions === true;
+          const nextCleared = clearAll
+            ? Math.max(current.clearedThroughRevision, current.revision, revision)
+            : Math.max(current.clearedThroughRevision, revision);
+          const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> = clearAll
+            ? Option.none()
+            : Option.flatMap(current.configuration, (configuration) => {
+                const withoutCatalog: AcpRegistryLiveConfiguration = {
+                  ...configuration,
+                  models: [],
+                  modelsFromModelSelect: false,
+                };
+                if (current.revision > revision) {
+                  // Preserve options-only updates that landed while the probe ran.
+                  return Option.some(withoutCatalog);
+                }
+                if (options.retainPreProbeConfiguration !== undefined) {
+                  return options.retainPreProbeConfiguration(withoutCatalog);
+                }
+                return withoutCatalog.configOptions.length > 0
+                  ? Option.some(withoutCatalog)
+                  : Option.none();
+              });
           if (
-            Option.isNone(current.configuration) &&
+            Equal.equals(current.configuration, nextConfiguration) &&
             nextCleared === current.clearedThroughRevision
           ) {
             return [true, state] as const;
           }
           const next = new Map(state);
           next.set(instanceId, {
-            configuration: Option.none(),
-            revision: Math.max(current.revision, revision),
-            catalogRevision: Math.max(current.catalogRevision, options?.catalogRevision ?? 0),
+            ...current,
+            configuration: nextConfiguration,
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -303,11 +318,25 @@ const make = Effect.gen(function* () {
       Ref.modify(liveConfigurations, (state) => {
         const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
         const revision = current.revision + 1;
-        const catalogRevision =
-          configuration.models.length > 0 ? current.catalogRevision + 1 : current.catalogRevision;
+        const hasCatalog = configuration.models.length > 0;
+        const catalogRevision = hasCatalog ? current.catalogRevision + 1 : current.catalogRevision;
+        // Keep any unsuperseded session catalog in coordinator state across options-only
+        // updates so readiness checks before acceptedCatalog settles do not regress to default.
+        const storedConfiguration: AcpRegistryLiveConfiguration =
+          !hasCatalog &&
+          Option.isSome(current.configuration) &&
+          current.configuration.value.models.length > 0
+            ? {
+                ...configuration,
+                models: current.configuration.value.models,
+                ...(current.configuration.value.modelsFromModelSelect === undefined
+                  ? {}
+                  : { modelsFromModelSelect: current.configuration.value.modelsFromModelSelect }),
+              }
+            : configuration;
         const next = new Map(state);
         next.set(instanceId, {
-          configuration: Option.some(configuration),
+          configuration: Option.some(storedConfiguration),
           revision,
           catalogRevision,
           clearedThroughRevision: current.clearedThroughRevision,

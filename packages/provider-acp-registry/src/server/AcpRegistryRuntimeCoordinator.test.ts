@@ -316,19 +316,40 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         yield* coordinator.publishLiveConfiguration(otherInstanceId, configFor("kimi-v1"));
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual(afterClear);
 
-        // Options-only updates advance revision without advancing catalogRevision, so a
-        // catalog-scoped clear still succeeds while preserving the newer options-only entry.
+        // Options-only updates preserve any unsuperseded catalog in stored state while keeping
+        // catalogRevision unchanged, and a catalog-scoped clear strips only the catalog while
+        // preserving the newer options descriptor.
+        const effortOption = {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue: "low",
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        };
         yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v3"));
         const catalogSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        yield* coordinator.publishLiveConfiguration(instanceId, {
+        const optionsOnlyConfig = {
           models: [],
           currentModelId: "model-v3",
-          configOptions: [],
+          configOptions: [effortOption],
+          modelOptionIds: ["effort"],
           modelsFromModelSelect: false,
-        });
+        };
+        yield* coordinator.publishLiveConfiguration(instanceId, optionsOnlyConfig);
         const optionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(optionsSnap.revision).toBe(catalogSnap.revision + 1);
         expect(optionsSnap.catalogRevision).toBe(catalogSnap.catalogRevision);
+        expect(optionsSnap.configuration).toEqual(
+          Option.some({
+            ...optionsOnlyConfig,
+            models: configFor("model-v3").models,
+            modelsFromModelSelect: true,
+          }),
+        );
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, catalogSnap.revision, {
             catalogRevision: catalogSnap.catalogRevision,
@@ -336,8 +357,49 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         const afterOptionsPreserved =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(Option.isSome(afterOptionsPreserved.configuration)).toBe(true);
-        expect(afterOptionsPreserved.clearedThroughRevision).toBe(catalogSnap.revision);
+        expect(afterOptionsPreserved).toEqual({
+          ...optionsSnap,
+          configuration: Option.some(optionsOnlyConfig),
+          clearedThroughRevision: catalogSnap.revision,
+        });
+
+        // A catalog-scoped clear with clearOptions: true wipes both catalog and options
+        // (used by authoritative unauthenticated probes) and advances clearedThroughRevision.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, catalogSnap.revision, {
+            catalogRevision: catalogSnap.catalogRevision,
+            clearOptions: true,
+          }),
+        ).toBe(true);
+        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
+          ...optionsSnap,
+          configuration: Option.none(),
+          clearedThroughRevision: optionsSnap.revision,
+        });
+
+        // A catalog-scoped clear at the exact catalog revision strips models while keeping options.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          ...configFor("model-v4"),
+          configOptions: [effortOption],
+          modelOptionIds: ["effort"],
+        });
+        const v4Snap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, v4Snap.revision, {
+            catalogRevision: v4Snap.catalogRevision,
+          }),
+        ).toBe(true);
+        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
+          ...v4Snap,
+          configuration: Option.some({
+            models: [],
+            currentModelId: "model-v4",
+            configOptions: [effortOption],
+            modelOptionIds: ["effort"],
+            modelsFromModelSelect: false,
+          }),
+          clearedThroughRevision: v4Snap.revision,
+        });
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

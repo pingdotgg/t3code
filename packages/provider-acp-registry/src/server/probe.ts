@@ -34,6 +34,7 @@ import {
   parseSessionModeState,
 } from "@t3tools/provider-acp/server/runtimeModel";
 import {
+  ACP_MAX_CATALOG_MODELS,
   acpProviderOptionDescriptors,
   flattenSelectChoices,
   isAcpThoughtLevelOption,
@@ -42,7 +43,7 @@ import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
-const MAX_MODELS = 256;
+const MAX_MODELS = ACP_MAX_CATALOG_MODELS;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
@@ -213,6 +214,8 @@ export interface AcpRegistryLiveConfiguration {
   // A single model from an explicit select is the agent's deliberate catalog
   // (e.g. an entitlement change), not a cold-start placeholder.
   readonly modelsFromModelSelect?: boolean;
+  // Carries explicit supportsReasoningEffort: false metadata on options-only updates.
+  readonly reasoningDisabledModelIds?: ReadonlyArray<string>;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -251,22 +254,32 @@ export function normalizeAcpRegistryLiveConfiguration(
     );
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
   });
-  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState });
+  const currentModel =
+    boundedCurrentModelId === null
+      ? undefined
+      : advertisedModels.find((model) => model.id === boundedCurrentModelId);
+  const stripCurrentReasoning = !includeCatalog && currentModel?.reasoningEffort === null;
+  const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
+    (descriptor) =>
+      !stripCurrentReasoning || descriptor.type !== "select" || descriptor.role !== "reasoning",
+  );
   const modelOptionIds = new Set(
     configOptions
       .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
   );
+  const reasoningDisabledModelIds = !includeCatalog
+    ? advertisedModels.filter((model) => model.reasoningEffort === null).map((model) => model.id)
+    : [];
   return {
     models: includeCatalog ? advertisedModels : [],
-    currentModelId: advertisedModels.some((model) => model.id === boundedCurrentModelId)
-      ? boundedCurrentModelId
-      : null,
+    currentModelId: currentModel === undefined ? null : currentModel.id,
     configOptions: descriptors,
     modelOptionIds: descriptors
       .filter((descriptor) => modelOptionIds.has(descriptor.id))
       .map((descriptor) => descriptor.id),
     modelsFromModelSelect: includeCatalog && modelOption !== undefined,
+    ...(reasoningDisabledModelIds.length > 0 ? { reasoningDisabledModelIds } : {}),
   };
 }
 

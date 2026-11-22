@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { ACP_SESSION_MODE_OPTION_ID, acpProviderOptionDescriptors } from "./sessionConfig.ts";
+import {
+  ACP_MAX_CATALOG_MODELS,
+  ACP_SESSION_MODE_OPTION_ID,
+  acpProviderOptionDescriptors,
+  acpSessionCatalogKey,
+} from "./sessionConfig.ts";
 
 describe("acpProviderOptionDescriptors", () => {
   it("maps non-model select options and excludes model and collaboration categories", () => {
@@ -207,5 +212,59 @@ describe("acpProviderOptionDescriptors", () => {
       currentValue: exactValue,
       options: [{ id: exactValue, label: "Exact" }],
     });
+  });
+});
+
+describe("acpSessionCatalogKey", () => {
+  it("ignores selection changes within the retained catalog but changes on labels or overflow selection", () => {
+    const modelSelect = (
+      currentValue: string,
+      options: ReadonlyArray<{ value: string; name: string; description?: string }>,
+    ) => [
+      {
+        id: "model",
+        name: "Model",
+        category: "model" as const,
+        type: "select" as const,
+        currentValue,
+        options: [...options],
+      },
+    ];
+    const baseOptions = Array.from({ length: ACP_MAX_CATALOG_MODELS + 1 }, (_, index) => ({
+      value: `m${index}`,
+      name: `Model ${index}`,
+    }));
+
+    const selectedM0 = acpSessionCatalogKey(modelSelect("m0", baseOptions), undefined);
+    const selectedM1 = acpSessionCatalogKey(modelSelect("m1", baseOptions), undefined);
+    expect(selectedM1).toBe(selectedM0);
+
+    // Selecting a model beyond the 256-model cap changes the retained catalog entry.
+    const selectedOverflow = acpSessionCatalogKey(
+      modelSelect(`m${ACP_MAX_CATALOG_MODELS}`, baseOptions),
+      undefined,
+    );
+    expect(selectedOverflow).not.toBe(selectedM0);
+
+    // Display-name or description updates within the retained catalog change the key too.
+    const renamed = acpSessionCatalogKey(
+      modelSelect("m0", [{ value: "m0", name: "Model 0 Renamed" }, ...baseOptions.slice(1)]),
+      undefined,
+    );
+    expect(renamed).not.toBe(selectedM0);
+
+    // Model-state catalogs follow the same cap and overflow-selection rule.
+    const availableModels = baseOptions.map((option) => ({
+      modelId: option.value,
+      name: option.name,
+    }));
+    const stateM0 = acpSessionCatalogKey([], { currentModelId: "m0", availableModels });
+    const stateM1 = acpSessionCatalogKey([], { currentModelId: "m1", availableModels });
+    const stateOverflow = acpSessionCatalogKey([], {
+      currentModelId: `m${ACP_MAX_CATALOG_MODELS}`,
+      availableModels,
+    });
+    expect(stateM1).toBe(stateM0);
+    expect(stateOverflow).not.toBe(stateM0);
   });
 });
