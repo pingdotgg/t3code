@@ -943,7 +943,7 @@ pub mod testing {
             "sessions": {
                 "supportsMultipleProviderThreadsPerSession": false,
                 "supportsModelSwitchInSession": true,
-                "supportsProviderSwitchingViaHandoff": false,
+                "supportsProviderSwitchingViaHandoff": true,
                 "supportsRuntimeModeSwitchInSession": false,
                 "pendingRequestsSurviveRestart": false,
             },
@@ -1009,11 +1009,11 @@ pub mod testing {
             "context": {
                 "acceptsSystemContext": false,
                 "acceptsDeveloperContext": false,
-                "acceptsSyntheticUserContext": false,
+                "acceptsSyntheticUserContext": true,
                 "canGenerateSummaries": false,
-                "canConsumeHandoffSummaries": false,
-                "supportsDeltaHandoff": false,
-                "supportsFullThreadHandoff": false,
+                "canConsumeHandoffSummaries": true,
+                "supportsDeltaHandoff": true,
+                "supportsFullThreadHandoff": true,
                 "maxRecommendedHandoffChars": null,
             },
             "checkpointing": {

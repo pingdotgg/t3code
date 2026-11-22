@@ -39,6 +39,50 @@ because a silent dead socket would otherwise hold its session forever. Proof: se
 `a_suspended_client_stays_connected` (failed with 1001 before), `disconnect_stops_every_stream`,
 `a_dead_peer_is_cleaned_up_on_a_failed_write`, `accepted_sockets_get_keepalive`.
 
+## Provider switch handoff (2026-11-22)
+
+A thread can move between Claude, Codex, Grok and Antigravity mid-thread, and the new provider
+gets the conversation. Before, every provider said
+`supportsProviderSwitchingViaHandoff: false`, so clients locked the model picker to the
+thread's provider, and a switch made another way started the new provider with no history.
+
+- **What runs** (`conn-engine/src/provider_handoff.rs`, T3's `dispatchMessage` and
+  `startNextQueuedRun`). A run on another instance than the conversation's gets a consumed
+  `provider_handoff` transfer, a context handoff (`handoff::prepare_provider_handoff`, T3's
+  `prepareProviderHandoff`), `contextHandoffId` and a "Provider handoff" item. The first run on
+  a provider with no native thread of this conversation gets the whole history
+  (`full_thread_summary`); a return to a provider gets what happened since its thread last took
+  part (`delta_since_target_last_seen`). The turn start delivers it as merge-back does:
+  injected into Codex's thread, inline for Claude, Grok and Antigravity.
+- **Capabilities.** Claude, Codex, Grok and Antigravity now say
+  `supportsProviderSwitchingViaHandoff: true` (T3 says `true` for all four) and
+  `acceptsSyntheticUserContext`, `canConsumeHandoffSummaries`, `supportsDeltaHandoff`,
+  `supportsFullThreadHandoff: true`, which the switch checks (`ensureContextHandoff`). They
+  still say `false` for `acceptsSystemContext`, `acceptsDeveloperContext` and
+  `canGenerateSummaries`, where T3 says `true` for Claude and Codex (and for summaries, ACP):
+  nothing in T3 or here reads them, and this server does not serve them.
+- **Fix found on the way:** when a delivery's coverage is too long, the condensed text names
+  the provider thread's app thread for `conn_thread_read`, as T3 does; it named the first
+  handoff's thread.
+- **Proof:** `cargo test -p conn-engine`: `a_provider_switch_hands_the_history_to_the_new_provider`
+  (Claude to Codex in full and injected, back to Claude as a delta inline),
+  `a_queued_run_on_another_provider_carries_the_history`,
+  `a_switch_to_a_provider_without_handoff_is_refused`; the first two fail on the commit before.
+  `gen-handoff-cases.mjs`: 90 cases (was 81), with T3's own `prepareProviderHandoff` for both
+  strategies, run statuses, a source thread and no transfer, and four deliveries of provider
+  handoffs. `client-check`: a switch through the client's reducers, with the client's own
+  `threadSupportsProviderHandoff` true on the live session (the picker opens).
+- **Not proven:** T3's `ProviderSwitch.integration.test.ts` runs on T3's in-process harness
+  (its own adapters and event sink), so it does not run on this engine; the switch rules here
+  come from reading `Orchestrator.ts`. No live provider was switched.
+- **Not built** (T3 has them): the v1-import recovery handoff (`prepareLegacyImport`) for an
+  imported thread with no completed run; the turn start's resume-fallback and missed-run retry
+  handoffs; a provider change steered into a running turn (T3 restarts the turn with a
+  handoff; here the steer stays on the running provider); resume across instances that share
+  native history (here every instance change hands off); the capability check for a queued
+  run (all four providers pass it); the provider thread's `handoffIds`. The budget still
+  knows no model window and no native estimate (as for merge-back).
+
 ## Unserved methods: triage (2026-11-21)
 
 Of 251 contract methods, 198 were served and 21 are skipped by decision (FORK.md, "Not
@@ -276,8 +320,7 @@ back" work. Before, the engine refused it ("Conn Server cannot merge a fork back
   first run, or after a provider switch) names a provisional one until delivery.
 - **Known differences:** the budget does not estimate native context without provider usage
   (T3 counts the delivered history) and knows no model window; `/goal` is matched by its
-  prefix, not T3's parser; the provider capabilities still say
-  `canConsumeHandoffSummaries: false` (nothing reads them here); a fork's first user message
+  prefix, not T3's parser; a fork's first user message
   has no `providerThreadId`, so its history line says `provider-thread=none`.
 
 ## `pull_request_create` (2026-11-20)

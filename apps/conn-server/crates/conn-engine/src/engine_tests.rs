@@ -3525,6 +3525,201 @@ async fn a_dispatch_on_another_instance_runs_on_that_provider() {
     assert_eq!(count(&codex.closed), 1);
 }
 
+/// Claude, and Codex that takes injected history (`thread/inject_items`), as a server with both.
+fn open_two_injecting(db: &TempDb) -> (SqliteEngine, Arc<FakeProvider>, Arc<FakeProvider>) {
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex").with_history_injection());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude.clone(), codex.clone()];
+    (SqliteEngine::open(config).unwrap(), claude, codex)
+}
+
+fn handoff_of<'a>(p: &'a Value, run: &str) -> &'a Value {
+    p["contextHandoffs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|h| h["targetRunId"] == run)
+        .unwrap_or_else(|| panic!("no handoff for {run}: {p}"))
+}
+
+/// A provider switch carries the conversation to the new provider, as T3's `dispatchMessage`
+/// does: the first run on Codex gets Claude's history in full (`full_thread_summary`),
+/// injected into its native thread; back on Claude, the run gets what happened since Claude's
+/// thread last took part (`delta_since_target_last_seen`), inline ahead of the user's text.
+#[tokio::test(flavor = "current_thread")]
+async fn a_provider_switch_hands_the_history_to_the_new_provider() {
+    let db = TempDb::new("switch-handoff");
+    let (engine, claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "remember the marker blue-17")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+
+    dispatch(&engine, model_selection_set("c3", "codex")).await;
+    dispatch(&engine, message("t1", "c4", "what is the marker?")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    let handoff = handoff_of(&p, "run:t1:2");
+    assert_eq!(handoff["strategy"], "full_thread_summary");
+    assert_eq!(handoff["coveredRunOrdinals"], json!({"from": 1, "to": 1}));
+    assert_eq!(
+        handoff["fromProviderThreadIds"],
+        json!(["provider-thread:t1"])
+    );
+    assert_eq!(handoff["toProviderThreadId"], "provider-thread:codex:t1");
+    assert_eq!(handoff["delivery"]["status"], "injected");
+    assert_eq!(p["runs"][1]["contextHandoffId"], handoff["id"]);
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["type"] == "provider_handoff")
+        .unwrap();
+    assert_eq!(transfer["status"], "consumed");
+    assert_eq!(transfer["sourceProviderInstanceId"], "claudeAgent");
+    assert_eq!(transfer["targetProviderInstanceId"], "codex");
+    assert_eq!(transfer["basePoint"], Value::Null);
+    assert_eq!(
+        transfer["resolution"],
+        json!({"strategy": "portable_context", "contextHandoffId": handoff["id"]})
+    );
+    let item = p["turnItems"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["type"] == "handoff")
+        .unwrap();
+    assert_eq!(item["title"], "Provider handoff");
+    assert_eq!(item["fromProviderInstanceIds"], json!(["claudeAgent"]));
+    assert_eq!(item["toProviderInstanceId"], "codex");
+    // Codex took the history natively; its prompt is the user's text alone.
+    let injected = crate::lock(&codex.injected).clone();
+    assert_eq!(injected.len(), 1);
+    let history = injected[0].1.to_string();
+    assert!(history.contains("remember the marker blue-17"), "{history}");
+    assert!(
+        history.contains("echo: remember the marker blue-17"),
+        "{history}"
+    );
+    assert_eq!(*crate::lock(&codex.prompts), ["what is the marker?"]);
+
+    // Back on Claude: its own thread resumes and gets only the Codex run.
+    dispatch(&engine, model_selection_set("c5", "claudeAgent")).await;
+    dispatch(&engine, message("t1", "c6", "and now?")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(p["runs"][2]["status"], "completed");
+    assert_eq!(p["runs"][2]["providerThreadId"], "provider-thread:t1");
+    let handoff = handoff_of(&p, "run:t1:3");
+    assert_eq!(handoff["strategy"], "delta_since_target_last_seen");
+    assert_eq!(handoff["coveredRunOrdinals"], json!({"from": 2, "to": 2}));
+    assert_eq!(handoff["delivery"]["status"], "inline");
+    let prompts = crate::lock(&claude.prompts).clone();
+    assert_eq!(prompts.len(), 2);
+    let prompt = &prompts[1];
+    assert!(prompt.contains("what is the marker?"), "{prompt}");
+    assert!(
+        !prompt.contains("blue-17"),
+        "Claude's thread holds run 1 already: {prompt}"
+    );
+    assert!(prompt.ends_with("\n\nUser message:\nand now?"), "{prompt}");
+    let transfer = p["contextTransfers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["type"] == "provider_handoff")
+        .next_back()
+        .unwrap();
+    assert_eq!(transfer["basePoint"]["runId"], "run:t1:1");
+    assert_eq!(transfer["resolution"]["strategy"], "delta_context");
+
+    // A run on the same provider carries nothing.
+    dispatch(&engine, message("t1", "c7", "plain")).await;
+    let p = run_to_end(&engine, "t1", "run:t1:4").await;
+    assert_eq!(p["runs"][3]["contextHandoffId"], Value::Null);
+    assert_eq!(crate::lock(&claude.prompts).last().unwrap(), "plain");
+}
+
+/// A switch to a provider that cannot take the history is refused with T3's text
+/// (`ensureContextHandoff`), and the thread keeps no run of it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_switch_to_a_provider_without_handoff_is_refused() {
+    let db = TempDb::new("switch-unsupported");
+    let claude = Arc::new(FakeProvider::new("claudeAgent"));
+    let codex = Arc::new(FakeProvider::new("codex").without_context_handoff());
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![claude, codex];
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    dispatch(&engine, message("t1", "c2", "hi")).await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    dispatch(&engine, model_selection_set("c3", "codex")).await;
+    let refused = engine
+        .dispatch(from_json(message("t1", "c4", "hi")).unwrap())
+        .await;
+    assert!(
+        matches!(&refused, Err(EngineError::Rejected(e)) if to_json(e).to_string().contains(
+            "codex cannot satisfy context_handoff for command c4: providerInstanceId cannot consume handoff summaries"
+        )),
+        "{refused:?}"
+    );
+    assert_eq!(
+        projection(&engine, "t1").await["runs"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+/// A queued run on another instance switches when it starts (`startNextQueuedRun`): the
+/// stopped run before it reached Claude, so Codex gets it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_run_on_another_provider_carries_the_history() {
+    let db = TempDb::new("switch-queued");
+    let (engine, _claude, codex) = open_two_injecting(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut queued = message("t1", "c3", "on codex");
+    queued["modelSelection"] = json!({"instanceId": "codex", "model": "gpt"});
+    queued["dispatchMode"] = json!({"type": "queue_after_active"});
+    dispatch(&engine, queued).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    run_to_end(&engine, "t1", "run:t1:1").await;
+    // Stop holds the queue; the user starts the queued run.
+    dispatch(
+        &engine,
+        json!({"type": "queued-run.start", "commandId": "c5", "threadId": "t1", "runId": "run:t1:2"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:2").await;
+    assert_eq!(p["runs"][1]["status"], "completed");
+    let handoff = handoff_of(&p, "run:t1:2");
+    assert_eq!(handoff["strategy"], "full_thread_summary");
+    assert_eq!(handoff["delivery"]["status"], "injected");
+    assert_eq!(p["runs"][1]["contextHandoffId"], handoff["id"]);
+    let history = crate::lock(&codex.injected)[0].1.to_string();
+    assert!(history.contains("run-status=interrupted"), "{history}");
+    assert_eq!(*crate::lock(&codex.prompts), ["on codex"]);
+}
+
 /// An instance the server does not have fails the run; it never goes to another provider.
 #[tokio::test(flavor = "current_thread")]
 async fn an_unknown_instance_fails_the_run_even_with_one_provider() {

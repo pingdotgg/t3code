@@ -1107,9 +1107,15 @@ impl Inner {
             None,
         );
         let injects = live.session.injects_history();
-        let plan =
-            crate::handoff::plan_delivery(&ready, native.as_deref(), budget, &delivered, injects)
-                .map_err(|e| StartError::Failed(e.message().to_owned()))?;
+        let plan = crate::handoff::plan_delivery(
+            &ready,
+            native.as_deref(),
+            provider_thread_json["appThreadId"].as_str(),
+            budget,
+            &delivered,
+            injects,
+        )
+        .map_err(|e| StartError::Failed(e.message().to_owned()))?;
         let Some(plan) = plan else {
             return Ok(None);
         };

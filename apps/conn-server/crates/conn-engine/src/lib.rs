@@ -50,6 +50,7 @@ mod html_cleanup;
 mod link_requests;
 mod output;
 mod projects;
+mod provider_handoff;
 mod pull_requests;
 mod push;
 mod reads;
