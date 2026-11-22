@@ -11,6 +11,7 @@ import {
   PI_T3_ADMIT_COMMAND,
   PI_T3_MCP_EXTENSION_SOURCE,
   PI_T3_SERVICE_TIER_COMMAND,
+  T3_PI_RESUMED_STARTUP_ENV,
 } from "./mcpExtensionSource.ts";
 import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
@@ -145,6 +146,15 @@ describe("Pi resume admission", () => {
     await admit("");
     assert.isTrue(await settled(held));
     assert.isTrue(await settled(gate({})));
+  });
+
+  it("holds startup runs when T3 spawned Pi on an existing session", async () => {
+    const { sessionStart, gate, admit } = await loadGate({ [T3_PI_RESUMED_STARTUP_ENV]: "1" });
+    await sessionStart({ type: "session_start", reason: "startup" });
+    const held = gate({});
+    assert.isFalse(await settled(held));
+    await admit("");
+    assert.isTrue(await settled(held));
   });
 });
 

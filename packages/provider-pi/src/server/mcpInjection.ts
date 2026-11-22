@@ -8,6 +8,7 @@ import {
   PI_T3_MCP_EXTENSION_SOURCE,
   T3_MCP_BEARER_ENV,
   T3_MCP_URL_ENV,
+  T3_PI_RESUMED_STARTUP_ENV,
   T3_PI_RUNTIME_MODE_ENV,
   T3_PI_MCP_EXTENSION_PATH_ENV,
 } from "./mcpExtensionSource.ts";
@@ -297,6 +298,7 @@ export function buildPiRpcLaunch(input: {
   delete environment[T3_MCP_URL_ENV];
   delete environment[T3_MCP_BEARER_ENV];
   delete environment[T3_PI_MCP_EXTENSION_PATH_ENV];
+  delete environment[T3_PI_RESUMED_STARTUP_ENV];
 
   return {
     args,
@@ -304,6 +306,9 @@ export function buildPiRpcLaunch(input: {
       ...environment,
       ...(hasT3Extension && input.extensionPath !== undefined
         ? { [T3_PI_MCP_EXTENSION_PATH_ENV]: input.extensionPath }
+        : {}),
+      ...(hasT3Extension && input.sessionPath !== undefined && input.ephemeral !== true
+        ? { [T3_PI_RESUMED_STARTUP_ENV]: "1" }
         : {}),
       ...(hasT3Extension && input.runtimeMode !== undefined
         ? {

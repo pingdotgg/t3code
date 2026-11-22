@@ -2336,6 +2336,8 @@ describe("PiAdapterV2", () => {
         assert.equal(providerThread.id, persisted.id);
         assert.isFalse(fake.allRequests().some((request) => request.type === "switch_session"));
         yield* startTurn(runtime, providerThread, "anthropic/claude-sonnet");
+        // Startup hooks of a session resumed at spawn are held until an owned turn admits them.
+        assert.equal((yield* fake.takeRequest("prompt"))["message"], `/${PI_T3_ADMIT_COMMAND}`);
         assert.equal((yield* fake.takeRequest("prompt"))["message"], "Hello pi");
         yield* fake.emit({ type: "agent_start" });
         yield* fake.emit({ type: "agent_settled" });

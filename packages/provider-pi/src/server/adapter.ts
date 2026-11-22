@@ -659,7 +659,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let runtimeRetired = false;
       let pendingWake: PiWake | null = null;
       // T3's extension holds runs a resumed session's hooks start until an owned turn admits them.
-      let resumeAdmissionPending = false;
+      let resumeAdmissionPending = initialSessionPath !== undefined;
       let lifecycleFailure: PiRpcError | PiRpcTimeoutError | null = null;
       let extensionStatusReset: {
         previous: NonNullable<OrchestrationV2ProviderSession["extensionStatuses"]>;
