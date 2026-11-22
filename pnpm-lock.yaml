@@ -176,6 +176,9 @@ catalogs:
     '@alchemy.run/planetscale':
       specifier: 2.0.0-beta.85
       version: 2.0.0-beta.85
+    '@alchemy.run/sql':
+      specifier: 2.0.0-beta.85
+      version: 2.0.0-beta.85
     '@alchemy.run/test':
       specifier: 2.0.0-beta.85
       version: 2.0.0-beta.85
@@ -1392,6 +1395,9 @@ importers:
         specifier: 'catalog:'
         version: 2.0.0-beta.85(eb667a4b2658382830b9c27fc99af2f0)
       '@alchemy.run/planetscale':
+        specifier: 'catalog:'
+        version: 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
+      '@alchemy.run/sql':
         specifier: 'catalog:'
         version: 2.0.0-beta.85(@effect/sql-pg@4.1.2(effect@4.1.3))(alchemy@2.0.0-beta.85(patch_hash=07cc8c7e14b3b9af143ddd40a059f117c27e55139fbf20bd5dde2eb30509cedd)(@effect/platform-bun@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(utf-8-validate@6.0.6))(@effect/platform-node@4.1.2(bufferutil@4.1.0)(effect@4.1.3)(redis@6.2.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(@voidzero-dev/vite-plus-core@1.4.0(@types/node@24.12.4)(@volar/typescript@2.4.28(typescript@6.0.3))(esbuild@0.28.2)(jiti@2.7.0)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(yaml@2.9.0))(effect@4.1.3)(react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6))(ws@8.22.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)))(effect@4.1.3)(pg@8.23.0)
       '@clerk/backend':

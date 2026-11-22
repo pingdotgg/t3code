@@ -37,6 +37,11 @@ jobs:
       PLANETSCALE_ORGANIZATION: ${{ vars.PLANETSCALE_ORGANIZATION }}
       AXIOM_ORG_ID: ${{ vars.AXIOM_ORG_ID }}
       RELAY_DOMAIN: ${{ vars.RELAY_DOMAIN }}
+      # Forks on free plans: external (e.g. Neon), off, off. Unset keeps
+      # PlanetScale, Axiom, and Cloudflare rate limiting.
+      RELAY_DATABASE_PROVIDER: ${{ vars.RELAY_DATABASE_PROVIDER }}
+      RELAY_OBSERVABILITY: ${{ vars.RELAY_OBSERVABILITY }}
+      RELAY_RATE_LIMIT: ${{ vars.RELAY_RATE_LIMIT }}
       RELAY_API_ZONE_NAME: ${{ vars.RELAY_API_ZONE_NAME }}
       RELAY_TUNNEL_ZONE_NAME: ${{ vars.RELAY_TUNNEL_ZONE_NAME }}
       RELAY_TUNNEL_CLEANUP_MODE: ${{ vars.RELAY_TUNNEL_CLEANUP_MODE }}
@@ -70,6 +75,12 @@ jobs:
             args:
               - --filter=t3code-relay...
 
+      - name: Migrate external relay database
+        if: vars.RELAY_DATABASE_PROVIDER == 'external'
+        run: vp run --filter t3code-relay migrate:external-db
+        env:
+          RELAY_DATABASE_URL: ${{ secrets.RELAY_DATABASE_URL }}
+
       - name: Deploy production relay stage
         run: vp run --filter t3code-relay deploy --stage prod --yes --no-input ${{ inputs.force && '--force' || '' }}
         env:
@@ -80,6 +91,7 @@ jobs:
           PLANETSCALE_API_TOKEN_ID: ${{ secrets.PLANETSCALE_API_TOKEN_ID }}
           PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
           AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
+          RELAY_DATABASE_URL: ${{ secrets.RELAY_DATABASE_URL }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}

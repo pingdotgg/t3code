@@ -115,6 +115,26 @@ deployed relay URL and tracing configuration into the repository-root `.env`, so
 builds point at the relay that was just deployed without copying values manually. It runs only when
 one of those outputs changed, and `T3CODE_RELAY_CLIENT_CONFIG_ENV` redirects it to another file.
 
+### Running on free plans
+
+Three switches replace the paid dependencies. Unset or empty keeps the defaults above.
+
+- `RELAY_DATABASE_PROVIDER=external` uses the Postgres at `RELAY_DATABASE_URL` as the
+  Hyperdrive origin instead of PlanetScale. Give it the direct, non-pooled URL (for Neon, the
+  connection string without `-pooler`), ideally in AWS `us-west-2`, next to the Worker's placement.
+  Alchemy does not migrate it: run `vp run --filter t3code-relay migrate:external-db` before each
+  deploy, which applies `migrations/postgres` with the same `relay_migrations` bookkeeping. CI does
+  this for you. An external database has no per-stage branches, so this mode deploys only `prod`.
+  Alchemy binds every value the Worker reads at startup, so the URL is also a Worker secret.
+- `RELAY_OBSERVABILITY=off` creates no Axiom datasets, tokens, monitors, or dashboard and no R2
+  source-map bucket. The relay exports no spans, accepts and drops mobile crash reports, and
+  publishes empty tracing settings, which leaves client tracing off.
+- `RELAY_RATE_LIMIT=off` drops the Workers Rate Limiting bindings, whose Free plan availability
+  Cloudflare does not document. Webhook and mobile telemetry requests are then not rate limited.
+
+With all three, the deploy needs only Cloudflare and Clerk credentials. Workers Free allows 10 ms of
+CPU per request and cron run and 50 subrequests per invocation, so watch for exceeded-CPU errors.
+
 ### Deployment CI
 
 The relay is versioned separately from client releases. `.github/workflows/deploy-relay.yml` deploys
@@ -138,6 +158,9 @@ The repository must define these Actions secrets shared by relay deployments:
 - `PLANETSCALE_API_TOKEN`
 - `AXIOM_TOKEN`
 
+The PlanetScale and Axiom values are needed only while the [free-plan switches](#running-on-free-plans)
+keep their defaults.
+
 The `production` GitHub environment must define these Actions variables:
 
 - `RELAY_API_ZONE_NAME`
@@ -154,12 +177,15 @@ The `production` GitHub environment must define these Actions variables:
 - `APNS_TEAM_ID`
 - `APNS_KEY_ID`
 - `APNS_BUNDLE_ID`
+- `RELAY_DATABASE_PROVIDER`, `RELAY_OBSERVABILITY`, and `RELAY_RATE_LIMIT`, optional; see
+  [Running on free plans](#running-on-free-plans)
 
 The `production` GitHub environment must define these Actions secrets:
 
 - `CLERK_SECRET_KEY`
 - `APNS_PRIVATE_KEY`
 - `FCM_SERVICE_ACCOUNT` when Android push is enabled
+- `RELAY_DATABASE_URL` when `RELAY_DATABASE_PROVIDER=external`
 - `T3CHAT_LINK_SECRET`, optional, shared with T3 Chat's `T3CODE_LINK_SECRET`. Without it the
   T3 Chat account link is off. Local and preview stages can set `T3CHAT_URL` to point
   at another T3 Chat deployment; production uses `https://t3.chat`.

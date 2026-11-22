@@ -138,6 +138,8 @@ builds refuse only T3's relay and hosted app, so the fork's own URLs pass.
 - **Relay deploys:** `deploy-relay.yml` also runs on a fork whose repository variable
   `RELAY_DEPLOY_ENABLED` is `true`. Put the variables and secrets it reads in the fork's
   `production` environment. Set `APNS_ENABLED=false` until the relay has an APNs key.
+- **Free plans:** see [Running on free plans](../../infra/relay/README.md#running-on-free-plans)
+  for deploying without PlanetScale, Axiom, or Cloudflare's rate limiting.
 - **Releases:** `fork-release.yml` bakes the repository variables `T3CODE_CLERK_PUBLISHABLE_KEY`,
   `T3CODE_CLERK_JWT_TEMPLATE`, `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID`, and `T3CODE_RELAY_URL` into the
   CLI, the server, the web client, and the desktop app. Unset leaves Connect off.
