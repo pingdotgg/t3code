@@ -850,9 +850,14 @@ function ThreadSurfaceContent({
             }
             getShortcutContext={getShortcutContext}
             shortcutsEnabled={visible}
-            environmentId={threadRef.environmentId}
+            environmentId={
+              (surface.environmentId as EnvironmentId | undefined) ?? threadRef.environmentId
+            }
             onSelectPullRequest={(reference) =>
               useRightPanelStore.getState().openPullRequest(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
                 projectId: reference.projectId,
                 repository: reference.repository,
                 number: reference.number,
@@ -916,10 +921,22 @@ function ThreadSurfaceContent({
             threadRef={context.threadless ? null : threadRef}
             onSelectPullRequest={(reference) =>
               useRightPanelStore.getState().openPullRequest(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
                 projectId: reference.projectId,
                 repository: reference.repository,
                 number: reference.number,
                 ...(reference.host ? { host: reference.host } : {}),
+              })
+            }
+            onSelectIssue={({ host, ...reference }) =>
+              useRightPanelStore.getState().openIssue(threadRef, {
+                ...(surface.environmentId === undefined
+                  ? {}
+                  : { environmentId: surface.environmentId }),
+                ...reference,
+                ...(host ? { host } : {}),
               })
             }
             // Back to the linked items, as a pull request among several goes back to them.

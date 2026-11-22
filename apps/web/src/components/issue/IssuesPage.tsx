@@ -430,18 +430,20 @@ export function IssuesPage() {
         : clearedSelection,
     );
 
-  const selectEntry = useStableCallback((entry: IssueRowTarget) => {
-    if (rightPanelRef === null) return;
-    useRightPanelStore.getState().openIssue(rightPanelRef, entry);
-    updateSearch({
-      selectedEnvironmentId: entry.environmentId,
-      selectedProjectId: entry.projectId,
-      selectedHost: entry.host,
-      tracker: entry.tracker,
-      scope: entry.scope,
-      key: entry.key,
-    });
-  });
+  const selectEntry = useStableCallback(
+    (entry: Omit<IssueRowTarget, "host"> & { readonly host?: string }) => {
+      if (rightPanelRef === null) return;
+      useRightPanelStore.getState().openIssue(rightPanelRef, entry);
+      updateSearch({
+        selectedEnvironmentId: entry.environmentId,
+        selectedProjectId: entry.projectId,
+        selectedHost: entry.host,
+        tracker: entry.tracker,
+        scope: entry.scope,
+        key: entry.key,
+      });
+    },
+  );
 
   // A link into the page names an issue before any row was pressed.
   const openLinkedIssue = useEffectEvent(() => {
@@ -996,6 +998,13 @@ export function IssuesPage() {
                       environmentId: panelEnvironmentId,
                     });
                   }}
+                  onSelectIssue={({ host, ...reference }) =>
+                    selectEntry({
+                      ...reference,
+                      ...(host === undefined ? {} : { host }),
+                      environmentId: panelEnvironmentId,
+                    })
+                  }
                 />
               ) : (
                 <PullRequestDetailPanel

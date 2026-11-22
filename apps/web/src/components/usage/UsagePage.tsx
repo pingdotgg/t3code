@@ -527,7 +527,7 @@ export function UsagePage() {
           <AppRouteModalClose />
         </header>
 
-        <ScrollArea className="min-h-0 flex-1">
+        <ScrollArea className="min-h-0 flex-1" observeContent>
           <WorkspacePageContainer
             width="wide"
             className="@container/usage-page max-w-[1040px] gap-5 pt-5.5"

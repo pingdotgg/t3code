@@ -64,7 +64,6 @@ import {
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useId, useRef, useState, type ReactNode } from "react";
 import type { MessageResolver } from "~/i18n/messages";
-import { flushSync } from "react-dom";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { buildThreadRouteParams } from "../../threadRoutes";
@@ -136,10 +135,10 @@ function ThreadLineageRowList(props: {
   const gt = useGT();
   const listRef = useRef<HTMLUListElement>(null);
   const showMore = () => {
-    const firstNewRow = listRef.current?.children.length ?? 0;
-    flushSync(props.onShowMore);
-    // The button can leave with the last page, so focus continues on the first revealed row.
-    listRef.current?.children[firstNewRow]?.querySelector<HTMLElement>("button")?.focus();
+    const exhausting = props.hiddenCount <= THREAD_LINEAGE_PAGE_COUNT;
+    props.onShowMore();
+    // The button unmounts on the final page; focus the list so focus isn't dropped.
+    if (exhausting) listRef.current?.focus({ preventScroll: true });
   };
   return (
     <>
@@ -147,8 +146,9 @@ function ThreadLineageRowList(props: {
       <ul
         ref={listRef}
         id={props.id}
+        tabIndex={-1}
         aria-label={gt("Related threads")}
-        className="m-0 flex flex-col gap-0.5 list-none overflow-x-clip p-0"
+        className="m-0 flex flex-col gap-0.5 list-none overflow-x-clip p-0 outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
         {props.children}
       </ul>

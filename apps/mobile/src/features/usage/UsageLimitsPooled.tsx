@@ -211,7 +211,7 @@ function PoolWindowCard({
             <Text className="text-sm font-t3-medium text-foreground">{label ?? pool.label}</Text>
           ) : null}
           <View className="flex-row items-baseline gap-1.5">
-            <Text className="text-sm text-foreground-muted">
+            <Text className="text-sm leading-(--text-3xl--line-height) text-foreground-muted">
               <T>
                 <Text className="text-3xl font-t3-bold tabular-nums text-foreground">
                   <Var>{pool.remainingPercent}</Var>%
