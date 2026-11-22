@@ -98,7 +98,9 @@ const mcpRules = [
   { action: "t3-code-*", resource: "*", effect: "deny" },
   { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
-const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
+// OpenCode's own `browser` namespace needs its desktop app; T3's browser is preview_*.
+const browserDeny = { action: "browser", resource: "*", effect: "deny" };
+const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules, browserDeny];
 const TITLE = "Prime check";
 const sessionInfo = (overrides: Record<string, unknown> = {}) => ({
   id: SESSION,
@@ -292,6 +294,7 @@ const supervisedRules = [
   { action: "external_directory", resource: "*", effect: "ask" },
   ...buildPaths,
   ...mcpRules,
+  browserDeny,
 ];
 
 const shellAsk = {
@@ -1586,7 +1589,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         reply("session.update", null),
         out("session.update", {
           sessionID: CHILD,
-          permissions: [...supervisedRules.slice(0, 3), ...mcpRules],
+          permissions: [...supervisedRules.slice(0, 3), ...mcpRules, browserDeny],
         }),
         reply("session.update", null),
         out("session.prompt", { sessionID: SESSION, text: "<any>" }),
@@ -3048,8 +3051,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         ...noOpenRequests,
         out("session.update", {
           sessionID: SESSION,
-          // OpenCode's own `browser` namespace needs its desktop app; T3's browser is preview_*.
-          permissions: [...t3Rules, { action: "browser", resource: "*", effect: "deny" }],
+          permissions: t3Rules,
         }),
         reply("session.update", null),
       ]);
@@ -5596,6 +5598,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
               { action: "*", resource: "*", effect: "allow" },
               { action: "t3-code-*", resource: "*", effect: "deny" },
               { action: `${server}_*`, resource: "*", effect: "allow" },
+              browserDeny,
             ],
           }),
         ),
@@ -7188,6 +7191,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             { action: "*", resource: "*", effect: "allow" },
             { action: "t3-code-*", resource: "*", effect: "deny" },
             { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
+            browserDeny,
           ],
         }),
         reply("session.update", null),
