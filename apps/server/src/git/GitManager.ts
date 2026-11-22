@@ -2945,9 +2945,12 @@ export const make = Effect.gen(function* () {
         Effect.mapError((cause) =>
           fail(`Could not push ${branch} to ${companion.repository}: ${cause.detail}`, cause),
         ),
+        Effect.tapError(() => invalidateStatus(cwd)),
       );
     // The companion branch is the pull request's head, so status finds it through the upstream.
-    yield* gitCore.setBranchUpstream({ cwd, branch, remoteName, remoteBranch: branch });
+    yield* gitCore
+      .setBranchUpstream({ cwd, branch, remoteName, remoteBranch: branch })
+      .pipe(Effect.ensuring(invalidateStatus(cwd)));
     const findOpen = provider
       .listChangeRequests({ cwd, headSelector: branch, state: "open" })
       .pipe(
