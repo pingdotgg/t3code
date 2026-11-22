@@ -69,6 +69,7 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 
 import {
+  ActivityIcon,
   CheckIcon,
   ChevronDownIcon,
   FolderIcon,
@@ -345,6 +346,8 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+// A filter row rather than a project key, so it never reaches the persisted project scope.
+const WORKING_SCOPE_VALUE = "__working__";
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -368,6 +371,8 @@ interface SidebarThreadPartitionInput {
   readonly connectedEnvironmentIds: readonly EnvironmentId[];
   readonly optimisticDrop: SidebarOptimisticDrop | null;
   readonly workingShelfEnabled: boolean;
+  /** Narrows the list to threads whose agent is running right now. */
+  readonly workingOnly: boolean;
   /** Boring mode: folders list active threads by the user's latest message. */
   readonly sortActiveBySend: boolean;
   // Snooze wakes, the queued-turn grace and the Working shelf's exit grace depend
@@ -436,6 +441,8 @@ function useSidebarThreads(input: {
   readonly delegatedUnderParent: ReadonlySet<string>;
   readonly routeRowThreadKey: string | null;
   readonly departingThreadKey: string | null;
+  // Narrows the list to threads whose agent is running right now.
+  readonly workingOnly: boolean;
   // Set in boring mode: the project groups to fold active threads into, in order.
   readonly folderGroups: readonly SidebarProjectSnapshot[] | null;
   // Keeps folders with no active threads, so a project the user filtered to or pinned can start one.
@@ -451,13 +458,15 @@ function useSidebarThreads(input: {
     delegatedUnderParent,
     routeRowThreadKey,
     departingThreadKey,
+    workingOnly,
     folderGroups,
     keepEmptyFolders: keepEmpty,
   } = input;
   const shelfRouteThreadKey = routeRowThreadKey === departingThreadKey ? null : routeRowThreadKey;
   // Folders already separate the work, so boring mode has no Working shelf.
+  // With only working threads listed, the shelf would just collapse the whole list.
   const workingShelfEnabled =
-    useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null;
+    useClientSettings((s) => s.sidebarWorkingShelfEnabled) && folderGroups === null && !workingOnly;
   const inboxReturnsVersion = useSyncExternalStore(
     inboxReturns.subscribe,
     inboxReturns.getSnapshot,
@@ -501,6 +510,7 @@ function useSidebarThreads(input: {
     connectedEnvironmentIds,
     optimisticDrop,
     workingShelfEnabled,
+    workingOnly,
     sortActiveBySend: folderGroups !== null,
     clockKey: `${nowMinute}:${snoozeWakeClock}:${inboxReturnsVersion}`,
   });
@@ -636,10 +646,16 @@ function partitionSidebarThreads(input: SidebarThreadPartitionInput) {
     serverConfigs,
     optimisticDrop,
     workingShelfEnabled,
+    workingOnly,
     sortActiveBySend,
   } = input;
   const preciseNow = new Date().toISOString();
-  const visible = filterSidebarV2VisibleThreads(threads, scopedProjectKeys, delegatedUnderParent);
+  const visible = filterSidebarV2VisibleThreads(
+    threads,
+    scopedProjectKeys,
+    delegatedUnderParent,
+    workingOnly,
+  );
   const inboxObservation = inboxReturns.observe(workingShelfEnabled ? threads : null);
   const pinned: EnvironmentThreadShell[] = [];
   const active: EnvironmentThreadShell[] = [];
@@ -1020,6 +1036,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const projectGroupsRef = useRef(projectGroups);
   const persistedProjectScopeKeys = useUiStateStore((store) => store.sidebarProjectScopeKeys);
   const setPersistedProjectScopeKeys = useUiStateStore((store) => store.setSidebarProjectScopeKeys);
+  const workingOnly = useUiStateStore((store) => store.sidebarWorkingOnly);
+  const setWorkingOnly = useUiStateStore((store) => store.setSidebarWorkingOnly);
   const [projectScopeMenuState, dispatchProjectScopeMenu] = useReducer(
     reduceSidebarProjectScopeMenuState,
     { open: false, query: "" },
@@ -1182,13 +1200,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     (item) => item.value,
     projectScopeMenuState.open,
   );
-  const selectedProjectScopeItem =
-    projectScopeKeys.length > 1
+  // Counted across every project, because the row promises the cross-project view.
+  const workingThreadCount = filterSidebarV2VisibleThreads(
+    listedThreads,
+    null,
+    delegatedUnderParent,
+    true,
+  ).length;
+  const workingScopeItem = {
+    value: WORKING_SCOPE_VALUE,
+    label: gt("Working ({count})", { count: workingThreadCount }),
+  };
+  const projectScopeMenuItems = [workingScopeItem, ...projectScopeItems];
+  const selectedProjectScopeItem = workingOnly
+    ? workingScopeItem
+    : projectScopeKeys.length > 1
       ? null
-      : (projectScopeItems.find((item) => item.value === (projectScopeKeys[0] ?? "all")) ??
-        projectScopeItems[0]!);
+      : (projectScopeMenuItems.find((item) => item.value === (projectScopeKeys[0] ?? "all")) ??
+        projectScopeMenuItems[0]!);
   const filteredProjectScopeItems = filterSidebarProjectScopeItems({
-    items: projectScopeItems,
+    items: projectScopeMenuItems,
     query: projectScopeMenuState.query,
     matches: (item, query) =>
       projectScopeFilter.contains(item, query, (candidate) => candidate.label),
@@ -1360,6 +1391,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     delegatedUnderParent,
     routeRowThreadKey,
     departingThreadKey,
+    workingOnly,
     folderGroups: boringSidebarEnabled
       ? scopedProjectGroups.length === 0
         ? // An archived project keeps a folder for its active threads, below the rest.
@@ -3060,7 +3092,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               hasProjects={projectGroups.length > 0}
               projectScope={
                 <Combobox
-                  items={projectScopeItems}
+                  items={projectScopeMenuItems}
                   filteredItems={filteredProjectScopeItems}
                   autoHighlight
                   itemToStringLabel={(item) => item.label}
@@ -3081,6 +3113,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       return;
                     }
                     if (!item) return;
+                    if (item.value === WORKING_SCOPE_VALUE) {
+                      // Picking the row again returns to every project.
+                      if (workingOnly) {
+                        setWorkingOnly(false);
+                      } else {
+                        setWorkingOnly(true);
+                        setProjectScopeKeys([]);
+                      }
+                      return;
+                    }
+                    setWorkingOnly(false);
                     if (item.value === "all") {
                       setProjectScopeKeys([]);
                     } else if (
@@ -3098,19 +3141,26 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                   <ComboboxTrigger
                     render={
                       <SidebarHeaderIconButton
+                        aria-pressed={workingOnly}
                         label={
-                          scopedProjectGroups.length > 0
-                            ? gt("Filter threads by project: {projects}", {
-                                projects: scopedProjectGroups
-                                  .map((project) => project.displayName)
-                                  .join(", "),
+                          workingOnly
+                            ? gt("Showing working agents ({count})", {
+                                count: workingThreadCount,
                               })
-                            : gt("Filter threads by project")
+                            : scopedProjectGroups.length > 0
+                              ? gt("Filter threads by project: {projects}", {
+                                  projects: scopedProjectGroups
+                                    .map((project) => project.displayName)
+                                    .join(", "),
+                                })
+                              : gt("Filter threads by project")
                         }
                       />
                     }
                   >
-                    {scopedProjectGroups.length > 1 ? (
+                    {workingOnly ? (
+                      <ActivityIcon className="size-4" />
+                    ) : scopedProjectGroups.length > 1 ? (
                       <span className="flex shrink-0">
                         {scopedProjectGroups.slice(0, 2).map((project, index) => (
                           <span
@@ -3191,11 +3241,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       <T>No matching projects.</T>
                     </ComboboxEmpty>
                     <ComboboxList aria-multiselectable>
-                      {(item: (typeof projectScopeItems)[number]) => {
+                      {(item: (typeof projectScopeMenuItems)[number]) => {
+                        const isWorkingItem = item.value === WORKING_SCOPE_VALUE;
                         const project = projectGroupByScopeKey.get(item.value) ?? null;
-                        const isSelected = project
-                          ? projectScopeKeys.includes(item.value)
-                          : projectScopeKeys.length === 0;
+                        const isSelected = isWorkingItem
+                          ? workingOnly
+                          : project
+                            ? projectScopeKeys.includes(item.value) && !workingOnly
+                            : projectScopeKeys.length === 0 && !workingOnly;
                         return (
                           <ComboboxItem
                             key={item.value}
@@ -3209,7 +3262,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                             }}
                           >
                             <ProjectScopeRowIcon isSelected={isSelected}>
-                              {project ? (
+                              {isWorkingItem ? (
+                                <ActivityIcon className="size-4 shrink-0" />
+                              ) : project ? (
                                 <ProjectFavicon project={project} className="size-4 shrink-0" />
                               ) : (
                                 <FolderIcon className="size-4 shrink-0" />
@@ -3389,7 +3444,20 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             0 &&
           (settledCount === 0 || scopedProjectGroups.length > 0) ? (
             <div className="flex flex-col items-center gap-2 px-2 py-6 text-center text-xs text-muted-foreground/60">
-              {projects.length === 0 ? (
+              {workingOnly ? (
+                <>
+                  <span>
+                    <T>No agents are working right now</T>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWorkingOnly(false)}
+                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-sidebar-border px-2.5 py-1 text-2xs font-medium text-sidebar-muted-foreground transition-colors hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
+                  >
+                    <T>Show all projects</T>
+                  </button>
+                </>
+              ) : projects.length === 0 ? (
                 <>
                   <span>
                     <T>No projects yet</T>

@@ -13,6 +13,7 @@ import {
   getFallbackThreadIdAfterDelete,
   hasUnseenCompletion,
   orderItemsByPreferredIds,
+  filterSidebarV2VisibleThreads,
   pinOrderKeyBetween,
   resolveSidebarSweepKeys,
   resolveSidebarRowStatus,
@@ -215,6 +216,88 @@ describe("orderItemsByPreferredIds", () => {
       "physical-a",
       "physical-b",
     ]);
+  });
+});
+
+describe("filterSidebarV2VisibleThreads", () => {
+  const runningRuntime = {
+    status: "running" as const,
+    activeRunId: RunId.make("run-1"),
+    providerInstanceId: ProviderInstanceId.make("codex"),
+    providerName: "Codex",
+    lastError: null,
+    updatedAt: "2026-03-09T10:00:00.000Z",
+  };
+  const runningLatestRun = {
+    ...makeLatestRun({ completedAt: null }),
+    runId: RunId.make("run-1"),
+    status: "running" as const,
+  };
+  const workingThread = (id: string, projectId: string) =>
+    makeThreadFixture({
+      id: ThreadId.make(id),
+      projectId: ProjectId.make(projectId),
+      runtime: runningRuntime,
+      latestRun: runningLatestRun,
+    });
+  const idleThread = (id: string, projectId: string) =>
+    makeThreadFixture({ id: ThreadId.make(id), projectId: ProjectId.make(projectId) });
+
+  it("keeps only running agents across every project", () => {
+    const threads = [
+      workingThread("working-one", "project-one"),
+      idleThread("idle-one", "project-one"),
+      workingThread("working-two", "project-two"),
+      idleThread("idle-two", "project-two"),
+    ];
+
+    expect(
+      filterSidebarV2VisibleThreads(threads, null, new Set(), true).map((thread) => thread.id),
+    ).toEqual([ThreadId.make("working-one"), ThreadId.make("working-two")]);
+  });
+
+  it("keeps idle threads when the working filter is off", () => {
+    const threads = [
+      workingThread("working-one", "project-one"),
+      idleThread("idle-one", "project-one"),
+    ];
+
+    expect(
+      filterSidebarV2VisibleThreads(threads, null, new Set()).map((thread) => thread.id),
+    ).toEqual([ThreadId.make("working-one"), ThreadId.make("idle-one")]);
+  });
+
+  it("drops a running thread that is waiting on the user", () => {
+    const threads = [
+      workingThread("working-one", "project-one"),
+      makeThreadFixture({
+        id: ThreadId.make("blocked-one"),
+        projectId: ProjectId.make("project-one"),
+        runtime: runningRuntime,
+        latestRun: runningLatestRun,
+        hasPendingApprovals: true,
+      }),
+    ];
+
+    expect(
+      filterSidebarV2VisibleThreads(threads, null, new Set(), true).map((thread) => thread.id),
+    ).toEqual([ThreadId.make("working-one")]);
+  });
+
+  it("combines the working filter with a project scope", () => {
+    const threads = [
+      workingThread("working-one", "project-one"),
+      workingThread("working-two", "project-two"),
+    ];
+
+    expect(
+      filterSidebarV2VisibleThreads(
+        threads,
+        new Set(["environment-test:project-two"]),
+        new Set(),
+        true,
+      ).map((thread) => thread.id),
+    ).toEqual([ThreadId.make("working-two")]);
   });
 });
 

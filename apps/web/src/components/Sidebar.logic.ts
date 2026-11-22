@@ -2,6 +2,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import { isThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -595,13 +596,27 @@ export async function deleteSelectedThreadEntries<
  * the sidebar lists, by thread key; they show under that thread, as subagents do.
  */
 export function filterSidebarV2VisibleThreads<
-  T extends Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
+  T extends Pick<
+    SidebarThreadSummary,
+    | "archivedAt"
+    | "environmentId"
+    | "id"
+    | "lineage"
+    | "hasActionableProposedPlan"
+    | "hasPendingApprovals"
+    | "hasPendingUserInput"
+    | "pendingSubagentRequest"
+    | "interactionMode"
+    | "latestRun"
+    | "runtime"
+  > & {
     projectId: string;
   },
 >(
   threads: readonly T[],
   scopedProjectKeys: ReadonlySet<string> | null,
   delegatedUnderParent: ReadonlySet<string>,
+  workingOnly = false,
 ): T[] {
   return threads.filter(
     (thread) =>
@@ -612,7 +627,8 @@ export function filterSidebarV2VisibleThreads<
         delegatedUnderParent,
       ) &&
       (scopedProjectKeys === null ||
-        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)),
+        scopedProjectKeys.has(`${thread.environmentId}:${thread.projectId}`)) &&
+      (!workingOnly || isThreadWorking(thread)),
   );
 }
 
@@ -1451,7 +1467,19 @@ export function sortLogicalProjectsForSidebar<
 export function sortSidebarV2ProjectGroups<
   TProject extends LogicalSidebarProject,
   TThread extends ScopedSidebarThread &
-    Pick<SidebarThreadSummary, "environmentId" | "id" | "lineage">,
+    Pick<
+      SidebarThreadSummary,
+      | "environmentId"
+      | "id"
+      | "lineage"
+      | "hasActionableProposedPlan"
+      | "hasPendingApprovals"
+      | "hasPendingUserInput"
+      | "pendingSubagentRequest"
+      | "interactionMode"
+      | "latestRun"
+      | "runtime"
+    >,
 >(
   projects: readonly TProject[],
   threads: readonly TThread[],

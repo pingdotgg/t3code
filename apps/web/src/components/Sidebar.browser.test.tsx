@@ -9,6 +9,8 @@ import {
   EnvironmentId,
   type LocalApi,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
@@ -30,6 +32,7 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
+import { useUiStateStore } from "../uiStateStore";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
@@ -460,5 +463,80 @@ describe("sidebar settled pagination", () => {
     const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
+});
+
+describe("sidebar working filter", () => {
+  it("narrows the list to running agents across projects", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    stack.defer(() => useUiStateStore.setState({ sidebarWorkingOnly: false }));
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      sidebarWorkingShelfEnabled: false,
+    });
+
+    const web = project("web");
+    const api = project("api");
+    const runningRuntime = {
+      status: "running" as const,
+      activeRunId: RunId.make("run-1"),
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const working = makeThreadFixture({
+      environmentId: EnvironmentId.make("local"),
+      id: ThreadId.make("thread-working"),
+      projectId: web.id,
+      title: "Working thread",
+      runtime: runningRuntime,
+      latestRun: {
+        runId: RunId.make("run-1"),
+        status: "running",
+        assistantMessageId: null,
+        requestedAt: "2026-01-01T00:00:00.000Z",
+        startedAt: "2026-01-01T00:00:00.000Z",
+        completedAt: null,
+      },
+    });
+    const idle = makeThreadFixture({
+      environmentId: EnvironmentId.make("local"),
+      id: ThreadId.make("thread-idle"),
+      projectId: api.id,
+      title: "Idle thread",
+    });
+    vi.mocked(useNowMinute).mockReturnValue("2026-01-01T00:00");
+    vi.mocked(useProjects).mockReturnValue([web, api]);
+    vi.mocked(useQuietThreadShells).mockReturnValue([working, idle]);
+    vi.mocked(useServerConfigs).mockReturnValue(new Map());
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: null,
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn(),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const rows = () => screen.container.querySelectorAll("[data-thread-item]");
+    expect(rows()).toHaveLength(2);
+
+    await userEvent.click(screen.getByRole("combobox", { name: "Filter threads by project" }));
+    await userEvent.click(screen.getByRole("option", { name: "Working (1)" }));
+
+    expect(rows()).toHaveLength(1);
+    await expect.element(screen.getByText("Working thread")).toBeInTheDocument();
+    await expect.element(screen.getByText("Idle thread")).not.toBeInTheDocument();
   });
 });
