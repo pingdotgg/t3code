@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it, afterEach, describe, expect, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
@@ -410,11 +411,11 @@ describe("azureCliInvocation", () => {
     installer: "MSI",
   };
 
-  const invocationFor = (install: AzureCliInstall | undefined) =>
+  const invocationFor = (install: AzureCliInstall | undefined, resolved = launcher) =>
     AzureDevOpsCli.azureCliInvocation().pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
-      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(SpawnExecutableResolution, () => resolved),
       Effect.provideService(AzureCliInstallLocation, () => install),
     );
 
@@ -428,11 +429,21 @@ describe("azureCliInvocation", () => {
     }),
   );
 
-  it.effect("keeps the launcher when the install is not recognized", () =>
+  it.effect("keeps a launcher that is its own executable", () =>
+    Effect.gen(function* () {
+      assert.deepStrictEqual(yield* invocationFor(undefined, "C:\\Users\\me\\Scripts\\az.exe"), {
+        command: "az",
+        args: [],
+      });
+    }),
+  );
+
+  it.effect("marks an unrecognized batch launcher, which cmd.exe runs", () =>
     Effect.gen(function* () {
       assert.deepStrictEqual(yield* invocationFor(undefined), {
         command: "az",
         args: [],
+        throughCmd: true,
       });
     }),
   );
@@ -444,6 +455,65 @@ describe("azureCliInvocation", () => {
       );
 
       assert.deepStrictEqual(invocation, { command: "az", args: [] });
+    }),
+  );
+});
+
+describe("AzureDevOpsCli.execute on Windows", () => {
+  const body = "Fix für Umlaute\n\n- second line\r\nthird = line";
+  const args = ["repos", "pr", "update", "--id", "42", `--description=${body}`, "a=b\nc", body];
+
+  const executeWith = (launcher: string) =>
+    Effect.gen(function* () {
+      const cli = yield* AzureDevOpsCli.AzureDevOpsCli;
+      return yield* cli.execute({ cwd: "/repo", args });
+    }).pipe(
+      Effect.provide(AzureDevOpsCli.layer),
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(HostProcess.Environment, { PATH: "C:\\tools" }),
+      Effect.provideService(SpawnExecutableResolution, () => launcher),
+      Effect.provideService(AzureCliInstallLocation, () => undefined),
+      // Outermost, so its Linux platform does not shadow the Windows one above.
+      Effect.provide(layerSupport),
+    );
+
+  it.effect("passes arguments with a newline to a batch launcher as UTF-8 files", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const files: Array<string> = [];
+      // What az does with each argument: expand `@file` after the first `=`, read as UTF-8.
+      const expanded: Array<string> = [];
+      mockRun.mockImplementationOnce((input) =>
+        Effect.gen(function* () {
+          for (const arg of input.args) {
+            assert.notMatch(arg, /[\r\n]/);
+            const [option, value] = arg.includes("=") ? arg.split(/=(.*)/s) : [undefined, arg];
+            const file = value?.startsWith("@") ? value.slice(1) : undefined;
+            if (file !== undefined) files.push(file);
+            const text = file === undefined ? value : yield* fileSystem.readFileString(file);
+            expanded.push(option === undefined ? `${text}` : `${option}=${text}`);
+          }
+          assert.isUndefined(input.stdin);
+          return processOutput("{}");
+        }).pipe(Effect.orDie),
+      );
+
+      yield* executeWith("C:\\Users\\me\\bin\\az.cmd");
+
+      assert.deepStrictEqual(expanded, args);
+      assert.lengthOf(files, 3);
+      for (const file of files) assert.isFalse(yield* fileSystem.exists(file));
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("keeps them in argv for an az.exe, which reads stdin in the ANSI code page", () =>
+    Effect.gen(function* () {
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      yield* executeWith("C:\\Users\\me\\Scripts\\az.exe");
+
+      expect(mockRun).toHaveBeenCalledWith(expect.objectContaining({ command: "az", args }));
+      assert.isUndefined(mockRun.mock.calls[0]?.[0].stdin);
     }),
   );
 });

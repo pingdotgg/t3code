@@ -17,14 +17,19 @@ const INSTALLERS_BY_LAUNCHER_DIRECTORY: Readonly<Record<string, AzureCliInstalle
   bin: "ZIP",
 };
 
+/** Windows runs a batch launcher through `cmd.exe`, which ends the command line at a newline. */
+export const isBatchLauncher = (launcherPath: string) => {
+  const extension = NodePath.win32.extname(launcherPath).toLowerCase();
+  return extension === ".cmd" || extension === ".bat";
+};
+
 /** The MSI and ZIP builds both launch the interpreter beside the install root, from `wbin` and `bin`. */
 export const azureCliInstall = (
   launcherPath: string,
   pathExists: (filePath: string) => boolean = NodeFS.existsSync,
 ): AzureCliInstall | undefined => {
   const path = NodePath.win32;
-  const extension = path.extname(launcherPath).toLowerCase();
-  if (extension !== ".cmd" && extension !== ".bat") return undefined;
+  if (!isBatchLauncher(launcherPath)) return undefined;
   const launcherDirectory = path.dirname(launcherPath);
   const installer =
     INSTALLERS_BY_LAUNCHER_DIRECTORY[path.basename(launcherDirectory).toLowerCase()];

@@ -1,5 +1,6 @@
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 import * as Result from "effect/Result";
@@ -15,7 +16,7 @@ import {
 import * as SourceControlHost from "@t3tools/source-control-core/server/SourceControlHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
-import { AzureCliInstallLocation } from "./azureCliLauncher.ts";
+import { AzureCliInstallLocation, isBatchLauncher } from "./azureCliLauncher.ts";
 import {
   decodeAzureDevOpsPullRequestJson,
   decodeAzureDevOpsPullRequestListJson,
@@ -483,6 +484,8 @@ export interface AzureCliInvocation {
   /** Arguments `az` needs before the caller's, to run the CLI in UTF-8 mode. */
   readonly args: ReadonlyArray<string>;
   readonly env?: NodeJS.ProcessEnv;
+  /** Set when `az` is a batch file T3 must run through `cmd.exe`, which cuts the line at a newline. */
+  readonly throughCmd?: true;
 }
 
 /**
@@ -499,14 +502,39 @@ export const azureCliInvocation = Effect.fn("AzureDevOpsCli.invocation")(functio
   const installFor = yield* AzureCliInstallLocation;
   const install = launcher === undefined ? undefined : installFor(launcher);
   // Unrecognized installs (pipx's Scripts\az.exe) keep the launcher and today's decode.
-  return install === undefined
-    ? ({ command: "az", args: [] } satisfies AzureCliInvocation)
-    : ({
-        command: install.interpreter,
-        args: ["-X", "utf8", "-IBm", "azure.cli"],
-        // What the launcher sets before running this same interpreter.
-        env: { AZ_INSTALLER: install.installer },
-      } satisfies AzureCliInvocation);
+  if (install === undefined) {
+    return {
+      command: "az",
+      args: [],
+      ...(launcher !== undefined && isBatchLauncher(launcher) ? { throughCmd: true } : {}),
+    } satisfies AzureCliInvocation;
+  }
+  return {
+    command: install.interpreter,
+    args: ["-X", "utf8", "-IBm", "azure.cli"],
+    // What the launcher sets before running this same interpreter.
+    env: { AZ_INSTALLER: install.installer },
+  } satisfies AzureCliInvocation;
+});
+
+/**
+ * Moves each argument holding a newline into a file and passes `@file`, which az expands before
+ * it parses. Only for a launcher run through `cmd.exe`: argv elsewhere already carries newlines,
+ * and az reads the file as UTF-8 where it would read stdin in the ANSI code page.
+ */
+const newlineArgsAsFiles = Effect.fn("AzureDevOpsCli.newlineArgsAsFiles")(function* (
+  fileSystem: FileSystem.FileSystem,
+  args: ReadonlyArray<string>,
+) {
+  return yield* Effect.forEach(args, (arg) => {
+    if (!/[\r\n]/.test(arg)) return Effect.succeed(arg);
+    // az splits `--option=value` at the first `=` and expands only the value.
+    const option = /^[^=\r\n]*=/.exec(arg)?.[0] ?? "";
+    return fileSystem.makeTempFileScoped({ prefix: "t3-azure-arg-" }).pipe(
+      Effect.tap((file) => fileSystem.writeFileString(file, arg.slice(option.length))),
+      Effect.map((file) => `${option}@${file}`),
+    );
+  });
 });
 
 /**
@@ -521,10 +549,17 @@ export const textOption = (option: string, value: string) =>
 /** @public */
 export const make = Effect.gen(function* () {
   const { process } = yield* SourceControlHost.SourceControlHost;
-  const invocation = yield* azureCliInvocation();
+  const fileSystem = yield* FileSystem.FileSystem;
+  const invocation: AzureCliInvocation = yield* azureCliInvocation();
 
   const execute: AzureDevOpsCli["Service"]["execute"] = Effect.fn("AzureDevOpsCli.execute")(
     function* (input) {
+      const errorContext = {
+        operation: "execute",
+        command: "az",
+        cwd: input.cwd,
+        argumentCount: input.args.length,
+      } as const;
       let args = input.args;
       if (detectsScope(args)) {
         // Windows az running in WSL cannot inspect the server's Linux checkout.
@@ -558,6 +593,11 @@ export const make = Effect.gen(function* () {
             ));
         if (remoteUrl !== null) args = scopeAzureCliArgs(args, remoteUrl);
       }
+      if (invocation.throughCmd) {
+        args = yield* newlineArgsAsFiles(fileSystem, args).pipe(
+          Effect.mapError((cause) => new AzureDevOpsCommandFailedError({ ...errorContext, cause })),
+        );
+      }
       return yield* process
         .run({
           operation: "AzureDevOpsCli.execute",
@@ -573,18 +613,11 @@ export const make = Effect.gen(function* () {
         })
         .pipe(
           Effect.mapError((error) =>
-            AzureDevOpsCommandFailedError.fromVcsError(
-              {
-                operation: "execute",
-                command: "az",
-                cwd: input.cwd,
-                argumentCount: input.args.length,
-              },
-              error,
-            ),
+            AzureDevOpsCommandFailedError.fromVcsError(errorContext, error),
           ),
         );
     },
+    Effect.scoped,
   );
 
   const executeJson = (input: Parameters<AzureDevOpsCli["Service"]["execute"]>[0]) =>
