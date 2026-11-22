@@ -36,6 +36,7 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
+import { useRefreshBranchesOnFocus } from "./use-refresh-branches-on-focus";
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
@@ -466,6 +467,7 @@ export function BranchPickerScreen(props: {
   const m = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  useRefreshBranchesOnFocus(props.project?.environmentId, props.project?.workspaceRoot);
   const search: AppBarSearch = {
     value: props.query,
     onChangeText: props.onQueryChange,

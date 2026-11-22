@@ -205,6 +205,16 @@ describe("PullRequestWatchService", () => {
     }),
   );
 
+  it.effect("tells the caller when the checks already passed, since no wake will report it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ readChecksState: "passing" });
+      const result = yield* harness.setWatching(true, {
+        url: "https://github.com/t3tools/t3code/pull/9",
+      });
+      expect(result).toMatchObject({ wasWatching: false, checksState: "passing" });
+    }),
+  );
+
   it.effect("reports a missing hosting CLI before saving a watch and still allows unwatch", () =>
     Effect.gen(function* () {
       const missing = new PullRequestUnavailableError({
