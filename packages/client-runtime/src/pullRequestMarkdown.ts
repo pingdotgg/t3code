@@ -1,4 +1,5 @@
-import { sourceControlClients, type ReferenceAutolink } from "./sourceControlClients.ts";
+import { GITHUB_EMOJI_ALIASES } from "./githubEmojiAliases.ts";
+import { sourceControlClients } from "./sourceControlClients.ts";
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =
@@ -6,7 +7,10 @@ export type PullRequestBodySegment =
       readonly id: string;
       readonly kind: "markdown";
       readonly text: string;
-      /** Where `text` starts in the body, so an edit made to it can be written back. */
+      /**
+       * `sourceOffset + i` is where `text[i]` sits in the body, so an edit can be written back.
+       * Holds past the body's reference definitions, which `text` may lead with.
+       */
       readonly sourceOffset: number;
     }
   | {
@@ -162,8 +166,52 @@ function mediaTableAt(
   return { end, rows: hasMedia ? rows : null };
 }
 
-export function splitPullRequestBody(body: string): ReadonlyArray<PullRequestBodySegment> {
-  return splitBodyAt(body, 0);
+/**
+ * Each markdown segment renders as its own document, so it leads with the body's definitions.
+ * Leading, they win over a later redefinition in the segment, as the first one does in the body.
+ */
+function withDefinitions(
+  segment: PullRequestBodySegment,
+  definitions: string,
+): PullRequestBodySegment {
+  if (segment.kind === "attachment") return segment;
+  if (segment.kind === "table") {
+    return {
+      ...segment,
+      rows: segment.rows.map((cells) =>
+        cells.map((cell) => ({
+          ...cell,
+          segments: cell.segments.map((inner) => withDefinitions(inner, definitions)),
+        })),
+      ),
+    };
+  }
+  if (!segment.text.includes("[")) return segment;
+  return {
+    ...segment,
+    text: definitions + segment.text,
+    sourceOffset: segment.sourceOffset - definitions.length,
+  };
+}
+
+/**
+ * The first definition of each label in a body, each on one line so it stands outside the quote or
+ * list it was written in, as the client's Markdown parser reads them.
+ */
+export type FindReferenceDefinitions = (body: string) => ReadonlyArray<string>;
+
+export function splitPullRequestBody(
+  body: string,
+  findDefinitions: FindReferenceDefinitions,
+): ReadonlyArray<PullRequestBodySegment> {
+  const segments = splitBodyAt(body, 0);
+  // One markdown segment is the whole body, which resolves its own references.
+  const whole = segments.length === 1 && segments[0]!.kind === "markdown";
+  if (whole || !body.includes("]:")) return segments;
+  const definitions = findDefinitions(body);
+  if (definitions.length === 0) return segments;
+  const leading = `${definitions.join("\n")}\n\n`;
+  return segments.map((segment) => withDefinitions(segment, leading));
 }
 
 /** `baseOffset` is where `body` starts in the whole body, so a table cell's edits write back. */
@@ -197,7 +245,13 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
     const line = lines[index]!;
     if (markdown.length === 0) markdownStart = lineStart;
     const fenceMatch = FENCE_PATTERN.exec(line);
-    if (fenceMatch !== null) {
+    // ```` ```npm test``` ```` is a code span, not an opener that would flip every later fence.
+    // A span that runs past this line is left an opener, so its lines stay out of media.
+    const isInlineCode =
+      openFence === null &&
+      fenceMatch?.[1]![0] === "`" &&
+      (fenceMatch[2]!.match(/`+/gu) ?? []).some((run) => run.length === fenceMatch[1]!.length);
+    if (fenceMatch !== null && !isInlineCode) {
       const fence = fenceMatch[1]!;
       // A fence closes only on the same marker, at least as long as the one that opened it,
       // and with nothing after it: `~~~` cannot end a ``` block, and ```` ```ts ```` is an
@@ -270,32 +324,38 @@ function splitBodyAt(body: string, baseOffset: number): ReadonlyArray<PullReques
   flushMarkdown();
   return segments;
 }
+let githubEmojiByAlias: ReadonlyMap<string, string> | undefined;
+const githubEmojiAlias = /:([a-z\d_+-]+)(?=:)/gu;
 
-/**
- * Finds the references the change request's host links in plain text, resolved against the change
- * request's repository. Null when the host links none.
- */
-export function changeRequestReferenceAutolinker(
-  changeRequest: { readonly provider: string; readonly url: string } | null | undefined,
-): ((text: string) => ReadonlyArray<ReferenceAutolink>) | null {
-  if (!changeRequest) return null;
-  const find = sourceControlClients.get(changeRequest.provider).referenceAutolinks;
-  const repositoryUrl = sourceControlClients.parseChangeRequestUrl(changeRequest.url)?.link
-    .repositoryUrl;
-  return find === undefined || repositoryUrl === undefined
-    ? null
-    : (text) => find(text, repositoryUrl);
+/** GitHub's `:alias:` emoji in `text`; a colon closes one alias only, so `:tada:tada:` has one. */
+export function githubEmojiAliases(
+  text: string,
+): ReadonlyArray<{ readonly index: number; readonly text: string; readonly emoji: string }> {
+  githubEmojiByAlias ??= new Map(
+    GITHUB_EMOJI_ALIASES.trim()
+      .split("\n")
+      .map((line) => {
+        const space = line.indexOf(" ");
+        return [line.slice(0, space), line.slice(space + 1)] as const;
+      }),
+  );
+  const found: { index: number; text: string; emoji: string }[] = [];
+  let end = 0;
+  for (const match of text.matchAll(githubEmojiAlias)) {
+    const emoji = githubEmojiByAlias.get(match[1]!);
+    if (emoji === undefined || match.index < end) continue;
+    end = match.index + match[0].length + 1;
+    found.push({ index: match.index, text: `${match[0]}:`, emoji });
+  }
+  return found;
 }
 
-/**
- * Forges link uploads root-relative, as GitCafe's `/api/attachments/<id>`. In a change request
- * body that always means the forge's origin, never a path on the machine rendering it.
- */
-export function resolveChangeRequestMediaUrl(url: string, changeRequestUrl: string): string {
-  if (!/^\/(?![/\\])/u.test(url)) return url;
-  try {
-    return new URL(url, changeRequestUrl).href;
-  } catch {
-    return url;
+export function expandGithubEmojiAliases(text: string): string {
+  let expanded = "";
+  let start = 0;
+  for (const alias of githubEmojiAliases(text)) {
+    expanded += text.slice(start, alias.index) + alias.emoji;
+    start = alias.index + alias.text.length;
   }
+  return start === 0 ? text : expanded + text.slice(start);
 }

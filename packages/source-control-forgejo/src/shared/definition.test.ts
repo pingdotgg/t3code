@@ -149,6 +149,17 @@ describe("Forgejo CLI commands", () => {
     }
     expect(definition.changeRequestCloseCommand.test("tea pull checkout 7")).toBe(false);
   });
+
+  it("reads the change request from every checkout spelling tea accepts", () => {
+    for (const command of [
+      "tea pulls checkout 7",
+      "tea pull checkout 7",
+      "tea pr co 7",
+      "tea pull co 7",
+    ]) {
+      expect(definition.checkoutCommandArgument(command), command).toBe("7");
+    }
+  });
 });
 
 describe("Forgejo change request host", () => {
@@ -158,5 +169,12 @@ describe("Forgejo change request host", () => {
     expect(
       definition.changeRequestHost?.(identity("ssh://git@forge.example:2222/git/team/repo.git")),
     ).toBe("forge.example");
+    expect(
+      definition.changeRequestHost?.(
+        identity("ssh://git@ssh.forge.example:2222/git/team/repo.git", {
+          webUrl: "http://forge.example:3000/git/team/repo",
+        }),
+      ),
+    ).toBe("forge.example:3000");
   });
 });

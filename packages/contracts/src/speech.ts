@@ -204,6 +204,13 @@ export const EnvironmentSpeechModels = Schema.Struct({
 });
 export type EnvironmentSpeechModels = typeof EnvironmentSpeechModels.Type;
 
+export const EnvironmentSpeechModelDownload = Schema.Struct({
+  ...EnvironmentSpeechModels.fields,
+  // Older environments return only the catalog.
+  cancelled: Schema.optionalKey(Schema.Boolean),
+});
+export type EnvironmentSpeechModelDownload = typeof EnvironmentSpeechModelDownload.Type;
+
 export const EnvironmentSpeechModelRequest = Schema.Struct({ modelId: SpeechModelId });
 /** A model file, or a folder to search for them, on the environment's own disk. */
 export const EnvironmentSpeechModelLinkRequest = Schema.Struct({
@@ -286,6 +293,8 @@ export const SpeechTranscriptionOptions = Schema.Struct({
   speechLanguage: SpeechLanguage,
   speechTranslateToEnglish: Schema.Boolean,
   speechCustomWords: SpeechCustomWords,
+  /** Recognition-only terms, such as the project name; never rewrite the transcript. */
+  speechHints: Schema.optionalKey(Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(8))),
   speechRemoveFillerWords: Schema.Boolean,
   /** Preserve this cue for separately consented transcript cleanup. */
   speechCorrectionWord: Schema.optionalKey(SpeechCorrectionCue),
