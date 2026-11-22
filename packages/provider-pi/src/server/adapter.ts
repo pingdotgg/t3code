@@ -384,6 +384,12 @@ interface ActivePiTurn {
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
   lastMessageUsage: PiMessageTokenUsage | undefined;
+  turnUsage: {
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+    cacheCreationTokens: number;
+  } | null;
   settleProbeGeneration: number;
   /** An extension may start compaction immediately after Pi emits agent_settled. */
   settleWhenIdle: boolean;
@@ -2120,6 +2126,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           turn.stopTreeRefs !== undefined ? turn.stopTreeRefs : yield* captureTurnTreeRefs();
         const tokenUsage = readUsage ? yield* readTokenUsage(turn, completedAt) : undefined;
         const failure = interrupted ? null : (turn.rejectedPromptFailure ?? turn.failure);
+        const status = interrupted ? "interrupted" : failure !== null ? "failed" : "completed";
         yield* emit({
           type: "provider_turn.updated",
           driver: PI_PROVIDER,
@@ -2132,9 +2139,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             ...(state.providerThread.nativeThreadRef === null
               ? {}
               : { nativeThreadRef: state.providerThread.nativeThreadRef }),
-            status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
+            status,
             completedAt,
             ...(tokenUsage === undefined ? {} : { tokenUsage }),
+            ...(turn.turnUsage === null
+              ? {}
+              : {
+                  turnTokenUsage: {
+                    usageScope: "main_agent" as const,
+                    usageStatus:
+                      status === "completed" ? ("complete" as const) : ("partial" as const),
+                    hasSubagents: false,
+                    inputTokens: turn.turnUsage.inputTokens,
+                    outputTokens: turn.turnUsage.outputTokens,
+                    cachedInputTokens: turn.turnUsage.cachedInputTokens,
+                    cacheCreationTokens: turn.turnUsage.cacheCreationTokens,
+                  },
+                }),
             ...(turn.reportedModel === undefined ? {} : { model: turn.reportedModel }),
           },
         });
@@ -2417,6 +2438,30 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const reportedModelId = recordString(message, "model");
             if (reportedProvider && reportedModelId) {
               turn.reportedModel = `${reportedProvider}/${reportedModelId}`;
+            }
+            const usage = recordField(message, "usage");
+            if (usage !== undefined) {
+              const input = nonNegativeInteger(usage, "input") ?? 0;
+              const cacheRead = nonNegativeInteger(usage, "cacheRead") ?? 0;
+              const cacheWrite = nonNegativeInteger(usage, "cacheWrite") ?? 0;
+              const output = nonNegativeInteger(usage, "output") ?? 0;
+              const promptTokens = input + cacheRead + cacheWrite;
+              if (promptTokens > 0 || output > 0) {
+                turn.turnUsage =
+                  turn.turnUsage === null
+                    ? {
+                        inputTokens: promptTokens,
+                        outputTokens: output,
+                        cachedInputTokens: cacheRead,
+                        cacheCreationTokens: cacheWrite,
+                      }
+                    : {
+                        inputTokens: turn.turnUsage.inputTokens + promptTokens,
+                        outputTokens: turn.turnUsage.outputTokens + output,
+                        cachedInputTokens: turn.turnUsage.cachedInputTokens + cacheRead,
+                        cacheCreationTokens: turn.turnUsage.cacheCreationTokens + cacheWrite,
+                      };
+              }
             }
             if (recordString(message, "stopReason") === "error" && turn.failure === null) {
               turn.failure = makeProviderFailure({
@@ -3550,6 +3595,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               latestCompactionAfterTokens: null,
               lastLiveUsedTokens: null,
               lastMessageUsage: undefined,
+              turnUsage: null,
               settleProbeGeneration: 0,
               settleWhenIdle: false,
               compactionCancelled: false,

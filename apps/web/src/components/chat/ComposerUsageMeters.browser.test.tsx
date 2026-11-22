@@ -44,23 +44,38 @@ const contextWindow: ContextWindowSnapshot = {
 };
 
 describe("ComposerUsageMeters", () => {
-  it("shows the context window, hour and day spend, and cache rate", async () => {
-    await render(<ComposerUsageMeters contextWindow={contextWindow} budget={budget(16.91)} />);
+  it("shows the session context window and cache rate before hour and day spend", async () => {
+    const screen = await render(
+      <ComposerUsageMeters
+        contextWindow={contextWindow}
+        cacheHitPercent={94.2}
+        budget={budget(16.91)}
+      />,
+    );
     await expect.element(page.getByLabelText("Context: 4% used")).toBeVisible();
+    await expect.element(page.getByLabelText("Cache: 94%")).toBeVisible();
     await expect.element(page.getByLabelText("Hour: $17/$30")).toBeVisible();
     await expect.element(page.getByLabelText("Today: $127/$200")).toBeVisible();
-    await expect.element(page.getByLabelText("Cache: 98%")).toBeVisible();
+    const labels = [...screen.container.querySelectorAll("[aria-label]")].map((node) =>
+      node.getAttribute("aria-label"),
+    );
+    expect(labels).toEqual(["Context: 4% used", "Cache: 94%", "Hour: $17/$30", "Today: $127/$200"]);
   });
 
-  it("colors a window that passed its soft limit", async () => {
-    await render(<ComposerUsageMeters contextWindow={null} budget={budget(28)} />);
+  it("colors a window that passed its soft limit and omits cache when the session has none", async () => {
+    const screen = await render(
+      <ComposerUsageMeters contextWindow={null} cacheHitPercent={null} budget={budget(28)} />,
+    );
     await expect
       .element(page.getByLabelText("Hour: $28/$30").getByText("$28/$30"))
       .toHaveClass(/text-warning-foreground/);
+    expect(screen.container.querySelector('[aria-label^="Cache:"]')).toBeNull();
   });
 
-  it("shows nothing without a context window or budget", async () => {
-    const screen = await render(<ComposerUsageMeters contextWindow={null} budget={null} />);
+  it("shows nothing without a context window, session cache rate, or budget", async () => {
+    const screen = await render(
+      <ComposerUsageMeters contextWindow={null} cacheHitPercent={null} budget={null} />,
+    );
     expect(screen.container.textContent).toBe("");
   });
 });

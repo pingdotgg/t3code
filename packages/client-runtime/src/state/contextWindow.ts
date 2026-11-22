@@ -76,6 +76,24 @@ export function latestProviderTurnTokenUsage(
   );
 }
 
+/** Cache reads as a share of the active provider thread's prompt tokens; null before any turn reports them. */
+export function deriveSessionCacheHitPercent(
+  turns: ReadonlyArray<Pick<OrchestrationV2ProviderTurn, "providerThreadId" | "turnTokenUsage">>,
+  providerThread?: Pick<OrchestrationV2ProviderThread, "id"> | null,
+): number | null {
+  let inputTokens = 0;
+  let cachedInputTokens = 0;
+  for (const { providerThreadId, turnTokenUsage } of turns) {
+    if (turnTokenUsage === undefined) continue;
+    if (providerThread != null && providerThreadId !== providerThread.id) continue;
+    if (turnTokenUsage.inputTokens === undefined || turnTokenUsage.inputTokens <= 0) continue;
+    if (turnTokenUsage.cachedInputTokens === undefined) continue;
+    inputTokens += turnTokenUsage.inputTokens;
+    cachedInputTokens += Math.min(turnTokenUsage.cachedInputTokens, turnTokenUsage.inputTokens);
+  }
+  return inputTokens > 0 ? (cachedInputTokens / inputTokens) * 100 : null;
+}
+
 type CompactionItem = Extract<ThreadStructureTurnItem, { readonly type: "compaction" }>;
 
 // A retired provider thread's items say nothing about the active conversation.

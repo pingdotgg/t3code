@@ -1196,6 +1196,54 @@ describe("PiAdapterV2", () => {
       }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("aggregates assistant message usage into turnTokenUsage on turn completion", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      const { runtime, takeEvent } = yield* openRuntime(fake);
+      const providerThread = yield* runtime.ensureThread({
+        threadId: THREAD_ID,
+        modelSelection: modelSelection("default"),
+        runtimePolicy,
+      });
+      yield* startTurn(runtime, providerThread);
+      yield* fake.takeRequest("prompt");
+      yield* fake.emit({ type: "agent_start" });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          usage: { input: 100, output: 20, cacheRead: 300, cacheWrite: 50 },
+          stopReason: "toolUse",
+        },
+      });
+      yield* fake.emit({
+        type: "message_end",
+        message: {
+          role: "assistant",
+          usage: { input: 50, output: 30, cacheRead: 500, cacheWrite: 0 },
+          stopReason: "stop",
+        },
+      });
+      fake.queueState({ isStreaming: false });
+      yield* fake.emit({ type: "agent_settled" });
+      const updated = yield* takeEvent(
+        (event) =>
+          event.type === "provider_turn.updated" && event.providerTurn.status === "completed",
+      );
+      assert.isTrue(updated.type === "provider_turn.updated");
+      if (updated.type !== "provider_turn.updated") return;
+      assert.deepEqual(updated.providerTurn.turnTokenUsage, {
+        usageScope: "main_agent",
+        usageStatus: "complete",
+        hasSubagents: false,
+        inputTokens: 1000,
+        outputTokens: 50,
+        cachedInputTokens: 800,
+        cacheCreationTokens: 50,
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect.each([false, true])(
     "serializes rollback fork hooks with native wake ownership, wake=%s",
     (nativeWake) =>
