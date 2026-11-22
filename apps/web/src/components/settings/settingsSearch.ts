@@ -31,6 +31,7 @@ export type SettingsPath =
   | "/settings/threads"
   | "/settings/browser"
   | "/settings/devices"
+  | "/settings/electronics"
   | "/settings/scheduled-tasks"
   | "/settings/source-control"
   | "/settings/worktrees"
@@ -107,6 +108,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/threads": msg("Threads"),
   "/settings/browser": msg("Browser"),
   "/settings/devices": msg("Devices"),
+  "/settings/electronics": msg("Electronics"),
   "/settings/scheduled-tasks": msg("Scheduled tasks"),
   "/settings/source-control": msg("Source control & issues"),
   "/settings/worktrees": msg("Worktrees"),
@@ -157,6 +159,7 @@ const ALL_SETTINGS_NAV_GROUPS: ReadonlyArray<SettingsNavGroup> = [
       "/settings/threads",
       "/settings/browser",
       "/settings/devices",
+      "/settings/electronics",
       "/settings/scheduled-tasks",
     ],
   },
@@ -1103,6 +1106,24 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("allow disable enable open drive preview tools sessions project override")],
   },
   {
+    id: "electronics-workbench-enabled",
+    title: msg("Electronics Workbench"),
+    to: "/settings/electronics",
+    targetId: "electronics-workbench-enabled",
+    scope: "environment",
+    searchTerms: [
+      msg("electronics kicad spice pcb schematic circuit erc drc ngspice simulation path"),
+    ],
+  },
+  {
+    id: "electronics-agent-access",
+    title: msg("Allow agent MCP access (Electronics)"),
+    to: "/settings/electronics",
+    targetId: "electronics-agent-access",
+    scope: "environment",
+    searchTerms: [msg("electronics mcp agent kicad spice validate simulate trace")],
+  },
+  {
     id: "device-sources",
     title: msg("Device sources"),
     to: "/settings/devices",
@@ -1510,6 +1531,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/threads": null,
   "/settings/browser": null,
   "/settings/devices": null,
+  "/settings/electronics": "environment",
   "/settings/source-control": "environment-defaults",
   "/settings/worktrees": "project-defaults",
   "/settings/connections": "connections",

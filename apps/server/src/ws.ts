@@ -203,6 +203,7 @@ import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as ElectronicsService from "./electronics/ElectronicsService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1501,6 +1502,7 @@ export const layerWsRpc = (
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
+      const electronicsService = yield* ElectronicsService.ElectronicsService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -3408,6 +3410,18 @@ export const layerWsRpc = (
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
+        [WS_METHODS.electronicsListFiles]: (input) => electronicsService.listFiles(input.cwd),
+        [WS_METHODS.electronicsInspect]: (input) =>
+          electronicsService.inspect(input.cwd, input.filePath),
+        [WS_METHODS.electronicsTracePath]: (input) => electronicsService.tracePath(input),
+        [WS_METHODS.electronicsValidate]: (input) => electronicsService.validate(input),
+        [WS_METHODS.electronicsSimulate]: (input) => electronicsService.simulate(input),
+        [WS_METHODS.electronicsToolchainStatus]: (input) =>
+          electronicsService.getToolchainStatus(input.refresh ?? false),
+        [WS_METHODS.electronicsOpenPanel]: (input) => electronicsService.openPanel(input),
+        [WS_METHODS.electronicsClosePanel]: (input) =>
+          electronicsService.closePanel(input.threadId).pipe(Effect.as({})),
+        [WS_METHODS.subscribeElectronicsState]: (_input) => electronicsService.subscribeState,
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

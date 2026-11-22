@@ -295,6 +295,10 @@
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
     },
+    "./state/electronics": {
+      "types": "./src/state/electronics.ts",
+      "default": "./src/state/electronics.ts"
+    },
     "./state/previewTunnel": {
       "types": "./src/state/previewTunnel.ts",
       "default": "./src/state/previewTunnel.ts"

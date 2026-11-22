@@ -5,6 +5,7 @@ import {
 } from "@t3tools/client-runtime/environment";
 import type {
   DeviceServiceState,
+  ElectronicsServiceState,
   EnvironmentId,
   PreviewSessionSnapshot,
   ScopedThreadRef,
@@ -27,6 +28,7 @@ import { useRightPanelStore } from "../../rightPanelStore";
 import { RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY } from "../../rightPanelLayout";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { deviceEnvironment } from "../../state/device";
+import { electronicsEnvironment } from "../../state/electronics";
 import { readEnvironmentSupportsServerBrowser } from "../../state/entities";
 import { environmentSummaries } from "../../state/presentation";
 
@@ -217,8 +219,27 @@ export function resetDeviceSessionBaselinesForTests(): void {
   deviceSessionBaselines.clear();
 }
 
+const electronicsSessionBaselines = new Map<EnvironmentId, Map<ThreadId, string>>();
+
+function applyElectronicsSnapshot(
+  environmentId: EnvironmentId,
+  state: ElectronicsServiceState,
+): void {
+  const previous = electronicsSessionBaselines.get(environmentId);
+  const next = new Map<ThreadId, string>();
+  for (const session of state.sessions) {
+    next.set(session.threadId, session.updatedAt);
+    if (previous !== undefined && previous.get(session.threadId) !== session.updatedAt) {
+      useRightPanelStore
+        .getState()
+        .open(scopeThreadRef(environmentId, session.threadId), "electronics");
+    }
+  }
+  electronicsSessionBaselines.set(environmentId, next);
+}
+
 function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
-  return appAtomRegistry.subscribe(
+  const stopDevices = appAtomRegistry.subscribe(
     deviceEnvironment.state({ environmentId, input: {} }),
     (result) => {
       const state = AsyncResult.getOrElse(result, () => null);
@@ -230,6 +251,20 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     },
     { immediate: true },
   );
+  const stopElectronics = appAtomRegistry.subscribe(
+    electronicsEnvironment.state({ environmentId, input: {} }),
+    (result) => {
+      const state = AsyncResult.getOrElse(result, () => null);
+      if (state === null) return;
+      applyElectronicsSnapshot(environmentId, state);
+    },
+    { immediate: true },
+  );
+  return () => {
+    stopDevices();
+    stopElectronics();
+    electronicsSessionBaselines.delete(environmentId);
+  };
 }
 
 /**

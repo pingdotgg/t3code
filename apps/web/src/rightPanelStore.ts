@@ -26,6 +26,7 @@ const RIGHT_PANEL_KINDS = [
   "file",
   "preview",
   "device",
+  "electronics",
   "terminal",
   "pull-request",
   "pull-requests",
@@ -48,6 +49,7 @@ export type RightPanelSurface =
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
+  | { id: "electronics"; kind: "electronics"; filePath?: string }
   | {
       id: `terminal:${string}`;
       kind: "terminal";
@@ -299,6 +301,8 @@ const singletonSurface = (
       return { id: "pull-requests", kind };
     case "device":
       return { id: "device", kind };
+    case "electronics":
+      return { id: "electronics", kind };
   }
 };
 

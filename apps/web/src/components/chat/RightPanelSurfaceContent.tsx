@@ -36,6 +36,11 @@ const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
+const ElectronicsPanel = lazy(() =>
+  import("../electronics/ElectronicsPanel").then((module) => ({
+    default: module.ElectronicsPanel,
+  })),
+);
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
 type RightPanelTerminalProps = Omit<
@@ -248,6 +253,18 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "electronics":
+      return (
+        <Suspense fallback={null}>
+          <ElectronicsPanel
+            key={surface.id}
+            threadRef={threadRef}
+            workspaceRoot={props.files.workspaceRoot}
+            initialFilePath={surface.filePath}
+            visible={visible}
           />
         </Suspense>
       );

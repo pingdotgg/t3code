@@ -465,6 +465,24 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  ElectronicsCircuitModel,
+  ElectronicsClosePanelInput,
+  ElectronicsError,
+  ElectronicsInspectInput,
+  ElectronicsListFilesInput,
+  ElectronicsListFilesResult,
+  ElectronicsOpenPanelInput,
+  ElectronicsServiceState,
+  ElectronicsSimulateInput,
+  ElectronicsSimulationResult,
+  ElectronicsThreadSession,
+  ElectronicsToolchainStatus,
+  ElectronicsTracePathInput,
+  ElectronicsTracePathResult,
+  ElectronicsValidateInput,
+  ElectronicsValidationReport,
+} from "./electronics.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
@@ -562,6 +580,16 @@ export const WS_METHODS = {
   deviceShutdown: "device.shutdown",
   deviceDetail: "device.detail",
   deviceAction: "device.action",
+
+  electronicsListFiles: "electronics.listFiles",
+  electronicsInspect: "electronics.inspect",
+  electronicsTracePath: "electronics.tracePath",
+  electronicsValidate: "electronics.validate",
+  electronicsSimulate: "electronics.simulate",
+  electronicsToolchainStatus: "electronics.toolchainStatus",
+  electronicsOpenPanel: "electronics.openPanel",
+  electronicsClosePanel: "electronics.closePanel",
+  subscribeElectronicsState: "electronics.subscribeState",
 
   serverProbe: "server.probe",
   serverGetConfig: "server.getConfig",
@@ -2365,6 +2393,63 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
   stream: true,
 });
 
+const WsElectronicsListFilesRpc = Rpc.make(WS_METHODS.electronicsListFiles, {
+  payload: ElectronicsListFilesInput,
+  success: ElectronicsListFilesResult,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsInspectRpc = Rpc.make(WS_METHODS.electronicsInspect, {
+  payload: ElectronicsInspectInput,
+  success: ElectronicsCircuitModel,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsTracePathRpc = Rpc.make(WS_METHODS.electronicsTracePath, {
+  payload: ElectronicsTracePathInput,
+  success: ElectronicsTracePathResult,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsValidateRpc = Rpc.make(WS_METHODS.electronicsValidate, {
+  payload: ElectronicsValidateInput,
+  success: ElectronicsValidationReport,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsSimulateRpc = Rpc.make(WS_METHODS.electronicsSimulate, {
+  payload: ElectronicsSimulateInput,
+  success: ElectronicsSimulationResult,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsToolchainStatusRpc = Rpc.make(WS_METHODS.electronicsToolchainStatus, {
+  payload: Schema.Struct({
+    refresh: Schema.optional(Schema.Boolean),
+  }),
+  success: ElectronicsToolchainStatus,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsOpenPanelRpc = Rpc.make(WS_METHODS.electronicsOpenPanel, {
+  payload: ElectronicsOpenPanelInput,
+  success: ElectronicsThreadSession,
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsElectronicsClosePanelRpc = Rpc.make(WS_METHODS.electronicsClosePanel, {
+  payload: ElectronicsClosePanelInput,
+  success: Schema.Struct({}),
+  error: Schema.Union([ElectronicsError, EnvironmentAuthorizationError]),
+});
+
+const WsSubscribeElectronicsStateRpc = Rpc.make(WS_METHODS.subscribeElectronicsState, {
+  payload: Schema.Struct({}),
+  success: ElectronicsServiceState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 export class RpcScopeAuthorization extends RpcMiddleware.Service<RpcScopeAuthorization>()(
   "t3/contracts/RpcScopeAuthorization",
   { error: EnvironmentAuthorizationError },
@@ -2591,6 +2676,15 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsElectronicsListFilesRpc,
+  WsElectronicsInspectRpc,
+  WsElectronicsTracePathRpc,
+  WsElectronicsValidateRpc,
+  WsElectronicsSimulateRpc,
+  WsElectronicsToolchainStatusRpc,
+  WsElectronicsOpenPanelRpc,
+  WsElectronicsClosePanelRpc,
+  WsSubscribeElectronicsStateRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

@@ -1463,6 +1463,16 @@ export const ServerSettings = Schema.Struct({
   simlockDeviceHosts: SimlockDeviceHostConfigs.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   /** Alpha: Simlock device hosts. Off, the server ignores `simlockDeviceHosts`. */
   simlockDeviceHostsEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /** Electronics Workbench panel, pure-TS parser/path validator, and optional KiCad/ngspice toolchain. */
+  enableElectronicsWorkbench: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  enableAgentElectronicsAccess: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  electronicsAllowExternalTools: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
+  electronicsKicadCliPath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  electronicsNgspicePath: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
@@ -1918,6 +1928,11 @@ export const ServerSettingsPatch = Schema.Struct({
   easDeviceHosts: Schema.optionalKey(EasDeviceHostConfigs),
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
+  enableElectronicsWorkbench: Schema.optionalKey(Schema.Boolean),
+  enableAgentElectronicsAccess: Schema.optionalKey(Schema.Boolean),
+  electronicsAllowExternalTools: Schema.optionalKey(Schema.Boolean),
+  electronicsKicadCliPath: Schema.optionalKey(TrimmedString),
+  electronicsNgspicePath: Schema.optionalKey(TrimmedString),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
