@@ -1,4 +1,5 @@
-import type { EnvironmentId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { useEffect, useRef } from "react";
 import { create } from "zustand";
@@ -39,6 +40,30 @@ const NO_PREPARING_IMAGES: ReadonlyArray<PreparingComposerImage> = [];
 const usePreparingComposerImageStore = create<{
   readonly byTargetKey: Readonly<Record<string, ReadonlyArray<PreparingComposerImage>>>;
 }>(() => ({ byTargetKey: {} }));
+
+const movedImageThreads = new WeakMap<PreparingComposerImage, ScopedThreadRef>();
+
+export function movedPreparingImageThread(image: PreparingComposerImage) {
+  return movedImageThreads.get(image);
+}
+
+/** Carries the live tiles to the thread, where they can still be removed or awaited. */
+export function movePreparingComposerImagesToThread(
+  sourceKey: string,
+  thread: ScopedThreadRef,
+): void {
+  const images = getPreparingComposerImages(sourceKey);
+  if (images.length === 0) return;
+  const threadKey = scopedThreadKey(thread);
+  for (const image of images) movedImageThreads.set(image, thread);
+  invalidatePendingSubmit(sourceKey);
+  usePreparingComposerImageStore.setState(({ byTargetKey }) => {
+    const next = { ...byTargetKey };
+    delete next[sourceKey];
+    next[threadKey] = [...(next[threadKey] ?? NO_PREPARING_IMAGES), ...images];
+    return { byTargetKey: next };
+  });
+}
 
 export function usePreparingComposerImages(targetKey: string) {
   return usePreparingComposerImageStore(
@@ -136,10 +161,10 @@ export function cancelHeldComposerSend(targetKey: string): void {
 }
 
 /** Inserts finished images into the draft without counting as an edit to a held send. */
-export function joinPreparedImagesToDraft(insert: () => void): void {
+export function joinPreparedImagesToDraft<T>(insert: () => T): T {
   preparedImagesJoiningDraft = true;
   try {
-    insert();
+    return insert();
   } finally {
     preparedImagesJoiningDraft = false;
   }
