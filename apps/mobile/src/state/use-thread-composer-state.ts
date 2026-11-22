@@ -259,6 +259,45 @@ export function useThreadComposerState(input: {
   const selectedThreadKey = selectedThreadShell
     ? scopedThreadKey(selectedThreadShell.environmentId, selectedThreadShell.id)
     : null;
+  const selectedThreadSequence = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_THREAD_SEQUENCE_ATOM
+      : environmentThreadDetails.sequenceAtom(selectedThreadDetailRef),
+  );
+  const checkpointSummaries = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
+      : environmentThreadDetails.checkpointSummariesAtom(selectedThreadDetailRef),
+  );
+  const [feedCache] = useState(createThreadFeedCache);
+  const preferencesResult = useAtomValue(mobilePreferencesAtom);
+  const queueWorkflow = useAtomValue(
+    selectedThreadDetailRef === null
+      ? EMPTY_QUEUE_WORKFLOW_ATOM
+      : environmentThreadDetails.queueWorkflowAtom(selectedThreadDetailRef),
+  );
+  const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
+  const selectedDraft = useComposerDraftSettings(selectedThreadKey);
+  const nowMinuteMs = useNowMinuteMs();
+  const fullHistoryThreadKeys = useAtomValue(fullHistoryThreadKeysAtom);
+  const { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText } =
+    useComposerAttachmentActions({
+      draftKey: selectedThreadShell ? activeComposerDraftKey(selectedThreadShell) : null,
+      serverConfig: selectedEnvironmentRuntime?.serverConfig,
+    });
+
+  const selectedThreadMessages = selectedThreadProjection?.projection.messages;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes the app-wide acknowledged atom when the mounted thread catches up
+  useEffect(() => {
+    if (selectedThreadKey === null || acknowledgedMessages.length === 0) return;
+    pruneCaughtUpAcknowledgedThreadMessages(selectedThreadKey, {
+      sequence: selectedThreadSequence,
+      messages: selectedThreadMessages,
+    });
+  }, [acknowledgedMessages, selectedThreadKey, selectedThreadSequence, selectedThreadMessages]);
+  // Every hook runs before the derived values below. The React Compiler can only
+  // memoize a value whose computation spans no hook call, so a hook between
+  // derivations rebuilt the feed and its callbacks on every render.
   const selectedThreadQueuedMessages = selectedThreadKey
     ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
         (message) => message.creation === undefined,
@@ -278,33 +317,13 @@ export function useThreadComposerState(input: {
       [selectedThreadKey]: (current[selectedThreadKey] ?? []).filter((entry) => entry.id !== id),
     }));
   };
-  const selectedThreadMessages = selectedThreadProjection?.projection.messages;
   const selectedThreadAttempts = selectedThreadProjection?.projection.attempts;
   const selectedThreadNodes = selectedThreadProjection?.projection.nodes;
-  const selectedThreadSequence = useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_THREAD_SEQUENCE_ATOM
-      : environmentThreadDetails.sequenceAtom(selectedThreadDetailRef),
-  );
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prunes the app-wide acknowledged atom when the mounted thread catches up
-  useEffect(() => {
-    if (selectedThreadKey === null || acknowledgedMessages.length === 0) return;
-    pruneCaughtUpAcknowledgedThreadMessages(selectedThreadKey, {
-      sequence: selectedThreadSequence,
-      messages: selectedThreadMessages,
-    });
-  }, [acknowledgedMessages, selectedThreadKey, selectedThreadSequence, selectedThreadMessages]);
-  const checkpointSummaries = useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_CHECKPOINT_SUMMARIES_ATOM
-      : environmentThreadDetails.checkpointSummariesAtom(selectedThreadDetailRef),
-  );
   // A thread whose creation has not delivered its turn yet: the prompt only
   // exists in the outbox, so it is appended to whatever the server has. The
   // detail is usually present but empty during a worktree checkout, so this
   // cannot be an either/or with the loaded messages.
   const pendingCreationMessage = selectedThreadCreation?.message ?? null;
-  const [feedCache] = useState(createThreadFeedCache);
   const selectedThreadFeed = (() => {
     const pendingCreation =
       pendingCreationMessage !== null &&
@@ -333,23 +352,15 @@ export function useThreadComposerState(input: {
     );
   })();
 
-  const preferencesResult = useAtomValue(mobilePreferencesAtom);
   const followUpBehavior = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.followUpBehavior ?? DEFAULT_FOLLOW_UP_BEHAVIOR)
     : DEFAULT_FOLLOW_UP_BEHAVIOR;
-  const queueWorkflow = useAtomValue(
-    selectedThreadDetailRef === null
-      ? EMPTY_QUEUE_WORKFLOW_ATOM
-      : environmentThreadDetails.queueWorkflowAtom(selectedThreadDetailRef),
-  );
-  const queuedRunEdit = useQueuedRunEdit(selectedThreadKey);
   const composerDraftKey =
     selectedThreadKey === null
       ? null
       : queuedRunEdit === null
         ? selectedThreadKey
         : queuedEditDraftKey(selectedThreadKey, queuedRunEdit.runId);
-  const selectedDraft = useComposerDraftSettings(selectedThreadKey);
   const selectedThreadQueueCount = selectedThreadQueuedMessages.length;
   const selectedThread = selectedThreadShell;
   const modelSelection = selectedDraft.modelSelection ?? selectedThread?.modelSelection ?? null;
@@ -480,12 +491,10 @@ export function useThreadComposerState(input: {
           now,
         })
       : null;
-  const nowMinuteMs = useNowMinuteMs();
   const compactTokens =
     selectedDraft.freshContext === true
       ? null
       : resumeCompactionTokens(modelSelection, "", new Date(nowMinuteMs).toISOString());
-  const fullHistoryThreadKeys = useAtomValue(fullHistoryThreadKeysAtom);
   const keepFullHistory =
     selectedThreadKey !== null && fullHistoryThreadKeys[selectedThreadKey] === true;
   const interruptibleRunId = threadRuntimeHasInterruptibleRun(selectedThreadRuntime)
@@ -1028,12 +1037,6 @@ export function useThreadComposerState(input: {
     const threadKey = activeComposerDraftKey(selectedThreadShell);
     setComposerDraftText(threadKey, value);
   };
-
-  const { onPickDraftMedia, onPickDraftFiles, onNativePasteImages, onNativePasteText } =
-    useComposerAttachmentActions({
-      draftKey: selectedThreadShell ? activeComposerDraftKey(selectedThreadShell) : null,
-      serverConfig: selectedEnvironmentRuntime?.serverConfig,
-    });
 
   const onRemoveDraftImage = (imageId: string) => {
     if (!selectedThreadShell) {

@@ -5,16 +5,23 @@ import {
   offersLinkedEnvironments,
 } from "@t3tools/client-runtime/link-request";
 import { createPeerLinkEnvironmentAtoms } from "@t3tools/client-runtime/state/peerLinks";
+import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { Atom } from "effect/reactivity";
 import { useEffect, useEffectEvent, useMemo } from "react";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { useEnvironments } from "./environments";
+import { environmentPresentations } from "./presentation";
 import { relayEnvironmentDiscovery } from "./relay";
 import { useEnvironmentQuery } from "./query";
 import { useAtomCommand } from "./use-atom-command";
 
 export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtomRuntime);
+
+const NO_PRESENTATIONS_ATOM = Atom.make<ReadonlyMap<EnvironmentId, EnvironmentPresentation>>(
+  new Map(),
+);
 
 /**
  * The machines `environmentId` links to, by name, while it offers links, and none otherwise.
@@ -23,18 +30,26 @@ export const peerLinkEnvironment = createPeerLinkEnvironmentAtoms(connectionAtom
 export function useLinkedEnvironments(
   environmentId: EnvironmentId | null,
 ): ReadonlyMap<EnvironmentId, string> {
-  const { environments } = useEnvironments();
-  const offered = offersLinkedEnvironments(
-    environments.find((environment) => environment.environmentId === environmentId)?.serverConfig,
+  // Every message without thread links passes null, and must not re-render on each connection change.
+  const presentationById = useAtomValue(
+    environmentId === null ? NO_PRESENTATIONS_ATOM : environmentPresentations.presentationsAtom,
   );
+  const offered =
+    environmentId !== null &&
+    offersLinkedEnvironments(presentationById.get(environmentId)?.serverConfig);
   const links = useEnvironmentQuery(
-    offered && environmentId !== null
-      ? peerLinkEnvironment.names({ environmentId, input: {} })
-      : null,
+    offered ? peerLinkEnvironment.names({ environmentId, input: {} }) : null,
   );
   return useMemo(
-    () => linkedEnvironmentNames({ links: offered ? (links.data?.links ?? []) : [], environments }),
-    [environments, links.data, offered],
+    () =>
+      linkedEnvironmentNames({
+        links: offered ? (links.data?.links ?? []) : [],
+        environments: [...presentationById].map(([id, presentation]) => ({
+          environmentId: id,
+          label: presentation.entry.target.label,
+        })),
+      }),
+    [presentationById, links.data, offered],
   );
 }
 

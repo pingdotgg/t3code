@@ -1,0 +1,82 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 205502bd60b7aec8f2609468986c6b0d010afd61..42f14ff9f73ab50059d9e53e4d59aa6b7e199f8f 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1039,6 +1039,12 @@ function _resolveAliasLocale(locale, customMapping) {
+ * translation credentials. It only stores locale metadata needed to resolve
+ * aliases, choose formatting fallbacks, and format values with Intl.
+ */
++// Patched for the T3 Code fork: every useGT/useMessages render calls
++// requiresTranslation with the configured locales, and each answer validated
++// both locales through Intl (getCanonicalLocales, DisplayNames), which is slow
++// on Hermes. Cache answers per resolution scope (rebuilt when locales change);
++// a custom mapping can change in place, so it skips the cache.
++const requiresTranslationCaches = /* @__PURE__ */ new WeakMap();
+ var LocaleConfig = class {
+ 	getResolutionScope() {
+ 		if (this.resolutionScope && this.isResolutionScopeCurrent(this.resolutionScope)) return this.resolutionScope;
+@@ -1169,7 +1175,22 @@ var LocaleConfig = class {
+ 	}
+ 	requiresTranslation(targetLocale, sourceLocale = this.defaultLocale, approvedLocales = this.locales.length ? this.locales : void 0) {
+ 		const approvedScope = approvedLocales ? approvedLocales === this.locales ? this.getResolutionScope().approved : _prepareApprovedLocales(approvedLocales.map((locale) => this.resolveCanonicalLocale(locale)), this.customMapping) : void 0;
+-		return _requiresTranslationWithScope(this.resolveCanonicalLocale(sourceLocale), this.resolveCanonicalLocale(targetLocale), approvedScope, this.customMapping);
++		const source = this.resolveCanonicalLocale(sourceLocale);
++		const target = this.resolveCanonicalLocale(targetLocale);
++		if (this.customMapping || approvedLocales !== void 0 && approvedLocales !== this.locales) return _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
++		const owner = approvedScope ?? this;
++		let results = requiresTranslationCaches.get(owner);
++		if (results === void 0) {
++			results = /* @__PURE__ */ new Map();
++			requiresTranslationCaches.set(owner, results);
++		}
++		const key = source + "\u0000" + target;
++		let result = results.get(key);
++		if (result === void 0) {
++			result = _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
++			results.set(key, result);
++		}
++		return result;
+ 	}
+ 	/**
+ 	* NOTE: consider moving LocaleCandidates type to this package, and
+diff --git a/dist/index.mjs b/dist/index.mjs
+index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..207e8555754179409e6c81e22817ebdcfc92ba47 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -1038,6 +1038,12 @@ function _resolveAliasLocale(locale, customMapping) {
+ * translation credentials. It only stores locale metadata needed to resolve
+ * aliases, choose formatting fallbacks, and format values with Intl.
+ */
++// Patched for the T3 Code fork: every useGT/useMessages render calls
++// requiresTranslation with the configured locales, and each answer validated
++// both locales through Intl (getCanonicalLocales, DisplayNames), which is slow
++// on Hermes. Cache answers per resolution scope (rebuilt when locales change);
++// a custom mapping can change in place, so it skips the cache.
++const requiresTranslationCaches = /* @__PURE__ */ new WeakMap();
+ var LocaleConfig = class {
+ 	getResolutionScope() {
+ 		if (this.resolutionScope && this.isResolutionScopeCurrent(this.resolutionScope)) return this.resolutionScope;
+@@ -1168,7 +1174,22 @@ var LocaleConfig = class {
+ 	}
+ 	requiresTranslation(targetLocale, sourceLocale = this.defaultLocale, approvedLocales = this.locales.length ? this.locales : void 0) {
+ 		const approvedScope = approvedLocales ? approvedLocales === this.locales ? this.getResolutionScope().approved : _prepareApprovedLocales(approvedLocales.map((locale) => this.resolveCanonicalLocale(locale)), this.customMapping) : void 0;
+-		return _requiresTranslationWithScope(this.resolveCanonicalLocale(sourceLocale), this.resolveCanonicalLocale(targetLocale), approvedScope, this.customMapping);
++		const source = this.resolveCanonicalLocale(sourceLocale);
++		const target = this.resolveCanonicalLocale(targetLocale);
++		if (this.customMapping || approvedLocales !== void 0 && approvedLocales !== this.locales) return _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
++		const owner = approvedScope ?? this;
++		let results = requiresTranslationCaches.get(owner);
++		if (results === void 0) {
++			results = /* @__PURE__ */ new Map();
++			requiresTranslationCaches.set(owner, results);
++		}
++		const key = source + "\u0000" + target;
++		let result = results.get(key);
++		if (result === void 0) {
++			result = _requiresTranslationWithScope(source, target, approvedScope, this.customMapping);
++			results.set(key, result);
++		}
++		return result;
+ 	}
+ 	/**
+ 	* NOTE: consider moving LocaleCandidates type to this package, and

@@ -399,10 +399,12 @@ export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
   const [statusRequests, setStatusRequests] = useState<
     Record<string, BackgroundWorkStopRequest | undefined>
   >({});
+  const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
   return (
     <ThreadDetailBody
-      key={scopedThreadKey(props.environmentId, props.selectedThread.id)}
+      key={selectedThreadKey}
       {...props}
+      selectedThreadKey={selectedThreadKey}
       statusRequests={statusRequests}
       setStatusRequests={setStatusRequests}
     />
@@ -411,6 +413,7 @@ export function ThreadDetailScreen(props: ThreadDetailScreenProps) {
 
 function ThreadDetailBody(
   props: ThreadDetailScreenProps & {
+    selectedThreadKey: string;
     statusRequests: Record<string, BackgroundWorkStopRequest | undefined>;
     setStatusRequests: React.Dispatch<
       React.SetStateAction<Record<string, BackgroundWorkStopRequest | undefined>>
@@ -505,7 +508,9 @@ function ThreadDetailBody(
   const columnMetrics = useNativeColumnLayoutMetrics();
   const nativeMetrics = usesNativeWorkspaceColumns ? columnMetrics : screenMetrics;
   const controlInsets = deriveBottomControlInsets(nativeMetrics);
-  const selectedThreadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  // A prop, not a scopedThreadKey call here: the React Compiler treats a call's result as mutable,
+  // so every later use kept the callbacks that capture it, and the feed and composer, unmemoized.
+  const selectedThreadKey = props.selectedThreadKey;
   const childThreadInputs = useChildThreadInputs({
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
@@ -1245,19 +1250,6 @@ function ThreadDetailBody(
       : isSplitLayout
         ? CHAT_CONTENT_MAX_WIDTH
         : undefined;
-  const providerSubagentProvider = props.serverConfig?.providers.find(
-    (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
-  );
-  const providerSubagentModelSlug = providerSubagentProvider
-    ? resolveSelectableModel(
-        providerSubagentProvider.driver,
-        props.selectedThread.modelSelection.model,
-        providerSubagentProvider.models,
-      )
-    : null;
-  const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
-    (model) => model.slug === providerSubagentModelSlug,
-  );
   const workspaceContentWidth = useWorkspaceContentWidth();
   // Clearing animated width can retain the unfolded width after Android resumes folded.
   const composerWidthStyle = useAnimatedStyle(() =>
@@ -1295,6 +1287,8 @@ function ThreadDetailBody(
       : (appAtomRegistry.get(
           environmentThreadDetails.pendingRequestsAtom(props.selectedThreadDetailRef),
         )?.approvals ?? []);
+  // Calling props.fn() makes the React Compiler depend on all of props, rebuilt every render.
+  const { onSendMessage, onChangeDraftMessage } = props;
   const handleSendMessage = async (
     followUp?: ActiveTurnComposerAction,
     stillSendable?: () => boolean,
@@ -1341,7 +1335,7 @@ function ThreadDetailBody(
           }
         : undefined;
     let dismissingKeyboard = false;
-    const messageId = await props.onSendMessage(followUp, declineBeforeDispatch, () => {
+    const messageId = await onSendMessage(followUp, declineBeforeDispatch, () => {
       if (
         scope.aborted ||
         Platform.OS !== "ios" ||
@@ -1447,7 +1441,7 @@ function ThreadDetailBody(
     const draftMessage =
       props.composerDraftKey === null ? "" : getComposerDraftSnapshot(props.composerDraftKey).text;
     const nextDraft = appendCodexArtifactTemplateUsePrompt(draftMessage, template);
-    if (nextDraft !== draftMessage) props.onChangeDraftMessage(nextDraft);
+    if (nextDraft !== draftMessage) onChangeDraftMessage(nextDraft);
     requestAnimationFrame(() => {
       composerEditorRef.current?.focus();
       composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
@@ -1464,6 +1458,20 @@ function ThreadDetailBody(
   const showScrollToEndButton = !props.draftMode && contentPresentationKind === "ready" && !isAtEnd;
   const { themeAppearance } = useAppearancePreferences();
   const isDarkMode = themeAppearance === "dark";
+  // After the last hook: the React Compiler can't memoize a lookup whose result is used across one.
+  const providerSubagentProvider = props.serverConfig?.providers.find(
+    (provider) => provider.instanceId === props.selectedThread.modelSelection.instanceId,
+  );
+  const providerSubagentModelSlug = providerSubagentProvider
+    ? resolveSelectableModel(
+        providerSubagentProvider.driver,
+        props.selectedThread.modelSelection.model,
+        providerSubagentProvider.models,
+      )
+    : null;
+  const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
+    (model) => model.slug === providerSubagentModelSlug,
+  );
 
   const handleFeedTouchStart = (event: GestureResponderEvent) => {
     feedTouchStartRef.current = {

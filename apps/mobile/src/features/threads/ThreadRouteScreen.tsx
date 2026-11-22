@@ -390,7 +390,11 @@ function ThreadRouteContent(
     AuthTerminalOperateScope,
   );
   const selectedThreadDetailState = props.selectedThreadDetailState;
-  const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  // The React Compiler treats Option.getOrNull's result as mutable, so the later reads that
+  // pass it on left most of this screen unmemoized; a property read is frozen like the prop.
+  const selectedThreadDetail = Option.isSome(selectedThreadDetailState.data)
+    ? selectedThreadDetailState.data.value
+    : null;
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const startSideChat = useStartSideChat();
   const composer = useThreadComposerState({ startSideChat });
@@ -951,6 +955,15 @@ function ThreadRouteContent(
       }),
     );
   };
+  // Above the content presentation: the compiler can't memoize a value used across a hook.
+  const connectionRetrying =
+    routeConnectionState === "connecting" || routeConnectionState === "reconnecting";
+  // Connection failures survive retries and app suspension.
+  const retryConnectionError = useDelayedStatus(
+    `${environmentId}:${connectionRetrying && routeConnectionError !== null}`,
+    connectionRetrying ? routeConnectionError : null,
+    RECONNECT_ERROR_DELAY_MS,
+  );
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
       return awaitingBootstrapTurn
@@ -981,14 +994,6 @@ function ThreadRouteContent(
           connectionState: routeConnectionState,
           resolve: m,
         });
-  const connectionRetrying =
-    routeConnectionState === "connecting" || routeConnectionState === "reconnecting";
-  // Connection failures survive retries and app suspension.
-  const retryConnectionError = useDelayedStatus(
-    `${environmentId}:${connectionRetrying && routeConnectionError !== null}`,
-    connectionRetrying ? routeConnectionError : null,
-    RECONNECT_ERROR_DELAY_MS,
-  );
   const connectionStatusLabel = connectionRetryLabel(
     {
       connectionError: retryConnectionError,
@@ -1029,7 +1034,8 @@ function ThreadRouteContent(
   }
 
   const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
-  const renderThreadRouteBody = () => (
+  // JSX, not a function called while rendering: the call kept everything it captured unmemoized.
+  const threadRouteBody = (
     <>
       <GitActionProgressOverlay
         progress={gitActionProgress}
@@ -1160,7 +1166,7 @@ function ThreadRouteContent(
         />
       ) : null}
 
-      {renderThreadRouteBody()}
+      {threadRouteBody}
     </>
   );
 }
