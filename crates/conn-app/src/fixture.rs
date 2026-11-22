@@ -5,7 +5,9 @@
 //! header breadcrumb can be inspected and tested standalone.
 
 use conn_contract::from_json;
-use conn_state::{ProjectShell, ShellState, ThreadActivity, ThreadShell};
+#[cfg(test)]
+use conn_state::ThreadActivity;
+use conn_state::{ProjectShell, ShellState, ThreadShell};
 use serde_json::{Value, json};
 
 /// Builds a realistic demo [`ShellState`] with 3 projects and 10 threads
@@ -158,7 +160,9 @@ pub(crate) fn demo_shell_state() -> ShellState {
 ///
 /// Prefers [`ShellState::activity`] once `conn-state`'s reducer populates it,
 /// and falls back to inspecting the decoded [`ThreadShell`] fields while
-/// running against the stub `conn-state` crate.
+/// running against the stub `conn-state` crate. The sidebar now resolves Conn's full status
+/// pills (`sidebar::thread_list::resolve_row_status`); fixture tests still use this.
+#[cfg(test)]
 #[must_use]
 pub(crate) fn thread_activity(shell: &ShellState, thread: &ThreadShell) -> ThreadActivity {
     let from_state = shell.activity(&thread.id);

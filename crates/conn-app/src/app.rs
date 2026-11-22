@@ -12,11 +12,20 @@ use gpui_kit::{
 
 use crate::a11y::ConnA11yExt as _;
 use crate::fixture::demo_shell_state;
-use crate::header::render_chat_header;
+use crate::header::details_card::{
+    DetailsCardProps, DetailsCopyTarget, EditorTarget, ThreadDetailsState,
+    render_thread_details_card, thread_cwd,
+};
+use crate::header::{ChatHeaderProps, render_chat_header};
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
 use crate::sidebar::rail::render_workspace_rail;
 use crate::sidebar::thread_list::render_thread_sidebar;
+use crate::sidebar::thread_menu::{
+    ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState, build_thread_action_menu_items,
+    render_thread_action_menu,
+};
 use crate::theme::{apply_kit_theme, hsla};
+use gpui_kit::prelude::FluentBuilder as _;
 
 actions!(conn_app, [ToggleSidebar, ToggleRightPanel, NewThread]);
 
@@ -94,6 +103,16 @@ pub(crate) struct ConnApp {
     renaming_thread_id: Option<String>,
     rename_input: Entity<gpui_kit::component::input::InputState>,
     _rename_sub: gpui_kit::Subscription,
+    /// The inline rename edits the chat header title (else the sidebar row).
+    rename_in_header: bool,
+    /// Open Thread Actions menu (sidebar right-click or header title).
+    thread_menu: Option<ThreadMenuAnchor>,
+    /// Bumped to cancel a pending header-title menu open (double-click renames instead).
+    header_menu_generation: u64,
+    /// Top-right Thread Details card.
+    thread_details: ThreadDetailsState,
+    /// Ticks relative times and live elapsed labels (`useNowSecond` / `useNowMinute`).
+    _sidebar_clock: Option<gpui_kit::Task<()>>,
     /// Whether the sidebar project-scope filter popover is open.
     sidebar_filter_menu_open: bool,
     /// When true, replaces translucent shell fills with opaque `sidebar`/`shell_card`.
@@ -331,7 +350,7 @@ impl ConnApp {
                     app.commit_thread_rename(cx);
                 }
                 gpui_kit::component::input::InputEvent::Blur => {
-                    app.cancel_thread_rename(cx);
+                    app.commit_thread_rename(cx);
                 }
                 _ => {}
             },
@@ -372,6 +391,11 @@ impl ConnApp {
             renaming_thread_id: None,
             rename_input,
             _rename_sub: rename_sub,
+            rename_in_header: false,
+            thread_menu: None,
+            header_menu_generation: 0,
+            thread_details: ThreadDetailsState::default(),
+            _sidebar_clock: None,
             sidebar_filter_menu_open: false,
             reduce_transparency: false,
             server_url,
@@ -390,6 +414,7 @@ impl ConnApp {
             annotation_last_sent: HashMap::new(),
         };
         app.sync_chat(cx);
+        app.start_sidebar_clock(cx);
         if crate::orbit_sync::orbit_sync_enabled_by_env() {
             app.sync_orbit_profile(crate::orbit_sync::allow_startup_theme_adopt(), cx);
             if let Some(rx) = app.right_panel.read(cx).subscribe_orbit_events(cx) {
@@ -619,10 +644,16 @@ impl ConnApp {
         cx.notify();
     }
 
-    /// A full-height seam with a 7px drag handle over it (Conn's resizable sidebar and right
-    /// panel). Double-click resets the panel to its default width.
+    /// A full-height seam with a `16px` (`w-4`) drag handle over it (Conn's `SidebarRail`):
+    /// a `1px` stripe lights on hover, dragging resizes, and double-click resets the width.
     fn render_seam(&self, right_panel: bool, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        use crate::panels::chrome::ConnTooltipExt as _;
         use gpui_kit::{CursorStyle, MouseButton, MouseDownEvent};
+        let stripe = hsla(self.tokens.sidebar_border);
+        let dragging = matches!(
+            (self.seam_drag, right_panel),
+            (Some(SeamDrag::RightPanel { .. }), true) | (Some(SeamDrag::Sidebar { .. }), false)
+        );
         let handle = div()
             .id(if right_panel {
                 "seam-right-panel"
@@ -632,9 +663,27 @@ impl ConnApp {
             .absolute()
             .top_0()
             .bottom_0()
-            .left(px(-3.0))
-            .w(px(7.0))
+            .left(px(-8.0))
+            .w(px(16.0))
+            .flex()
+            .justify_center()
+            .group("seam-handle")
             .cursor(CursorStyle::ResizeLeftRight)
+            .conn_tooltip(
+                if right_panel {
+                    "Drag to resize panel"
+                } else {
+                    "Drag to resize sidebar"
+                },
+                &self.tokens,
+            )
+            .child(
+                div()
+                    .h_full()
+                    .w(px(1.0))
+                    .when(dragging, move |s| s.bg(stripe))
+                    .group_hover("seam-handle", move |s| s.bg(stripe)),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |app, event: &MouseDownEvent, _, cx| {
@@ -2140,6 +2189,9 @@ impl ConnApp {
         }
         self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         self.sync_chat(cx);
+        if self.thread_details.open {
+            self.refresh_thread_details(cx);
+        }
         cx.notify();
     }
 
@@ -2521,15 +2573,590 @@ impl ConnApp {
         let Ok(cmd) = crate::commands::settle_thread(&thread_id, settled) else {
             return;
         };
+        // `planForwardNavigation`: settling the open thread moves on to the next active one.
+        let advance = settled
+            && self.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
+            && self.draft.is_none();
+        cx.spawn(
+            async move |this, cx| match connection.dispatch_command(cmd).await {
+                Ok(_) => {
+                    if advance {
+                        let _ = this.update(cx, |app, cx| {
+                            if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str())
+                            {
+                                app.navigate_forward_from(&thread_id, cx);
+                            }
+                        });
+                    }
+                }
+                Err(e) => eprintln!("settle: dispatchCommand failed: {e}"),
+            },
+        )
+        .detach();
+    }
+
+    /// `planForwardNavigation`: open the next active thread after `thread_id` in sidebar
+    /// order (wrapping), else start a new thread in its project.
+    fn navigate_forward_from(&mut self, thread_id: &str, cx: &mut Context<'_, Self>) {
+        let ordered = crate::sidebar::thread_list::ordered_active_thread_ids(&self.shell);
+        let next = ordered
+            .iter()
+            .position(|id| id == thread_id)
+            .and_then(|idx| {
+                ordered[idx + 1..]
+                    .iter()
+                    .chain(ordered[..idx].iter())
+                    .find(|id| id.as_str() != thread_id)
+                    .cloned()
+            });
+        match next {
+            Some(next) => self.select_thread(next, cx),
+            None => {
+                let project_id = self
+                    .shell
+                    .find_thread(thread_id)
+                    .map(|t| t.project_id.clone());
+                self.start_new_thread(project_id, None, cx);
+            }
+        }
+    }
+
+    /// Dispatches one orchestration command, logging failures under `what`.
+    fn dispatch_thread_command(
+        &self,
+        what: &'static str,
+        cmd: Result<conn_contract::OrchestrationV2Command, serde_json::Error>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let cmd = match cmd {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                eprintln!("{what}: could not build command: {e}");
+                return;
+            }
+        };
         cx.spawn(async move |_, _| {
             if let Err(e) = connection.dispatch_command(cmd).await {
-                eprintln!("settle: dispatchCommand failed: {e}");
+                eprintln!("{what}: dispatchCommand failed: {e}");
             }
         })
         .detach();
     }
 
-    /// Starts inline renaming for `thread_id` in the sidebar.
+    /// `thread.pin` / `thread.unpin`.
+    pub(crate) fn pin_thread(
+        &mut self,
+        thread_id: String,
+        pinned: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.dispatch_thread_command("pin", crate::commands::pin_thread(&thread_id, pinned), cx);
+    }
+
+    /// Opens the Thread Actions menu for `thread_id` at `position` (window coordinates).
+    pub(crate) fn open_thread_menu(
+        &mut self,
+        thread_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.thread_details.copy_menu = None;
+        self.thread_menu = Some(ThreadMenuAnchor {
+            thread_id,
+            position,
+            copy_open: false,
+        });
+        cx.notify();
+    }
+
+    /// Opens the header title's menu after the `500ms` double-click window, unless a
+    /// double-click (rename) arrives first.
+    pub(crate) fn schedule_header_title_menu(
+        &mut self,
+        thread_id: String,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.header_menu_generation = self.header_menu_generation.wrapping_add(1);
+        let generation = self.header_menu_generation;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(500))
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                if app.header_menu_generation == generation && app.renaming_thread_id.is_none() {
+                    app.open_thread_menu(thread_id, position, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Shows or hides the Thread Actions `Copy` submenu.
+    pub(crate) fn set_thread_menu_copy_open(&mut self, open: bool, cx: &mut Context<'_, Self>) {
+        if let Some(menu) = &mut self.thread_menu
+            && menu.copy_open != open
+        {
+            menu.copy_open = open;
+            cx.notify();
+        }
+    }
+
+    /// Closes open shell popovers (Thread Actions menu, details card and its menus).
+    /// Returns whether anything closed.
+    fn dismiss_shell_popovers(&mut self, cx: &mut Context<'_, Self>) -> bool {
+        let mut changed = self.thread_menu.take().is_some();
+        let details = &mut self.thread_details;
+        if details.copy_menu.take().is_some() {
+            changed = true;
+        } else if details.open_in_menu_open || details.scripts_menu_open {
+            details.open_in_menu_open = false;
+            details.scripts_menu_open = false;
+            changed = true;
+        } else if details.open {
+            details.open = false;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+        changed
+    }
+
+    /// Writes `text` to the system clipboard.
+    pub(crate) fn copy_to_clipboard(&mut self, text: String, cx: &mut Context<'_, Self>) {
+        cx.write_to_clipboard(gpui_kit::ClipboardItem::new_string(text));
+    }
+
+    /// Runs one Thread Actions menu item (`handleThreadContextMenu` switch).
+    pub(crate) fn run_thread_menu_action(
+        &mut self,
+        thread_id: String,
+        action: ThreadMenuAction,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.thread_menu = None;
+        cx.notify();
+        let Some(thread) = self.shell.find_thread(&thread_id).cloned() else {
+            return;
+        };
+        match action {
+            ThreadMenuAction::Pin => self.pin_thread(thread_id, true, cx),
+            ThreadMenuAction::Unpin => self.pin_thread(thread_id, false, cx),
+            ThreadMenuAction::Settle => self.settle_thread(thread_id, true, cx),
+            ThreadMenuAction::Unsettle => self.settle_thread(thread_id, false, cx),
+            ThreadMenuAction::Rename => {
+                self.start_thread_rename(thread_id, thread.title, window, cx);
+            }
+            ThreadMenuAction::RegenerateTitle => {
+                if thread
+                    .title_regeneration
+                    .as_ref()
+                    .is_some_and(Option::is_some)
+                {
+                    return;
+                }
+                self.dispatch_thread_command(
+                    "regenerate title",
+                    crate::commands::regenerate_thread_title(&thread_id),
+                    cx,
+                );
+            }
+            ThreadMenuAction::MarkUnread => self.dispatch_thread_command(
+                "mark unread",
+                crate::commands::mark_thread_unread(&thread_id),
+                cx,
+            ),
+            ThreadMenuAction::FilterByProject => {
+                let next = (self.active_workspace.as_deref() != Some(thread.project_id.as_str()))
+                    .then(|| thread.project_id.clone());
+                self.select_workspace(next, cx);
+            }
+            ThreadMenuAction::Copy => {}
+            ThreadMenuAction::CopyPath => {
+                if let Some(path) = thread_cwd(&self.shell, &thread) {
+                    self.copy_to_clipboard(path, cx);
+                }
+            }
+            ThreadMenuAction::CopyBranch => {
+                if let Some(branch) = thread.branch.filter(|b| !b.is_empty()) {
+                    self.copy_to_clipboard(branch, cx);
+                }
+            }
+            ThreadMenuAction::CopyThread => self.copy_to_clipboard(thread.title, cx),
+            ThreadMenuAction::CopyThreadId => self.copy_to_clipboard(thread.id, cx),
+            ThreadMenuAction::ProjectSettings => {
+                if self.settings_modal.is_none() {
+                    self.open_settings(window, cx);
+                }
+            }
+            ThreadMenuAction::Delete => {
+                self.confirm_delete_thread(thread_id, thread.title, window, cx)
+            }
+        }
+    }
+
+    /// `Delete thread "<title>"?` destructive confirmation, then `thread.delete`.
+    fn confirm_delete_thread(
+        &mut self,
+        thread_id: String,
+        title: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let answer = window.prompt(
+            gpui_kit::PromptLevel::Critical,
+            &format!("Delete thread \"{title}\"?"),
+            Some("This permanently clears conversation history for this thread."),
+            &["Delete", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            let _ = this.update(cx, |app, cx| {
+                if app.layout.selected_thread_id.as_deref() == Some(thread_id.as_str()) {
+                    app.navigate_forward_from(&thread_id, cx);
+                }
+                app.dispatch_thread_command(
+                    "delete thread",
+                    crate::commands::delete_thread(&thread_id),
+                    cx,
+                );
+            });
+        })
+        .detach();
+    }
+
+    /// Ticks the sidebar each second while a visible row shows a live elapsed label, else each
+    /// minute for relative ages (`useNowSecond` / `useNowMinute`).
+    fn start_sidebar_clock(&mut self, cx: &mut Context<'_, Self>) {
+        let task = cx.spawn(async move |this, cx| {
+            let mut last_minute = 0_i64;
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(1))
+                    .await;
+                let alive = this.update(cx, |app, cx| {
+                    let now = crate::sidebar::thread_list::current_unix_secs();
+                    let live = app.layout.sidebar_open
+                        && app.shell.top_level_active_threads().any(|t| {
+                            crate::sidebar::thread_list::resolve_row_status(t).is_some_and(|s| {
+                                matches!(
+                                    s,
+                                    crate::sidebar::thread_list::RowStatus::Working
+                                        | crate::sidebar::thread_list::RowStatus::Goal
+                                        | crate::sidebar::thread_list::RowStatus::Waiting
+                                )
+                            })
+                        });
+                    let minute = now / 60;
+                    if live || app.thread_details.open || minute != last_minute {
+                        last_minute = minute;
+                        cx.notify();
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        });
+        self._sidebar_clock = Some(task);
+    }
+
+    /// Applies one pointer move of a seam drag, keeping the chat column at least `640px`
+    /// (`THREAD_MAIN_CONTENT_MIN_WIDTH`).
+    fn apply_seam_drag(&mut self, drag: SeamDrag, x: f32, viewport_w: f32) {
+        const CHAT_MIN_WIDTH_PX: f32 = 640.0;
+        let rail = crate::shell::WORKSPACE_RAIL_WIDTH_PX;
+        match drag {
+            SeamDrag::Sidebar { from_x, start } => {
+                let right = if self.layout.right_panel_open {
+                    self.layout.right_panel_width
+                } else {
+                    0.0
+                };
+                let max = (viewport_w - rail - right - CHAT_MIN_WIDTH_PX)
+                    .max(conn_state::SIDEBAR_MIN_WIDTH);
+                self.layout
+                    .set_sidebar_width((start + (x - from_x)).min(max));
+            }
+            SeamDrag::RightPanel { from_x, start } => {
+                let left = if self.layout.sidebar_open {
+                    rail + self.layout.sidebar_width
+                } else {
+                    0.0
+                };
+                let max =
+                    (viewport_w - left - CHAT_MIN_WIDTH_PX).max(conn_state::RIGHT_PANEL_MIN_WIDTH);
+                self.layout
+                    .set_right_panel_width((start - (x - from_x)).min(max));
+            }
+        }
+    }
+
+    /// Toggles the top-right Thread Details card and loads its data when it opens.
+    pub(crate) fn toggle_thread_details(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_details.open = !self.thread_details.open;
+        self.thread_details.open_in_menu_open = false;
+        self.thread_details.scripts_menu_open = false;
+        self.thread_details.copy_menu = None;
+        if self.thread_details.open {
+            self.refresh_thread_details(cx);
+        }
+        cx.notify();
+    }
+
+    /// Loads VCS status (`vcs.refreshStatus`) and scheduled tasks for the open thread.
+    fn refresh_thread_details(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(thread) = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| self.shell.find_thread(id))
+        else {
+            return;
+        };
+        let thread_id = thread.id.clone();
+        let cwd = thread_cwd(&self.shell, thread);
+        if self.thread_details.loaded_for.as_deref() != Some(thread_id.as_str()) {
+            self.thread_details.vcs = None;
+            self.thread_details.prs_expanded = false;
+            self.thread_details.previous_agents_expanded = false;
+        }
+        self.thread_details.loaded_for = Some(thread_id.clone());
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if let Some(cwd) = cwd {
+            self.thread_details.vcs_loading = true;
+            let conn = connection.clone();
+            cx.spawn(async move |this, cx| {
+                let payload = conn_contract::VcsRefreshStatusPayload {
+                    cwd,
+                    local_only: Some(true),
+                };
+                let result = conn
+                    .call::<_, conn_contract::VcsStatusResult>("vcs.refreshStatus", &payload)
+                    .await;
+                let _ = this.update(cx, |app, cx| {
+                    if app.thread_details.loaded_for.as_deref() != Some(thread_id.as_str()) {
+                        return;
+                    }
+                    app.thread_details.vcs_loading = false;
+                    match result {
+                        Ok(status) => app.thread_details.vcs = Some(status),
+                        Err(e) => eprintln!("thread details: vcs.refreshStatus failed: {e}"),
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+        // First `scheduledTasks.subscribe` snapshot, then stop the stream.
+        let (stream_id, mut rx) =
+            connection.stream_json("scheduledTasks.subscribe", serde_json::json!({}));
+        cx.spawn(async move |this, cx| {
+            let first = rx.recv().await;
+            connection.cancel_stream(stream_id);
+            let _ = this.update(cx, |app, cx| {
+                match first.map(serde_json::from_value::<conn_state::ScheduledTaskListResult>) {
+                    Some(Ok(list)) => {
+                        app.thread_details.tasks = list.tasks.into_iter().flatten().collect();
+                        app.thread_details.tasks_error = None;
+                    }
+                    Some(Err(e)) => {
+                        app.thread_details.tasks_error =
+                            Some(format!("Failed to load scheduled tasks: {e}"));
+                    }
+                    None => {}
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    pub(crate) fn open_details_copy_menu(
+        &mut self,
+        target: DetailsCopyTarget,
+        position: gpui_kit::Point<gpui_kit::Pixels>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.thread_details.copy_menu = Some((target, position));
+        cx.notify();
+    }
+
+    pub(crate) fn close_details_copy_menu(&mut self, cx: &mut Context<'_, Self>) {
+        if self.thread_details.copy_menu.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    pub(crate) fn toggle_details_open_in_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_details.open_in_menu_open = !self.thread_details.open_in_menu_open;
+        self.thread_details.scripts_menu_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_details_scripts_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_details.scripts_menu_open = !self.thread_details.scripts_menu_open;
+        self.thread_details.open_in_menu_open = false;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_details_prs(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_details.prs_expanded = !self.thread_details.prs_expanded;
+        cx.notify();
+    }
+
+    pub(crate) fn toggle_details_previous_agents(&mut self, cx: &mut Context<'_, Self>) {
+        self.thread_details.previous_agents_expanded =
+            !self.thread_details.previous_agents_expanded;
+        cx.notify();
+    }
+
+    /// Picks the `Open in` editor (Conn persists the preferred editor).
+    pub(crate) fn set_preferred_editor(
+        &mut self,
+        editor: EditorTarget,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.thread_details.preferred_editor = Some(editor);
+        self.thread_details.open_in_menu_open = false;
+        cx.notify();
+    }
+
+    /// Opens the thread's workspace in `editor` (`open -a <App> <path>`, or Finder).
+    pub(crate) fn open_thread_in_editor(
+        &mut self,
+        editor: EditorTarget,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(path) = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| self.shell.find_thread(id))
+            .and_then(|t| thread_cwd(&self.shell, t))
+        else {
+            return;
+        };
+        let mut command = std::process::Command::new("open");
+        if let Some(app) = editor.app_name() {
+            command.arg("-a").arg(app);
+        }
+        if let Err(e) = command.arg(&path).spawn() {
+            eprintln!("open in {}: {e}", editor.label());
+        }
+        cx.notify();
+    }
+
+    /// `vcs.init` for a non-git workspace (`Initialize Git`).
+    pub(crate) fn init_git_for_thread(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(cwd) = self
+            .layout
+            .selected_thread_id
+            .as_deref()
+            .and_then(|id| self.shell.find_thread(id))
+            .and_then(|t| thread_cwd(&self.shell, t))
+        else {
+            return;
+        };
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.thread_details.git_init_pending = true;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let payload = conn_contract::VcsInitInput { cwd, kind: None };
+            let result = connection
+                .call::<_, serde_json::Value>("vcs.init", &payload)
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.thread_details.git_init_pending = false;
+                if let Err(e) = result {
+                    eprintln!("thread details: vcs.init failed: {e}");
+                }
+                app.refresh_thread_details(cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `scheduledTasks.runNow` from the Automations section.
+    pub(crate) fn run_scheduled_task_now(&mut self, task_id: String, cx: &mut Context<'_, Self>) {
+        self.scheduled_task_call(
+            task_id.clone(),
+            "scheduledTasks.runNow",
+            serde_json::json!({ "id": task_id }),
+            cx,
+        );
+    }
+
+    /// `scheduledTasks.setEnabled` from the Automations section switch.
+    pub(crate) fn set_scheduled_task_enabled(
+        &mut self,
+        task_id: String,
+        enabled: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.scheduled_task_call(
+            task_id.clone(),
+            "scheduledTasks.setEnabled",
+            serde_json::json!({ "id": task_id, "enabled": enabled }),
+            cx,
+        );
+    }
+
+    fn scheduled_task_call(
+        &mut self,
+        task_id: String,
+        method: &'static str,
+        payload: serde_json::Value,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        self.thread_details.busy_task_id = Some(task_id);
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = connection
+                .call::<_, conn_state::ScheduledTaskRunNowResult>(method, &payload)
+                .await;
+            let _ = this.update(cx, |app, cx| {
+                app.thread_details.busy_task_id = None;
+                match result {
+                    Ok(updated) => {
+                        if let Some(slot) = app
+                            .thread_details
+                            .tasks
+                            .iter_mut()
+                            .find(|t| t.id == updated.task.id)
+                        {
+                            *slot = updated.task;
+                        }
+                        app.thread_details.tasks_error = None;
+                    }
+                    Err(e) => {
+                        app.thread_details.tasks_error =
+                            Some(format!("Could not update task: {e}"));
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Starts inline renaming for `thread_id` in the sidebar (double-click, `Rename thread`).
     pub(crate) fn start_thread_rename(
         &mut self,
         thread_id: String,
@@ -2537,10 +3164,40 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.begin_rename(thread_id, current_title, false, window, cx);
+    }
+
+    /// Starts inline renaming of the chat header title (double-click on the title).
+    pub(crate) fn start_header_rename(
+        &mut self,
+        thread_id: String,
+        current_title: String,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        // A double-click cancels the pending single-click menu open.
+        self.header_menu_generation = self.header_menu_generation.wrapping_add(1);
+        self.thread_menu = None;
+        self.begin_rename(thread_id, current_title, true, window, cx);
+    }
+
+    fn begin_rename(
+        &mut self,
+        thread_id: String,
+        current_title: String,
+        in_header: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.renaming_thread_id = Some(thread_id);
+        self.rename_in_header = in_header;
         self.rename_input.update(cx, |input, cx| {
             input.set_value(current_title, window, cx);
             input.focus(window, cx);
+        });
+        // Select the whole title on focus, as Conn's rename inputs do.
+        window.defer(cx, |window, cx| {
+            window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
         });
         cx.notify();
     }
@@ -2550,8 +3207,13 @@ impl ConnApp {
         let Some(thread_id) = self.renaming_thread_id.take() else {
             return;
         };
+        self.rename_in_header = false;
         let next_title = self.rename_input.read(cx).value().trim().to_owned();
-        if next_title.is_empty() {
+        let unchanged = self
+            .shell
+            .find_thread(&thread_id)
+            .is_some_and(|t| t.title == next_title);
+        if next_title.is_empty() || unchanged {
             cx.notify();
             return;
         }
@@ -2574,6 +3236,7 @@ impl ConnApp {
 
     /// Cancels inline thread renaming without saving.
     pub(crate) fn cancel_thread_rename(&mut self, cx: &mut Context<'_, Self>) {
+        self.rename_in_header = false;
         if self.renaming_thread_id.take().is_some() {
             cx.notify();
         }
@@ -2671,13 +3334,18 @@ impl ConnApp {
         &self.tokens
     }
 
-    fn render_chat_column(&self, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render_chat_column(&self, viewport_h: f32, cx: &mut Context<'_, Self>) -> impl IntoElement {
         let header = render_chat_header(
-            &self.shell,
-            &self.layout,
-            self.draft.as_ref().map(|d| d.project_id.as_str()),
-            &self.tokens,
-            &self.geometry,
+            &ChatHeaderProps {
+                shell: &self.shell,
+                layout: &self.layout,
+                draft_project_id: self.draft.as_ref().map(|d| d.project_id.as_str()),
+                details_open: self.thread_details.open,
+                header_rename: (self.rename_in_header && self.renaming_thread_id.is_some())
+                    .then_some(&self.rename_input),
+                tokens: &self.tokens,
+                geometry: &self.geometry,
+            },
             cx,
         );
 
@@ -2693,16 +3361,55 @@ impl ConnApp {
             .bg(hsla(self.tokens.shell_card))
             .child(self.chat.clone());
 
-        div()
+        let mut column = div()
             .id("conn-chat-column")
             .a11y(gpui_kit::Role::Main, "shell.chat-column", "Conversation")
+            .relative()
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
             .h_full()
             .child(header)
-            .child(chat_card)
+            .child(chat_card);
+
+        // `ThreadDetailsCard` popover: `side="bottom" align="end"` under the `SquareMenu`
+        // toggle, `max-h-[calc(100dvh-6.5rem)]`.
+        if self.thread_details.open
+            && self.draft.is_none()
+            && let Some(thread) = self
+                .layout
+                .selected_thread_id
+                .as_deref()
+                .and_then(|id| self.shell.find_thread(id))
+        {
+            let environment_label = self
+                .server_label
+                .clone()
+                .unwrap_or_else(|| "Local".to_owned());
+            let card = render_thread_details_card(
+                &DetailsCardProps {
+                    shell: &self.shell,
+                    thread,
+                    state: &self.thread_details,
+                    environment_label: &environment_label,
+                    max_height: (viewport_h - 104.0).max(160.0),
+                    tokens: &self.tokens,
+                },
+                cx,
+            );
+            column = column.child(
+                gpui_kit::deferred(
+                    div()
+                        .absolute()
+                        .top(px(self.geometry.header_height_px))
+                        .right(px(self.geometry.workspace_controls_right_px))
+                        .child(card),
+                )
+                .with_priority(4),
+            );
+        }
+        column
     }
 
     /// Surfaces the add menu enables, by Conn's rules (`SURFACE_DISABLED_REASONS`): Browser and
@@ -2760,7 +3467,7 @@ impl ConnApp {
                 open_tabs: &self.right_panel_open_tabs,
                 active_tab: &active_surface,
                 maximized: self.right_panel_maximized,
-                bottom_dock_open: false,
+                owns_window_leading_edge: self.right_panel_maximized && !self.layout.sidebar_open,
                 panel_open: self.layout.right_panel_open,
                 add_menu_open: self.right_panel_add_menu_open,
                 available_tabs: &available_tabs,
@@ -2808,14 +3515,17 @@ impl ConnApp {
                         });
                     })
                 },
-                on_toggle_dock_bottom: Rc::new(|_, _| {
-                    eprintln!("right panel: dock to bottom is not implemented yet");
-                }),
-                on_toggle_panel: Rc::new(move |_, cx| {
-                    app.update(cx, |this, cx| {
-                        this.right_panel_add_menu_open = false;
-                        this.toggle_right_panel(cx);
-                    });
+                on_toggle_panel: {
+                    let app = app.clone();
+                    Rc::new(move |_, cx| {
+                        app.update(cx, |this, cx| {
+                            this.right_panel_add_menu_open = false;
+                            this.toggle_right_panel(cx);
+                        });
+                    })
+                },
+                on_open_sidebar: Rc::new(move |_, cx| {
+                    app.update(cx, |this, cx| this.toggle_sidebar(cx));
                 }),
             },
         );
@@ -4128,8 +4838,11 @@ pub(crate) fn start_frame_log(cx: &mut App) {
 }
 
 impl Render for ConnApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         RENDERS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let viewport = window.viewport_size();
+        let viewport_w = f32::from(viewport.width);
+        let viewport_h = f32::from(viewport.height);
         let mut root = div()
             .id("conn-shell-root")
             .a11y_group("shell.root", "Conn workspace")
@@ -4143,6 +4856,10 @@ impl Render for ConnApp {
                         );
                     }
                     if app.handle_add_menu_key(event, cx) {
+                        cx.stop_propagation();
+                        return;
+                    }
+                    if event.keystroke.key == "escape" && app.dismiss_shell_popovers(cx) {
                         cx.stop_propagation();
                     }
                 }),
@@ -4161,9 +4878,16 @@ impl Render for ConnApp {
                         app.sidebar_filter_menu_open = false;
                         changed = true;
                     }
+                    changed |= app.dismiss_shell_popovers(cx);
                     if changed {
                         cx.notify();
                     }
+                }),
+            )
+            .on_mouse_down(
+                gpui_kit::MouseButton::Right,
+                cx.listener(|app, _, _window, cx| {
+                    app.dismiss_shell_popovers(cx);
                 }),
             )
             .on_action(cx.listener(|app, _: &ToggleSidebar, _window, cx| {
@@ -4217,7 +4941,9 @@ impl Render for ConnApp {
                     self.draft.as_ref().map(|d| d.project_id.as_str()),
                     &self.collapsed_projects,
                     &self.sidebar_search_input,
-                    self.renaming_thread_id.as_deref(),
+                    self.renaming_thread_id
+                        .as_deref()
+                        .filter(|_| !self.rename_in_header),
                     &self.rename_input,
                     self.sidebar_filter_menu_open,
                     &self.tokens,
@@ -4229,7 +4955,7 @@ impl Render for ConnApp {
 
         let maximized = self.layout.right_panel_open && self.right_panel_maximized;
         if !maximized {
-            root = root.child(self.render_chat_column(cx));
+            root = root.child(self.render_chat_column(viewport_h, cx));
         }
 
         if self.layout.right_panel_open {
@@ -4237,6 +4963,67 @@ impl Render for ConnApp {
                 root = root.child(self.render_seam(true, cx));
             }
             root = root.child(self.render_right_panel_column(cx));
+        }
+
+        // Seam drag-resize (`SidebarRail`): window-level capture listeners follow the pointer
+        // over any surface (terminal, browser) and end the drag on release, even off-window.
+        if self.seam_drag.is_some() {
+            let entity = cx.entity().downgrade();
+            root = root.child(
+                gpui_kit::canvas(
+                    |_, _, _| {},
+                    move |_, (), window, _| {
+                        let move_entity = entity.clone();
+                        window.on_mouse_event(
+                            move |event: &gpui_kit::MouseMoveEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = move_entity.update(cx, |app, cx| {
+                                    let Some(drag) = app.seam_drag else {
+                                        return;
+                                    };
+                                    if event.pressed_button == Some(gpui_kit::MouseButton::Left) {
+                                        app.apply_seam_drag(
+                                            drag,
+                                            f32::from(event.position.x),
+                                            viewport_w,
+                                        );
+                                    } else {
+                                        app.seam_drag = None;
+                                    }
+                                    cx.notify();
+                                });
+                            },
+                        );
+                        let up_entity = entity.clone();
+                        window.on_mouse_event(
+                            move |_: &gpui_kit::MouseUpEvent, phase, _window, cx| {
+                                if phase != gpui_kit::DispatchPhase::Capture {
+                                    return;
+                                }
+                                let _ = up_entity.update(cx, |app, cx| {
+                                    if app.seam_drag.take().is_some() {
+                                        cx.notify();
+                                    }
+                                });
+                            },
+                        );
+                    },
+                )
+                .absolute()
+                .size_full(),
+            );
+        }
+
+        if let Some(anchor) = &self.thread_menu
+            && let Some(thread) = self.shell.find_thread(&anchor.thread_id)
+        {
+            let state =
+                ThreadMenuState::for_thread(&self.shell, thread, self.active_workspace.as_deref());
+            let items = build_thread_action_menu_items(&state);
+            let anchor = anchor.clone();
+            root = root.child(render_thread_action_menu(&items, &anchor, &self.tokens, cx));
         }
 
         if let Some(modal) = &self.settings_modal {

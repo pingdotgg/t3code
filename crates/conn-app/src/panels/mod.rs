@@ -76,7 +76,6 @@ pub struct RightPanel {
     file: Option<String>,
     add_menu_open: bool,
     maximized: bool,
-    bottom_dock_open: bool,
     project_id: Option<String>,
     workspace_root: Option<String>,
     thread_id: Option<String>,
@@ -174,7 +173,6 @@ impl RightPanel {
             file: None,
             add_menu_open: false,
             maximized: false,
-            bottom_dock_open: false,
             project_id: None,
             workspace_root: None,
             thread_id: None,
@@ -563,21 +561,13 @@ impl RightPanel {
                     });
                 })
             },
-            on_toggle_dock_bottom: {
-                let entity = entity.clone();
-                Rc::new(move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.bottom_dock_open = !this.bottom_dock_open;
-                        cx.notify();
-                    });
-                })
-            },
             on_toggle_panel: Rc::new(move |_, cx| {
                 entity.update(cx, |this, cx| {
                     this.add_menu_open = false;
                     cx.notify();
                 });
             }),
+            on_open_sidebar: Rc::new(|_, _| {}),
         };
 
         let active = self.surface();
@@ -586,7 +576,7 @@ impl RightPanel {
                 open_tabs: &self.open_tabs,
                 active_tab: &active,
                 maximized: self.maximized,
-                bottom_dock_open: self.bottom_dock_open,
+                owns_window_leading_edge: false,
                 panel_open: true,
                 add_menu_open: self.add_menu_open,
                 available_tabs: &RightPanelTab::MENU_ORDER,

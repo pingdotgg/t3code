@@ -13,16 +13,23 @@
 //!   `/` in muted icon tone, and medium foreground thread title.
 //! - Right controls (`ThreadPanelHeaderControl` / `PanelLayoutControls`):
 //!   - When the right panel is open, Conn shows only the `28px` ghost thread-details
-//!     button (`SquareMenu` -> `superhero/panel-menu.svg`, `16px`).
+//!     button (`SquareMenu` -> `superhero/panel-menu.svg`, `16px`), which opens the
+//!     `ThreadDetailsCard` popover (`details_card.rs`).
 //!   - When the right panel is closed, Conn shows the `gap-1` (`4px`) ghost toggle
 //!     trio: thread details (`panel-menu`), terminal drawer (`panel-bottom`), and
 //!     right panel (`sidebar-right`).
+//! - The project chip starts a new thread in that project; the thread title opens the
+//!   Thread Actions menu (hover chevron, click after `500ms`), double-click renames inline,
+//!   and right-click anywhere on the header opens the same menu.
+
+pub(crate) mod details_card;
 
 use conn_state::{LayoutState, RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::{
-    Context, InteractiveElement as _, MouseButton, ParentElement as _,
+    Context, Entity, InteractiveElement as _, MouseButton, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, WindowControlArea, div, px,
 };
 
@@ -45,16 +52,32 @@ const BREADCRUMB_FAVICON_PX: f32 = 14.0;
 /// `--control-radius: 0.5rem` (`8px`) on `SidebarTrigger`.
 const SIDEBAR_TOGGLE_RADIUS_PX: f32 = 8.0;
 
+/// Header state the chat header reads from `ConnApp`.
+pub(crate) struct ChatHeaderProps<'a> {
+    pub(crate) shell: &'a ShellState,
+    pub(crate) layout: &'a LayoutState,
+    pub(crate) draft_project_id: Option<&'a str>,
+    /// Whether the Thread Details card is open (`SquareMenu` pressed).
+    pub(crate) details_open: bool,
+    /// The header title is being renamed inline with this input.
+    pub(crate) header_rename: Option<&'a Entity<InputState>>,
+    pub(crate) tokens: &'a Tokens,
+    pub(crate) geometry: &'a ShellGeometry,
+}
+
 /// Renders the 44px transparent chat header matching real Conn.
 #[must_use]
 pub(crate) fn render_chat_header(
-    shell: &ShellState,
-    layout: &LayoutState,
-    draft_project_id: Option<&str>,
-    tokens: &Tokens,
-    geometry: &ShellGeometry,
+    props: &ChatHeaderProps<'_>,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let (shell, layout, draft_project_id, tokens, geometry) = (
+        props.shell,
+        props.layout,
+        props.draft_project_id,
+        props.tokens,
+        props.geometry,
+    );
     let fg = hsla(tokens.foreground);
     let muted = hsla(tokens.muted_foreground);
     let separator_color = hsla_alpha(tokens.muted_foreground, 0.55);
@@ -131,15 +154,12 @@ pub(crate) fn render_chat_header(
         .text_size(px(BREADCRUMB_FONT_SIZE_PX));
 
     if let Some(project) = active_project {
+        let project_id = project.id.clone();
         breadcrumb = breadcrumb
             .child(
                 div()
                     .id("header-project-chip")
-                    .a11y(
-                        gpui_kit::Role::Label,
-                        "header.project",
-                        project.title.clone(),
-                    )
+                    .a11y_button("header.project", format!("New thread in {}", project.title))
                     .flex()
                     .flex_row()
                     .items_center()
@@ -147,8 +167,16 @@ pub(crate) fn render_chat_header(
                     .flex_shrink_0()
                     .max_w(px(160.0))
                     .overflow_hidden()
+                    .rounded(px(4.0))
+                    .cursor_pointer()
                     .font_weight(gpui_kit::FontWeight::MEDIUM)
                     .text_color(muted)
+                    .hover(move |s| s.text_color(fg))
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .on_click(cx.listener(move |app, _, window, cx| {
+                        app.start_new_thread(Some(project_id.clone()), Some(window), cx);
+                    }))
+                    .conn_tooltip(format!("New thread in {}", project.title), tokens)
                     .child(render_project_favicon(
                         project,
                         BREADCRUMB_FAVICON_PX,
@@ -159,30 +187,120 @@ pub(crate) fn render_chat_header(
             .child(div().flex_shrink_0().text_color(separator_color).child("/"));
     }
 
-    breadcrumb = breadcrumb.child(
-        div()
-            .id("header-thread-title")
-            .a11y(
-                gpui_kit::Role::Heading,
-                "header.thread-title",
-                thread_title.to_owned(),
-            )
-            .min_w_0()
-            .flex_1()
-            .overflow_hidden()
-            .truncate()
-            .font_weight(gpui_kit::FontWeight::MEDIUM)
-            .text_color(fg)
-            .child(thread_title.to_owned()),
-    );
+    let server_thread = draft_project_id.is_none() && active_thread.is_some();
+    if let Some(rename_input) = props.header_rename.filter(|_| server_thread) {
+        // Inline header rename: `ring-1 ring-inset ring-ring/50`, commits on Enter and blur.
+        breadcrumb = breadcrumb.child(
+            div()
+                .id("header-thread-rename")
+                .flex_1()
+                .min_w_0()
+                .px(px(4.0))
+                .rounded(px(4.0))
+                .border_1()
+                .border_color(hsla_alpha(tokens.ring, 0.50))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
+                    if event.keystroke.key == "escape" {
+                        app.cancel_thread_rename(cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(
+                    Input::new(rename_input)
+                        .appearance(false)
+                        .text_size(px(BREADCRUMB_FONT_SIZE_PX)),
+                ),
+        );
+    } else if let Some(thread) = active_thread.filter(|_| server_thread) {
+        // Thread title button: hover chevron, click opens the Thread Actions menu after the
+        // `500ms` double-click window, double-click renames.
+        let menu_id = thread.id.clone();
+        let rename_id = thread.id.clone();
+        let rename_title = thread.title.clone();
+        let chevron_id = thread.id.clone();
+        breadcrumb = breadcrumb.child(
+            div()
+                .id("header-thread-title")
+                .a11y_button(
+                    "header.thread-title",
+                    format!("Thread actions for {thread_title}"),
+                )
+                .group("header-thread-title")
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .min_w_0()
+                .max_w_full()
+                .rounded(px(4.0))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(
+                    cx.listener(move |app, event: &gpui_kit::ClickEvent, window, cx| {
+                        if event.click_count() >= 2 {
+                            app.start_header_rename(
+                                rename_id.clone(),
+                                rename_title.clone(),
+                                window,
+                                cx,
+                            );
+                        } else {
+                            app.schedule_header_title_menu(menu_id.clone(), event.position(), cx);
+                        }
+                    }),
+                )
+                .conn_tooltip(thread_title.to_owned(), tokens)
+                .child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .font_weight(gpui_kit::FontWeight::MEDIUM)
+                        .text_color(fg)
+                        .child(thread_title.to_owned()),
+                )
+                .child(
+                    div()
+                        .id("header-thread-title-chevron")
+                        .flex_shrink_0()
+                        .opacity(0.0)
+                        .group_hover("header-thread-title", |s| s.opacity(1.0))
+                        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                        .on_click(
+                            cx.listener(move |app, event: &gpui_kit::ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                app.open_thread_menu(chevron_id.clone(), event.position(), cx);
+                            }),
+                        )
+                        .child(icons::concept("superhero/chevron-down.svg", 14.0, muted)),
+                ),
+        );
+    } else {
+        breadcrumb = breadcrumb.child(
+            div()
+                .id("header-thread-title")
+                .a11y(
+                    gpui_kit::Role::Heading,
+                    "header.thread-title",
+                    thread_title.to_owned(),
+                )
+                .min_w_0()
+                .flex_1()
+                .overflow_hidden()
+                .truncate()
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(fg)
+                .conn_tooltip(thread_title.to_owned(), tokens)
+                .child(thread_title.to_owned()),
+        );
+    }
 
     left_group = left_group.child(breadcrumb);
 
     // Right-side controls (`ThreadPanelHeaderControl` / `PanelLayoutControls`):
     // When the right panel is open, only the thread details/linked items button sits on
     // the chat header; when closed, the terminal and right-panel toggles join it.
-    let details_active =
-        layout.right_panel_open && layout.right_panel_tab == RightPanelTab::LinkedItems;
+    let details_active = props.details_open;
     let mut right_group = div()
         .flex()
         .flex_row()
@@ -196,12 +314,12 @@ pub(crate) fn render_chat_header(
                 details_active,
                 tokens,
                 cx.listener(|app, _event, _window, cx| {
-                    app.activate_or_toggle_right_panel_tab(RightPanelTab::LinkedItems, cx);
+                    app.toggle_thread_details(cx);
                 }),
             )
-            .a11y_button("header.linked-items", "Linked items")
+            .a11y_button("header.thread-details", "Toggle thread details panel")
             .aria_selected(details_active)
-            .conn_tooltip("Linked items", tokens),
+            .conn_tooltip("Toggle thread details", tokens),
         );
 
     if !layout.right_panel_open {
@@ -235,6 +353,9 @@ pub(crate) fn render_chat_header(
             );
     }
 
+    let menu_thread = active_thread
+        .filter(|_| draft_project_id.is_none())
+        .map(|t| t.id.clone());
     div()
         .id("chat-header-bar")
         .a11y(gpui_kit::Role::Toolbar, "header.bar", "Thread header")
@@ -256,6 +377,15 @@ pub(crate) fn render_chat_header(
                 window.start_window_move();
             }
         })
+        .on_mouse_down(
+            MouseButton::Right,
+            cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
+                if let Some(thread_id) = &menu_thread {
+                    cx.stop_propagation();
+                    app.open_thread_menu(thread_id.clone(), event.position, cx);
+                }
+            }),
+        )
         .child(left_group)
         .child(right_group)
 }

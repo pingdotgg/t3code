@@ -1,6 +1,7 @@
 //! Right-panel header matching real Conn (`RightPanelTabs.tsx` + `PanelLayoutControls.tsx`):
 //! open-panel tabs, `+` add-panel button with a `dropdown-glass` menu, and far-right
-//! maximize, dock-to-bottom, and close/toggle controls.
+//! maximize and close/toggle controls. Bottom-dock is deferred (`docs/scope.md` #16), so its
+//! button is not drawn.
 
 use std::rc::Rc;
 
@@ -15,6 +16,7 @@ use gpui_kit::{
 
 use super::color::to_hsla;
 use crate::a11y::ConnA11yExt as _;
+use crate::panels::chrome::ConnTooltipExt as _;
 
 /// Header height (`--shell-header-height`, 44px).
 pub(crate) const HEADER_HEIGHT_PX: f32 = 44.0;
@@ -144,7 +146,10 @@ pub(crate) struct PanelHeaderProps<'a> {
     pub(crate) open_tabs: &'a [PanelSurface],
     pub(crate) active_tab: &'a PanelSurface,
     pub(crate) maximized: bool,
-    pub(crate) bottom_dock_open: bool,
+    /// The panel is maximized while the sidebar is collapsed, so the header owns the window's
+    /// top-left corner: it clears the macOS traffic lights (`90px`) and shows the `PanelLeft`
+    /// sidebar reopen button, as Conn's chat header does.
+    pub(crate) owns_window_leading_edge: bool,
     pub(crate) panel_open: bool,
     pub(crate) add_menu_open: bool,
     /// Surfaces the add menu offers as enabled; the rest show dimmed, as in Conn.
@@ -160,12 +165,13 @@ pub(crate) struct PanelHeaderCallbacks {
     pub(crate) on_toggle_add_menu: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(crate) on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
     pub(crate) on_toggle_maximize: Rc<dyn Fn(&mut Window, &mut App)>,
-    pub(crate) on_toggle_dock_bottom: Rc<dyn Fn(&mut Window, &mut App)>,
     pub(crate) on_toggle_panel: Rc<dyn Fn(&mut Window, &mut App)>,
+    /// Reopens the sidebar (shown only when [`PanelHeaderProps::owns_window_leading_edge`]).
+    pub(crate) on_open_sidebar: Rc<dyn Fn(&mut Window, &mut App)>,
 }
 
 /// Renders Conn's 44px right-panel glass header: open tabs, `+` add-panel launcher with
-/// `dropdown-glass` menu, and far-right maximize, dock-to-bottom, and close/toggle buttons.
+/// `dropdown-glass` menu, and far-right maximize and close/toggle buttons.
 pub(crate) fn render_panel_header(
     props: PanelHeaderProps<'_>,
     callbacks: PanelHeaderCallbacks,
@@ -321,23 +327,49 @@ pub(crate) fn render_panel_header(
         ));
     }
 
-    let left_strip = h_flex()
+    let mut left_strip = h_flex()
         .flex_1()
         .min_w_0()
         .h_full()
         .items_center()
-        .gap(px(4.0))
-        .child(tab_strip)
-        .child(add_anchor);
+        .gap(px(4.0));
+    if props.owns_window_leading_edge {
+        // `AppSidebarLayout.tsx`: the `28x28` `PanelLeft` reopen button at `x = 90px`.
+        let on_open_sidebar = callbacks.on_open_sidebar.clone();
+        let sidebar_hover = to_hsla(props.tokens.sidebar_row_hover);
+        left_strip = left_strip.child(
+            div()
+                .id("right-panel-open-sidebar")
+                .a11y_button("panel.open-sidebar", "Show sidebar")
+                .aria_keyshortcuts("Meta+B")
+                .size(px(LAYOUT_BUTTON_SIZE_PX))
+                .flex()
+                .flex_shrink_0()
+                .items_center()
+                .justify_center()
+                .rounded(px(TAB_RADIUS_PX))
+                .cursor_pointer()
+                .hover(move |s| s.bg(sidebar_hover))
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    cx.stop_propagation();
+                    on_open_sidebar(window, cx);
+                })
+                .conn_tooltip("Show sidebar (⌘B)", props.tokens)
+                .child(crate::icons::chrome(
+                    gpui_kit::assets::IconName::PanelLeft,
+                    muted,
+                )),
+        );
+    }
+    let left_strip = left_strip.child(tab_strip).child(add_anchor);
 
-    // Far-right layout controls: maximize/restore, dock-to-bottom, close/toggle right panel.
+    // Far-right layout controls: maximize/restore and close/toggle right panel.
     let max_icon = if props.maximized {
         "superhero/minimize.svg"
     } else {
         "superhero/maximize.svg"
     };
     let on_max = callbacks.on_toggle_maximize;
-    let on_dock = callbacks.on_toggle_dock_bottom;
     let on_toggle = callbacks.on_toggle_panel;
 
     let right_controls = h_flex()
@@ -361,17 +393,6 @@ pub(crate) fn render_panel_header(
             on_max,
         ))
         .child(header_icon_toggle(
-            "right-panel-dock-bottom-btn",
-            "panel.dock-bottom",
-            "Dock panel to bottom",
-            "superhero/panel-bottom.svg",
-            props.bottom_dock_open,
-            fg,
-            muted,
-            highlight,
-            on_dock,
-        ))
-        .child(header_icon_toggle(
             "right-panel-toggle-btn",
             "panel.toggle",
             "Toggle right panel",
@@ -393,7 +414,11 @@ pub(crate) fn render_panel_header(
         .w_full()
         .h(px(HEADER_HEIGHT_PX))
         .flex_shrink_0()
-        .pl(px(HEADER_PAD_START_PX))
+        .pl(px(if props.owns_window_leading_edge {
+            crate::shell::MACOS_TRAFFIC_LIGHTS_INSET_PX
+        } else {
+            HEADER_PAD_START_PX
+        }))
         .pr(px(HEADER_PAD_END_PX))
         .items_center()
         .gap(px(4.0))
@@ -445,13 +470,28 @@ fn header_icon_toggle(
         .child(superhero_icon(icon_path, HEADER_ICON_PX, icon_color))
 }
 
+/// `dropdown-glass` popup shadow: `shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)]`,
+/// `dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]` (`menu.tsx`).
+#[must_use]
+pub(crate) fn dropdown_glass_shadow(tokens: &Tokens) -> gpui_kit::BoxShadow {
+    let (offset_y, blur, alpha) = match tokens.appearance {
+        conn_theme::Appearance::Dark => (18.0, 44.0, 0.80),
+        conn_theme::Appearance::Light => (16.0, 40.0, 0.55),
+    };
+    gpui_kit::BoxShadow {
+        color: gpui_kit::hsla(0.0, 0.0, 0.0, alpha),
+        offset: gpui_kit::point(px(0.0), px(offset_y)),
+        blur_radius: px(blur),
+        spread_radius: px(-18.0),
+        inset: false,
+    }
+}
+
 fn render_add_panel_menu(
     tokens: &Tokens,
     available_tabs: &[RightPanelTab],
     on_add_tab: Rc<dyn Fn(RightPanelTab, &mut Window, &mut App)>,
 ) -> impl IntoElement {
-    use gpui_kit::{BoxShadow, point};
-
     // GPUI cannot blur what lies behind a popup, so use `dropdown-glass`'s own fallback for
     // that case (`@supports not (backdrop-filter)`: `var(--popover)`), not the 94% overlay.
     let overlay_bg = to_hsla(tokens.popover);
@@ -460,18 +500,7 @@ fn render_add_panel_menu(
     let fg = to_hsla(tokens.foreground);
     let muted = to_hsla(tokens.muted_foreground);
     let icon_color = muted.opacity(MENU_ICON_OPACITY);
-    // `shadow-[0_16px_40px_-18px_rgb(0_0_0/55%)]`, `dark:shadow-[0_18px_44px_-18px_rgb(0_0_0/80%)]`.
-    let (offset_y, blur, alpha) = match tokens.appearance {
-        conn_theme::Appearance::Dark => (18.0, 44.0, 0.80),
-        conn_theme::Appearance::Light => (16.0, 40.0, 0.55),
-    };
-    let shadow = BoxShadow {
-        color: gpui_kit::hsla(0.0, 0.0, 0.0, alpha),
-        offset: point(px(0.0), px(offset_y)),
-        blur_radius: px(blur),
-        spread_radius: px(-18.0),
-        inset: false,
-    };
+    let shadow = dropdown_glass_shadow(tokens);
 
     let mut list = div()
         .id("right-panel-add-menu")
@@ -517,14 +546,7 @@ fn render_add_panel_menu(
                     .text_color(muted)
                     .child(tab.menu_shortcut()),
             );
-        if tab == RightPanelTab::Browser {
-            // `MenuSubTrigger`'s trailing chevron (browser profiles submenu).
-            row = row.child(div().mr(px(-2.0)).child(superhero_icon(
-                "superhero/chevron-right.svg",
-                HEADER_ICON_PX,
-                fg.opacity(MENU_ICON_OPACITY),
-            )));
-        }
+        // Browser profiles submenu is out of scope (`docs/scope.md` #17/#31): no chevron.
         row = if available {
             row.cursor_pointer()
                 .hover(move |s| s.bg(highlight))

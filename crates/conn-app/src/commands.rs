@@ -408,6 +408,52 @@ pub(crate) fn rename_thread(
     }))
 }
 
+/// `thread.metadata.update` with `regenerateTitle: true`: ask the server to regenerate the
+/// thread title (Conn's `Regenerate title` thread action).
+pub(crate) fn regenerate_thread_title(
+    thread_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.metadata.update",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "regenerateTitle": true,
+    }))
+}
+
+/// `thread.pin` / `thread.unpin`: move a thread into or out of the Pinned section.
+pub(crate) fn pin_thread(
+    thread_id: &str,
+    pinned: bool,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let kind = if pinned { "thread.pin" } else { "thread.unpin" };
+    conn_contract::from_json(json!({
+        "type": kind,
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+    }))
+}
+
+/// `thread.mark-unread`: clear the thread's visit marker so it shows as unseen again.
+pub(crate) fn mark_thread_unread(
+    thread_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.mark-unread",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+    }))
+}
+
+/// `thread.delete`: permanently delete a thread and its conversation history.
+pub(crate) fn delete_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.delete",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+    }))
+}
+
 /// `projects.mutate` (`project.create`): register a local workspace folder as a project.
 pub(crate) fn create_project_mutation(
     workspace_root: &str,
@@ -549,6 +595,17 @@ mod tests {
             rename_thread("t1", "New title").is_ok(),
             "thread.metadata.update decodes"
         );
+        assert!(
+            regenerate_thread_title("t1").is_ok(),
+            "thread.metadata.update (regenerateTitle) decodes"
+        );
+        assert!(pin_thread("t1", true).is_ok(), "thread.pin decodes");
+        assert!(pin_thread("t1", false).is_ok(), "thread.unpin decodes");
+        assert!(
+            mark_thread_unread("t1").is_ok(),
+            "thread.mark-unread decodes"
+        );
+        assert!(delete_thread("t1").is_ok(), "thread.delete decodes");
         assert!(
             create_project_mutation("/tmp/demo", "demo").is_ok(),
             "project.create mutation decodes"

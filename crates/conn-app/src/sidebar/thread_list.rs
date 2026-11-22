@@ -6,25 +6,22 @@
 //! - Inset panel card:
 //!   - Fixed top `SidebarGroup` (`p-2` = `8px`): `"Search"` (`h-8`, `text-sm font-medium`)
 //!     + trailing `28x28` icon buttons (`ListFilter`, `FolderPlus`, `SquarePen`).
-//!   - Scrollable `SidebarGroup` (`px-2 pb-2`, `gap-px`): two-line card rows
-//!     (`SidebarThreadRow.tsx` `variant="card"`):
-//!     - Outer wrapper: `py-0.5` (`2px`), card `rounded-lg` (`8px`), `px-2.5 py-2` (`10px`/`8px`),
-//!       `border-t` (`--shell-divider-raised/50` when active, transparent otherwise).
-//!     - Line 1 (`h-5`, `gap-1.5`): `16px` project favicon/monogram wrapped in `StatusDotBadge`
-//!       (`6px` corner status dot for working / attention / failed / unread) + `14px` medium title.
-//!     - Line 2 (`mt-1`, `ps-5.5` = `22px`, `gap-1.5`, `text-xs` = `12px`, muted):
-//!       `14px` provider icon · project name · branch (when present) · compact relative age.
-//!   - `Settled` collapsible section header (`SidebarSectionHeader`) pushed to the
-//!     bottom (`mt-auto`) when settled threads exist; hidden when empty.
+//!   - Scrollable `SidebarGroup` (`px-2 pb-2`, `gap-px`): pinned cards, a subtle divider, then
+//!     active cards (`SidebarThreadRow.tsx` `variant="card"`, three lines, `rounded-md`).
+//!   - `Settled` collapsible section pushed to the bottom (`mt-auto`) with `36px` slim rows; a
+//!     collapsed shelf still shows the open settled thread (`routeThreadOnly`).
+//! - Right-click on any row opens the Thread Actions menu (`thread_menu.rs`); double-click
+//!   starts inline rename.
 
 use std::collections::HashSet;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
-use conn_state::{LayoutState, ProjectShell, ShellState, ThreadActivity, ThreadShell};
+use conn_state::{LayoutState, ProjectShell, ShellState, ThreadShell};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     Context, Entity, InteractiveElement as _, IntoElement as _, MouseButton, ParentElement as _,
     SharedString, StatefulInteractiveElement as _, Styled as _, WindowControlArea, deferred, div,
@@ -33,7 +30,6 @@ use gpui_kit::{
 
 use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
-use crate::fixture::thread_activity;
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
@@ -44,8 +40,12 @@ use crate::theme::{hsla, hsla_alpha};
 const SIDEBAR_CONTENT_INSET_PX: f32 = 8.0;
 /// `--sidebar-row-content-inset: 0.625rem` (`10px`).
 const ROW_HORIZONTAL_INSET_PX: f32 = 10.0;
-/// `rounded-lg` (`--radius: 0.5rem` = `8px`) on thread cards and icon controls.
+/// `rounded-lg` (`8px`) on sidebar icon controls.
 const ROW_RADIUS_PX: f32 = 8.0;
+/// `rounded-md` (`6px`) on thread cards and slim rows (`rowSurfaceClassName`).
+const CARD_RADIUS_PX: f32 = 6.0;
+/// `h-9` (`36px`) slim settled rows.
+const SLIM_ROW_HEIGHT_PX: f32 = 36.0;
 /// `rounded-md` (`6px`) on the search field and collapsible section header.
 const SEARCH_RADIUS_PX: f32 = 6.0;
 /// `size-7` (`28px`) for `SidebarHeaderIconButton` and `SidebarTrigger`.
@@ -60,38 +60,12 @@ const TITLE_LINE_HEIGHT_PX: f32 = 20.0;
 /// `text-xs` (`12px` / `16px`) for line-2 metadata and Settled section header.
 const META_FONT_SIZE_PX: f32 = 12.0;
 const META_LINE_HEIGHT_PX: f32 = 16.0;
-/// `size-1.5` (`6px`) corner dot in `StatusDotBadge.tsx`.
-const STATUS_DOT_PX: f32 = 6.0;
 /// Left offset inside the sidebar header so the toggle sits at `x = 90px`
 /// (`--desktop-window-controls-inset`) directly right of the traffic lights.
 const SIDEBAR_TOGGLE_LEFT_OFFSET_PX: f32 = MACOS_TRAFFIC_LIGHTS_INSET_PX - WORKSPACE_RAIL_WIDTH_PX;
 /// Sentinel key stored in `collapsed_projects` to toggle the Settled shelf
 /// without requiring a new field on `ConnApp`.
 const SETTLED_SHELF_TOGGLE_KEY: &str = "__settled__";
-
-/// Status dot state matching `StatusDotBadge.tsx`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StatusDotState {
-    Working,
-    Waiting,
-    #[expect(
-        dead_code,
-        reason = "ready for unread-completion tracking in LayoutState"
-    )]
-    Done,
-    Failed,
-}
-
-impl StatusDotState {
-    fn from_activity(activity: ThreadActivity) -> Option<Self> {
-        match activity {
-            ThreadActivity::Working => Some(Self::Working),
-            ThreadActivity::NeedsAttention => Some(Self::Waiting),
-            ThreadActivity::Failed => Some(Self::Failed),
-            ThreadActivity::Idle => None,
-        }
-    }
-}
 
 /// Renders the thread sidebar column (`layout.sidebar_width` wide).
 #[expect(
@@ -158,6 +132,7 @@ pub(crate) fn render_thread_sidebar(
                 .on_click(cx.listener(|app, _event, _window, cx| {
                     app.toggle_sidebar(cx);
                 }))
+                .conn_tooltip("Hide sidebar (⌘B)", tokens)
                 .child(icons::chrome(IconName::PanelLeftClose, muted)),
         );
 
@@ -301,6 +276,13 @@ pub(crate) fn render_thread_sidebar(
     };
 
     let now_secs = current_unix_secs();
+    let selected_id = layout.selected_thread_id.as_deref();
+    let row_flags = |thread: &ThreadShell| {
+        (
+            selected_id == Some(thread.id.as_str()),
+            renaming_thread_id == Some(thread.id.as_str()),
+        )
+    };
     let visible_threads: Vec<&ThreadShell> = shell
         .top_level_active_threads()
         .filter(|thread| thread_in_scope(thread))
@@ -308,31 +290,60 @@ pub(crate) fn render_thread_sidebar(
             thread_matches_search(thread, shell.project(&thread.project_id), &search_query)
         })
         .collect();
+    // Pinned (`pinOrderKey` order) above a subtle divider, then Active.
+    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = visible_threads
+        .into_iter()
+        .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
+    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
 
-    let mut thread_rows =
-        Vec::with_capacity(visible_threads.len() + usize::from(draft_project_id.is_some()));
+    let mut thread_rows = Vec::with_capacity(
+        pinned.len() + active.len() + 1 + usize::from(draft_project_id.is_some()),
+    );
     if let Some(project_id) = draft_project_id {
         let project = shell.project(project_id);
         thread_rows.push(render_draft_sidebar_row(project, tokens, cx));
     }
-    for (idx, thread) in visible_threads.into_iter().enumerate() {
-        let project = shell.project(&thread.project_id);
-        let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
-        let is_renaming = renaming_thread_id == Some(thread.id.as_str());
-        let activity = thread_activity(shell, thread);
-        thread_rows.push(render_thread_card(
-            idx,
+    for (idx, thread) in pinned.iter().enumerate() {
+        let row_key = idx;
+        let (selected, is_renaming) = row_flags(thread);
+        let row = RowCtx {
+            row_key,
             thread,
-            project,
+            project: shell.project(&thread.project_id),
             selected,
-            false,
             is_renaming,
             rename_input,
-            activity,
             now_secs,
+            sidebar_width: layout.sidebar_width,
             tokens,
-            cx,
-        ));
+        };
+        thread_rows.push(render_thread_card(&row, cx));
+    }
+    if !pinned.is_empty() {
+        // `pinned-divider`: a hairline between the Pinned and Active groups.
+        thread_rows.push(
+            div()
+                .w_full()
+                .px(px(ROW_HORIZONTAL_INSET_PX))
+                .py(px(4.0))
+                .child(div().h(px(1.0)).bg(hsla_alpha(tokens.sidebar_border, 0.60))),
+        );
+    }
+    for (idx, thread) in active.iter().enumerate() {
+        let row_key = 10_000 + idx;
+        let (selected, is_renaming) = row_flags(thread);
+        let row = RowCtx {
+            row_key,
+            thread,
+            project: shell.project(&thread.project_id),
+            selected,
+            is_renaming,
+            rename_input,
+            now_secs,
+            sidebar_width: layout.sidebar_width,
+            tokens,
+        };
+        thread_rows.push(render_thread_card(&row, cx));
     }
 
     // Settled shelf (`SidebarSectionHeader` in `Sidebar.tsx`): always shown, with its count
@@ -418,25 +429,30 @@ pub(crate) fn render_thread_sidebar(
 
         list_scroll = list_scroll.child(settled_header);
 
-        if settled_expanded {
-            for (idx, thread) in settled_threads.into_iter().enumerate() {
-                let project = shell.project(&thread.project_id);
-                let selected = layout.selected_thread_id.as_deref() == Some(thread.id.as_str());
-                let is_renaming = renaming_thread_id == Some(thread.id.as_str());
-                list_scroll = list_scroll.child(render_thread_card(
-                    100_000 + idx,
-                    thread,
-                    project,
-                    selected,
-                    true,
-                    is_renaming,
-                    rename_input,
-                    ThreadActivity::Idle,
-                    now_secs,
-                    tokens,
-                    cx,
-                ));
-            }
+        // A collapsed shelf still shows the open settled thread (`routeThreadOnly`).
+        let shown: Vec<&ThreadShell> = if settled_expanded {
+            settled_threads
+        } else {
+            settled_threads
+                .into_iter()
+                .filter(|t| selected_id == Some(t.id.as_str()))
+                .collect()
+        };
+        for (idx, thread) in shown.into_iter().enumerate() {
+            let row_key = 100_000 + idx;
+            let (selected, is_renaming) = row_flags(thread);
+            let row = RowCtx {
+                row_key,
+                thread,
+                project: shell.project(&thread.project_id),
+                selected,
+                is_renaming,
+                rename_input,
+                now_secs,
+                sidebar_width: layout.sidebar_width,
+                tokens,
+            };
+            list_scroll = list_scroll.child(render_settled_row(&row, cx));
         }
     }
 
@@ -592,145 +608,335 @@ fn render_project_filter_menu(
     deferred(menu).with_priority(3).into_any_element()
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "pure view helper taking borrowed thread, project, rename, and theme slices"
-)]
-fn render_thread_card(
+/// Status pill in the card's top-right slot (`topStatus` in `SidebarThreadRow.tsx`).
+/// `Request`, `Limited`, and `Woke` are out of scope (`docs/scope.md` #3, #9, #27).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum RowStatus {
+    Working,
+    Goal,
+    Waiting,
+    Approval,
+    Input,
+    Failed,
+    Done,
+}
+
+impl RowStatus {
+    #[must_use]
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::Working => "Working",
+            Self::Goal => "Goal",
+            Self::Waiting => "Waiting",
+            Self::Approval => "Approval",
+            Self::Input => "Input",
+            Self::Failed => "Failed",
+            Self::Done => "Done",
+        }
+    }
+
+    /// `TopStatusIcon`: `CircleDashed`, `CircleDotDashed`, `ShieldQuestion`,
+    /// `MessageCircleQuestion`, `CircleAlert`, `CircleCheck` through the Conn manifest.
+    #[must_use]
+    pub(crate) fn icon(self) -> &'static str {
+        match self {
+            Self::Working | Self::Goal => "superhero/circle-dashed.svg",
+            Self::Waiting => "superhero/circle-dashed-dot.svg",
+            Self::Approval => "superhero/needs-approval.svg",
+            Self::Input => "superhero/question.svg",
+            Self::Failed => "superhero/error-circle.svg",
+            Self::Done => "superhero/check-circle.svg",
+        }
+    }
+
+    /// `text-info-foreground`, `text-muted-foreground`, `text-warning-foreground`,
+    /// `text-indigo-600 dark:text-indigo-300`, `text-error-foreground`, `text-success-foreground`.
+    #[must_use]
+    pub(crate) fn color(self, tokens: &Tokens) -> gpui_kit::Hsla {
+        match self {
+            Self::Working | Self::Goal => hsla(tokens.info_foreground),
+            Self::Waiting => hsla(tokens.muted_foreground),
+            Self::Approval => hsla(tokens.warning_foreground),
+            Self::Input => hsla(crate::sidebar::project_icon_color(
+                conn_contract::ProjectIconColor::Indigo,
+                tokens,
+            )),
+            Self::Failed => hsla(tokens.destructive),
+            Self::Done => hsla(tokens.success_foreground),
+        }
+    }
+}
+
+/// Port of `resolveSidebarThreadStatus` plus the unseen-completion `Done` pill
+/// (`hasUnseenCompletion`: the latest run completed after the last visit).
+#[must_use]
+pub(crate) fn resolve_row_status(thread: &ThreadShell) -> Option<RowStatus> {
+    use conn_contract::OrchestrationV2PendingRuntimeRequestSummaryKind as Kind;
+    use conn_contract::OrchestrationV2ShellThreadStatus as Status;
+    if let Some(request) = &thread.pending_runtime_request {
+        match request.kind {
+            Kind::UserInput => return Some(RowStatus::Input),
+            Kind::AuthRefresh => {}
+            _ => return Some(RowStatus::Approval),
+        }
+    }
+    let running_like = matches!(
+        thread.status,
+        Status::Preparing | Status::Queued | Status::Starting | Status::Running | Status::Waiting
+    ) || matches!(thread.activity_run_status, Some(Some(_)));
+    if running_like {
+        if thread.status == Status::Running && thread.blocked_on_thread_wait == Some(true) {
+            return Some(RowStatus::Waiting);
+        }
+        let goal_active = thread
+            .goal
+            .as_ref()
+            .and_then(Option::as_ref)
+            .is_some_and(|g| g.status == conn_contract::OrchestrationV2ProviderGoalStatus::Active);
+        return Some(if goal_active {
+            RowStatus::Goal
+        } else {
+            RowStatus::Working
+        });
+    }
+    if thread.status == Status::Failed {
+        return Some(RowStatus::Failed);
+    }
+    has_unseen_completion(thread).then_some(RowStatus::Done)
+}
+
+/// `hasUnseenCompletion`: completion after the last visit (never for unvisited threads).
+#[must_use]
+pub(crate) fn has_unseen_completion(thread: &ThreadShell) -> bool {
+    let Some(completed) = thread
+        .latest_run_completed_at
+        .as_ref()
+        .and_then(Option::as_deref)
+        .and_then(parse_iso8601_unix_secs)
+    else {
+        return false;
+    };
+    let Some(visited) = thread.last_visited_at.as_ref().and_then(Option::as_deref) else {
+        return false;
+    };
+    parse_iso8601_unix_secs(visited).is_none_or(|v| completed > v)
+}
+
+/// Start time of the live elapsed label (`WorkingDuration`).
+fn status_started_at(thread: &ThreadShell, status: RowStatus) -> Option<&str> {
+    match status {
+        RowStatus::Working | RowStatus::Goal => thread
+            .activity_run_started_at
+            .as_ref()
+            .and_then(Option::as_deref)
+            .or_else(|| {
+                thread
+                    .latest_run_started_at
+                    .as_ref()
+                    .and_then(Option::as_deref)
+            }),
+        RowStatus::Waiting => thread
+            .latest_run_completed_at
+            .as_ref()
+            .and_then(Option::as_deref),
+        _ => None,
+    }
+}
+
+/// `formatWorkingDurationLabel`: `Ns`, `Nm`, then `Nh Nm`.
+#[must_use]
+pub(crate) fn format_working_duration(elapsed_secs: i64) -> String {
+    let seconds = elapsed_secs.max(0);
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    format!("{}h {}m", minutes / 60, minutes % 60)
+}
+
+/// `shouldRecedeSidebarThread`: quiet idle and working rows that need no attention.
+fn should_recede(status: Option<RowStatus>, is_active: bool) -> bool {
+    if is_active {
+        return false;
+    }
+    match status {
+        None | Some(RowStatus::Working | RowStatus::Goal | RowStatus::Waiting) => true,
+        Some(RowStatus::Approval) => true,
+        Some(RowStatus::Input | RowStatus::Failed | RowStatus::Done) => false,
+    }
+}
+
+/// `MiddleTruncate`: keeps the branch prefix and its unique tail (`feat/…-fix`).
+#[must_use]
+pub(crate) fn middle_truncate(value: &str, max_chars: usize) -> String {
+    let count = value.chars().count();
+    if count <= max_chars || max_chars < 5 {
+        return value.to_owned();
+    }
+    let keep = max_chars - 1;
+    let head = keep.div_ceil(2);
+    let tail = keep - head;
+    let head_str: String = value.chars().take(head).collect();
+    let tail_str: String = value.chars().skip(count - tail).collect();
+    format!("{head_str}…{tail_str}")
+}
+
+/// Branch character budget for the meta line at the current sidebar width (`12px` text,
+/// ~6.6px per glyph, minus row insets and trailing badges).
+fn branch_char_budget(sidebar_width: f32) -> usize {
+    let usable = (sidebar_width - 96.0).max(48.0);
+    // Truncation toward zero is intended: a partial glyph does not fit.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "width is clamped positive and small"
+    )]
+    let chars = (usable / 6.6) as usize;
+    chars
+}
+
+/// Shared row context for [`render_thread_card`] and [`render_settled_row`].
+struct RowCtx<'a> {
     row_key: usize,
-    thread: &ThreadShell,
-    project: Option<&ProjectShell>,
+    thread: &'a ThreadShell,
+    project: Option<&'a ProjectShell>,
     selected: bool,
-    is_settled: bool,
     is_renaming: bool,
-    rename_input: &Entity<InputState>,
-    activity: ThreadActivity,
+    rename_input: &'a Entity<InputState>,
     now_secs: i64,
-    tokens: &Tokens,
+    sidebar_width: f32,
+    tokens: &'a Tokens,
+}
+
+/// Inline rename field (`ThreadRenameInput`): Enter and blur commit, Escape cancels.
+fn render_rename_field(
+    rename_input: &Entity<InputState>,
     cx: &mut Context<'_, ConnApp>,
-) -> gpui_kit::Div {
-    let fg = hsla(tokens.foreground);
-    let muted = hsla(tokens.sidebar_muted_foreground);
-    let hover_bg = hsla(tokens.sidebar_row_hover);
-    let selected_bg = hsla(tokens.sidebar_row_selected);
-    let active_bg = hsla(tokens.sidebar_row_active);
-    let thread_id = thread.id.clone();
+) -> gpui_kit::AnyElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
+            if event.keystroke.key == "escape" {
+                app.cancel_thread_rename(cx);
+                cx.stop_propagation();
+            }
+        }))
+        .child(
+            Input::new(rename_input)
+                .appearance(false)
+                .text_size(px(TITLE_FONT_SIZE_PX)),
+        )
+        .into_any_element()
+}
 
-    let project_name = project.map(|p| p.title.as_str());
-    let provider_hint = thread.provider_instance_id.as_str();
-    // Conn: `opacity-60` on the provider mark in the meta line.
-    let provider_mark = div()
-        .flex()
-        .items_center()
-        .justify_center()
+/// Right-click opens the Thread Actions menu; double-click starts inline rename.
+fn attach_row_interactions(
+    row: gpui_kit::Stateful<gpui_kit::Div>,
+    thread: &ThreadShell,
+    is_renaming: bool,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let select_id = thread.id.clone();
+    let rename_id = thread.id.clone();
+    let rename_title = thread.title.clone();
+    let menu_id = thread.id.clone();
+    row.on_click(
+        cx.listener(move |app, event: &gpui_kit::ClickEvent, window, cx| {
+            let modifiers = event.modifiers();
+            if event.click_count() >= 2
+                && !is_renaming
+                && !(modifiers.platform || modifiers.control || modifiers.shift || modifiers.alt)
+            {
+                app.start_thread_rename(rename_id.clone(), rename_title.clone(), window, cx);
+                return;
+            }
+            app.select_thread(select_id.clone(), cx);
+        }),
+    )
+    .on_mouse_down(
+        MouseButton::Right,
+        cx.listener(move |app, event: &gpui_kit::MouseDownEvent, _, cx| {
+            cx.stop_propagation();
+            app.open_thread_menu(menu_id.clone(), event.position, cx);
+        }),
+    )
+}
+
+/// `pinIndicator`: a `12px` pin that turns into the `PinOff` "Unpin thread" button on hover.
+fn render_pin_indicator(
+    row: &RowCtx<'_>,
+    cx: &mut Context<'_, ConnApp>,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let tokens = row.tokens;
+    let rest = hsla_alpha(tokens.muted_foreground, 0.65);
+    let hover = hsla(tokens.foreground);
+    let thread_id = row.thread.id.clone();
+    let group = SharedString::from(format!("sidebar-unpin-{}", row.row_key));
+    div()
+        .id(("thread-unpin-btn", row.row_key))
+        .group(group.clone())
+        .relative()
         .flex_shrink_0()
-        .opacity(0.6)
-        .child(icons::provider_mark(
-            provider_hint,
-            14.0,
-            hsla_alpha(tokens.foreground, 0.60),
-        ));
+        .size(px(12.0))
+        .rounded(px(2.0))
+        .cursor_pointer()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |app, _, _, cx| {
+            cx.stop_propagation();
+            app.pin_thread(thread_id.clone(), false, cx);
+        }))
+        .conn_tooltip("Unpin thread", tokens)
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .group_hover(group.clone(), |s| s.invisible())
+                .child(icons::concept("superhero/pin.svg", 12.0, rest)),
+        )
+        .child(
+            div()
+                .absolute()
+                .inset_0()
+                .invisible()
+                .group_hover(group, |s| s.visible())
+                .child(icons::concept("superhero/unpin.svg", 12.0, hover)),
+        )
+}
 
-    // Line 1 (`h-5`, `gap-1.5`): 16px project favicon (with corner StatusDotBadge) + 14px medium title.
-    let favicon = project.map_or_else(
+/// Active-thread card (`SidebarThreadRow.tsx` `variant="card"`):
+/// - Line 1 (`h-5 gap-1.5`): favicon, pin, project name (`text-xs` secondary label), and the
+///   status pill with live elapsed time (or relative age) that swaps to `✓ Settle` on hover.
+/// - Line 2 (`mt-1`): `text-sm` title (`font-normal text-foreground/75` when receded,
+///   `opacity-55` while regenerating).
+/// - Line 3 (`mt-0.5 text-xs`, omitted when empty): worktree icon, middle-truncated branch,
+///   PR badge, and the provider mark.
+fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_kit::Div {
+    let tokens = row.tokens;
+    let thread = row.thread;
+    let fg = hsla(tokens.foreground);
+    let secondary = hsla(tokens.sidebar_muted_foreground);
+    let muted = hsla(tokens.muted_foreground);
+    let hover_bg = hsla(tokens.sidebar_row_hover);
+    let active_bg = hsla(tokens.sidebar_row_active);
+    let status = resolve_row_status(thread);
+    let recede = should_recede(status, row.selected);
+    let is_pinned = thread.pinned_at.as_ref().is_some_and(Option::is_some);
+    let regenerating = thread
+        .title_regeneration
+        .as_ref()
+        .is_some_and(Option::is_some);
+    let group = SharedString::from(format!("sidebar-row-{}", row.row_key));
+
+    // Line 1.
+    let favicon = row.project.map_or_else(
         || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
         |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
     );
-    let leading_icon = render_status_dot_badge(
-        favicon,
-        StatusDotState::from_activity(activity),
-        selected,
-        tokens,
-    );
-
-    let rename_thread_id = thread.id.clone();
-    let rename_initial_title = thread.title.clone();
-    let rename_btn = div()
-        .id(("thread-rename-btn", row_key))
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(20.0))
-        .flex_shrink_0()
-        .rounded(px(5.0))
-        .opacity(0.0)
-        .group_hover("sidebar-row", |s| s.opacity(1.0))
-        .hover(move |s| s.bg(hover_bg))
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |app, _event, window, cx| {
-            cx.stop_propagation();
-            app.start_thread_rename(
-                rename_thread_id.clone(),
-                rename_initial_title.clone(),
-                window,
-                cx,
-            );
-        }))
-        .child(icons::concept("superhero/edit.svg", 13.0, muted))
-        .conn_tooltip("Rename thread", tokens);
-
-    let settle_thread_id = thread.id.clone();
-    let settle_icon = if is_settled {
-        "superhero/undo.svg"
-    } else {
-        "superhero/check.svg"
-    };
-    let settle_tooltip = if is_settled {
-        "Un-settle thread"
-    } else {
-        "Settle thread"
-    };
-    let settle_btn = div()
-        .id(("thread-settle-btn", row_key))
-        .flex()
-        .items_center()
-        .justify_center()
-        .size(px(20.0))
-        .flex_shrink_0()
-        .rounded(px(5.0))
-        .opacity(0.0)
-        .group_hover("sidebar-row", |s| s.opacity(1.0))
-        .hover(move |s| s.bg(hover_bg))
-        .cursor_pointer()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .on_click(cx.listener(move |app, _event, _window, cx| {
-            cx.stop_propagation();
-            app.settle_thread(settle_thread_id.clone(), !is_settled, cx);
-        }))
-        .child(icons::concept(settle_icon, 13.0, muted))
-        .conn_tooltip(settle_tooltip, tokens);
-
-    let title_slot = if is_renaming {
-        div()
-            .flex_1()
-            .min_w_0()
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_key_down(cx.listener(|app, event: &gpui_kit::KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" {
-                    app.cancel_thread_rename(cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(
-                Input::new(rename_input)
-                    .appearance(false)
-                    .text_size(px(TITLE_FONT_SIZE_PX)),
-            )
-            .into_any_element()
-    } else {
-        div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_size(px(TITLE_FONT_SIZE_PX))
-            .line_height(px(TITLE_LINE_HEIGHT_PX))
-            .font_weight(gpui_kit::FontWeight::MEDIUM)
-            .text_color(fg)
-            .child(thread.title.clone())
-            .into_any_element()
-    };
-
     let mut line1 = div()
         .flex()
         .flex_row()
@@ -739,22 +945,140 @@ fn render_thread_card(
         .w_full()
         .h(px(TITLE_LINE_HEIGHT_PX))
         .min_w_0()
-        .child(leading_icon)
-        .child(title_slot);
-    if !is_renaming {
-        line1 = line1.child(rename_btn).child(settle_btn);
+        .child(div().flex_shrink_0().child(favicon));
+    if is_pinned {
+        line1 = line1.child(render_pin_indicator(row, cx));
     }
+    line1 = line1.child(
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(px(META_FONT_SIZE_PX))
+            .line_height(px(META_LINE_HEIGHT_PX))
+            .text_color(secondary)
+            .child(row.project.map(|p| p.title.clone()).unwrap_or_default()),
+    );
 
-    // Line 2 (`cardMetaLine` in `SidebarThreadRow.tsx:1357-1392`):
-    // `mt-1 flex min-w-0 items-center gap-1.5 ps-5.5 text-secondary-label text-xs`
-    // Contents: provider icon · project · branch · relative age
-    let timestamp_iso = thread
-        .latest_user_message_at
-        .as_deref()
-        .filter(|s| !s.is_empty())
-        .unwrap_or(&thread.updated_at);
-    let age = format_compact_relative_age_at(timestamp_iso, now_secs).unwrap_or_default();
+    let resting: gpui_kit::AnyElement = if let Some(status) = status {
+        let color = status.color(tokens);
+        let mut pill = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(4.0))
+            .font_weight(gpui_kit::FontWeight::MEDIUM)
+            .text_color(color)
+            .child(icons::concept(status.icon(), 16.0, color))
+            .child(status.label());
+        if let Some(started) = status_started_at(thread, status).and_then(parse_iso8601_unix_secs) {
+            pill = pill.child(format_working_duration(row.now_secs - started));
+        }
+        pill.into_any_element()
+    } else {
+        div()
+            .text_color(secondary)
+            .child(
+                format_compact_relative_age_at(thread_time_timestamp(thread), row.now_secs)
+                    .unwrap_or_default(),
+            )
+            .into_any_element()
+    };
+    let settle_id = thread.id.clone();
+    let status_slot = div()
+        .relative()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .h(px(TITLE_LINE_HEIGHT_PX))
+        .min_w(px(32.0))
+        .flex_shrink_0()
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .group_hover(group.clone(), |s| s.invisible())
+                .child(resting),
+        )
+        .child(
+            div()
+                .id(("thread-settle-btn", row.row_key))
+                .a11y_button(
+                    SharedString::from(format!("sidebar.thread.{}.settle", thread.id)),
+                    "Settle thread",
+                )
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(-4.0))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .px(px(6.0))
+                .rounded(px(CARD_RADIUS_PX))
+                .invisible()
+                .group_hover(group.clone(), |s| s.visible())
+                .cursor_pointer()
+                .text_color(muted)
+                .hover(move |s| s.text_color(fg))
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.settle_thread(settle_id.clone(), true, cx);
+                }))
+                .conn_tooltip("Settle thread", tokens)
+                .child(icons::concept("superhero/check.svg", 14.0, muted))
+                .child("Settle"),
+        );
+    line1 = line1.child(status_slot);
 
+    // Line 3 (built first so Line 2 knows whether the provider mark moves up).
+    let provider_mark = div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .opacity(0.6)
+        .child(icons::provider_mark(
+            &thread.provider_instance_id,
+            14.0,
+            hsla_alpha(tokens.foreground, 0.60),
+        ));
+    let branch = thread.branch.as_deref().filter(|b| !b.is_empty());
+    let pr_number = thread_pr_number(thread);
+    let meta_line_empty = branch.is_none() && pr_number.is_none();
+
+    let title_el = if row.is_renaming {
+        render_rename_field(row.rename_input, cx)
+    } else {
+        let mut title = div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(px(TITLE_FONT_SIZE_PX))
+            .line_height(px(TITLE_LINE_HEIGHT_PX));
+        title = if recede {
+            title
+                .font_weight(gpui_kit::FontWeight::NORMAL)
+                .text_color(hsla_alpha(tokens.foreground, 0.75))
+                .group_hover(group.clone(), move |s| s.text_color(fg))
+        } else if status == Some(RowStatus::Failed) {
+            title
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(hsla_alpha(tokens.foreground, 0.95))
+        } else {
+            title
+                .font_weight(gpui_kit::FontWeight::MEDIUM)
+                .text_color(fg)
+        };
+        if regenerating {
+            title = title.opacity(0.55);
+        }
+        title.child(thread.title.clone()).into_any_element()
+    };
     let mut line2 = div()
         .flex()
         .flex_row()
@@ -762,68 +1086,93 @@ fn render_thread_card(
         .gap(px(6.0))
         .w_full()
         .mt(px(4.0))
-        .pl(px(META_LINE_INDENT_PX))
         .min_w_0()
-        .text_size(px(META_FONT_SIZE_PX))
-        .line_height(px(META_LINE_HEIGHT_PX))
-        .text_color(muted)
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .flex_shrink_0()
-                .child(provider_mark),
-        );
-
-    if let Some(name) = project_name {
-        line2 = line2.child(div().flex_shrink_0().child("·")).child(
-            div()
-                .min_w_0()
-                .max_w(px(92.0))
-                .flex_shrink_0()
-                .truncate()
-                .child(name.to_owned()),
-        );
+        .child(title_el);
+    let mut provider_mark = Some(provider_mark);
+    if meta_line_empty {
+        line2 = line2.children(provider_mark.take());
     }
 
-    if let Some(branch) = thread.branch.as_deref().filter(|b| !b.is_empty()) {
-        line2 = line2
-            .child(div().flex_shrink_0().child("·"))
-            .child(div().min_w_0().truncate().child(branch.to_owned()));
-    }
-
-    if !age.is_empty() {
-        line2 = line2
-            .child(div().flex_shrink_0().child("·"))
-            .child(div().flex_shrink_0().child(age));
-    }
-
-    let thread_ax_id = SharedString::from(format!("sidebar.thread.{}", thread.id));
     let mut card = div()
-        .id(("thread-row", row_key))
-        .a11y(gpui_kit::Role::ListItem, thread_ax_id, thread.title.clone())
-        .aria_selected(selected)
-        .group("sidebar-row")
+        .id(("thread-row", row.row_key))
+        .a11y(
+            gpui_kit::Role::ListItem,
+            SharedString::from(format!("sidebar.thread.{}", thread.id)),
+            thread.title.clone(),
+        )
+        .aria_selected(row.selected)
+        .group(group)
         .flex()
         .flex_col()
         .w_full()
         .px(px(ROW_HORIZONTAL_INSET_PX))
         .py(px(SIDEBAR_CONTENT_INSET_PX))
-        .rounded(px(ROW_RADIUS_PX))
+        .rounded(px(CARD_RADIUS_PX))
         .border_t_1()
         .cursor_pointer()
-        .on_click(cx.listener(move |app, _event, _window, cx| {
-            app.select_thread(thread_id.clone(), cx);
-        }))
         .child(line1)
         .child(line2);
 
-    // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
-    // Light mode adds `ring-1 ring-inset ring-sidebar-border/70`.
-    if selected {
+    if !meta_line_empty {
+        let mut line3 = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .w_full()
+            .mt(px(2.0))
+            .min_w_0()
+            .text_size(px(META_FONT_SIZE_PX))
+            .line_height(px(META_LINE_HEIGHT_PX))
+            .text_color(secondary);
+        if let Some(branch) = branch {
+            if thread
+                .worktree_path
+                .as_deref()
+                .is_some_and(|p| !p.is_empty())
+            {
+                // `ThreadWorktreeIndicator` (`FolderGit2Icon`).
+                line3 = line3.child(icons::concept("superhero/folder-git.svg", 12.0, secondary));
+            }
+            line3 = line3.child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(middle_truncate(
+                        branch,
+                        branch_char_budget(row.sidebar_width),
+                    )),
+            );
+        } else {
+            line3 = line3.child(div().flex_1());
+        }
+        if let Some(number) = pr_number {
+            // `ThreadPullRequestBadgeControl`: PR glyph + `#number`.
+            line3 = line3.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(2.0))
+                    .flex_shrink_0()
+                    .child(icons::concept(icons::PULL_REQUEST, 12.0, secondary))
+                    .child(format!("#{number}")),
+            );
+        }
+        line3 = line3.child(div().ml_auto().children(provider_mark.take()));
+        card = card.child(line3);
+    }
+
+    card = attach_row_interactions(card, thread, row.is_renaming, cx);
+
+    // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)` (100%);
+    // light mode adds `ring-1 ring-inset ring-sidebar-border/70`.
+    if row.selected {
         card = card
             .bg(active_bg)
-            .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
+            .border_color(hsla(tokens.shell_divider_raised))
             .hover(move |s| s.bg(active_bg));
         if tokens.appearance == Appearance::Light {
             card = card
@@ -833,12 +1182,191 @@ fn render_thread_card(
     } else {
         card = card
             .border_color(gpui_kit::transparent_black())
-            .hover(move |s| s.bg(hover_bg))
-            .active(move |s| s.bg(selected_bg));
+            .hover(move |s| s.bg(hover_bg));
+        if recede && matches!(status, Some(RowStatus::Working | RowStatus::Goal)) {
+            card = card
+                .opacity(0.7)
+                .hover(move |s| s.bg(hover_bg).opacity(1.0));
+        }
     }
 
-    // Outer `li` wrapper carries `py-0.5` (`2px`) matching `SidebarThreadRow.tsx:1610`.
+    // Outer `li`: `py-0.5` (`2px`).
     div().w_full().py(px(2.0)).child(card)
+}
+
+/// Settled row (`SidebarThreadRow.tsx` slim variant, `h-9 gap-2.5 px-2.5`): grayscale `opacity-40`
+/// favicon that regains color on hover, single-line muted title, and the `settled_at` time that
+/// swaps to the `Undo2` "Un-settle thread" button on hover.
+fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_kit::Div {
+    let tokens = row.tokens;
+    let thread = row.thread;
+    let fg = hsla(tokens.foreground);
+    let secondary = hsla(tokens.sidebar_muted_foreground);
+    let muted = hsla(tokens.muted_foreground);
+    let hover_bg = hsla(tokens.sidebar_row_hover);
+    let active_bg = hsla(tokens.sidebar_row_active);
+    let group = SharedString::from(format!("sidebar-row-{}", row.row_key));
+
+    let favicon = row.project.map_or_else(
+        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
+        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
+    );
+    // GPUI has no grayscale filter; `opacity-40` carries the muted look and hover restores it.
+    let favicon_slot = div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .opacity(0.4)
+        .group_hover(group.clone(), |s| s.opacity(1.0))
+        .child(favicon);
+
+    let title_el = if row.is_renaming {
+        render_rename_field(row.rename_input, cx)
+    } else {
+        div()
+            .flex_1()
+            .min_w_0()
+            .truncate()
+            .text_size(px(TITLE_FONT_SIZE_PX))
+            .line_height(px(TITLE_LINE_HEIGHT_PX))
+            .font_weight(gpui_kit::FontWeight::NORMAL)
+            .text_color(if row.selected { fg } else { secondary })
+            .group_hover(group.clone(), move |s| s.text_color(fg))
+            .when(
+                thread
+                    .title_regeneration
+                    .as_ref()
+                    .is_some_and(Option::is_some),
+                |s| s.opacity(0.55),
+            )
+            .child(thread.title.clone())
+            .into_any_element()
+    };
+
+    let unsettle_id = thread.id.clone();
+    let time_slot = div()
+        .relative()
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_end()
+        .h(px(24.0))
+        .min_w(px(32.0))
+        .ml_auto()
+        .flex_shrink_0()
+        .text_size(px(META_FONT_SIZE_PX))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .child(
+            div()
+                .text_color(secondary)
+                .group_hover(group.clone(), |s| s.invisible())
+                .child(
+                    format_compact_relative_age_at(settled_thread_timestamp(thread), row.now_secs)
+                        .unwrap_or_default(),
+                ),
+        )
+        .child(
+            div()
+                .id(("thread-unsettle-btn", row.row_key))
+                .a11y_button(
+                    SharedString::from(format!("sidebar.thread.{}.unsettle", thread.id)),
+                    "Un-settle thread",
+                )
+                .absolute()
+                .top_0()
+                .bottom_0()
+                .right(px(-4.0))
+                .flex()
+                .items_center()
+                .px(px(6.0))
+                .rounded(px(CARD_RADIUS_PX))
+                .invisible()
+                .group_hover(group.clone(), |s| s.visible())
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |app, _, _, cx| {
+                    cx.stop_propagation();
+                    app.settle_thread(unsettle_id.clone(), false, cx);
+                }))
+                .conn_tooltip("Un-settle thread", tokens)
+                .child(icons::concept("superhero/undo.svg", 14.0, muted)),
+        );
+
+    let mut slim = div()
+        .id(("thread-row", row.row_key))
+        .a11y(
+            gpui_kit::Role::ListItem,
+            SharedString::from(format!("sidebar.thread.{}", thread.id)),
+            thread.title.clone(),
+        )
+        .aria_selected(row.selected)
+        .group(group)
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap(px(10.0))
+        .w_full()
+        .h(px(SLIM_ROW_HEIGHT_PX))
+        .px(px(ROW_HORIZONTAL_INSET_PX))
+        .rounded(px(CARD_RADIUS_PX))
+        .border_t_1()
+        .cursor_pointer()
+        .child(favicon_slot)
+        .child(title_el)
+        .child(time_slot);
+    slim = attach_row_interactions(slim, thread, row.is_renaming, cx);
+    if row.selected {
+        slim = slim
+            .bg(active_bg)
+            .border_color(hsla(tokens.shell_divider_raised))
+            .hover(move |s| s.bg(active_bg));
+        if tokens.appearance == Appearance::Light {
+            slim = slim
+                .border_1()
+                .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
+        }
+    } else {
+        slim = slim
+            .border_color(gpui_kit::transparent_black())
+            .hover(move |s| s.bg(hover_bg));
+    }
+    div().w_full().child(slim)
+}
+
+/// `threadTimeTimestamp`: last user message, else last update.
+fn thread_time_timestamp(thread: &ThreadShell) -> &str {
+    thread
+        .latest_user_message_at
+        .as_deref()
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&thread.updated_at)
+}
+
+/// `resolveSettledThreadTimestamp`: when the thread was settled (or archived).
+fn settled_thread_timestamp(thread: &ThreadShell) -> &str {
+    thread
+        .settled_at
+        .as_deref()
+        .or(thread.archived_at.as_deref())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(&thread.updated_at)
+}
+
+/// The thread's current PR number: the branch PR, the linked PR, else the newest link.
+fn thread_pr_number(thread: &ThreadShell) -> Option<i64> {
+    thread
+        .branch_pull_request
+        .as_ref()
+        .and_then(Option::as_ref)
+        .or_else(|| thread.linked_pull_request.as_ref().and_then(Option::as_ref))
+        .map(|pr| pr.number)
+        .or_else(|| {
+            thread
+                .pull_requests
+                .as_ref()
+                .and_then(|prs| prs.last())
+                .map(|pr| pr.number)
+        })
 }
 
 /// Active unsent draft row pinned at the top of the sidebar list (Conn `SidebarDraftBlock` parity).
@@ -943,55 +1471,30 @@ fn render_draft_sidebar_row(
     div().w_full().py(px(2.0)).child(card)
 }
 
-/// Wraps a 16px leading project icon with Conn's `StatusDotBadge` (`StatusDotBadge.tsx`):
-/// a 6px (`size-1.5`) dot at `top: -1px, right: -1px` with a cutout border.
-fn render_status_dot_badge(
-    icon: gpui_kit::Div,
-    state: Option<StatusDotState>,
-    selected: bool,
-    tokens: &Tokens,
-) -> gpui_kit::Div {
-    let mut wrapper = div()
-        .relative()
-        .flex()
-        .items_center()
-        .justify_center()
-        .flex_shrink_0()
-        .child(icon);
-
-    if let Some(dot_state) = state {
-        let dot_color = match dot_state {
-            StatusDotState::Working => hsla(tokens.info),
-            StatusDotState::Waiting => hsla_alpha(tokens.muted_foreground, 0.70),
-            StatusDotState::Done => hsla(tokens.success),
-            StatusDotState::Failed => hsla(tokens.destructive),
-        };
-        // Ring color blends the cutout cleanly into the row behind the icon.
-        let ring_color = if selected {
-            hsla(tokens.shell_control)
-        } else {
-            hsla(tokens.shell_card)
-        };
-        wrapper = wrapper.child(
-            div()
-                .absolute()
-                .top(px(-2.0))
-                .right(px(-2.0))
-                .size(px(STATUS_DOT_PX + 2.0))
-                .rounded_full()
-                .bg(dot_color)
-                .border(px(1.5))
-                .border_color(ring_color),
-        );
-    }
-
-    wrapper
+/// Active thread ids in sidebar order: pinned (`pinOrderKey`) first, then active.
+#[must_use]
+pub(crate) fn ordered_active_thread_ids(shell: &ShellState) -> Vec<String> {
+    let (mut pinned, active): (Vec<&ThreadShell>, Vec<&ThreadShell>) = shell
+        .top_level_active_threads()
+        .partition(|t| t.pinned_at.as_ref().is_some_and(Option::is_some));
+    pinned.sort_by(|a, b| pin_order_key(a).cmp(&pin_order_key(b)));
+    pinned
+        .into_iter()
+        .chain(active)
+        .map(|t| t.id.clone())
+        .collect()
 }
 
-/// Provider glyph tint matching `ProviderInstanceIcon.tsx` (`opacity-60`):
-/// Claude uses the theme's warm warning role; OpenAI/Codex and others use
-/// `foreground` at 60% opacity.
-fn current_unix_secs() -> i64 {
+/// `pinOrderKey` sort key: pinned threads with a key sort by it; the rest keep shell order.
+fn pin_order_key(thread: &ThreadShell) -> (bool, &str) {
+    match thread.pin_order_key.as_ref().and_then(Option::as_deref) {
+        Some(key) => (false, key),
+        None => (true, ""),
+    }
+}
+
+/// Current Unix time in seconds.
+pub(crate) fn current_unix_secs() -> i64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
@@ -1022,7 +1525,7 @@ pub(crate) fn format_compact_relative_age_at(iso: &str, now_secs: i64) -> Option
 
 /// Parses an RFC 3339 / ISO-8601 timestamp (`YYYY-MM-DDTHH:MM:SS(.frac)?(Z|±HH:MM)`)
 /// into Unix epoch seconds.
-fn parse_iso8601_unix_secs(iso: &str) -> Option<i64> {
+pub(crate) fn parse_iso8601_unix_secs(iso: &str) -> Option<i64> {
     let s = iso.trim();
     if s.len() < 20 {
         return None;
@@ -1189,6 +1692,64 @@ mod tests {
             format_compact_relative_age_at("2026-03-19T12:00:00.000Z", now).as_deref(),
             Some("247d")
         );
+    }
+
+    #[test]
+    fn working_duration_matches_conn_format() {
+        assert_eq!(format_working_duration(-5), "0s");
+        assert_eq!(format_working_duration(42), "42s");
+        assert_eq!(format_working_duration(125), "2m");
+        assert_eq!(format_working_duration(3 * 3600 + 7 * 60), "3h 7m");
+    }
+
+    #[test]
+    fn middle_truncate_keeps_prefix_and_suffix() {
+        assert_eq!(middle_truncate("main", 10), "main");
+        let out = middle_truncate("feat/wave1-sidebar-context-header", 15);
+        assert_eq!(out.chars().count(), 15);
+        assert!(out.starts_with("feat/wa"));
+        assert!(out.ends_with("header"));
+        assert!(out.contains('…'));
+    }
+
+    #[test]
+    fn status_labels_and_icons_exist() {
+        use gpui_kit::AssetSource as _;
+        let assets = crate::superhero::AppAssets;
+        for status in [
+            RowStatus::Working,
+            RowStatus::Goal,
+            RowStatus::Waiting,
+            RowStatus::Approval,
+            RowStatus::Input,
+            RowStatus::Failed,
+            RowStatus::Done,
+        ] {
+            assert!(!status.label().is_empty());
+            assert!(
+                assets.load(status.icon()).ok().flatten().is_some(),
+                "status icon {} exists",
+                status.icon()
+            );
+        }
+        for path in [
+            "superhero/pin.svg",
+            "superhero/unpin.svg",
+            "superhero/undo.svg",
+            "superhero/check.svg",
+            "superhero/folder-git.svg",
+        ] {
+            assert!(assets.load(path).ok().flatten().is_some(), "{path} exists");
+        }
+    }
+
+    #[test]
+    fn recede_rules_follow_conn() {
+        assert!(should_recede(None, false));
+        assert!(!should_recede(None, true));
+        assert!(should_recede(Some(RowStatus::Working), false));
+        assert!(!should_recede(Some(RowStatus::Input), false));
+        assert!(!should_recede(Some(RowStatus::Done), false));
     }
 
     #[test]

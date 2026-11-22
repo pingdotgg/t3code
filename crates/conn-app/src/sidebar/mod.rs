@@ -2,6 +2,7 @@
 
 pub(crate) mod rail;
 pub(crate) mod thread_list;
+pub(crate) mod thread_menu;
 
 use conn_contract::{ProjectIconColor, ProjectProjectIcon};
 use conn_state::ProjectShell;
