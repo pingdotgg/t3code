@@ -67,6 +67,15 @@ export function resolvePendingUserInputAnswer(
     question.initialAnswer !== undefined
       ? (draft?.customAnswer ?? null)
       : normalizeDraftAnswer(draft?.customAnswer);
+
+  const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
+
+  // If allowCustomAnswer is explicitly false and an option is chosen, keep the chosen option.
+  // If the user typed a custom answer via the Other option, submit the custom answer.
+  if (question.allowCustomAnswer === false && selectedOptionValues.length > 0) {
+    return question.multiSelect ? selectedOptionValues : selectedOptionValues[0]!;
+  }
+
   if (customAnswer !== null && customAnswer.length > 0) {
     return customAnswer;
   }
@@ -74,7 +83,6 @@ export function resolvePendingUserInputAnswer(
     return "";
   }
 
-  const selectedOptionValues = normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   if (question.multiSelect) {
     return selectedOptionValues.length > 0
       ? selectedOptionValues
