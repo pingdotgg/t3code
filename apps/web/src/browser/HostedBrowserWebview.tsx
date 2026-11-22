@@ -3,12 +3,14 @@ import type {
   PreviewViewportSetting,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { msg, T } from "gt-react";
 import { useShallow } from "zustand/react/shallow";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { Button } from "~/components/ui/button";
 import { toastManager } from "~/components/ui/toast";
+import { m } from "~/i18n/messages";
 import { takeTabWindowRequest } from "./pendingTabWindows";
 import {
   preventThumbButtonFocus,
@@ -173,6 +175,7 @@ export function HostedBrowserWebview(props: {
     if (!clientSettingsHydrated || !webview || !config || !bridge) return;
     let disposed = false;
     let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
+    let registeredWebContentsId: number | null = null;
     const register = () => {
       const lease = tabLeaseRef.current;
       if (!lease) return;
@@ -184,13 +187,15 @@ export function HostedBrowserWebview(props: {
           const webContentsId = webview.getWebContentsId();
           if (Number.isInteger(webContentsId) && webContentsId > 0) {
             await bridge.registerWebview(runtimeTabId, webContentsId);
+            registeredWebContentsId = webContentsId;
             withDesktopTab(runtimeTabId, () => bridge.setShown(runtimeTabId, reportedShown()));
             if (takeTabWindowRequest(runtimeTabId)) {
               await bridge.tabWindow.open(runtimeTabId, config.partition).catch((error) => {
                 toastManager.add({
                   type: "error",
-                  title: "Unable to open browser window",
-                  description: error instanceof Error ? error.message : "An error occurred.",
+                  title: m(msg("Unable to open browser window")),
+                  description:
+                    error instanceof Error ? error.message : m(msg("An error occurred.")),
                 });
               });
             }
@@ -221,6 +226,13 @@ export function HostedBrowserWebview(props: {
         dismissHostPopups();
       }
     };
+    // The desktop clears a destroyed guest's id; nothing reattaches this element, so remount it.
+    const unsubscribeState = bridge.onStateChange((changedTabId, state) => {
+      if (changedTabId !== runtimeTabId || registeredWebContentsId === null) return;
+      if (state.webContentsId !== null) return;
+      registeredWebContentsId = null;
+      recoverGuest();
+    });
     webview.addEventListener("did-attach", register);
     webview.addEventListener("dom-ready", register);
     webview.addEventListener("render-process-gone", recoverGuest);
@@ -230,6 +242,7 @@ export function HostedBrowserWebview(props: {
     return () => {
       disposed = true;
       if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
+      unsubscribeState();
       webview.removeEventListener("did-attach", register);
       webview.removeEventListener("dom-ready", register);
       webview.removeEventListener("render-process-gone", recoverGuest);
@@ -399,7 +412,9 @@ export function HostedBrowserWebview(props: {
         ) : null}
         {detached ? (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background text-sm text-muted-foreground">
-            <span>This tab is open in its own window.</span>
+            <T>
+              <span>This tab is open in its own window.</span>
+            </T>
             <Button
               size="sm"
               variant="outline"
@@ -407,17 +422,20 @@ export function HostedBrowserWebview(props: {
                 void previewBridge?.tabWindow.close(runtimeTabId).catch((error) => {
                   toastManager.add({
                     type: "error",
-                    title: "Unable to update browser window",
-                    description: error instanceof Error ? error.message : "An error occurred.",
+                    title: m(msg("Unable to update browser window")),
+                    description:
+                      error instanceof Error ? error.message : m(msg("An error occurred.")),
                   });
                 })
               }
             >
-              Bring back
+              <T>Bring back</T>
             </Button>
           </div>
         ) : (
           <div
+            // Keyed here, not on the webview: a destroyed guest's element may already be detached.
+            key={webviewGeneration}
             className="absolute"
             style={{
               left: layout.viewportX,
@@ -428,7 +446,6 @@ export function HostedBrowserWebview(props: {
             }}
           >
             <webview
-              key={webviewGeneration}
               ref={setWebviewRef}
               // Electron needs allowpopups at attachment. React drops boolean values for unknown attributes.
               {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}

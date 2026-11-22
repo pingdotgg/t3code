@@ -925,8 +925,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     extendEnv: false,
     shell: spawnCommand.shell,
     // Its own process group: teardown signals the whole group, because vp
-    // does not pass SIGTERM on to Vite and the server.
-    detached: true,
+    // does not pass SIGTERM on to Vite and the server. Windows tears down with
+    // taskkill /T instead, and a detached shell there leaves vp to open a
+    // visible console of its own.
+    detached: (yield* HostProcess.Platform) !== "win32",
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(

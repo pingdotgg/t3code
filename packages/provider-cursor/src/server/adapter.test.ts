@@ -756,6 +756,149 @@ describe("CursorAdapterV2", () => {
     ),
   );
 
+  it.effect("marks failed turns as promptDropped only when Cursor did not checkpoint the run", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "cursor-v2-dropped-",
+      });
+      const checkpointedRuns = new Set<string>();
+      let sendCalls = 0;
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dropped-thread");
+      const modelSelection = { instanceId, model: "gemini-4-neon" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: () =>
+            Effect.succeed({
+              agentId: "native-cursor-dropped",
+              listMessages: Effect.succeed([]),
+              close: Effect.void,
+              runCheckpointed: (runId) =>
+                Effect.succeed(runId !== undefined && checkpointedRuns.has(runId)),
+              send: () =>
+                Effect.sync(() => {
+                  sendCalls += 1;
+                  const runId = `native-cursor-run-${sendCalls}`;
+                  return {
+                    agentId: "native-cursor-dropped",
+                    runId,
+                    cancel: Effect.void,
+                    wait: Effect.succeed({
+                      id: runId,
+                      status: "error" as const,
+                      error: {
+                        message:
+                          'AI Model Not Found Invalid parameters for registry model: "gemini-4-neon"',
+                      },
+                    }),
+                  };
+                }),
+            }),
+          textGenerate: () => Effect.die("unused"),
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dropped-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const now = yield* DateTime.now;
+      const appThread = {
+        id: threadId,
+        projectId: ProjectId.make("cursor-dropped-project"),
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+        title: "Cursor dropped prompt",
+        providerInstanceId: instanceId,
+        modelSelection,
+        runtimeMode: "full-access" as const,
+        interactionMode: "default" as const,
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: providerThread.id,
+        lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      };
+      const runFailed = (ordinal: number) =>
+        Effect.gen(function* () {
+          yield* runtime.startTurn({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+            runId: RunId.make(`cursor-dropped-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`cursor-dropped-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`cursor-dropped-root-${ordinal}`),
+            appThread,
+            message: {
+              messageId: MessageId.make(`cursor-dropped-message-${ordinal}`),
+              createdBy: "user",
+              creationSource: "web",
+              text: "Resume",
+              attachments: [],
+            },
+          });
+          const events = yield* runtime.events.pipe(
+            Stream.takeUntil((event) => event.type === "turn.terminal"),
+            Stream.runCollect,
+          );
+          const terminal = events.find((event) => event.type === "turn.terminal");
+          const turn = events.findLast(
+            (event) =>
+              event.type === "provider_turn.updated" && event.providerTurn.completedAt !== null,
+          );
+          return {
+            terminal: terminal?.type === "turn.terminal" ? terminal : undefined,
+            turn: turn?.type === "provider_turn.updated" ? turn.providerTurn : undefined,
+          };
+        });
+
+      // Uncheckpointed failure: Cursor never persisted the prompt.
+      const uncheckpointed = yield* runFailed(1);
+      assert.equal(uncheckpointed.terminal?.status, "failed");
+      assert.equal(uncheckpointed.terminal?.promptDropped, true);
+      assert.equal(uncheckpointed.turn?.promptDropped, true);
+
+      // Checkpointed failure: Cursor kept the run's prompt in its store.
+      checkpointedRuns.add("native-cursor-run-2");
+      const checkpointed = yield* runFailed(2);
+      assert.equal(checkpointed.terminal?.status, "failed");
+      assert.isUndefined(checkpointed.terminal?.promptDropped);
+      assert.isUndefined(checkpointed.turn?.promptDropped);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
+  );
+
   it.effect("sends T3 instructions to each Cursor conversation that lacks them", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -3509,6 +3652,143 @@ describe("CursorAdapterV2", () => {
           Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
         ),
       ),
+  );
+
+  it.effect("reopens a fresh session when a cached worker session is no longer alive", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const workspace = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3code-cursor-dead-worker-",
+      });
+      const instanceId = ProviderInstanceId.make("cursor");
+      const threadId = ThreadId.make("cursor-dead-worker-thread");
+      const modelSelection = { instanceId, model: "composer-2.5" };
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: workspace,
+      });
+
+      let firstAlive = true;
+      let firstClosed = 0;
+      const opens: Array<{ readonly operation: string; readonly agentId?: string }> = [];
+      const sends: Array<number> = [];
+
+      const adapter = yield* makeCursorAdapterV2({
+        instanceId,
+        environment: { HOME: workspace },
+      }).pipe(
+        Effect.provideService(CursorAgentSdk.CursorAgentSdkRunner, {
+          assertComplete: Effect.void,
+          open: (input) => {
+            const sessionNumber = opens.length + 1;
+            opens.push({
+              operation: input.operation,
+              ...(input.agentId === undefined ? {} : { agentId: input.agentId }),
+            });
+            return Effect.succeed({
+              agentId: "native-cursor-reopen",
+              isAlive: () => (sessionNumber === 1 ? firstAlive : true),
+              listMessages: Effect.succeed([]),
+              close: Effect.sync(() => {
+                if (sessionNumber === 1) firstClosed += 1;
+              }),
+              send: () => {
+                sends.push(sessionNumber);
+                return Effect.succeed({
+                  agentId: "native-cursor-reopen",
+                  runId: `run-${sessionNumber}`,
+                  wait: Effect.succeed({
+                    id: `run-${sessionNumber}`,
+                    requestId: `req-${sessionNumber}`,
+                    status: "finished" as const,
+                    result: "ok",
+                    model: { id: "composer-2.5" },
+                    durationMs: 1,
+                  }),
+                  cancel: Effect.void,
+                });
+              },
+            });
+          },
+        }),
+        Effect.provide(TestProviderHost.layer({ cwd: workspace })),
+      );
+
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("cursor-dead-worker-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.deepEqual(opens, [{ operation: "create" }]);
+
+      // Simulate the first worker terminating after ensureThread.
+      firstAlive = false;
+      const now = yield* DateTime.now;
+      yield* runtime.startTurn({
+        threadId,
+        providerThread,
+        modelSelection,
+        runtimePolicy,
+        runId: RunId.make("cursor-dead-worker-run"),
+        runOrdinal: 1,
+        providerTurnOrdinal: 1,
+        attemptId: RunAttemptId.make("cursor-dead-worker-attempt"),
+        rootNodeId: NodeId.make("cursor-dead-worker-root"),
+        appThread: {
+          id: threadId,
+          projectId: ProjectId.make("cursor-dead-worker-project"),
+          createdBy: "user",
+          creationSource: "web",
+          title: "Dead worker recovery",
+          providerInstanceId: instanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: providerThread.id,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+        message: {
+          messageId: MessageId.make("cursor-dead-worker-message"),
+          createdBy: "user",
+          creationSource: "web",
+          text: "Continue on a fresh worker.",
+          attachments: [],
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil((event) => event.type === "turn.terminal"),
+        Stream.runCollect,
+      );
+      assert.equal(events.find((event) => event.type === "turn.terminal")?.status, "completed");
+      assert.equal(firstClosed, 1);
+      assert.deepEqual(opens, [
+        { operation: "create" },
+        { operation: "resume", agentId: "native-cursor-reopen" },
+      ]);
+      assert.deepEqual(sends, [2]);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(NodeServices.layer, IdAllocator.layer, McpProviderSessions.layer),
+      ),
+    ),
   );
 
   it("preserves failed nested read calls when Cursor omits their path", () => {
