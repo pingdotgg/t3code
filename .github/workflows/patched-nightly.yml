@@ -140,7 +140,6 @@ jobs:
           ### Mobile
           - Show Mark unread in the mobile thread hold menu instead of under More.
           - Keep mobile thread rows on three lines: project, title, then branch and machine.
-          - Send iOS push alerts straight from the T3 server to APNs for the fork's bundle ID, without the relay.
 
           ### Desktop
           - Add named workspace agents, a Composer picker, a project default agent, and per-launch model or reasoning/economy tier selection.
@@ -151,7 +150,13 @@ jobs:
 
           ### Server
           - Allow named T3 delegate_task targets according to each lead agent's allowlist.
-          - Publish a Linux x64 server archive (`t3-<version>-linux-x64.tar.gz` plus `SHA256SUMS`) built from the patched source.
+
+          <details>
+          <summary>Full changelog</summary>
+
+          https://github.com/pingdotgg/t3code/releases/tag/$source_tag
+
+          </details>
 
           ---
           Source nightly: $source_tag
