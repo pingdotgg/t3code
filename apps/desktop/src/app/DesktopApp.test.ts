@@ -14,6 +14,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import type * as Electron from "electron";
 import { vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({}));
@@ -83,6 +84,9 @@ interface StubbedDesktop {
   readonly record: (event: string) => Effect.Effect<void>;
   readonly windowStarted: Deferred.Deferred<void>;
   readonly registerLinuxUrlHandler: Effect.Effect<void>;
+  readonly configureHostResolver?: (
+    options: Electron.ConfigureHostResolverOptions,
+  ) => Effect.Effect<void>;
   readonly backends?: ReadonlyArray<{ readonly stop: () => Effect.Effect<void> }>;
   readonly flushRendererHistory?: Effect.Effect<void>;
   readonly tokenRequested?: Deferred.Deferred<void>;
@@ -102,6 +106,7 @@ const runStubbedDesktop = (stub: StubbedDesktop) =>
         Effect.provideService(ElectronApp.ElectronApp, {
           setPath: () => Effect.void,
           whenReady: stub.record("ready"),
+          configureHostResolver: stub.configureHostResolver ?? (() => Effect.void),
         } as unknown as ElectronApp.ElectronApp["Service"]),
         Effect.provideService(ElectronDialog.ElectronDialog, {
           showErrorBox: () => Effect.die("unexpected fatal startup error"),
@@ -269,6 +274,7 @@ it.effect.each([false, true])(
       const releaseHistory = yield* Deferred.make<void>();
       const tokenRequested = yield* Deferred.make<void>();
       const events: string[] = [];
+      const hostResolverConfigs: Electron.ConfigureHostResolverOptions[] = [];
       const app = yield* runStubbedDesktop({
         localEnvironmentEnabled: true,
         environment: {},
@@ -276,6 +282,11 @@ it.effect.each([false, true])(
         record: (event) =>
           Effect.sync(() => {
             events.push(event);
+          }),
+        configureHostResolver: (options) =>
+          Effect.sync(() => {
+            hostResolverConfigs.push(options);
+            events.push("host-resolver");
           }),
         windowStarted,
         tokenRequested,
@@ -309,8 +320,11 @@ it.effect.each([false, true])(
       // The backend spawns before menus, and its token is minted without waiting for the renderer.
       assert.deepEqual(
         events.filter((event) => event !== "token"),
-        ["identity", "ready", "identity", "backend", "menu", "window"],
+        ["identity", "ready", "host-resolver", "identity", "backend", "menu", "window"],
       );
+      assert.deepEqual(hostResolverConfigs, [
+        { enableBuiltInResolver: false, secureDnsMode: "off" },
+      ]);
       assert.isAbove(events.indexOf("token"), events.indexOf("backend"));
       assert.isFalse(yield* Deferred.isDone(registrationStopped));
       const shutdown = yield* DesktopShutdown.DesktopShutdown;
