@@ -53,7 +53,7 @@ vi.mock("../auth/EnvironmentAuth.ts", async (importOriginal) => {
 const threadId = ThreadId.make("thread-1");
 const runId = RunId.make("run-1");
 
-it.effect("lists delegated project threads across pages without listing native subagents", () =>
+it.effect("list includes delegated threads across pages and still leaves out subagents", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
