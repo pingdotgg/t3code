@@ -224,6 +224,7 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
   platform: NodeJS.Platform,
 ) {
   let baseCertificates: Array<string> | undefined;
+  let launchExtras: ReadonlyArray<string> = [];
   return Effect.fn("resourceTelemetry.desktopTelemetryReceiver.applyShellEnvironment")(function* (
     message: DesktopShellEnvironmentSnapshot,
   ) {
@@ -231,7 +232,8 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
     // Node's first default-CA enumeration consults process.env, so capture it before the patch.
     if (message.environment.NODE_EXTRA_CA_CERTS !== undefined && baseCertificates === undefined) {
       // Remove only the startup extras, preserving duplicates from bundled or system trust.
-      const extras = [...NodeTls.getCACertificates("extra")];
+      launchExtras = NodeTls.getCACertificates("extra");
+      const extras = [...launchExtras];
       baseCertificates = NodeTls.getCACertificates("default").filter((certificate) => {
         const index = extras.indexOf(certificate);
         if (index === -1) return true;
@@ -255,8 +257,12 @@ export function makeApplyDesktopShellEnvironmentSnapshot(
         const bundle = file ? yield* fs.readFileString(file) : undefined;
         yield* Effect.try({
           try: () => {
+            // An unset shell value is no override, so trust falls back to the launch extras.
             const extras =
-              bundle?.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+              file === null
+                ? launchExtras
+                : (bundle?.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ??
+                  []);
             if (bundle?.trim() && extras.length === 0) {
               throw new Error("No PEM certificates found.");
             }
