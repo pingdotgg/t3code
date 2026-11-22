@@ -400,32 +400,32 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  // Oracle: model quotas have no evidence for the summary-only rule.
-  it.effect("keeps full model fallback resets even at a full window from the request", () =>
-    Effect.gen(function* () {
-      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")));
-      const { probe } = yield* fixture({
-        summaryStatus: 404,
-        models: {
+  it.effect(
+    "reports limits unavailable when the summary is refused and models read untouched",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(
+          DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-21T10:16:04Z")),
+        );
+        const { probe } = yield* fixture({
+          summaryStatus: 403,
           models: {
-            "gemini-a": {
-              quotaInfo: { remainingFraction: 1, resetTime: "2026-10-21T15:16:04Z" },
-              weeklyQuotaInfo: { remainingFraction: 1, resetTime: "2026-10-28T10:16:04Z" },
+            models: {
+              "gemini-a": {
+                quotaInfo: { remainingFraction: 1, resetTime: "2026-10-21T15:16:04Z" },
+                weeklyQuotaInfo: { remainingFraction: 1, resetTime: "2026-10-28T10:16:04Z" },
+              },
+              "claude-a": { quotaInfo: { remainingFraction: 1 } },
             },
           },
-        },
-      });
-      expect(
-        (yield* probe).windows.map(({ id, resetsAt, windowDurationMins }) => ({
-          id,
-          resetsAt,
-          windowDurationMins,
-        })),
-      ).toEqual([
-        { id: "gemini-weekly", resetsAt: "2026-10-28T10:16:04.000Z", windowDurationMins: 10080 },
-        { id: "gemini-quota", resetsAt: "2026-10-21T15:16:04.000Z", windowDurationMins: undefined },
-      ]);
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+        });
+        const limits = yield* probe;
+        expect(limits.windows).toEqual([]);
+        expect(limits.unavailable).toEqual({
+          reason: "probeFailed",
+          message: "Google does not report Antigravity quota usage for this account.",
+        });
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it.effect("reports separate Gemini and shared Claude/GPT five-hour and weekly limits", () =>

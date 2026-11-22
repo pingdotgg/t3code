@@ -456,23 +456,32 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
               ),
             ).pipe(
               Effect.flatMap((response) => parse(response, requestedAt)),
-              Effect.orElseSucceed(() => []),
+              Effect.orElseSucceed(() => undefined),
             );
           }),
         { concurrency: "unbounded" },
       );
       const windows = new Map<string, ServerProviderUsageWindow>();
-      for (const window of responses.flat()) {
+      for (const window of responses.flatMap((response) => response ?? [])) {
         if (!windows.has(window.id)) windows.set(window.id, window);
       }
-      return [...windows.values()];
+      return { windows: [...windows.values()], refused: responses.every((r) => r === undefined) };
     });
     const summary = yield* fetchWindows("retrieveUserQuotaSummary", antigravitySummaryWindows);
-    const windows = summary.length
-      ? summary
-      : yield* fetchWindows("fetchAvailableModels", (response) =>
+    const windows = summary.windows.length
+      ? summary.windows
+      : (yield* fetchWindows("fetchAvailableModels", (response) =>
           decodeModels(response).pipe(Effect.map(modelWindows)),
-        );
+        )).windows;
+    // Accounts refused the summary (403 on both hosts) can still read model quotas, which then
+    // stay untouched after real use, so a full bar would mislead.
+    if (summary.refused && windows.length > 0 && windows.every((w) => w.usedPercent === 0)) {
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "probeFailed",
+        message: "Google does not report Antigravity quota usage for this account.",
+      });
+    }
     if (windows.length === 0) {
       return makeUnavailableUsageLimits({
         checkedAt,
