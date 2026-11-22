@@ -1,4 +1,6 @@
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
@@ -45,6 +47,8 @@ const QueuedThreadCreationSchema = Schema.Struct({
   worktreePath: Schema.NullOr(Schema.String),
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
+  repositories: Schema.optional(Schema.Array(Schema.String)),
+  startsFromRepositoryDefaults: Schema.optional(Schema.Boolean),
 });
 
 export const QueuedThreadMessageSchema = Schema.Struct({
@@ -54,6 +58,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   messageId: MessageId,
   commandId: CommandId,
   text: Schema.String,
+  restoreToDraft: Schema.optional(Schema.Boolean),
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
   modelSelection: Schema.optional(ModelSelection),
@@ -78,6 +83,10 @@ export interface QueuedThreadCreation {
   readonly worktreePath: string | null;
   readonly startFromOrigin?: boolean;
   readonly pullRequestReference?: string;
+  /** Tracked repositories the new worktree takes, by path; absent leaves the choice to the server. */
+  readonly repositories?: ReadonlyArray<string>;
+  /** The project folder is no Git repository, so a new worktree needs no base branch. */
+  readonly startsFromRepositoryDefaults?: boolean;
 }
 
 export interface QueuedThreadMessage {
@@ -86,6 +95,7 @@ export interface QueuedThreadMessage {
   readonly messageId: MessageId;
   readonly commandId: CommandId;
   readonly text: string;
+  readonly restoreToDraft?: boolean;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly modelSelection?: ModelSelectionType;
@@ -244,7 +254,7 @@ export function resolveThreadOutboxDispatchStep(input: {
   }
   const maxBytes = input.serverConfig.maxFileUploadBytes;
   if (maxBytes === undefined) {
-    return { step: "restore", reason: "This server does not support file attachments." };
+    return { step: "restore", reason: m(msg("This server does not support file attachments.")) };
   }
   const effectiveMaxBytes = clampFileAttachmentUploadBytes(maxBytes);
   const oversized = input.fileAttachments.find(
@@ -263,7 +273,11 @@ export function isQueuedThreadCreationSendable(message: QueuedThreadMessage): bo
   if (!hasContent || message.modelSelection === undefined) {
     return false;
   }
-  return message.creation.workspaceMode !== "worktree" || Boolean(message.creation.branch);
+  return (
+    message.creation.workspaceMode !== "worktree" ||
+    Boolean(message.creation.branch) ||
+    message.creation.startsFromRepositoryDefaults === true
+  );
 }
 
 function errorMessage(error: unknown): string | null {

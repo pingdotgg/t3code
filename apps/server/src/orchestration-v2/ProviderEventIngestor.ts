@@ -471,11 +471,7 @@ export const layer: Layer.Layer<
           switch (input.event.type) {
             case "app_thread.created": {
               const offered = input.event.appThread;
-              const existing = yield* projections.getThread(offered.id).pipe(
-                Effect.catchTags({
-                  ProjectionStoreThreadNotFoundError: () => Effect.succeed(null),
-                }),
-              );
+              const existing = yield* projections.findThread(offered.id);
               if (
                 existing !== null &&
                 (input.event.createOnly === true ||

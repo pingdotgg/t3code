@@ -6,6 +6,7 @@ import { WorkspaceExtraTab } from "./WorkspaceExtraTab";
 import { WorkspaceSettingsList } from "../../settings/SettingsRouteScreen";
 import { WorkspaceSectionToolbar } from "./WorkspaceSectionToolbar";
 import { useNavigation } from "@react-navigation/native";
+import { useGT, useMessages } from "gt-react-native";
 import { use } from "react";
 import { View, useWindowDimensions } from "react-native";
 import { useKeyboardState } from "react-native-keyboard-controller";
@@ -37,7 +38,7 @@ import {
 } from "./WorkspaceTabsContext";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
 import { WORKSPACE_DOCK, workspaceDockBottomClearance } from "./workspace-tabs-state";
-import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import {
   useCompactWorkspaceTabs,
   useSidebarWorkspaceTabs,
@@ -51,14 +52,16 @@ function WorkspaceRootTitle(props: {
   readonly columnWidth: number;
   readonly onOpenEnvironments: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { state, settingsOpen } = useWorkspaceTabs()!;
   const maxWidth = Math.max(0, props.columnWidth - (use(HeaderItemsWidthContext) ?? 160));
   const enabled = useEnabledNavigationTabs();
   const tabTitle = settingsOpen
-    ? "Settings"
+    ? gt("Settings")
     : enabled.length
-      ? TAB_TITLES[state.selectedTab]
-      : "Navigation";
+      ? m(TAB_TITLES[state.selectedTab])
+      : gt("Navigation", { $context: "screen title when every navigation tab is hidden" });
   return (
     <View style={{ width: maxWidth, minHeight: 32, justifyContent: "center" }}>
       <WorkspaceConnectionTitle
@@ -66,7 +69,10 @@ function WorkspaceRootTitle(props: {
           !settingsOpen && isSharedSlotTab(state.selectedTab) ? (
             <SharedSlotTitle tab={state.selectedTab} />
           ) : (
-            <CompactBrandTitle accessibilityLabel={`T3 Code, ${tabTitle}`} fit />
+            <CompactBrandTitle
+              accessibilityLabel={gt("{product}, {title}", { product: "T3 Code", title: tabTitle })}
+              fit
+            />
           )
         }
         maxWidth={maxWidth}
@@ -77,6 +83,8 @@ function WorkspaceRootTitle(props: {
 }
 
 function WorkspaceRootContent() {
+  const gt = useGT();
+  const m = useMessages();
   const navigation = useNavigation();
   const { width: windowWidth } = useWindowDimensions();
   const { layout, startNewTask } = useAdaptiveWorkspaceLayout();
@@ -138,10 +146,12 @@ function WorkspaceRootContent() {
           ]}
           options={{
             title: settingsOpen
-              ? "Settings"
+              ? gt("Settings")
               : enabled.length
-                ? TAB_TITLES[state.selectedTab]
-                : "Navigation",
+                ? m(TAB_TITLES[state.selectedTab])
+                : gt("Navigation", {
+                    $context: "screen title when every navigation tab is hidden",
+                  }),
             headerShown: true,
             headerTransparent: NATIVE_LIQUID_GLASS_SUPPORTED,
             headerStyle: NATIVE_LIQUID_GLASS_SUPPORTED
@@ -177,7 +187,7 @@ function WorkspaceRootContent() {
           )}
         </SafeAreaInsetsContext>
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
-          <WorkspaceSidebarTabs />
+          <WorkspaceTabDock placement="column" />
         ) : null}
         {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
           state.selectedTab !== "usage" ? (

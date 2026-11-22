@@ -7,8 +7,10 @@ import {
   clampFileAttachmentUploadBytes,
   fileAttachmentTooLargeMessage,
 } from "@t3tools/client-runtime/state/attachments";
+import { msg } from "gt-react";
 
 import type { ComposerFileAttachment, ComposerImageAttachment } from "../../composerDraftStore";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { isHeicImageFile } from "../../lib/imageCompression";
 import { isVideoAttachment, videoMimeType } from "../../types";
 import { isSvgAttachment } from "@t3tools/shared/image";
@@ -207,20 +209,23 @@ export function fileAttachmentCapabilityBlockReason(
   input: FileAttachmentCapabilityState & {
     readonly files: ReadonlyArray<{ readonly name: string; readonly sizeBytes: number }>;
   },
+  resolve: MessageResolver = m,
 ): string | null {
   if (input.files.length === 0) {
     return null;
   }
   if (!input.attachmentUploadsCapabilityKnown) {
-    return "Waiting for the server before file attachments can send";
+    return resolve(msg("Waiting for the server before file attachments can send"));
   }
   const maxFileAttachmentBytes = fileAttachmentStagingLimit(input);
   if (maxFileAttachmentBytes === null) {
-    return "This server does not accept file attachments right now. Remove the files to send.";
+    return resolve(
+      msg("This server does not accept file attachments right now. Remove the files to send."),
+    );
   }
   const oversizedFile = input.files.find((file) => file.sizeBytes > maxFileAttachmentBytes);
   if (oversizedFile) {
-    return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes);
+    return fileAttachmentTooLargeMessage(oversizedFile.name, maxFileAttachmentBytes, resolve);
   }
   return null;
 }
@@ -234,27 +239,46 @@ export function attachmentsToReleaseOnUploadCapabilityLoss(
   );
 }
 
+function isOnlyFileNames(text: string, files: ReadonlyArray<File>): boolean {
+  const names = new Set(files.map((file) => file.name));
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .every((line) => names.has(line));
+}
+
+/** A browser's Copy Image puts only an <img> in text/html; rich text sources put the text there. */
+export function isImageOnlyClipboardHtml(html: string): boolean {
+  if (html.length === 0) return false;
+  const body = new DOMParser().parseFromString(html, "text/html").body;
+  return body.querySelector("img") !== null && (body.textContent ?? "").trim().length === 0;
+}
+
 export function shouldHandleComposerAttachmentPaste(input: {
   readonly files: ReadonlyArray<File>;
   readonly plainText: string;
+  readonly bypassAutoAttachment?: boolean;
+  readonly htmlIsOnlyImage?: boolean;
 }): boolean {
+  // Paste as Text keeps the text even when the source also put an image of it on the clipboard.
+  if (input.bypassAutoAttachment && input.plainText.length > 0) return false;
   if (
-    input.files.some((file) => {
-      if (isDngFile(file)) return true;
-      const classification = classifyComposerAttachmentFile(file);
-      return (
-        classification === "image" ||
-        classification === "unsupported-image" ||
-        isSvgAttachment({ name: file.name, mimeType: file.type })
-      );
-    })
+    input.files.some(
+      (file) => isDngFile(file) || isSvgAttachment({ name: file.name, mimeType: file.type }),
+    )
   ) {
     return true;
   }
-
-  if (input.plainText.length > 0) {
-    return false;
+  const hasImage = input.files.some((file) => {
+    const classification = classifyComposerAttachmentFile(file);
+    return classification === "image" || classification === "unsupported-image";
+  });
+  if (input.plainText.length === 0) {
+    return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
   }
-
-  return input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
+  // Rich text sources (Word, Pages) add a picture of the text. Copy Image adds the image URL as
+  // text beside an <img>, and a Finder copy adds the file names.
+  return (
+    hasImage && (input.htmlIsOnlyImage === true || isOnlyFileNames(input.plainText, input.files))
+  );
 }

@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import { msg } from "gt-react-native";
+import { m } from "../i18n/messages";
 import {
   EnvironmentId as EnvironmentIdSchema,
   ModelSelection as ModelSelectionSchema,
@@ -477,6 +479,11 @@ export interface ComposerDraftWorkspaceSelection {
    * included) until the user picks a branch, rather than pinning the first name refs reported.
    */
   readonly followsCurrentCheckout?: boolean;
+  /**
+   * Tracked repositories a new worktree takes, by path. Absent until the user chooses, so the
+   * server's default applies.
+   */
+  readonly repositories?: ReadonlyArray<string>;
 }
 
 export type ComposerDraftSettingsUpdate = Pick<
@@ -496,6 +503,7 @@ const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
   startFromOrigin: Schema.optional(Schema.Boolean),
   pullRequestReference: Schema.optional(Schema.String),
   followsCurrentCheckout: Schema.optional(Schema.Boolean),
+  repositories: Schema.optional(Schema.Array(Schema.String)),
 });
 
 const ComposerDraftProjectSchema = Schema.Struct({
@@ -1180,7 +1188,8 @@ export async function archiveCloudComposerDrafts(
   knownEnvironmentIds: Iterable<EnvironmentId>,
 ): Promise<void> {
   await waitForComposerDraftsLoaded();
-  if (!(await threadOutboxManager.load())) throw new Error("Could not preserve queued messages.");
+  if (!(await threadOutboxManager.load()))
+    throw new Error(m(msg("Could not preserve queued messages.")));
   await flushThreadOutbox();
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const owner = accountId ?? cloud.accountId;
@@ -1282,7 +1291,9 @@ export async function removeDeliveredCloudQueuedMessage(
             editor.workspaceSelection.pullRequestReference !==
               message.creation?.pullRequestReference ||
             (editor.workspaceSelection.startFromOrigin ?? false) !==
-              (message.creation?.startFromOrigin ?? false))))
+              (message.creation?.startFromOrigin ?? false) ||
+            JSON.stringify(editor.workspaceSelection.repositories) !==
+              JSON.stringify(message.creation?.repositories))))
     )
       continue;
     const drafts = { ...saved.drafts };
@@ -1310,7 +1321,8 @@ export async function restoreCloudComposerDrafts(accountId: string): Promise<voi
   const cloud = appAtomRegistry.get(composerCloudDraftsAtom);
   const saved = cloud.signedOut[accountId];
   if (saved) {
-    if (!(await threadOutboxManager.load())) throw new Error("Could not restore queued messages.");
+    if (!(await threadOutboxManager.load()))
+      throw new Error(m(msg("Could not restore queued messages.")));
     for (const message of saved.queuedMessages) {
       const alreadyQueued = Object.values(
         appAtomRegistry.get(threadOutboxManager.queuedMessagesByThreadKeyAtom),
@@ -2071,13 +2083,15 @@ export function retargetNewTaskDraft(
   });
 }
 
-/** Retargets a saved draft once drafts load; an absent one is not created. */
+/** Retargets a saved draft after loading. Returns false if absent or cancelled before the write. */
 export async function retargetSavedNewTaskDraft(
   draftKey: string,
   project: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId },
+  signal?: AbortSignal,
 ): Promise<boolean> {
   await waitForComposerDraftsLoaded();
-  if (appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined) return false;
+  if (signal?.aborted || appAtomRegistry.get(composerDraftsAtom)[draftKey] === undefined)
+    return false;
   retargetNewTaskDraft(draftKey, project);
   return true;
 }
