@@ -85,6 +85,31 @@ test(
       } finally {
         await app.screenshot("after-background-clone-fails");
       }
+
+      const failure = browser.locator(
+        `[data-slot="toast-title"]:text-is("Failed to clone ${name}")`,
+      );
+      await browser
+        .locator(
+          `[data-position]:has(> div > [data-slot="toast-close"]):has([data-slot="toast-title"]:text-is("Failed to clone ${name}"))`,
+        )
+        .getByRole("button", "Dismiss notification", { exact: true })
+        .tap();
+      await failure.waitFor({ state: "detached" });
+
+      const retryRequest = Promise.withResolvers<NodeHttp.ServerResponse>();
+      remote.once("request", (_request, response) => retryRequest.resolve(response));
+      const retry = await runPromise(
+        Effect.gen(function* () {
+          const client = yield* rpcClient(T3_HOME, origin);
+          return yield* client["projectClone.retry"]({ projectId });
+        }).pipe(Effect.scoped),
+      );
+      await expect(retry.applied).toBe(true);
+      const retryResponse = await retryRequest.promise;
+      await expect(progress).toBeVisible();
+      retryResponse.writeHead(404).end();
+      await expect(failure).toBeVisible();
     } finally {
       remote.close();
       remote.closeAllConnections();

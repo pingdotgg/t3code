@@ -45,7 +45,8 @@ interface TrackedToast {
   readonly toastId: ReturnType<typeof toastManager.add>;
   readonly renderedKey: string;
   readonly phase: ProjectCloneSnapshot["phase"];
-  readonly progressDismissed?: true;
+  readonly startedAt: ProjectCloneSnapshot["startedAt"];
+  readonly closed?: true;
 }
 
 function renderKey(clone: ProjectCloneSnapshot): string {
@@ -99,6 +100,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
       seen.add(clone.projectId);
       const key = renderKey(clone);
       const tracked = toasts.current.get(clone.projectId);
+      const sameAttempt = tracked?.startedAt === clone.startedAt;
       const name = projectCloneDisplayName(clone);
       const closeToast = () => {
         const current = toasts.current.get(clone.projectId);
@@ -112,7 +114,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         closeToast();
         continue;
       }
-      if (tracked?.renderedKey === key) continue;
+      if (sameAttempt && tracked.renderedKey === key) continue;
       if (
         isProjectCloneToastSilenced(ref) &&
         (clone.phase === "running" || clone.phase === "done")
@@ -120,12 +122,19 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         closeToast();
         continue;
       }
-      if (tracked?.progressDismissed && clone.phase !== "failed") continue;
+      if (
+        sameAttempt &&
+        tracked.closed &&
+        (tracked.phase !== "running" || clone.phase !== "failed")
+      ) {
+        continue;
+      }
 
       const showToast = (options: ReturnType<typeof stackedThreadToast>) => {
-        if (tracked && !tracked.progressDismissed) {
+        const rendered = { renderedKey: key, phase: clone.phase, startedAt: clone.startedAt };
+        if (tracked && !tracked.closed) {
           toastManager.update(tracked.toastId, options);
-          toasts.current.set(clone.projectId, { ...tracked, renderedKey: key, phase: clone.phase });
+          toasts.current.set(clone.projectId, { toastId: tracked.toastId, ...rendered });
           return;
         }
 
@@ -134,12 +143,12 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
           // Updates to a closing toast are ignored, even before it has been removed.
           onClose: () => {
             const current = toasts.current.get(clone.projectId);
-            if (current?.toastId === toastId && current.phase === "running") {
-              toasts.current.set(clone.projectId, { ...current, progressDismissed: true });
+            if (current?.toastId === toastId) {
+              toasts.current.set(clone.projectId, { ...current, closed: true });
             }
           },
         });
-        toasts.current.set(clone.projectId, { toastId, renderedKey: key, phase: clone.phase });
+        toasts.current.set(clone.projectId, { toastId, ...rendered });
       };
 
       if (clone.phase === "running") {
