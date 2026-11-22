@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
-import { deriveBottomControlInsets, type NativeLayoutMetrics } from "./reserved-regions";
+import {
+  deriveBottomControlInsets,
+  deriveContentSideInsets,
+  deriveSharedTopBand,
+  type NativeLayoutMetrics,
+} from "./reserved-regions";
 import { deriveLayout, deriveWorkspacePaneLayout } from "./layout";
 
 const innerDisplay: NativeLayoutMetrics = {
@@ -21,26 +26,27 @@ describe("bottom controls around reserved regions", () => {
     expect(innerDisplay.width - insets.left - insets.right).toBeGreaterThan(320);
   });
 
-  it("does not reserve a hinge twice when a native column starts at the division", () => {
+  it("starts the editor after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveBottomControlInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0, bottom: 0 });
+  });
+
+  it("does not reserve a hinge twice when the safe area already covers it", () => {
     expect(
       deriveBottomControlInsets({
         ...innerDisplay,
         width: 412,
-        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        safeArea: { top: 82, bottom: 34, left: 40, right: 0 },
         reservedRegions: [{ kind: "division", x: 0, y: 0, width: 40, height: 560 }],
       }),
-    ).toEqual({ left: 0, right: 0, bottom: 0 });
-  });
-
-  it("keeps a native column's trailing division at its existing edge", () => {
-    expect(
-      deriveBottomControlInsets({
-        ...innerDisplay,
-        width: 456,
-        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
-        reservedRegions: [{ kind: "division", x: 455.75, y: 0, width: 0.25, height: 560 }],
-      }),
-    ).toEqual({ left: 0, right: 0, bottom: 0 });
+    ).toEqual({ left: 40, right: 0, bottom: 0 });
   });
 
   it("keeps controls below a horizontal fold in a hands-free pose", () => {
@@ -62,6 +68,98 @@ describe("bottom controls around reserved regions", () => {
         ],
       }),
     ).toEqual({ left: 68, right: 72, bottom: 0 });
+  });
+});
+
+describe("content side insets around reserved regions", () => {
+  it("keeps transcript text on the wider side of a book fold", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [{ kind: "division", x: 456, y: 0, width: 48, height: 560 }],
+      }),
+    ).toEqual({ left: 8, right: 504 });
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 800,
+        reservedRegions: [{ kind: "division", x: 240, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 280, right: 72 });
+  });
+
+  it("starts transcript text after a fold that covers a native column's leading edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 411.33,
+        height: 669,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 0, y: 0, width: 39.83, height: 669 }],
+      }),
+    ).toEqual({ left: 39.83, right: 0 });
+  });
+
+  it("ends transcript text before a fold at a native column's trailing edge", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        width: 456,
+        safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+        reservedRegions: [{ kind: "division", x: 416, y: 0, width: 40, height: 560 }],
+      }),
+    ).toEqual({ left: 0, right: 40 });
+  });
+
+  it("ignores a horizontal fold and bottom cameras", () => {
+    expect(
+      deriveContentSideInsets({
+        ...innerDisplay,
+        reservedRegions: [
+          { kind: "division", x: 0, y: 240, width: 960, height: 40 },
+          { kind: "occlusion", x: 8, y: 510, width: 60, height: 50 },
+        ],
+      }),
+    ).toEqual({ left: 8, right: 72 });
+  });
+});
+
+describe("a bar sharing the top band with the system status", () => {
+  // The folded Duo with horizontal bars: its status block sits at the right of a tall top band.
+  const foldedDuo: NativeLayoutMetrics = {
+    width: 466,
+    height: 678,
+    horizontalSizeClass: "compact",
+    verticalBarEdge: "none",
+    safeArea: { top: 82, bottom: 34, left: 0, right: 0 },
+    reservedRegions: [
+      { kind: "occlusion", x: 399.67, y: 29.33, width: 37, height: 37 },
+      { kind: "occlusion", x: 266, y: 0, width: 200, height: 82 },
+    ],
+  };
+
+  it.each([
+    ["status block on the right", foldedDuo, { height: 82, left: 0, right: 200 }],
+    [
+      "status block on the left",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 0, y: 0, width: 200, height: 82 }],
+      },
+      { height: 82, left: 200, right: 0 },
+    ],
+    ["no status block (a notch or island)", { ...foldedDuo, reservedRegions: [] }, null],
+    [
+      "a block across the middle",
+      {
+        ...foldedDuo,
+        reservedRegions: [{ kind: "occlusion" as const, x: 133, y: 0, width: 200, height: 82 }],
+      },
+      null,
+    ],
+    ["no top safe area", { ...foldedDuo, safeArea: { ...foldedDuo.safeArea, top: 0 } }, null],
+  ])("%s", (_, metrics, expected) => {
+    expect(deriveSharedTopBand(metrics)).toEqual(expected);
   });
 });
 
