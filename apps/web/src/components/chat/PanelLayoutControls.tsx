@@ -1,5 +1,7 @@
 import {
   PanelBottomIcon,
+  PanelLeftIcon,
+  Rows2Icon,
   PanelRightIcon,
   SquareMenuIcon,
   Maximize2Icon,
@@ -11,6 +13,7 @@ import { memo, type ReactNode, useLayoutEffect, useRef } from "react";
 import { cn } from "~/lib/utils";
 
 import type { ThreadPanelPresentation } from "../../rightPanelLayout";
+import { Button } from "../ui/button";
 import { PopoverCreateHandle, PopoverTrigger } from "../ui/popover";
 import { useMobileSidebarSheetMounted } from "../ui/sidebar";
 import { Toggle } from "../ui/toggle";
@@ -19,7 +22,16 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 /** Matches the right inset of `ThreadPanelHeaderControl`. */
 const THREAD_PANEL_HEADER_INSET_PX = 12;
 
+import type { ChatSplitDirection } from "./chatSplitLayout";
+
+interface ChatSplitControlsProps {
+  readonly pending: boolean;
+  readonly onSplit: (direction: ChatSplitDirection) => void;
+  readonly compact?: boolean;
+}
+
 export interface PanelLayoutControlsProps {
+  chatSplit?: ChatSplitControlsProps | undefined;
   showThreadPanelControl?: boolean;
   showTerminalControl?: boolean;
   showRightPanelControl?: boolean;
@@ -40,6 +52,7 @@ export interface PanelLayoutControlsProps {
 }
 
 export const PanelLayoutControls = memo(function PanelLayoutControls({
+  chatSplit,
   showThreadPanelControl = true,
   showTerminalControl = true,
   showRightPanelControl = true,
@@ -93,6 +106,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       className="flex h-full shrink-0 items-center gap-1 [-webkit-app-region:no-drag]"
       data-panel-layout-controls
     >
+      {chatSplit ? <ChatSplitControls {...chatSplit} /> : null}
       {showThreadPanelControl ? threadPanelControl : null}
       {showTerminalControl ? (
         <Tooltip>
@@ -147,6 +161,32 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   );
 });
 
+export function ChatSplitControls({ pending, onSplit, compact }: ChatSplitControlsProps) {
+  const gt = useGT();
+  const actions = [
+    { direction: "left", label: gt("Split left"), Icon: PanelLeftIcon },
+    { direction: "right", label: gt("Split right"), Icon: PanelRightIcon },
+    { direction: "bottom", label: gt("Split bottom"), Icon: Rows2Icon },
+  ] as const;
+
+  return actions.map(({ direction, label, Icon }) => (
+    <Tooltip key={direction}>
+      <TooltipTrigger render={<span className="flex shrink-0" />}>
+        <Button
+          variant="ghost"
+          size={compact ? "icon-xs" : "icon-sm"}
+          aria-label={label}
+          disabled={pending}
+          onClick={() => onSplit(direction)}
+        >
+          <Icon className="size-4" />
+        </Button>
+      </TooltipTrigger>
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
+  ));
+}
+
 export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl({
   maximized,
   onToggle,
@@ -192,13 +232,19 @@ export function ThreadPanelHeaderControl(props: PanelLayoutControlsProps) {
       )}
       data-workspace-titlebar-controls
     >
-      <PanelLayoutControls {...props} showTerminalControl={false} showRightPanelControl={false} />
+      <PanelLayoutControls
+        {...props}
+        chatSplit={undefined}
+        showTerminalControl={false}
+        showRightPanelControl={false}
+      />
     </div>
   );
 }
 
 /** The window's top-right panel controls, with the maximize toggle while the panel is open. */
 export function WorkspaceTitlebarControls(props: {
+  readonly withinChatPane?: boolean;
   readonly showMaximizeControl: boolean;
   readonly rightPanelOpen: boolean;
   readonly animationsActive: boolean;
@@ -233,7 +279,10 @@ export function WorkspaceTitlebarControls(props: {
     <div
       ref={controlsRef}
       className={cn(
-        "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        "pointer-events-none z-50 mr-px flex h-[var(--workspace-topbar-height)] items-center gap-1 [-webkit-app-region:no-drag]",
+        props.withinChatPane
+          ? "absolute top-0 right-3"
+          : "fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)]",
         mobileSidebarSheetMounted && "hidden",
       )}
       data-workspace-titlebar-controls

@@ -314,6 +314,15 @@ import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import {
+  MAIN_CHAT_PANE,
+  chatPaneBounds,
+  closeChatPane,
+  splitChatPane,
+  type ChatSplitDirection,
+  type ChatSplitLayout,
+} from "./chat/chatSplitLayout";
+import SideThreadPane from "./chat/SideThreadPane";
 import { useSideChat } from "./chat/useSideChat";
 import { sideThreadComposer, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
 import { useOpenSurfaceInMainView } from "../hooks/useOpenSurfaceInMainView";
@@ -321,6 +330,7 @@ import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
 import {
+  ChatSplitControls,
   PanelLayoutControls,
   type PanelLayoutControlsProps,
   RightPanelMaximizeControl,
@@ -2999,6 +3009,31 @@ export default function ChatView(props: ChatViewProps) {
                   )
                 ? gt("Available once the thread's worktree is set up.")
                 : null;
+  const [chatLayouts, setChatLayouts] = useState<Record<string, ChatSplitLayout>>({});
+  const chatLayout = chatLayouts[routeThreadKey] ?? MAIN_CHAT_PANE;
+  const hasChatSplits = chatLayout.kind === "group";
+  const [openingChatSplit, setOpeningChatSplit] = useState(false);
+  const deleteUnusedSplit = useAtomCommand(threadEnvironment.delete, "side chat delete");
+  const showChatSplitControls = sideChat.available && sideChatDisabledReason === null;
+  const openChatSplit = useStableCallback(
+    (direction: ChatSplitDirection, paneId: ThreadId | null) => {
+      if (openingChatSplit || !showChatSplitControls) return;
+      setOpeningChatSplit(true);
+      void sideChat
+        .open(undefined, (ref) => {
+          setChatLayouts((previous) => {
+            const layout = previous[routeThreadKey] ?? MAIN_CHAT_PANE;
+            const next = splitChatPane(layout, paneId, ref.threadId, direction);
+            return {
+              ...previous,
+              [routeThreadKey]:
+                next === layout ? splitChatPane(layout, null, ref.threadId, direction) : next,
+            };
+          });
+        })
+        .finally(() => setOpeningChatSplit(false));
+    },
+  );
   const openSideChatStable = useStableCallback(() => void sideChat.open());
   const openSurfaceInMainView = useOpenSurfaceInMainView(activeThreadRef);
   const sendSideChatStable = useStableCallback(sideChat.open);
@@ -3460,12 +3495,21 @@ export default function ChatView(props: ChatViewProps) {
   const panelToggleControls = (
     <PanelLayoutControls
       {...panelToggleControlProps}
+      chatSplit={
+        showChatSplitControls
+          ? {
+              pending: openingChatSplit,
+              onSplit: (direction) => openChatSplit(direction, null),
+            }
+          : undefined
+      }
       showThreadPanelControl={!inlineRightPanelOwnsTitleBar}
     />
   );
   const threadPanelHeaderControl = <ThreadPanelHeaderControl {...panelToggleControlProps} />;
   const panelLayoutControls = (
     <WorkspaceTitlebarControls
+      withinChatPane={hasChatSplits}
       showMaximizeControl={!shouldUsePlanSidebarSheet}
       rightPanelOpen={rightPanelOpen}
       animationsActive={panelAnimationsActive}
@@ -3521,10 +3565,13 @@ export default function ChatView(props: ChatViewProps) {
               COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS,
             )}
           >
-            {isElectron && rightPanelControlsAtRoot ? (
+            {isElectron && rightPanelControlsAtRoot && !hasChatSplits ? (
               <span
                 aria-hidden
-                className="pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] w-28 [-webkit-app-region:no-drag]"
+                className={cn(
+                  "pointer-events-none fixed top-[var(--workspace-controls-top)] right-[var(--workspace-controls-right)] h-[var(--workspace-topbar-height)] [-webkit-app-region:no-drag]",
+                  showChatSplitControls ? "w-52" : "w-28",
+                )}
               />
             ) : null}
             {!rightPanelControlsAtRoot && !rightPanelControlsInPanel ? panelLayoutControls : null}
@@ -3539,6 +3586,7 @@ export default function ChatView(props: ChatViewProps) {
               parentThreadLink={headerParentThreadLink}
               onOpenThread={onOpenRelatedThreadStable}
               rightPanelOpen={inlineRightPanelOwnsTitleBar}
+              showChatSplitControls={showChatSplitControls}
               onNewThreadInProject={handleNewThreadInActiveProjectStable}
               {...(activeDraftLogicalProjectKey
                 ? { onOpenProjectSettings: handleOpenDraftProjectSettingsStable }
@@ -4234,6 +4282,46 @@ export default function ChatView(props: ChatViewProps) {
       <ExpandedImageDialogHost threadKey={routeThreadKey} />
     </div>
   );
+  const renderChatSplit = (splitThreadId: ThreadId) => {
+    if (!activeThreadRef) return null;
+    const removeSplit = () => {
+      setChatLayouts((previous) => {
+        const layout = previous[routeThreadKey];
+        if (!layout) return previous;
+        return {
+          ...previous,
+          [routeThreadKey]: closeChatPane(layout, splitThreadId) ?? MAIN_CHAT_PANE,
+        };
+      });
+    };
+    return (
+      <SideThreadPane
+        parentRef={activeThreadRef}
+        parentPanel={sideChatParentPanel}
+        surface={{ id: `thread:${splitThreadId}`, kind: "thread", threadId: splitThreadId }}
+        splitControls={
+          showChatSplitControls ? (
+            <ChatSplitControls
+              compact
+              pending={openingChatSplit}
+              onSplit={(direction) => openChatSplit(direction, splitThreadId)}
+            />
+          ) : null
+        }
+        onDeleted={removeSplit}
+        onClose={() => {
+          removeSplit();
+          if (canOperateThread) {
+            void deleteUnusedSplit({
+              environmentId,
+              input: { threadId: splitThreadId, onlyIfUnused: true },
+            });
+          }
+        }}
+      />
+    );
+  };
+
   return (
     <FileMetadataThreadProvider
       threadRef={activeThreadRef}
@@ -4241,7 +4329,30 @@ export default function ChatView(props: ChatViewProps) {
       checkpoints={serverProjection?.checkpoints}
       checkpointScopes={serverProjection?.checkpointScopes}
     >
-      {content}
+      {embedded ? (
+        content
+      ) : (
+        <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden bg-border">
+          {chatPaneBounds(chatLayout).map(({ id, left, top, width, height }) => (
+            <div
+              key={id ?? "main"}
+              className={cn(
+                "absolute flex min-h-0 min-w-0 flex-col overflow-hidden bg-background",
+                left > 0 && "border-l border-border",
+                top > 0 && "border-t border-border",
+              )}
+              style={{
+                left: `${left}%`,
+                top: `${top}%`,
+                width: `${width}%`,
+                height: `${height}%`,
+              }}
+            >
+              {id === null ? content : renderChatSplit(id)}
+            </div>
+          ))}
+        </div>
+      )}
     </FileMetadataThreadProvider>
   );
 }

@@ -10,7 +10,7 @@ import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/co
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { T, useGT } from "gt-react";
 import { Trash2Icon, XIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 
 import { useComposerDraftStore } from "../../composerDraftStore";
 import { ComposerHandleContext } from "../../composerHandleContext";
@@ -46,6 +46,8 @@ export default function SideThreadPane(props: {
   readonly surface: ThreadSurface;
   readonly parentPanel: SideChatParentPanel;
   readonly onClose: () => void;
+  readonly onDeleted?: () => void;
+  readonly splitControls?: ReactNode;
 }) {
   const { parentRef, surface } = props;
   const { threadId } = surface;
@@ -118,7 +120,11 @@ export default function SideThreadPane(props: {
     if (result._tag === "Success") {
       releaseComposerDraftUploads(threadRef);
       useComposerDraftStore.getState().clearDraftThread(threadRef);
-      useRightPanelStore.getState().closeSurface(parentRef, surface.id);
+      if (props.onDeleted) {
+        props.onDeleted();
+      } else {
+        useRightPanelStore.getState().closeSurface(parentRef, surface.id);
+      }
     } else if (!isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       toastManager.add({
@@ -145,7 +151,7 @@ export default function SideThreadPane(props: {
       className="flex h-full min-h-0 flex-col"
     >
       {isSideChat ? (
-        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border pr-1 pl-3">
+        <div className="flex min-h-9 shrink-0 flex-wrap items-center gap-1 border-b border-border pr-1 pl-3">
           <h2 className="min-w-0 flex-1 truncate text-xs font-medium">{title}</h2>
           <Tooltip>
             <TooltipTrigger
@@ -166,6 +172,7 @@ export default function SideThreadPane(props: {
                 : gt("Available after the first message.")}
             </TooltipPopup>
           </Tooltip>
+          {props.splitControls}
           <Button
             variant="ghost"
             size="icon-xs"
