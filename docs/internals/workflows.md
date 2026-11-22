@@ -153,6 +153,12 @@ key, so after a version bump the same key would be a new run: a trigger that see
 again, or a webhook retry, would start the work twice. The key is unique per workflow, so the row
 that takes it is the run; a start that finds a row the engine never got executes it.
 
+**An ended run's journal is deleted.** The engine keeps every request and reply of a run, which
+grew one large deployment's database by gigabytes in two weeks, so the sweep clears a run's engine
+messages (its sleeps included) an hour after it ends with no step still going. Our rows stay, and
+they are all that shows a run. Nothing may hand an ended run to the engine again: with no journal
+it would run the body from the start, so a start for an ended run's key returns that run as it is.
+
 **One signal wakes one wait.** A wait is taken by the first signal for it; a second signal on the
 same channel is for the next run that waits on that channel, and is kept until one does or its `ttl` runs
 out (seven days by default), after which it is gone. A signal's id is remembered for seven days

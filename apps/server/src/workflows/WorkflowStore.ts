@@ -214,6 +214,12 @@ export class WorkflowStore extends Context.Service<
     ) => Effect.Effect<"delivered" | "gone" | "claimed">;
     /** Runs that were not ended while the run that invoked them was cancelled. */
     readonly orphans: Effect.Effect<ReadonlyArray<RunRow>>;
+    /** Runs ended before `before`, with no step still going, whose engine journal is still kept. */
+    readonly prunable: (
+      before: string,
+      limit: number,
+    ) => Effect.Effect<ReadonlyArray<{ readonly run_id: string; readonly engine_tag: string }>>;
+    readonly enginePruned: (runId: string) => Effect.Effect<void>;
     /** Every run in this state, however many: the sweep must not miss old ones past a page. */
     readonly everyRun: (
       status: "running" | "waiting" | "paused",
@@ -613,6 +619,22 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orDie,
         );
+    }),
+    prunable: Effect.fn("WorkflowStore.prunable")(function* (before, limit) {
+      return yield* sql<{ run_id: string; engine_tag: string }>`
+        SELECT run_id, engine_tag FROM workflow_runs r
+        WHERE ended_at IS NOT NULL AND ended_at < ${before} AND engine_pruned_at IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM workflow_steps s WHERE s.run_id = r.run_id AND s.status = 'running'
+          )
+        ORDER BY ended_at LIMIT ${limit}
+      `.pipe(Effect.orDie);
+    }),
+    enginePruned: Effect.fn("WorkflowStore.enginePruned")(function* (runId) {
+      const at = yield* now;
+      yield* sql`
+        UPDATE workflow_runs SET engine_pruned_at = ${at} WHERE run_id = ${runId}
+      `.pipe(Effect.orDie);
     }),
     orphans: sql<RunRow>`
       SELECT c.* FROM workflow_runs c

@@ -35,6 +35,7 @@ import Migration0107 from "../persistence/Migrations/116_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/117_WorkflowStepTurn.ts";
 import Migration0109 from "../persistence/Migrations/118_WorkflowRunKey.ts";
 import Migration0110 from "../persistence/Migrations/119_WorkflowRunReferences.ts";
+import Migration0111 from "../persistence/Migrations/120_WorkflowEnginePruned.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import {
   Issue,
@@ -794,6 +795,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
         Migration0108,
         Migration0109,
         Migration0110,
+        Migration0111,
       ],
       {
         discard: true,
@@ -839,7 +841,7 @@ const harness = Effect.fnUntraced(function* (store?: typeof WorkflowStore.layer)
       Effect.scoped(Effect.provide(use, engineOf(registered))),
       Effect.forever(Effect.andThen(clock.await, TestClock.adjust("1 second"))),
     );
-  return { counts, failures, latch, boot, agents, forge, clock };
+  return { counts, failures, latch, boot, agents, forge, clock, database };
 });
 
 /** The store the engine writes to, for a test to leave what a crash would have left. */
@@ -865,7 +867,7 @@ it.effect(
   "a failing step pauses its run, and resuming runs that step again and nothing before it",
   () =>
     Effect.gen(function* () {
-      const { counts, failures, boot } = yield* harness();
+      const { counts, failures, boot, database } = yield* harness();
       yield* Ref.set(failures, 2);
       const runId = yield* boot(
         Effect.gen(function* () {
@@ -904,6 +906,30 @@ it.effect(
               ["flaky", "completed", 3],
             ],
           );
+        }),
+      );
+      assert.deepStrictEqual(yield* Ref.get(counts), { before: 1, flaky: 1 });
+
+      // An hour after it ended its engine journal goes, and starting its key again is still that run.
+      yield* boot(
+        Effect.gen(function* () {
+          const workflows = yield* Workflows.Workflows;
+          const journal = Effect.flatMap(
+            SqlClient.SqlClient,
+            (sql) => sql<{ readonly n: number | bigint }>`
+              SELECT COUNT(*) AS n FROM cluster_messages WHERE entity_id = ${runId}
+            `,
+          ).pipe(
+            Effect.map((rows) => Number(rows[0]?.n ?? 0)),
+            Effect.provide(database),
+          );
+          assert.isAbove(yield* journal, 0);
+          yield* TestClock.adjust("2 hours");
+          yield* workflows.sweep;
+          assert.equal(yield* journal, 0);
+          const again = yield* workflows.start("flaky", { id: "a" }, { idempotencyKey: "a" });
+          assert.equal(again.runId, runId);
+          assert.equal((yield* workflows.get(runId)).run.status, "completed");
         }),
       );
       assert.deepStrictEqual(yield* Ref.get(counts), { before: 1, flaky: 1 });

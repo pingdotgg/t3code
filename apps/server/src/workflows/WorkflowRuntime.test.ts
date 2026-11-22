@@ -25,6 +25,7 @@ import Migration0107 from "../persistence/Migrations/116_WorkflowWaitWatch.ts";
 import Migration0108 from "../persistence/Migrations/117_WorkflowStepTurn.ts";
 import Migration0109 from "../persistence/Migrations/118_WorkflowRunKey.ts";
 import Migration0110 from "../persistence/Migrations/119_WorkflowRunReferences.ts";
+import Migration0111 from "../persistence/Migrations/120_WorkflowEnginePruned.ts";
 import { WorkflowAgents } from "./WorkflowAgents.ts";
 import * as WorkflowEngine from "./WorkflowEngine.ts";
 import * as WorkflowRuntime from "./WorkflowRuntime.ts";
@@ -72,6 +73,7 @@ const setup = Effect.fn("setup")(function* (
         Migration0108,
         Migration0109,
         Migration0110,
+        Migration0111,
       ],
       { discard: true },
     ),

@@ -1,7 +1,15 @@
 // The workflow service on Effect's workflow engine. Loaded only when workflows are enabled: the
 // engine's modules are not worth their load time on a server that registers none.
 import * as Cause from "effect/Cause";
-import { ClusterWorkflowEngine, SingleRunner } from "effect/cluster";
+import {
+  ClusterWorkflowEngine,
+  EntityAddress,
+  EntityId,
+  EntityType,
+  MessageStorage,
+  Sharding,
+  SingleRunner,
+} from "effect/cluster";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -66,6 +74,9 @@ const WATCH_SETTLE = Duration.millis(100);
 const END_TRIES = 5;
 // How long a cancelled run's cleanup rests after each failed try before the sweep tries again.
 const END_AFTER = ["5 minutes", "20 minutes", "80 minutes", "5 hours"] as const;
+// An ended run's engine journal only answers replays that will not come; the run's own rows stay.
+const PRUNE_AFTER = Duration.hours(1);
+const PRUNE_BATCH = 100;
 // Delivery ids that common senders put on a request and keep when they send it again.
 const DELIVERY_HEADERS = [
   "x-github-delivery",
@@ -86,6 +97,8 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const keyValues = yield* KeyValues;
   const link = yield* EngineLink;
   const trackers = Option.getOrElse(yield* Effect.serviceOption(WorkflowForge), () => unavailable);
+  const messages = yield* Effect.serviceOption(MessageStorage.MessageStorage);
+  const sharding = yield* Effect.serviceOption(Sharding.Sharding);
   // The engine reads its own tables as BigInts. The rest of the server's queries must not.
   const plain =
     <Args extends ReadonlyArray<unknown>, A, E>(call: (...args: Args) => Effect.Effect<A, E>) =>
@@ -225,7 +238,11 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
         return { runId: earlier.run_id };
       });
       const earlier = yield* store.runByKey(name, options.idempotencyKey);
-      if (earlier !== undefined && earlier.engine_tag !== engineTag(definition)) {
+      // An ended run's journal may be pruned, so executing it again would start the work over.
+      if (
+        earlier !== undefined &&
+        (earlier.engine_tag !== engineTag(definition) || earlier.ended_at !== null)
+      ) {
         return yield* other(earlier);
       }
       const payloadCodec = Schema.toCodecJson(definition.payload);
@@ -621,6 +638,30 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     );
   });
 
+  const prune = Effect.fn("WorkflowEngine.prune")(function* (at: DateTime.Utc) {
+    if (Option.isNone(messages) || Option.isNone(sharding)) return;
+    const before = DateTime.formatIso(DateTime.subtractDuration(at, PRUNE_AFTER));
+    for (const row of yield* store.prunable(before, PRUNE_BATCH)) {
+      const entityId = EntityId.make(row.run_id);
+      const shardId = sharding.value.getShardId(entityId, "default");
+      // Its sleeps are entities of their own under the same id.
+      yield* Effect.forEach(
+        [`Workflow/${row.engine_tag}`, "Workflow/-/DurableClock"],
+        (type) =>
+          messages.value.clearAddress(
+            EntityAddress.make({ shardId, entityType: EntityType.make(type), entityId }),
+          ),
+        { discard: true },
+      ).pipe(
+        Effect.andThen(store.enginePruned(row.run_id)),
+        // Left unmarked, so the next sweep tries it again.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not prune a workflow run's engine journal", cause),
+        ),
+      );
+    }
+  });
+
   const sweep: Workflows["Service"]["sweep"] = Effect.gen(function* () {
     for (const wait of yield* store.waitsPastDeadline) {
       const woke = { expired: true, value: null };
@@ -668,6 +709,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       if (due === undefined || DateTime.isLessThan(at, due)) continue;
       yield* Effect.ignore(resumeRun(row.run_id, row));
     }
+    yield* prune(at);
   }).pipe(Effect.withSpan("Workflows.sweep"));
 
   // With nothing registered there is nothing to resume, end or start: only history to read.
@@ -1005,7 +1047,8 @@ export const layer = (
       registered.length === 0
         ? WorkflowEngine.layerMemory
         : ClusterWorkflowEngine.layer.pipe(
-            Layer.provide(SingleRunner.layer({ runnerStorage: "sql" })),
+            // Merged so the sweep can prune ended runs' journals from the same storage.
+            Layer.provideMerge(SingleRunner.layer({ runnerStorage: "sql" })),
           ),
     ),
     Layer.provide(Layer.succeed(SqlClient.SafeIntegers, true)),
