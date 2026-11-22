@@ -140,7 +140,7 @@ const mapLocateErrors = <A, R>(
       DeviceListFailedError: (error) =>
         Effect.fail(
           new DeviceToolUnavailableError({
-            reason: `Device ${error.deviceId} is not in the last device list, and listing devices failed on ${error.hosts.map((host) => `${hostName(host)} (${host.detail})`).join(", ")}. Call device_list to retry.`,
+            reason: `${error.message} Call device_list to retry.`,
           }),
         ),
       DeviceOnOtherHostError: (error) =>
