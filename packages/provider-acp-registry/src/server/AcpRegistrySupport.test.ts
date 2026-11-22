@@ -5113,7 +5113,9 @@ describe("AcpRegistrySupport", () => {
         let failSidecarWrite = false;
         let failSidecarRead = false;
         let failSidecarReadWhileLockedPath: string | null = null;
+        let corruptSidecarWhileLockedPath: string | null = null;
         let failReceiptReadWhileLockedPath: string | null = null;
+        let injectedReceiptReadFailures = 0;
         let receiptRenameCount = 0;
         let onStatPath: {
           readonly matchPath: string;
@@ -5147,6 +5149,17 @@ describe("AcpRegistrySupport", () => {
               if (failSidecarRead) {
                 return fileSystem.readFileString(path.dirname(filePath), encoding);
               }
+              if (corruptSidecarWhileLockedPath !== null) {
+                const lockPath = corruptSidecarWhileLockedPath;
+                return fileSystem.exists(lockPath).pipe(
+                  Effect.orElseSucceed(() => false),
+                  Effect.flatMap((locked) =>
+                    locked
+                      ? Effect.succeed("{corrupt-under-lock")
+                      : fileSystem.readFileString(filePath, encoding),
+                  ),
+                );
+              }
               if (failSidecarReadWhileLockedPath !== null) {
                 const lockPath = failSidecarReadWhileLockedPath;
                 return fileSystem.exists(lockPath).pipe(
@@ -5165,7 +5178,11 @@ describe("AcpRegistrySupport", () => {
                 Effect.orElseSucceed(() => false),
                 Effect.flatMap((locked) =>
                   locked
-                    ? fileSystem.readFileString(path.dirname(filePath), encoding)
+                    ? Effect.sync(() => {
+                        injectedReceiptReadFailures += 1;
+                      }).pipe(
+                        Effect.andThen(fileSystem.readFileString(path.dirname(filePath), encoding)),
+                      )
                     : fileSystem.readFileString(filePath, encoding),
                 ),
               );
@@ -6261,9 +6278,11 @@ describe("AcpRegistrySupport", () => {
         failReceiptTempWrite = false;
         failSidecarWrite = false;
         // Transient locked receipt reread failure must preserve pending --fail-2.
+        injectedReceiptReadFailures = 0;
         failReceiptReadWhileLockedPath = edgeSyncSidecarLockPath;
         yield* edgeCatA.resolve(settings(), "/workspace");
         failReceiptReadWhileLockedPath = null;
+        expect(injectedReceiptReadFailures).toBe(1);
         // Before catalog B commits a newer rev, edgeCatA's in-process fallback uses pending --fail-2.
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -6367,6 +6386,7 @@ describe("AcpRegistrySupport", () => {
           "--lock-c-retry",
         ]);
         // Locked receipt reread error while sidecar is unreadable also preserves base rev 7.
+        injectedReceiptReadFailures = 0;
         failSidecarRead = true;
         failReceiptReadWhileLockedPath = edgeSyncSidecarLockPath;
         upstream = makeBinary("1.0.0", {
@@ -6379,6 +6399,7 @@ describe("AcpRegistrySupport", () => {
         yield* lockTimeoutCat.resolve(settings(), "/workspace");
         failReceiptReadWhileLockedPath = null;
         failSidecarRead = false;
+        expect(injectedReceiptReadFailures).toBe(1);
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
           cmd: "./bin/example-agent",
@@ -6426,8 +6447,98 @@ describe("AcpRegistrySupport", () => {
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--lock-c-timeout2",
         ]);
-        // Corrupt sidecar while pending base is rev 7 must allocate rev 8 (> 7), not rev 5.
+        // Corrupt sidecar repaired by a fresh catalog (via sidecar OR receipt OR matching receipt)
+        // must outrank lockTimeoutCat's older higher-base pending entry via launchOptionsRecoveryId.
         const savedSidecarBeforeCorrupt = yield* fileSystem.readFileString(edgeSyncSidecarPath);
+        const freshRepairCat = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: edgeSyncDir,
+          toolsDir: edgeSyncToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        // (i) Sidecar repair (rev 5 < pending base 7) and subsequent normal write (rev 6 < 7).
+        yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar");
+        failReceiptTempWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fresh-b-sidecar-repair"],
+        });
+        yield* freshRepairCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* freshRepairCat.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--fresh-b-sidecar-repair",
+        ]);
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fresh-b-sidecar-rev6"],
+        });
+        yield* freshRepairCat.invalidateIndex();
+        yield* freshRepairCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* freshRepairCat.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--fresh-b-sidecar-rev6",
+        ]);
+        // (ii) Receipt repair (rev 5 < pending base 7) and matching-receipt repair on corrupt file.
+        yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fresh-b-receipt-repair"],
+        });
+        yield* freshRepairCat.invalidateIndex();
+        yield* freshRepairCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const freshReceiptResolved = yield* freshRepairCat.resolve(settings(), "/workspace");
+        const edgeReceiptPath = path.join(
+          path.dirname(path.dirname(freshReceiptResolved.spawn.command)),
+          ".t3-artifact.json",
+        );
+        const afterReceiptRepair = JSON.parse(
+          yield* fileSystem.readFileString(edgeReceiptPath),
+        ) as { readonly launchOptionsRevision?: number; readonly launchOptionsRecoveryId?: string };
+        expect(afterReceiptRepair.launchOptionsRevision).toBe(5);
+        expect(afterReceiptRepair.launchOptionsRecoveryId).toBeDefined();
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--fresh-b-receipt-repair",
+        ]);
+        yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar-match");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fresh-b-receipt-repair"],
+        });
+        yield* freshRepairCat.invalidateIndex();
+        yield* freshRepairCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* freshRepairCat.resolve(settings(), "/workspace");
+        const afterMatchRepair = JSON.parse(yield* fileSystem.readFileString(edgeReceiptPath)) as {
+          readonly launchOptionsRevision?: number;
+          readonly launchOptionsRecoveryId?: string;
+        };
+        expect(afterMatchRepair.launchOptionsRevision).toBe(6);
+        expect(afterMatchRepair.launchOptionsRecoveryId).toBeDefined();
+        expect(afterMatchRepair.launchOptionsRecoveryId).not.toBe(
+          afterReceiptRepair.launchOptionsRecoveryId,
+        );
+        // Corrupt sidecar while lockTimeoutCat holds pending base rev 7 must allocate rev 8 (> 7).
         yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar");
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
@@ -6436,13 +6547,9 @@ describe("AcpRegistrySupport", () => {
         });
         yield* lockTimeoutCat.invalidateIndex();
         yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const afterCorruptResolved = yield* lockTimeoutCat.resolve(settings(), "/workspace");
-        const afterCorruptReceiptPath = path.join(
-          path.dirname(path.dirname(afterCorruptResolved.spawn.command)),
-          ".t3-artifact.json",
-        );
+        yield* lockTimeoutCat.resolve(settings(), "/workspace");
         const afterCorruptReceipt = JSON.parse(
-          yield* fileSystem.readFileString(afterCorruptReceiptPath),
+          yield* fileSystem.readFileString(edgeReceiptPath),
         ) as { readonly launchOptionsRevision?: number };
         expect(afterCorruptReceipt.launchOptionsRevision).toBe(8);
         // Restore sidecar at rev 7 (lower than rev 8) and confirm rev 8 receipt wins cleanly.
@@ -6456,7 +6563,7 @@ describe("AcpRegistrySupport", () => {
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--after-corrupt-rev8",
         ]);
-        // A newer committed rev 9 (--commit-9) still outranks everything cleanly.
+        // A newer committed rev 9 (--commit-8) still outranks everything cleanly.
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
           cmd: "./bin/example-agent",
@@ -6474,6 +6581,36 @@ describe("AcpRegistrySupport", () => {
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--commit-8",
         ]);
+        // Fresh catalog (no pending entry) that observes sidecar rev 10 on the fast path, then
+        // encounters a corrupt sidecar under the lock, allocates rev 11 (> observedDiskRev 10).
+        failReceiptTempWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--sidecar-rev10"],
+        });
+        yield* edgeCatB.invalidateIndex();
+        yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* edgeCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        const observedRevCat = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: edgeSyncDir,
+          toolsDir: edgeSyncToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--commit-8"],
+        });
+        yield* observedRevCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        corruptSidecarWhileLockedPath = edgeSyncSidecarLockPath;
+        yield* observedRevCat.resolve(settings(), "/workspace");
+        corruptSidecarWhileLockedPath = null;
+        const afterObservedRev = JSON.parse(yield* fileSystem.readFileString(edgeReceiptPath)) as {
+          readonly launchOptionsRevision?: number;
+        };
+        expect(afterObservedRev.launchOptionsRevision).toBe(11);
         // 5) Fast-path hasMatchingPending gating: reverting to matching receipt --commit-8 clears
         //    earlier pending options instead of short-circuiting and leaving them active.
         failReceiptTempWrite = true;

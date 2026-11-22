@@ -3590,12 +3590,28 @@ describe("AcpRegistryDriver registry recovery", () => {
         const authFailAgentPath = path.join(directory, "auth-fail-agent.mjs");
         const exitFailAgentPath = path.join(directory, "exit-fail-agent.mjs");
         const logoutAgentPath = path.join(directory, "logout-agent.mjs");
+        const authLoginAgentPath = path.join(directory, "auth-login-agent.mjs");
+        const versionlessLocalAgentPath = path.join(directory, "versionless-local-agent.mjs");
         yield* fileSystem.writeFileString(exitFailAgentPath, "process.exit(1);\n");
         yield* fileSystem.writeFileString(
           logoutAgentPath,
           fakeAgentSource.replace(
             "agentCapabilities: {}",
             "agentCapabilities: { auth: { logout: {} } }",
+          ),
+        );
+        yield* fileSystem.writeFileString(
+          authLoginAgentPath,
+          fakeAgentSource.replace(
+            "authMethods: []",
+            'authMethods: [{ id: "agent-login", name: "Agent Login", type: "agent" }]',
+          ),
+        );
+        yield* fileSystem.writeFileString(
+          versionlessLocalAgentPath,
+          fakeAgentSource.replace(
+            'agentInfo: { name: "fake", version: "1.5.9" }',
+            'agentInfo: { name: "fake", version: "" }',
           ),
         );
         yield* fileSystem.writeFileString(
@@ -3632,6 +3648,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         let failProbeAuth = false;
         let failProbeExit = false;
         let useLogoutAgent = false;
+        let useAuthLoginAgent = false;
         let probeResolveCount = 0;
         let defectInspectCount = 0;
         let interruptInspectOnce = false;
@@ -3846,7 +3863,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                       ? [exitFailAgentPath]
                       : environment?.MISE_OFFLINE === "1" && failProbeAuth
                         ? [authFailAgentPath]
-                        : [useLogoutAgent ? logoutAgentPath : agentPath, modelsPath],
+                        : [
+                            useAuthLoginAgent
+                              ? authLoginAgentPath
+                              : useLogoutAgent
+                                ? logoutAgentPath
+                                : agentPath,
+                            modelsPath,
+                          ],
                 },
               };
             }),
@@ -4921,10 +4945,33 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(beforeLogoutSnap.auth.status).toBe("authenticated");
         expect(beforeLogoutSnap.auth.canLogout).toBe(true);
         expect(beforeLogoutSnap.models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
+        // Live config update while authenticated must also strip "authenticated" in lastSuccessfulRuntime.
+        const logoutLiveUpdated = yield* logoutInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "model-live")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          logoutInstanceId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "model-live",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "model-b", name: "model-b" },
+              { modelId: "model-live", name: "model-live" },
+            ],
+          }),
+          v1Identity,
+        );
+        expect(
+          Option.getOrThrow(yield* Fiber.join(logoutLiveUpdated)).models.map((model) => model.slug),
+        ).toEqual(["model-a", "model-b", "model-live"]);
+        // Set failProbeSpawn before logout so logout's own refresh cannot overwrite
+        // lastSuccessfulRuntime with a fresh probe before we assert auth.status === "unknown".
+        failProbeSpawn = true;
         yield* logoutInstance.acpSessionManagement!.logout(directory);
         expect(yield* (yield* seedLogoutAuth()).get).toBe(false);
         // Same-runtime non-auth failure after logout must show unknown (never authenticated).
-        failProbeSpawn = true;
         const afterLogoutSameFailDone = yield* Deferred.make<void>();
         onEnrichmentEnd = () => Deferred.doneUnsafe(afterLogoutSameFailDone, Exit.void);
         yield* logoutInstance.snapshot.refresh.pipe(
@@ -4951,6 +4998,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(afterLogoutUpgradeSnap.models.map((model) => model.slug)).toEqual([
           "model-a",
           "model-b",
+          "model-live",
         ]);
         const afterLogoutSnapshots: Array<ServerProvider> = [];
         const afterLogoutCollector = yield* logoutInstance.snapshot.streamChanges.pipe(
@@ -4972,7 +5020,208 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         for (const emitted of afterLogoutSnapshots) {
           expect(emitted.auth.status).not.toBe("authenticated");
         }
+
+        // Foreground-skipped startup runtimes populated only via live commands or live config
+        // while authenticated must also strip "authenticated" before logout + probe failure.
+        remoteVersion = "1.0.0";
+        failProbeSpawn = false;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fgLogoutStarted = yield* Deferred.make<void>();
+        const releaseFgLogout = yield* Deferred.make<void>();
+        const fgLogoutFiber = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(fgLogoutStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseFgLogout)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(fgLogoutStarted);
+        const fgCmdLogoutId = ProviderInstanceId.make("acpRegistry_fg_cmd_logout");
+        const fgCfgLogoutId = ProviderInstanceId.make("acpRegistry_fg_cfg_logout");
+        const seedAuthFor = (id: ProviderInstanceId) =>
+          AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
+            cacheDir: host.paths.providerStatusCacheDir,
+            instanceId: id,
+            settings: authConfirmSettings,
+            environment: authConfirmEnv,
+            processEnvironment: process.env,
+          });
+        yield* (yield* seedAuthFor(fgCmdLogoutId)).set(true);
+        yield* (yield* seedAuthFor(fgCfgLogoutId)).set(true);
+        const fgCmdInitDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgCmdInitDone, Exit.void);
+        const fgCmdLogoutInstance = yield* AcpRegistryDriver.create({
+          instanceId: fgCmdLogoutId,
+          displayName: "FG Cmd Logout",
+          enabled: true,
+          environment: authConfirmEnv,
+          config: authConfirmSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fgCmdInitDone);
+        const fgCfgInitDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgCfgInitDone, Exit.void);
+        const fgCfgLogoutInstance = yield* AcpRegistryDriver.create({
+          instanceId: fgCfgLogoutId,
+          displayName: "FG Cfg Logout",
+          enabled: true,
+          environment: authConfirmEnv,
+          config: authConfirmSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fgCfgInitDone);
+        const fgCmdPopulated = yield* fgCmdLogoutInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.slashCommands.some((cmd) => cmd.name === "fg-logout-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const fgCfgPopulated = yield* fgCfgLogoutInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.models.some((model) => model.slug === "fg-logout-model"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          fgCmdLogoutId,
+          { slashCommands: [{ name: "fg-logout-cmd" }], skills: [] },
+          v1Identity,
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgCfgLogoutId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-logout-model",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "fg-logout-model", name: "fg-logout-model" },
+            ],
+          }),
+          v1Identity,
+        );
+        expect(Option.getOrThrow(yield* Fiber.join(fgCmdPopulated)).auth.status).toBe(
+          "authenticated",
+        );
+        expect(Option.getOrThrow(yield* Fiber.join(fgCfgPopulated)).auth.status).toBe(
+          "authenticated",
+        );
+        yield* Deferred.succeed(releaseFgLogout, undefined);
+        yield* Fiber.join(fgLogoutFiber);
+        failProbeSpawn = true;
+        yield* fgCmdLogoutInstance.acpSessionManagement!.logout(directory);
+        yield* fgCfgLogoutInstance.acpSessionManagement!.logout(directory);
+        const fgCmdAfterLogoutDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgCmdAfterLogoutDone, Exit.void);
+        yield* fgCmdLogoutInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fgCmdAfterLogoutDone);
+        const fgCfgAfterLogoutDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fgCfgAfterLogoutDone, Exit.void);
+        yield* fgCfgLogoutInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fgCfgAfterLogoutDone);
+        const fgCmdAfterLogout = yield* fgCmdLogoutInstance.snapshot.getSnapshot;
+        expect(fgCmdAfterLogout.auth.status).toBe("unknown");
+        expect(fgCmdAfterLogout.slashCommands).toEqual([{ name: "fg-logout-cmd" }]);
+        const fgCfgAfterLogout = yield* fgCfgLogoutInstance.snapshot.getSnapshot;
+        expect(fgCfgAfterLogout.auth.status).toBe("unknown");
+        expect(fgCfgAfterLogout.models.map((model) => model.slug)).toEqual([
+          "model-a",
+          "fg-logout-model",
+        ]);
         useLogoutAgent = false;
+        failProbeSpawn = false;
+
+        // Live config update while unauthenticated must not bake "unauthenticated" into
+        // lastSuccessfulRuntime: signing in again then failing probe promotes back to authenticated.
+        useAuthLoginAgent = true;
+        const reauthId = ProviderInstanceId.make("acpRegistry_unauth_live_reauth");
+        const reauthStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(reauthStartupDone, Exit.void);
+        const reauthInstance = yield* AcpRegistryDriver.create({
+          instanceId: reauthId,
+          displayName: "Unauth Live Reauth",
+          enabled: true,
+          environment: authConfirmEnv,
+          config: authConfirmSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(reauthStartupDone);
+        yield* TestClock.adjust("16 minutes");
+        failProbeAuth = true;
+        const reauthUnauthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(reauthUnauthDone, Exit.void);
+        yield* reauthInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(reauthUnauthDone);
+        expect((yield* reauthInstance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
+        const reauthLiveUpdated = yield* reauthInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.models.some((model) => model.slug === "reauth-live-model"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          reauthId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "reauth-live-model",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "reauth-live-model", name: "reauth-live-model" },
+            ],
+          }),
+          v1Identity,
+        );
+        expect(Option.getOrThrow(yield* Fiber.join(reauthLiveUpdated)).auth.status).toBe(
+          "unauthenticated",
+        );
+        failProbeAuth = false;
+        failProbeSpawn = true;
+        const reauthAuthFinished = yield* reauthInstance.auth!.subscribe("reauth-owner").pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const reauthPostSignInDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(reauthPostSignInDone, Exit.void);
+        yield* reauthInstance
+          .auth!.start("reauth-owner", Effect.void, "agent-login")
+          .pipe(Effect.provideService(Tracer.Tracer, enrichmentTracer));
+        expect(Option.getOrThrow(yield* Fiber.join(reauthAuthFinished)).phase).toBe("succeeded");
+        yield* Deferred.await(reauthPostSignInDone);
+        const reauthAfterSignIn = yield* reauthInstance.snapshot.getSnapshot;
+        expect(reauthAfterSignIn.status).toBe("ready");
+        expect(reauthAfterSignIn.auth.status).toBe("authenticated");
+        expect(reauthAfterSignIn.models.map((model) => model.slug)).toEqual([
+          "model-a",
+          "reauth-live-model",
+        ]);
+        useAuthLoginAgent = false;
         failProbeSpawn = false;
 
         // (e) Cold-start direct-publish branch clears saved confirmation when fallback runtime
@@ -5057,6 +5306,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           });
         yield* (yield* seedLocalAuth()).set(true);
         let localFailAuth = true;
+        let localUseVersionless = false;
         const localWithLiveStarted = yield* Deferred.make<void>();
         const localWithLiveRelease = yield* Deferred.make<void>();
         const localWithLiveInterrupted = yield* Deferred.make<void>();
@@ -5083,7 +5333,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                 distribution: "local" as const,
                 spawn: {
                   command: process.execPath,
-                  args: localFailAuth ? [authFailAgentPath] : [agentPath, modelsPath],
+                  args: localFailAuth
+                    ? [authFailAgentPath]
+                    : [localUseVersionless ? versionlessLocalAgentPath : agentPath, modelsPath],
                   cwd: directory,
                   env: process.env,
                 },
@@ -5150,6 +5402,71 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           "unauthenticated",
         );
         expect(yield* (yield* seedLocalAcceptedAuth()).get).toBe(false);
+        // Version-less local agent (entryIdentity === null): an accepted auth rejection must evict
+        // the cached probe entry so a live config update cannot revive it on the next refresh.
+        localUseVersionless = true;
+        localFailAuth = false;
+        const localVersionlessId = ProviderInstanceId.make("acpRegistry_local_versionless_cache");
+        const localVersionlessReadyDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(localVersionlessReadyDone, Exit.void);
+        const localVersionlessInstance = yield* AcpRegistryDriver.create({
+          instanceId: localVersionlessId,
+          displayName: "Local Versionless Cache",
+          enabled: true,
+          environment: localUnauthEnv,
+          config: localUnauthSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, localCatalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(localVersionlessReadyDone);
+        expect((yield* localVersionlessInstance.snapshot.getSnapshot).version).toBeNull();
+        expect((yield* localVersionlessInstance.snapshot.getSnapshot).status).toBe("ready");
+        yield* TestClock.adjust("16 minutes");
+        localFailAuth = true;
+        const localVersionlessUnauthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(localVersionlessUnauthDone, Exit.void);
+        yield* localVersionlessInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(localVersionlessUnauthDone);
+        expect((yield* localVersionlessInstance.snapshot.getSnapshot).auth.status).toBe(
+          "unauthenticated",
+        );
+        const localVersionlessLive = yield* localVersionlessInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.models.some((model) => model.slug === "local-unauth-live"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          localVersionlessId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "local-unauth-live",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "local-unauth-live", name: "local-unauth-live" },
+            ],
+          }),
+        );
+        expect(Option.getOrThrow(yield* Fiber.join(localVersionlessLive)).auth.status).toBe(
+          "unauthenticated",
+        );
+        const localVersionlessRecheckDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(localVersionlessRecheckDone, Exit.void);
+        yield* localVersionlessInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(localVersionlessRecheckDone);
+        const localVersionlessAfter = yield* localVersionlessInstance.snapshot.getSnapshot;
+        expect(localVersionlessAfter.status).toBe("warning");
+        expect(localVersionlessAfter.auth.status).toBe("unauthenticated");
+        expect(localVersionlessAfter.message).toContain("API key");
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });

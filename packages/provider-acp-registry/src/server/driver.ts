@@ -1018,7 +1018,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       readonly provider: ServerProvider;
     } | null>(null);
     // Tracks the latest accepted auth result per runtime separately from lastSuccessfulRuntime
-    // capabilities so a failure on B neither clears A's confirmation nor restores lost confirmation.
+    // capabilities so an un-adopted failure on B neither clears retained A's confirmation nor
+    // restores lost confirmation.
     const latestAcceptedAuth = yield* Ref.make<{
       readonly identity: string;
       readonly auth: ServerProvider["auth"];
@@ -1367,14 +1368,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           : cache;
       });
     const recordAcceptedAuthRejection = (identity: string | null, auth: ServerProvider["auth"]) =>
-      confirmedAuthentication
-        .set(false)
-        .pipe(
-          Effect.andThen(clearCachedProbeForRuntime(identity)),
-          Effect.andThen(
-            identity === null ? Effect.void : Ref.set(latestAcceptedAuth, { identity, auth }),
-          ),
-        );
+      clearCachedProbeForRuntime(identity).pipe(
+        Effect.andThen(
+          identity === null ? Effect.void : Ref.set(latestAcceptedAuth, { identity, auth }),
+        ),
+        Effect.andThen(confirmedAuthentication.set(false)),
+      );
     const isProbeStillCurrent = (
       current: AcpRegistryEnrichmentCache,
       captured: {
@@ -1808,25 +1807,35 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                                   : {}),
                               }
                             : nextSnapshotRaw;
-                          const published = yield* tryPublishSnapshot(nextSnapshot);
-                          if (published) {
-                            if (activeRuntimeUnauthenticated) {
-                              // Clear fallback backoff so a user's sign-in retry probes immediately.
-                              yield* Ref.set(activeFallback, null);
-                              yield* recordAcceptedAuthRejection(previousIdentity, provider.auth);
-                            }
-                            yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
-                            yield* Ref.set(
-                              failedUpgradeTarget,
-                              isUpgradeFailure
-                                ? {
-                                    targetLaunchIdentity: failedTargetLaunchIdentity,
-                                    status: provider.status,
-                                    message: provider.message,
-                                  }
-                                : null,
-                            );
-                          }
+                          const published = yield* Effect.uninterruptible(
+                            tryPublishSnapshot(nextSnapshot).pipe(
+                              Effect.tap((didPublish) =>
+                                didPublish
+                                  ? Effect.gen(function* () {
+                                      if (activeRuntimeUnauthenticated) {
+                                        // Clear fallback backoff so a user's sign-in retry probes immediately.
+                                        yield* Ref.set(activeFallback, null);
+                                        yield* recordAcceptedAuthRejection(
+                                          previousIdentity,
+                                          provider.auth,
+                                        );
+                                      }
+                                      yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
+                                      yield* Ref.set(
+                                        failedUpgradeTarget,
+                                        isUpgradeFailure
+                                          ? {
+                                              targetLaunchIdentity: failedTargetLaunchIdentity,
+                                              status: provider.status,
+                                              message: provider.message,
+                                            }
+                                          : null,
+                                      );
+                                    })
+                                  : Effect.void,
+                              ),
+                            ),
+                          );
                           return {
                             published,
                             readiness: published
@@ -1843,20 +1852,37 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         // No accepted snapshot exists for previousIdentity; publish the failure
                         // snapshot directly without attaching previousIdentity's live state and
                         // align watcher identities so previousIdentity updates cannot land on it.
-                        const published = yield* tryPublishSnapshot(provider);
                         const failedIdentity = runtimeIdentityFor(
                           provider,
                           probedLaunchIdentity ?? failedTargetLaunchIdentity,
                         );
-                        if (published) {
-                          if (provider.auth.status === "unauthenticated") {
-                            yield* recordAcceptedAuthRejection(failedIdentity, provider.auth);
-                          }
-                          if (failedIdentity !== null && failedIdentity !== previousIdentity) {
-                            yield* clearLiveState({ preserveRuntimeIdentity: failedIdentity });
-                          }
-                          yield* Ref.set(expectedRuntimeIdentity, failedIdentity);
-                        }
+                        const published = yield* Effect.uninterruptible(
+                          tryPublishSnapshot(provider).pipe(
+                            Effect.tap((didPublish) =>
+                              didPublish
+                                ? Effect.gen(function* () {
+                                    if (provider.auth.status === "unauthenticated") {
+                                      // Adopting failedIdentity with no retained runtime clears
+                                      // saved confirmation so refreshes do not flash authenticated.
+                                      yield* recordAcceptedAuthRejection(
+                                        failedIdentity,
+                                        provider.auth,
+                                      );
+                                    }
+                                    if (
+                                      failedIdentity !== null &&
+                                      failedIdentity !== previousIdentity
+                                    ) {
+                                      yield* clearLiveState({
+                                        preserveRuntimeIdentity: failedIdentity,
+                                      });
+                                    }
+                                    yield* Ref.set(expectedRuntimeIdentity, failedIdentity);
+                                  })
+                                : Effect.void,
+                            ),
+                          ),
+                        );
                         return {
                           published,
                           readiness: published
@@ -1897,111 +1923,140 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           useLearnedModels: !runtimeChanged,
                           persistLearnedModels: false,
                         });
-                      const nextSnapshot =
-                        fallback && effectiveMessage !== undefined
+                      const preserveUnauthenticated =
+                        providerToPublish.auth.status === "unauthenticated";
+                      const nextSnapshot = preserveUnauthenticated
+                        ? {
+                            ...nextSnapshotRaw,
+                            status: providerToPublish.status,
+                            ...(providerToPublish.message !== undefined
+                              ? { message: providerToPublish.message }
+                              : {}),
+                          }
+                        : fallback && effectiveMessage !== undefined
                           ? { ...nextSnapshotRaw, message: effectiveMessage }
                           : nextSnapshotRaw;
-                      const published = yield* tryPublishSnapshot(nextSnapshot);
-                      if (published) {
-                        if (!providerToPublish.installed) {
-                          yield* Ref.set(activeFallback, null);
-                          yield* Ref.set(failedUpgradeTarget, null);
-                          yield* Ref.set(lastSuccessfulRuntime, null);
-                          yield* Ref.set(latestAcceptedAuth, null);
-                          if (previousIdentity !== null || current.entry !== null) {
-                            yield* clearLiveState();
-                            yield* invalidateEnrichmentCache;
-                          }
-                          yield* Ref.set(expectedRuntimeIdentity, null);
-                        } else {
-                          const previousLastSuccessful = yield* Ref.get(lastSuccessfulRuntime);
-                          if (nextSnapshot.auth.status === "unauthenticated") {
-                            yield* recordAcceptedAuthRejection(
-                              resolvedIdentity ??
-                                runtimeIdentityFor(providerToPublish, probedLaunchIdentity),
-                              nextSnapshot.auth,
-                            );
-                          }
-                          if (!probeFailed) {
-                            yield* Ref.set(failedUpgradeTarget, null);
-                          }
-                          if (fallback && !fromCache) {
-                            const now = yield* Clock.currentTimeMillis;
-                            const keepFailedAt =
-                              existingFallback !== null &&
-                              existingFallback.targetLaunchIdentity ===
-                                fallbackTargetLaunchIdentity &&
-                              now >= existingFallback.failedAtMs &&
-                              now - existingFallback.failedAtMs < FALLBACK_RETRY_BACKOFF_MS;
-                            yield* Ref.set(activeFallback, {
-                              targetLaunchIdentity: fallbackTargetLaunchIdentity,
-                              targetVersion: fallbackTargetVersion,
-                              targetIndexRevision: fallbackTargetIndexRevision,
-                              fallbackVersion: providerToPublish.version,
-                              fallbackLaunchIdentity: launchIdentity,
-                              failedAtMs: keepFailedAt ? existingFallback.failedAtMs : now,
-                              message:
-                                fallbackMessage ??
-                                existingFallback?.message ??
-                                "Using the previously installed version.",
-                            });
-                          } else if (!fallback && !probeFailed) {
-                            yield* Ref.set(activeFallback, null);
-                          }
-                          if (runtimeChanged) {
-                            yield* clearLiveState({ preserveRuntimeIdentity: resolvedIdentity });
-                            const retiredAtRevision =
-                              (fallback ? fallbackTargetIndexRevision : indexRevision) ??
-                              (yield* currentCatalogIndexRevision);
-                            yield* Ref.update(retiredRuntimeIdentities, (retired) => {
-                              const next = new Map(retired);
-                              // Retire only a runtime that actually succeeded; a never-installed
-                              // target replaced during cold fallback stays eligible to reconcile.
-                              if (previousLastSuccessful?.identity === previousIdentity) {
-                                next.set(previousIdentity, retiredAtRevision);
-                              }
-                              next.delete(resolvedIdentity);
-                              return next;
-                            });
-                            if (appliedLiveConfiguration) {
-                              yield* Ref.set(learnedModels, nextSnapshot.models);
-                            }
-                            yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
-                          } else {
-                            if (
-                              appliedLiveConfiguration &&
-                              nextSnapshot.models !== providerToPublish.models
-                            ) {
-                              yield* Ref.set(learnedModels, nextSnapshot.models);
-                            }
-                            if (resolvedIdentity !== null) {
-                              yield* Ref.set(activeRuntimeIdentity, resolvedIdentity);
-                              yield* Ref.update(retiredRuntimeIdentities, (retired) => {
-                                if (!retired.has(resolvedIdentity)) return retired;
-                                const next = new Map(retired);
-                                next.delete(resolvedIdentity);
-                                return next;
-                              });
-                            }
-                            yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
-                          }
-                          if (!probeFailed && resolvedIdentity !== null) {
-                            const { message: _fallbackMsg, ...cleanProvider } = nextSnapshotRaw;
-                            const storedProvider = fallback ? cleanProvider : nextSnapshotRaw;
-                            yield* Ref.set(lastSuccessfulRuntime, {
-                              identity: resolvedIdentity,
-                              provider: {
-                                ...storedProvider,
-                                auth: stripConfirmedAuth(storedProvider.auth),
-                              },
-                            });
-                            yield* Ref.set(latestAcceptedAuth, {
-                              identity: resolvedIdentity,
-                              auth: stripConfirmedAuth(nextSnapshot.auth),
-                            });
-                          }
-                        }
-                      }
+                      const published = yield* Effect.uninterruptible(
+                        tryPublishSnapshot(nextSnapshot).pipe(
+                          Effect.tap((didPublish) =>
+                            didPublish
+                              ? Effect.gen(function* () {
+                                  if (!providerToPublish.installed) {
+                                    yield* Ref.set(activeFallback, null);
+                                    yield* Ref.set(failedUpgradeTarget, null);
+                                    yield* Ref.set(lastSuccessfulRuntime, null);
+                                    yield* Ref.set(latestAcceptedAuth, null);
+                                    if (previousIdentity !== null || current.entry !== null) {
+                                      yield* clearLiveState();
+                                      yield* invalidateEnrichmentCache;
+                                    }
+                                    yield* Ref.set(expectedRuntimeIdentity, null);
+                                  } else {
+                                    const previousLastSuccessful =
+                                      yield* Ref.get(lastSuccessfulRuntime);
+                                    if (nextSnapshot.auth.status === "unauthenticated") {
+                                      yield* recordAcceptedAuthRejection(
+                                        resolvedIdentity ??
+                                          runtimeIdentityFor(
+                                            providerToPublish,
+                                            probedLaunchIdentity,
+                                          ),
+                                        nextSnapshot.auth,
+                                      );
+                                    }
+                                    if (!probeFailed) {
+                                      yield* Ref.set(failedUpgradeTarget, null);
+                                    }
+                                    if (fallback && !fromCache) {
+                                      const now = yield* Clock.currentTimeMillis;
+                                      const keepFailedAt =
+                                        existingFallback !== null &&
+                                        existingFallback.targetLaunchIdentity ===
+                                          fallbackTargetLaunchIdentity &&
+                                        now >= existingFallback.failedAtMs &&
+                                        now - existingFallback.failedAtMs <
+                                          FALLBACK_RETRY_BACKOFF_MS;
+                                      yield* Ref.set(activeFallback, {
+                                        targetLaunchIdentity: fallbackTargetLaunchIdentity,
+                                        targetVersion: fallbackTargetVersion,
+                                        targetIndexRevision: fallbackTargetIndexRevision,
+                                        fallbackVersion: providerToPublish.version,
+                                        fallbackLaunchIdentity: launchIdentity,
+                                        failedAtMs: keepFailedAt
+                                          ? existingFallback.failedAtMs
+                                          : now,
+                                        message:
+                                          fallbackMessage ??
+                                          existingFallback?.message ??
+                                          "Using the previously installed version.",
+                                      });
+                                    } else if (!fallback && !probeFailed) {
+                                      yield* Ref.set(activeFallback, null);
+                                    }
+                                    if (runtimeChanged) {
+                                      yield* clearLiveState({
+                                        preserveRuntimeIdentity: resolvedIdentity,
+                                      });
+                                      const retiredAtRevision =
+                                        (fallback ? fallbackTargetIndexRevision : indexRevision) ??
+                                        (yield* currentCatalogIndexRevision);
+                                      yield* Ref.update(retiredRuntimeIdentities, (retired) => {
+                                        const next = new Map(retired);
+                                        // Retire only a runtime that actually succeeded; a
+                                        // never-installed target replaced during cold fallback
+                                        // stays eligible to reconcile.
+                                        if (previousLastSuccessful?.identity === previousIdentity) {
+                                          next.set(previousIdentity, retiredAtRevision);
+                                        }
+                                        next.delete(resolvedIdentity);
+                                        return next;
+                                      });
+                                      if (appliedLiveConfiguration) {
+                                        yield* Ref.set(learnedModels, nextSnapshot.models);
+                                      }
+                                      yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
+                                    } else {
+                                      if (
+                                        appliedLiveConfiguration &&
+                                        nextSnapshot.models !== providerToPublish.models
+                                      ) {
+                                        yield* Ref.set(learnedModels, nextSnapshot.models);
+                                      }
+                                      if (resolvedIdentity !== null) {
+                                        yield* Ref.set(activeRuntimeIdentity, resolvedIdentity);
+                                        yield* Ref.update(retiredRuntimeIdentities, (retired) => {
+                                          if (!retired.has(resolvedIdentity)) return retired;
+                                          const next = new Map(retired);
+                                          next.delete(resolvedIdentity);
+                                          return next;
+                                        });
+                                      }
+                                      yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
+                                    }
+                                    if (!probeFailed && resolvedIdentity !== null) {
+                                      const { message: _fallbackMsg, ...cleanProvider } =
+                                        nextSnapshotRaw;
+                                      const storedProvider = fallback
+                                        ? cleanProvider
+                                        : nextSnapshotRaw;
+                                      yield* Ref.set(lastSuccessfulRuntime, {
+                                        identity: resolvedIdentity,
+                                        provider: {
+                                          ...storedProvider,
+                                          auth: stripConfirmedAuth(storedProvider.auth),
+                                        },
+                                      });
+                                      yield* Ref.set(latestAcceptedAuth, {
+                                        identity: resolvedIdentity,
+                                        auth: stripConfirmedAuth(nextSnapshot.auth),
+                                      });
+                                    }
+                                  }
+                                })
+                              : Effect.void,
+                          ),
+                        ),
+                      );
                       return {
                         published,
                         readiness: published
@@ -2176,15 +2231,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             : prev,
                       );
                     }
+                    const snapshotChanged = !Equal.equals(next, current);
                     const now = yield* Clock.currentTimeMillis;
                     yield* Ref.update(enrichmentCache, (cache) =>
-                      updateAcpRegistryEnrichmentCache({
-                        cache,
-                        configuration,
-                        customModels: effectiveConfig.customModels,
-                        now,
-                        runtimeIdentity: meta.runtimeIdentity ?? gate.expected,
-                      }),
+                      cache.entry === null && !snapshotChanged
+                        ? cache
+                        : updateAcpRegistryEnrichmentCache({
+                            cache,
+                            configuration,
+                            customModels: effectiveConfig.customModels,
+                            now,
+                            runtimeIdentity: meta.runtimeIdentity ?? gate.expected,
+                          }),
                     );
                     return undefined;
                   }),
