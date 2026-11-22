@@ -55,6 +55,9 @@ const AuthFile = Schema.Struct({
   ),
 });
 const AuthFiles = Schema.Struct({ files: Schema.Array(AuthFile) });
+const AuthFileModels = Schema.Struct({
+  models: Schema.Array(Schema.Struct({ id: Schema.String })),
+});
 const ApiResponse = Schema.Struct({ status_code: Schema.Number, body: Schema.String });
 const CodexWindow = Schema.Struct({
   used_percent: Schema.Number,
@@ -118,6 +121,7 @@ const CreditList = Schema.Struct({
 });
 
 const decodeAuthFiles = Schema.decodeUnknownEffect(AuthFiles);
+const decodeAuthFileModels = Schema.decodeUnknownEffect(AuthFileModels);
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeApiResponse = Schema.decodeUnknownEffect(ApiResponse);
 const decodeCreditList = Schema.decodeUnknownEffect(Schema.fromJsonString(CreditList));
@@ -439,6 +443,20 @@ export const makeCliproxyApi = Effect.gen(function* () {
     return (yield* decodeAuthFiles(response)).files;
   });
 
+  // Older hubs lack this endpoint; the account then counts for every model of its driver.
+  const routedModels = Effect.fn("CliproxyApi.routedModels")(function* (
+    hub: CliproxyHub,
+    account: AuthFile,
+  ) {
+    const response = yield* management(
+      hub,
+      `auth-files/models?name=${encodeURIComponent(account.id)}`,
+    );
+    return (yield* decodeAuthFileModels(response)).models.flatMap(({ id }) =>
+      id.trim() ? [id.trim()] : [],
+    );
+  });
+
   const apiCall = Effect.fn("CliproxyApi.apiCall")(function* (
     hub: CliproxyHub,
     account: AuthFile,
@@ -472,14 +490,19 @@ export const makeCliproxyApi = Effect.gen(function* () {
       apiCall(hub, account, provider.header(account, platform, architecture), url, data);
     const reading = yield* provider.read({ account, call, checkedAt }).pipe(
       Effect.provideService(Digest.Digest, digest),
-      Effect.orElseSucceed(() => ({
-        ...listedIdentity(account),
-        usageLimits: makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "probeFailed",
-          message: "The hub could not read this account's usage.",
+      Effect.catch((error) =>
+        Effect.succeed({
+          ...listedIdentity(account),
+          usageLimits: makeUnavailableUsageLimits({
+            checkedAt,
+            reason: "probeFailed",
+            // Source-error details are already credential-free (status codes only).
+            message: isUsageLimitSourceError(error)
+              ? error.detail
+              : "The hub could not read this account's usage.",
+          }),
         }),
-      })),
+      ),
     );
     return { id: account.id, driver: provider.driver, ...reading };
   });
@@ -494,14 +517,33 @@ export const makeCliproxyApi = Effect.gen(function* () {
           : new UsageLimitSourceError({ detail: "The hub could not list accounts." }),
       ),
     );
-    return yield* Effect.forEach(
-      accounts.flatMap((account) => {
-        const provider = HUB_PROVIDERS.get(account.provider);
-        return provider && !account.disabled ? [{ account, provider }] : [];
-      }),
-      ({ account, provider }) => readAccount(hub, account, provider),
-      { concurrency: 4 },
+    const readable = accounts.flatMap((account) => {
+      const provider = HUB_PROVIDERS.get(account.provider);
+      return provider && !account.disabled ? [{ account, provider }] : [];
+    });
+    // Model lists are optional, so their lookups run apart from the quota reads and stop at one
+    // short deadline; a slow lookup must not push a refresh past its budget.
+    const [readings, models] = yield* Effect.all(
+      [
+        Effect.forEach(readable, ({ account, provider }) => readAccount(hub, account, provider), {
+          concurrency: 4,
+        }),
+        Effect.forEach(
+          readable,
+          ({ account }) =>
+            routedModels(hub, account).pipe(
+              Effect.timeoutOption("2 seconds"),
+              Effect.orElseSucceed(() => Option.none()),
+            ),
+          { concurrency: "unbounded" },
+        ),
+      ],
+      { concurrency: 2 },
     );
+    return readings.map((reading, index) => {
+      const listed = models[index];
+      return listed && Option.isSome(listed) ? { ...reading, models: listed.value } : reading;
+    });
   });
 
   const consume = Effect.fn("CliproxyApi.consume")(function* (
