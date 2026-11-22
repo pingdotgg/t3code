@@ -1,6 +1,7 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -9,7 +10,9 @@ import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServer, type HttpClientRequest } from "effect/http";
+import { RELAY_LINK_PROOF_TYP, signRelayJwt, verifyRelayJwt } from "@t3tools/shared/relayJwt";
 import * as NetAddress from "effect/net/NetAddress";
 
 import { EnvironmentId } from "@t3tools/contracts";
@@ -28,7 +31,10 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as AgentAwarenessRelay from "../relay/AgentAwarenessRelay.ts";
 import { CLOUD_CLI_DESIRED_LINK_SECRET } from "./CliState.ts";
 import * as CliTokenManager from "./CliTokenManager.ts";
-import { RelayManagedEndpointRecoveryRegistrationRequest } from "@t3tools/contracts/relay";
+import {
+  RelayEnvironmentLinkProofPayload,
+  RelayManagedEndpointRecoveryRegistrationRequest,
+} from "@t3tools/contracts/relay";
 import {
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
@@ -46,6 +52,7 @@ import { pendingServiceUpdateExists } from "./updateHandoff.ts";
 import { managedTunnelStartupAction } from "./managedTunnelStartup.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
+import * as ServerSettings from "../serverSettings.ts";
 
 const storeFailure = (tag: "AlreadyExists" | "PermissionDenied") =>
   new ServerSecretStore.SecretStorePersistError({
@@ -142,6 +149,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
     readonly respondEffect?: Effect.Effect<Response>;
     readonly getExisting?: CliTokenManager.CloudCliTokenManager["Service"]["getExisting"];
     readonly latestReachability?: ConnectReachability.ConnectReachability["Service"]["latest"];
+    readonly connector?: ManagedEndpointRuntime.ConnectorFacts;
   }
 
   const writeLauncherState = (update: ServiceUpdateRecord) =>
@@ -166,6 +174,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
           CloudLink.layer.pipe(
             Layer.provide(EnvironmentKeys.layer),
             Layer.provide(ManagedPolicy.layerTest()),
+            Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
           ),
         ),
         Effect.provideService(
@@ -185,7 +194,13 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ServerEnvironment.ServerEnvironment,
           ServerEnvironment.ServerEnvironment.of({
             getEnvironmentId: Effect.succeed(EnvironmentId.make("env_123")),
-            getDescriptor: Effect.die("unused"),
+            getDescriptor: Effect.succeed({
+              environmentId: EnvironmentId.make("env_123"),
+              label: "Test environment",
+              platform: { os: "linux", arch: "x64" },
+              serverVersion: "0.0.0-test",
+              capabilities: { repositoryIdentity: true },
+            }),
           }),
         ),
         Effect.provideService(
@@ -208,7 +223,7 @@ describe("releaseManagedTunnelOnShutdown", () => {
             requestRecovery: () => Effect.void,
             restartConnector: () => Effect.succeed(false),
             tunnelConnected: Stream.empty,
-            inspectConnector: Effect.succeed(null),
+            inspectConnector: Effect.succeed(harness.connector ?? null),
             readinessChanged: Stream.empty,
             withLinkStateLock: (effect) => effect,
           }),
@@ -243,13 +258,80 @@ describe("releaseManagedTunnelOnShutdown", () => {
           ),
         ),
 
-        Effect.provide(
+        Effect.provide([
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
             Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
           ),
-        ),
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ]),
         Effect.scoped,
       );
+
+  it.effect.each([
+    { direction: "ahead", skewSeconds: 600 },
+    { direction: "behind", skewSeconds: -600 },
+  ])(
+    "signs a link proof accepted at relay time when the host clock is $direction",
+    ({ skewSeconds }) => {
+      const { store } = makeMemorySecretStore();
+
+      return Effect.gen(function* () {
+        const relayNow = 1_800_000_000;
+        const relayIssuer = "https://relay.example.test";
+        const relayKeys = yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(
+          makeMemorySecretStore().store,
+        );
+        const challenge = yield* signRelayJwt({
+          privateKey: relayKeys.privateKey,
+          typ: "t3-link-challenge+jwt",
+          payload: {
+            kind: "environment_link_challenge",
+            iss: relayIssuer,
+            aud: relayIssuer,
+            sub: "user-123",
+            jti: "challenge-jti",
+            iat: relayNow,
+            exp: relayNow + 300,
+            notificationsEnabled: true,
+            liveActivitiesEnabled: false,
+            managedTunnelsEnabled: false,
+          },
+        });
+        yield* TestClock.setTime((relayNow + skewSeconds) * 1_000);
+        const link = yield* CloudLink.CloudLink;
+        const proof = yield* link.linkProof({
+          challenge,
+          relayIssuer,
+          endpoint: {
+            httpBaseUrl: "http://127.0.0.1:3773",
+            wsBaseUrl: "ws://127.0.0.1:3773",
+            providerKind: "manual",
+          },
+          origin: { localHttpHost: "127.0.0.1", localHttpPort: 3773 },
+        });
+        const environmentKeys =
+          yield* EnvironmentKeys.getOrCreateEnvironmentKeyPairFromSecretStore(store);
+        yield* TestClock.setTime(relayNow * 1_000);
+        const verified = yield* verifyRelayJwt(RelayEnvironmentLinkProofPayload, {
+          publicKey: environmentKeys.publicKey,
+          token: proof,
+          typ: RELAY_LINK_PROOF_TYP,
+          issuer: "t3-env:env_123",
+          audience: relayIssuer,
+        });
+
+        expect(verified).toMatchObject({
+          iat: relayNow,
+          exp: relayNow + 300,
+          challenge,
+          environmentId: "env_123",
+          scopes: ["agent_activity_notifications"],
+        });
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+    },
+  );
 
   const managedLinkSecrets = [
     [CLOUD_ENDPOINT_RUNTIME_CONFIG, "runtime-config"],
@@ -294,6 +376,20 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(request.headers.authorization).toBe("Bearer cli-access-token");
       expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(false);
       expect(values.has(CLOUD_ENDPOINT_CONFIRMED_ORIGIN)).toBe(false);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
+  it.effect("releases a tunnel only through the configured relay", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    values.set(RELAY_URL_SECRET, new TextEncoder().encode("https://old-relay.example.test"));
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const link = yield* CloudLink.CloudLink;
+      expect(yield* link.releaseManagedTunnelOnShutdown()).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
@@ -612,28 +708,117 @@ describe("releaseManagedTunnelOnShutdown", () => {
     );
   });
 
-  it.effect("clears the revoked mark when the environment is linked again", () => {
-    const { store } = makeMemorySecretStore([
+  it.effect.each([
+    {
+      name: "replaces a revoked link to another account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+    },
+    {
+      name: "replaces a revoked link to the same account",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-123",
+    },
+    {
+      name: "replaces a revoked link after a partial drop removed its user id",
+      revoked: true,
+      startup: false,
+      cloudUserId: "user-456",
+      partialDrop: true,
+    },
+    {
+      name: "rejects switching an active link to another account",
+      revoked: false,
+      startup: false,
+      cloudUserId: "user-456",
+    },
+    {
+      name: "keeps a revoked link when startup links another account",
+      revoked: true,
+      startup: true,
+      cloudUserId: "user-456",
+    },
+  ])("$name", ({ revoked, startup, cloudUserId, partialDrop }) => {
+    const { store, values } = makeMemorySecretStore([
       [RELAY_URL_SECRET, "https://relay.example.test"],
-      [CLOUD_LINKED_USER_ID, "user-123"],
-      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "revoked-credential"],
-      [CLOUD_LINK_REVOKED, "true"],
+      ...(partialDrop ? [] : [[CLOUD_LINKED_USER_ID, "user-123"] as const]),
+      [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, "old-credential"],
+      ...(revoked ? [[CLOUD_LINK_REVOKED, "true"] as const] : []),
+      [CLOUD_CLI_DESIRED_LINK_SECRET, startup ? "publish_only" : "managed"],
     ]);
     const cloudMintPublicKey =
       "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAqZ2u2LjMoAyG2QTHXmITJ9w6RzZtVUAv394XCcPV0zE=\n-----END PUBLIC KEY-----";
 
     return Effect.gen(function* () {
       const link = yield* CloudLink.CloudLink;
-      expect((yield* link.linkState()).linkRevoked).toBe(true);
-      yield* link.applyRelayConfig({
-        relayUrl: "https://relay.example.test",
-        cloudUserId: "user-123",
-        environmentCredential: "fresh-credential",
-        cloudMintPublicKey,
-        endpointRuntime: null,
+      expect((yield* link.linkState()).linkRevoked).toBe(revoked && !partialDrop);
+      const relink = Effect.gen(function* () {
+        if (startup) {
+          yield* link.reconcileDesiredLinkIfStillDesired("http://127.0.0.1:3773");
+        } else {
+          yield* link.applyRelayConfig({
+            relayUrl: "https://relay.example.test",
+            cloudUserId,
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+            endpointRuntime: null,
+          });
+        }
       });
-      expect(yield* link.linkState()).toMatchObject({ linked: true, linkRevoked: false });
-    }).pipe(provideReleaseHarness({ store, applyConfigCalls: [], requests: [] }));
+      const result = yield* relink.pipe(
+        Effect.provide(
+          ConfigProvider.layer(
+            ConfigProvider.fromEnv({ env: { T3CODE_RELAY_URL: "https://relay.example.test" } }),
+          ),
+        ),
+        Effect.flip,
+        Effect.option,
+      );
+      if (revoked && !startup) {
+        expect(result).toEqual(Option.none());
+        expect(yield* link.linkState()).toMatchObject({
+          linked: true,
+          linkRevoked: false,
+          cloudUserId,
+        });
+        expect(new TextDecoder().decode(values.get(RELAY_ENVIRONMENT_CREDENTIAL_SECRET))).toBe(
+          "fresh-credential",
+        );
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(cloudUserId === "user-123");
+      } else {
+        expect(Option.getOrThrow(result)).toBeInstanceOf(CloudLink.CloudLinkAccountMismatchError);
+        expect(yield* link.linkState()).toMatchObject({
+          cloudUserId: "user-123",
+          linkRevoked: revoked,
+        });
+        expect(values.has(CLOUD_CLI_DESIRED_LINK_SECRET)).toBe(true);
+      }
+    }).pipe(
+      provideReleaseHarness({
+        store,
+        applyConfigCalls: [],
+        requests: [],
+        respond: () =>
+          Response.json({
+            challenge: "challenge-1",
+            expiresAt: "2099-01-01T00:00:00.000Z",
+            ok: true,
+            cloudUserId: "user-456",
+            environmentId: "env_123",
+            endpoint: {
+              httpBaseUrl: "http://127.0.0.1:3773",
+              wsBaseUrl: "ws://127.0.0.1:3773",
+              providerKind: "manual",
+            },
+            endpointRuntime: null,
+            relayIssuer: "https://relay.example.test",
+            environmentCredential: "fresh-credential",
+            cloudMintPublicKey,
+          }),
+      }),
+    );
   });
 
   it.effect(
@@ -1079,12 +1264,21 @@ describe("releaseManagedTunnelOnShutdown", () => {
       expect(state.reachability?.status === "unreachable" && state.reachability.cause).not.toBe(
         "not_linked",
       );
+      // The address shows before any check passes.
+      expect(state.tunnelHostname).toBe("prod-abc.t3coderelay.com");
     }).pipe(
       provideReleaseHarness({
         store,
         applyConfigCalls: [],
         requests: [],
         latestReachability: Effect.succeedSome(notLinked),
+        connector: {
+          pid: 123,
+          readyConnections: 0,
+          hostname: "prod-abc.t3coderelay.com",
+          origin: null,
+          protocol: null,
+        },
       }),
     );
   });

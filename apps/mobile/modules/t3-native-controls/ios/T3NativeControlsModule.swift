@@ -1,13 +1,19 @@
 import AVFoundation
 import ExpoModulesCore
+import Photos
 import Security
 import UIKit
+import UniformTypeIdentifiers
 
 @ExpoModule("T3NativeControls")
 public final class T3NativeControlsModule: Module {
   private let presentationSources = T3PresentationSources()
   private var videoPresentation: T3NativeVideoPresentation?
   private var filePresentation: T3NativeFilePresentation?
+  private var imageViewer: T3NativeImageViewer?
+  /// The last file preview that closed. Written on main, read synchronously from JS.
+  private let filePreviewActivity = NSLock()
+  private var finishedFilePreview: String?
 
   public func definition() -> ModuleDefinition {
     Events("videoPlaybackChange")
@@ -51,6 +57,16 @@ public final class T3NativeControlsModule: Module {
       ViewName("ScrollEdgeBleed")
     }
 
+    AsyncFunction("generateDpopKey") { T3DpopKeys.generate() }
+
+    AsyncFunction("dpopKeyMatches") { (privateKey: Data, publicKey: Data) in
+      try T3DpopKeys.matches(privateKey: privateKey, publicKey: publicKey)
+    }
+
+    AsyncFunction("signDpop") { (privateKey: Data, signingInput: Data) in
+      try T3DpopKeys.sign(privateKey: privateKey, signingInput: signingInput)
+    }
+
     AsyncFunction("presentVideo") { (url: URL, title: String, sourceIdentifier: String, identifier: String, promise: Promise) in
       try self.presentVideo(
         url: url,
@@ -73,26 +89,42 @@ public final class T3NativeControlsModule: Module {
       else {
         throw URLError(.badURL)
       }
-      let file = try self.makeFilePresentation(sourceIdentifiers: sourceIdentifiers, identifier: identifier,
-                                               promise: promise)
-      guard let presenter = self.appContext?.utilities?.currentViewController() else {
-        file.dismiss()
-        return
-      }
-      file.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
+      // A viewer still animating closed must not block the next one, as Quick Look's error alert did.
+      self.imageViewer?.finishImmediately()
+      guard self.filePresentation == nil, self.videoPresentation == nil,
+        let presenter = self.appContext?.utilities?.currentViewController()
+      else { throw URLError(.cannotLoadFromNetwork) }
+      let viewer = T3NativeImageViewer(
+        identifier: identifier, sources: self.presentationSources, sourceIdentifiers: sourceIdentifiers,
+        onFinish: { [weak self] in self?.setFinishedFilePreview(identifier) },
+        completion: { [weak self] error in
+          if self?.imageViewer?.identifier == identifier { self?.imageViewer = nil }
+          if let error { promise.reject(error) } else { promise.resolve(nil) }
+        }
+      )
+      self.imageViewer = viewer
+      viewer.present(urls: urls, titles: titles, selectedIndex: selectedIndex, from: presenter)
     }.runOnQueue(.main)
+
+    // A tap can reach JS before the old viewer's close does; this tells it whether that viewer is gone.
+    // A presentation main has not started yet reads as still open.
+    Function("isFilePreviewFinished") { (identifier: String) -> Bool in
+      self.filePreviewActivity.withLock { self.finishedFilePreview == identifier }
+    }
 
     // A nil URL marks the item as one that could not be resolved.
     AsyncFunction("updateFile") { (identifier: String, index: Int, url: URL?) in
-      if self.filePresentation?.identifier == identifier { self.filePresentation?.update(index: index, url: url) }
+      if self.imageViewer?.identifier == identifier { self.imageViewer?.update(index: index, url: url) }
     }.runOnQueue(.main)
 
     OnDestroy {
       let presentation = self.videoPresentation
       let file = self.filePresentation
+      let images = self.imageViewer
       DispatchQueue.main.async {
         presentation?.dismiss()
         file?.dismiss()
+        images?.dismiss()
       }
     }
 
@@ -123,6 +155,11 @@ public final class T3NativeControlsModule: Module {
     AsyncFunction("shareFileFromSource") { (url: URL, title: String, identifier: String, promise: Promise) in
       try self.shareFile(url: url, title: title, sourceIdentifier: identifier, promise: promise)
     }.runOnQueue(.main)
+
+    // Photos names the asset itself, so iOS ignores the Android display name.
+    AsyncFunction("saveImageToLibrary") { (url: URL, mimeType: String, name: String, promise: Promise) in
+      Self.saveImageToLibrary(url: url, mimeType: mimeType, name: name, promise: promise)
+    }
   }
 
   // UIKit presenters are main-actor isolated rather than run on the JS thread
@@ -244,7 +281,7 @@ public final class T3NativeControlsModule: Module {
     let isPlayableURL = url.isFileURL
       ? FileManager.default.isReadableFile(atPath: url.path)
       : (["https", "http"].contains(url.scheme?.lowercased() ?? "") && url.host != nil)
-    guard videoPresentation == nil, filePresentation == nil,
+    guard videoPresentation == nil, filePresentation == nil, imageViewer == nil,
       let presenter = appContext?.utilities?.currentViewController(),
       isPlayableURL
     else {
@@ -272,29 +309,66 @@ public final class T3NativeControlsModule: Module {
     if videoPresentation?.identifier == identifier { videoPresentation?.dismiss() }
   }
 
-  private func makeFilePresentation(sourceIdentifiers: [String], identifier: String,
+  private func makeFilePresentation(sourceIdentifier: String, identifier: String,
                                     promise: Promise) throws -> T3NativeFilePresentation {
-    guard filePresentation == nil, videoPresentation == nil,
+    guard filePresentation == nil, videoPresentation == nil, imageViewer == nil,
       appContext?.utilities?.currentViewController() != nil
     else { throw URLError(.cannotLoadFromNetwork) }
-    let file = T3NativeFilePresentation(identifier: identifier, sources: presentationSources,
-                                        sourceIdentifiers: sourceIdentifiers) { [weak self] error in
-      self?.filePresentation = nil
-      if let error { promise.reject(error) } else { promise.resolve(nil) }
-    }
+    let file = T3NativeFilePresentation(
+      identifier: identifier, sources: presentationSources, sourceIdentifier: sourceIdentifier,
+      onFinish: { [weak self] in self?.setFinishedFilePreview(identifier) },
+      completion: { [weak self] error in
+        self?.filePresentation = nil
+        if let error { promise.reject(error) } else { promise.resolve(nil) }
+      }
+    )
     filePresentation = file
     return file
   }
 
+  private func setFinishedFilePreview(_ identifier: String) {
+    filePreviewActivity.withLock { finishedFilePreview = identifier }
+  }
+
   private func presentFile(url: URL, title: String, sourceIdentifier: String,
                            identifier: String, promise: Promise) throws {
-    let file = try makeFilePresentation(sourceIdentifiers: [sourceIdentifier], identifier: identifier, promise: promise)
+    let file = try makeFilePresentation(sourceIdentifier: sourceIdentifier, identifier: identifier, promise: promise)
     guard let presenter = appContext?.utilities?.currentViewController() else { file.dismiss(); return }
     file.present(url: url, title: title, from: presenter)
   }
 
   private func dismissFilePresentation(identifier: String) {
     if filePresentation?.identifier == identifier { filePresentation?.dismiss() }
+    if imageViewer?.identifier == identifier { imageViewer?.dismiss() }
+  }
+
+  private static func saveImageToLibrary(url: URL, mimeType: String, name: String, promise: Promise) {
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        promise.reject(NSError(
+          domain: "T3NativePhotos",
+          code: 1,
+          userInfo: [NSLocalizedDescriptionKey: "Allow T3 Code to add photos in Settings."]
+        ))
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        let options = PHAssetResourceCreationOptions()
+        options.uniformTypeIdentifier = UTType(mimeType: mimeType)?.identifier
+        options.originalFilename = name
+        PHAssetCreationRequest.forAsset().addResource(with: .photo, fileURL: url, options: options)
+      }, completionHandler: { saved, error in
+        if saved {
+          promise.resolve(nil)
+        } else {
+          promise.reject(error ?? NSError(
+            domain: "T3NativePhotos",
+            code: 2,
+            userInfo: [NSLocalizedDescriptionKey: "Photos could not save this image."]
+          ))
+        }
+      })
+    }
   }
 
   private func shareFile(url: URL, title: String, sourceIdentifier: String, promise: Promise) throws {
