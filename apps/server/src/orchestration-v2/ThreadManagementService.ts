@@ -1368,15 +1368,15 @@ const make = Effect.gen(function* () {
         cause,
       });
     const { threads } = yield* orchestrator.getShellSnapshot({ location: "active" });
-    // Pinned, settled, and subagent threads have no slot in the active section.
-    // Snoozed threads keep theirs while hidden, so they stay in the order.
+    // Pinned, settled, subagent, and side-chat threads have no slot in the active
+    // section. Snoozed threads keep theirs while hidden, so they stay in the order.
     const active = threads.filter(
       (thread) =>
         thread.deletedAt === null &&
         thread.archivedAt === null &&
         thread.pinnedAt == null &&
         thread.settledOverride !== "settled" &&
-        thread.lineage.relationshipToParent !== "subagent",
+        isListedThreadLineage(thread.lineage),
     );
     const orderedIds = sortActiveThreadsByOrderKey(
       active.map((thread) => ({

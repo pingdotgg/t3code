@@ -1071,6 +1071,26 @@ describe("reorderActiveThread", () => {
     }),
   );
 
+  it.effect("leaves side chats out of the planned order", () =>
+    Effect.gen(function* () {
+      const service = reorderService([
+        shell("side", "2026-04-01T00:00:00Z", {
+          lineage: { relationshipToParent: "fork", sideChat: true },
+          runtimeMode: "full-access",
+        } as Partial<OrchestrationV2ThreadShell>),
+        shell("a", "2026-01-01T00:00:00Z", { activeOrderKey: "m" }),
+        shell("b", "2026-01-01T00:00:00Z", { activeOrderKey: "t" }),
+      ]);
+      yield* service.run({ threadId: "b", beforeThreadId: "a" }).pipe(
+        Effect.provideService(DispatchModeLimit, {
+          runtimeMode: "auto",
+          interactionMode: "default",
+        }),
+      );
+      expect(service.dispatched.map((command) => command.threadId)).toEqual(["b"]);
+    }),
+  );
+
   it.effect("refuses a fenced caller's reseed that would rewrite a thread outside its link", () =>
     Effect.gen(function* () {
       const linkOrigin = { sessionId: "link", label: "Laptop", access: "auto" as const };
