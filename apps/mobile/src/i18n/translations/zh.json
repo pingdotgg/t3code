@@ -3073,7 +3073,7 @@
   "0a5031567a04178b": "已请求你审查",
   "f4be944ea960d671": "待审查",
   "8b2b5dd056680555": "此 {term, select, mr {merge request} cr {change request} other {pull request}} 已不在堆叠中。请刷新。",
-  "204e205fb3ea14de": "没有可经由此 {term, select, mr {merge request} cr {change request} other {pull request}} 合并的开放层。",
+  "204e205fb3ea14de": "没有可经由此 {term, select, mr {merge request} cr {change request} other {pull request}} 合并的开放的层。",
   "428b4ba1895d313f": "合并此堆叠前，请重新打开已关闭的层。",
   "ff54cc329d22cf5d": "将所有要合并的层标记为可供审查。",
   "cc8127b995731737": "合并前请刷新堆叠以加载其最新修订。",
