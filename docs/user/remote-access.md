@@ -165,9 +165,12 @@ sudo ufw allow from 192.168.1.0/24 to any port 3773 proto tcp comment 'T3 Code L
 
 Check existing rules with `sudo ufw status numbered`. UFW uses the first matching
 rule, so an earlier deny can still block the connection. If you intend to allow
-this LAN traffic through that deny, replace `ufw allow` in the command above with
-`ufw insert N allow`, where `N` is the deny rule's number, to insert the allow
-before it.
+this LAN traffic through that deny and already ran the allow command above,
+first remove that appended rule using the same command with `ufw delete allow`
+instead of `ufw allow`. UFW skips inserting an identical rule that already exists.
+Run `sudo ufw status numbered` again after deletion because rule numbers can change.
+Then replace `ufw allow` in the command above with `ufw insert N allow`, where `N`
+is the deny rule's current number, to insert the allow before it.
 
 Use your own LAN subnet and server port. Keep the firewall enabled; no router port
 forwarding is needed. To remove this rule later, use the command above with
