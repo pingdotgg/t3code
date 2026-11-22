@@ -1319,6 +1319,34 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  it.effect("leaves no background work when the continuation run ends without starting", () =>
+    Effect.gen(function* () {
+      const { session, command, offers, send, startTurn, throughTerminal } =
+        yield* openSessionWithRunningCommand({ IsDaemon: true, WaitMsBeforeAsync: 500 });
+      yield* startTurn(1, false);
+      yield* throughTerminal;
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the finished daemon must wake the thread");
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      assert.isTrue(yield* session.hasPendingBackgroundWork!, "the queued continuation is owed");
+
+      assert.isDefined(
+        offers[0]!.onRunEndedWithoutStarting,
+        "a cancelled queued continuation must release its wake",
+      );
+      yield* offers[0]!.onRunEndedWithoutStarting!();
+      assert.isFalse(
+        yield* session.hasPendingBackgroundWork!,
+        "Stop on the queued continuation must let the thread switch providers",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // Frames as agy 1.5.11 sent them for `run_command` with `WaitMsBeforeAsync`: the prompt returns
   // end_turn while the command runs, and the agent replies when the command finishes.
   it.effect("keeps the run open while a command the agent waits for still runs", () =>
