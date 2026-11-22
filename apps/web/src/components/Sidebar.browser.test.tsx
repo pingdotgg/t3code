@@ -575,7 +575,9 @@ describe("sidebar settled pagination", () => {
           settledAt: "2026-01-01T00:00:00.000Z",
         }),
       );
-      threads.unshift(threadShell(activeProject.id, 100));
+      threads.unshift(
+        ...Array.from({ length: 20 }, (_, index) => threadShell(activeProject.id, 100 + index)),
+      );
       vi.mocked(useProjects).mockReturnValue([activeProject]);
       vi.mocked(useQuietThreadShells).mockReturnValue(threads);
       vi.mocked(useThreadRouteTarget).mockReturnValue({
@@ -605,12 +607,13 @@ describe("sidebar settled pagination", () => {
           ],
         ]),
       );
+      const routeReveal = { observedKey: null, pendingKey: null };
       await using screen = await render(
         <SidebarProvider
           {...workspaceAreaProps("sidebar", 0, "Threads")}
           style={{ height: 400, minHeight: 400 }}
         >
-          <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+          <Sidebar routeReveal={routeReveal} />
         </SidebarProvider>,
       );
       const shelf = screen.container.querySelector<HTMLElement>(
@@ -645,6 +648,32 @@ describe("sidebar settled pagination", () => {
       const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
       await act(() => moreButton.click());
       expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+      if (!(activeViewport instanceof HTMLElement)) throw new Error("Active viewport not found");
+      const settingsTrigger = document.createElement("button");
+      document.body.append(settingsTrigger);
+      using _settingsTrigger = { [Symbol.dispose]: () => settingsTrigger.remove() };
+      settingsTrigger.focus({ preventScroll: true });
+      activeViewport.scrollTop = 100;
+      expect(activeViewport.scrollTop).toBe(100);
+      __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarSettledShelfFixed: !fixed });
+      await screen.rerender(
+        <SidebarProvider
+          {...workspaceAreaProps("sidebar", 0, "Threads")}
+          style={{ height: 400, minHeight: 400 }}
+        >
+          <Sidebar routeReveal={routeReveal} />
+        </SidebarProvider>,
+      );
+      const movedViewport = screen.container
+        .querySelector('[data-sidebar-list="active"]')
+        ?.closest('[data-slot="scroll-area-viewport"]');
+      const movedSettledViewport = screen.container
+        .querySelector('[data-sidebar-list="settled"]')
+        ?.closest('[data-slot="scroll-area-viewport"]');
+      expect(movedSettledViewport).toBeInstanceOf(HTMLElement);
+      expect(movedSettledViewport === movedViewport).toBe(fixed);
+      expect(movedViewport).toBe(activeViewport);
+      expect(activeViewport.scrollTop).toBe(100);
     },
   );
 });

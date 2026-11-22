@@ -143,18 +143,18 @@ and background commands or other monitors the agent says it is waiting on. A dev
 there. A thread returns to the active list when it finishes or fails. The Working section lists
 the thread you last sent work to first. Pinned threads stay in the pinned section.
 
-On web and desktop, threads that need an answer, an approval, or a plan review move into
-**Input**, above Working. Both sections stay available while you scroll the active list.
-Find **Settled** at the end of that list. Enable **Settings → General → Keep Settled at bottom**
-to keep it visible below Working and Snoozed instead. Each device remembers its choice.
-On native mobile, requests return to the active list.
+**Working section** is on by default. Turn it off under **Settings → General → Working section**.
+Each device keeps its own choice. On web and desktop, while this setting is on, threads that need
+an answer, approval, or plan review move into **Input** above Working. Both sections stay available
+while you scroll the active list. When the setting is off, or on native mobile, requests appear in
+the active list.
 
-This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
-or **Settings → General → Working section** on iOS and Android. Each device keeps its own
-choice.
+While **Working section** is on, the active list is ordered by when each thread last came back to you,
+so you cannot drag or move threads within it. Your saved order returns when you turn it off.
 
-While this is on, the active list is ordered by when each thread last came back to you, so you
-cannot drag or move threads within it. Your saved order returns when you turn it off.
+On web and desktop, **Settled** appears at the end of the active list by default. Turn on
+**Settings → General → Keep Settled at bottom** to keep it visible below the other status sections.
+Each device remembers this setting separately.
 
 ### Group threads by project (beta)
 

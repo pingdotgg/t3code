@@ -76,6 +76,7 @@ import {
   ChevronDownIcon,
   FolderIcon,
   ListFilterIcon,
+  PinIcon,
   PlusIcon,
   SettingsIcon,
 } from "lucide-react";
@@ -1755,8 +1756,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const restrictBelowPins: Modifier = (args) =>
     restrictBelowSidebarLabel(args, dragLabelOffsetRef.current);
   const dndModifiers = [restrictToVerticalAxis, restrictBelowPins];
-  const attachTreeRef = (node: HTMLDivElement) => {
-    threadListRef.current = node;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-registers DOM lists when Settled moves between viewports or search replaces them
+  useLayoutEffect(() => {
+    const node = threadListRef.current;
+    if (!node) return;
     const lists = Array.from(node.querySelectorAll<HTMLUListElement>("[data-sidebar-list]"));
     const motions = lists.map(createSidebarListMotion);
     const guards = lists.map(createSidebarShiftGuard);
@@ -1781,9 +1784,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       guard.dispose();
       if (listMotionRef.current === motion) listMotionRef.current = null;
       if (shiftGuardRef.current === guard) shiftGuardRef.current = null;
-      if (threadListRef.current === node) threadListRef.current = null;
     };
-  };
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- these options change which list DOM nodes are mounted
+  }, [isSearchingThreads, settledShelfFixed]);
 
   // Folder rows only drag out to the composer; folders own their order, so nothing drops in the list.
   const isContextDrag =
@@ -1791,7 +1794,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState?.contextDrag === true ||
     dragState?.activeSection === "working" ||
     dragState?.activeSection === "input";
-  const dragTargetSection = isContextDrag ? null : (dragState?.targetSection ?? null);
+  const dragSourceChanged =
+    dragState !== null && sectionByThreadKey.get(dragState.activeKey) !== dragState.activeSection;
+  const dragTargetSection =
+    isContextDrag || dragSourceChanged ? null : (dragState?.targetSection ?? null);
   const dragDropVerb =
     dragState === null ? null : resolveSidebarDropVerb(dragState.activeSection, dragTargetSection);
   const finishThreadDrag = (started: boolean) => {
@@ -2068,15 +2074,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     setSidebarListItems(sidebarListItemsFresh);
     sidebarListItems = sidebarListItemsFresh;
   }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the dnd-kit drag sensor when the dragged row leaves the list
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the dnd-kit sensor when its source row leaves the list or changes section
   useEffect(() => {
     if (
       dragState !== null &&
-      !sidebarListItems.some((item) => item.kind === "thread" && item.key === dragState.activeKey)
+      (dragSourceChanged ||
+        !sidebarListItems.some(
+          (item) => item.kind === "thread" && item.key === dragState.activeKey,
+        ))
     ) {
       cancelThreadDrag();
     }
-  }, [cancelThreadDrag, dragState, sidebarListItems]);
+  }, [cancelThreadDrag, dragSourceChanged, dragState, sidebarListItems]);
   // Only order, section, or draft changes need layout reads and motion.
   const listMotionLayoutKey = [
     sidebarListItemsKey,
@@ -2144,6 +2153,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const draggedFromSection = dragState?.activeSection;
   const dragActivationY = dragState?.activationY;
   const dndCollisionDetection = (() => {
+    if (dragSourceChanged) return () => [];
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
     const source = threadByKey.get(draggedThreadKey);
@@ -2178,7 +2188,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     );
   })();
   const handleThreadDragEnd = (event: DragEndEvent) => {
-    if (projectFolders !== null) return;
+    if (projectFolders !== null || dragSourceChanged) return;
     const activeKey = String(event.active.id);
     const activeSection = sectionByThreadKey.get(activeKey);
     const target =
@@ -3788,8 +3798,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     }
                     return (
                       <SidebarThreadSections
-                        key={settledShelfFixed ? "fixed-settled" : "scroll-settled"}
-                        ref={attachTreeRef}
+                        ref={threadListRef}
                         settledFixed={settledShelfFixed}
                         main={main}
                         shelves={shelves}
@@ -3797,9 +3806,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         dragging={dragState !== null}
                         settledMore={
                           settledShelfExpanded && hiddenSettledCount > 0 ? (
-                            <li className="list-none">
-                              <button
-                                type="button"
+                            <li className="grid list-none">
+                              <Button
+                                variant="ghost"
                                 data-sidebar-row="settled:more"
                                 data-sidebar-parent="shelf:settled"
                                 aria-disabled={olderSettledShelf.loading}
@@ -3808,7 +3817,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   olderSettledShelf.retry();
                                   showMoreSettled();
                                 }}
-                                className="flex h-9 w-full cursor-pointer items-center gap-2.5 rounded-md px-2.5 text-left text-sm text-sidebar-muted-foreground hover:bg-sidebar-row-hover hover:text-sidebar-foreground aria-disabled:cursor-default"
                               >
                                 {/* Plus means "add", so revealing more uses a chevron. */}
                                 <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
@@ -3825,7 +3833,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                           ),
                                         },
                                       )}
-                              </button>
+                              </Button>
                             </li>
                           ) : null
                         }
@@ -3835,11 +3843,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                 </SortableContext>
                 {createPortal(
                   <DragOverlay dropAnimation={null}>
-                    {draggedThreadKey && !isContextDrag ? (
+                    {draggedThreadKey && !isContextDrag && !dragSourceChanged ? (
                       <div className="flex items-center gap-2 rounded-md bg-sidebar p-3 text-sm text-sidebar-foreground shadow-lg ring-1 ring-sidebar-border">
-                        <span>{threadByKey.get(draggedThreadKey)?.title}</span>
+                        {draggedFromSection === "pinned" && dragTargetSection === "pinned" ? (
+                          <PinIcon
+                            aria-hidden
+                            className="size-3 shrink-0 text-sidebar-muted-foreground"
+                          />
+                        ) : null}
+                        <span className="min-w-0 flex-1 truncate">
+                          {threadByKey.get(draggedThreadKey)?.title}
+                        </span>
                         {dragTargetSection ? (
-                          <span className="text-xs text-sidebar-muted-foreground">
+                          <span className="shrink-0 text-xs text-sidebar-muted-foreground">
                             {
                               {
                                 pinned: gt("Pinned", { $context: "sidebar section" }),

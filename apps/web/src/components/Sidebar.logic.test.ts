@@ -25,6 +25,7 @@ import {
   shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
+  sidebarListItemId,
   planSidebarThreadDrop,
   resolveSidebarReorderableThreadKeys,
   sortPinnedThreadsForSidebar,
@@ -1239,6 +1240,17 @@ describe("Working shelf (beta)", () => {
     it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
       expect(resolveSidebarDropTarget(items, "a1", "i1")).toBeNull();
+      const inputHeader = marker("input-header");
+      const snoozed = [marker("snoozed-header"), row("z1", "snoozed")];
+      for (const beforeInput of [[], [marker("settled-header"), row("s1", "settled")]]) {
+        expect(
+          resolveSidebarDropTarget(
+            [...items.slice(0, 5), ...beforeInput, inputHeader, ...snoozed],
+            "z1",
+            sidebarListItemId(inputHeader),
+          ),
+        ).toBeNull();
+      }
       expect(resolveSidebarDropVerb("active", "input")).toBeNull();
       expect(resolveSidebarDropTarget(items, "p1", "a2")).toEqual({
         section: "active",
