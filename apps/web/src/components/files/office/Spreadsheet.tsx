@@ -727,7 +727,8 @@ function SpreadsheetGrid(props: {
         aria-rowcount={lastCell.row + 1}
         aria-colcount={lastCell.col + 1}
         aria-activedescendant={`office-cell-${active.row}-${active.col}`}
-        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto bg-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        // The sheet is white in every theme, so its scrollbars keep the light theme's thumb.
+        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto bg-white scheme-light outline-none [--app-scrollbar-thumb-hover:rgb(191_191_191)] [--app-scrollbar-thumb:rgb(217_217_217)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <div
           ref={spacer}

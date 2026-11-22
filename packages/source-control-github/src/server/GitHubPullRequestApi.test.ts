@@ -838,6 +838,27 @@ layer("GitHubPullRequestApi.layer", (it) => {
             }),
           );
         }
+        // Job 16 never started, so GitHub holds no log; its check run explains why.
+        if (log?.[1] === "16") {
+          return Effect.fail(
+            new GitHubRequestPolicy.GitHubApiNotFoundError({
+              host: "github.com",
+              operation: "readCheckLog",
+            }),
+          );
+        }
+        if (/check-runs\/16\/annotations/.test(call.path)) {
+          return Effect.succeed(
+            output(
+              encodeJson([
+                {
+                  annotation_level: "failure",
+                  message: "The job was not started because of a billing problem.",
+                },
+              ]),
+            ),
+          );
+        }
         if (log) return Effect.succeed(output("setup\nbuild\nError: boom\n"));
         const job = /actions\/jobs\/(\d+)$/.exec(call.path);
         if (job) return Effect.succeed(output(encodeJson({ run_id: runOf[job[1]!] })));
@@ -871,6 +892,8 @@ layer("GitHubPullRequestApi.layer", (it) => {
         { log: "one long line", truncated: true },
       ]);
       const refused = yield* Effect.flip(api.readCheckLogs({ ...capped, checks: [job(14, 30)] }));
+      const [unstarted] = yield* api.readCheckLogs({ ...capped, checks: [job(16, 30)] });
+      expect(unstarted?.detail).toContain("The job was not started because of a billing problem.");
       const [huge] = yield* api.readCheckLogs({ ...capped, checks: [job(15, 30)] });
       expect(huge?.log?.length).toBe(32_000);
       expect(huge?.truncated).toBe(true);
