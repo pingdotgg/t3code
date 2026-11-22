@@ -23,11 +23,17 @@ const TestEntityLayer = TestEntity.toLayer({
   Ping: ({ payload }) => Effect.succeed(`pong:${payload.id}`)
 })
 
+const diskSyncOff: Record<Backend, Record<string, string>> = {
+  mysql: { innodb_flush_log_at_trx_commit: "0", sync_binlog: "0" },
+  pg: { fsync: "off" }
+}
+
 describe("cluster integration smoke", () => {
   for (const backend of ["pg", "mysql"] satisfies ReadonlyArray<Backend>) {
     it.live(`${backend}: persists messages and rebalances after an abrupt runner death`, () =>
       Effect.gen(function*() {
         const cluster = yield* make({ backend, entities: TestEntityLayer })
+        assert.deepStrictEqual(yield* cluster.diskSyncSettings(), diskSyncOff[backend])
         yield* cluster.start(3)
         yield* cluster.waitForStableAssignments()
 
