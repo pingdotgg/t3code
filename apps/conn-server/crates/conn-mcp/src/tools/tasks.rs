@@ -6,7 +6,7 @@
 //! no table keeps tasks: task `node:delegated-task:<commandId>`, child
 //! `thread:delegated-task:<commandId>`.
 
-use std::time::Duration;
+use std::{path::Path, time::Duration};
 
 use serde_json::{Value, json};
 
@@ -132,13 +132,6 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
             "Delegated tasks require an active run owned by this MCP provider session.",
         ));
     }
-    if str_arg(args, "isolation") == Some("worktree") {
-        return Err(fail(
-            "invalid_request",
-            "Conn Server cannot prepare a worktree for a child yet. Use isolation \"shared\" to work in the parent's checkout.",
-        ));
-    }
-
     let inherited = &parent_thread["modelSelection"];
     let instance = target["providerInstanceId"]
         .as_str()
@@ -197,6 +190,18 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let command_id = cx.stable_id("command", "delegate-task", &key);
     let task_id = format!("{TASK_PREFIX}{command_id}");
     let child = format!("thread:delegated-task:{command_id}");
+    // TS `isRetryOfAcceptedDelegation`: a retry keeps the checkout the first call made.
+    let retried = cx
+        .engine()
+        .created_run_status(&command_id)
+        .await
+        .map_err(super::internal)?
+        .is_some();
+    let isolated = if str_arg(args, "isolation") == Some("worktree") && !retried {
+        Some(worktree_base(cx, parent_thread).await?)
+    } else {
+        None
+    };
     let prompt = task_prompt(args);
     let wait = str_arg(args, "mode") == Some("wait");
     let mut command = json!({
@@ -221,7 +226,14 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
     {
         command["title"] = json!(title);
     }
+    if let Some((_, base)) = &isolated {
+        command["workspaceStrategy"] =
+            json!({"type": "worktree", "baseRef": base, "startFromOrigin": false});
+    }
     cx.dispatch(command).await?;
+    if let Some((project, _)) = &isolated {
+        run_setup_script(cx, &child, project).await;
+    }
 
     if wait {
         let (_, timed_out, _) = threads::wait_for_run(
@@ -245,6 +257,65 @@ pub(super) async fn delegate(cx: &Cx<'_>, args: &Args) -> ToolResult {
         return read_task(cx, &caller.thread_id, &task_id, timed_out).await;
     }
     read_task(cx, &caller.thread_id, &task_id, false).await
+}
+
+/// The project and the commit a `worktree` child starts from: the parent checkout's `HEAD`,
+/// so the parent's uncommitted edits stay out (TS `delegate`, isolation `worktree`).
+async fn worktree_base(cx: &Cx<'_>, parent: &Value) -> Result<(Value, String), ToolError> {
+    let project = super::worktree::project(cx, parent).await?;
+    let root = project["workspaceRoot"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    let parent_worktree = parent["worktreePath"].as_str();
+    let cwd = parent_worktree.unwrap_or(&root);
+    let base = conn_vcs::repo::resolve_commit(Path::new(cwd), "HEAD")
+        .await
+        .ok()
+        .flatten()
+        .ok_or_else(|| {
+            fail(
+                "invalid_request",
+                "Unable to resolve the parent checkout commit.",
+            )
+        })?;
+    // The child's worktree is made from the project root, so a parent checkout in another
+    // repository would hand it a commit it cannot find.
+    if parent_worktree.is_some()
+        && conn_vcs::repo::resolve_commit(Path::new(&root), &base)
+            .await
+            .ok()
+            .flatten()
+            .is_none()
+    {
+        return Err(fail(
+            "invalid_request",
+            format!(
+                "Isolation \"worktree\" creates the child checkout in project \"{}\" ({root}), which does not contain the parent checkout's commit. Use isolation \"shared\" to work in the parent's checkout.",
+                project["title"].as_str().unwrap_or_default()
+            ),
+        ));
+    }
+    Ok((project, base))
+}
+
+/// The project's `runOnWorktreeCreate` script in the child's new checkout, as T3's
+/// preparation runs it (`ProjectSetupScriptRunner.runForThread`). It starts in the child's
+/// terminal and does not hold the child back; a failure to start it is logged, as the
+/// worktree handoff does.
+async fn run_setup_script(cx: &Cx<'_>, child: &str, project: &Value) {
+    let Some(config) = cx.config().worktrees.as_ref() else {
+        return;
+    };
+    let Ok(projection) = cx.projection(child).await else {
+        return;
+    };
+    let Some(path) = projection["thread"]["worktreePath"].as_str() else {
+        return;
+    };
+    if let Err(error) = super::worktree::setup(config, child, project, path).await {
+        eprintln!("delegate_task setup script for {child}: {error}");
+    }
 }
 
 pub(super) async fn status(cx: &Cx<'_>, args: &Args) -> ToolResult {

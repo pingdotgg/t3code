@@ -537,8 +537,9 @@ What a real Conn session hits that this server does not do:
   the title model the thread keeps the client's seed title until the Claude provider
   implements `Provider::generate_text` (`docs/server-area.md`, "Text generators").
 - **`/mcp` serves 28 of 87 T3 tools** (`crates/conn-mcp/README.md`).
-- **Worktree launch:** the worktree is made before the thread exists; `prepared-run.*` stays
-  refused and no project setup script runs.
+- **Worktree launch and worktree delegates:** the worktree is made before the thread exists;
+  `prepared-run.*` stays refused. A launch runs no project setup script; a `delegate_task`
+  child with `isolation: worktree` starts it in its terminal without waiting for it.
 - **Providers:** Claude, Codex and Grok (Grok with `/compact`, background work and subagents; not subagents carried over to a later turn). Their gaps are in each crate's README. Claude and Codex instance settings apply (binary, home, launch arguments, environment, enabled, identity); Codex is probed as T3 probes it (its `app-server`, account, models, skills, config, usage) and reads `customModels`; not yet: Claude's `customModels` and `autoCompactWindow`, Codex's `shadowHomePath` and managed setup.
 - **Auth:** bearer and ticket only. No cookie sessions, DPoP or relay (`DROP-IN.md` §4).
 - **Desktop-local backend:** the `--bootstrap-fd` start works; the desktop itself still

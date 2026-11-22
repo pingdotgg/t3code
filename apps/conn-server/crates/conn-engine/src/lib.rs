@@ -212,6 +212,18 @@ pub trait EngineHost: Send + Sync {
         )))
     }
 
+    /// A worktree made for a command that the engine then refused (`refused` holds why) or
+    /// that an earlier attempt had already accepted (`None`): remove it and its branch.
+    fn discard_worktree(
+        &self,
+        _thread_id: String,
+        _project_root: String,
+        _worktree: ProvisionedWorktree,
+        _refused: Option<String>,
+    ) -> BoxFuture<'_, ()> {
+        Box::pin(std::future::ready(()))
+    }
+
     /// The branch checked out in `cwd` (`GitWorkflowService.currentBranch`): `None` when HEAD
     /// is detached, the folder is no checkout, or git fails. A project-folder launch that
     /// names no branch records it. The default knows none.

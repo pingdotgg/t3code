@@ -2293,6 +2293,7 @@ async fn annotation_tools_report_a_conflict_and_refuse_callers_outside_a_thread(
     idle_agent.ok("annotations_list", json!({})).await;
 }
 
+mod delegate_worktree;
 mod peers;
 mod shared_runtime;
 mod threads_handoff;

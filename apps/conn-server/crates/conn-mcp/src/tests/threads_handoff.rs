@@ -1,6 +1,6 @@
 use super::*;
 
-async fn running_parent(f: &Fixture) -> (Value, Caller) {
+pub(super) async fn running_parent(f: &Fixture) -> (Value, Caller) {
     let mut c = Client::open(&f.service, client(true)).await;
     let parent = c
         .ok(
@@ -209,7 +209,7 @@ impl conn_engine::EngineHost for FilesHost {
     }
 }
 
-fn git(dir: &std::path::Path, args: &[&str]) -> String {
+pub(super) fn git(dir: &std::path::Path, args: &[&str]) -> String {
     let out = std::process::Command::new("git")
         .args(args)
         .current_dir(dir)

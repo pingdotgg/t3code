@@ -184,6 +184,13 @@ pub(crate) struct Inner {
     thread_gates: crate::thread_locks::ThreadLocks,
 }
 
+/// A delegated child's checkout, made before its command commits.
+struct DelegatedWorktree {
+    thread_id: String,
+    project_root: String,
+    worktree: crate::ProvisionedWorktree,
+}
+
 /// An effect with its place in its thread's lane. Dropped without [`Self::start`] (its commit
 /// failed), it gives its place up only after the effect before it ended, so the lane keeps its
 /// order.
@@ -499,6 +506,15 @@ impl Inner {
         let (command, claimed) = self.claim_attachments(command).await?;
         let command = self.plan_selection(command).await?;
         let command = self.rollback_capabilities(command).await?;
+        let (command, worktree) = match self.delegated_worktree(command).await {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                if let (Some(claimed), Some(host)) = (claimed, &self.host) {
+                    host.release_attachments(claimed).await;
+                }
+                return Err(error);
+            }
+        };
         // A paused commit committed nothing: wait for access, then check everything again
         // (ownership included) in a fresh transaction.
         // Only a guarded commit can pause and retry: the ordinary path passes the command by
@@ -508,6 +524,7 @@ impl Inner {
             if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
                 host.release_attachments(claimed).await;
             }
+            self.settle_delegated_worktree(worktree, &result).await;
             return result;
         }
         let result = loop {
@@ -530,7 +547,107 @@ impl Inner {
         if let (Err(_), Some(claimed), Some(host)) = (&result, claimed, &self.host) {
             host.release_attachments(claimed).await;
         }
+        self.settle_delegated_worktree(worktree, &result).await;
         result
+    }
+
+    /// `delegate_task` with isolation `worktree` (`workspaceStrategy: {type: "worktree"}`): the
+    /// child's checkout is made before the command commits, as a worktree launch makes its
+    /// thread's, and the child thread records its branch and path. T3 prepares the same
+    /// checkout after the command, through `prepared-run.*`, which this server refuses. A
+    /// command already accepted makes nothing: its child keeps the first checkout.
+    async fn delegated_worktree(
+        &self,
+        mut command: Value,
+    ) -> Result<(Value, Option<DelegatedWorktree>), DispatchError> {
+        if command["type"] != "delegated_task.request"
+            || command["workspaceStrategy"]["type"] != "worktree"
+        {
+            return Ok((command, None));
+        }
+        let command_id = command["commandId"].as_str().unwrap_or_default().to_owned();
+        let parent_id = command["parentThreadId"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        let id = command_id.clone();
+        let (seen, root) = self
+            .db(move |store| -> Result<(bool, Option<String>), String> {
+                let seen = store.receipt(&id)?.is_some();
+                let tx = store.tx()?;
+                let root = match tx.thread(&parent_id) {
+                    Ok(Some(parent)) => parent["projectId"]
+                        .as_str()
+                        .map(|project| tx.project(project))
+                        .transpose()
+                        .map(|project| {
+                            project
+                                .flatten()
+                                .and_then(|p| p["workspaceRoot"].as_str().map(str::to_owned))
+                        }),
+                    Ok(None) => Ok(None),
+                    Err(e) => Err(e),
+                };
+                tx.rollback();
+                Ok((seen, root?))
+            })
+            .await
+            .map_err(DispatchError::Internal)?;
+        if seen {
+            return Ok((command, None));
+        }
+        // No parent or project: the handler refuses the command.
+        let Some(root) = root else {
+            return Ok((command, None));
+        };
+        let Some(host) = &self.host else {
+            return Err(DispatchError::Rejected(
+                "This server cannot create worktrees.".into(),
+            ));
+        };
+        let thread_id = crate::families::child_thread_id(&command_id);
+        let strategy = &command["workspaceStrategy"];
+        let made = host
+            .provision_worktree(crate::WorktreeRequest {
+                thread_id: thread_id.clone(),
+                project_root: root.clone(),
+                base_ref: strategy["baseRef"].as_str().unwrap_or("HEAD").to_owned(),
+                branch: strategy["branch"].as_str().map(str::to_owned),
+                start_from_origin: strategy["startFromOrigin"] == true,
+            })
+            .await
+            .map_err(DispatchError::Rejected)?;
+        command["branch"] = json!(made.branch);
+        command["worktreePath"] = json!(made.path);
+        Ok((
+            command,
+            Some(DelegatedWorktree {
+                thread_id,
+                project_root: root,
+                worktree: made,
+            }),
+        ))
+    }
+
+    /// A child worktree whose command was refused, or replayed by a concurrent retry that
+    /// committed first, is removed with its branch.
+    async fn settle_delegated_worktree(
+        &self,
+        worktree: Option<DelegatedWorktree>,
+        result: &Result<(u64, bool), DispatchError>,
+    ) {
+        let (Some(made), Some(host)) = (worktree, &self.host) else {
+            return;
+        };
+        let refused = match result {
+            Ok((_, false)) => return,
+            Ok((_, true)) => None,
+            Err(DispatchError::Rejected(message) | DispatchError::Internal(message)) => {
+                Some(message.clone())
+            }
+        };
+        host.discard_worktree(made.thread_id, made.project_root, made.worktree, refused)
+            .await;
     }
 
     /// `ProviderSwitchService.plan` for a model change on the thread's instance: the provider
@@ -1266,7 +1383,21 @@ impl Engine for SqliteEngine {
                     &message,
                 ))
             };
-            match self.inner.dispatch_value(command.clone()).await {
+            // A worktree delegate makes a checkout before its command commits: that runs on its
+            // own task, so a caller that goes away cannot leave the checkout behind.
+            let outcome = if command["type"] == "delegated_task.request"
+                && command["workspaceStrategy"]["type"] == "worktree"
+            {
+                let inner = self.inner.clone();
+                let detached = command.clone();
+                tokio::spawn(async move { inner.dispatch_value(detached).await })
+                    .await
+                    .map_err(|e| DispatchError::Internal(format!("dispatch ended: {e}")))
+                    .and_then(|outcome| outcome)
+            } else {
+                self.inner.dispatch_value(command.clone()).await
+            };
+            match outcome {
                 Ok((sequence, _)) => from_json(json!({"sequence": sequence}))
                     .map_err(|e| EngineError::Internal(e.to_string())),
                 Err(DispatchError::Rejected(message)) => Err(rejected(refusal(message))),

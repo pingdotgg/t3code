@@ -13,6 +13,14 @@ Conn depends on it. Since 2026-11-16 one Orbit Project runs it in its new contai
 `conn-support/src/input.rs` and the generator walk `tools/schema-rules.mjs`. Proof:
 `tools/check.sh` 46/46, no skips; touched-crate tests pass; the original cases are unchanged.
 
+**Worktree delegates (2026-11-22):** `delegate_task` with `isolation: worktree` works, as in
+T3: a new worktree from the parent's `HEAD` on a `t3/<8 hex>` branch, uncommitted edits left
+out, the child bound to it; a refused or replayed command removes it. Proof: four `conn-mcp`
+tests (`tests/delegate_worktree.rs`) and live Claude and Codex children on a scratch server.
+Left: T3's generated branch name and waiting for the setup script (both also open for a
+worktree launch). One difference by design: when the checkout fails, the call is
+refused and no child is made; T3 makes the child and fails its run in preparation.
+
 **Known difference, stop in progress (2026-11-18):** with the provider's reply to
 `turn/interrupt` held, T3 reported the run interrupted on one slow CI run (cause not proven).
 Conn ends a stopped run only on the provider's terminal event: the Codex adapter awaits the
@@ -313,7 +321,8 @@ An agent here can delegate to, and message, threads in another linked environmen
   here without a child thread. Internal engine commands do the recording:
   `delegated_task.remote.request`, `.complete` and `.stop` (`Engine::remote_task`). They
   never reach client dispatch. Provider, model and modes inherit as in T3. The project there
-  is matched by repository or named. `isolation: worktree` is refused with T3's text.
+  is matched by repository or named. `isolation: worktree` is refused there with T3's text
+  (T3 refuses it for remote targets too).
 - **The follower**: one per open task, at most 1,024. It waits on the thread there in 45 s
   steps (the forwarder's cap) and races each step against the task ending here. It reads the
   last reply, paging and following truncated text. Then it completes the task, which wakes

@@ -127,6 +127,11 @@ pub(crate) fn delegated_task_request(tx: &mut Tx<'_>, c: Value) -> Outcome {
     if let Some(map) = child.as_object_mut() {
         map.remove("tags");
     }
+    // Isolation `worktree`: the engine made the child its own checkout before this command.
+    if let Some(path) = c["worktreePath"].as_str() {
+        child["worktreePath"] = json!(path);
+        child["branch"] = c["branch"].clone();
+    }
     tx.append(Draft::new(&child_id, "thread.created", child).command(Some(&command_id)))?;
 
     let draft = |event_type, payload| {

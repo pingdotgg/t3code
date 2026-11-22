@@ -35,7 +35,7 @@ fn config<'a>(cx: &'a Cx<'_>) -> Result<&'a WorktreeConfig, ToolError> {
     })
 }
 
-async fn project(cx: &Cx<'_>, thread: &Value) -> ToolResult {
+pub(super) async fn project(cx: &Cx<'_>, thread: &Value) -> ToolResult {
     let shell = cx.shell().await?;
     shell["projects"]
         .as_array()

@@ -114,6 +114,29 @@ pub async fn has_head_commit(cwd: &Path) -> VcsResult<bool> {
     .await
 }
 
+/// `GitVcsDriver.resolveCommit`: the commit `revision` names in `cwd`, or `None` when it names
+/// none or `cwd` is no checkout.
+pub async fn resolve_commit(cwd: &Path, revision: &str) -> VcsResult<Option<String>> {
+    if !cwd.is_dir() {
+        return Ok(None);
+    }
+    Ok(optional_text(
+        git(
+            "GitVcsDriver.resolveCommit",
+            cwd,
+            [
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{revision}^{{commit}}"),
+            ],
+        )
+        .timeout(PROBE_TIMEOUT),
+    )
+    .await?
+    .filter(|sha| !sha.is_empty()))
+}
+
 pub async fn config_get(cwd: &Path, key: &str) -> VcsResult<Option<String>> {
     Ok(optional_text(git(
         "GitVcsDriver.readConfigValue",

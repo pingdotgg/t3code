@@ -211,6 +211,33 @@ impl EngineHost for Host {
         })
     }
 
+    fn discard_worktree(
+        &self,
+        thread_id: String,
+        project_root: String,
+        worktree: ProvisionedWorktree,
+        refused: Option<String>,
+    ) -> BoxFuture<'_, ()> {
+        Box::pin(async move {
+            use conn_vcs::worktree::{Removal, delete_branch, remove_worktree};
+            let root = PathBuf::from(project_root);
+            let path = PathBuf::from(&worktree.path);
+            if let Err(error) = remove_worktree(&root, &path, Removal::Force).await {
+                eprintln!("discard worktree {}: {error}", worktree.path);
+            }
+            if let Err(error) = delete_branch(&root, &worktree.branch, Removal::Force).await {
+                eprintln!("discard branch {}: {error}", worktree.branch);
+            }
+            // A refused command made no thread, so no agent ends its setup. A replay leaves
+            // the setup to the attempt that made the thread.
+            if let Some(reason) = refused {
+                self.vcs
+                    .setups
+                    .finish(&thread_id, ProjectClonePhase::Failed, Some(&reason));
+            }
+        })
+    }
+
     fn cleanup_html_attachments(&self, ids: Vec<(String, String)>) -> BoxFuture<'_, ()> {
         let files = self.files.clone();
         Box::pin(async move {

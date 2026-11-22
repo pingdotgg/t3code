@@ -124,9 +124,16 @@ Where they differ, because the engine does not do it yet:
   started after the request keeps the thread active".
 - Delegation: `delegate_task` dispatches the engine's `delegated_task.request`, which makes the
   child (lineage `subagent`) and wakes the parent (`always`; `settled_only` for `mode: wait`,
-  upgraded when the wait gives up). Task ids are `node:delegated-task:<commandId>`. No
-  `isolation: worktree`: the engine's `delegated_task.request` takes no workspace strategy
-  yet. Remote targets: see "Linked environments".
+  upgraded when the wait gives up). Task ids are `node:delegated-task:<commandId>`.
+  `isolation: worktree` (T3 `OrchestratorMcpService.delegate`): the tool resolves the parent
+  checkout's `HEAD` (refused with T3's texts when there is none, or when the project root lacks
+  that commit), and sends `workspaceStrategy {type: worktree, baseRef: <sha>}`. The engine
+  makes the child's worktree on a temporary `t3/<8 hex>` branch before the command commits,
+  binds the child thread to it, and removes it again when the command is refused or was
+  already accepted. Then the project's `runOnWorktreeCreate` script starts in the child's
+  terminal, as the worktree handoff starts it. Not as T3: the script does not hold the child
+  back, and the branch keeps its temporary name (no generated name, as in a worktree launch).
+  Remote targets: see "Linked environments".
 - `orchestrator_capabilities`: no option descriptors, favourites or model preferences.
 - `send_to_user` stores nothing, as in T3: the provider records the call as a `dynamic_tool`
   item, and the client shows its `sentMessage`. Our engine sends tool items whole (no wire
