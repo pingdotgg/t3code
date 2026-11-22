@@ -290,7 +290,10 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
+    const checkpoint = (
+      ordinal: number,
+      status: "ready" | "missing" | "stale" | "error" = "ready",
+    ) => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -323,6 +326,11 @@ describe("V2 session presentation", () => {
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
       // Without file snapshots, missing checkpoints still pin the conversation.
       expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
+      // A failed snapshot capture still pins the conversation; only file restore needs one.
+      expect(targets([1, 2], [checkpoint(1, "error")])).toEqual({
         "user-1": 0,
         "user-2": 1,
       });

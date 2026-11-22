@@ -178,8 +178,10 @@ export const layer: Layer.Layer<
         // A repository's checkpoints follow the thread's; they are not a place to rewind to.
         typeof scope.repositoryPath === "string" ||
         checkpoint.scopeId !== scope.id ||
-        // Missing snapshots support conversation rewind, and restoring a task folder's repositories.
+        // Missing or failed snapshots support conversation rewind; missing ones also restoring a
+        // task folder's repositories.
         (checkpoint.status !== "ready" &&
+          !(checkpoint.status === "error" && !restoreFiles) &&
           !(checkpoint.status === "missing" && (!restoreFiles || linkedProjectFolder)))
       ) {
         return yield* invalidTarget();
