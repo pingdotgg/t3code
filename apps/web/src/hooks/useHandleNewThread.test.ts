@@ -65,6 +65,9 @@ const testState = vi.hoisted(() => {
     discoverBranch(branch: string) {
       draftSession = { ...draftSession, branch };
     },
+    keepEarlierManualChoice() {
+      draftSession = { ...draftSession, environmentSelection: "manual" };
+    },
     pickBranch(branch: string) {
       draftSession = { ...draftSession, branch, environmentSelection: "manual" };
     },
@@ -299,6 +302,26 @@ describe.each([
     await pendingDefault;
 
     expect(readPendingWorkspaceDefault(opened!.draftId)).toBeNull();
+
+    expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(opened?.draftId, {
+      envMode: "worktree",
+      startFromOrigin: false,
+    });
+  });
+
+  it("applies the project file's default to a draft chosen manually before it opened", async () => {
+    testState.reset(draft, { envMode: null, startFromOrigin: false });
+    testState.keepEarlierManualChoice();
+    const opened = await useNewThreadHandler()({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+    testState.draftStore.setDraftThreadContext.mockClear();
+
+    const pendingDefault = readPendingWorkspaceDefault(opened!.draftId);
+    expect(pendingDefault).not.toBeNull();
+    testState.completeProjectFileRead({ defaultThreadEnvMode: "worktree" });
+    await pendingDefault;
 
     expect(testState.draftStore.setDraftThreadContext).toHaveBeenCalledWith(opened?.draftId, {
       envMode: "worktree",
