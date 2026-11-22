@@ -22,7 +22,7 @@ export function PullRequestPrivateMark({ className }: { className?: string }) {
 export function PullRequestPrivateBadge() {
   const gt = useGT();
   return (
-    <Badge size="control" variant="outline">
+    <Badge size="lg" variant="outline">
       <span className="flex items-center gap-1 text-muted-foreground">
         <LockIcon className="size-3.5" />
         {gt("Private")}
