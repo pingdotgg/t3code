@@ -457,6 +457,18 @@ it.each([false, true])(
   },
 );
 
+it("turning off in-app notifications with mode off clears the badge", async () => {
+  await using app = setup();
+  state.mode = "off";
+  state.inApp = true;
+  app.start();
+  state.shells.set("one", shell({ hasPendingUserInput: true }));
+  expect(state.badge).toHaveBeenLastCalledWith(1);
+  state.inApp = false;
+  app.changeSettings();
+  expect(state.badge).toHaveBeenLastCalledWith(0);
+});
+
 it("opening a thread or removing its environment closes only its in-app toasts, and disabling notifications closes the rest", async () => {
   await using app = setup();
   state.inApp = true;
