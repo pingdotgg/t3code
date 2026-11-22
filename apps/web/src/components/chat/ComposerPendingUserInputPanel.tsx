@@ -1,6 +1,6 @@
 import { type RuntimeRequestId, type ScopedThreadRef } from "@t3tools/contracts";
 import { markdownProseDirection, textDirection } from "~/textDirection";
-import { useGT } from "gt-react";
+import { T, useGT } from "gt-react";
 import { memo, use, useEffect, useEffectEvent, useRef, useState } from "react";
 import { BackgroundThreadContext } from "./backgroundThread";
 import { useStableCallback } from "~/hooks/useStableCallback";
@@ -415,11 +415,15 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       )}
                     </span>
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
-                      <span className="text-sm font-medium">Other</span>
+                      <span className="text-sm font-medium">
+                        <T>Other</T>
+                      </span>
                       <span className="text-secondary-label text-2xs">
-                        {customAnswerActive
-                          ? "Type your custom answer below"
-                          : "Type a custom response or suggestion"}
+                        {customAnswerActive ? (
+                          <T>Type your custom answer below</T>
+                        ) : (
+                          <T>Type a custom response or suggestion</T>
+                        )}
                       </span>
                     </div>
                     {activeQuestion.options.length < 9 ? (
@@ -439,7 +443,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         ref={otherInputRef}
                         size="compact"
                         value={progress.customAnswer}
-                        placeholder="Type your custom answer..."
+                        placeholder={gt("Type your custom answer...")}
                         disabled={disabled || isResponding}
                         onChange={(e) => {
                           onChangeCustomAnswer?.(activeQuestion.id, e.target.value);
