@@ -2413,7 +2413,11 @@ export default function ChatView(props: ChatViewProps) {
       ? (pendingServerThreadStartFromOriginByThreadId[activeThread?.id ?? ""] ??
         activeProjectSettings.settings.newWorktreesStartFromOrigin)
       : false;
-  const worktreeRepositoryChoices = useWorktreeRepositoryChoices(activeProject);
+  // The server launches a No project worktree request in the thread's own folder, so the
+  // repositories found in other No project threads' folders are never a choice.
+  const worktreeRepositoryChoices = useWorktreeRepositoryChoices(
+    activeProjectIsScratch ? null : activeProject,
+  );
   const rememberedWorktreeRepositories = useRememberedWorktreeRepositories(activeProject ?? null);
   const sendEnvMode = resolveSendEnvMode({
     requestedEnvMode: envMode,
