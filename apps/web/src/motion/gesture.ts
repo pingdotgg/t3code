@@ -98,6 +98,97 @@ export function sidewaysWheelDelta(
   return Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : 0;
 }
 
+const WHEEL_EASE_MS = 40;
+const wheelChases = new WeakMap<HTMLElement, { target: number; time: number; position: number }>();
+let reducedMotion: MediaQueryList | null = null;
+const wheelStream = { last: Number.NEGATIVE_INFINITY, direct: false };
+
+function wholeTicks(ticks: number): boolean {
+  return Math.round(ticks) !== 0 && Math.abs(ticks - Math.round(ticks)) < 0.05;
+}
+
+function wheelSource(event: WheelEvent): "notched" | "trackpad" | "either" {
+  if (event.deltaMode !== WheelEvent.DOM_DELTA_PIXEL) return "notched";
+  const sideways = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+  const { wheelDeltaX = 0, wheelDeltaY = 0 } = event as WheelEvent & {
+    wheelDeltaX?: number;
+    wheelDeltaY?: number;
+  };
+  const [delta, other, legacy, otherLegacy] = sideways
+    ? [event.deltaX, event.deltaY, wheelDeltaX, wheelDeltaY]
+    : [event.deltaY, event.deltaX, wheelDeltaY, wheelDeltaX];
+  if (other !== 0 || otherLegacy !== 0) return "trackpad";
+  const ratio = window.devicePixelRatio;
+  const zoomed = !Number.isInteger(ratio) && wholeTicks((legacy * ratio) / 120);
+  if (!wholeTicks(legacy / 120) && !zoomed) return "trackpad";
+  if (Math.abs(legacy + delta) <= 1) return "trackpad";
+  return Math.abs(legacy + 3 * delta) <= 1 ? "either" : "notched";
+}
+
+function easesWheel(event: WheelEvent): boolean {
+  if (event.timeStamp - wheelStream.last > WHEEL_STREAM_IDLE_MS) wheelStream.direct = false;
+  wheelStream.last = event.timeStamp;
+  if (wheelSource(event) === "trackpad") wheelStream.direct = true;
+  return !wheelStream.direct;
+}
+
+export function wheelScrollTarget(
+  position: number,
+  pending: number | undefined,
+  delta: number,
+  max: number,
+): number {
+  const base =
+    pending !== undefined && Math.sign(pending - position) === Math.sign(delta)
+      ? pending
+      : position;
+  return Math.min(Math.max(base + delta, 0), Math.max(0, max));
+}
+
+export function wheelChaseStep(position: number, target: number, elapsedMs: number): number {
+  const next = target + (position - target) * Math.exp(-elapsedMs / WHEEL_EASE_MS);
+  return Math.abs(target - next) < 0.5 ? target : next;
+}
+
+export function scrollLeftByWheel(element: HTMLElement, event: WheelEvent, delta: number): boolean {
+  const position = element.scrollLeft;
+  const max = element.scrollWidth - element.clientWidth;
+  reducedMotion ??= window.matchMedia("(prefers-reduced-motion: reduce)");
+  const chase = wheelChases.get(element);
+  if (!easesWheel(event) || reducedMotion.matches) {
+    if (chase) {
+      chase.position += delta;
+      chase.target = Math.min(Math.max(chase.target + delta, 0), Math.max(0, max));
+    }
+    element.scrollLeft = position + delta;
+    return Math.min(Math.max(position + delta, 0), max) !== position;
+  }
+  const target = wheelScrollTarget(position, chase?.target, delta, max);
+  if (chase) {
+    chase.target = target;
+    return true;
+  }
+  if (target === position) return false;
+  const state = { target, time: performance.now(), position };
+  wheelChases.set(element, state);
+  const step = (time: number) => {
+    if (wheelChases.get(element) !== state) return;
+    if (!element.isConnected || Math.abs(element.scrollLeft - state.position) > 1) {
+      wheelChases.delete(element);
+      return;
+    }
+    state.target = Math.min(state.target, element.scrollWidth - element.clientWidth);
+    const next = wheelChaseStep(state.position, state.target, Math.max(0, time - state.time));
+    state.time = Math.max(time, state.time);
+    state.position = next;
+    element.scrollLeft = next;
+    if (next === state.target) wheelChases.delete(element);
+    else requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+  return true;
+}
+
 function sidewaysScroller(element: Element): { scrolls: boolean; stopsChain: boolean } {
   const style = getComputedStyle(element);
   const scroller = style.overflowX === "auto" || style.overflowX === "scroll";
@@ -145,7 +236,7 @@ export function scrollTabStripFromRow(event: WheelEvent, strip: HTMLElement): vo
   if (event.composedPath().includes(strip) && event.deltaX !== 0) return;
   event.preventDefault();
   event.stopPropagation();
-  strip.scrollLeft += wheelDeltaPx(delta, event);
+  scrollLeftByWheel(strip, event, wheelDeltaPx(delta, event));
 }
 
 /**

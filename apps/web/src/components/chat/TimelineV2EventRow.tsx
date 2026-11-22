@@ -15,6 +15,18 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       </WorkLogBlock>
     );
   }
+  if (item.type === "run_interrupt_result") {
+    return (
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
+        <V2LifecycleRow
+          environmentId={ctx.activeThreadEnvironmentId}
+          item={item}
+          runs={ctx.runs}
+          onOpenThread={ctx.onOpenThread}
+        />
+      </WorkLogBlock>
+    );
+  }
   if (item.type === "secret_request") {
     return (
       <SecretRequestCard

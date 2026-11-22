@@ -30,7 +30,6 @@ import {
   type FleetNode,
   type FleetStack,
   fleetLinkBackOffered,
-  fleetSummary,
   fleetTwoWayLinks,
   isLinkEdge,
   linkNeedsAttention,
@@ -153,16 +152,20 @@ export function FleetDetails(props: FleetDetailsProps) {
     onSelect(focus);
     panel.current?.focus();
   };
+  // At rest the map says it all: the panel opens for what is selected, or a listing that failed.
+  if (connectProblem === null && node === undefined && edge === undefined && stack === undefined) {
+    return null;
+  }
   return (
     <div
       ref={panel}
       tabIndex={-1}
       role="group"
       aria-label={gt("Details")}
-      className="min-h-20 border-t border-border/60 text-meta outline-none"
+      className="text-meta outline-none"
     >
       {connectProblem ? (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border/60 px-3 py-2 sm:px-4">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 px-3 py-2 not-last:border-b not-last:border-divider sm:px-4">
           <p className="min-w-0 flex-1 text-muted-foreground">
             <span className="text-label text-destructive">
               <T>Could not load T3 Connect environments</T>
@@ -219,9 +222,7 @@ export function FleetDetails(props: FleetDetailsProps) {
         />
       ) : node ? (
         <NodeDetails {...props} key={node.id} node={node} links={links} onSelect={selectWithin} />
-      ) : (
-        <FleetSummary graph={graph} links={links} />
-      )}
+      ) : null}
     </div>
   );
 }
@@ -231,42 +232,6 @@ function Heading({ children, detail }: { children: ReactNode; detail?: ReactNode
     <div className="mb-2 flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
       <h3 className="text-label text-foreground">{children}</h3>
       {detail ? <span className="text-muted-foreground">{detail}</span> : null}
-    </div>
-  );
-}
-
-function FleetSummary({
-  graph,
-  links,
-}: {
-  readonly graph: FleetGraph;
-  readonly links: ReadonlyArray<FleetLinkEdge>;
-}) {
-  const gt = useGT();
-  const summary = fleetSummary(graph);
-  const attention = links.filter((edge) => linkNeedsAttention(edge.health)).length;
-  const { machines } = summary;
-  return (
-    <div className={SECTION}>
-      <Heading
-        detail={
-          summary.loading
-            ? gt("Loading links…")
-            : attention > 0
-              ? gt("{count, plural, one {# needs attention} other {# need attention}}", {
-                  count: attention,
-                  $context: "after a count of links: how many of those links have a problem",
-                })
-              : null
-        }
-      >
-        {summary.links !== null
-          ? gt(
-              "{machines, plural, one {# machine} other {# machines}}, {links, plural, =0 {no links} one {# link} other {# links}}",
-              { machines, links: summary.links },
-            )
-          : gt("{machines, plural, one {# machine} other {# machines}}", { machines })}
-      </Heading>
     </div>
   );
 }

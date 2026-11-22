@@ -1665,12 +1665,14 @@ function layoutFleetGraphAt(
     const clearOfRoutes = (badge: FleetLinkBadge) =>
       !pillColumns.some(
         (pill) =>
-          pill.x < badge.x + badge.width &&
-          badge.x < pill.x + pill.width &&
-          pill.y < badge.y + badge.height &&
-          badge.y < pill.y + pill.height,
+          pill.x < badge.x + badge.width + BADGE.gap &&
+          badge.x < pill.x + pill.width + BADGE.gap &&
+          pill.y < badge.y + badge.height + BADGE.gap &&
+          badge.y < pill.y + pill.height + BADGE.gap,
       );
-    const options = gaps.flatMap((at) => [place(at, 1), place(at, -1)]);
+    // Growing toward the cards crosses only the gap between them, so every gap is tried that
+    // way before any name grows back over the routes.
+    const options = [...gaps.map((at) => place(at, 1)), ...gaps.map((at) => place(at, -1))];
     const clear = options.find(
       (option) => clearOfNames(option) && clearOfLanes(option) && clearOfRoutes(option),
     );
@@ -1856,8 +1858,8 @@ export const FLEET_FIT_LEGIBLE_SCALE = 0.85;
 /** The canvas width a layout is made for: steps, so dragging a window edge relays it rarely. */
 export const fleetLayoutWidth = (canvasWidth: number) => Math.floor(canvasWidth / 16) * 16;
 
-/** The margin the fit leaves around the map: a narrow canvas spends less of itself on it. */
-const fleetFitPadding = (canvasWidth: number) => (canvasWidth < 720 ? 16 : 28);
+/** The margin the fit leaves inside the map's frame: a narrow canvas spends little on it. */
+const fleetFitPadding = (canvasWidth: number) => (canvasWidth < 720 ? 8 : 28);
 
 const fitScale = (available: number, extent: number, padding: number) =>
   Math.max(0.01, (available - padding * 2) / Math.max(1, extent));

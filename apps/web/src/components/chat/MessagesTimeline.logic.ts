@@ -3180,8 +3180,10 @@ function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesT
       const runId = row.message.runId;
       const turnTailBelow =
         runId != null &&
-        next?.kind === "work" &&
-        next.groupedEntries.every((entry) => entry.runId === runId);
+        ((next?.kind === "work" && next.groupedEntries.every((entry) => entry.runId === runId)) ||
+          (next?.kind === "event" &&
+            next.projectedItem.item.type === "run_interrupt_result" &&
+            next.projectedItem.item.runId === runId));
       return (row.turnTailBelow ?? false) === turnTailBelow ? row : { ...row, turnTailBelow };
     }
     if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
@@ -3231,8 +3233,10 @@ function timelineRowIsWorkLog(row: MessagesTimelineRow | undefined): boolean {
       row.kind === "work-toggle" ||
       row.kind === "work-live" ||
       row.kind === "thinking" ||
-      // Subagent rows are tool rows in the same list.
-      (row.kind === "event" && row.projectedItem.item.type === "subagent"))
+      // Subagent rows and a turn's interrupt result are rows in the same list.
+      (row.kind === "event" &&
+        (row.projectedItem.item.type === "subagent" ||
+          row.projectedItem.item.type === "run_interrupt_result")))
   );
 }
 

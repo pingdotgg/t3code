@@ -32,6 +32,7 @@ import {
   TriangleAlertIcon,
   UnfoldVerticalIcon,
   FoldVerticalIcon,
+  LinkIcon,
   XIcon,
 } from "lucide-react";
 import {
@@ -40,6 +41,7 @@ import {
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent,
+  type ComponentProps,
   type ReactNode,
   useContext,
   useEffect,
@@ -71,7 +73,9 @@ import { accessConfig } from "../auth/ConnectAgentSurface";
 import { connectionPhaseTone } from "../connectionPhaseTone";
 import { StatusDot } from "../ui/status-dot";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
+import { Badge } from "../ui/badge";
 import { Button, ContentButton } from "../ui/button";
+import { Group, GroupSeparator } from "../ui/group";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -92,6 +96,7 @@ import {
   fleetNodesInBox,
   fleetSearch,
   fleetLayoutWidth,
+  fleetSummary,
   fleetShapeKey,
   fleetStackPartial,
   fleetStacks,
@@ -142,7 +147,7 @@ type GT = ReturnType<typeof useGT>;
 type Messages = ReturnType<typeof useMessages>;
 
 /** One ordinal scale for access, read only to full access: a link's line gets heavier and darker. */
-const ACCESS_STROKE_WIDTHS = [1.25, 1.75, 2.25, 2.75, 3.5];
+const ACCESS_STROKE_WIDTHS = [1, 1.25, 1.5, 1.75, 2];
 const ACCESS_STROKE_OPACITIES = [0.4, 0.5, 0.62, 0.76, 0.9];
 /** Short maps get a short canvas; a tall one grows to this, then the fit shrinks it or it pans. */
 const CANVAS_HEIGHT = { min: 180, max: 840 };
@@ -154,6 +159,8 @@ const ARROW_ROVE: Record<string, FleetDirection> = {
 };
 const NO_STACKS: ReadonlySet<string> = new Set();
 const NO_SELECTION: ReadonlySet<string> = new Set();
+/** The link handle's size: the app's small round icon button, centred on the card's edge. */
+const HANDLE = 22;
 /** Search centres a machine at a scale it can be read at, however far out the map was. */
 const FOUND_MIN_SCALE = 0.85;
 
@@ -185,24 +192,20 @@ function healthState(
 /** How each route state is drawn: the one in use stands out, the rest stay quiet. */
 const ROUTE_STYLES: Record<
   FleetRouteState,
-  { readonly wire: string; readonly width: number; readonly dash?: string; readonly pill: string }
+  {
+    readonly wire: string;
+    readonly width: number;
+    readonly dash?: string;
+    readonly badge: NonNullable<ComponentProps<typeof Badge>["variant"]>;
+  }
 > = {
-  "in-use": {
-    wire: "text-success",
-    width: 1.75,
-    pill: "border-success/70 text-foreground",
-  },
-  standby: { wire: "text-muted-foreground/60", width: 1, pill: "border-border" },
-  trying: { wire: "text-warning", width: 1, dash: "1 4", pill: "border-warning/60" },
-  down: { wire: "text-muted-foreground/60", width: 1, dash: "4 4", pill: "border-dashed" },
-  idle: { wire: "text-muted-foreground/40", width: 1, dash: "4 4", pill: "border-dashed" },
-  refused: {
-    wire: "text-destructive/80",
-    width: 1,
-    dash: "4 4",
-    pill: "border-dashed border-destructive/60 text-destructive",
-  },
-  offered: { wire: "text-muted-foreground/50", width: 1, dash: "1 4", pill: "border-dotted" },
+  "in-use": { wire: "text-success", width: 1.75, badge: "success" },
+  standby: { wire: "text-muted-foreground/60", width: 1, badge: "secondary" },
+  trying: { wire: "text-warning", width: 1, dash: "1 4", badge: "warning" },
+  down: { wire: "text-muted-foreground/60", width: 1, dash: "4 4", badge: "unavailable" },
+  idle: { wire: "text-muted-foreground/40", width: 1, dash: "4 4", badge: "unavailable" },
+  refused: { wire: "text-destructive/80", width: 1, dash: "4 4", badge: "error" },
+  offered: { wire: "text-muted-foreground/50", width: 1, dash: "1 4", badge: "outline" },
 };
 
 function routeKindLabel(kind: ConnectionRouteKind, gt: GT): string {
@@ -516,42 +519,42 @@ export function EnvironmentsMap(
   };
   return (
     <>
-      <FleetCanvas
-        graph={graph}
-        stacks={stacks}
-        shapeKey={key}
-        environments={environments}
-        selection={selection}
-        selected={selected}
-        onSelect={select}
-        onTick={tick}
-        onClearTicked={() => setTicked(NO_SELECTION)}
-        onLink={requestLink}
-        onLinkSeveral={requestBatch}
-        dropped={dropped}
-        onLinkOne={requestOneLink}
-        onDismissDropped={() => setDropped(null)}
-        onToggleStack={toggleStack}
-        onFind={(stackId, memberId) => {
-          setPicked({ kind: "stack", id: stackId });
-          setFound(memberId);
-        }}
-      />
       <SettingsSearchTarget id={props.footerId}>
-        <FleetDetails
-          {...props}
+        <FleetCanvas
           graph={graph}
           stacks={stacks}
+          shapeKey={key}
           environments={environments}
-          connectProblem={connectProblem}
           selection={selection}
-          found={found}
+          selected={selected}
           onSelect={select}
-          onLinkFrom={(sourceId) => requestLink(sourceId, null)}
-          onLinkBack={(edge) => requestOneLink(edge.to, edge.from)}
+          onTick={tick}
+          onClearTicked={() => setTicked(NO_SELECTION)}
+          onLink={requestLink}
+          onLinkSeveral={requestBatch}
+          dropped={dropped}
+          onLinkOne={requestOneLink}
+          onDismissDropped={() => setDropped(null)}
           onToggleStack={toggleStack}
+          onFind={(stackId, memberId) => {
+            setPicked({ kind: "stack", id: stackId });
+            setFound(memberId);
+          }}
         />
       </SettingsSearchTarget>
+      <FleetDetails
+        {...props}
+        graph={graph}
+        stacks={stacks}
+        environments={environments}
+        connectProblem={connectProblem}
+        selection={selection}
+        found={found}
+        onSelect={select}
+        onLinkFrom={(sourceId) => requestLink(sourceId, null)}
+        onLinkBack={(edge) => requestOneLink(edge.to, edge.from)}
+        onToggleStack={toggleStack}
+      />
       {linkRequest ? (
         <LinkEnvironmentDialog
           key={linkRequest.serial}
@@ -881,119 +884,117 @@ function FleetCanvas({
   const selectSeveral = gt("Shift-click or Shift-drag to select several");
 
   return (
-    <>
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-t-xl border-b border-border/60 bg-background/50 px-3 py-1.5">
-        <div className="w-48">
-          <InputGroup>
-            <InputGroupAddon>
-              <SearchIcon aria-hidden />
-            </InputGroupAddon>
-            <InputGroupInput
-              size="sm"
-              type="search"
-              value={query}
-              aria-label={gt("Find a machine on the map")}
-              placeholder={gt("Find a machine")}
-              spellCheck={false}
-              autoComplete="off"
-              onChange={(event) => setQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  event.preventDefault();
-                  goToFirstMatch();
-                } else if (event.key === "Escape" && query !== "") {
-                  event.stopPropagation();
-                  setQuery("");
-                }
-              }}
-            />
-          </InputGroup>
-        </div>
-        <p role="status" className="min-w-0 text-caption text-muted-foreground">
-          {matches === null
-            ? null
-            : matchIds.length === 0
+    <div className="flex flex-col gap-2 px-1.5 pt-2 pb-1.5">
+      <div className="flex flex-wrap items-center gap-2 px-0.5">
+        <InputGroup className="min-w-40 flex-1">
+          <InputGroupAddon>
+            <SearchIcon aria-hidden />
+          </InputGroupAddon>
+          <InputGroupInput
+            size="sm"
+            type="search"
+            value={query}
+            aria-label={gt("Find a machine on the map")}
+            placeholder={gt("Find a machine")}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                goToFirstMatch();
+              } else if (event.key === "Escape" && query !== "") {
+                event.stopPropagation();
+                setQuery("");
+              }
+            }}
+          />
+        </InputGroup>
+        {matches === null ? null : (
+          <p role="status" className="min-w-0 text-caption text-muted-foreground">
+            {matchIds.length === 0
               ? gt("No machine by that name")
               : gt("{count, plural, one {# match} other {# matches}}", {
                   count: matchIds.length,
                   $context: "how many machines a search by name found",
                 })}
-        </p>
-        <div className="ml-auto flex items-center gap-2">
-          {selected.size > 0 ? (
-            <span className="flex items-center gap-1 text-caption text-foreground">
-              <span role="status" className="tabular-nums">
-                {gt("{count, plural, one {# selected} other {# selected}}", {
-                  count: selected.size,
-                  $context: "how many machines are selected on a map",
-                })}
-              </span>
-              <Button size="xs" variant="ghost-muted" onClick={onClearTicked}>
-                {gt("Clear", { $context: "clears the selection of machines" })}
-              </Button>
+          </p>
+        )}
+        {selected.size > 0 ? (
+          <span className="flex items-center gap-2 text-caption text-foreground">
+            <span role="status" className="tabular-nums">
+              {gt("{count, plural, one {# selected} other {# selected}}", {
+                count: selected.size,
+                $context: "how many machines are selected on a map",
+              })}
             </span>
-          ) : null}
-          {sources.length === 0 ? null : source !== undefined ? (
+            <Button size="sm" variant="secondary" onClick={onClearTicked}>
+              {gt("Clear", { $context: "clears the selection of machines" })}
+            </Button>
+          </span>
+        ) : null}
+        {sources.length === 0 ? null : source !== undefined ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button size="sm" variant="secondary" onClick={() => onLinkSeveral(source.id)}>
+                  <LinkIcon />
+                  {gt("Link several…")}
+                </Button>
+              }
+            />
+            <TooltipPopup>{selectSeveral}</TooltipPopup>
+          </Tooltip>
+        ) : (
+          <Menu>
             <Tooltip>
               <TooltipTrigger
                 render={
-                  <Button size="xs" variant="secondary" onClick={() => onLinkSeveral(source.id)}>
-                    {gt("Link several…")}
-                  </Button>
+                  <MenuTrigger
+                    render={
+                      <Button size="sm" variant="secondary">
+                        <LinkIcon />
+                        {gt("Link several…")}
+                      </Button>
+                    }
+                  />
                 }
               />
               <TooltipPopup>{selectSeveral}</TooltipPopup>
             </Tooltip>
-          ) : (
-            <Menu>
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <MenuTrigger
-                      render={
-                        <Button size="xs" variant="secondary">
-                          {gt("Link several…")}
-                        </Button>
-                      }
-                    />
-                  }
-                />
-                <TooltipPopup>{selectSeveral}</TooltipPopup>
-              </Tooltip>
-              <MenuPopup align="end">
-                {sources.map((node) => (
-                  <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
-                    {gt("From {source}", {
-                      source: node.label,
-                      $context: "menu item: link several machines from this environment",
-                    })}
-                  </MenuItem>
-                ))}
-              </MenuPopup>
-            </Menu>
-          )}
-          <Popover>
-            <PopoverTrigger
-              render={
-                <Button size="icon-xs" variant="ghost" aria-label={gt("How to use the map")}>
-                  <CircleHelpIcon />
-                </Button>
-              }
-            />
-            <PopoverPopup align="end" width="sm" padding="compact">
-              <ul className="list-disc space-y-1 pl-4 text-meta text-muted-foreground">
-                <li>{gt("Select a machine to manage it.")}</li>
-                {sources.length === 0 ? null : (
-                  <>
-                    <li>{gt("Drag a plus onto a machine to link them.")}</li>
-                    <li>{selectSeveral}</li>
-                  </>
-                )}
-                <li>{gt("A link reaches one machine and stops there.")}</li>
-              </ul>
-            </PopoverPopup>
-          </Popover>
-        </div>
+            <MenuPopup align="end">
+              {sources.map((node) => (
+                <MenuItem key={node.id} onClick={() => onLinkSeveral(node.id)}>
+                  {gt("From {source}", {
+                    source: node.label,
+                    $context: "menu item: link several machines from this environment",
+                  })}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+        )}
+        <Popover>
+          <PopoverTrigger
+            render={
+              <Button size="icon-sm" variant="secondary" aria-label={gt("How to use the map")}>
+                <CircleHelpIcon />
+              </Button>
+            }
+          />
+          <PopoverPopup align="end" width="sm" padding="compact">
+            <ul className="list-disc space-y-1 pl-4 text-meta text-muted-foreground">
+              <li>{gt("Select a machine to manage it.")}</li>
+              {sources.length === 0 ? null : (
+                <>
+                  <li>{gt("Drag a plus onto a machine to link them.")}</li>
+                  <li>{selectSeveral}</li>
+                </>
+              )}
+              <li>{gt("A link reaches one machine and stops there.")}</li>
+            </ul>
+          </PopoverPopup>
+        </Popover>
       </div>
       {dropped === null ? null : (
         <CodeOnlyNotice
@@ -1003,81 +1004,127 @@ function FleetCanvas({
           onDismiss={onDismissDropped}
         />
       )}
-      <div
-        ref={setCanvas}
-        data-dragging={dragging || undefined}
-        data-glide={glide || undefined}
-        className="relative min-h-45 cursor-grab touch-none overflow-clip bg-background/50 select-none data-dragging:cursor-grabbing data-glide:transition-[height,background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
-        style={
-          view === null || size === null
-            ? undefined
-            : {
-                height: size.height,
-                backgroundImage: "radial-gradient(circle, var(--border) 1px, transparent 1.5px)",
-                backgroundSize: `${24 * view.scale}px ${24 * view.scale}px`,
-                backgroundPosition: `${view.x}px ${view.y}px`,
-              }
-        }
-        onPointerDown={onPointerDown}
-        onPointerMove={onPointerMove}
-        onPointerUp={(event) => endDrag(event, false)}
-        onPointerCancel={(event) => endDrag(event, true)}
-        onLostPointerCapture={(event) => endDrag(event, true)}
-        onKeyDown={onKeyDown}
-      >
-        {view === null ? null : (
-          <div
-            data-fleet-scene
-            className="absolute top-0 left-0 origin-top-left in-data-dragging:will-change-transform in-data-glide:transition-transform in-data-glide:duration-200 in-data-glide:ease-out motion-reduce:transition-none"
-            style={{
-              width: layout.width,
-              height: layout.height,
-              transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
-            }}
-          >
-            <FleetScene {...scene} layout={layout} matches={matches} onReveal={reveal} />
+      {/* The app's backdrop, as the layout editor draws it: the map reads as its own surface. */}
+      <div className="overflow-clip rounded-lg border border-border bg-(--app-chrome-background)">
+        <div
+          ref={setCanvas}
+          data-dragging={dragging || undefined}
+          data-glide={glide || undefined}
+          className="relative min-h-45 cursor-grab touch-none overflow-clip select-none data-dragging:cursor-grabbing data-glide:transition-[height,background-size,background-position] data-glide:duration-200 data-glide:ease-out motion-reduce:transition-none"
+          style={
+            view === null || size === null
+              ? undefined
+              : {
+                  height: size.height,
+                  backgroundImage: "radial-gradient(circle, var(--border) 1px, transparent 1.5px)",
+                  backgroundSize: `${24 * view.scale}px ${24 * view.scale}px`,
+                  backgroundPosition: `${view.x}px ${view.y}px`,
+                }
+          }
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={(event) => endDrag(event, false)}
+          onPointerCancel={(event) => endDrag(event, true)}
+          onLostPointerCapture={(event) => endDrag(event, true)}
+          onKeyDown={onKeyDown}
+        >
+          {view === null ? null : (
+            <div
+              data-fleet-scene
+              className="absolute top-0 left-0 origin-top-left in-data-dragging:will-change-transform in-data-glide:transition-transform in-data-glide:duration-200 in-data-glide:ease-out motion-reduce:transition-none"
+              style={{
+                width: layout.width,
+                height: layout.height,
+                transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+              }}
+            >
+              <FleetScene {...scene} layout={layout} matches={matches} onReveal={reveal} />
+            </div>
+          )}
+          {box === null ? null : (
+            <div
+              aria-hidden
+              style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
+              className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10 forced-colors:border-2"
+            />
+          )}
+        </div>
+        {/* In the surface's corners, below the canvas: nothing on the map can end up under them. */}
+        <div className="flex items-end justify-between gap-3 px-2 pb-2">
+          <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
+          <div className="flex shrink-0 items-center gap-2">
+            <FleetAttention graph={graph} />
+            <Group>
+              <Button
+                size="icon-xs"
+                variant="secondary"
+                aria-label={gt("Zoom out")}
+                onClick={() => zoom(0.8)}
+              >
+                <MinusIcon />
+              </Button>
+              <GroupSeparator />
+              <Button
+                size="icon-xs"
+                variant="secondary"
+                aria-label={gt("Zoom in")}
+                onClick={() => zoom(1.25)}
+              >
+                <PlusIcon />
+              </Button>
+              <GroupSeparator />
+              <Button
+                size="icon-xs"
+                variant="secondary"
+                aria-label={gt("Fit the map to view")}
+                disabled={held === null}
+                onClick={fit}
+              >
+                <MaximizeIcon />
+              </Button>
+            </Group>
           </div>
-        )}
-        {box === null ? null : (
-          <div
-            aria-hidden
-            style={{ left: box.x, top: box.y, width: box.width, height: box.height }}
-            className="pointer-events-none absolute rounded-sm border border-primary bg-primary/10 forced-colors:border-2"
-          />
-        )}
-      </div>
-      {/* Below the canvas, not over it: nothing on the map can end up under the controls. */}
-      <div className="flex items-end justify-between gap-3 bg-background/50 px-3 pb-2">
-        <FleetLegend twoWay={fleetTwoWayLinks(graph).size > 0} />
-        <div className="flex shrink-0 items-center gap-1 rounded-lg border border-border/60 bg-popover/90 p-0.5 shadow-xs/5">
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Zoom out")}
-            onClick={() => zoom(0.8)}
-          >
-            <MinusIcon />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Zoom in")}
-            onClick={() => zoom(1.25)}
-          >
-            <PlusIcon />
-          </Button>
-          <Button
-            size="icon-xs"
-            variant="ghost"
-            aria-label={gt("Fit the map to view")}
-            disabled={held === null}
-            onClick={fit}
-          >
-            <MaximizeIcon />
-          </Button>
         </div>
       </div>
-    </>
+    </div>
+  );
+}
+
+/** Links in trouble, as one warning beside the legend; each is marked on the map itself. */
+function FleetAttention({ graph }: { readonly graph: FleetGraph }) {
+  const gt = useGT();
+  const summary = fleetSummary(graph);
+  const attention = graph.edges
+    .filter(isLinkEdge)
+    .filter((edge) => linkNeedsAttention(edge.health)).length;
+  if (attention === 0) return null;
+  const label = [
+    summary.links === null
+      ? gt("{machines, plural, one {# machine} other {# machines}}", { machines: summary.machines })
+      : gt(
+          "{machines, plural, one {# machine} other {# machines}}, {links, plural, =0 {no links} one {# link} other {# links}}",
+          { machines: summary.machines, links: summary.links },
+        ),
+    gt("{count, plural, one {# needs attention} other {# need attention}}", {
+      count: attention,
+      $context: "after a count of links: how many of those links have a problem",
+    }),
+  ].join(", ");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span
+            tabIndex={0}
+            aria-label={label}
+            className="inline-flex size-6 items-center justify-center rounded-badge text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
+          />
+        }
+      >
+        <TriangleAlertIcon aria-hidden className="size-3.5" />
+      </TooltipTrigger>
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
   );
 }
 
@@ -1097,7 +1144,7 @@ function FleetLegend({ twoWay }: { readonly twoWay: boolean }) {
   return (
     <ul
       aria-label={gt("How to read the lines")}
-      className="flex min-w-0 items-center gap-x-3 overflow-clip pb-1 text-caption whitespace-nowrap text-muted-foreground"
+      className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 pb-1 text-caption whitespace-nowrap text-muted-foreground"
     >
       <li className="flex items-center gap-1.5">
         {sample("in-use")}
@@ -1406,13 +1453,6 @@ const FleetScene = memo(function FleetScene({
     cn(
       "transition-opacity duration-150 motion-reduce:transition-none",
       dimmed && "opacity-25 forced-colors:opacity-40",
-    );
-  // A name on a line stays solid when out of focus, so the lines under it never show through:
-  // its text and outline step back instead.
-  const fadeName = (dimmed: boolean) =>
-    cn(
-      "transition-colors duration-150 motion-reduce:transition-none",
-      dimmed && "border-border/50 text-muted-foreground/45",
     );
   const routeLit = (edge: FleetRouteEdge) => lit === null || lit.edges.has(edge.id);
   // Painted last, so the routes in focus lie over the ones that are not.
@@ -1732,22 +1772,26 @@ const FleetScene = memo(function FleetScene({
         const geometry = layout.routes.get(edge.id);
         if (geometry === undefined) return null;
         const { pill } = geometry;
+        // The badge's tint sits on the map's own fill, so the wire running under it never shows.
         return (
           <span
             key={edge.id}
             aria-hidden
             style={{ left: pill.x, top: pill.y, width: pill.width, height: pill.height }}
             className={cn(
-              "absolute flex items-center justify-center rounded-full border bg-background px-1.5 text-caption leading-none text-muted-foreground",
-              routeLit(edge) && ROUTE_STYLES[edge.state].pill,
+              "absolute flex rounded-badge bg-(--app-chrome-background)",
               // Lit routes sit over the others, whose wires pass beside them on the way in.
               routeLit(edge) && "z-1",
-              fadeName(!routeLit(edge)),
             )}
           >
-            <span className="truncate">
-              {edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}
-            </span>
+            <Badge
+              variant={routeLit(edge) ? ROUTE_STYLES[edge.state].badge : "quiet"}
+              className="size-full min-w-0"
+            >
+              <span className="truncate">
+                {edge.routeLabel ?? routeKindLabel(edge.routeKind, gt)}
+              </span>
+            </Badge>
           </span>
         );
       })}
@@ -1857,7 +1901,7 @@ const FleetScene = memo(function FleetScene({
                   height: face.height,
                 }}
                 className={cn(
-                  "absolute rounded-lg border border-border bg-card transition-opacity duration-200 ease-out motion-reduce:transition-none",
+                  "absolute rounded-lg border border-border surface-card-settings transition-opacity duration-200 ease-out motion-reduce:transition-none",
                   group !== null && "border-dashed",
                   stack.expanded && "opacity-0",
                 )}
@@ -2199,25 +2243,33 @@ const FleetScene = memo(function FleetScene({
               </span>
             </ContentButton>
             {handle !== undefined && node.linking === "ready" ? (
-              <ContentButton
-                variant="fleet-handle"
-                data-fleet-item=""
-                tabIndex={node.id === tabStop ? 0 : -1}
-                aria-label={gt("Link {label} to another machine", { label: node.label })}
-                style={{ left: handle.x - 9, top: handle.y - 9 }}
-                onFocus={(event) => {
-                  // Its own bounds: it straddles the card's edge, so the card can be in view
-                  // while half the handle is not.
-                  if (event.currentTarget.matches(":focus-visible")) {
-                    onReveal({ x: handle.x - 9, y: handle.y - 9, width: 18, height: 18 });
-                  }
-                }}
-                data-faded={nodeDimmed(node.id) ? "" : undefined}
-                className="absolute"
-                {...handleProps(node.id)}
+              <span
+                style={{ left: handle.x - HANDLE / 2, top: handle.y - HANDLE / 2 }}
+                className={cn("absolute flex", fade(nodeDimmed(node.id)))}
               >
-                <PlusIcon aria-hidden className="size-3" strokeWidth={2.5} />
-              </ContentButton>
+                <Button
+                  size="icon-xs-pill"
+                  variant="secondary"
+                  data-fleet-item=""
+                  tabIndex={node.id === tabStop ? 0 : -1}
+                  aria-label={gt("Link {label} to another machine", { label: node.label })}
+                  onFocus={(event) => {
+                    // Its own bounds: it straddles the card's edge, so the card can be in view
+                    // while half the handle is not.
+                    if (event.currentTarget.matches(":focus-visible")) {
+                      onReveal({
+                        x: handle.x - HANDLE / 2,
+                        y: handle.y - HANDLE / 2,
+                        width: HANDLE,
+                        height: HANDLE,
+                      });
+                    }
+                  }}
+                  {...handleProps(node.id)}
+                >
+                  <PlusIcon aria-hidden />
+                </Button>
+              </span>
             ) : null}
           </div>
         );

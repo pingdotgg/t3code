@@ -100,7 +100,12 @@ import { beginLayoutContentDrag, beginLayoutTabDrag } from "./layoutDrag";
 import { useLayoutPane } from "./layoutPaneContext";
 import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useLayoutStore } from "./layoutStore";
-import { scrollTabStripFromRow, setWheelScroller, wheelDeltaPx } from "../motion/gesture";
+import {
+  scrollLeftByWheel,
+  scrollTabStripFromRow,
+  setWheelScroller,
+  wheelDeltaPx,
+} from "../motion/gesture";
 import { useClientSettings } from "../hooks/useSettings";
 import { useMediaQuery } from "../hooks/useMediaQuery";
 import { surfaceTabTitle, terminalTabTitle } from "./surfaceTabLabels";
@@ -237,7 +242,7 @@ function createPaneStrip(role?: "panel"): PaneStrip {
         return;
       event.preventDefault();
       event.stopPropagation();
-      strip.scrollLeft += wheelDeltaPx(event.deltaY, event);
+      scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
     },
     { passive: false },
   );
@@ -677,6 +682,18 @@ function slideOnPress(entry: PaneStrip, event: PointerEvent): void {
   window.addEventListener("pointercancel", settle, true);
 }
 
+function scrollStripFromGap(event: WheelEvent, strip: HTMLElement): void {
+  if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey) return;
+  if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+  if (strip.scrollWidth <= strip.clientWidth) return;
+  const box = strip.getBoundingClientRect();
+  if (event.clientX < box.left || event.clientX >= box.right) return;
+  if (event.clientY < box.top || event.clientY >= box.bottom) return;
+  event.preventDefault();
+  event.stopPropagation();
+  scrollLeftByWheel(strip, event, wheelDeltaPx(event.deltaY, event));
+}
+
 /** Reveal the active tab in a strip wider than its pane, keeping the joined tab's ears inside. */
 function revealPaneTab(strip: HTMLElement, tabId: string | null): number | null {
   const tab = findStripTab(strip, tabId);
@@ -761,7 +778,10 @@ export function LayoutPaneTabStrip({
     showStripLayer(layer, strip, true);
     const row = strip.closest<HTMLElement>("[data-pane-header]");
     const pane = row?.closest<HTMLElement>("[data-layout-tab-id]") ?? null;
-    const wheel = (event: WheelEvent) => scrollTabStripFromRow(event, strip);
+    const wheel = (event: WheelEvent) => {
+      scrollStripFromGap(event, strip);
+      scrollTabStripFromRow(event, strip);
+    };
     row?.addEventListener("wheel", wheel, { passive: false });
     markStripOverflow(strip);
     // The collapsed sidebar's inset moves the strip off the pane's edge
