@@ -11,7 +11,11 @@ export function isAppModalPage(pathname: string) {
 
 export function isSidebarUtilityPage(pathname: string) {
   return (
-    pathname.startsWith("/projects/") || pathname === "/pull-requests" || pathname === "/issues"
+    pathname.startsWith("/projects/") ||
+    pathname === "/pull-requests" ||
+    pathname === "/issues" ||
+    // TRAIL-PATCH: board utility page — see PATCHES.md and github.com/Joeydekruis/trail-v2/issues/1
+    pathname === "/board"
   );
 }
 
