@@ -2545,6 +2545,7 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         const alphaSessionId = "11111111-1111-4000-8000-00000000000a";
         const betaSessionId = "11111111-1111-4000-8000-00000000000b";
         const gammaSessionId = "11111111-1111-4000-8000-00000000000c";
+        const deltaSessionId = "11111111-1111-4000-8000-00000000000d";
 
         const continuationRequests = {
           offer: () => Effect.succeed(true),
@@ -2862,6 +2863,8 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
           }
           return map;
         };
+        // The native `swarm add` tool call must not create a subagent beside the roster workers.
+        assert.deepEqual([...subagentsByTitle().keys()].sort(), ["@alpha", "@beta"]);
         const alphaAfterTurn1 = subagentsByTitle().get("@alpha");
         const betaAfterTurn1 = subagentsByTitle().get("@beta");
         assert.equal(alphaAfterTurn1?.status, "idle");
@@ -2880,6 +2883,7 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
 
         // Between turns @beta wakes and is killed; turn 2 must not replay the queued running update.
         // New worker @gamma spawns and finishes in the same gap; turn 2 must still show its report.
+        // @delta is first seen already finished, with no running update before it.
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
           head: 4,
@@ -2914,10 +2918,18 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
               brief: "Inspect docs",
               state: "killed",
             },
+            {
+              name: "delta",
+              role: "worker",
+              conversationId: deltaSessionId,
+              brief: "Inspect CI",
+              state: "killed",
+            },
           ],
           posts: [
             { seq: 4, agent: "beta", text: "@coordinator Backend wrap-up." },
             { seq: 5, agent: "gamma", text: "@coordinator Docs wrap-up." },
+            { seq: 6, agent: "delta", text: "@coordinator CI wrap-up." },
           ],
         });
 
@@ -2973,6 +2985,8 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.equal(subagentsByTitle().get("@beta")?.result, "Backend wrap-up.");
         assert.equal(subagentsByTitle().get("@gamma")?.status, "completed");
         assert.equal(subagentsByTitle().get("@gamma")?.result, "Docs wrap-up.");
+        assert.equal(subagentsByTitle().get("@delta")?.status, "completed");
+        assert.equal(subagentsByTitle().get("@delta")?.result, "CI wrap-up.");
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),

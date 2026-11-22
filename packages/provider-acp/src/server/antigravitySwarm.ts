@@ -280,6 +280,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
     applyNotification(notification) {
       nativeProtocolSessions.add(notification.sessionId);
       const session = sessionFor(notification.sessionId);
+      const postedNow = new Set<string>();
 
       for (const post of notification.posts ?? []) {
         if (post.control !== undefined) continue;
@@ -299,6 +300,7 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         const report = cleanBoardReport(post.text);
         if (report === null) continue;
         session.latestPostsByAgent.set(author, report);
+        postedNow.add(author);
         const tracked = session.membersByName.get(author);
         if (tracked !== undefined) {
           tracked.latestReport = report;
@@ -320,6 +322,11 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
         let tracked = session.membersByConversationId.get(conversationId);
         const nativeTaskId = `${ANTIGRAVITY_SWARM_TASK_PREFIX}${conversationId}`;
         if (tracked === undefined) {
+          // A recreated worker reuses its name; reports from the old incarnation are not its own.
+          const previous = session.membersByName.get(nameKey);
+          if (previous !== undefined && !postedNow.has(nameKey)) {
+            session.latestPostsByAgent.delete(nameKey);
+          }
           tracked = {
             nativeTaskId,
             name: member.name,

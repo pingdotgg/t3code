@@ -1308,8 +1308,14 @@ export function extractAcpChildRequestTarget(input: {
       (typeof swarm?.workerSessionId === "string" && swarm.workerSessionId.trim()) ||
       "";
     if (childSessionId.length === 0) continue;
+    const workerToolCallId = [input.meta, input.toolCallMeta]
+      .map((record) => (isRecord(record) && isRecord(record.antigravity) ? record.antigravity : {}))
+      .map((record) =>
+        typeof record.workerToolCallId === "string" ? record.workerToolCallId.trim() : "",
+      )
+      .find((id) => id.length > 0);
     const toolCallId =
-      (typeof ag.workerToolCallId === "string" && ag.workerToolCallId.trim()) ||
+      workerToolCallId ||
       (typeof input.fallbackToolCallId === "string" && input.fallbackToolCallId.trim()) ||
       null;
     const workerName =

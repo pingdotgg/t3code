@@ -367,7 +367,9 @@ export function makeAntigravityAcpAdapterFlavor(
           rootSessionId: sessionId,
           toolCallIds: unmanagedTaskIds,
         });
-        return [...new Set([...runningSwarmTaskIds, ...diskAtWork])];
+        // Swarm notifications can land during the disk read; use the latest roster.
+        const running = swarmTracker.partitionTaskIds(sessionId, nativeTaskIds).runningSwarmTaskIds;
+        return [...new Set([...running, ...diskAtWork])];
       },
     ),
     ...(profileDirectory === undefined

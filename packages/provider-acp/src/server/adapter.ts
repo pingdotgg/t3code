@@ -1934,6 +1934,7 @@ interface ActiveAcpSubagent {
   readonly interruptedToolIds: Set<string>;
   readonly toolSessionIds: Map<string, string>;
   thoughtSegmentIndex: number;
+  thoughtFlushPending: boolean;
   thoughtText: string;
   thoughtStartedAt: DateTime.Utc | null;
 }
@@ -3566,6 +3567,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               streaming: !completed,
             },
           });
+          subagent.thoughtFlushPending = false;
           if (completed) {
             subagent.thoughtSegmentIndex += 1;
             subagent.thoughtText = "";
@@ -3579,8 +3581,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           mode: "append" | "replace",
         ) {
           if (text.length === 0) return;
+          const continuing = mode === "append" && subagent.thoughtText.length > 0;
           subagent.thoughtText = mode === "replace" ? text : `${subagent.thoughtText}${text}`;
-          yield* writeSubagentThought(subagent, false);
+          if (!continuing) return yield* writeSubagentThought(subagent, false);
+          // Coalesce follow-up chunks like the assistant stream; each write carries the whole text.
+          if (subagent.thoughtFlushPending) return;
+          subagent.thoughtFlushPending = true;
+          const segment = subagent.thoughtSegmentIndex;
+          yield* Effect.suspend(() =>
+            subagent.thoughtFlushPending && subagent.thoughtSegmentIndex === segment
+              ? writeSubagentThought(subagent, false)
+              : Effect.void,
+          ).pipe(Effect.delay(ACP_SUBAGENT_TEXT_FLUSH_INTERVAL), Effect.forkIn(sessionScope));
         });
 
         const projectSubagentNotification = Effect.fnUntraced(function* (
@@ -3913,6 +3925,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interruptedToolIds: new Set(),
             toolSessionIds: new Map(),
             thoughtSegmentIndex: 0,
+            thoughtFlushPending: false,
             thoughtText: "",
             thoughtStartedAt: null,
           };
@@ -7179,6 +7192,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
           }
+          if (
+            update.status === "completed" ||
+            update.status === "failed" ||
+            update.status === "cancelled"
+          ) {
+            const ended =
+              context.subagents.get(update.nativeTaskId) ??
+              (update.childSessionId === null
+                ? undefined
+                : context.subagentsBySessionId.get(update.childSessionId));
+            if (ended !== undefined) yield* terminalizeSubagentTools(ended);
+          }
           yield* emitSubagent(context, update, { allowReopenFromIdle });
           if (hasDeferredBackgroundWork(context)) {
             context.backgroundFinalizeGeneration += 1;
@@ -7228,7 +7253,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 update.childSessionId,
               );
               if (dormant !== undefined) {
-                pendingBetweenTurnChildNotifications.delete(update.childSessionId);
+                // A parked worker keeps its buffered frames for the turn that wakes it.
+                if (update.status !== "idle") {
+                  pendingBetweenTurnChildNotifications.delete(update.childSessionId);
+                }
                 const nextResult = update.result ?? dormant.task.result;
                 if (dormant.task.status !== update.status || dormant.task.result !== nextResult) {
                   yield* projectCarryoverSubagentStatus(dormant, update.status, nextResult);
@@ -7254,19 +7282,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     carryover.projectsLateTerminals,
                 },
               );
-              if (!handledByCarryover && queued !== undefined) {
-                // A worker first seen between turns exists only in the queue; keep its final state
+              if (
+                !handledByCarryover &&
+                (queued !== undefined || (postSettleContinuationEnabled && wakeContinuation))
+              ) {
+                // A worker first seen between turns has no other lineage; keep its final state
                 // and buffered frames so the next turn still projects it.
                 yield* Ref.update(pendingExtensionSubagents, (current) => [
                   ...current,
-                  {
-                    ...queued,
-                    subagent: {
-                      ...queued.subagent,
-                      status: update.status,
-                      result: update.result ?? queued.subagent.result,
-                    },
-                  },
+                  queued === undefined
+                    ? { sessionId: notice.sessionId, subagent: update, allowReopenFromIdle }
+                    : {
+                        ...queued,
+                        subagent: {
+                          ...queued.subagent,
+                          status: update.status,
+                          result: update.result ?? queued.subagent.result,
+                        },
+                      },
                 ]);
                 return;
               }
@@ -7806,11 +7839,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const context = followsAgentWorkState
                     ? yield* Ref.get(activeTurn)
                     : yield* activeContext;
-                  // Kiro sends the tool's kind on its `tool_call` and leaves it
-                  // off the permission request for that call; take it from the
-                  // tool already seen under the same id so policy can tell a
-                  // read from a write.
-                  const knownKind = context?.tools.get(params.toolCall.toolCallId)?.kind;
+                  // Kiro leaves the kind off the permission request; take it from the tool
+                  // seen under the same id so policy can tell a read from a write. Worker
+                  // tool ids live in their own session, so a root tool's kind never applies.
+                  const knownKind =
+                    childTarget === undefined
+                      ? context?.tools.get(params.toolCall.toolCallId)?.kind
+                      : undefined;
                   const disposition = dispositionFor(
                     context?.input.runtimePolicy ?? latestRuntimePolicy,
                     params.toolCall.kind == null && knownKind !== undefined
@@ -10052,7 +10087,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const queuedChildNotifications = new Map(pendingBetweenTurnChildNotifications);
             pendingBetweenTurnChildNotifications.clear();
             for (const [childId, frames] of queuedChildNotifications) {
-              context.pendingSubagentNotifications.set(childId, frames);
+              const live = context.pendingSubagentNotifications.get(childId) ?? [];
+              context.pendingSubagentNotifications.set(childId, [...frames, ...live]);
             }
             for (const queued of queuedExtensionSubagents) {
               yield* applyExtensionSubagentToTurn(

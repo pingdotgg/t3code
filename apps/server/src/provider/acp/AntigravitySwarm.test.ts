@@ -247,6 +247,35 @@ describe("AntigravitySwarm", () => {
         .subagents.map((entry) => entry.subagent.childSessionId),
     ).toEqual(["worker-m"]);
 
+    // A new @helper incarnation does not inherit the old one's report.
+    const recreated = tracker.applyNotification(
+      decode({
+        sessionId: "root-1",
+        head: 5,
+        activeWorkers: 1,
+        workingWorkers: 1,
+        waitingWorkers: 0,
+        members: [
+          { name: "helper", role: "worker", conversationId: "worker-h2", state: "working" },
+        ],
+      }),
+    );
+    expect(recreated.subagents[0]?.subagent).toMatchObject({ status: "running", result: null });
+    const recreatedKilled = tracker.applyNotification(
+      decode({
+        sessionId: "root-1",
+        head: 5,
+        activeWorkers: 0,
+        workingWorkers: 0,
+        waitingWorkers: 0,
+        members: [{ name: "helper", role: "worker", conversationId: "worker-h2", state: "killed" }],
+      }),
+    );
+    expect(recreatedKilled.subagents[0]?.subagent).toMatchObject({
+      status: "cancelled",
+      result: null,
+    });
+
     tracker.clearSession("root-1");
     expect(tracker.hasLiveSwarm("root-1")).toBe(false);
     expect(tracker.usesNativeProtocol("root-1")).toBe(false);
