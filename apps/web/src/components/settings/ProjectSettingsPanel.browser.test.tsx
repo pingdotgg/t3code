@@ -536,13 +536,16 @@ describe("project identity reset", () => {
         input: { projectId: state.projects[0]!.id, title: "No project" },
       }),
     );
-    await userEvent.click(resetButton(screen, "project icon")!);
+    const iconReset = resetButton(screen, "project icon")!;
+    const iconRow = iconReset.closest('[data-slot="settings-row"]');
+    await userEvent.click(iconReset);
     await vi.waitFor(() =>
       expect(state.update).toHaveBeenLastCalledWith({
         environmentId: primaryId,
         input: { projectId: state.projects[0]!.id, faviconPath: null, projectIcon: scratchIcon },
       }),
     );
+    expect(document.activeElement).toBe(iconRow);
   });
 
   it("resets each member of a mixed group to its own default icon", async () => {
@@ -656,6 +659,33 @@ describe("project settings scope", () => {
     await userEvent.click(environmentMenu());
     await expect.element(primaryOption()).toBeVisible();
     await expect.element(remoteOption()).toBeVisible();
+  });
+
+  it("lists only the selected environment's projects and keeps it when one is opened", async () => {
+    setup();
+    const [primaryProject, remoteProject] = state.projects;
+    state.projects = [
+      primaryProject!,
+      {
+        ...remoteProject!,
+        title: "Remote only",
+        repositoryIdentity: null,
+      },
+    ];
+    await using screen = await mountSettings({ machine: primaryId });
+
+    await expect.element(page.getByRole("button", { name: /^Shared repo/ })).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: /^Remote only/ }))
+      .not.toBeInTheDocument();
+
+    await userEvent.click(page.getByRole("button", { name: /^Shared repo/ }));
+    await vi.waitFor(() =>
+      expect(screen.router.state.location.search).toEqual({
+        project: projectKey(),
+        machine: primaryId,
+      }),
+    );
   });
 
   it("offers only the selected project's checkout environments", async () => {
