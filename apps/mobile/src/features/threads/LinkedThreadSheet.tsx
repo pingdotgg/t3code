@@ -351,7 +351,7 @@ export function LinkedThreadView(props: {
           ) : (
             <>
               {view.thread.historyCursor !== null ? (
-                <View className="self-center">
+                <View className="items-center self-center">
                   <Button
                     size="compact"
                     tone="text"
@@ -360,6 +360,15 @@ export function LinkedThreadView(props: {
                     disabled={view.history.loading}
                     onPress={view.loadEarlier}
                   />
+                  {view.history.failed ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      accessibilityRole="alert"
+                      className="text-center text-xs text-danger-foreground"
+                    >
+                      {gt("Could not load earlier turns. Try again.")}
+                    </Text>
+                  ) : null}
                 </View>
               ) : null}
               {feed.length === 0 ? (
