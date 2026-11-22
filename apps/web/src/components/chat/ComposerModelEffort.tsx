@@ -206,7 +206,7 @@ function ColumnRow(props: {
     "aria-checked": props.selected,
     disabled: props.disabled,
     "data-effort-row": true,
-    // Focus lands on a level after a model pick.
+    // Focus lands on a level after a model pick, and a typed letter finds one by its label.
     "data-effort-level": props.label,
     // Up and Down move between rows.
     tabIndex: props.tabStop ? 0 : -1,
