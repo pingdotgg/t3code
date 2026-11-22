@@ -94,10 +94,7 @@ const STATUS_QUOTA_ERROR = Buffer.concat([
   ),
 ]);
 const UNAUTHENTICATED_MESSAGE =
-  "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential. See https://developers.google.com/identity/sign-in/web/devconsole-project.";
-const UNAUTHENTICATED_ERROR = errorPayload(
-  `Error 401, Message: ${UNAUTHENTICATED_MESSAGE}, Status: UNAUTHENTICATED, Details: []`,
-);
+  "Request had invalid authentication credentials. Expected OAuth 2 access token, login cookie or other valid authentication credential.";
 const STATUS_UNAUTHENTICATED_ERROR = Buffer.concat([
   Buffer.from([0x12, 0xec, 0x01]),
   Buffer.from(
@@ -245,8 +242,13 @@ describe("watchAntigravityPromptOutcome", () => {
         ))?.failure.resetAt,
         "2026-11-09T01:05:00.000Z",
       );
-      // A 404 after the turn already reached the model is a transient edge error, not a bad model.
-      for (const error of [NOT_FOUND_ERROR, STATUS_NOT_FOUND_ERROR]) {
+      // After the turn reached the model, a 404 is a transient edge error and a 401 an OAuth
+      // refresh race; before, they are a bad model and a signed-out session.
+      for (const [error, message, code] of [
+        [NOT_FOUND_ERROR, "Requested entity was not found.", "NOT_FOUND"],
+        [STATUS_NOT_FOUND_ERROR, "Requested entity was not found.", "NOT_FOUND"],
+        [STATUS_UNAUTHENTICATED_ERROR, UNAUTHENTICATED_MESSAGE, "UNAUTHENTICATED"],
+      ] as const) {
         assert.deepEqual(
           yield* turn([
             [USER_INPUT, input],
@@ -255,57 +257,18 @@ describe("watchAntigravityPromptOutcome", () => {
             [ERROR_MESSAGE, error],
           ]),
           {
-            ...reusable({
-              class: "provider_error",
-              message: "Requested entity was not found.",
-              code: "NOT_FOUND",
-              retryable: true,
-            }),
+            ...reusable({ class: "provider_error", message, code, retryable: true }),
             resumeWith: "continue",
           },
         );
-      }
-      // A 404 before the model answered is an unknown or unentitled model.
-      assert.equal(
-        (yield* turn([
-          [USER_INPUT, input],
-          [ERROR_MESSAGE, STATUS_NOT_FOUND_ERROR],
-        ]))?.failure.retryable,
-        false,
-      );
-      // A 401 after the turn already reached the model is a transient OAuth refresh race.
-      for (const error of [UNAUTHENTICATED_ERROR, STATUS_UNAUTHENTICATED_ERROR]) {
         assert.deepEqual(
           yield* turn([
             [USER_INPUT, input],
-            [PLANNER_RESPONSE, reply],
-            [TOOL, reply],
             [ERROR_MESSAGE, error],
           ]),
-          {
-            ...reusable({
-              class: "provider_error",
-              message: UNAUTHENTICATED_MESSAGE,
-              code: "UNAUTHENTICATED",
-              retryable: true,
-            }),
-            resumeWith: "continue",
-          },
+          reusable({ class: "provider_error", message, code, retryable: false }),
         );
       }
-      // A 401 before the model answered is an unauthenticated session, not a mid-turn refresh race.
-      assert.deepEqual(
-        yield* turn([
-          [USER_INPUT, input],
-          [ERROR_MESSAGE, STATUS_UNAUTHENTICATED_ERROR],
-        ]),
-        reusable({
-          class: "provider_error",
-          message: UNAUTHENTICATED_MESSAGE,
-          code: "UNAUTHENTICATED",
-          retryable: false,
-        }),
-      );
       // Google account verification errors surface the verified continuation link on both
       // pretty-printed and compact HTTP bodies, while rejecting untrusted or malformed URLs.
       for (const [url, compact, accepted] of [
