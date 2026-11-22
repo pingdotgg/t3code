@@ -269,20 +269,20 @@ const make = Effect.gen(function* () {
     link_issue: writesThread((input) =>
       Effect.gen(function* () {
         const thread = yield* requireThread(input.threadId);
-        const target = yield* resolveTarget({
+        const target: ResolvedTarget = yield* resolveTarget({
           ...input,
           projectId: input.projectId ?? thread.projectId,
         });
         // Reading the issue proves it exists and names it for the thread's row.
-        const detail = yield* readIssue(target);
-        const url = target.url ?? detail.url;
+        const issue = target.issue ?? (yield* issues.linkMetadata(refOf(target)));
+        const url = target.url ?? issue.url;
         const { alreadyLinked } = yield* threadIssues
           .link({
             threadId: thread.id,
             ref: refOf(target),
             url,
-            displayKey: detail.displayKey,
-            title: detail.title,
+            displayKey: issue.displayKey,
+            title: issue.title,
             source: "agent",
           })
           .pipe(Effect.catchCause(linkFailure));
