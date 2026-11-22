@@ -1104,6 +1104,8 @@ builder with a test that fails without the fix.
   and compact `orbitTask` receipts (#201, #205); the version bump is its own PR.
 - **Release `conn-server-v0.4.1`**: live reload of the label and Orbit Instance facts
   (#202: SIGHUP, inotify on `/etc/orbit/`, 2 s poll); the version bump is its own PR.
+- **Release `conn-server-v0.4.2`**: Conn naming in agent instructions, tool titles and server
+  messages (#210), `delegate_task` isolation `"worktree"` (#211); the version bump is its own PR.
 
 ## Partly followed to Conn `444f032be7` (the 2026-11-18 sync)
 
