@@ -112,9 +112,6 @@ import {
 import {
   COMPOSER_UNDO_GROUP_DELAY,
   type ComposerChangeKind,
-  type ComposerHistoryRevision,
-  composerHistoryRevisionOf,
-  createComposerHistoryRevisionPlugin,
   groupUndoByChangeKind,
   markAsClipboardEdit,
   markAsCompositionReplace,
@@ -173,8 +170,6 @@ export interface ComposerPromptEditorHandle {
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
-export type ComposerPromptHistoryChange = ComposerHistoryRevision;
-
 export interface ComposerPromptEditorProps {
   draftKey?: string;
   value: string;
@@ -208,11 +203,7 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
-    /** ProseMirror history revision and direction for this change. */
-    history?: ComposerPromptHistoryChange,
   ) => void;
-  /** Fired after editor mount or controlled document rewrites that bypass onChange. */
-  onControlledHistoryChange?: ((history: ComposerPromptHistoryChange) => void) | undefined;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
@@ -806,17 +797,11 @@ type TiptapEditor = NonNullable<ReturnType<typeof useEditor>>;
 
 const SILENT_SELECTION_META = "composerSilentSelection";
 
-const CARRIED_HISTORY_DIRECTION_META = "composerCarriedHistoryDirection";
-
 function replaceSkillChips(
   editor: TiptapEditor,
   replacements: ReturnType<typeof skillChipReplacements>,
-  carriedHistoryDirection?: ComposerPromptHistoryChange["direction"],
 ): void {
   const transaction = editor.state.tr.setMeta("addToHistory", false);
-  if (carriedHistoryDirection) {
-    transaction.setMeta(CARRIED_HISTORY_DIRECTION_META, carriedHistoryDirection);
-  }
   for (const { from, to, node } of replacements) transaction.replaceWith(from, to, node);
   editor.view.dispatch(transaction);
 }
@@ -863,9 +848,6 @@ const ComposerUndoGroupingExtension = Extension.create<
   name: "composer-undo-grouping",
   addStorage() {
     return { previous: null };
-  },
-  addProseMirrorPlugins() {
-    return [createComposerHistoryRevisionPlugin()];
   },
   dispatchTransaction({ transaction, next }) {
     this.storage.previous = groupUndoByChangeKind(transaction, this.storage.previous);
@@ -1012,7 +994,6 @@ function ComposerPromptEditorTiptapInner(
     placeholderClassName,
     placeholderSuffix,
     onChange,
-    onControlledHistoryChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
     onPageScrollKeyDown,
@@ -1039,7 +1020,6 @@ function ComposerPromptEditorTiptapInner(
   // The editor config is built once, so its handlers reach the current callbacks through here.
   const readCallbacks = useStableCallback(() => ({
     onChange,
-    onControlledHistoryChange,
     onVisibleSelectionChange,
     onCommandKeyDown,
     isPathQueryActive,
@@ -1140,23 +1120,13 @@ function ComposerPromptEditorTiptapInner(
       [updated.state.selection.$from.nodeBefore, updated.state.selection.$from.nodeAfter].some(
         (node) => node?.isInline && node.isAtom && !node.isText && node.type.name !== "hardBreak",
       );
-    const textChanged = previousSnapshot.value !== nextValue;
-    const rawHistory = composerHistoryRevisionOf(updated.state);
-    const carriedDirection = transaction.getMeta(CARRIED_HISTORY_DIRECTION_META) as
-      | ComposerPromptHistoryChange["direction"]
-      | undefined;
-    const history =
-      carriedDirection && rawHistory.direction === null
-        ? { ...rawHistory, direction: carriedDirection }
-        : rawHistory;
     readCallbacks().onChange(
       nextValue,
       nextCursor,
       nextExpandedCursor,
       suppressTrigger,
       contextIds,
-      textChanged,
-      history,
+      previousSnapshot.value !== nextValue,
     );
   };
 
@@ -1586,7 +1556,7 @@ function ComposerPromptEditorTiptapInner(
             isKnownModel,
           ).filter(({ node }) => node.isText);
           if (stale.length > 0) {
-            replaceSkillChips(updated, stale, composerHistoryRevisionOf(updated.state).direction);
+            replaceSkillChips(updated, stale);
             return;
           }
         }
@@ -1734,9 +1704,6 @@ function ComposerPromptEditorTiptapInner(
           emitUpdate: false,
         },
       );
-      readCallbacks().onControlledHistoryChange?.(composerHistoryRevisionOf(editor.state));
-    } else if (initialSelection) {
-      readCallbacks().onControlledHistoryChange?.(composerHistoryRevisionOf(editor.state));
     }
     selectMarkdownOffset(editor, value, normalizedExpandedCursor);
     const map = serializeEditorDoc(editor.state.doc);
@@ -1777,7 +1744,6 @@ function ComposerPromptEditorTiptapInner(
     expandEditorCursor,
     initialExpandedCursor,
     literalText,
-    readCallbacks,
     richText,
     skillLabelFor,
     isKnownModel,

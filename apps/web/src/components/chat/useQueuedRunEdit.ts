@@ -373,15 +373,10 @@ export function useQueuedRunEdit(input: {
     focusComposerSoon();
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
-    const contextIds =
-      editing === null
-        ? []
-        : (() => {
-            const removed = editing.existingAttachments.find(
-              (attachment) => attachment.id === attachmentId,
-            );
-            return removed ? attachmentContextIdsForRecord(editing.context, removed) : [];
-          })();
+    const removed = editing?.existingAttachments.find(
+      (attachment) => attachment.id === attachmentId,
+    );
+    const contextIds = removed ? attachmentContextIdsForRecord(editing?.context, removed) : [];
     queuedRunEdits.update(editKey, (current) => ({
       ...current,
       existingAttachments: current.existingAttachments.filter(
@@ -401,22 +396,14 @@ export function useQueuedRunEdit(input: {
   });
   const restoreEditingAttachment = useStableCallback((attachment: ChatAttachment) => {
     queuedRunEdits.update(editKey, (current) => {
-      if (current.existingAttachments.some((entry) => entry.id === attachment.id)) {
-        return current;
-      }
-      const restoredIds = new Set([
+      const keptIds = new Set([
         ...current.existingAttachments.map((entry) => entry.id),
         attachment.id,
       ]);
-      const existingAttachments = current.originalAttachments.filter((entry) =>
-        restoredIds.has(entry.id),
-      );
+      // Filtering the originals keeps the restored attachment in its original position.
       return {
         ...current,
-        existingAttachments:
-          existingAttachments.length > current.existingAttachments.length
-            ? existingAttachments
-            : [...current.existingAttachments, attachment],
+        existingAttachments: current.originalAttachments.filter((entry) => keptIds.has(entry.id)),
       };
     });
   });

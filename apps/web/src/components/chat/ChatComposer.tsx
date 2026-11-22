@@ -123,8 +123,6 @@ import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
   type QueuedAttachmentContextBinding,
   reconcileAttachmentContextReferences,
-  recordChiplessQueuedImageRemoval,
-  recordQueuedImageHistoryRevision,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
 import { ComposerBanner } from "./ComposerBanner";
@@ -170,7 +168,6 @@ import {
 import {
   type ComposerCitationCommentRequest,
   type ComposerPromptEditorHandle,
-  type ComposerPromptHistoryChange,
   ComposerPromptEditorTiptap as ComposerPromptEditor,
 } from "../ComposerPromptEditorTiptap";
 import {
@@ -1472,7 +1469,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const copyComposerSnapshotStable = useStableCallback(copyComposerSnapshot);
   const buildContextClipboardFragmentStable = useStableCallback(buildContextClipboardFragment);
-  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
   const {
     loadThreadTranscript,
     countReservedAttachments,
@@ -1498,42 +1494,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingThreadImportsRef,
     addComposerFilesToDraft,
     removedQueuedAttachments: activeRemovedEditingQueuedAttachments,
-    onRestoreQueuedAttachment: (attachment) => {
-      if (!queuedEditOwnsComposer) return;
-      if (isQueuedImageAttachment(attachment)) {
-        retainedContextPayloads.queuedImageHistory.pendingRestoredIds.add(attachment.id);
-      }
-      onRestoreEditingQueuedAttachment?.(attachment);
-    },
-  });
-
-  const onControlledHistoryChangeStable = useStableCallback(
-    (history: ComposerPromptHistoryChange) => {
-      if (!queuedEditOwnsComposer) return;
-      recordQueuedImageHistoryRevision(
-        retainedContextPayloads.queuedImageHistory,
-        history,
-        activeRemovedEditingQueuedAttachments ?? [],
-      );
-    },
-  );
-
-  const onRemoveEditingQueuedAttachmentStable = useStableCallback((attachmentId: string) => {
-    const entry = activeEditingQueuedAttachments?.find(
-      (item) => item.attachment.id === attachmentId,
-    );
-    if (
-      entry &&
-      isQueuedImageAttachment(entry.attachment) &&
-      entry.contextIds &&
-      entry.contextIds.length > 0
-    ) {
-      const referenced = new Set(collectInlineContextIds(promptRef.current));
-      if (!entry.contextIds.some((contextId) => referenced.has(contextId))) {
-        recordChiplessQueuedImageRemoval(retainedContextPayloads.queuedImageHistory, attachmentId);
-      }
-    }
-    onRemoveEditingQueuedAttachment(attachmentId);
+    onRestoreQueuedAttachment: onRestoreEditingQueuedAttachment,
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -1730,6 +1691,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     syncComposerDraftPersistedAttachments,
   ]);
 
+  const retainedContextPayloads = useRetainedContextPayloads(composerDraftTargetKey);
+
   const onPromptChange = (
     nextPrompt: string,
     nextCursor: number,
@@ -1737,7 +1700,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
     textChanged: boolean,
-    history?: ComposerPromptHistoryChange,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
     const trigger = cursorAdjacentToMention
@@ -1855,8 +1817,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }),
       ),
       removedQueuedAttachments: activeRemovedEditingQueuedAttachments ?? [],
-      history,
-      textChanged,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
@@ -3919,7 +3879,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 activeEditingQueuedAttachments.length > 0 && (
                   <ComposerQueuedAttachmentRow
                     attachments={activeEditingQueuedAttachments}
-                    onRemove={onRemoveEditingQueuedAttachmentStable}
+                    onRemove={onRemoveEditingQueuedAttachment}
                   />
                 )}
 
@@ -3942,7 +3902,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 ) : null}
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
-                    draftKey={attachmentTargetKey}
+                    draftKey={composerDraftTargetKey}
                     // Switching threads lands focus here, so the label names the thread.
                     ariaLabel={
                       activeThread
@@ -3970,7 +3930,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     skills={selectedProviderSkills}
                     className={cn(showMobilePendingAnswerActions && "max-sm:pb-12")}
                     onChange={onPromptChangeStable}
-                    onControlledHistoryChange={onControlledHistoryChangeStable}
                     onCommandKeyDown={onComposerCommandKeyStable}
                     onPageScrollKeyDown={onPageScrollKeyDown}
                     onPageScrollKeyUp={onPageScrollKeyUp}
