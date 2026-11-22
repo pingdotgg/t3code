@@ -64,7 +64,57 @@ describe("image preview groups", () => {
         expect(result).toHaveLength(2);
         expect(result.map(filePreviewKey)).toEqual([...new Set(gallery.map(filePreviewKey))]);
       }
-      expect(filePreviewGallery(delivered("a"), uploaded)[1]?.actionsSource).toEqual({
+      expect(composerImageGallery(attachments)).toEqual(local);
+    },
+  );
+
+  it("gives every remote image page its own media actions", () => {
+    const environmentId = EnvironmentId.make("test");
+    const ids = ["a", "b"];
+    const galleries = [
+      messageImageGallery(
+        {
+          text: "",
+          attachments: ids.map((id) => ({
+            type: "image" as const,
+            id: `uploaded-${id}`,
+            name: `${id}.png`,
+            mimeType: "image/png",
+            sizeBytes: 3,
+          })),
+        },
+        { environmentId, threadId: ThreadId.make("thread"), workspaceRoot: null },
+      ),
+      composerImageGallery(
+        ids.map((id) => ({
+          id,
+          type: "image",
+          name: `${id}.png`,
+          mimeType: "image/png",
+          sizeBytes: 3,
+          previewUri: `data:image/png;base64,${id}`,
+          uploadedAttachmentId: `uploaded-${id}`,
+        })),
+        environmentId,
+      ),
+      contextImageGallery(
+        ids.map((id) => ({
+          version: 1,
+          kind: "image",
+          contextId: ComposerContextId.make(`context-${id}`),
+          label: `Screenshot ${id}`,
+          attachmentId: `uploaded-${id}`,
+          name: `${id}.png`,
+          mimeType: "image/png",
+          sizeBytes: 3,
+        })),
+        [],
+        environmentId,
+      ),
+    ];
+
+    for (const gallery of galleries) {
+      expect(filePreviewGallery(gallery[0]!, gallery)[1]?.actionsSource).toEqual({
         name: "b.png",
         mimeType: "image/png",
         environmentId,
@@ -75,38 +125,7 @@ describe("image preview groups", () => {
           mimeType: "image/png",
         },
       });
-      expect(composerImageGallery(attachments)).toEqual(local);
-    },
-  );
-
-  it("keeps media actions when swiping to another remote context image", () => {
-    const environmentId = EnvironmentId.make("test");
-    const contextImages = contextImageGallery(
-      ["a", "b"].map((id) => ({
-        version: 1,
-        kind: "image",
-        contextId: ComposerContextId.make(`context-${id}`),
-        label: `Screenshot ${id}`,
-        attachmentId: `uploaded-${id}`,
-        name: `${id}.png`,
-        mimeType: "image/png",
-        sizeBytes: 3,
-      })),
-      [],
-      environmentId,
-    );
-
-    expect(filePreviewGallery(contextImages[0]!, contextImages)[1]?.actionsSource).toEqual({
-      name: "b.png",
-      mimeType: "image/png",
-      environmentId,
-      resource: {
-        _tag: "attachment",
-        attachmentId: "uploaded-b",
-        fileName: "b.png",
-        mimeType: "image/png",
-      },
-    });
+    }
   });
 
   it("matches remote originals despite metadata and property order differences", () => {
