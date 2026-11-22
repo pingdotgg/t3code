@@ -1,6 +1,21 @@
 {
   "customNotices": [
     {
+      "bundles": ["desktop", "mobile"],
+      "license": "MIT",
+      "name": "Apple Speech engine (adapted from @react-native-ai/apple)",
+      "sourceUrl": "https://github.com/callstackincubator/ai",
+      "generatedNotices": [
+        {
+          "licenseId": "MIT",
+          "copyrights": [
+            "Copyright (c) 2024-2025 Szymon Rybczak",
+            "Copyright (c) 2025-present Callstack"
+          ]
+        }
+      ]
+    },
+    {
       "bundles": ["desktop", "mobile", "web"],
       "license": "MIT",
       "name": "GitHub gemoji alias data",
@@ -606,17 +621,6 @@
       "generatedNotice": {
         "licenseId": "MIT",
         "copyrights": ["Copyright (c) Meta Platforms, Inc. and affiliates."]
-      }
-    },
-    {
-      "name": "@react-native-ai/apple",
-      "sourceUrl": "https://github.com/callstackincubator/ai",
-      "generatedNotice": {
-        "licenseId": "MIT",
-        "copyrights": [
-          "Copyright (c) 2024-2025 Szymon Rybczak",
-          "Copyright (c) 2025-present Callstack"
-        ]
       }
     },
     {

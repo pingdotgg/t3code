@@ -1,4 +1,4 @@
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";
 import { agentWorkingDirectories } from "@t3tools/client-runtime/workspace-basename-lookup";
@@ -14,7 +14,12 @@ import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
 import { McpAppFrame } from "./McpAppFrame";
 import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
-import { ChangedFilesCard } from "./ChangedFilesTree";
+import { ChangedFilesCard, type ChangedFilesGroup } from "./ChangedFilesTree";
+import {
+  changedFileTotals,
+  turnChanges,
+  turnHasChanges,
+} from "@t3tools/client-runtime/state/thread-repositories";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import {
   readResponseSubagents,
@@ -439,7 +444,7 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
 }) {
   if (!turnSummary) return null;
   const checkpointFiles = turnSummary.files;
-  if (checkpointFiles.length === 0) return null;
+  if (!turnHasChanges(turnSummary)) return null;
 
   return (
     <AssistantChangedFilesSectionInner
@@ -467,6 +472,7 @@ function AssistantChangedFilesSectionInner({
   onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
 }) {
   const ctx = use(TimelineRowCtx);
+  const gt = useGT();
   const persistedExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
@@ -489,33 +495,72 @@ function AssistantChangedFilesSectionInner({
       : NO_VCS_STATUS,
     (status) => AsyncResult.getOrElse(status, () => null)?.workingTree.rootPath,
   );
+  const repositories = turnSummary.repositories;
+  const rootGroupName = activeProject?.title ?? gt("Project folder");
+  const groups: ReadonlyArray<ChangedFilesGroup> | undefined =
+    repositories === undefined
+      ? undefined
+      : [
+          ...(checkpointFiles.length === 0
+            ? []
+            : [
+                {
+                  key: ".",
+                  name: rootGroupName,
+                  files: checkpointFiles,
+                  totals: checkpointFileTotals(turnSummary),
+                  relativePath: "",
+                },
+              ]),
+          ...repositories.map((repository) => ({
+            key: repository.scopeId,
+            name: repository.name,
+            files: repository.files,
+            totals: changedFileTotals(repository),
+            relativePath: repository.relativePath,
+            ...(repository.baselineMissing
+              ? { note: gt("This turn's changes in this repository cannot be listed.") }
+              : {}),
+          })),
+        ];
+  const repositoryCwdByGroupKey = new Map(
+    repositories?.map((repository) => [repository.scopeId as string, repository.cwd]),
+  );
 
   return (
     <ChangedFilesCard
       runId={turnSummary.runId}
       files={checkpointFiles}
-      totals={checkpointFileTotals(turnSummary)}
+      totals={turnChanges(turnSummary).totals}
+      groups={groups}
       allDirectoriesExpanded={allDirectoriesExpanded}
       resolvedTheme={resolvedTheme}
       onToggleAllDirectories={() =>
         setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
       }
       onOpenTurnDiff={onOpenTurnDiff}
-      onFileContextMenu={(filePath, event) =>
+      onFileContextMenu={(filePath, event, group) => {
+        const repositoryCwd = group && repositoryCwdByGroupKey.get(group.key);
         onFileContextMenu(
-          {
-            environmentId: ctx.activeThreadEnvironmentId,
-            filePath,
-            workspaceRoot: ctx.workspaceRoot,
-            repositoryRoot:
-              repositoryRoot ??
-              (thread?.worktreePath == null
-                ? activeProject?.repositoryIdentity?.rootPath
-                : undefined),
-          },
+          repositoryCwd === undefined
+            ? {
+                environmentId: ctx.activeThreadEnvironmentId,
+                filePath,
+                workspaceRoot: ctx.workspaceRoot,
+                repositoryRoot:
+                  repositoryRoot ??
+                  (thread?.worktreePath == null
+                    ? activeProject?.repositoryIdentity?.rootPath
+                    : undefined),
+              }
+            : {
+                environmentId: ctx.activeThreadEnvironmentId,
+                filePath,
+                workspaceRoot: repositoryCwd,
+              },
           event,
-        )
-      }
+        );
+      }}
     />
   );
 }
