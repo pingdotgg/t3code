@@ -1277,6 +1277,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       ) : (
         <span className="flex-1" />
       )}
+      {terminalStatusIcon}
       {prBadge}
       {issueBadge}
       {diff ? (
@@ -1296,19 +1297,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       </span>
     </div>
   );
-  const titleLineIcons = (
+  const titleLineIcons = metaLineEmpty ? (
     <>
       {terminalStatusIcon}
-      {metaLineEmpty ? (
-        <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
-          <SidebarProviderStack
-            thread={thread}
-            providerEntryByInstanceId={props.providerEntryByInstanceId}
-          />
-        </span>
-      ) : null}
+      <span aria-hidden className="inline-flex shrink-0 items-center gap-1">
+        <SidebarProviderStack
+          thread={thread}
+          providerEntryByInstanceId={props.providerEntryByInstanceId}
+        />
+      </span>
     </>
-  );
+  ) : null;
 
   if (variant !== "card") {
     const multiline = variant === "folder-multiline";
