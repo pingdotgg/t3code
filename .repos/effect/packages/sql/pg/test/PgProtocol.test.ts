@@ -395,6 +395,14 @@ describe("PgProtocol", () => {
       )
     })
 
+    it("keeps a leading U+FEFF when the string contains U+FFFD", () => {
+      const name = "\ufeffnote\ufffd"
+      assert.deepStrictEqual(
+        PgProtocol.makeParser().push(parameterStatus(name, name)),
+        [{ _tag: "ParameterStatus", name, value: name }]
+      )
+    })
+
     it("rejects a stray high byte at every position of the string fast path", () => {
       for (let length = 1; length <= 16; length++) {
         for (let at = 0; at < length; at++) {
