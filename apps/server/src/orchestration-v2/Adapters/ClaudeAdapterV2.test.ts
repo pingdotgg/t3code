@@ -20613,7 +20613,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         assert.deepEqual(routing.assistantTexts(harness.threadId), ["The auditor finished."]);
       }).pipe(
         Effect.provide(
-          Layer.mergeAll(IdAllocator.layer, McpProviderSessions.layer, NodeServices.layer),
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
     ),
