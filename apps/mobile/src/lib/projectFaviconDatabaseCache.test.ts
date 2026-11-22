@@ -10,7 +10,7 @@ const native = vi.hoisted(() => ({
   uuid: vi.fn(() => "ab74bbb8-c8aa-4b3a-a2d1-91cfb7688a85"),
   load: vi.fn(
     async (
-      _source: string | { uri?: string; cacheKey?: string },
+      _source: string | { uri?: string },
       options: { maxWidth: number; maxHeight: number },
     ) => ({
       width: options.maxWidth,
@@ -127,7 +127,9 @@ describe("mobile project icon thumbnails", () => {
 
     const [first, repeated, changed] = native.load.mock.calls.map(([source]) => source);
     expect(first).toMatchObject({ uri: expect.any(String), cacheKey: expect.any(String) });
-    if (typeof first !== "object") throw new Error("Expected an image source with a cache key");
+    if (typeof first !== "object" || !("cacheKey" in first)) {
+      throw new Error("Expected an image source with a cache key");
+    }
     expect(repeated).toMatchObject({ cacheKey: first.cacheKey });
     expect(repeated).not.toMatchObject({ uri: first.uri });
     expect(changed).toMatchObject({ cacheKey: expect.any(String) });
