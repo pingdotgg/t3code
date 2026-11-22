@@ -512,6 +512,168 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       }),
   );
 
+  it.effect.each([
+    // The repositories are the project's own checkouts, each on whatever branch it is on.
+    { name: "in the project folder", checkouts: "/workspace/wrapper", branch: null },
+    // The repositories are the thread's worktrees; `web` stands for a checkout off its branch.
+    { name: "in a task folder", checkouts: "/worktrees/wrapper/task", branch: "feature/api" },
+  ])(
+    "links the open pull request of each tracked repository a thread $name changed",
+    ({ checkouts, branch }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let thread: OrchestrationV2ThreadShell = {
+            ...threadShell("repositories-thread"),
+            branch,
+            worktreePath: branch === null ? null : checkouts,
+          };
+          const project: OrchestrationProjectShell = {
+            id: thread.projectId,
+            title: "Wrapper",
+            workspaceRoot: "/workspace/wrapper",
+            trackedFolders: ["api", "web", "docs"].map((name) => ({
+              name,
+              path: `/workspace/wrapper/${name}`,
+            })),
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+          const lookedUp = yield* Queue.unbounded<void>();
+          const lookups: Array<{ readonly cwd: string; readonly branch: string }> = [];
+          const dispatched: Array<OrchestrationV2ServerCommand> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.fromQueue(domainEvents),
+              getPullRequestSnapshot: () =>
+                Effect.sync(() => ({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [thread],
+                  archivedThreads: [],
+                })),
+              // The thread changed api and web, and a folder the project no longer tracks.
+              getCheckpointContext: () =>
+                Effect.succeed({
+                  runs: [],
+                  checkpoints: [],
+                  checkpointScopes: ["api", "web", "removed"].map((name) => ({
+                    id: `scope-${name}`,
+                    runId: null,
+                    kind: "manual",
+                    cwd: `${checkouts}/${name}`,
+                    repositoryPath: `/workspace/wrapper/${name}`,
+                  })),
+                } as never),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatched.push(command as OrchestrationV2ServerCommand);
+                  return {} as never;
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              localStatus: ({ cwd }) =>
+                Effect.succeed({
+                  isRepo: true,
+                  refName: cwd.endsWith("/api")
+                    ? "feature/api"
+                    : branch === null
+                      ? "main"
+                      : "other",
+                  isDefaultRef: !cwd.endsWith("/api") && branch === null,
+                } as never),
+              branchPullRequest: (input) =>
+                Queue.offer(lookedUp, undefined).pipe(
+                  Effect.map(() => {
+                    lookups.push(input);
+                    return {
+                      number: 7,
+                      title: "API change",
+                      url: "https://github.com/Acme/API/pull/7",
+                      baseRef: "main",
+                      headRef: input.branch,
+                      state: "open" as const,
+                      repositoryKey: "github.com/acme/api",
+                      updatedAt: null,
+                    };
+                  }),
+                ),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              shouldRunScopeWork: () => Effect.succeed(false),
+              shouldRunOpportunisticWork: Effect.succeed(false),
+            }),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({}),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            // The startup sweep asks no repository.
+            yield* service.drain;
+            expect(lookups).toEqual([]);
+
+            const turnEnd = {
+              type: "checkpoint.captured",
+              threadId: thread.id,
+            } as OrchestrationV2DomainEvent;
+            yield* Queue.offer(domainEvents, turnEnd);
+            yield* Queue.take(lookedUp);
+            yield* service.drain;
+
+            // Only the repository on a branch of its own is asked, and nothing touches the
+            // thread's own branch.
+            expect(lookups).toEqual([{ cwd: `${checkouts}/api`, branch: "feature/api" }]);
+            expect(dispatched).toMatchObject([
+              {
+                type: "thread.pull-request.link",
+                threadId: thread.id,
+                host: "github.com",
+                repository: "acme/api",
+                number: 7,
+                source: "created",
+              },
+            ]);
+
+            thread = {
+              ...thread,
+              pullRequests: [
+                {
+                  host: "github.com",
+                  repository: "acme/api",
+                  number: 7,
+                  url: "https://github.com/acme/api/pull/7",
+                  source: "created",
+                  linkedAt: "2026-09-20T00:00:00.000Z",
+                  snapshot: null,
+                  stack: null,
+                },
+              ],
+            };
+            yield* Queue.offer(domainEvents, turnEnd);
+            yield* Queue.take(lookedUp);
+            yield* service.drain;
+            expect(dispatched).toHaveLength(1);
+          }).pipe(Effect.provide(dependencies));
+        }),
+      ),
+  );
+
   it.effect("leaves delegated child threads to their own refresh instead of the sweep", () =>
     Effect.gen(function* () {
       const parent = {

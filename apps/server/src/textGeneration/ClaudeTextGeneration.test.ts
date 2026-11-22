@@ -64,8 +64,11 @@ function withFakeClaudeEnv<A, E, R>(
     exitCode?: number;
     stderr?: string;
     argsMustContain?: string;
+    expectedTools?: string;
     argsMustNotContain?: string;
     stdinMustContain?: string;
+    imageRejection?: string;
+    imageAttemptLog?: string;
     configDirMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
@@ -87,9 +90,12 @@ function withFakeClaudeEnv<A, E, R>(
       T3_FAKE_CLAUDE_HOLD_PORT: input.holdPort === undefined ? undefined : String(input.holdPort),
       T3_FAKE_CLAUDE_HOLD_REPORT: input.holdReportPath,
       T3_FAKE_CLAUDE_STDERR: input.stderr,
+      T3_FAKE_CLAUDE_EXPECTED_TOOLS: input.expectedTools,
       T3_FAKE_CLAUDE_ARGS_MUST_CONTAIN: input.argsMustContain,
       T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN: input.argsMustNotContain,
       T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN: input.stdinMustContain,
+      T3_FAKE_CLAUDE_IMAGE_REJECTION: input.imageRejection,
+      T3_FAKE_CLAUDE_IMAGE_ATTEMPT_LOG: input.imageAttemptLog,
       T3_FAKE_CLAUDE_CWD_MUST_NOT_BE: input.cwdMustNotBe,
       T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE: input.configDirMustBe,
     };
@@ -114,6 +120,30 @@ function withFakeClaudeEnv<A, E, R>(
 }
 
 it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
+  it.effect("loads only user settings when generating review guides", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { stops: [] } }),
+        argsMustContain: "--setting-sources user",
+        expectedTools: "Read,Grep,Glob,Bash",
+      },
+      (textGeneration) =>
+        textGeneration.generateReviewGuide({
+          cwd: process.cwd(),
+          number: 12,
+          title: "Review a change",
+          description: "",
+          baseBranch: "main",
+          baseCommit: "base",
+          settledReview: "",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("claudeAgent"),
+            SYNTHETIC_CLAUDE_CAPABLE_MODEL,
+          ),
+        }),
+    ),
+  );
+
   it.effect(
     "keeps canonical built-in capabilities when a custom model collides with its alias",
     () =>
@@ -192,7 +222,7 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
     withFakeClaudeEnv(
       {
         output: JSON.stringify({ structured_output: { title: "Reconnect failures" } }),
-        stdinMustContain: "Additional instructions:\nUse two to four words.",
+        stdinMustContain: "Title instructions from the user:\nUse two to four words.",
       },
       (textGeneration) =>
         textGeneration.generateThreadTitle({
@@ -205,6 +235,118 @@ it.layer(layerClaudeTextGenerationTest)("ClaudeTextGeneration", (it) => {
           },
         }),
     ),
+  );
+
+  it.effect("sends image attachments to Claude, not only their metadata", () =>
+    Effect.gen(function* () {
+      const probe = yield* makeProcessProbe;
+      yield* withFakeClaudeEnv(
+        {
+          output: [
+            JSON.stringify({ type: "system" }),
+            JSON.stringify({ type: "result", structured_output: { branch: "fix/login-button" } }),
+            "",
+          ].join("\n"),
+          holdPort: probe.port,
+          stdinMustContain: Buffer.from("hello").toString("base64"),
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+            const attachmentId = "thread-1-claude-attachment";
+            const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+            yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+            yield* fs.writeFile(imagePath, Buffer.from("hello"));
+
+            const generated = yield* textGeneration
+              .generateBranchName({
+                cwd: process.cwd(),
+                message: "fix this",
+                attachments: [
+                  {
+                    type: "image",
+                    id: attachmentId,
+                    name: "screen.png",
+                    mimeType: "image/png",
+                    sizeBytes: 5,
+                  },
+                ],
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("claudeAgent"),
+                  model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+                },
+              })
+              .pipe(Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)));
+
+            expect(generated.branch).toBe("fix/login-button");
+            yield* probe.started;
+            expect(yield* probe.hasExited).toBe(false);
+            yield* probe.release;
+            yield* probe.exited;
+          }),
+      );
+    }),
+  );
+
+  it.effect.each([
+    // A model that cannot take images is remembered, so later calls go straight to text only.
+    { rejection: "Image inputs are not supported by this model", imageAttempts: 1 },
+    // A rejection of this request's images says nothing about the model.
+    {
+      rejection:
+        "At least one of the image dimensions exceed max allowed size for many-image requests: 2000 pixels",
+      imageAttempts: 2,
+    },
+  ])("still generates text when images are rejected: $rejection", ({ rejection, imageAttempts }) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const logDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-claude-image-log-" });
+      const imageAttemptLog = path.join(logDir, "image-attempts.log");
+      return yield* withFakeClaudeEnv(
+        {
+          output: JSON.stringify({ structured_output: { branch: "fix/login-button" } }),
+          imageRejection: rejection,
+          imageAttemptLog,
+        },
+        (textGeneration) =>
+          Effect.gen(function* () {
+            const { attachmentsDir } = yield* ServerConfig.ServerConfig;
+            const attachmentId = "thread-1-claude-text-only-attachment";
+            const imagePath = path.join(attachmentsDir, `${attachmentId}.png`);
+            yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+            yield* fs.writeFile(imagePath, Buffer.from("hello"));
+            const generate = textGeneration.generateBranchName({
+              cwd: process.cwd(),
+              message: "fix this",
+              attachments: [
+                {
+                  type: "image",
+                  id: attachmentId,
+                  name: "screen.png",
+                  mimeType: "image/png",
+                  sizeBytes: 5,
+                },
+              ],
+              modelSelection: {
+                instanceId: ProviderInstanceId.make("claudeAgent"),
+                model: SYNTHETIC_CLAUDE_STANDARD_MODEL,
+              },
+            });
+
+            const [first, second] = yield* Effect.all([generate, generate]).pipe(
+              Effect.ensuring(fs.remove(imagePath).pipe(Effect.ignore)),
+            );
+
+            expect(first.branch).toBe("fix/login-button");
+            expect(second.branch).toBe("fix/login-button");
+            const attempts = yield* fs.readFileString(imageAttemptLog);
+            expect(attempts.trim().split("\n")).toHaveLength(imageAttempts);
+          }),
+      );
+    }).pipe(Effect.scoped),
   );
 
   it.effect("runs Claude text generation with the configured CLAUDE_CONFIG_DIR", () =>

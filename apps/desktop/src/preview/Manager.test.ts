@@ -1680,6 +1680,30 @@ describe("PreviewManager", () => {
     ),
   );
 
+  effectIt.effect(
+    "does not open picture-in-picture against a destroyed webview's WebContents",
+    () =>
+      withManager((manager) =>
+        Effect.gen(function* () {
+          const guest = makeAttachingGuest(49);
+          fromId.mockImplementation((id) =>
+            id === 49 && !guest.wc.isDestroyed() ? guest.wc : null,
+          );
+          yield* manager.prepareWebview(guest.wc);
+          yield* manager.createTab("tab_destroyed_guest");
+          yield* manager.registerWebview("tab_destroyed_guest", 49);
+
+          guest.destroy();
+          yield* Effect.yieldNow;
+
+          const pictureInPicture = yield* Effect.flip(
+            manager.openPictureInPicture("tab_destroyed_guest"),
+          ).pipe(Effect.orDie);
+          expect(pictureInPicture._tag).toBe("PreviewWebviewNotInitializedError");
+        }),
+      ),
+  );
+
   effectIt.effect("skips a guest destroyed while another guest's session opens", () =>
     withManager((manager) =>
       Effect.gen(function* () {
@@ -2415,10 +2439,18 @@ describe("PreviewManager", () => {
       Effect.gen(function* () {
         const host = yield* DesktopBrowserHost.DesktopBrowserHost;
         const serverTab = { threadId: "thread-1", tabId: "server-tab-1" };
+        const windowThrottling = vi.fn<(enabled: boolean) => void>();
+        const mainWebContents = Object.assign(makeTestHostWebContents(), {
+          setBackgroundThrottling: windowThrottling,
+        });
         const contents = Object.assign(
-          makeTestPreviewWebContents(async () => {
-            throw new Error("unused");
-          }, 42),
+          makeTestPreviewWebContents(
+            async () => {
+              throw new Error("unused");
+            },
+            42,
+            mainWebContents,
+          ),
           {
             isDevToolsOpened: () => false,
             getUserAgent: () => "Electron",
@@ -2431,6 +2463,11 @@ describe("PreviewManager", () => {
         ) as unknown as typeof contents.debugger.sendCommand;
         fromId.mockReturnValue(contents);
         const manager = yield* PreviewManager.PreviewManager;
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: mainWebContents,
+        } as never);
         const capturing = yield* Queue.unbounded<boolean>();
         yield* manager.subscribeStateChanges((_tabId, state) =>
           Queue.offer(capturing, state.capturing).pipe(Effect.asVoid),
@@ -2463,9 +2500,14 @@ describe("PreviewManager", () => {
           }),
         );
         expect(yield* Queue.take(capturing)).toBe(true);
+        // A locked or covered window paints a guest it had hidden only while unthrottled.
+        expect(windowThrottling.mock.calls).toEqual([[false]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false]]);
         yield* manager.setCaptureDrawn("tab_1", true);
         screenshot.resolve({ data: "" });
         expect(yield* Queue.take(capturing)).toBe(false);
+        expect(windowThrottling.mock.calls).toEqual([[false], [true]]);
+        expect(contents.setBackgroundThrottling.mock.calls).toEqual([[false], [true]]);
       }).pipe(Effect.provide(managerLayer())),
   );
 

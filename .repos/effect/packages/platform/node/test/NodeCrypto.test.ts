@@ -4,6 +4,7 @@ import * as Aead from "effect/crypto/Aead"
 import * as Digest from "effect/crypto/Digest"
 import * as Kdf from "effect/crypto/Kdf"
 import * as Mac from "effect/crypto/Mac"
+import * as Password from "effect/crypto/Password"
 import * as SecureRandom from "effect/crypto/SecureRandom"
 import * as Effect from "effect/Effect"
 import * as Hex from "effect/encoding/Hex"
@@ -98,6 +99,15 @@ describe("NodeCrypto", () => {
         "8da4e775a563c18f715f802a063c5a31b8a11f5c5ee1879ec3454e5f3c738d2d9d201395faa4b61a96c8"
       )
     }).pipe(Effect.provide(NodeCrypto.layerKdf)))
+
+  if (typeof NodeCryptoModule.argon2 === "function") {
+    it.effect("verifies a stored Argon2id password under a PBKDF2 policy", () =>
+      Effect.gen(function*() {
+        const passwords = yield* Password.Password
+        const stored = "$argon2id$v=19$m=65536,t=2,p=1$c29tZXNhbHQ$CTFhFdXPJO1aFaMaO6Mm5c8y7cJHAph8ArZWb2GRPPc"
+        assert.isTrue(yield* passwords.verify("password", stored))
+      }).pipe(Effect.provide(Password.layer({ algorithm: Kdf.pbkdf2Sha256 }).pipe(Layer.provide(NodeCrypto.layer)))))
+  }
 
   it.effect("layerAead encrypts ChaCha20-Poly1305 on node:crypto and the other algorithms through the core implementation", () =>
     Effect.gen(function*() {

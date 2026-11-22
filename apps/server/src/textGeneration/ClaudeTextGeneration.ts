@@ -37,6 +37,8 @@ import {
   makeClaudeEnvironment,
 } from "../provider/Drivers/ClaudeHome.ts";
 import { readClaudeLaunchArgSettings } from "../orchestration-v2/Adapters/ClaudeAdapterV2.ts";
+import { resolveAttachmentPath } from "../attachmentStore.ts";
+import * as ServerConfig from "../config.ts";
 import { runCliUntilResult } from "./runCliUntilResult.ts";
 
 const CLAUDE_TIMEOUT_MS = 180_000;
@@ -57,6 +59,9 @@ const CLAUDE_INVESTIGATION_DENIED = ["Bash(git * --output*)", "Bash(git * -o *)"
 const NO_SESSION_PERSISTENCE = "--no-session-persistence";
 // Claude Code before 2.0.63 exits with this on stderr; those runs retry without the flag.
 const NO_SESSION_PERSISTENCE_REJECTED = `error: unknown option '${NO_SESSION_PERSISTENCE}'`;
+// Only a rejection of images as such marks a model text-only, not a size or count limit.
+const IMAGES_UNSUPPORTED =
+  /image[^\n]*(?:not support|unsupported)|(?:not support|unsupported)[^\n]*image/i;
 
 const ClaudeOutputEnvelope = Schema.Struct({
   structured_output: Schema.Unknown,
@@ -101,22 +106,31 @@ function claudeErrorResult(stdout: string): string | undefined {
 
 // Claude prints its result, then spends most of a second flushing telemetry before it exits.
 // Failed results wait for the exit so their reporting stays on the exit-code path.
-function claudeSuccessReader() {
+function claudeSuccessReader(streamJson: boolean) {
   let stdout = "";
   return (chunk: string): string | undefined => {
     stdout += chunk;
-    if (!/[}\]]\s*$/.test(stdout)) return undefined;
-    const output = Option.getOrUndefined(decodeJsonOption(stdout));
-    const result = Array.isArray(output)
-      ? output.findLast(
-          (message) => Predicate.hasProperty(message, "type") && message.type === "result",
-        )
-      : output;
-    return Predicate.hasProperty(result, "structured_output") &&
-      !(Predicate.hasProperty(result, "is_error") && result.is_error === true)
-      ? stdout
-      : undefined;
+    if (streamJson) {
+      const lines = stdout.split("\n");
+      stdout = lines.pop() ?? "";
+      return lines.find(isClaudeSuccess);
+    }
+    return isClaudeSuccess(stdout) ? stdout : undefined;
   };
+}
+
+function isClaudeSuccess(stdout: string): boolean {
+  if (!/[}\]]\s*$/.test(stdout)) return false;
+  const output = Option.getOrUndefined(decodeJsonOption(stdout));
+  const result = Array.isArray(output)
+    ? output.findLast(
+        (message) => Predicate.hasProperty(message, "type") && message.type === "result",
+      )
+    : output;
+  return (
+    Predicate.hasProperty(result, "structured_output") &&
+    !(Predicate.hasProperty(result, "is_error") && result.is_error === true)
+  );
 }
 
 export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(function* (
@@ -131,10 +145,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
   const commandSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const serverConfig = yield* ServerConfig.ServerConfig;
   const claudeEnvironment = yield* makeClaudeEnvironment(claudeSettings, environment);
   const scopedModelCatalog = modelCatalog.pipe(
     Effect.map((catalog) => scopeClaudeModelCatalog(catalog, claudeSettings.customModels)),
   );
+  // Models that failed with images and then succeeded without them; later runs skip the image attempt.
+  const textOnlyModels = new Set<string>();
 
   const encodeJsonForOperation = (
     operation: TextGenerationOperations.Operation,
@@ -175,6 +192,36 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     return { path, hold };
   });
 
+  const readImageBlocks = Effect.fn("readImageBlocks")(function* (
+    attachments: TextGenerationOperations.Request<Schema.Top>["attachments"],
+  ) {
+    const blocks: Array<{
+      type: "image";
+      source: { type: "base64"; media_type: string; data: string };
+    }> = [];
+    for (const attachment of attachments ?? []) {
+      if (attachment.type !== "image") continue;
+      const attachmentPath = resolveAttachmentPath({
+        attachmentsDir: serverConfig.attachmentsDir,
+        attachment,
+      });
+      if (!attachmentPath) continue;
+      const bytes = yield* fileSystem
+        .readFile(attachmentPath)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (!bytes) continue;
+      blocks.push({
+        type: "image",
+        source: {
+          type: "base64",
+          media_type: attachment.mimeType,
+          data: Buffer.from(bytes).toString("base64"),
+        },
+      });
+    }
+    return blocks;
+  });
+
   const runClaudeJson = Effect.fn("runClaudeJson")(function* <S extends Schema.Top>({
     operation,
     cwd,
@@ -182,6 +229,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
     outputSchema: outputSchemaJson,
     modelSelection,
     investigate,
+    attachments,
   }: TextGenerationOperations.Request<S>): Effect.fn.Return<
     S["Type"],
     TextGenerationError,
@@ -250,8 +298,25 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
       "Failed to encode Claude CLI settings.",
     );
 
+    // `claude -p` accepts images only as content blocks of a stream-json user message.
+    const apiModelId = resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection);
+    const imageBlocks = textOnlyModels.has(apiModelId) ? [] : yield* readImageBlocks(attachments);
+    const imageStdin =
+      imageBlocks.length > 0
+        ? `${yield* encodeJsonForOperation(
+            operation,
+            {
+              type: "user",
+              message: { role: "user", content: [{ type: "text", text: prompt }, ...imageBlocks] },
+            },
+            "Failed to encode Claude CLI input.",
+          )}\n`
+        : undefined;
+
     const makeCommand = Effect.fn("runClaudeJson.makeCommand")(function* (
       noSessionPersistence: boolean,
+      stdin: string,
+      streamJson: boolean,
     ) {
       if (titleDirectory) yield* titleDirectory.hold;
       const managedMcpConfig = yield* hasClaudeManagedMcpConfig();
@@ -259,12 +324,13 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         claudeSettings.binaryPath || "claude",
         [
           "-p",
-          "--output-format",
-          "json",
+          ...(streamJson
+            ? ["--input-format", "stream-json", "--output-format", "stream-json", "--verbose"]
+            : ["--output-format", "json"]),
           "--json-schema",
           jsonSchemaStr,
           "--model",
-          resolveClaudeCatalogApiModelId(catalog, resolvedModelSelection),
+          apiModelId,
           ...(cliEffort ? ["--effort", cliEffort] : []),
           "--settings",
           settingsJson,
@@ -278,6 +344,7 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
                 CLAUDE_INVESTIGATION_DENIED,
               ]
             : ["--tools", ""]),
+          ...(investigate ? ["--setting-sources", "user"] : []),
           "--disable-slash-commands",
           ...(noSessionPersistence ? [NO_SESSION_PERSISTENCE] : []),
           // managed-mcp.json already isolates servers and makes Claude reject this flag.
@@ -292,29 +359,60 @@ export const makeClaudeTextGeneration = Effect.fn("makeClaudeTextGeneration")(fu
         cwd: workingDirectory,
         shell: spawnCommand.shell,
         stdin: {
-          stream: Stream.encodeText(Stream.make(prompt)),
+          stream: Stream.encodeText(Stream.make(stdin)),
         },
         forceKillAfter: "1 second",
       });
     });
-    const runClaudeCommand = (noSessionPersistence: boolean) =>
-      runCliUntilResult({
+    const runClaudeCommand = (noSessionPersistence: boolean, withImages: boolean) => {
+      const streamJson = withImages && imageStdin !== undefined;
+      return runCliUntilResult({
         spawner: commandSpawner,
         cliName: "claude",
         label: "Claude",
         operation,
-        command: makeCommand(noSessionPersistence),
-        readResult: claudeSuccessReader(),
-      });
+        command: makeCommand(noSessionPersistence, streamJson ? imageStdin : prompt, streamJson),
+        readResult: claudeSuccessReader(streamJson),
+      }).pipe(
+        Effect.map((run) =>
+          run._tag === "Exited" && streamJson
+            ? { ...run, stdout: run.stdout.trim().split("\n").at(-1) ?? "" }
+            : run,
+        ),
+      );
+    };
 
-    const rawStdout = yield* runClaudeCommand(true).pipe(
-      Effect.filterOrElse(
-        (run) =>
-          run._tag === "Result" ||
-          run.exitCode === 0 ||
-          !run.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
-        () => runClaudeCommand(false),
-      ),
+    const runClaudeAttempt = (withImages: boolean) =>
+      runClaudeCommand(true, withImages).pipe(
+        Effect.filterOrElse(
+          (result) =>
+            result._tag === "Result" ||
+            result.exitCode === 0 ||
+            !result.stderr.includes(NO_SESSION_PERSISTENCE_REJECTED),
+          () => runClaudeCommand(false, withImages),
+        ),
+      );
+
+    const rawStdout = yield* runClaudeAttempt(true).pipe(
+      // Text-only models (custom models behind Anthropic-compatible endpoints) reject image blocks.
+      Effect.flatMap((result) => {
+        if (result._tag === "Result" || result.exitCode === 0 || imageStdin === undefined) {
+          return Effect.succeed(result);
+        }
+        const imageFailure = `${result.stdout}\n${result.stderr}`;
+        return runClaudeAttempt(false).pipe(
+          Effect.tap((fallback) =>
+            Effect.sync(() => {
+              if (
+                (fallback._tag === "Result" || fallback.exitCode === 0) &&
+                IMAGES_UNSUPPORTED.test(imageFailure)
+              ) {
+                textOnlyModels.add(apiModelId);
+              }
+            }),
+          ),
+        );
+      }),
       Effect.flatMap((run) => {
         if (run._tag === "Result") return Effect.succeed(run.result);
         const { stdout, stderr, exitCode } = run;

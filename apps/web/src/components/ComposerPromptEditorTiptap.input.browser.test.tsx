@@ -7,14 +7,25 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
@@ -54,12 +65,22 @@ function Composer({
   skills,
   onChange,
   onCommandKeyDown = () => false,
+  importContextFragment,
+  literalText = false,
+  disabled = false,
+  placeholder = "",
+  placeholderSuffix,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
   onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  literalText?: boolean;
+  disabled?: boolean;
+  placeholder?: string;
+  placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -70,14 +91,17 @@ function Composer({
       richTextEnabled={richTextEnabled}
       contextRecords={new Map()}
       skills={skills}
-      disabled={false}
-      placeholder=""
+      disabled={disabled}
+      placeholder={placeholder}
+      placeholderSuffix={placeholderSuffix}
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
       }}
       onPaste={() => {}}
       onCommandKeyDown={onCommandKeyDown}
+      importContextFragment={importContextFragment}
+      literalText={literalText}
     />
   );
 }
@@ -287,6 +311,22 @@ it.each([
   },
 );
 
+it("distinguishes text edits from caret moves in change notifications", async () => {
+  const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
+  await using screen = await mountEditor("", true, [], onChange);
+  await act(async () => {
+    screen.editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(screen.editor.view.dom));
+  await userEvent.keyboard("/mod ab");
+  expect(onChange.mock.lastCall?.[0]).toBe("/mod ab");
+  expect(onChange.mock.lastCall?.[5]).toBe(true);
+
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(onChange.mock.lastCall?.[0]).toBe("/mod ab");
+  expect(onChange.mock.lastCall?.[5]).toBe(false);
+});
+
 // The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
 it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
@@ -390,6 +430,50 @@ it("lets composition replace selected text without surrounding it", async () => 
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
 });
 
+// CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
+describe("an IME composition over a selection with a chip", () => {
+  const chip = "[Seed · 2](t3-context://v1/thread/thread_seed)";
+  it.each([
+    { range: "text and the chip after it", anchor: 1, head: 6, composed: `あ ${chip} RIGHT` },
+    { range: "a chip and the text after it", anchor: 5, head: 7, composed: `LEFTあ${chip} RIGHT` },
+    {
+      range: "a chip and the text after it, backward",
+      anchor: 14,
+      head: 7,
+      composed: `LEFT${chip} あ`,
+    },
+  ])("replaces $range as typing would", async ({ anchor, head, composed }) => {
+    const value = `LEFT${chip} ${chip} RIGHT`;
+    await using screen = await mountEditor(`LEFT${chip} ${chip} `);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    await userEvent.keyboard("RIGHT");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    await act(async () => {
+      editor.commands.setTextSelection({ from: anchor, to: head });
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const session = cdp();
+    for (const text of ["u", "u3", "u30", "u304", "u3042"]) {
+      await session.send("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+    }
+    await session.send("Input.insertText", { text: "あ" });
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(composed));
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    expect(editor.state.selection.toJSON()).toEqual({ type: "text", anchor, head });
+  });
+});
+
 it.each([
   { at: "inside bold", selection: 5, composed: "**bo漢ld** after", bold: ["bo漢ld"] },
   {
@@ -482,6 +566,55 @@ it.each([
   expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
 });
 
+it.each([
+  { literalText: false, imports: 1 },
+  { literalText: true, imports: 0 },
+])(
+  "imports a copied snapshot's context over its image file: %o",
+  async ({ literalText, imports }) => {
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: ComposerContextId.make("image_snapshot"),
+      label: "shot.png",
+      attachmentId: "snapshot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } satisfies ComposerContextRecord;
+    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    await using screen = await render(
+      <Composer
+        value=""
+        richTextEnabled
+        skills={[]}
+        literalText={literalText}
+        importContextFragment={importContextFragment}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(
+        new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      );
+      clipboardData.setData("text/plain", formatComposerContextReference(record));
+      clipboardData.setData(
+        COMPOSER_CONTEXT_CLIPBOARD_MIME,
+        encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("snapshot-source") },
+          records: [record],
+        })!,
+      );
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+  },
+);
+
 it.each(["x\r\n\r\ny", "x\r\ry"])(
   "pastes %j with the same blank line as x\\n\\ny",
   async (text) => {
@@ -547,6 +680,18 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   expect(document.activeElement).not.toBe(scroller);
   const caret = editor.view.coordsAtPos(editor.state.selection.head);
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
+});
+
+it("does not outline the line under a click made with the node-select modifier held", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const paragraph = editor.view.dom.querySelector("p")!;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  await userEvent.keyboard(`{${mod}>}`);
+  await userEvent.click(paragraph);
+  await userEvent.keyboard(`{/${mod}}`);
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  expect(getComputedStyle(paragraph).outlineStyle).toBe("none");
 });
 
 describe("Markdown markers around styled text", () => {
@@ -823,7 +968,7 @@ const file = {
 } satisfies ComposerFileAttachment;
 
 describe("composer context undo lifetime", () => {
-  async function mountComposer(destinationValue = "") {
+  async function mountComposer(destinationValue = "", disabled = false) {
     const initialValue = `Draft A ${formatInlineContextReference(fileContextReference(file))}`;
     const editorRef = createRef<ComposerPromptEditorHandle>();
     let current: { value: string; files: ComposerFileAttachment[] };
@@ -854,7 +999,7 @@ describe("composer context undo lifetime", () => {
           ]),
         ),
         skills: [],
-        disabled: false,
+        disabled,
         placeholder: "",
         onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
           const changes = reconcileAttachmentContextReferences({
@@ -924,6 +1069,19 @@ describe("composer context undo lifetime", () => {
     await composer.unmount();
     expect(retained.files.size).toBe(0);
   });
+
+  it.each(["Backspace", "Delete"])(
+    "removes a focused chip with %s while dictation makes the composer read-only",
+    async (key) => {
+      await using composer = await mountComposer("", true);
+      composer
+        .getByRole("button", { name: /notes\.txt/ })
+        .element()
+        .focus();
+      await userEvent.keyboard(`{${key}}`);
+      expect(composer.draft()).toEqual({ value: "Draft A ", files: [] });
+    },
+  );
 
   it.each(["", "Draft B"])(
     "releases deleted payloads and prevents undo into the previous draft when switching to %j",
@@ -1013,4 +1171,73 @@ describe("an Arabic line", () => {
       box.left + box.width / 2,
     );
   });
+});
+
+it.each([true, false])(
+  "restores the caret after dictation unlocks the editor (rich text: %s)",
+  async (richTextEnabled) => {
+    const ui = (disabled: boolean) => (
+      <Composer value="Draft" richTextEnabled={richTextEnabled} skills={[]} disabled={disabled} />
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => {
+      editor.commands.setTextSelection(3);
+      editor.view.focus();
+    });
+    await screen.rerender(ui(true));
+    await screen.rerender(ui(false));
+    await vi.waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true);
+      expect(editor.view.dom.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+    });
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(editor.getText()).toBe("DrXaft"));
+  },
+);
+
+it.each(["other field", "document body"])(
+  "does not reclaim focus when it moves away during dictation and ends on the %s",
+  async (focusTarget) => {
+    const ui = (disabled: boolean) => (
+      <>
+        <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
+        <input aria-label="Other field" />
+      </>
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => editor.view.focus());
+    await screen.rerender(ui(true));
+    const other = screen.container.querySelector("input")!;
+    other.focus();
+    await vi.waitFor(() => expect(document.activeElement).toBe(other));
+    if (focusTarget === "document body") other.blur();
+    await screen.rerender(ui(false));
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(focusTarget === "document body" ? document.body : other),
+    );
+  },
+);
+
+it("lets a one-line placeholder's button take clicks and passes the rest to the editor", async () => {
+  const onClick = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      placeholder="Run the tests"
+      placeholderSuffix={
+        <button type="button" className="pointer-events-auto" onClick={onClick}>
+          Tab
+        </button>
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await userEvent.click(editor.view.dom, { position: { x: 12, y: 12 } });
+  await vi.waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: "Tab" }));
+  expect(onClick).toHaveBeenCalledOnce();
 });

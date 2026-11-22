@@ -1,6 +1,9 @@
+import { msg } from "gt-react";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ModelSelection, RuntimeMode, ScopedThreadRef } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { deriveThreadTitleSeed } from "@t3tools/client-runtime/operations";
+import type { StartThreadTurnInput } from "@t3tools/client-runtime/operations";
 import {
   type AtomCommandResult,
   isAtomCommandInterrupted,
@@ -17,9 +20,14 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 
+export type SideChatMessage = Pick<
+  StartThreadTurnInput["message"],
+  "text" | "attachments" | "context"
+> & { readonly titleSeed: string };
+
 /**
  * Starts side chats from `threadRef`, or offers none when it is null. `open` forks the
- * thread's latest stable point, sends `prompt` there with `readSettings()`, the parent
+ * thread's latest stable point, sends `message` there with `readSettings()`, the parent
  * composer's settings, and shows the tab. It resolves false when the side chat did not
  * start, or another one is still starting.
  */
@@ -46,17 +54,18 @@ export function useSideChat(input: {
   ) => {
     if (isAtomCommandInterrupted(failure)) return;
     const error = squashAtomCommandFailure(failure);
-    input.onError(error instanceof Error ? error.message : fallback);
+    input.onError(thrownErrorMessage(error, m) ?? fallback);
   };
-  const start = async (threadRef: ScopedThreadRef, prompt: string | undefined) => {
+  const start = async (threadRef: ScopedThreadRef, message: SideChatMessage | undefined) => {
     const { runtimeMode, modelSelection } = input.readSettings();
     const targetThreadId = newThreadId();
     const fork = await forkSideChat({
       environmentId: threadRef.environmentId,
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- stored on the server as the thread title, shared by every viewer
       input: { sourceThreadId: threadRef.threadId, targetThreadId, title: "Side chat" },
     });
     if (fork._tag === "Failure") {
-      reportFailure(fork, "Could not start a side chat.");
+      reportFailure(fork, m(msg("Could not start a side chat.")));
       return false;
     }
     // Drops the empty side chat a failed start leaves behind; one that got its message stays.
@@ -67,13 +76,13 @@ export function useSideChat(input: {
       });
     const targetRef = scopeThreadRef(threadRef.environmentId, targetThreadId);
     if (!(await waitForThreadShell(targetRef))) {
-      input.onError("The side chat was created, but it did not reach this client.");
+      input.onError(m(msg("The side chat was created, but it did not reach this client.")));
       discard();
       return false;
     }
     const sideChat = readThreadShell(targetRef);
     if (sideChat === null) {
-      input.onError("The side chat is no longer available.");
+      input.onError(m(msg("The side chat is no longer available.")));
       discard();
       return false;
     }
@@ -83,42 +92,42 @@ export function useSideChat(input: {
         input: { threadId: targetThreadId, runtimeMode, createdAt: new Date().toISOString() },
       });
       if (mode._tag === "Failure") {
-        reportFailure(mode, "Could not set the side chat's permission mode.");
+        reportFailure(mode, m(msg("Could not set the side chat's permission mode.")));
         discard();
         return false;
       }
     }
-    const text = prompt?.trim();
     // Send before showing the tab: closing a tab whose side chat has no run deletes it.
-    if (text) {
+    if (message) {
+      const { titleSeed, ...content } = message;
       const turn = await startThreadTurn({
         environmentId: threadRef.environmentId,
         input: {
           threadId: targetThreadId,
-          message: { messageId: newMessageId(), role: "user", text, attachments: [] },
+          message: { messageId: newMessageId(), role: "user", ...content },
           ...(modelSelection === undefined ? {} : { modelSelection }),
-          titleSeed: deriveThreadTitleSeed({ text, attachments: [] }),
+          titleSeed,
           runtimeMode,
           interactionMode: "default",
           createdAt: new Date().toISOString(),
         },
       });
       if (turn._tag === "Failure") {
-        reportFailure(turn, "Could not send the side chat message.");
+        reportFailure(turn, m(msg("Could not send the side chat message.")));
         discard();
         return false;
       }
     } else if (modelSelection !== undefined) {
       useComposerDraftStore.getState().setModelSelection(targetRef, modelSelection);
     }
-    useRightPanelStore.getState().openSideChat(threadRef, targetThreadId);
+    useRightPanelStore.getState().openThread(threadRef, targetThreadId);
     return true;
   };
-  const open = async (prompt?: string) => {
+  const open = async (message?: SideChatMessage) => {
     const { threadRef } = input;
     if (!threadRef || pendingRef.current) return false;
     pendingRef.current = true;
-    return start(threadRef, prompt).finally(() => {
+    return start(threadRef, message).finally(() => {
       pendingRef.current = false;
     });
   };
