@@ -20,7 +20,7 @@ import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
 import { PULL_REQUESTS_PANEL_REF, useRightPanelStore } from "../rightPanelStore";
 import {
-  selectThreadBranchBaseRef,
+  selectRepositoryBranchBaseRef,
   selectThreadDiffPanelSelection,
   useDiffPanelStore,
 } from "../diffPanelStore";
@@ -188,7 +188,12 @@ export function useOpenChangeRequestLink(
       event.preventDefault();
       event.stopPropagation();
       const userActionRevision = useRightPanelStore.getState().markUserAction(resolvedThreadRef);
-      const baseRef = selectThreadBranchBaseRef(useDiffPanelStore.getState(), resolvedThreadRef);
+      // The commit is looked up in the thread folder, whatever repository the Diff panel remembers.
+      const baseRef = selectRepositoryBranchBaseRef(
+        useDiffPanelStore.getState(),
+        resolvedThreadRef,
+        null,
+      );
       const selection = selectThreadDiffPanelSelection(
         useDiffPanelStore.getState().byThreadKey,
         resolvedThreadRef,
@@ -218,6 +223,7 @@ export function useOpenChangeRequestLink(
               (source) => source.kind === "commit" && source.headRef === commit.sha,
             )
           ) {
+            useDiffPanelStore.getState().selectGitRepository(resolvedThreadRef, null);
             useDiffPanelStore.getState().selectCommit(resolvedThreadRef, commit.sha);
             useRightPanelStore.getState().open(resolvedThreadRef, "diff");
             return;
