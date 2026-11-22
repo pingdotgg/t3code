@@ -18,6 +18,7 @@ mod shell;
 #[cfg(feature = "testkit")]
 pub mod testkit;
 mod thread;
+mod timeline;
 
 pub use conn_contract::{
     AnnotationCapture, AnnotationRecord, AnnotationRecordSource, AnnotationStatus,
@@ -52,6 +53,15 @@ pub use crate::layout::{
 };
 pub use crate::shell::{ShellChange, ShellState, ThreadActivity};
 pub use crate::thread::{
-    EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
-    parse_iso8601_epoch_ms,
+    EntryTiming, ItemStatus, RunStatus, RunTiming, SecretRequestStatus, ThreadState, TimelineEntry,
+    TurnCheckpointSummary, TurnItemStatus, parse_iso8601_epoch_ms, turn_item_detail,
+};
+pub use crate::timeline::{
+    LocalDateTime, PLAN_PREVIEW_MAX_LINES, SubagentTone, TurnCheckpointFile, TurnDiffRow,
+    TurnDiffTreeNode, UserInputAnswer, UserInputAnswerValue, UserInputDraft, UserInputOption,
+    UserInputQuestion, build_turn_diff_tree, build_user_input_answers, collapsed_plan_preview,
+    flatten_turn_diff_tree, format_chat_timestamp_tooltip, format_day_aware_timestamp,
+    format_duration, format_subagent_display_title, normalize_plan_markdown_for_export,
+    plan_can_collapse, proposed_plan_title, strip_displayed_plan_markdown, subagent_detail,
+    subagent_settled, subagent_status_visual,
 };

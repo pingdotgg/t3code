@@ -35,6 +35,26 @@ pub(super) const EDIT: &str = "superhero/edit.svg";
 pub(super) const CLOSE: &str = "superhero/close.svg";
 pub(super) const IMAGE: &str = "superhero/image.svg";
 
+// Card and hover-action glyphs (Lucide name -> superheroicons concept via manifest.json).
+/// `Redo2` (Conn's `Steer` marker).
+pub(super) const REDO: &str = "superhero/redo.svg";
+/// `GitFork` (`Fork from this response`).
+pub(super) const FORK: &str = "superhero/fork.svg";
+/// `Minus` (declined secret request).
+pub(super) const MINUS: &str = "superhero/remove.svg";
+/// `Lock` (secret pending in another thread).
+pub(super) const LOCK: &str = "superhero/lock.svg";
+/// `ShieldCheck` (secret privacy note).
+pub(super) const SHIELD_CHECK: &str = "superhero/shield-check.svg";
+/// `FileDiff` (`Open diff`).
+pub(super) const FILE_DIFF: &str = "superhero/file-diff.svg";
+/// `ChevronsUpDown` (`Expand all folders`).
+pub(super) const CHEVRONS_UP_DOWN: &str = "superhero/chevrons-up-down.svg";
+/// `ChevronsDownUp` (`Collapse all folders`).
+pub(super) const CHEVRONS_DOWN_UP: &str = "superhero/chevrons-down-up.svg";
+/// `ExternalLink` (secret sign-in page).
+pub(super) const EXTERNAL_LINK: &str = "superhero/external-link.svg";
+
 /// Returns the superheroicons asset path for a `TimelineEntry::Tool` using both its
 /// contract `kind` and human-readable `title` (matching Conn's `toolGroupAction`).
 pub(super) fn tool_icon_path(kind: &str, title: &str) -> &'static str {

@@ -171,6 +171,81 @@ pub(crate) fn respond_approval(
     }))
 }
 
+/// `runtime-request.respond`: answer a `user_input_request` with `answers` keyed by question id
+/// (each a string or a string array), as Conn's `ComposerPendingUserInputPanel` submits them.
+pub(crate) fn respond_user_input(
+    thread_id: &str,
+    request_id: &str,
+    answers: &serde_json::Map<String, serde_json::Value>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "runtime-request.respond",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "requestId": request_id,
+        "answers": serde_json::Value::Object(answers.clone()),
+    }))
+}
+
+/// `thread.user-input.dismiss`: dismiss a message-mode question without answering it.
+pub(crate) fn dismiss_user_input(
+    thread_id: &str,
+    request_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.user-input.dismiss",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "requestId": request_id,
+    }))
+}
+
+/// `thread.fork`: fork `source_thread_id` at run `run_id` into the new `target_thread_id`
+/// (Conn's `Fork from this response`, `forkThreadFromRun`).
+pub(crate) fn fork_thread_from_run(
+    source_thread_id: &str,
+    target_thread_id: &str,
+    run_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "thread.fork",
+        "commandId": new_id("cmd"),
+        "createdBy": "user",
+        "creationSource": "web",
+        "sourceThreadId": source_thread_id,
+        "targetThreadId": target_thread_id,
+        "sourcePoint": { "type": "run", "runId": run_id },
+    }))
+}
+
+/// RPC tag for answering a secret request.
+pub(crate) const SECRETS_ANSWER_REQUEST: &str = "secrets.answerRequest";
+
+/// `secrets.answerRequest` payload: save the trimmed `secret` (`Some`) or decline (`None`) for
+/// the secret request turn item `turn_item_id` (`secretRequestAnswerInput`). Returns `None`
+/// when a save has only whitespace.
+pub(crate) fn secret_answer_payload(
+    thread_id: &str,
+    turn_item_id: &str,
+    secret: Option<&str>,
+) -> Option<serde_json::Value> {
+    let answer = match secret {
+        None => json!({ "type": "decline" }),
+        Some(raw) => {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            json!({ "type": "save", "secret": trimmed })
+        }
+    };
+    Some(json!({
+        "threadId": thread_id,
+        "turnItemId": turn_item_id,
+        "answer": answer,
+    }))
+}
+
 /// `thread.model-selection.set`: switch the thread to `model` on provider `instance_id`,
 /// optionally passing provider/model `options` (such as `{ "effort": "high" }`).
 pub(crate) fn set_model_selection(
@@ -402,6 +477,40 @@ mod tests {
         assert!(
             respond_approval("t1", "r1", "accept").is_ok(),
             "runtime-request.respond decodes"
+        );
+        let mut answers = serde_json::Map::new();
+        answers.insert("q1".to_owned(), json!("golang"));
+        answers.insert("q2".to_owned(), json!(["fmt", "clippy"]));
+        assert!(
+            respond_user_input("t1", "r1", &answers).is_ok(),
+            "runtime-request.respond with answers decodes"
+        );
+        assert!(
+            dismiss_user_input("t1", "r1").is_ok(),
+            "thread.user-input.dismiss decodes"
+        );
+        assert!(
+            fork_thread_from_run("t1", "t2", "run-1").is_ok(),
+            "thread.fork from run decodes"
+        );
+        for secret in [Some("  ghp_abc  "), None] {
+            let payload = secret_answer_payload("t1", "item-secret", secret);
+            let decoded =
+                payload.map(conn_contract::from_json::<conn_contract::SecretRequestAnswerInput>);
+            assert!(
+                matches!(decoded, Some(Ok(_))),
+                "secrets.answerRequest payload decodes for {secret:?}"
+            );
+        }
+        assert_eq!(
+            secret_answer_payload("t1", "item-secret", Some("ghp_abc  "))
+                .and_then(|p| p["answer"]["secret"].as_str().map(str::to_owned)),
+            Some("ghp_abc".to_owned()),
+            "saved secret is trimmed"
+        );
+        assert!(
+            secret_answer_payload("t1", "item-secret", Some("   ")).is_none(),
+            "blank secret is not sent"
         );
         assert!(
             set_interaction_mode("t1", "plan").is_ok(),

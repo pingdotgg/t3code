@@ -198,8 +198,20 @@ impl ConnApp {
                 } => {
                     app.select_model(instance_id, model, options.as_ref(), cx);
                 }
-                crate::chat::ChatEvent::OpenDiff => {
+                crate::chat::ChatEvent::OpenTurnDiff {
+                    app_run_ordinal, ..
+                } => {
+                    // The Diff panel scopes by checkpoint turn; it has no per-file focus yet.
+                    let turn = *app_run_ordinal;
+                    app.right_panel
+                        .update(cx, |panel, cx| panel.set_turn_count(turn, cx));
                     app.select_right_panel_tab(RightPanelTab::Diff, cx);
+                }
+                crate::chat::ChatEvent::OpenThread(thread_id) => {
+                    app.select_thread(thread_id.clone(), cx);
+                }
+                crate::chat::ChatEvent::ForkFromRun { run_id } => {
+                    app.fork_selected_from_run(run_id, cx);
                 }
                 crate::chat::ChatEvent::OpenFile(path) => {
                     app.select_right_panel_surface(PanelSurface::File(path.clone()), cx);
@@ -1539,6 +1551,41 @@ impl ConnApp {
         .detach();
     }
 
+    /// Forks the selected thread at `run_id` into a new thread and opens it
+    /// (Conn `onForkFromRun` -> `forkThreadFromRun`).
+    pub(crate) fn fork_selected_from_run(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(source_thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let target_thread_id = crate::commands::new_thread_id();
+        let command = match crate::commands::fork_thread_from_run(
+            &source_thread_id,
+            &target_thread_id,
+            run_id,
+        ) {
+            Ok(command) => command,
+            Err(e) => {
+                eprintln!("fork: could not build thread.fork: {e}");
+                return;
+            }
+        };
+        cx.spawn(async move |this, cx| {
+            let result = connection.dispatch_command(command).await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(_) => app.select_thread(target_thread_id, cx),
+                Err(err) => {
+                    let message = crate::commands::format_client_error(&err);
+                    app.chat
+                        .update(cx, |chat, cx| chat.set_error(Some(message), cx));
+                }
+            });
+        })
+        .detach();
+    }
+
     /// Switches the selected thread's (or active draft's) model and optional effort/provider
     /// options (`thread.model-selection.set`).
     pub(crate) fn select_model(
@@ -1851,6 +1898,10 @@ impl ConnApp {
                 id: format!("big-u-{turn}"),
                 text: format!("Turn #{turn}: {topic} and verify edge cases."),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             });
 
             // Simulate realistic agent work (thinking + 3 tools) per turn.
@@ -1893,6 +1944,7 @@ impl ConnApp {
                     } else {
                         ItemStatus::Completed
                     },
+                    output_omitted: false,
                 });
                 state.entry_timings.insert(
                     tool_id,
@@ -1919,6 +1971,9 @@ impl ConnApp {
                      - Checked `ListState::splice` anchor stability."
                 ),
                 streaming: false,
+                created_at: None,
+                run_id: Some(run_id.clone()),
+                status: conn_state::ItemStatus::Completed,
             });
             state.entry_timings.insert(
                 asst_id,
@@ -1938,6 +1993,7 @@ impl ConnApp {
                         file_count: 2 + (turn % 4),
                         additions: (18 + turn) as i64,
                         deletions: (4 + (turn % 7)) as i64,
+                        files: Vec::new(),
                     },
                 );
             }

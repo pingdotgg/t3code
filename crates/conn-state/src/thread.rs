@@ -7,7 +7,6 @@ use conn_contract::{
     OrchestrationV2ConversationMessage as ConversationMessage,
     OrchestrationV2DomainEvent as DomainEvent, OrchestrationV2LinkRequestStatus as LinkStatus,
     OrchestrationV2PlanStepStatus as PlanStepStatus, OrchestrationV2Run as Run,
-    OrchestrationV2RunStatus as RunStatus, OrchestrationV2SecretRequestStatus as SecretStatus,
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
     OrchestrationV2ThreadStreamItem as ThreadStreamItem, OrchestrationV2TurnItem as TurnItem,
     OrchestrationV2TurnItemApprovalRequest as ApprovalRequestItem,
@@ -25,7 +24,6 @@ use conn_contract::{
     OrchestrationV2TurnItemRunInterruptRequest as RunInterruptRequestItem,
     OrchestrationV2TurnItemRunInterruptResult as RunInterruptResultItem,
     OrchestrationV2TurnItemSecretRequest as SecretRequestItem,
-    OrchestrationV2TurnItemStatus as TurnItemStatus,
     OrchestrationV2TurnItemSubagent as SubagentItem,
     OrchestrationV2TurnItemSystemNotice as SystemNoticeItem,
     OrchestrationV2TurnItemThreadCreated as ThreadCreatedItem,
@@ -34,6 +32,17 @@ use conn_contract::{
     OrchestrationV2TurnItemUserMessage as UserMessageItem,
     OrchestrationV2TurnItemWebSearch as WebSearchItem,
     OrchestrationV2UserMessageInputIntent as UserMessageIntent, ProviderRequestKind,
+};
+
+pub use conn_contract::{
+    OrchestrationV2RunStatus as RunStatus,
+    OrchestrationV2SecretRequestStatus as SecretRequestStatus,
+    OrchestrationV2TurnItemStatus as TurnItemStatus,
+};
+
+use crate::timeline::{
+    TurnCheckpointFile, UserInputAnswer, UserInputOption, UserInputQuestion,
+    format_subagent_display_title, proposed_plan_title, subagent_detail,
 };
 
 const WORKSPACE_PREPARATION_INPUT: &str = "Preparing workspace";
@@ -62,6 +71,12 @@ pub enum TimelineEntry {
         /// True when the message was dispatched by an agent or system rather than the human user
         /// (Conn renders these as a collapsible `"Agent <preview>"` row).
         created_by_agent: bool,
+        /// ISO-8601 creation time (`startedAt`, else `updatedAt`) for the hover timestamp.
+        created_at: Option<String>,
+        attachments: Vec<ChatAttachment>,
+        /// True for `steer` and `promoted_queued_to_steer` messages (Conn's `Steer` marker).
+        is_steer: bool,
+        run_id: Option<String>,
     },
     /// A server-backed queued user message waiting to run after the active turn (or while the
     /// queue is held).
@@ -79,6 +94,10 @@ pub enum TimelineEntry {
         id: String,
         markdown: String,
         streaming: bool,
+        /// ISO-8601 `updatedAt` for the hover timestamp.
+        created_at: Option<String>,
+        run_id: Option<String>,
+        status: ItemStatus,
     },
     Thinking {
         id: String,
@@ -93,12 +112,71 @@ pub enum TimelineEntry {
         title: String,
         detail: Option<String>,
         status: ItemStatus,
+        /// True when the server compacted the output away; expand fetches it on demand
+        /// (`orchestration.getTurnItem`).
+        output_omitted: bool,
     },
-    /// A pending approval or question the user must answer.
+    /// A pending approval the user must answer.
     Approval {
         id: String,
         title: String,
         detail: Option<String>,
+    },
+    /// A provider question (`user_input_request`): pending questions render Conn's interactive
+    /// picker; answered ones render the answer history.
+    UserInputRequest {
+        id: String,
+        request_id: String,
+        title: Option<String>,
+        questions: Vec<UserInputQuestion>,
+        status: TurnItemStatus,
+        /// True while the request still waits for an answer.
+        pending: bool,
+        answers: Vec<UserInputAnswer>,
+        /// True for `responseMode: "message"` requests, which can be dismissed unanswered.
+        dismissible: bool,
+        created_at: Option<String>,
+    },
+    /// A secret request (`secret_request`), answered with `secrets.answerRequest` keyed by `id`.
+    SecretRequest {
+        id: String,
+        label: String,
+        reason: String,
+        url: Option<String>,
+        placeholder: Option<String>,
+        /// True when the secret is delivered to the agent as a private file.
+        file_delivery: bool,
+        status: SecretRequestStatus,
+        /// True while the request still waits for an answer.
+        pending: bool,
+        created_at: Option<String>,
+    },
+    /// A proposed plan (`proposed_plan`), rendered as Conn's `ProposedPlanCard`.
+    ProposedPlan {
+        id: String,
+        run_id: Option<String>,
+        /// The plan's first heading, else `"Proposed plan"`.
+        title: String,
+        markdown: String,
+        streaming: bool,
+        status: ItemStatus,
+        created_at: Option<String>,
+    },
+    /// A delegated subagent (`subagent`), rendered as Conn's `SubagentTimelineLink`.
+    Subagent {
+        id: String,
+        child_thread_id: Option<String>,
+        title: String,
+        /// Provider driver (`codex`, `claudeAgent`, ...).
+        role: String,
+        status: TurnItemStatus,
+        /// One-line progress or result detail.
+        summary: Option<String>,
+        /// Linked environment label when the child runs remotely (`on <label>`).
+        remote_label: Option<String>,
+        created_at: Option<String>,
+        started_at: Option<String>,
+        completed_at: Option<String>,
     },
     /// An error or notice row.
     Notice {
@@ -119,6 +197,10 @@ impl TimelineEntry {
             | Self::Thinking { id, .. }
             | Self::Tool { id, .. }
             | Self::Approval { id, .. }
+            | Self::UserInputRequest { id, .. }
+            | Self::SecretRequest { id, .. }
+            | Self::ProposedPlan { id, .. }
+            | Self::Subagent { id, .. }
             | Self::Notice { id, .. } => id,
         }
     }
@@ -147,6 +229,9 @@ pub struct TurnCheckpointSummary {
     pub file_count: usize,
     pub additions: i64,
     pub deletions: i64,
+    /// Changed files with per-file stats. May be a prefix of `file_count` when the server
+    /// truncated the list.
+    pub files: Vec<TurnCheckpointFile>,
 }
 
 /// Run metadata tracked to derive `working`, `active_run_id`, and queued message order.
@@ -280,6 +365,21 @@ impl ThreadState {
         self.runs
             .values()
             .filter(|run| is_run_active(run.status))
+            .max_by_key(|run| run.ordinal)
+            .map(|run| run.id.as_str())
+    }
+
+    /// Returns the status of run `run_id`, when tracked.
+    #[must_use]
+    pub fn run_status(&self, run_id: &str) -> Option<RunStatus> {
+        self.runs.get(run_id).map(|run| run.status)
+    }
+
+    /// Returns the id of the latest run by ordinal (Conn's `latestRun`).
+    #[must_use]
+    pub fn latest_run_id(&self) -> Option<&str> {
+        self.runs
+            .values()
             .max_by_key(|run| run.ordinal)
             .map(|run| run.id.as_str())
     }
@@ -529,6 +629,16 @@ impl ThreadState {
             file_count,
             additions,
             deletions,
+            files: cp
+                .files
+                .iter()
+                .map(|f| TurnCheckpointFile {
+                    path: f.path.clone(),
+                    kind: f.kind.clone(),
+                    additions: f.additions,
+                    deletions: f.deletions,
+                })
+                .collect(),
         };
         let changed = self.turn_checkpoints.get(run_id) != Some(&summary);
         self.turn_checkpoints.insert(run_id.clone(), summary);
@@ -815,6 +925,9 @@ impl ThreadState {
                     id: item_id.to_owned(),
                     markdown: delta.to_owned(),
                     streaming: true,
+                    created_at: None,
+                    run_id: None,
+                    status: ItemStatus::Running,
                 }
             };
             self.entries.push(new_entry);
@@ -826,10 +939,14 @@ impl ThreadState {
             && let Some(entry) = self.entries.iter_mut().find(|e| e.id() == item_id)
         {
             match entry {
-                TimelineEntry::Assistant { streaming, .. }
-                | TimelineEntry::Thinking { streaming, .. }
-                    if *streaming =>
-                {
+                TimelineEntry::Assistant {
+                    streaming, status, ..
+                } if *streaming => {
+                    *streaming = false;
+                    *status = ItemStatus::Completed;
+                    return true;
+                }
+                TimelineEntry::Thinking { streaming, .. } if *streaming => {
                     *streaming = false;
                     return true;
                 }
@@ -998,6 +1115,17 @@ fn turn_item_id(item: &TurnItem) -> &str {
     }
 }
 
+/// Returns the expanded detail text for a turn item fetched on demand
+/// (`orchestration.getTurnItem`) after its output was omitted from the thread snapshot.
+#[must_use]
+pub fn turn_item_detail(item: TurnItem) -> Option<String> {
+    match map_turn_item(item)? {
+        TimelineEntry::Tool { detail, .. } => detail,
+        TimelineEntry::Thinking { text, .. } => non_empty(Some(text)),
+        _ => None,
+    }
+}
+
 fn map_projection_turn_item(item: ProjectionTurnItem) -> Option<TimelineEntry> {
     match item {
         ProjectionTurnItem::Notification(i) => map_notification(i),
@@ -1078,10 +1206,18 @@ fn map_user_message(item: UserMessageItem) -> Option<TimelineEntry> {
             _ => {}
         }
     }
+    let is_steer = matches!(
+        item.input_intent,
+        UserMessageIntent::Steer | UserMessageIntent::PromotedQueuedToSteer
+    );
     Some(TimelineEntry::User {
         id: item.id,
         text: item.text,
         created_by_agent: item.created_by != Actor::User,
+        created_at: Some(item.started_at.unwrap_or(item.updated_at)),
+        attachments: item.attachments,
+        is_steer,
+        run_id: item.run_id,
     })
 }
 
@@ -1090,6 +1226,9 @@ fn map_assistant_message(item: AssistantMessageItem) -> Option<TimelineEntry> {
         id: item.id,
         markdown: item.text,
         streaming: item.streaming,
+        created_at: Some(item.updated_at),
+        run_id: item.run_id,
+        status: map_item_status(item.status),
     })
 }
 
@@ -1102,10 +1241,17 @@ fn map_reasoning(item: ReasoningItem) -> Option<TimelineEntry> {
 }
 
 fn map_proposed_plan(item: ProposedPlanItem) -> Option<TimelineEntry> {
-    Some(TimelineEntry::Assistant {
+    let title = proposed_plan_title(&item.markdown)
+        .or_else(|| non_empty(item.title))
+        .unwrap_or_else(|| "Proposed plan".to_owned());
+    Some(TimelineEntry::ProposedPlan {
         id: item.id,
+        run_id: item.run_id,
+        title,
         markdown: item.markdown,
         streaming: item.streaming,
+        status: map_item_status(item.status),
+        created_at: Some(item.updated_at),
     })
 }
 
@@ -1137,6 +1283,7 @@ fn map_command_execution(item: CommandExecutionItem) -> Option<TimelineEntry> {
         title,
         detail,
         status,
+        output_omitted: item.output_omitted == Some(true),
     })
 }
 
@@ -1157,6 +1304,7 @@ fn map_file_change(item: FileChangeItem) -> Option<TimelineEntry> {
         title,
         detail,
         status: map_item_status(item.status),
+        output_omitted: false,
     })
 }
 
@@ -1168,6 +1316,7 @@ fn map_file_search(item: FileSearchItem) -> Option<TimelineEntry> {
         title,
         detail: non_empty(item.pattern),
         status: map_item_status(item.status),
+        output_omitted: false,
     })
 }
 
@@ -1183,6 +1332,7 @@ fn map_web_search(item: WebSearchItem) -> Option<TimelineEntry> {
         title,
         detail,
         status: map_item_status(item.status),
+        output_omitted: false,
     })
 }
 
@@ -1190,26 +1340,43 @@ fn map_dynamic_tool(item: DynamicToolItem) -> Option<TimelineEntry> {
     let title = non_empty(item.title)
         .or_else(|| non_empty(item.tool_name))
         .unwrap_or_else(|| "Tool call".to_owned());
+    let output_omitted = item.output_omitted == Some(true);
+    let detail = non_empty(
+        item.output
+            .as_ref()
+            .and_then(Option::as_ref)
+            .and_then(json_text),
+    )
+    .or_else(|| non_empty(item.viewed_image_path));
     Some(TimelineEntry::Tool {
         id: item.id,
         kind: "dynamic_tool".to_owned(),
         title,
-        detail: non_empty(item.viewed_image_path),
+        detail,
         status: map_item_status(item.status),
+        output_omitted,
     })
 }
 
 fn map_subagent(item: SubagentItem) -> Option<TimelineEntry> {
-    let title = non_empty(item.title).unwrap_or_else(|| "Subagent".to_owned());
-    let detail = non_empty(item.progress)
-        .or_else(|| non_empty(item.result))
-        .or_else(|| non_empty(Some(item.prompt)));
-    Some(TimelineEntry::Tool {
+    let title =
+        format_subagent_display_title(non_empty(item.title).as_deref().unwrap_or("Subagent"));
+    let summary = subagent_detail(
+        item.status,
+        item.progress.as_deref(),
+        item.result.as_deref(),
+    );
+    Some(TimelineEntry::Subagent {
         id: item.id,
-        kind: "subagent".to_owned(),
+        child_thread_id: non_empty(item.child_thread_id),
         title,
-        detail,
-        status: map_item_status(item.status),
+        role: item.driver,
+        status: item.status,
+        summary,
+        remote_label: item.remote_child.map(|remote| remote.label),
+        created_at: Some(item.updated_at),
+        started_at: item.started_at,
+        completed_at: item.completed_at,
     })
 }
 
@@ -1238,6 +1405,7 @@ fn map_todo_list(item: TodoListItem) -> Option<TimelineEntry> {
         title,
         detail: non_empty(item.explanation),
         status: map_item_status(item.status),
+        output_omitted: false,
     })
 }
 
@@ -1259,57 +1427,128 @@ fn map_approval_request(item: ApprovalRequestItem) -> Option<TimelineEntry> {
             title,
             detail,
             status: map_item_status(item.status),
+            output_omitted: false,
         })
     }
 }
 
 fn map_user_input_request(item: UserInputRequestItem) -> Option<TimelineEntry> {
-    let answered = item.question_answer.is_some();
-    let title = non_empty(item.title).unwrap_or_else(|| {
-        if answered {
-            "Answered questions".to_owned()
-        } else {
-            "Input requested".to_owned()
+    let questions: Vec<UserInputQuestion> = item
+        .questions
+        .into_iter()
+        .map(|q| UserInputQuestion {
+            id: q.id,
+            header: q.header,
+            question: q.question,
+            options: q
+                .options
+                .into_iter()
+                .map(|o| UserInputOption {
+                    label: o.label,
+                    description: o.description,
+                    value: o.value,
+                })
+                .collect(),
+            multi_select: q.multi_select == Some(true),
+            allow_custom_answer: q.allow_custom_answer != Some(false),
+            initial_answer: q.initial_answer,
+        })
+        .collect();
+    let answers = item
+        .question_answer
+        .as_ref()
+        .map(|payload| {
+            let texts = payload.question_text_by_id.as_ref();
+            let mut out: Vec<UserInputAnswer> = Vec::new();
+            // Keep question order; append answers for ids the questions list lacks.
+            for q in &questions {
+                if let Some(value) = payload.answers.get(&q.id) {
+                    out.push(UserInputAnswer {
+                        question_id: q.id.clone(),
+                        question: texts
+                            .and_then(|t| t.get(&q.id).cloned())
+                            .unwrap_or_else(|| q.question.clone()),
+                        answer: answer_text(value),
+                    });
+                }
+            }
+            for (qid, value) in &payload.answers {
+                if !questions.iter().any(|q| &q.id == qid) {
+                    out.push(UserInputAnswer {
+                        question_id: qid.clone(),
+                        question: texts.and_then(|t| t.get(qid).cloned()).unwrap_or_default(),
+                        answer: answer_text(value),
+                    });
+                }
+            }
+            out
+        })
+        .unwrap_or_default();
+    let pending = is_pending_item_status(item.status) && item.question_answer.is_none();
+    Some(TimelineEntry::UserInputRequest {
+        id: item.id,
+        request_id: item.request_id,
+        title: non_empty(item.title),
+        questions,
+        status: item.status,
+        pending,
+        answers,
+        dismissible: item.response_mode.is_some(),
+        created_at: Some(item.started_at.unwrap_or(item.updated_at)),
+    })
+}
+
+/// Renders one provider answer value (`string`, `string[]`, or other JSON) as display text.
+fn answer_text(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(items) => {
+            items.iter().map(answer_text).collect::<Vec<_>>().join(", ")
         }
-    });
-    let detail = item.questions.first().map(|q| q.question.clone());
-    if is_pending_item_status(item.status) && !answered {
-        Some(TimelineEntry::Approval {
-            id: item.id,
-            title,
-            detail,
-        })
-    } else {
-        Some(TimelineEntry::Tool {
-            id: item.id,
-            kind: "user_input".to_owned(),
-            title,
-            detail,
-            status: map_item_status(item.status),
-        })
+        serde_json::Value::Null => String::new(),
+        other => other.to_string(),
+    }
+}
+
+/// Text of a dynamic tool's JSON output: strings as-is, `{ text }` / `{ content: [{text}] }`
+/// unwrapped, other values pretty-printed.
+fn json_text(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::Null => None,
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Object(map) => {
+            if let Some(text) = map.get("text").and_then(serde_json::Value::as_str) {
+                return Some(text.to_owned());
+            }
+            if let Some(serde_json::Value::Array(parts)) = map.get("content") {
+                let joined: Vec<&str> = parts
+                    .iter()
+                    .filter_map(|p| p.get("text").and_then(serde_json::Value::as_str))
+                    .collect();
+                if !joined.is_empty() {
+                    return Some(joined.join("\n"));
+                }
+            }
+            serde_json::to_string_pretty(value).ok()
+        }
+        other => serde_json::to_string_pretty(other).ok(),
     }
 }
 
 fn map_secret_request(item: SecretRequestItem) -> Option<TimelineEntry> {
-    let title = non_empty(item.title)
-        .or_else(|| non_empty(Some(item.label)))
-        .unwrap_or_else(|| "Secret requested".to_owned());
-    let detail = non_empty(Some(item.reason));
-    if item.secret_status == SecretStatus::Pending && is_pending_item_status(item.status) {
-        Some(TimelineEntry::Approval {
-            id: item.id,
-            title,
-            detail,
-        })
-    } else {
-        Some(TimelineEntry::Tool {
-            id: item.id,
-            kind: "secret_request".to_owned(),
-            title,
-            detail,
-            status: map_item_status(item.status),
-        })
-    }
+    let pending =
+        item.secret_status == SecretRequestStatus::Pending && is_pending_item_status(item.status);
+    Some(TimelineEntry::SecretRequest {
+        id: item.id,
+        label: item.label,
+        reason: item.reason,
+        url: non_empty(item.url),
+        placeholder: non_empty(item.placeholder),
+        file_delivery: item.delivery.is_some(),
+        status: item.secret_status,
+        pending,
+        created_at: Some(item.started_at.unwrap_or(item.updated_at)),
+    })
 }
 
 fn map_link_request(item: LinkRequestItem) -> Option<TimelineEntry> {
@@ -1317,21 +1556,21 @@ fn map_link_request(item: LinkRequestItem) -> Option<TimelineEntry> {
         .or_else(|| non_empty(item.label))
         .unwrap_or_else(|| "Link environment".to_owned());
     let detail = non_empty(Some(item.reason));
-    if item.link_status == LinkStatus::Pending && is_pending_item_status(item.status) {
-        Some(TimelineEntry::Approval {
-            id: item.id,
-            title,
-            detail,
-        })
+    // Peer linking is Orbit-owned (`docs/scope.md` #1): show a read-only row, never
+    // Approve/Decline buttons that cannot link anything.
+    let status = if item.link_status == LinkStatus::Pending && is_pending_item_status(item.status) {
+        ItemStatus::Running
     } else {
-        Some(TimelineEntry::Tool {
-            id: item.id,
-            kind: "link_request".to_owned(),
-            title,
-            detail,
-            status: map_item_status(item.status),
-        })
-    }
+        map_item_status(item.status)
+    };
+    Some(TimelineEntry::Tool {
+        id: item.id,
+        kind: "link_request".to_owned(),
+        title,
+        detail,
+        status,
+        output_omitted: false,
+    })
 }
 
 fn map_error(item: ErrorItem) -> Option<TimelineEntry> {
@@ -1413,6 +1652,7 @@ fn map_thread_created(item: ThreadCreatedItem) -> Option<TimelineEntry> {
         title,
         detail: Some(item.target_thread_id),
         status: map_item_status(item.status),
+        output_omitted: false,
     })
 }
 
@@ -1596,7 +1836,7 @@ pub fn parse_iso8601_epoch_ms(raw: &str) -> Option<i64> {
     Some(secs * 1000 + millis)
 }
 
-fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
+pub(crate) fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let y = year - i64::from(month <= 2);
     let era = y.div_euclid(400);
     let yoe = y.rem_euclid(400);

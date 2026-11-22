@@ -75,14 +75,24 @@ pub(super) enum VirtualItem {
     Assistant {
         row_idx: usize,
         followed_by_work: bool,
+        /// Show Conn's hover meta bar (Copy, Fork, timestamp): the run's terminal assistant
+        /// message once the run no longer streams (`terminalAssistantMessageIds`).
+        show_meta: bool,
     },
     WorkGroup {
         id: String,
         row_start: usize,
         row_end: usize,
         has_active: bool,
+        /// True when the group directly follows a steer message (`Continued for ...`).
+        continues_steer: bool,
     },
     Approval {
+        row_idx: usize,
+    },
+    /// An interactive or link card: user input request, secret request, proposed plan, or
+    /// subagent.
+    Card {
         row_idx: usize,
     },
     Notice {
@@ -127,33 +137,53 @@ impl VirtualItem {
             Self::Assistant {
                 row_idx,
                 followed_by_work,
+                show_meta,
             } => {
-                let (id, len, streaming) = match &rows[*row_idx].entry {
+                let (id, len, streaming, status) = match &rows[*row_idx].entry {
                     TimelineEntry::Assistant {
                         id,
                         markdown,
                         streaming,
-                    } => (id.as_str(), markdown.len(), *streaming),
-                    other => (other.id(), 0, false),
+                        status,
+                        ..
+                    } => (id.as_str(), markdown.len(), *streaming, Some(*status)),
+                    other => (other.id(), 0, false, None),
                 };
-                format!("a:{id}:{len}:{}:{streaming}", *followed_by_work as u8)
+                format!(
+                    "a:{id}:{len}:{}:{streaming}:{status:?}:{}",
+                    *followed_by_work as u8, *show_meta as u8
+                )
             }
             Self::WorkGroup {
                 id,
                 row_start,
                 row_end,
                 has_active,
+                continues_steer,
             } => format!(
-                "w:{id}:{}:{}:{}",
+                "w:{id}:{}:{}:{}:{}",
                 row_end - row_start,
                 rows[*row_end - 1].entry.id(),
-                *has_active as u8
+                *has_active as u8,
+                *continues_steer as u8
             ),
             Self::Approval { row_idx } => format!("ap:{}", rows[*row_idx].entry.id()),
+            // Cards change shape with their status, answers, or streamed body.
+            Self::Card { row_idx } => {
+                let entry = &rows[*row_idx].entry;
+                format!(
+                    "c:{}:{:016x}",
+                    entry.id(),
+                    fnv1a64(format!("{entry:?}").as_bytes())
+                )
+            }
             Self::Notice { row_idx } => format!("n:{}", rows[*row_idx].entry.id()),
             Self::ChangedFiles { run_id, summary } => format!(
-                "cf:{run_id}:{}:{}:{}",
-                summary.file_count, summary.additions, summary.deletions
+                "cf:{run_id}:{}:{}:{}:{}",
+                summary.file_count,
+                summary.additions,
+                summary.deletions,
+                summary.files.len()
             ),
             Self::Working => "working".to_owned(),
         }
@@ -184,7 +214,14 @@ impl VirtualItem {
             Self::Approval { row_idx }
             | Self::Notice { row_idx }
             | Self::QueuedUser { row_idx } => rows[*row_idx].entry.id() == target_id,
-            Self::LoadEarlier { .. } | Self::ChangedFiles { .. } | Self::Working => false,
+            Self::Card { row_idx } => {
+                let id = rows[*row_idx].entry.id();
+                target_id == id || target_id.starts_with(&format!("{id}:"))
+            }
+            Self::ChangedFiles { run_id, .. } => {
+                target_id.strip_prefix("changed-files:") == Some(run_id.as_str())
+            }
+            Self::LoadEarlier { .. } | Self::Working => false,
         }
     }
 }
@@ -478,6 +515,24 @@ impl RowCache {
         loading_earlier: bool,
     ) {
         let rows = &self.rows;
+        // Terminal assistant message per run, and the live turn's start (after the last user
+        // prompt) while working, for `show_meta`.
+        let mut last_assistant_by_run: HashMap<&str, usize> = HashMap::new();
+        for (i, row) in rows.iter().enumerate() {
+            if let TimelineEntry::Assistant {
+                run_id: Some(run), ..
+            } = &row.entry
+            {
+                last_assistant_by_run.insert(run.as_str(), i);
+            }
+        }
+        let live_turn_start = if working {
+            rows.iter()
+                .rposition(|r| matches!(r.entry, TimelineEntry::User { .. }))
+                .map_or(0, |i| i + 1)
+        } else {
+            usize::MAX
+        };
         let mut base_items: Vec<VirtualItem> = Vec::with_capacity(rows.len());
         let mut queued_items: Vec<VirtualItem> = Vec::new();
         let mut idx = 0usize;
@@ -492,11 +547,18 @@ impl RowCache {
                     let has_active = rows[start..idx]
                         .iter()
                         .any(|r| is_active_work_entry(&r.entry));
+                    // Work right after a steer message folds under its own `Continued` row.
+                    let continues_steer = start > 0
+                        && matches!(
+                            rows[start - 1].entry,
+                            TimelineEntry::User { is_steer: true, .. }
+                        );
                     base_items.push(VirtualItem::WorkGroup {
                         id: format!("work-group-{}", rows[start].entry.id()),
                         row_start: start,
                         row_end: idx,
                         has_active,
+                        continues_steer,
                     });
                 }
                 TimelineEntry::User {
@@ -527,22 +589,43 @@ impl RowCache {
                     queued_items.push(VirtualItem::QueuedUser { row_idx: idx });
                     idx += 1;
                 }
-                TimelineEntry::Assistant { .. } => {
+                TimelineEntry::Assistant {
+                    run_id, streaming, ..
+                } => {
+                    let terminal = match run_id {
+                        Some(run) => last_assistant_by_run.get(run.as_str()) == Some(&idx),
+                        None => !rows[idx + 1..]
+                            .iter()
+                            .take_while(|r| !matches!(r.entry, TimelineEntry::User { .. }))
+                            .any(|r| matches!(r.entry, TimelineEntry::Assistant { .. })),
+                    };
+                    let show_meta = terminal && !*streaming && idx < live_turn_start;
                     let followed_by_work = idx + 1 < rows.len()
                         && matches!(
                             rows[idx + 1].entry,
                             TimelineEntry::Thinking { .. }
                                 | TimelineEntry::Tool { .. }
                                 | TimelineEntry::Approval { .. }
+                                | TimelineEntry::UserInputRequest { .. }
+                                | TimelineEntry::SecretRequest { .. }
+                                | TimelineEntry::Subagent { .. }
                         );
                     base_items.push(VirtualItem::Assistant {
                         row_idx: idx,
                         followed_by_work,
+                        show_meta,
                     });
                     idx += 1;
                 }
                 TimelineEntry::Approval { .. } => {
                     base_items.push(VirtualItem::Approval { row_idx: idx });
+                    idx += 1;
+                }
+                TimelineEntry::UserInputRequest { .. }
+                | TimelineEntry::SecretRequest { .. }
+                | TimelineEntry::ProposedPlan { .. }
+                | TimelineEntry::Subagent { .. } => {
+                    base_items.push(VirtualItem::Card { row_idx: idx });
                     idx += 1;
                 }
                 TimelineEntry::Notice { .. } => {
@@ -557,6 +640,7 @@ impl RowCache {
                 VirtualItem::User { row_idx, .. }
                 | VirtualItem::Assistant { row_idx, .. }
                 | VirtualItem::Approval { row_idx }
+                | VirtualItem::Card { row_idx }
                 | VirtualItem::Notice { row_idx } => rows[*row_idx].entry.id(),
                 VirtualItem::WorkGroup { row_end, .. } => {
                     rows.get(row_end.saturating_sub(1))?.entry.id()
@@ -610,6 +694,7 @@ impl RowCache {
                             id,
                             text,
                             created_by_agent,
+                            ..
                         } = &rows[*row_idx].entry
                     {
                         toc.push(TocEntry {
@@ -654,6 +739,18 @@ impl RowCache {
                     if matches!(
                         rows[*row_idx].entry,
                         TimelineEntry::Notice { is_error: true, .. }
+                    ) && let Some(last) = toc.last_mut()
+                    {
+                        last.has_error = true;
+                    }
+                }
+                VirtualItem::Card { row_idx } => {
+                    if matches!(
+                        rows[*row_idx].entry,
+                        TimelineEntry::Subagent {
+                            status: conn_state::TurnItemStatus::Failed,
+                            ..
+                        }
                     ) && let Some(last) = toc.last_mut()
                     {
                         last.has_error = true;
@@ -777,16 +874,26 @@ mod tests {
                 id: "u1".to_owned(),
                 text: "Hello".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::Assistant {
                 id: "a1".to_owned(),
                 markdown: "First reply".to_owned(),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
             TimelineEntry::Assistant {
                 id: "a2".to_owned(),
                 markdown: "Streaming...".to_owned(),
                 streaming: true,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
         ];
 
@@ -817,6 +924,9 @@ mod tests {
             id: "a2".to_owned(),
             markdown: "Streaming... more text".to_owned(),
             streaming: true,
+            created_at: None,
+            run_id: None,
+            status: ItemStatus::Completed,
         };
         let s2 = cache.sync(
             &updated,
@@ -845,6 +955,9 @@ mod tests {
             id: "a2".to_owned(),
             markdown: "Streaming... more text".to_owned(),
             streaming: false,
+            created_at: None,
+            run_id: None,
+            status: ItemStatus::Completed,
         };
         let s3 = cache.sync(
             &updated,
@@ -870,6 +983,10 @@ mod tests {
                 id: format!("u{turn}"),
                 text: format!("Turn {turn} prompt\nsecond line"),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             });
             entries.push(TimelineEntry::Tool {
                 id: format!("t{turn}"),
@@ -881,12 +998,16 @@ mod tests {
                 } else {
                     ItemStatus::Completed
                 },
+                output_omitted: false,
             });
             let aid = format!("a{turn}");
             entries.push(TimelineEntry::Assistant {
                 id: aid.clone(),
                 markdown: format!("Reply {turn}"),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             });
             timings.insert(
                 aid,
@@ -905,6 +1026,7 @@ mod tests {
                         file_count: 3,
                         additions: 42,
                         deletions: 7,
+                        files: Vec::new(),
                     },
                 );
             }
@@ -938,11 +1060,19 @@ mod tests {
                 id: "u1".to_owned(),
                 text: "First".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::User {
                 id: "u2".to_owned(),
                 text: "Second".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::Thinking {
                 id: "th1".to_owned(),
@@ -955,6 +1085,7 @@ mod tests {
                 title: "cargo test".to_owned(),
                 detail: None,
                 status: ItemStatus::Completed,
+                output_omitted: false,
             },
             TimelineEntry::Approval {
                 id: "ap1".to_owned(),
@@ -967,11 +1098,15 @@ mod tests {
                 title: "Edited main.rs".to_owned(),
                 detail: None,
                 status: ItemStatus::Running,
+                output_omitted: false,
             },
             TimelineEntry::Assistant {
                 id: "a1".to_owned(),
                 markdown: "All done.".to_owned(),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
         ];
         cache.sync(
@@ -1016,6 +1151,7 @@ mod tests {
                 row_start: 2,
                 row_end: 4,
                 has_active: false,
+                continues_steer: false,
             } if id == "work-group-th1"
         ));
         assert!(matches!(items[3], VirtualItem::Approval { row_idx: 4 }));
@@ -1026,6 +1162,7 @@ mod tests {
                 row_start: 5,
                 row_end: 6,
                 has_active: true,
+                continues_steer: false,
             } if id == "work-group-t2"
         ));
         assert!(matches!(
@@ -1033,6 +1170,7 @@ mod tests {
             VirtualItem::Assistant {
                 row_idx: 6,
                 followed_by_work: false,
+                show_meta: true,
             }
         ));
     }
@@ -1045,11 +1183,18 @@ mod tests {
                 id: "u3".to_owned(),
                 text: "Latest prompt".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::Assistant {
                 id: "a3".to_owned(),
                 markdown: "Latest reply".to_owned(),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
         ];
 
@@ -1094,11 +1239,18 @@ mod tests {
                 id: "u2".to_owned(),
                 text: "Middle prompt".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::Assistant {
                 id: "a2".to_owned(),
                 markdown: "Middle reply".to_owned(),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
             initial[0].clone(),
             initial[1].clone(),
@@ -1123,11 +1275,18 @@ mod tests {
                 id: "u1".to_owned(),
                 text: "First prompt".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::Assistant {
                 id: "a1".to_owned(),
                 markdown: "First reply".to_owned(),
                 streaming: false,
+                created_at: None,
+                run_id: None,
+                status: ItemStatus::Completed,
             },
             with_page_2[0].clone(),
             with_page_2[1].clone(),
@@ -1179,6 +1338,10 @@ mod tests {
                 id: "u1".to_owned(),
                 text: "Start".to_owned(),
                 created_by_agent: false,
+                created_at: None,
+                attachments: Vec::new(),
+                is_steer: false,
+                run_id: None,
             },
             TimelineEntry::QueuedUser {
                 id: "turn-item:q1".to_owned(),

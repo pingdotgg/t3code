@@ -2,6 +2,7 @@
 //! working indicator, empty state, and bottom composer.
 
 mod cache;
+mod cards;
 mod color;
 mod composer;
 mod icons;
@@ -15,7 +16,8 @@ use std::rc::Rc;
 
 use conn_contract::ChatAttachment;
 use conn_state::{
-    EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
+    EntryTiming, ItemStatus, RunStatus, RunTiming, ThreadState, TimelineEntry,
+    TurnCheckpointSummary,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::scroll::ScrollableElement as _;
@@ -70,6 +72,17 @@ pub(crate) struct DraftViewInfo {
     pub(crate) launching: bool,
 }
 
+/// One human user bubble's render inputs.
+struct UserBubble<'a> {
+    id: &'a str,
+    text: &'a str,
+    attachments: &'a [ChatAttachment],
+    is_steer: bool,
+    created_at: Option<&'a str>,
+    grouped_with_previous: bool,
+    grouped_with_next: bool,
+}
+
 /// Events emitted by [`ChatView`] to the host shell.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ChatEvent {
@@ -88,8 +101,19 @@ pub(crate) enum ChatEvent {
         model: String,
         options: Option<serde_json::Map<String, serde_json::Value>>,
     },
-    /// Open the right panel's Diff tab (e.g. clicking a turn's changed-files summary card).
-    OpenDiff,
+    /// Open the Diff panel for one turn (`onOpenTurnDiff(runId, filePath)`), scoped to the
+    /// run's checkpoint ordinal and, when given, focused on `file_path`.
+    OpenTurnDiff {
+        run_id: String,
+        app_run_ordinal: Option<i64>,
+        file_path: Option<String>,
+    },
+    /// Open another thread (a subagent's child thread).
+    OpenThread(String),
+    /// Fork the thread from a completed assistant response's run (`thread.fork`).
+    ForkFromRun {
+        run_id: String,
+    },
     /// Open a workspace-relative file in the right panel's File preview tab.
     OpenFile(String),
     /// Switch the thread's runtime permission mode (`thread.runtime-mode.set`).
@@ -162,6 +186,23 @@ pub(crate) struct ChatView {
     editing_queued_run_id: Option<String>,
     composer: Entity<Composer>,
     _input_sub: Subscription,
+    /// Live connection for card actions (answers, secrets, omitted tool output).
+    connection: Option<conn_client::Connection>,
+    /// The latest run when it was interrupted (`You stopped after ...`).
+    interrupted_run_id: Option<String>,
+    /// Copy button currently showing its check (`MessageCopyButton`).
+    copied_message_key: Option<String>,
+    _copy_reset: Option<gpui_kit::Task<()>>,
+    /// Ids of pending question and secret cards that need input fields.
+    pending_card_ids: Vec<String>,
+    user_input_cards: HashMap<String, cards::UserInputCardState>,
+    secret_forms: HashMap<String, cards::SecretFormState>,
+    /// Runs whose changed-files tree has every folder expanded.
+    changed_files_expanded: HashSet<String>,
+    /// Per-run folder expansion overrides (`path -> expanded`).
+    changed_files_dir_overrides: HashMap<String, HashMap<String, bool>>,
+    /// Tool output fetched on demand for rows whose output the snapshot omitted.
+    fetched_details: HashMap<String, cards::DetailFetch>,
 }
 
 /// Snapshot of virtualized timeline & TOC metrics (used for diagnostics and automation).
@@ -216,7 +257,7 @@ impl ChatView {
             });
         });
 
-        let composer = cx.new(|cx| Composer::new(tokens.clone(), connection, window, cx));
+        let composer = cx.new(|cx| Composer::new(tokens.clone(), connection.clone(), window, cx));
         let input_sub = cx.subscribe(
             &composer,
             |this, _, event: &ComposerEvent, cx| match event {
@@ -306,6 +347,16 @@ impl ChatView {
             editing_queued_run_id: None,
             composer,
             _input_sub: input_sub,
+            connection,
+            interrupted_run_id: None,
+            copied_message_key: None,
+            _copy_reset: None,
+            pending_card_ids: Vec::new(),
+            user_input_cards: HashMap::new(),
+            secret_forms: HashMap::new(),
+            changed_files_expanded: HashSet::new(),
+            changed_files_dir_overrides: HashMap::new(),
+            fetched_details: HashMap::new(),
         }
     }
 
@@ -317,6 +368,7 @@ impl ChatView {
         cx: &mut Context<'_, Self>,
     ) {
         self.connected = connection.is_some();
+        self.connection = connection.clone();
         self.composer
             .update(cx, |c, cx| c.set_connection(connection, cx));
         cx.notify();
@@ -438,6 +490,7 @@ impl ChatView {
             self.toc_hovered_slot = None;
             self.toc_pinned_slot = None;
             self.editing_queued_run_id = None;
+            self.reset_card_state();
             self.list_state.reset(0);
             self.list_state.set_follow_mode(FollowMode::Tail);
             self.composer.update(cx, |c, cx| {
@@ -458,6 +511,7 @@ impl ChatView {
             self.toc_pinned_slot = None;
             self.editing_queued_run_id = None;
             self.working_started_at_ms = None;
+            self.reset_card_state();
         } else if self.has_thread
             && self.synced_revision == Some(thread.revision)
             && self.has_more_history == thread.has_more_history
@@ -502,6 +556,23 @@ impl ChatView {
         self.entry_timings = thread.entry_timings.clone();
         self.run_timings = thread.run_timings.clone();
         self.turn_checkpoints = thread.turn_checkpoints.clone();
+        self.interrupted_run_id = thread
+            .latest_run_id()
+            .filter(|run| thread.run_status(run) == Some(RunStatus::Interrupted))
+            .map(str::to_owned);
+        self.pending_card_ids = thread
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TimelineEntry::UserInputRequest {
+                    id, pending: true, ..
+                }
+                | TimelineEntry::SecretRequest {
+                    id, pending: true, ..
+                } => Some(id.clone()),
+                _ => None,
+            })
+            .collect();
         self.sync_working_timer(cx);
         let sync_start = std::time::Instant::now();
         let stats = self.cache.sync(
@@ -631,6 +702,43 @@ impl ChatView {
         self.composer.update(cx, |c, cx| {
             c.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
         });
+    }
+
+    /// Drops per-thread card, copy, and fetched-detail state.
+    fn reset_card_state(&mut self) {
+        self.interrupted_run_id = None;
+        self.copied_message_key = None;
+        self._copy_reset = None;
+        self.pending_card_ids.clear();
+        self.user_input_cards.clear();
+        self.secret_forms.clear();
+        self.changed_files_expanded.clear();
+        self.changed_files_dir_overrides.clear();
+        self.fetched_details.clear();
+    }
+
+    /// Markdown options shared by assistant rows and plan cards (copy/wrap code, file links).
+    fn markdown_options(&self, cx: &mut Context<'_, Self>) -> markdown::MarkdownOptions<'_> {
+        let entity_copy = cx.entity().downgrade();
+        let entity_wrap = cx.entity().downgrade();
+        let entity_file = cx.entity().downgrade();
+        markdown::MarkdownOptions {
+            heading_style: markdown::HeadingStyle::Scale,
+            copied_code_key: self.copied_code_key.as_deref(),
+            on_copy_code: Some(Rc::new(move |key, _window, cx| {
+                let _ = entity_copy.update(cx, |view, cx| view.mark_code_copied(key, cx));
+            })),
+            wrapped_code_keys: Some(&self.wrapped_code_keys),
+            on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
+                let _ = entity_wrap.update(cx, |view, cx| view.toggle_code_wrap(key, cx));
+            })),
+            workspace_root: self.workspace_root.as_deref(),
+            on_open_file: Some(Rc::new(move |path, _window, cx| {
+                let _ = entity_file.update(cx, |_view, cx| {
+                    cx.emit(ChatEvent::OpenFile(path));
+                });
+            })),
+        }
     }
 
     fn remeasure_for_id(&self, target_id: &str) {
@@ -929,87 +1037,6 @@ impl ChatView {
             return u64::try_from(end - start).ok();
         }
         None
-    }
-
-    fn render_changed_files_card(
-        &self,
-        idx: usize,
-        cp: &TurnCheckpointSummary,
-        cx: &mut Context<'_, Self>,
-    ) -> AnyElement {
-        let label = if cp.file_count == 1 {
-            "1 changed file".to_owned()
-        } else {
-            format!("{} changed files", cp.file_count)
-        };
-        let border = hsla(self.tokens.shell_divider);
-        let hover_bg = hsla(self.tokens.shell_highlight);
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-        let added = hsla(self.tokens.diff_added);
-        let removed = hsla(self.tokens.diff_removed);
-
-        div()
-            .pt(px(6.0))
-            .pb(px(4.0))
-            .child(
-                div()
-                    .id(SharedString::from(format!("turn-changed-files-{idx}")))
-                    .a11y_button(
-                        SharedString::from(format!("chat.changed-files.{idx}")),
-                        format!("{label} +{} -{}", cp.additions, cp.deletions),
-                    )
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(8.0))
-                    .w_full()
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(10.0))
-                    .bg(hsla(self.tokens.shell_field))
-                    .border_1()
-                    .border_color(border)
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(hover_bg))
-                    .on_click(cx.listener(|_, _, _, cx| {
-                        cx.emit(ChatEvent::OpenDiff);
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.0))
-                            .child(icons::icon("superhero/file-diff.svg", 14.0, muted))
-                            .child(
-                                div()
-                                    .text_size(px(UI_FONT_PX))
-                                    .line_height(px(UI_LINE_HEIGHT_PX))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .text_color(fg)
-                                    .child(label),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap(px(8.0))
-                            .text_size(px(UI_FONT_PX))
-                            .line_height(px(UI_LINE_HEIGHT_PX))
-                            .child(div().text_color(added).child(format!("+{}", cp.additions)))
-                            .child(
-                                div()
-                                    .text_color(removed)
-                                    .child(format!("-{}", cp.deletions)),
-                            )
-                            .child(icons::icon(icons::CARET_RIGHT, 12.0, muted)),
-                    ),
-            )
-            .into_any_element()
     }
 
     fn render_empty_no_thread(&self, cx: &mut Context<'_, Self>) -> AnyElement {
@@ -1377,123 +1404,151 @@ impl ChatView {
         };
         let rows = self.cache.rows();
 
-        let body =
-            match item {
-                VirtualItem::LoadEarlier { loading } => self.render_load_earlier_row(*loading, cx),
-                VirtualItem::User {
-                    row_idx,
-                    grouped_with_previous,
-                    grouped_with_next,
-                } => {
-                    if let TimelineEntry::User {
-                        id,
-                        text,
-                        created_by_agent,
-                    } = &rows[*row_idx].entry
-                    {
-                        if *created_by_agent {
-                            self.render_agent_prompt_row(id, text, cx)
-                        } else {
-                            self.render_user_bubble(
+        let body = match item {
+            VirtualItem::LoadEarlier { loading } => self.render_load_earlier_row(*loading, cx),
+            VirtualItem::User {
+                row_idx,
+                grouped_with_previous,
+                grouped_with_next,
+            } => {
+                if let TimelineEntry::User {
+                    id,
+                    text,
+                    created_by_agent,
+                    created_at,
+                    attachments,
+                    is_steer,
+                    ..
+                } = &rows[*row_idx].entry
+                {
+                    if *created_by_agent {
+                        self.render_agent_prompt_row(id, text, cx)
+                    } else {
+                        self.render_user_bubble(
+                            UserBubble {
                                 id,
                                 text,
-                                *grouped_with_previous,
-                                *grouped_with_next,
-                            )
-                        }
-                    } else {
-                        div().into_any_element()
+                                attachments,
+                                is_steer: *is_steer,
+                                created_at: created_at.as_deref(),
+                                grouped_with_previous: *grouped_with_previous,
+                                grouped_with_next: *grouped_with_next,
+                            },
+                            cx,
+                        )
                     }
+                } else {
+                    div().into_any_element()
                 }
-                VirtualItem::QueuedUser { row_idx } => {
-                    if let TimelineEntry::QueuedUser {
-                        id,
-                        run_id,
-                        text,
-                        attachments,
-                        created_at,
-                        ..
-                    } = &rows[*row_idx].entry
-                    {
-                        self.render_queued_user_row(id, run_id, text, attachments, created_at, cx)
-                    } else {
-                        div().into_any_element()
-                    }
+            }
+            VirtualItem::QueuedUser { row_idx } => {
+                if let TimelineEntry::QueuedUser {
+                    id,
+                    run_id,
+                    text,
+                    attachments,
+                    created_at,
+                    ..
+                } = &rows[*row_idx].entry
+                {
+                    self.render_queued_user_row(id, run_id, text, attachments, created_at, cx)
+                } else {
+                    div().into_any_element()
                 }
-                VirtualItem::Assistant {
-                    row_idx,
-                    followed_by_work,
-                } => {
-                    let row = &rows[*row_idx];
-                    if let TimelineEntry::Assistant { id, .. } = &row.entry {
-                        // Lazily parse & cache Markdown only when this row enters the viewport.
-                        let blocks = row.markdown_blocks();
-                        let entity_copy = cx.entity().downgrade();
-                        let entity_wrap = cx.entity().downgrade();
-                        let entity_file = cx.entity().downgrade();
-                        let options = markdown::MarkdownOptions {
-                            heading_style: markdown::HeadingStyle::Scale,
-                            copied_code_key: self.copied_code_key.as_deref(),
-                            on_copy_code: Some(Rc::new(move |key, _window, cx| {
-                                let _ = entity_copy
-                                    .update(cx, |view, cx| view.mark_code_copied(key, cx));
-                            })),
-                            wrapped_code_keys: Some(&self.wrapped_code_keys),
-                            on_toggle_wrap_code: Some(Rc::new(move |key, _window, cx| {
-                                let _ = entity_wrap
-                                    .update(cx, |view, cx| view.toggle_code_wrap(key, cx));
-                            })),
-                            workspace_root: self.workspace_root.as_deref(),
-                            on_open_file: Some(Rc::new(move |path, _window, cx| {
-                                let _ = entity_file.update(cx, |_view, cx| {
-                                    cx.emit(ChatEvent::OpenFile(path));
-                                });
-                            })),
-                        };
-                        // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
+            }
+            VirtualItem::Assistant {
+                row_idx,
+                followed_by_work,
+                show_meta,
+            } => {
+                let row = &rows[*row_idx];
+                if let TimelineEntry::Assistant {
+                    id,
+                    markdown: text,
+                    streaming,
+                    created_at,
+                    run_id,
+                    status,
+                } = &row.entry
+                {
+                    // Lazily parse & cache Markdown only when this row enters the viewport.
+                    let blocks = row.markdown_blocks();
+                    let options = self.markdown_options(cx);
+                    let group = SharedString::from(format!("assistant-row-{id}"));
+                    let body: AnyElement = if text.is_empty() && !*streaming {
+                        // Conn: `text || (streaming ? "" : "(empty response)")`.
                         div()
-                            .id(SharedString::from(format!("chat-assistant-{id}")))
-                            .a11y(
-                                gpui_kit::Role::Article,
-                                SharedString::from(format!("chat.message.assistant.{id}")),
-                                "Assistant message",
-                            )
-                            .w_full()
-                            .min_w_0()
-                            .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
-                            .child(div().w_full().min_w_0().px(px(4.0)).py(px(2.0)).child(
-                                markdown::render_blocks(id, &blocks, &self.tokens, &options),
-                            ))
+                            .text_size(px(BODY_FONT_PX))
+                            .line_height(px(BODY_LINE_HEIGHT_PX))
+                            .text_color(hsla(self.tokens.muted_foreground))
+                            .child("(empty response)")
                             .into_any_element()
                     } else {
-                        div().into_any_element()
+                        markdown::render_blocks(id, &blocks, &self.tokens, &options)
+                    };
+                    let mut inner = div().w_full().min_w_0().px(px(4.0)).py(px(2.0)).child(body);
+                    if *show_meta {
+                        inner = inner.child(self.render_assistant_meta(
+                            id,
+                            text,
+                            *status,
+                            run_id.as_deref(),
+                            created_at.as_deref(),
+                            &group,
+                            cx,
+                        ));
                     }
+                    // Conn `AssistantTimelineRow`: `px-1 py-0.5`, row spacing `pb-2` before work or `pb-4`.
+                    div()
+                        .id(SharedString::from(format!("chat-assistant-{id}")))
+                        .a11y(
+                            gpui_kit::Role::Article,
+                            SharedString::from(format!("chat.message.assistant.{id}")),
+                            "Assistant message",
+                        )
+                        .group(group)
+                        .w_full()
+                        .min_w_0()
+                        .pb(px(if *followed_by_work { 8.0 } else { 16.0 }))
+                        .child(inner)
+                        .into_any_element()
+                } else {
+                    div().into_any_element()
                 }
-                VirtualItem::WorkGroup {
-                    id,
-                    row_start,
-                    row_end,
-                    has_active,
-                } => self.render_work_group(id, &rows[*row_start..*row_end], *has_active, cx),
-                VirtualItem::Approval { row_idx } => {
-                    if let TimelineEntry::Approval { id, title, detail } = &rows[*row_idx].entry {
-                        self.render_approval_row(id, title, detail.as_deref(), cx)
-                    } else {
-                        div().into_any_element()
-                    }
+            }
+            VirtualItem::WorkGroup {
+                id,
+                row_start,
+                row_end,
+                has_active,
+                continues_steer,
+            } => self.render_work_group(
+                id,
+                &rows[*row_start..*row_end],
+                *has_active,
+                *continues_steer,
+                cx,
+            ),
+            VirtualItem::Card { row_idx } => self.render_card(&rows[*row_idx].entry, cx),
+            VirtualItem::Approval { row_idx } => {
+                if let TimelineEntry::Approval { id, title, detail } = &rows[*row_idx].entry {
+                    self.render_approval_row(id, title, detail.as_deref(), cx)
+                } else {
+                    div().into_any_element()
                 }
-                VirtualItem::Notice { row_idx } => {
-                    if let TimelineEntry::Notice { text, is_error, .. } = &rows[*row_idx].entry {
-                        self.render_notice_row(text, *is_error)
-                    } else {
-                        div().into_any_element()
-                    }
+            }
+            VirtualItem::Notice { row_idx } => {
+                if let TimelineEntry::Notice { text, is_error, .. } = &rows[*row_idx].entry {
+                    self.render_notice_row(text, *is_error)
+                } else {
+                    div().into_any_element()
                 }
-                VirtualItem::ChangedFiles { summary, .. } => {
-                    self.render_changed_files_card(idx, summary, cx)
-                }
-                VirtualItem::Working => self.render_working_row(),
-            };
+            }
+            VirtualItem::ChangedFiles { summary, .. } => {
+                self.render_changed_files_card(summary, cx)
+            }
+            VirtualItem::Working => self.render_working_row(),
+        };
 
         // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px) with
         // 48px horizontal padding and 16px top/bottom timeline insets carried on first/last row.
@@ -1568,13 +1623,88 @@ impl ChatView {
         div().w_full().pb(px(8.0)).child(button).into_any_element()
     }
 
-    fn render_user_bubble(
-        &self,
-        id: &str,
-        text: &str,
-        grouped_with_previous: bool,
-        grouped_with_next: bool,
-    ) -> AnyElement {
+    /// Dispatches a [`VirtualItem::Card`] row to its Conn card renderer.
+    fn render_card(&self, entry: &TimelineEntry, cx: &mut Context<'_, Self>) -> AnyElement {
+        match entry {
+            TimelineEntry::UserInputRequest {
+                id,
+                title,
+                questions,
+                status,
+                pending,
+                answers,
+                dismissible,
+                ..
+            } => self.render_user_input_card(
+                id,
+                title.as_deref(),
+                questions,
+                *pending,
+                *status,
+                answers,
+                *dismissible,
+                cx,
+            ),
+            TimelineEntry::SecretRequest {
+                id,
+                label,
+                reason,
+                url,
+                file_delivery,
+                status,
+                pending,
+                ..
+            } => self.render_secret_card(
+                id,
+                label,
+                reason,
+                url.as_deref(),
+                *file_delivery,
+                *status,
+                *pending,
+                cx,
+            ),
+            TimelineEntry::ProposedPlan {
+                id,
+                title,
+                markdown,
+                ..
+            } => self.render_plan_card(id, title, markdown, cx),
+            TimelineEntry::Subagent {
+                id,
+                child_thread_id,
+                title,
+                status,
+                summary,
+                remote_label,
+                started_at,
+                completed_at,
+                ..
+            } => self.render_subagent_row(
+                id,
+                child_thread_id.as_deref(),
+                title,
+                *status,
+                summary.as_deref(),
+                remote_label.as_deref(),
+                started_at.as_deref(),
+                completed_at.as_deref(),
+                cx,
+            ),
+            _ => div().into_any_element(),
+        }
+    }
+
+    fn render_user_bubble(&self, bubble: UserBubble<'_>, cx: &mut Context<'_, Self>) -> AnyElement {
+        let UserBubble {
+            id,
+            text,
+            attachments,
+            is_steer,
+            created_at,
+            grouped_with_previous,
+            grouped_with_next,
+        } = bubble;
         // Conn `TimelineUserMessageRow`: `max-w-[80%] rounded-bubble border-t border-t-(--message-highlight)!
         // bg-message text-message-foreground px-4 pt-2.5 pb-3 text-sm leading-relaxed`.
         let preview: String = text.chars().take(120).collect();
@@ -1585,6 +1715,10 @@ impl ChatView {
                 SharedString::from(format!("chat.message.user.{id}")),
                 preview,
             )
+            .relative()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
             .max_w(relative(0.8))
             .min_w_0()
             .rounded(px(BUBBLE_RADIUS_PX))
@@ -1596,8 +1730,13 @@ impl ChatView {
             .pb(px(12.0))
             .text_size(px(BODY_FONT_PX))
             .line_height(px(BODY_LINE_HEIGHT_PX))
-            .text_color(hsla(self.tokens.message_foreground))
-            .child(text.to_owned());
+            .text_color(hsla(self.tokens.message_foreground));
+        if !attachments.is_empty() {
+            bubble = bubble.child(self.render_attachment_chips(&format!("user-{id}"), attachments));
+        }
+        if !text.is_empty() {
+            bubble = bubble.child(div().min_w_0().child(text.to_owned()));
+        }
 
         if grouped_with_previous {
             bubble = bubble.rounded_tr(px(BUBBLE_GROUPED_RADIUS_PX));
@@ -1606,14 +1745,44 @@ impl ChatView {
             bubble = bubble.rounded_br(px(BUBBLE_GROUPED_RADIUS_PX));
         }
 
-        div()
+        let group = SharedString::from(format!("user-row-{id}"));
+        let actions = self.render_user_actions(id, text, created_at, &group, cx);
+        let mut row = div()
+            .group(group)
             .flex()
-            .flex_row()
-            .justify_end()
+            .flex_col()
+            .items_end()
             .w_full()
-            .pb(px(if grouped_with_next { 4.0 } else { 16.0 }))
-            .child(bubble)
-            .into_any_element()
+            .pb(px(if grouped_with_next { 4.0 } else { 16.0 }));
+        if is_steer {
+            row = row.child(self.render_steer_marker(id));
+        }
+        if grouped_with_next {
+            // Conn `floatActions`: grouped bubbles float their actions beside the bubble.
+            row = row.child(
+                bubble.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .bottom_0()
+                        .right(relative(1.0))
+                        .mr(px(8.0))
+                        .flex()
+                        .items_center()
+                        .child(actions),
+                ),
+            );
+        } else {
+            row = row.child(bubble).child(
+                div()
+                    .w_full()
+                    .max_w(relative(0.8))
+                    .pr(px(4.0))
+                    .pt(px(2.0))
+                    .child(actions),
+            );
+        }
+        row.into_any_element()
     }
 
     /// Renders a server-backed queued user message at the bottom of the timeline, matching
@@ -1667,81 +1836,8 @@ impl ChatView {
             .text_color(bubble_fg);
 
         if !attachments.is_empty() {
-            let mut att_row = div()
-                .flex()
-                .flex_row()
-                .flex_wrap()
-                .items_center()
-                .gap(px(6.0));
-            for (att_idx, att) in attachments.iter().enumerate() {
-                match att {
-                    ChatAttachment::Image(img) => {
-                        att_row = att_row.child(
-                            div()
-                                .id((SharedString::from(format!("queued-img-{id}")), att_idx))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .size(px(32.0))
-                                .rounded(px(6.0))
-                                .bg(hsla_alpha(self.tokens.muted, 0.60))
-                                .border_1()
-                                .border_color(hsla_alpha(self.tokens.border, 0.70))
-                                .conn_tooltip(img.name.clone(), &self.tokens)
-                                .child(icons::icon(icons::IMAGE, 14.0, muted)),
-                        );
-                    }
-                    ChatAttachment::File(file) => {
-                        let file_icon = crate::file_icons::file_icon(&file.name);
-                        let icon_color = file_icon
-                            .color
-                            .map(|c| hsla(c.for_appearance(self.tokens.appearance)))
-                            .unwrap_or(muted);
-                        att_row = att_row.child(
-                            div()
-                                .id((SharedString::from(format!("queued-file-{id}")), att_idx))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(4.0))
-                                .h(px(24.0))
-                                .max_w(px(200.0))
-                                .px(px(8.0))
-                                .rounded(px(6.0))
-                                .bg(hsla_alpha(self.tokens.muted, 0.45))
-                                .border_1()
-                                .border_color(hsla_alpha(self.tokens.border, 0.70))
-                                .text_size(px(12.0))
-                                .line_height(px(16.0))
-                                .text_color(muted)
-                                .child(icons::icon(file_icon.asset, 12.0, icon_color))
-                                .child(div().min_w_0().truncate().child(file.name.clone())),
-                        );
-                    }
-                    ChatAttachment::Unknown(unknown) => {
-                        att_row = att_row.child(
-                            div()
-                                .id((SharedString::from(format!("queued-unk-{id}")), att_idx))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(4.0))
-                                .h(px(24.0))
-                                .max_w(px(200.0))
-                                .px(px(8.0))
-                                .rounded(px(6.0))
-                                .bg(hsla_alpha(self.tokens.muted, 0.45))
-                                .border_1()
-                                .border_color(hsla_alpha(self.tokens.border, 0.70))
-                                .text_size(px(12.0))
-                                .line_height(px(16.0))
-                                .text_color(muted)
-                                .child(div().min_w_0().truncate().child(unknown.name.clone())),
-                        );
-                    }
-                }
-            }
-            bubble = bubble.child(att_row);
+            bubble =
+                bubble.child(self.render_attachment_chips(&format!("queued-{id}"), attachments));
         }
 
         if !text.is_empty() {
@@ -2015,6 +2111,7 @@ impl ChatView {
         group_id: &str,
         rows: &[CachedRow],
         has_active: bool,
+        continues_steer: bool,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let manually_expanded = self.expanded_ids.contains(group_id);
@@ -2031,7 +2128,15 @@ impl ChatView {
             // button `flex items-center gap-1 rounded-md px-1 text-sm leading-relaxed
             // text-muted-foreground hover:text-foreground`, `size-3.5` (14px) chevron.
             let duration_ms = self.work_group_duration_ms(rows);
-            let worked_label = format_worked_label(duration_ms);
+            let interrupted = self.interrupted_run_id.as_deref().is_some_and(|run| {
+                rows.iter().any(|r| {
+                    self.entry_timings
+                        .get(r.entry.id())
+                        .and_then(|t| t.run_id.as_deref())
+                        == Some(run)
+                })
+            });
+            let worked_label = format_fold_label(duration_ms, interrupted, continues_steer);
             let worked_ax_id = SharedString::from(format!("chat.work-group.{group_id}"));
             let fold_btn = div()
                 .id(SharedString::from(format!("fold-{group_id}")))
@@ -2339,9 +2444,18 @@ impl ChatView {
                 title,
                 detail,
                 status,
+                output_omitted,
             } => {
                 let title = self.relative_title(title);
-                self.render_tool_row(id, kind, &title, detail.as_deref(), *status, cx)
+                self.render_tool_row(
+                    id,
+                    kind,
+                    &title,
+                    detail.as_deref(),
+                    *status,
+                    *output_omitted,
+                    cx,
+                )
             }
             _ => div().into_any_element(),
         }
@@ -2454,6 +2568,10 @@ impl ChatView {
         container.into_any_element()
     }
 
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "mirrors the Conn component props one to one"
+    )]
     fn render_tool_row(
         &self,
         id: &str,
@@ -2461,11 +2579,22 @@ impl ChatView {
         title: &str,
         detail: Option<&str>,
         status: ItemStatus,
+        output_omitted: bool,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let expanded = self.expanded_ids.contains(id);
         let toggle_id = id.to_owned();
-        let has_detail = detail.is_some_and(|d| !d.trim().is_empty());
+        // An omitted output fetches lazily on expand (`turnItemNeedsDetailFetch`).
+        let fetched = self.fetched_details.get(id);
+        let fetched_text: Option<String> = match fetched {
+            Some(cards::DetailFetch::Loaded(Some(text))) => Some(text.clone()),
+            Some(cards::DetailFetch::Loading) => Some("Loading output…".to_owned()),
+            Some(cards::DetailFetch::Failed(err)) => Some(format!("Could not load output: {err}")),
+            Some(cards::DetailFetch::Loaded(None)) | None => None,
+        };
+        let detail_owned: Option<String> = fetched_text.or_else(|| detail.map(str::to_owned));
+        let detail = detail_owned.as_deref();
+        let has_detail = output_omitted || detail.is_some_and(|d| !d.trim().is_empty());
 
         let muted = hsla(self.tokens.muted_foreground);
         let bright_fg = hsla(self.tokens.foreground);
@@ -2527,6 +2656,9 @@ impl ChatView {
                 .cursor_pointer()
                 .hover(|s| s.text_color(hsla(self.tokens.foreground)))
                 .on_click(cx.listener(move |view, _, _, cx| {
+                    if output_omitted && !view.expanded_ids.contains(&toggle_id) {
+                        view.fetch_omitted_detail(&toggle_id, cx);
+                    }
                     view.toggle_expanded(&toggle_id, cx);
                 }))
                 .child(
@@ -2890,8 +3022,14 @@ impl ChatView {
 }
 
 impl Render for ChatView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
         self.log_first_paint();
+        if !self.pending_card_ids.is_empty()
+            || !self.user_input_cards.is_empty()
+            || !self.secret_forms.is_empty()
+        {
+            self.ensure_card_inputs(window, cx);
+        }
         if !self.has_thread && self.draft.is_none() {
             return div()
                 .flex()
@@ -3214,32 +3352,26 @@ fn strip_markdown_links(input: &str) -> String {
     out
 }
 
-/// Formats Conn's settled work-group label (`Worked` / `Worked for 7.5s` / `Worked for 2m 14s`).
+/// Conn's turn-fold label (`MessagesTimeline.logic.ts:1176-1213`): `Worked for <d>`,
+/// `You stopped after <d>` for the interrupted latest run, `Continued for <d>` after a steer,
+/// and the bare `Worked` / `You stopped this response` / `Continued` without a duration.
 #[must_use]
-fn format_worked_label(duration_ms: Option<u64>) -> String {
-    let Some(ms) = duration_ms.filter(|&d| d >= 100) else {
-        return "Worked".to_owned();
-    };
-    if ms < 10_000 {
-        format!("Worked for {:.1}s", (ms as f64) / 1000.0)
-    } else if ms < 60_000 {
-        format!("Worked for {}s", (ms + 500) / 1000)
-    } else {
-        let total_secs = (ms + 500) / 1000;
-        let mins = total_secs / 60;
-        let secs = total_secs % 60;
-        if secs == 0 {
-            format!("Worked for {mins}m")
-        } else {
-            format!("Worked for {mins}m {secs}s")
-        }
+fn format_fold_label(duration_ms: Option<u64>, interrupted: bool, continues_steer: bool) -> String {
+    let duration = duration_ms.map(conn_state::format_duration);
+    match (continues_steer, interrupted, duration) {
+        (true, _, Some(d)) => format!("Continued for {d}"),
+        (true, _, None) => "Continued".to_owned(),
+        (false, true, Some(d)) => format!("You stopped after {d}"),
+        (false, true, None) => "You stopped this response".to_owned(),
+        (false, false, Some(d)) => format!("Worked for {d}"),
+        (false, false, None) => "Worked".to_owned(),
     }
 }
 
 #[cfg(test)]
 mod worked_label_tests {
     use super::{
-        format_queued_timestamp, format_worked_label, format_working_elapsed, live_thought_preview,
+        format_fold_label, format_queued_timestamp, format_working_elapsed, live_thought_preview,
     };
 
     #[test]
@@ -3260,23 +3392,49 @@ mod worked_label_tests {
 
     #[test]
     fn formats_worked_duration_labels() {
-        assert_eq!(format_worked_label(None), "Worked", "missing duration");
-        assert_eq!(format_worked_label(Some(50)), "Worked", "sub-100ms");
         assert_eq!(
-            format_worked_label(Some(7_500)),
-            "Worked for 7.5s",
-            "sub-10s shows one decimal"
+            format_fold_label(None, false, false),
+            "Worked",
+            "missing duration"
+        );
+        assert_eq!(format_fold_label(Some(50), false, false), "Worked for 50ms");
+        assert_eq!(
+            format_fold_label(Some(7_500), false, false),
+            "Worked for 7.5s"
         );
         assert_eq!(
-            format_worked_label(Some(42_400)),
-            "Worked for 42s",
-            "10..60s rounds to whole seconds"
+            format_fold_label(Some(2_000), false, false),
+            "Worked for 2s"
         );
         assert_eq!(
-            format_worked_label(Some(134_000)),
-            "Worked for 2m 14s",
-            "minutes and seconds"
+            format_fold_label(Some(42_400), false, false),
+            "Worked for 42s"
         );
+        assert_eq!(
+            format_fold_label(Some(59_600), false, false),
+            "Worked for 1m"
+        );
+        assert_eq!(
+            format_fold_label(Some(134_000), false, false),
+            "Worked for 2m 14s"
+        );
+        assert_eq!(
+            format_fold_label(Some(3_725_000), false, false),
+            "Worked for 1h 2m 5s"
+        );
+        assert_eq!(
+            format_fold_label(Some(12_000), true, false),
+            "You stopped after 12s"
+        );
+        assert_eq!(
+            format_fold_label(None, true, false),
+            "You stopped this response"
+        );
+        assert_eq!(
+            format_fold_label(Some(4_000), false, true),
+            "Continued for 4s"
+        );
+        assert_eq!(format_fold_label(None, true, true), "Continued");
     }
 
     #[test]

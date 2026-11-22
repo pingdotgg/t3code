@@ -1,11 +1,18 @@
 #![recursion_limit = "256"]
 
 use conn_contract::from_json;
+use std::collections::HashMap;
+
 use conn_state::{
-    ItemStatus, LayoutState, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
-    RIGHT_PANEL_MIN_WIDTH, RightPanelTab, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
-    SIDEBAR_MIN_WIDTH, ShellChange, ShellState, ShellStreamItem, ThreadActivity, ThreadState,
-    ThreadStreamItem, TimelineEntry,
+    ItemStatus, LayoutState, LocalDateTime, RIGHT_PANEL_DEFAULT_WIDTH, RIGHT_PANEL_MAX_WIDTH,
+    RIGHT_PANEL_MIN_WIDTH, RightPanelTab, RunStatus, SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MAX_WIDTH,
+    SIDEBAR_MIN_WIDTH, SecretRequestStatus, ShellChange, ShellState, ShellStreamItem, SubagentTone,
+    ThreadActivity, ThreadState, ThreadStreamItem, TimelineEntry, TurnCheckpointFile,
+    TurnItemStatus, UserInputAnswerValue, UserInputDraft, build_turn_diff_tree,
+    build_user_input_answers, collapsed_plan_preview, flatten_turn_diff_tree,
+    format_chat_timestamp_tooltip, format_day_aware_timestamp, format_duration,
+    format_subagent_display_title, plan_can_collapse, strip_displayed_plan_markdown,
+    subagent_status_visual,
 };
 use serde_json::{Value, json};
 
@@ -500,6 +507,10 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
             id: "item-u1".to_owned(),
             text: "Run tests".to_owned(),
             created_by_agent: false,
+            created_at: Some("2026-11-13T09:00:00.000Z".to_owned()),
+            attachments: Vec::new(),
+            is_steer: false,
+            run_id: Some("run-1".to_owned()),
         },
         "first entry should be user message"
     );
@@ -510,7 +521,8 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
             kind: "command".to_owned(),
             title: "cargo test".to_owned(),
             detail: Some("ok".to_owned()),
-            status: ItemStatus::Completed
+            status: ItemStatus::Completed,
+            output_omitted: false,
         },
         "second entry should be completed command tool"
     );
@@ -519,7 +531,10 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
         TimelineEntry::Assistant {
             id: "item-a1".to_owned(),
             markdown: "All tests passed.".to_owned(),
-            streaming: false
+            streaming: false,
+            created_at: Some("2026-11-13T09:00:10.000Z".to_owned()),
+            run_id: Some("run-1".to_owned()),
+            status: ItemStatus::Completed,
         },
         "third entry should be assistant reply"
     );
@@ -595,7 +610,10 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
         Some(&TimelineEntry::Assistant {
             id: "item-a2".to_owned(),
             markdown: "Hello".to_owned(),
-            streaming: true
+            streaming: true,
+            created_at: Some("2026-11-13T09:01:01.000Z".to_owned()),
+            run_id: Some("run-2".to_owned()),
+            status: ItemStatus::Running,
         }),
         "streaming entry should start with 'Hello'"
     );
@@ -615,7 +633,10 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
         Some(&TimelineEntry::Assistant {
             id: "item-a2".to_owned(),
             markdown: "Hello, world".to_owned(),
-            streaming: true
+            streaming: true,
+            created_at: Some("2026-11-13T09:01:01.000Z".to_owned()),
+            run_id: Some("run-2".to_owned()),
+            status: ItemStatus::Running,
         }),
         "delta should append onto existing assistant entry"
     );
@@ -662,7 +683,10 @@ fn thread_snapshot_and_streaming_deltas_flip_working() {
         TimelineEntry::Assistant {
             id: "item-a2".to_owned(),
             markdown: "Hello, world!".to_owned(),
-            streaming: false
+            streaming: false,
+            created_at: Some("2026-11-13T09:01:02.000Z".to_owned()),
+            run_id: Some("run-2".to_owned()),
+            status: ItemStatus::Completed,
         },
         "completed assistant entry should have streaming=false"
     );
@@ -1732,14 +1756,14 @@ fn thread_queued_messages_appear_edit_cancel_and_transition_to_user() {
             .any(|e| matches!(e, TimelineEntry::QueuedUser { .. })),
         "promoted message should no longer be QueuedUser"
     );
-    assert_eq!(
-        state.entries.last(),
-        Some(&TimelineEntry::User {
-            id: "turn-item:msg-q1".to_owned(),
-            text: "Edited queued prompt".to_owned(),
-            created_by_agent: false,
-        }),
-        "promoted queued message should transition to normal TimelineEntry::User"
+    assert!(
+        matches!(
+            state.entries.last(),
+            Some(TimelineEntry::User { id, text, created_by_agent: false, .. })
+                if id == "turn-item:msg-q1" && text == "Edited queued prompt"
+        ),
+        "promoted queued message should transition to normal TimelineEntry::User, got {:?}",
+        state.entries.last()
     );
 }
 
@@ -1833,14 +1857,14 @@ fn thread_pending_queued_turn_item_transitions_to_user_and_cancel() {
         state.apply(started),
         "started queued turn item should apply"
     );
-    assert_eq!(
-        state.entries,
-        vec![TimelineEntry::User {
-            id: "item-q1".to_owned(),
-            text: "Wait my turn".to_owned(),
-            created_by_agent: false,
-        }],
-        "started queued turn item must transition cleanly into TimelineEntry::User"
+    assert!(
+        matches!(
+            state.entries.as_slice(),
+            [TimelineEntry::User { id, text, created_by_agent: false, .. }]
+                if id == "item-q1" && text == "Wait my turn"
+        ),
+        "started queued turn item must transition cleanly into TimelineEntry::User, got {:?}",
+        state.entries
     );
 
     // 3. Another pending queued item cancelled via turn-item.updated disappears.
@@ -1924,5 +1948,651 @@ fn thread_pending_queued_turn_item_transitions_to_user_and_cancel() {
         state.entries.len(),
         1,
         "cancelled pending queued item should be removed"
+    );
+}
+
+/// Builds a `turn-item.updated` event with the common turn-item base fields merged into
+/// `fields`.
+fn turn_item_event(sequence: i64, fields: Value) -> ThreadStreamItem {
+    let mut payload = json!({
+        "threadId": "thread-cards",
+        "runId": "run-1",
+        "nodeId": null,
+        "providerThreadId": null,
+        "providerTurnId": null,
+        "nativeItemRef": null,
+        "parentItemId": null,
+        "ordinal": sequence,
+        "title": null,
+        "startedAt": "2026-11-22T10:00:00.000Z",
+        "completedAt": null,
+        "updatedAt": "2026-11-22T10:00:05.000Z"
+    });
+    if let (Some(base), Value::Object(extra)) = (payload.as_object_mut(), fields) {
+        base.extend(extra);
+    }
+    decode_thread(json!({
+        "kind": "event",
+        "sequence": sequence,
+        "event": {
+            "id": format!("ev-{sequence}"),
+            "threadId": "thread-cards",
+            "occurredAt": "2026-11-22T10:00:05.000Z",
+            "type": "turn-item.updated",
+            "payload": payload
+        }
+    }))
+}
+
+fn run_event(
+    sequence: i64,
+    kind: &str,
+    run_id: &str,
+    ordinal: i64,
+    status: &str,
+) -> ThreadStreamItem {
+    decode_thread(json!({
+        "kind": "event",
+        "sequence": sequence,
+        "event": {
+            "id": format!("ev-run-{sequence}"),
+            "threadId": "thread-cards",
+            "occurredAt": "2026-11-22T10:00:00.000Z",
+            "type": kind,
+            "payload": {
+                "id": run_id,
+                "threadId": "thread-cards",
+                "ordinal": ordinal,
+                "providerInstanceId": "codex",
+                "modelSelection": { "instanceId": "codex", "model": "gpt-5" },
+                "providerThreadId": null,
+                "userMessageId": format!("msg-{run_id}"),
+                "rootNodeId": null,
+                "activeAttemptId": null,
+                "status": status,
+                "requestedAt": "2026-11-22T10:00:00.000Z",
+                "startedAt": "2026-11-22T10:00:00.000Z",
+                "completedAt": null,
+                "checkpointId": null,
+                "contextHandoffId": null
+            }
+        }
+    }))
+}
+
+#[test]
+fn user_input_request_maps_to_interactive_card_and_answer_history() {
+    let mut state = ThreadState::new("thread-cards");
+    let pending = turn_item_event(
+        1,
+        json!({
+            "id": "item-q",
+            "status": "waiting",
+            "type": "user_input_request",
+            "requestId": "req-q",
+            "responseMode": "message",
+            "questions": [
+                {
+                    "id": "q-lang",
+                    "header": "Language",
+                    "question": "Which **language**?",
+                    "options": [
+                        { "label": "Rust", "description": "Fast" },
+                        { "label": "Go", "description": "Simple", "value": "golang" }
+                    ]
+                },
+                {
+                    "id": "q-tools",
+                    "header": "Tools",
+                    "question": "Pick tools",
+                    "multiSelect": true,
+                    "allowCustomAnswer": false,
+                    "options": [
+                        { "label": "fmt", "description": "" },
+                        { "label": "clippy", "description": "" }
+                    ]
+                }
+            ]
+        }),
+    );
+    assert!(state.apply(pending), "pending question should apply");
+    let Some(TimelineEntry::UserInputRequest {
+        request_id,
+        questions,
+        pending,
+        dismissible,
+        answers,
+        created_at,
+        ..
+    }) = state.entries.first()
+    else {
+        panic!("expected UserInputRequest, got {:?}", state.entries);
+    };
+    assert_eq!(
+        request_id, "req-q",
+        "request id is preserved for runtime-request.respond"
+    );
+    assert!(*pending, "waiting question without answer is pending");
+    assert!(*dismissible, "message-mode questions are dismissible");
+    assert!(answers.is_empty(), "pending question has no answers");
+    assert_eq!(created_at.as_deref(), Some("2026-11-22T10:00:00.000Z"));
+    assert_eq!(questions.len(), 2, "both questions map");
+    assert!(questions[1].multi_select && !questions[1].allow_custom_answer);
+    assert_eq!(
+        questions[0].options[1].answer_value(),
+        "golang",
+        "value beats label"
+    );
+    assert!(
+        !state
+            .entries
+            .iter()
+            .any(|e| matches!(e, TimelineEntry::Approval { .. })),
+        "questions must never render as Approve/Decline rows"
+    );
+
+    // Draft answers: single select replaces, multi select toggles, custom text wins.
+    let lang = &questions[0];
+    let tools = &questions[1];
+    let mut drafts: HashMap<String, UserInputDraft> = HashMap::new();
+    assert_eq!(
+        build_user_input_answers(questions, &drafts),
+        None,
+        "unanswered"
+    );
+    let d = lang.toggle_option(None, "Rust");
+    let d = lang.toggle_option(Some(&d), "golang");
+    assert_eq!(
+        d.selected,
+        vec!["golang".to_owned()],
+        "single select keeps one value"
+    );
+    assert!(lang.is_option_selected(Some(&d), "golang"));
+    drafts.insert("q-lang".to_owned(), d);
+    let t = tools.toggle_option(None, "fmt");
+    let t = tools.toggle_option(Some(&t), "clippy");
+    let t = tools.toggle_option(Some(&t), "fmt");
+    assert_eq!(
+        t.selected,
+        vec!["clippy".to_owned()],
+        "multi select toggles off"
+    );
+    assert_eq!(
+        tools.toggle_option(Some(&t), "unknown"),
+        t,
+        "unknown option leaves the draft unchanged"
+    );
+    drafts.insert("q-tools".to_owned(), t);
+    assert_eq!(
+        build_user_input_answers(questions, &drafts),
+        Some(vec![
+            (
+                "q-lang".to_owned(),
+                UserInputAnswerValue::Single("golang".to_owned())
+            ),
+            (
+                "q-tools".to_owned(),
+                UserInputAnswerValue::Multi(vec!["clippy".to_owned()])
+            ),
+        ]),
+        "all questions answered"
+    );
+    let custom = lang.set_custom_answer(drafts.get("q-lang"), "  Zig  ");
+    assert!(custom.selected.is_empty(), "typing clears selections");
+    assert!(!lang.is_option_selected(Some(&custom), "golang"));
+    assert_eq!(
+        lang.resolve_answer(Some(&custom)),
+        Some(UserInputAnswerValue::Single("Zig".to_owned())),
+        "custom answer is trimmed and wins"
+    );
+    assert_eq!(
+        tools.set_custom_answer(drafts.get("q-tools"), "nope"),
+        drafts["q-tools"],
+        "custom answers are ignored when the provider disallows them"
+    );
+
+    // Answered: the same item now carries `questionAnswer` and renders as history.
+    let answered = turn_item_event(
+        2,
+        json!({
+            "id": "item-q",
+            "status": "completed",
+            "type": "user_input_request",
+            "requestId": "req-q",
+            "questions": [
+                { "id": "q-lang", "header": "Language", "question": "Which language?", "options": [] },
+                { "id": "q-tools", "header": "Tools", "question": "Pick tools", "options": [] }
+            ],
+            "questionAnswer": {
+                "requestId": "req-q",
+                "questionTextById": { "q-lang": "Which language do you want?" },
+                "answers": { "q-lang": "golang", "q-tools": ["fmt", "clippy"] },
+                "attachmentsByQuestionId": {}
+            }
+        }),
+    );
+    assert!(state.apply(answered), "answer should apply");
+    let Some(TimelineEntry::UserInputRequest {
+        pending,
+        answers,
+        dismissible,
+        ..
+    }) = state.entries.first()
+    else {
+        panic!("expected answered UserInputRequest");
+    };
+    assert!(!*pending, "answered question is no longer pending");
+    assert!(!*dismissible, "non-message requests are not dismissible");
+    assert_eq!(answers.len(), 2, "both answers recorded");
+    assert_eq!(
+        answers[0].question, "Which language do you want?",
+        "questionTextById wins"
+    );
+    assert_eq!(answers[0].answer, "golang");
+    assert_eq!(answers[1].answer, "fmt, clippy", "multi answers join");
+}
+
+#[test]
+fn secret_request_maps_to_secret_card_with_status() {
+    let mut state = ThreadState::new("thread-cards");
+    let pending = turn_item_event(
+        1,
+        json!({
+            "id": "item-secret",
+            "status": "waiting",
+            "type": "secret_request",
+            "label": "GITHUB_TOKEN",
+            "reason": "Needed to open the PR",
+            "url": "https://github.com/settings/tokens",
+            "placeholder": "ghp_...",
+            "delivery": "file",
+            "secretStatus": "pending"
+        }),
+    );
+    assert!(state.apply(pending), "pending secret should apply");
+    assert_eq!(
+        state.entries,
+        vec![TimelineEntry::SecretRequest {
+            id: "item-secret".to_owned(),
+            label: "GITHUB_TOKEN".to_owned(),
+            reason: "Needed to open the PR".to_owned(),
+            url: Some("https://github.com/settings/tokens".to_owned()),
+            placeholder: Some("ghp_...".to_owned()),
+            file_delivery: true,
+            status: SecretRequestStatus::Pending,
+            pending: true,
+            created_at: Some("2026-11-22T10:00:00.000Z".to_owned()),
+        }],
+        "pending secret maps to a SecretRequest card, never an approval"
+    );
+
+    let saved = turn_item_event(
+        2,
+        json!({
+            "id": "item-secret",
+            "status": "completed",
+            "type": "secret_request",
+            "label": "GITHUB_TOKEN",
+            "reason": "Needed to open the PR",
+            "secretStatus": "saved"
+        }),
+    );
+    assert!(state.apply(saved), "saved secret should apply");
+    assert!(
+        matches!(
+            state.entries.first(),
+            Some(TimelineEntry::SecretRequest {
+                pending: false,
+                status: SecretRequestStatus::Saved,
+                url: None,
+                file_delivery: false,
+                ..
+            })
+        ),
+        "saved secret is settled, got {:?}",
+        state.entries
+    );
+}
+
+#[test]
+fn proposed_plan_maps_to_plan_card_with_title_and_preview() {
+    let mut state = ThreadState::new("thread-cards");
+    let body: String = (1..=25).map(|i| format!("- Step {i}\n")).collect();
+    let markdown = format!("# Ship the timeline cards\n\n## Summary\n\nPort the cards.\n\n{body}");
+    let plan = turn_item_event(
+        1,
+        json!({
+            "id": "item-plan",
+            "status": "completed",
+            "type": "proposed_plan",
+            "planId": "plan-1",
+            "markdown": markdown,
+            "streaming": false
+        }),
+    );
+    assert!(state.apply(plan), "plan should apply");
+    let Some(TimelineEntry::ProposedPlan {
+        title,
+        run_id,
+        markdown: plan_md,
+        status,
+        ..
+    }) = state.entries.first()
+    else {
+        panic!("expected ProposedPlan, got {:?}", state.entries);
+    };
+    assert_eq!(
+        title, "Ship the timeline cards",
+        "title comes from the first heading"
+    );
+    assert_eq!(run_id.as_deref(), Some("run-1"));
+    assert_eq!(*status, ItemStatus::Completed);
+    assert!(plan_can_collapse(plan_md), "25+ lines collapse");
+    let display = strip_displayed_plan_markdown(plan_md);
+    assert!(
+        display.starts_with("Port the cards."),
+        "title and Summary headings are stripped, got {display:?}"
+    );
+    let preview = collapsed_plan_preview(plan_md, 10);
+    assert_eq!(
+        preview.lines().filter(|l| !l.trim().is_empty()).count(),
+        11,
+        "10 lines + ..."
+    );
+    assert!(preview.ends_with("\n\n..."), "preview marks hidden content");
+    assert!(
+        !plan_can_collapse("# Short\n\nOne step."),
+        "short plans stay open"
+    );
+}
+
+#[test]
+fn subagent_maps_to_clickable_link_with_status_and_detail() {
+    let mut state = ThreadState::new("thread-cards");
+    let running = turn_item_event(
+        1,
+        json!({
+            "id": "item-sub",
+            "status": "running",
+            "title": "Subagent: /root/work/code_reviewer",
+            "type": "subagent",
+            "subagentId": "sub-1",
+            "origin": "app_owned",
+            "driver": "codex",
+            "providerInstanceId": "codex",
+            "childThreadId": "thread-child",
+            "prompt": "Review the diff",
+            "progress": "Reading [main.rs](src/main.rs)\n- `cargo test`",
+            "result": null
+        }),
+    );
+    assert!(state.apply(running), "subagent should apply");
+    assert_eq!(
+        state.entries,
+        vec![TimelineEntry::Subagent {
+            id: "item-sub".to_owned(),
+            child_thread_id: Some("thread-child".to_owned()),
+            title: "Code Reviewer".to_owned(),
+            role: "codex".to_owned(),
+            status: TurnItemStatus::Running,
+            summary: Some("Reading main.rs cargo test".to_owned()),
+            remote_label: None,
+            created_at: Some("2026-11-22T10:00:05.000Z".to_owned()),
+            started_at: Some("2026-11-22T10:00:00.000Z".to_owned()),
+            completed_at: None,
+        }],
+        "subagent is a first-class link row, not a folded tool"
+    );
+
+    let done = turn_item_event(
+        2,
+        json!({
+            "id": "item-sub",
+            "status": "completed",
+            "title": "Reviewer",
+            "type": "subagent",
+            "subagentId": "sub-1",
+            "origin": "app_owned",
+            "driver": "codex",
+            "providerInstanceId": "codex",
+            "childThreadId": null,
+            "prompt": "Review the diff",
+            "progress": "Still reading",
+            "result": "Child task ended with status completed"
+        }),
+    );
+    assert!(state.apply(done), "settled subagent should apply");
+    assert!(
+        matches!(
+            state.entries.first(),
+            Some(TimelineEntry::Subagent {
+                child_thread_id: None,
+                summary: None,
+                status: TurnItemStatus::Completed,
+                ..
+            })
+        ),
+        "generic child-end result hides the detail, got {:?}",
+        state.entries
+    );
+    assert_eq!(
+        subagent_status_visual(TurnItemStatus::Completed),
+        (SubagentTone::Success, "Completed")
+    );
+    assert_eq!(
+        subagent_status_visual(TurnItemStatus::Interrupted),
+        (SubagentTone::Stopped, "Stopped")
+    );
+    assert_eq!(format_subagent_display_title("Plain title"), "Plain title");
+}
+
+#[test]
+fn user_message_preserves_attachments_steer_and_timestamps() {
+    let mut state = ThreadState::new("thread-cards");
+    assert!(state.apply(run_event(1, "run.created", "run-1", 1, "running")));
+    let steer = turn_item_event(
+        2,
+        json!({
+            "id": "item-steer",
+            "status": "completed",
+            "createdBy": "user",
+            "creationSource": "web",
+            "type": "user_message",
+            "messageId": "msg-steer",
+            "inputIntent": "promoted_queued_to_steer",
+            "text": "Also update docs",
+            "attachments": [
+                { "type": "image", "id": "att-1", "name": "shot.png", "mimeType": "image/png", "sizeBytes": 42 }
+            ]
+        }),
+    );
+    assert!(state.apply(steer), "steer message should apply");
+    let Some(TimelineEntry::User {
+        is_steer,
+        attachments,
+        created_at,
+        run_id,
+        created_by_agent,
+        ..
+    }) = state.entries.first()
+    else {
+        panic!("expected user entry, got {:?}", state.entries);
+    };
+    assert!(
+        *is_steer,
+        "promoted-to-steer messages carry the Steer marker"
+    );
+    assert!(!*created_by_agent);
+    assert_eq!(attachments.len(), 1, "attachments are preserved");
+    assert_eq!(created_at.as_deref(), Some("2026-11-22T10:00:00.000Z"));
+    assert_eq!(run_id.as_deref(), Some("run-1"));
+
+    // Run status accessors drive `You stopped after ...` fold labels.
+    assert_eq!(state.latest_run_id(), Some("run-1"));
+    assert_eq!(state.run_status("run-1"), Some(RunStatus::Running));
+    assert!(state.apply(run_event(3, "run.updated", "run-1", 1, "interrupted")));
+    assert_eq!(state.run_status("run-1"), Some(RunStatus::Interrupted));
+
+    // Day-aware timestamps and the ordinal tooltip.
+    let now = LocalDateTime {
+        year: 2026,
+        month: 11,
+        day: 22,
+        hour: 15,
+        minute: 0,
+    };
+    let at = |year, month, day| LocalDateTime {
+        year,
+        month,
+        day,
+        hour: 14,
+        minute: 2,
+    };
+    assert_eq!(format_day_aware_timestamp(at(2026, 11, 22), now), "14:02");
+    assert_eq!(
+        format_day_aware_timestamp(at(2026, 11, 21), now),
+        "yesterday at 14:02"
+    );
+    assert_eq!(
+        format_day_aware_timestamp(at(2026, 11, 20), now),
+        "11/20 14:02"
+    );
+    assert_eq!(
+        format_day_aware_timestamp(at(2025, 12, 31), now),
+        "12/31/2025 14:02"
+    );
+    assert_eq!(
+        format_chat_timestamp_tooltip(at(2026, 11, 22)),
+        "14:02, 22nd November 2026"
+    );
+    assert_eq!(
+        format_chat_timestamp_tooltip(at(2026, 11, 11)),
+        "14:02, 11th November 2026"
+    );
+    let utc = LocalDateTime::from_epoch_ms(
+        conn_state::parse_iso8601_epoch_ms("2026-11-22T23:30:00Z").unwrap_or_default(),
+        3_600,
+    );
+    assert_eq!(
+        utc,
+        LocalDateTime {
+            year: 2026,
+            month: 11,
+            day: 23,
+            hour: 0,
+            minute: 30
+        }
+    );
+
+    // Conn's `formatDuration`.
+    assert_eq!(format_duration(0), "1ms");
+    assert_eq!(format_duration(450), "450ms");
+    assert_eq!(format_duration(2_000), "2s");
+    assert_eq!(format_duration(7_500), "7.5s");
+    assert_eq!(format_duration(59_600), "1m", "unit chosen after rounding");
+    assert_eq!(format_duration(134_000), "2m 14s");
+    assert_eq!(format_duration(3_725_000), "1h 2m 5s");
+    assert_eq!(format_duration(3_600_000), "1h");
+}
+
+#[test]
+fn checkpoint_keeps_changed_files_and_builds_tree() {
+    let mut state = ThreadState::new("thread-cards");
+    let captured = decode_thread(json!({
+        "kind": "event",
+        "sequence": 1,
+        "event": {
+            "id": "ev-cp",
+            "threadId": "thread-cards",
+            "occurredAt": "2026-11-22T10:01:00.000Z",
+            "type": "checkpoint.captured",
+            "payload": {
+                "id": "cp-1",
+                "threadId": "thread-cards",
+                "scopeId": "scope-1",
+                "runId": "run-1",
+                "nodeId": "node-1",
+                "parentCheckpointId": null,
+                "ordinalWithinScope": 1,
+                "appRunOrdinal": 3,
+                "ref": "refs/conn/cp-1",
+                "status": "ready",
+                "files": [
+                    { "path": "crates/app/src/chat/mod.rs", "kind": "modified", "additions": 10, "deletions": 2 },
+                    { "path": "crates/app/src/chat/cache.rs", "kind": "modified", "additions": 3, "deletions": 1 },
+                    { "path": "docs/status.md", "kind": "modified", "additions": 4, "deletions": 0 },
+                    { "path": "README.md", "kind": "added", "additions": 1, "deletions": 0 }
+                ],
+                "filesTotal": { "count": 6, "additions": 30, "deletions": 5 },
+                "capturedAt": "2026-11-22T10:01:00.000Z"
+            }
+        }
+    }));
+    assert!(state.apply(captured), "ready checkpoint should apply");
+    let Some(cp) = state.checkpoint_for_run("run-1") else {
+        panic!("checkpoint should be recorded for run-1");
+    };
+    assert_eq!(
+        (cp.file_count, cp.additions, cp.deletions),
+        (6, 30, 5),
+        "totals win"
+    );
+    assert_eq!(cp.app_run_ordinal, Some(3));
+    assert_eq!(
+        cp.files.len(),
+        4,
+        "individual files are kept (server prefix)"
+    );
+    assert_eq!(
+        cp.files[0],
+        TurnCheckpointFile {
+            path: "crates/app/src/chat/mod.rs".to_owned(),
+            kind: "modified".to_owned(),
+            additions: 10,
+            deletions: 2,
+        }
+    );
+
+    let tree = build_turn_diff_tree(&cp.files);
+    let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["crates/app/src/chat", "docs", "README.md"],
+        "single-child folders compact; folders sort before files"
+    );
+    assert_eq!(
+        (tree[0].additions, tree[0].deletions),
+        (13, 3),
+        "folder stats sum"
+    );
+    let collapsed = flatten_turn_diff_tree(&tree, &HashMap::new(), false);
+    assert_eq!(collapsed.len(), 3, "collapsed folders hide children");
+    let expanded = flatten_turn_diff_tree(&tree, &HashMap::new(), true);
+    let rows: Vec<(usize, &str)> = expanded
+        .iter()
+        .map(|r| (r.depth, r.name.as_str()))
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            (0, "crates/app/src/chat"),
+            (1, "cache.rs"),
+            (1, "mod.rs"),
+            (0, "docs"),
+            (1, "status.md"),
+            (0, "README.md"),
+        ],
+        "expanded tree lists files under folders in name order"
+    );
+    assert_eq!(
+        expanded[1].path, "crates/app/src/chat/cache.rs",
+        "file rows keep full paths"
+    );
+    let mut overrides = HashMap::new();
+    overrides.insert("docs".to_owned(), false);
+    assert_eq!(
+        flatten_turn_diff_tree(&tree, &overrides, true).len(),
+        5,
+        "per-folder override collapses one folder"
     );
 }
