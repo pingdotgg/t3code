@@ -8464,37 +8464,21 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  // Summarized display cannot mark a progress update, so only the second of two
-  // thinking blocks before a tool call becomes text; default display omits the first block's text.
-  const plan = "Planning the check";
+  // Default display sends the first pre-tool thinking block empty; a blank update is never promoted.
   const update = "Found it: the memory file is the cause.";
   it.effect.each([
-    {
-      model: "claude-opus-5-5",
-      texts: [plan, update],
-      expected: ["reasoning", "assistant_message"],
-    },
-    {
-      model: "claude-fable-5-1",
-      texts: [plan, update],
-      expected: ["reasoning", "assistant_message"],
-    },
-    { model: "claude-opus-5", texts: [plan, update], expected: ["reasoning", "reasoning"] },
-    { model: "claude-sonnet-4-6", texts: [plan, update], expected: ["reasoning", "reasoning"] },
-    { model: "claude-opus-5-5", texts: [plan], expected: ["reasoning"] },
-    { model: "claude-opus-5-5", texts: [plan, " \n "], expected: ["reasoning", "reasoning"] },
     {
       model: "claude-opus-5-5",
       texts: ["", update],
       expected: ["assistant_message"],
       shown: [update],
     },
+    { model: "claude-opus-5", texts: ["", update], expected: ["reasoning"], shown: [update] },
     {
       model: "claude-opus-5-5",
-      texts: [" \n ", update],
-      expected: ["reasoning", "assistant_message"],
+      texts: ["Planning the check", " \n "],
+      expected: ["reasoning", "reasoning"],
     },
-    { model: "claude-opus-5", texts: ["", update], expected: ["reasoning"], shown: [update] },
   ] as ReadonlyArray<{
     readonly model: string;
     readonly texts: ReadonlyArray<string>;
