@@ -1353,12 +1353,19 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
           );
           const child = nativeProbe.spawn.mock.results.at(-1)
             ?.value as NodeChildProcess.ChildProcess;
-          // The fixture prints its first line once the trap is in place.
-          const ready = new Promise<void>((resolve) => child.stdout?.once("data", () => resolve()));
-          const kill = vi.spyOn(child, "kill");
           const exited = exitOf(child);
+          // The fixture prints its first line once the trap is in place. Resolving with the
+          // failure instead of rejecting leaves no rejection unhandled if it never starts.
+          const ready = new Promise<unknown>((resolve) => {
+            child.stdout?.once("data", () => resolve(undefined));
+            exited.then(
+              () => resolve(new Error("the fake xcrun exited before it was ready")),
+              resolve,
+            );
+          });
+          const kill = vi.spyOn(child, "kill");
           yield* Effect.addFinalizer(() => Effect.sync(() => child.kill("SIGKILL")));
-          yield* Effect.promise(() => ready);
+          expect(yield* Effect.promise(() => ready)).toBeUndefined();
 
           expect(lookup.pollUnsafe()).toBeUndefined();
           yield* TestClock.adjust("5 seconds");
