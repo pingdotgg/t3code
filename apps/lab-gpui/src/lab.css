@@ -1,0 +1,4 @@
+/* The app's own stylesheet. Tailwind scans this package by default; @source adds the app's
+   sources, so every class the real components use is generated. */
+@import "../../web/src/index.css";
+@source "../../web";

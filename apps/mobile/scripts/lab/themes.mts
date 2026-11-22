@@ -2,7 +2,7 @@
 // Mobile lab themes: the phone wears Nick's appearance, like the desktop lab does.
 //
 // Nick's Orbit profile "Nick" has the custom dark theme "Dark Mono" in the dark slot, stock t3-code
-// for light, and dark mode on. The desktop lab seeds Dark Mono from apps/web/lab.html; this file
+// for light, and dark mode on. The desktop lab seeds Dark Mono from apps/lab-gpui/index.html; this file
 // reads the same palette from there, so the two labs cannot drift. The lab server publishes the
 // theme files (`<stateDir>/themes/<id>.json`), the phone lists them as `published:<id>` themes, and
 // `applyLabTheme` writes the phone's theme preferences, which live in the app's SQLite database.
@@ -21,13 +21,14 @@ const DARK_OCEAN_ID = "dark-ocean";
 
 /** The palette desktop's lab seeds into `t3code:themes:v1` (the one source for Dark Mono). */
 function darkMonoFromDesktopLab(repoRoot: string) {
-  const html = FS.readFileSync(Path.join(repoRoot, "apps/web/lab.html"), "utf8");
+  const html = FS.readFileSync(Path.join(repoRoot, "apps/lab-gpui/index.html"), "utf8");
   // The call is formatted across lines, with or without trailing commas.
   const seeded =
     /setItem\(\s*"t3code:themes:v1",\s*JSON\.stringify\(\s*(\[.*?\])\s*,?\s*\)\s*,?\s*\)/s.exec(
       html,
     )?.[1];
-  if (seeded === undefined) throw new Error("apps/web/lab.html no longer seeds t3code:themes:v1.");
+  if (seeded === undefined)
+    throw new Error("apps/lab-gpui/index.html no longer seeds t3code:themes:v1.");
   // A JS array literal in the page (unquoted keys), not JSON; it holds only data.
   const themes = VM.runInNewContext(`(${seeded})`) as Array<{
     id: string;
@@ -36,7 +37,7 @@ function darkMonoFromDesktopLab(repoRoot: string) {
     colors: object;
   }>;
   const theme = themes.find((entry) => entry.id === DARK_MONO_ID);
-  if (theme === undefined) throw new Error("apps/web/lab.html seeds no Dark Mono theme.");
+  if (theme === undefined) throw new Error("apps/lab-gpui/index.html seeds no Dark Mono theme.");
   return { version: 1, name: theme.label, appearance: theme.appearance, colors: theme.colors };
 }
 

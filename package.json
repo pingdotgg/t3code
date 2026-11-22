@@ -10,6 +10,8 @@
     "dev:server": "node scripts/dev-runner.ts dev:server",
     "dev:web": "node scripts/dev-runner.ts dev:web",
     "dev:marketing": "vp run --filter @t3tools/marketing dev",
+    "lab:gpui": "vp run --filter @t3tools/lab-gpui dev",
+    "lab:ios": "vp run --filter @t3tools/lab-ios dev",
     "dev:desktop": "node scripts/dev-runner.ts dev:desktop",
     "migrate-dev-db": "node apps/server/scripts/migrate-dev-db.ts",
     "start": "vp run --filter t3 start",

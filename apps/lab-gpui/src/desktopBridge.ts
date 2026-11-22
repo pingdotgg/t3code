@@ -3,8 +3,8 @@
 // answered as the browser would. Installed after module load, so isElectron stays false.
 import type { DesktopBridge } from "@t3tools/contracts";
 
-import { showContextMenuFallback } from "../contextMenuFallback";
-import { readBrowserClientSettings, writeBrowserClientSettings } from "../clientPersistenceStorage";
+import { showContextMenuFallback } from "~/contextMenuFallback";
+import { readBrowserClientSettings, writeBrowserClientSettings } from "~/clientPersistenceStorage";
 import { labDatabaseRun } from "./database";
 
 const unsubscribe = () => () => undefined;

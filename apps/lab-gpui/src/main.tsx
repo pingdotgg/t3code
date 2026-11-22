@@ -1,7 +1,7 @@
 // Conn UI lab: the real app on fixture data, for fast design iteration without a server or
 // Orbit. Threads, projects and settings come from ./fixtures; edit those to change the data.
 import "@fontsource-variable/inter";
-import "../index.css";
+import "./lab.css";
 import { createHashHistory } from "@tanstack/react-router";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
 import ReactDOM from "react-dom/client";
@@ -12,7 +12,7 @@ import { whenLocaleReady } from "~/i18n/runtime";
 import { getRouter } from "~/router";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ENVIRONMENT_ID, installFakeEnvironment } from "../../test/fakeEnvironment";
+import { ENVIRONMENT_ID, installFakeEnvironment } from "../../web/test/fakeEnvironment";
 import { LAB_PROJECTS, LAB_PROVIDERS, LAB_THREADS } from "./fixtures";
 import { installLabDesktopBridge } from "./desktopBridge";
 import { registerLabEnvironments } from "./registerEnvironments";
@@ -26,9 +26,9 @@ installFakeEnvironment(LAB_THREADS, {
   providers: LAB_PROVIDERS,
   pullRequests: true,
 });
-// The Database panel reads through the desktop bridge's databaseRun (src/lab/desktopBridge.ts).
+// The Database panel reads through the desktop bridge's databaseRun (src/desktopBridge.ts).
 installLabDesktopBridge();
-// The Pull requests page lists LAB_PULL_REQUESTS (src/lab/pr/pullRequestList.ts).
+// The Pull requests page lists LAB_PULL_REQUESTS (src/pr/pullRequestList.ts).
 installPullRequestListFixture();
 // A returning user: the first-run gate would otherwise wait on onboarding evidence.
 // The Working shelf is off, so waiting threads list inline like Nick's sidebar.
@@ -52,7 +52,7 @@ if (!window.location.hash || params.has("thread"))
   window.location.hash = `/${ENVIRONMENT_ID}/${threadId}`;
 const router = getRouter(createHashHistory());
 await router.load();
-// The MacBook and Linux VM environments host some threads (src/lab/environments.ts).
+// The MacBook and Linux VM environments host some threads (src/environments.ts).
 await registerLabEnvironments();
 // The right panel opens on Tasks unless `?panel=none`; `?panel=files` and `?panel=database` open
 // the lab's dummy Files and Database tabs.
@@ -63,5 +63,5 @@ if (panel !== "none") {
 }
 await whenLocaleReady();
 ReactDOM.createRoot(document.getElementById("root")!).render(<AppRoot router={router} />);
-// Icon set switch (?icons=original|outline|solid24|solid20|solid16|auto), src/lab/icons.
+// Icon set switch (?icons=original|outline|solid24|solid20|solid16|auto), src/icons.
 mountIconSwitcher();

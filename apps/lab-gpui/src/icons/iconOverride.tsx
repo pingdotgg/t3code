@@ -1,4 +1,4 @@
-// Lab stand-in for src/icons/iconOverride.ts (vite.lab.config.ts, STUBBED). Draws the new icon
+// Lab stand-in for apps/web/src/icons/iconOverride.ts (vite.config.ts, STUBBED). Draws the new icon
 // set in place of Lucide and Phosphor. Only the glyph changes: size, className, aria and the rest
 // of the props stay as the caller gave them. Switch modes with `?icons=` or the corner switcher.
 import type { LucideProps } from "lucide-react-original";

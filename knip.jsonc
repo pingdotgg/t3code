@@ -148,19 +148,23 @@
       // Worktree setup (scripts/setup-worktree.ts) runs this directly, and evidence
       // fixtures run under node.
       // toolbar-mockup.html loads the Conn toolbar preview, which knip does not read.
-      // The UI labs (lab.html, mobile.html) load their scripts from the HTML pages, and
-      // vite.lab.config.ts swaps modules by alias; their generators run by hand.
       "entry": [
         "scripts/warm-dep-cache.ts",
         "test/fixtures/**/*.mjs",
         "src/laravelToolbarPreview/main.tsx",
-        "vite.lab.config.ts",
-        "src/lab/**/*.{ts,tsx,mjs}",
-        "scripts/mobile-lab/*.mts",
       ],
       // UI component modules are copied and adapted as cohesive sets. Keep their
       // named subcomponents even before they have callers; the file audit still
       // reports an entire component module when nothing imports it.
+    },
+    "apps/lab-gpui": {
+      // index.html loads src/main.tsx, and vite.config.ts swaps app modules for the stand-ins
+      // under src by path; the icon generator runs by hand.
+      "entry": ["src/**/*.{ts,tsx,mjs}"],
+    },
+    "apps/lab-ios": {
+      // index.html loads src/main.tsx; the generators run by hand.
+      "entry": ["src/main.tsx", "scripts/*.mts"],
     },
     "apps/marketing": {
       // `astro check` runs from the typecheck task in vite.config.ts, which knip does not read.

@@ -1,23 +1,23 @@
 // The conn project's workspace as the lab's fake environment serves it to the Files and Database
 // panels (projects.listEntries / readFile / searchEntries in labDriver.ts). The contents are the
 // repo's real sources, loaded raw by Vite on demand; the root files and the .env are inline.
-import rootPackageJson from "../../../../package.json?raw";
-import rootReadme from "../../../../README.md?raw";
-import webPackageJson from "../../package.json?raw";
+import rootPackageJson from "../../../package.json?raw";
+import rootReadme from "../../../README.md?raw";
+import webPackageJson from "../../web/package.json?raw";
 
 const sources = import.meta.glob(
   [
-    "../components/ui/{button,input-group,menu,badge,tooltip,scroll-area,checkbox,switch}.tsx",
-    "../components/files/{FileBreadcrumbs,FileExplorerPane,FileBrowserPanel,ReadOnlySourcePreview}.tsx",
-    "../components/chat/{MarkdownCodeBlock,ThreadStatusLine,ThreadNow,ComposerPendingUserInputPanel}.tsx",
-    "../components/{StatusDotBadge,ToolbarGroup}.tsx",
-    "../orbit/tasks/*.{ts,tsx}",
-    "!../orbit/tasks/*.test.*",
-    "../database/{DatabasePanel,databaseApi,databaseStore}.{ts,tsx}",
-    "../lib/{utils,observeResize,lruCache}.ts",
-    "../hooks/{useTheme,useNowMinute}.ts",
-    "../rightPanelStore.ts",
-    "../main.tsx",
+    "../../web/src/components/ui/{button,input-group,menu,badge,tooltip,scroll-area,checkbox,switch}.tsx",
+    "../../web/src/components/files/{FileBreadcrumbs,FileExplorerPane,FileBrowserPanel,ReadOnlySourcePreview}.tsx",
+    "../../web/src/components/chat/{MarkdownCodeBlock,ThreadStatusLine,ThreadNow,ComposerPendingUserInputPanel}.tsx",
+    "../../web/src/components/{StatusDotBadge,ToolbarGroup}.tsx",
+    "../../web/src/orbit/tasks/*.{ts,tsx}",
+    "!../../web/src/orbit/tasks/*.test.*",
+    "../../web/src/database/{DatabasePanel,databaseApi,databaseStore}.{ts,tsx}",
+    "../../web/src/lib/{utils,observeResize,lruCache}.ts",
+    "../../web/src/hooks/{useTheme,useNowMinute}.ts",
+    "../../web/src/rightPanelStore.ts",
+    "../../web/src/main.tsx",
   ],
   { query: "?raw", import: "default" },
 ) as Record<string, () => Promise<string>>;
@@ -51,7 +51,7 @@ const loaders = new Map<string, Loader>([
   [".gitignore", text("node_modules\ndist\n.env\n.t3\n")],
 ]);
 for (const [key, load] of Object.entries(sources))
-  loaders.set(`apps/web/src/${key.slice(3)}`, load);
+  loaders.set(`apps/web/src/${key.slice("../../web/src/".length)}`, load);
 
 const FILE_PATHS = [...loaders.keys()].sort();
 

@@ -1,17 +1,17 @@
-// The lab's only fake layer: client-runtime's ConnectionDriver, swapped (vite.lab.config.ts) for the
+// The lab's only fake layer: client-runtime's ConnectionDriver, swapped (vite.config.ts) for the
 // in-process environment of the render tests (test/fakeEnvironment.ts). Each environment gets its
 // own view of that one shared session: the primary keeps the threads no remote hosts
-// (src/lab/environments.ts); a remote sees only its own threads and names its own machine.
+// (src/environments.ts); a remote sees only its own threads and names its own machine.
 import { ORCHESTRATION_V2_WS_METHODS, ProjectReadFileError, WS_METHODS } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
-import { ConnectionDriver } from "../../../../packages/client-runtime/src/connection/driver.ts";
-import { ENVIRONMENT_ID, fakeDriver } from "../../test/fakeEnvironment";
+import { ConnectionDriver } from "../../../packages/client-runtime/src/connection/driver.ts";
+import { ENVIRONMENT_ID, fakeDriver } from "../../web/test/fakeEnvironment";
 import { labRemoteEnvironment, labThreadHost, type LabRemoteEnvironment } from "./environments";
 import { labListEntries, labReadFile, labSearchEntries } from "./workspace";
 
-export * from "../../../../packages/client-runtime/src/connection/driver.ts";
+export * from "../../../packages/client-runtime/src/connection/driver.ts";
 
 type Session = Effect.Success<ReturnType<typeof fakeDriver.connect>>["session"];
 type Item = Record<string, any>;
@@ -53,7 +53,7 @@ function sessionFor(session: Session, remote: LabRemoteEnvironment | null): Sess
       Stream.map((session.client as any)[ORCHESTRATION_V2_WS_METHODS.subscribeShell](input), shell),
     [WS_METHODS.subscribeServerConfig]: (input) =>
       Stream.map((session.client as any)[WS_METHODS.subscribeServerConfig](input), config),
-    // The Files and Database panels read the conn project's workspace (src/lab/workspace.ts).
+    // The Files and Database panels read the conn project's workspace (src/workspace.ts).
     [WS_METHODS.projectsListEntries]: (input: { directoryPath?: string }) =>
       Effect.succeed({ entries: labListEntries(input.directoryPath), truncated: false }),
     [WS_METHODS.projectsSearchEntries]: (input: {
@@ -70,7 +70,12 @@ function sessionFor(session: Session, remote: LabRemoteEnvironment | null): Sess
       Effect.tryPromise({
         try: () => labReadFile(input.relativePath),
         catch: () =>
-          new ProjectReadFileError({ message: "The lab workspace could not read the file." }),
+          new ProjectReadFileError({
+            cwd: input.cwd,
+            relativePath: input.relativePath,
+            failure: "operation_failed",
+            operation: "read",
+          }),
       }).pipe(
         Effect.flatMap((contents) =>
           contents !== null
@@ -94,7 +99,6 @@ function sessionFor(session: Session, remote: LabRemoteEnvironment | null): Sess
                     cwd: input.cwd,
                     relativePath: input.relativePath,
                     failure: "path_not_file",
-                    message: `${input.relativePath} is not in the lab workspace.`,
                   }),
                 ),
         ),

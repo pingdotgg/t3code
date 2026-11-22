@@ -19,7 +19,7 @@ import {
   threadWithHistory,
   threadWithQuestion,
   type FakeThread,
-} from "../../test/fakeEnvironment";
+} from "../../web/test/fakeEnvironment";
 import phoneScreenshotPath from "./phone-screenshot.png";
 
 // Markdown drops data: URLs, so the tall phone screenshot (390x844) is an absolute URL Vite serves.

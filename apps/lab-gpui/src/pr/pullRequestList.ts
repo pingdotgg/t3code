@@ -13,7 +13,7 @@ import type {
   PullRequestState,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import { answerRpc } from "../../../test/fakeEnvironment";
+import { answerRpc } from "../../../web/test/fakeEnvironment";
 import { matchesPullRequestFilters } from "~/components/pullRequest/pullRequestList.logic";
 
 const GITHUB = "github" as PullRequestListEntry["provider"];

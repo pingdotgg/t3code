@@ -812,7 +812,13 @@ export default defineConfig({
         rules: { "t3code/no-manual-memo": ["error", { allowMemoHooks: true }] },
       },
       {
-        files: ["apps/web/src/**", "apps/mobile/src/**", "packages/*/src/**"],
+        files: [
+          "apps/web/src/**",
+          "apps/lab-gpui/src/**",
+          "apps/lab-ios/src/**",
+          "apps/mobile/src/**",
+          "packages/*/src/**",
+        ],
         rules: { "t3code/no-unreasoned-state-sync": "error" },
       },
       {
@@ -858,9 +864,8 @@ export default defineConfig({
         // icon maps list every glyph name, the stand-ins keep the hook names of the modules they
         // replace, and the lab driver talks to the fake environment's RPC.
         files: [
-          "apps/web/src/lab/**",
-          "apps/web/scripts/mobile-lab/**",
-          "apps/web/vite.lab.config.ts",
+          "apps/lab-gpui/**",
+          "apps/lab-ios/**",
           "apps/mobile/scripts/lab/**",
           "apps/mobile/src/lab/**",
         ],
