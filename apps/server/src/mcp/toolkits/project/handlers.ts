@@ -8,6 +8,9 @@ import {
   ProjectId,
   type TaskFolderError,
   type Project as ProjectRecord,
+  type ProjectSettingsOverrides,
+  type ProjectUpdatePayload,
+  type ServerSettingsError,
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
@@ -46,7 +49,13 @@ import {
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as OrchestrationMcp from "../../OrchestratorMcpService.ts";
-import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
+import {
+  newCommandId,
+  readCaller,
+  refuseProviderSignOut,
+  resolveProjectId,
+  unavailable,
+} from "../../threadAccess.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 const isAboveCeilingError = Schema.is(OrchestratorRuntimeModeAboveCeilingError);
@@ -216,6 +225,47 @@ const withSavedProjectSettings = Effect.gen(function* () {
   };
 });
 
+// The GUI keeps these in Settings' per-project overrides; the project row's copies apply only until folded.
+const saveProjectSettingsOverrides = Effect.fn("mcp.saveProjectSettingsOverrides")(function* (
+  input: ProjectUpdatePayload & { readonly projectId: ProjectId },
+) {
+  const set: ProjectSettingsOverrides = {
+    ...(input.scripts === undefined ? {} : { defaultProjectScripts: input.scripts }),
+    ...(input.defaultModelSelection == null
+      ? {}
+      : { defaultModelSelection: input.defaultModelSelection }),
+    ...(input.defaultThreadEnvMode == null
+      ? {}
+      : { defaultThreadEnvMode: input.defaultThreadEnvMode }),
+    ...(input.autoPull === undefined ? {} : { defaultAutoPull: input.autoPull }),
+  };
+  const cleared = [
+    ...(input.defaultModelSelection === null ? (["defaultModelSelection"] as const) : []),
+    ...(input.defaultThreadEnvMode === null ? (["defaultThreadEnvMode"] as const) : []),
+  ];
+  if (Object.keys(set).length === 0 && cleared.length === 0) return;
+  const service = yield* ServerSettings.ServerSettingsService;
+  const settings = yield* service.getSettings.pipe(Effect.mapError(unavailable));
+  const next: Record<string, unknown> = {
+    ...settings.projectSettingsOverrides[input.projectId],
+    ...set,
+  };
+  for (const key of cleared) delete next[key];
+  yield* service
+    .updateSettings({
+      projectSettingsOverrides: {
+        [input.projectId]:
+          Object.keys(next).length === 0 ? null : (next as ProjectSettingsOverrides),
+      },
+    })
+    .pipe(Effect.mapError(settingsFailure));
+});
+
+const settingsFailure = (error: ServerSettingsError) =>
+  error.operation === "write-managed-setting" || error.operation === "use-disallowed-provider"
+    ? new OrchestratorMcpFailure({ code: "capability_denied", message: error.message })
+    : unavailable();
+
 // The project is already committed, so a failed Settings read must not report the create as failed.
 const withSavedProjectSettingsAfterCreate = withSavedProjectSettings.pipe(
   Effect.orElseSucceed(() => (project: ProjectRecord) => project),
@@ -239,6 +289,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const threadId = ThreadId.make(commandId);
         const messageId = MessageId.make(commandId);
         const attachments = input.attachments ?? [];
+        if (input.message !== undefined) yield* refuseProviderSignOut(input.message, attachments);
         if (input.generateTitle === true && !input.message?.trim() && attachments.length === 0)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
@@ -622,6 +673,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
       const updated = yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));
+      yield* saveProjectSettingsOverrides(input);
       return (yield* withSavedProjectSettings)(updated);
     }),
   ),

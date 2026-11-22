@@ -266,6 +266,17 @@ it.effect(
       expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
       expect(titled.launched[0]?.titleRenamed).toBeUndefined();
 
+      // Over RPC a bare `/logout` needs providers:manage, which agents never hold.
+      const signOut = yield* launchWith("full-access", "full-access", {
+        title: "Out",
+        message: " /LOGOUT ",
+      });
+      expect(signOut.result).toMatchObject({
+        code: "capability_denied",
+        message: expect.stringContaining("sign a provider out"),
+      });
+      expect(signOut.launched).toHaveLength(0);
+
       for (const message of [undefined, "", " \n "]) {
         const idleTitled = yield* launchWith("full-access", "full-access", {
           title: "Fix",
@@ -1450,6 +1461,62 @@ it.effect("reading a project shows the default model and actions saved in Settin
       defaultModelSelection: overrideModel,
       scripts: overrideScripts,
     });
+  }),
+);
+
+it.effect("a project update saves its default model and actions where Settings reads them", () =>
+  Effect.gen(function* () {
+    const overrideModel = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-sonnet",
+    };
+    const scripts = [
+      { id: "lint", name: "Lint", command: "pnpm lint", icon: "lint", runOnWorktreeCreate: false },
+    ] satisfies ProjectScript[];
+    const harness = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      overrideModel,
+      launched: [],
+    });
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        update: (input) =>
+          Effect.succeed({
+            id: input.projectId,
+            title: "Client target",
+            workspaceRoot: "/projects/client-target",
+            defaultModelSelection: null,
+            scripts: input.scripts ?? [],
+            createdAt: "2026-01-01T00:00:00.000Z",
+            updatedAt: "2026-01-01T00:00:00.000Z",
+            deletedAt: null,
+          }),
+      }),
+    );
+    yield* Effect.gen(function* () {
+      const toolkit = yield* ProjectToolkit;
+      const updated = yield* toolkit
+        .handle("t3_project_update", {
+          projectId: harness.projectId,
+          scripts,
+          defaultModelSelection: null,
+          autoPull: true,
+        })
+        .pipe(Stream.unwrap, Stream.runCollect);
+      expect(updated.at(-1)?.result).toMatchObject({ defaultModelSelection: null, scripts });
+      const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+      expect(settings.projectSettingsOverrides[harness.projectId]).toEqual({
+        defaultProjectScripts: scripts,
+        defaultAutoPull: true,
+      });
+    }).pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provideMerge(dependencies),
+        ),
+      ),
+    );
   }),
 );
 

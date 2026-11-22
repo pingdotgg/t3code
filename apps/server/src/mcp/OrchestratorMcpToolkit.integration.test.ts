@@ -422,6 +422,16 @@ describe("orchestrator MCP toolkit", () => {
         const followupStartSequence = yield* orchestrator.getThreadEventSequence(
           localChild(delegated.childThreadId),
         );
+        // Over RPC a bare `/logout` needs providers:manage, which agents never hold.
+        for (const [tool, args] of [
+          ["t3_thread_send", { threadId: localChild(delegated.childThreadId), message: "/logout" }],
+          ["delegate_task", { task: "/logout" }],
+          ["create_threads", { threads: [{ prompt: "/logout" }] }],
+        ] as const) {
+          const signOut = yield* invoke(tool, args);
+          expect(signOut.isError).toBe(true);
+          expect(JSON.stringify(signOut.content)).toContain("sign a provider out");
+        }
         const runningFollowupCall = yield* invoke("t3_thread_send", {
           threadId: localChild(delegated.childThreadId),
           message: cancellationPrompt,

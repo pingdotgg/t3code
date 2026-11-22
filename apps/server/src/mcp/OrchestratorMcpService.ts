@@ -139,7 +139,12 @@ import {
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
-import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import {
+  assertTargetWithinLimits,
+  isLiveCallerShell,
+  refuseProviderSignOut,
+  threadNotFound,
+} from "./threadAccess.ts";
 import { WITHHELD, withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
@@ -2924,6 +2929,7 @@ const make = Effect.gen(function* () {
       };
     }),
     delegateTask: Effect.fn("OrchestratorMcpService.delegateTask")(function* (callerScope, input) {
+      yield* refuseProviderSignOut(taskPrompt(input));
       const environmentId =
         input.target === undefined
           ? undefined
@@ -3331,6 +3337,8 @@ const make = Effect.gen(function* () {
     }),
     createThreads: Effect.fn("OrchestratorMcpService.createThreads")(
       function* (callerScope, input) {
+        for (const request of input.threads)
+          if (request.prompt !== undefined) yield* refuseProviderSignOut(request.prompt);
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
         const parentRun = ThreadManagementService.latestActiveRun(parent);
         if (
@@ -3761,6 +3769,7 @@ const make = Effect.gen(function* () {
       } satisfies OrchestratorMcpThreadReadResult;
     }),
     sendToThread: Effect.fn("OrchestratorMcpService.sendToThread")(function* (scope, input) {
+      yield* refuseProviderSignOut(input.message);
       const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
       yield* assertLiveCallerForOtherThread(scope, parent, target);
       yield* assertTargetWithinLimits(limits, target.thread);

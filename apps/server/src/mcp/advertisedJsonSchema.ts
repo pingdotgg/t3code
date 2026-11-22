@@ -1,4 +1,5 @@
 import * as Predicate from "effect/Predicate";
+import type * as Schema from "effect/Schema";
 import { Tool } from "effect/ai";
 
 type Json = unknown;
@@ -109,3 +110,7 @@ const compact = (schema: Json, optional: boolean): Json => {
  */
 export const advertisedJsonSchema = (tool: Tool.Any) =>
   compact(Tool.getJsonSchema(tool), false) as ReturnType<typeof Tool.getJsonSchema>;
+
+/** The same compaction for a schema a tool returns, so agents read it as they read tool inputs. */
+export const advertisedSchemaOf = (schema: Schema.Constraint) =>
+  compact(Tool.getJsonSchemaFromSchema(schema), false) as ReturnType<typeof Tool.getJsonSchema>;
