@@ -1694,6 +1694,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cursorAdjacentToMention: boolean,
     contextIds: string[],
     textChanged: boolean,
+    isHistory = false,
   ) => {
     refreshWorkspaceSnapshotOnTyping();
     const trigger = cursorAdjacentToMention
@@ -1809,6 +1810,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         contextIds: contextIds ?? [],
       })),
       removedQueuedAttachments: removedEditingQueuedAttachments ?? [],
+      isHistory,
+      textChanged,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,

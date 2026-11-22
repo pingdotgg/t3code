@@ -152,6 +152,8 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: chipFile, contextIds: [chipContextId] },
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
+      isHistory: true,
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -170,11 +172,43 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
       removedQueuedAttachments: [],
+      isHistory: true,
+      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(redone.queuedAttachmentIdsToRemove).toEqual([chipFile.id, rowRemovedImage.id]);
     expect(redone.queuedAttachmentsToRestore).toEqual([]);
+
+    // Undoing again and then deleting the image chip directly via Backspace (non-history edit)
+    // keeps the image on the thumbnail shelf.
+    reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([imageContextId]),
+      files: [],
+      queuedAttachments: [{ attachment: plainFile, contextIds: [] }],
+      removedQueuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
+      isHistory: true,
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    const backspaced = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      files: [],
+      queuedAttachments: [
+        { attachment: plainFile, contextIds: [] },
+        { attachment: rowRemovedImage, contextIds: [imageContextId] },
+      ],
+      removedQueuedAttachments: [],
+      isHistory: false,
+      textChanged: true,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(backspaced.queuedAttachmentIdsToRemove).toEqual([]);
+    expect(backspaced.queuedAttachmentsToRestore).toEqual([]);
   });
 });

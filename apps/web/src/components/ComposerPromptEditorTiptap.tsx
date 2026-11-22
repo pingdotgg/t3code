@@ -203,6 +203,8 @@ export interface ComposerPromptEditorProps {
     contextIds: string[],
     /** False when only the caret or selection moved. */
     textChanged: boolean,
+    /** True when ProseMirror history (undo or redo) produced this change. */
+    isHistory?: boolean,
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (key: string, event: KeyboardEvent, isTaskItem?: boolean) => boolean;
@@ -1127,6 +1129,7 @@ function ComposerPromptEditorTiptapInner(
       suppressTrigger,
       contextIds,
       previousSnapshot.value !== nextValue,
+      isHistoryTransaction(transaction),
     );
   };
 
