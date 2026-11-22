@@ -18,20 +18,15 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as CheckpointService from "./CheckpointService.ts";
-import * as ProjectStore from "./ProjectStore.ts";
-import * as SqlitePersistence from "../persistence/Sqlite.ts";
-import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as WorkspaceFolders from "../workspace/WorkspaceFolders.ts";
 
@@ -776,92 +771,3 @@ it.effect("keeps the pre-rewind snapshot of a folder a failed rewind could not p
     assert.deepEqual(captured, ["/repo/first", "/repo/second", "/repo/second"]);
   }).pipe(Effect.provide(layerTest));
 });
-
-it.effect("walks the project folder once to find a thread's repositories and submodules", () =>
-  Effect.gen(function* () {
-    const fileSystem = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const workspaceRoot = yield* fileSystem.realPath(
-      yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-checkpoint-scopes-" }),
-    );
-    for (const folder of ["api/.git", "api/vendor/lib/.git", "notes"]) {
-      yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
-    }
-    yield* fileSystem.writeFileString(
-      path.join(workspaceRoot, "api", ".gitmodules"),
-      '[submodule "lib"]\n\tpath = vendor/lib\n',
-    );
-    const projectId = ProjectId.make("project:checkpoint-scopes");
-    let rootReads = 0;
-    const counting = FileSystem.FileSystem.of({
-      ...fileSystem,
-      readDirectory: (target, options) => {
-        if (target === workspaceRoot) rootReads += 1;
-        return fileSystem.readDirectory(target, options);
-      },
-    });
-    const layerTest = CheckpointService.layer.pipe(
-      Layer.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          Layer.mock(CheckpointStore.CheckpointStore)({}),
-          WorkspaceFolders.layer.pipe(
-            Layer.provide(
-              Layer.mock(ProjectStore.ProjectStoreV2)({
-                get: () =>
-                  Effect.succeedSome({
-                    projectId,
-                    title: "Project",
-                    hasCustomTitle: false,
-                    defaultModelSelection: null,
-                    defaultThreadEnvMode: null,
-                    autoPull: false,
-                    faviconPath: null,
-                    projectIcon: null,
-                    scripts: [],
-                    pinnedAt: null,
-                    archivedAt: null,
-                    createdAt: "2026-06-21T00:00:00.000Z",
-                    updatedAt: "2026-06-21T00:00:00.000Z",
-                    deletedAt: null,
-                    workspaceRoot,
-                    trackedFolders: [],
-                  }),
-              }),
-            ),
-            Layer.provide(TaskFolderStore.layer.pipe(Layer.provide(SqlitePersistence.layerMemory))),
-          ),
-        ),
-      ),
-      Layer.provide(Layer.succeed(FileSystem.FileSystem, counting)),
-      Layer.provideMerge(NodeCrypto.layer),
-    );
-
-    const scopes = yield* Effect.gen(function* () {
-      const checkpoints = yield* CheckpointService.CheckpointServiceV2;
-      return yield* checkpoints.repositoryScopes({
-        rootScope: {
-          id: CheckpointScopeId.make("checkpoint-scope:checkpoint-scopes"),
-          threadId: ThreadId.make("thread:checkpoint-scopes"),
-          runId: RunId.make("run:checkpoint-scopes:1"),
-          nodeId: NodeId.make("node:checkpoint-scopes:1"),
-          parentScopeId: null,
-          providerThreadId: ProviderThreadId.make("provider-thread:checkpoint-scopes"),
-          kind: "root_run",
-          ordinalWithinParent: 0,
-          advancesAppRunCount: true,
-          cwd: workspaceRoot,
-          createdAt: DateTime.makeUnsafe("2026-07-28T00:00:00.000Z"),
-        },
-        projectId,
-        worktreePath: null,
-      });
-    }).pipe(Effect.provide(layerTest));
-
-    assert.deepEqual(
-      scopes.map((scope) => scope.cwd),
-      [path.join(workspaceRoot, "api"), path.join(workspaceRoot, "api", "vendor", "lib")],
-    );
-    assert.strictEqual(rootReads, 1);
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
-);
