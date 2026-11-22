@@ -17,13 +17,14 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import {
   ArrowLeftIcon,
+  ArrowUpRightIcon,
+  ChevronRightIcon,
   BotIcon,
   CheckIcon,
-  CircleHelpIcon,
-  FlagIcon,
   CircleAlertIcon,
   HourglassIcon,
   MoonIcon,
+  SquareIcon,
 } from "lucide-react";
 import { secondTick } from "@t3tools/client-runtime/clock";
 import { useRef, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -145,7 +146,7 @@ export function WorkflowChip({ name }: { readonly name: string }) {
 
 // The thread list's own colours for the same states, so a run reads like a thread does.
 const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
-  input: "text-primary",
+  input: "text-warning-foreground",
   failed: "text-destructive",
   working: "text-info-foreground",
   quiet: "text-muted-foreground",
@@ -199,9 +200,13 @@ export function WorkflowRunFeed({
 }) {
   const { run } = node;
   const gt = useGT();
-  const nowMs = useRunNowMs(node.run.endedAt === null);
+  const clockMs = useRunNowMs(node.run.endedAt === null);
+  // An ended run's last step can still read as running for a moment; it ran until the run ended.
+  const nowMs = node.run.endedAt === null ? clockMs : Date.parse(node.run.endedAt);
   const panel = useRef<HTMLElement | null>(null);
   const [picked, setPicked] = useState<string | null>(null);
+  // Steps already there when the run opens are simply shown; only later ones arrive with motion.
+  const [openedAtMs] = useState(() => Date.now());
   const detail = useEnvironmentQuery(
     serverEnvironment.workflowRun({ environmentId, input: { runId: run.runId } }),
   );
@@ -284,6 +289,7 @@ export function WorkflowRunFeed({
       nowMs={nowMs}
       disabled={busy || !canResume || run.retired}
       onResume={() => void resumeRun()}
+      kept={(steps ?? []).some((step) => step.status === "completed")}
     />
   );
   const beatCard = (beat: WorkflowBeat) => {
@@ -294,16 +300,6 @@ export function WorkflowRunFeed({
           {pause(beat.name, beat.attempts, beat.detail ?? run.detail)}
           {stepCard(beat)}
         </div>
-      );
-    }
-    const question = questionOf(beat);
-    if (question !== null) {
-      return (
-        <WorkflowQuestionCard
-          environmentId={environmentId}
-          question={question}
-          onOpenThread={onOpenThread}
-        />
       );
     }
     return stepCard(beat);
@@ -328,21 +324,46 @@ export function WorkflowRunFeed({
     ...(pausedApart ? ["pause"] : []),
     ...(ended ? ["end"] : []),
   ]);
+  // A run that finished opens on what it came to: its result when that says more than the last
+  // answer, else the last agent's reply. The header already says it is done.
+  const lastAnswer = beats.findLast((beat) => beat.kind === "ask" && beat.status === "completed");
+  const answered = lastAnswer === undefined ? null : workflowAnswer(lastAnswer.result);
+  const resultSaysMore =
+    resultLines.length > 0 &&
+    !(resultLines.length === 1 && answered !== null && resultLines[0]?.value === answered.choice);
+  const latest = (found: ReadonlyArray<WorkflowBeat>) =>
+    found.reduce<WorkflowBeat | undefined>(
+      (best, beat) => (best === undefined || beat.endMs >= best.endMs ? beat : best),
+      undefined,
+    );
+  const lastAgent = latest(
+    beats.filter((beat) => beat.kind === "agent" && beat.status === "completed"),
+  );
+  const finishedFocus =
+    run.status !== "completed" || resultSaysMore || lastAgent === undefined
+      ? "end"
+      : `step:${lastAgent.name}`;
   const focus =
     picked !== null && keys.has(picked)
       ? picked
       : feed === null
         ? null
-        : workflowFlowFocus({
-            rows: feed,
-            status: run.status,
-            ended,
-            questions: node.questions.map((question) => question.name),
-          });
+        : ended
+          ? finishedFocus
+          : workflowFlowFocus({
+              rows: feed,
+              status: run.status,
+              ended,
+              questions: node.questions.map((question) => question.name),
+            });
   const pick = (key: string) => {
-    setPicked(key);
-    // Below the flow on a narrow page, so picking a step brings what it shows into view.
-    panel.current?.scrollIntoView({ block: "nearest" });
+    const asks =
+      key.startsWith("question:") ||
+      beats.some((beat) => `step:${beat.name}` === key && questionOf(beat) !== null);
+    setPicked(asks ? null : key);
+    // Below the flow on a narrow page, so picking a step brings what it shows into view; a
+    // question is answered where it is, so the page stays put.
+    if (!asks) panel.current?.scrollIntoView({ block: "nearest" });
   };
   const endWord =
     run.status === "completed"
@@ -352,22 +373,45 @@ export function WorkflowRunFeed({
         : run.status === "skipped"
           ? gt("Skipped", { $context: "how a workflow run ended" })
           : gt("Cancelled", { $context: "how a workflow run ended" });
-  const shownBeat = beats.find((beat) => `step:${beat.name}` === focus);
+  // A question is answered where it was asked, so beside it is what led up to it.
+  const asking =
+    focus !== null &&
+    (focus.startsWith("question:") ||
+      beats.some(
+        (beat) =>
+          `step:${beat.name}` === focus &&
+          // Answered, its question is gone a moment before the step itself says it is done.
+          (questionOf(beat) !== null || (beat.kind === "ask" && beat.status === "running")),
+      ));
+  // The latest agent's reply is what a person weighs before answering; failing that, the last
+  // step that left something behind. A sleep or a wait has nothing to say.
+  const before = asking
+    ? (latest(beats.filter((beat) => beat.kind === "agent" && beat.status !== "running")) ??
+      beats.findLast(
+        (beat) =>
+          beat.status !== "running" &&
+          beat.kind !== "ask" &&
+          beat.kind !== "sleep" &&
+          beat.kind !== "wait",
+      ) ??
+      null)
+    : null;
+  const shown = asking ? (before === null ? null : `step:${before.name}`) : focus;
+  const shownBeat = beats.find((beat) => `step:${beat.name}` === shown);
   const shownQuick = (feed ?? []).find(
-    (row) => row.kind === "quick" && `quick:${row.steps[0]?.name}` === focus,
+    (row) => row.kind === "quick" && `quick:${row.steps[0]?.name}` === shown,
   );
-  const shownQuestion = loose.find((question) => `question:${question.name}` === focus);
 
   return (
     <article
       aria-label={run.title}
-      className="mx-auto flex w-full max-w-4xl min-w-0 flex-col px-5 pt-5 pb-10"
+      className="mx-auto flex w-full max-w-5xl min-w-0 flex-col px-5 pt-5 pb-10"
     >
       <header className="space-y-1">
         <Button
           size="sm"
           variant="ghost"
-          className="md:hidden"
+          className="-ms-2.5 md:hidden"
           onClick={() => onSelect(null)}
           aria-label={gt("Back to the list of runs")}
         >
@@ -385,9 +429,21 @@ export function WorkflowRunFeed({
             </T>
           </button>
         )}
-        <div className="flex items-start gap-3">
+        <div className="flex items-center gap-2">
           <h2 className="min-w-0 flex-1 text-base font-semibold break-words">{run.title}</h2>
           <WorkflowStateWord node={node} />
+          {ended ? null : (
+            <Button
+              size="xs"
+              variant="ghost-destructive"
+              disabled={busy || !canCancel}
+              title={gt("Cancel run")}
+              onClick={() => void cancelRun()}
+            >
+              <SquareIcon className="size-2.5 fill-current" />
+              {gt("Stop")}
+            </Button>
+          )}
         </div>
         <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
           <WorkflowChip name={run.workflow} />
@@ -401,12 +457,16 @@ export function WorkflowRunFeed({
               </Var>
             </T>
           </span>
-          <span aria-hidden>·</span>
-          <span>
-            {ended
-              ? gt("took {duration}", { duration: formatDuration(ranMs) })
-              : gt("{duration} so far", { duration: formatDuration(ranMs) })}
-          </span>
+          {run.status === "paused" ? null : (
+            <>
+              <span aria-hidden>·</span>
+              <span>
+                {ended
+                  ? gt("took {duration}", { duration: formatDuration(ranMs) })
+                  : gt("{duration} so far", { duration: formatDuration(ranMs) })}
+              </span>
+            </>
+          )}
           {run.retired ? (
             <>
               <span aria-hidden>·</span>
@@ -415,43 +475,34 @@ export function WorkflowRunFeed({
               </span>
             </>
           ) : null}
-          {ended ? null : (
-            <>
-              <span aria-hidden>·</span>
-              <button
-                type="button"
-                disabled={busy || !canCancel}
-                className="cursor-pointer underline underline-offset-2 hover:text-destructive disabled:cursor-default disabled:opacity-60"
-                onClick={() => void cancelRun()}
-              >
-                <T>Cancel run</T>
-              </button>
-            </>
-          )}
         </p>
         {references.length === 0 ? null : (
           <ul aria-label={gt("What the run touched")} className="flex flex-wrap gap-1.5 pt-1.5">
             {references.map((reference) => (
               <li key={`${reference.kind}:${reference.key}`} className="min-w-0">
-                {chip(reference)}
+                {chip(reference, reference.title !== "" && run.title.includes(reference.title))}
               </li>
             ))}
           </ul>
         )}
       </header>
 
-      {detail.error || feed === null ? (
+      {detail.error ||
+      feed === null ||
+      (feed.length === 0 && run.status === "paused" && loose.length === 0) ? (
         <>
           {detail.error ? (
             <p className="mt-4 text-xs text-destructive">{detail.error}</p>
-          ) : (
+          ) : feed === null ? (
             <p className="mt-4 text-xs text-muted-foreground" role="status">
               <T>Loading steps…</T>
             </p>
-          )}
+          ) : null}
           {/* A question the run already asks is answerable without its step history. */}
           {run.status === "paused" ? (
-            <div className="mt-4">{pause(null, run.pauses, run.detail)}</div>
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="max-w-2xl">{pause(null, run.pauses, run.detail)}</div>
+            </div>
           ) : null}
           {node.questions.map((question) => (
             <div key={question.name} className="mt-4">
@@ -465,40 +516,45 @@ export function WorkflowRunFeed({
         </>
       ) : (
         <div className="mt-4 flex flex-col gap-4 @2xl/feed:flex-row @2xl/feed:items-start">
-          <WorkflowFlow
+          <WorkflowTimeline
             environmentId={environmentId}
             rows={feed}
             node={node}
             nowMs={nowMs}
-            focus={focus}
+            // Only a step someone picked is marked; what the panel follows on its own is not.
+            focus={picked !== null && keys.has(picked) ? picked : null}
+            current={shown}
             onPick={pick}
             loose={loose}
             paused={pausedApart}
             end={ended ? endWord : null}
-            touched={(name) =>
-              workflowStepReferences(references, name).map((reference) => chip(reference, true))
-            }
+            question={questionOf}
+            onOpenThread={onOpenThread}
+            openedAtMs={openedAtMs}
           />
           <section
             ref={panel}
             aria-label={gt("What happened")}
-            className="min-w-0 flex-1 @2xl/feed:sticky @2xl/feed:top-4"
+            className="min-w-0 flex-1 border-t border-border pt-4 @2xl/feed:sticky @2xl/feed:top-4 @2xl/feed:self-stretch @2xl/feed:border-t-0 @2xl/feed:border-s @2xl/feed:ps-6 @2xl/feed:pt-1"
           >
             {shownBeat !== undefined ? (
               // Keyed by the step: a reason typed for one question must not follow to the next.
               <div key={shownBeat.name} data-step={shownBeat.name}>
                 {beatCard(shownBeat)}
+                {(() => {
+                  // With one reference, the header already says it.
+                  const touched =
+                    references.length > 1 ? workflowStepReferences(references, shownBeat.name) : [];
+                  return touched.length === 0 ? null : (
+                    <div className="mt-4 flex flex-wrap gap-1.5">
+                      {touched.map((reference) => chip(reference, true))}
+                    </div>
+                  );
+                })()}
               </div>
             ) : shownQuick !== undefined && shownQuick.kind === "quick" ? (
               <WorkflowQuickStepsCard row={shownQuick} />
-            ) : shownQuestion !== undefined ? (
-              <WorkflowQuestionCard
-                key={shownQuestion.name}
-                environmentId={environmentId}
-                question={shownQuestion}
-                onOpenThread={onOpenThread}
-              />
-            ) : focus === "pause" ? (
+            ) : asking ? null : focus === "pause" ? (
               pause(null, run.pauses, run.detail)
             ) : focus === "end" ? (
               <FeedCard tone={run.status === "completed" ? "done" : "plain"}>
@@ -512,7 +568,7 @@ export function WorkflowRunFeed({
                   sub={<RelativeLabel value={run.endedAt ?? run.updatedAt} />}
                 />
                 {run.status !== "completed" && run.detail ? (
-                  <p className="mt-1.5 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
+                  <p className="mt-3 text-sm break-words whitespace-pre-wrap">{run.detail}</p>
                 ) : null}
                 <ResultLines lines={resultLines} />
               </FeedCard>
@@ -528,161 +584,321 @@ export function WorkflowRunFeed({
   );
 }
 
+// The first line of prose, so a reply that opens with a heading or a list still reads as a sentence.
 const firstSentence = (text: string) => {
-  const line = text.trim().split("\n", 1)[0] ?? "";
-  const end = line.search(/[.!?](\s|$)/);
-  return end === -1 ? line : line.slice(0, end + 1);
+  const line =
+    text
+      .split("\n")
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
+      ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+  // One line of plain text: inline code, emphasis and links read as their words.
+  const plain = line
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
+  const end = plain.search(/[.!?](\s|$)/);
+  return end === -1 ? plain : plain.slice(0, end + 1);
 };
 
-// Wires are drawn with borders, so a corner is a rounded box and nothing needs measuring.
-const WIRE = "border-muted-foreground/35";
-// Past two, steps that ran at once no longer fit side by side and hang off a rail instead.
-const SIDE_BY_SIDE = 2;
+type StepTone = "working" | "input" | "quiet" | "done" | "failed" | "ended";
 
-/** The straight piece of wire between two parts of the flow, with a word beside it if it has one. */
-function Wire({ live = false, label }: { readonly live?: boolean; readonly label?: ReactNode }) {
-  return (
-    <div aria-hidden={label === undefined} className="relative">
-      <span
-        aria-hidden
-        className={cn(
-          "mx-auto block w-0 border-l-2",
-          live ? "h-6 border-dashed border-primary" : cn("h-4", WIRE),
-          label === undefined ? null : "h-5",
-        )}
-      />
-      {label === undefined ? null : (
-        <span className="absolute top-1/2 left-1/2 ms-2.5 -translate-y-1/2 text-3xs whitespace-nowrap text-muted-foreground">
-          {label}
-        </span>
-      )}
-    </div>
-  );
-}
+/** A step's time in one shape down the column: 0.3s, 9.7s, 12s, then minutes. */
+const stepTime = (ms: number) =>
+  ms < 10_000 && ms % 1000 !== 0
+    ? `${(Math.max(ms, 100) / 1000).toFixed(1)}s`
+    : ms < 60_000
+      ? `${Math.round(ms / 1000)}s`
+      : formatDuration(ms);
 
-/** Where one column of a side-by-side fork leaves the wire above it, or rejoins the one below. */
-function Elbow({ first, join = false }: { readonly first: boolean; readonly join?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "block h-3 w-1/2",
-        WIRE,
-        join ? "border-b-2" : "border-t-2",
-        first
-          ? cn("ms-[50%] border-l-2", join ? "rounded-bl-xl" : "rounded-tl-xl")
-          : cn("border-r-2", join ? "rounded-br-xl" : "rounded-tr-xl"),
-      )}
-    />
-  );
-}
+// Colour says what is live: blue for work under way, amber for a person's turn. Done is quiet.
+const RING: Record<StepTone, string> = {
+  working: "stroke-info",
+  input: "stroke-warning",
+  quiet: "stroke-muted-foreground/60",
+  done: "stroke-muted-foreground/45",
+  failed: "stroke-destructive",
+  ended: "stroke-muted-foreground/60",
+};
 
-/** Where the wire swings out to the rail that many steps hang off, or back in from it. */
-function RailTurn({ join = false }: { readonly join?: boolean }) {
-  return (
-    <span
-      aria-hidden
-      className={cn(
-        "ms-3 block h-3 w-[calc(50%-0.75rem)] border-l-2",
-        WIRE,
-        join ? "rounded-bl-xl border-b-2" : "rounded-tl-xl border-t-2",
-      )}
-    />
-  );
-}
-
-const MARK_TONE = {
-  plain: "bg-muted text-muted-foreground",
-  working: "bg-info/12 text-info-foreground",
-  ask: "bg-primary/12 text-primary",
-  failed: "bg-destructive/12 text-destructive",
-  done: "bg-success/12 text-success-foreground",
+const VERB_TONE = {
+  working: "text-info-foreground",
+  input: "text-warning-foreground",
+  quiet: "text-muted-foreground",
+  failed: "text-destructive",
 } as const;
 
-const NODE_TONE: Record<keyof typeof MARK_TONE, string> = {
-  plain: "border-border bg-card",
-  working: "border-info/40 bg-card",
-  ask: "border-primary/40 bg-primary/4",
-  failed: "border-destructive/40 bg-destructive/4",
-  done: "border-success/30 bg-success/4",
-};
-
-/** A stop in the flow: a mark for what it is, its name, a line on how it went, and its time. */
-function FlowNode({
+/**
+ * A step's place on the rail: a ring, filled while it works, ticked when it is done. `pulse` and
+ * `draw` never change for a step, so each plays once, when its part of the mark first appears.
+ */
+function StepMark({
   tone,
-  mark,
-  name,
-  line,
-  aside,
-  selected,
-  onPick,
-  extra,
+  pulse,
+  draw,
 }: {
-  readonly tone: keyof typeof MARK_TONE;
-  readonly mark: ReactNode;
-  readonly name: string;
-  readonly line: string;
-  readonly aside?: string | undefined;
-  readonly selected: boolean;
-  readonly onPick: () => void;
-  /** Controls of its own under the line, which are not part of picking the node. */
-  readonly extra?: ReactNode;
+  readonly tone: StepTone;
+  /** It started while the run was open here. */
+  readonly pulse: boolean;
+  /** It ended while the run was open here. */
+  readonly draw: boolean;
 }) {
-  const node = (
+  const live = tone === "working" || tone === "input";
+  return (
+    <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
+      {live && pulse ? (
+        <span
+          className={cn(
+            "absolute inset-0.5 rounded-full border-2 opacity-0 motion-safe:animate-step-ping",
+            tone === "input" ? "border-warning" : "border-info",
+          )}
+        />
+      ) : null}
+      <svg viewBox="0 0 20 20" className="size-5 overflow-visible">
+        <circle
+          cx="10"
+          cy="10"
+          r="8.2"
+          strokeWidth="1.6"
+          strokeDasharray={tone === "input" ? "2.6 2.2" : undefined}
+          className={cn("fill-background", RING[tone])}
+        />
+        {live || tone === "quiet" ? (
+          <circle
+            cx="10"
+            cy="10"
+            r="3.4"
+            className={
+              tone === "input"
+                ? "fill-warning"
+                : tone === "quiet"
+                  ? "fill-muted-foreground/60"
+                  : "fill-info"
+            }
+          />
+        ) : tone === "done" ? (
+          <path
+            d="M6.3 10.3l2.5 2.4 4.9-5"
+            fill="none"
+            strokeWidth={1.8}
+            strokeDasharray="12"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className={cn(
+              "stroke-muted-foreground",
+              draw ? "motion-safe:animate-check-draw" : null,
+            )}
+          />
+        ) : tone === "failed" ? (
+          <path
+            d="M10 6.2v4.6M10 13.6v.1"
+            fill="none"
+            strokeWidth={1.8}
+            strokeLinecap="round"
+            className="stroke-destructive"
+          />
+        ) : (
+          <path
+            d="M6.6 10h6.8"
+            fill="none"
+            strokeWidth={1.6}
+            strokeLinecap="round"
+            className="stroke-muted-foreground"
+          />
+        )}
+      </svg>
+    </span>
+  );
+}
+
+/** One line of the run: its mark on the rail, name, what it is doing, a word on how it went, its time. */
+function TimelineRow({
+  tone,
+  enters,
+  draw,
+  lead,
+  name,
+  note,
+  verb,
+  verbTone = "working",
+  aside,
+  asideTone,
+  duration,
+  selected,
+  current = false,
+  onPick,
+  sub = false,
+}: {
+  readonly tone: StepTone;
+  /** It started while the run was open here, so it arrives instead of just being there. */
+  readonly enters: boolean;
+  /** It ended while the run was open here. */
+  readonly draw: boolean;
+  /** A small mark before the name, such as the agent's provider. */
+  readonly lead?: ReactNode;
+  readonly name: string;
+  /** A quieter word after the name, such as the agent's model. */
+  readonly note?: string | null;
+  readonly verb?: string | null;
+  readonly verbTone?: keyof typeof VERB_TONE;
+  readonly aside?: string | null;
+  readonly asideTone?: "failed";
+  readonly duration?: string | null;
+  readonly selected: boolean;
+  /** The pane beside the timeline shows it. */
+  readonly current?: boolean;
+  readonly onPick: () => void;
+  /** A step of a fork, hanging off the branch rather than the rail. */
+  readonly sub?: boolean;
+}) {
+  const live = tone === "working" || tone === "input";
+  return (
     <button
       type="button"
       aria-current={selected}
       className={cn(
-        "flex w-full min-w-0 cursor-pointer items-center gap-2 text-left",
-        extra === undefined
-          ? cn(
-              "rounded-xl border px-2 py-1.5 shadow-xs hover:bg-accent",
-              NODE_TONE[tone === "done" ? "plain" : tone],
-              selected ? "border-primary ring-2 ring-primary/25" : null,
-            )
-          : "rounded-t-xl px-2 pt-1.5 pb-1 hover:bg-accent",
+        "group/row relative flex w-full min-w-0 cursor-pointer items-center gap-2.5 pe-2 text-left",
+        sub ? "py-1 ps-1" : "py-1.5",
+        enters ? "motion-safe:animate-step-in" : null,
       )}
       onClick={onPick}
     >
+      {/* The highlight starts past the mark, so the rail and the branch stay whole. */}
       <span
         aria-hidden
-        className={cn("grid size-6 shrink-0 place-items-center rounded-md", MARK_TONE[tone])}
-      >
-        {mark}
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="flex min-w-0 items-baseline gap-2">
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold">{name}</span>
-          {aside === undefined ? null : (
-            <span className="shrink-0 text-3xs text-muted-foreground tabular-nums">{aside}</span>
-          )}
-        </span>
-        {line === "" ? null : (
-          <span className="block truncate text-2xs text-muted-foreground">{line}</span>
+        className={cn(
+          "pointer-events-none absolute inset-y-0 end-0 rounded-lg",
+          "start-6",
+          selected ? "bg-accent" : "group-hover/row:bg-accent/60",
         )}
+      />
+      {sub ? (
+        <span aria-hidden className="relative z-10 grid size-5 shrink-0 place-items-center">
+          <span
+            className={cn(
+              "size-2.5 rounded-full border-2",
+              tone === "done"
+                ? "border-transparent bg-muted-foreground/45"
+                : tone === "failed"
+                  ? "border-destructive bg-destructive"
+                  : tone === "input"
+                    ? "border-warning bg-warning"
+                    : tone === "working"
+                      ? "border-info bg-info"
+                      : "border-muted-foreground/50 bg-background",
+            )}
+          />
+        </span>
+      ) : (
+        <StepMark tone={tone} pulse={enters} draw={draw} />
+      )}
+      {/* Read left to right: the step, then what came of it. The name keeps its room. */}
+      <span className="relative flex min-w-0 flex-1 items-baseline gap-2">
+        <span className="flex max-w-[60%] min-w-0 shrink-0 items-baseline gap-1.5">
+          {lead === undefined ? null : <span className="self-center">{lead}</span>}
+          <span
+            className={cn(
+              "min-w-0 truncate text-sm",
+              live || selected || current ? "font-medium text-foreground" : "text-foreground/75",
+            )}
+          >
+            {name}
+          </span>
+        </span>
+        {note || aside ? (
+          <span
+            className={cn(
+              "min-w-0 truncate text-xs",
+              asideTone === "failed" ? "text-destructive" : "text-muted-foreground",
+            )}
+          >
+            {aside ?? note}
+          </span>
+        ) : null}
+      </span>
+      {verb ? (
+        <span className={cn("relative max-w-[40%] shrink-0 truncate text-xs", VERB_TONE[verbTone])}>
+          {verb}
+        </span>
+      ) : null}
+      <span className="relative min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+        {duration ?? ""}
+      </span>
+      {/* Points at the pane beside the timeline; no background moves on its own. */}
+      <span aria-hidden className="relative hidden w-3 shrink-0 place-items-center @2xl/feed:grid">
+        {selected || current ? (
+          <ChevronRightIcon
+            className={cn("size-3", selected ? "text-foreground" : "text-muted-foreground")}
+          />
+        ) : null}
       </span>
     </button>
   );
-  if (extra === undefined) return node;
+}
+
+/** The rail beside a row: from the row above to this mark, and on to the next unless it is last. */
+function Rail({ first, last }: { readonly first: boolean; readonly last: boolean }) {
   return (
-    <div
+    <span
+      aria-hidden
       className={cn(
-        "overflow-hidden rounded-xl border shadow-xs",
-        NODE_TONE[tone === "done" ? "plain" : tone],
-        selected ? "border-primary ring-2 ring-primary/25" : null,
+        "pointer-events-none absolute start-[9px] w-0.5 bg-border",
+        first ? "top-4" : "top-0",
+        last ? "h-4" : "bottom-0",
+        first && last ? "hidden" : null,
       )}
+    />
+  );
+}
+
+// A fork leaves the rail under its mark, runs through each step's dot, and rejoins the rail.
+// The rail's centre is 10px in and a step's dot 39px in; the mark ends 26px down, the first dot
+// sits 46px down, and each dot is 14px below its own row's top.
+function BranchOut() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 32 20"
+      className="pointer-events-none absolute start-[9px] top-[26px] h-5 w-8 overflow-visible"
     >
-      {node}
-      <div className="flex flex-wrap gap-1 ps-10 pe-2 pb-1.5">{extra}</div>
-    </div>
+      <path
+        d="M1 0V1Q1 7 7 7H24Q30 7 30 13V20"
+        fill="none"
+        strokeWidth={2}
+        className="stroke-border"
+      />
+    </svg>
+  );
+}
+
+function BranchBack() {
+  return (
+    <>
+      <svg
+        aria-hidden
+        viewBox="0 0 32 14"
+        className="pointer-events-none absolute -start-4 top-3.5 h-3.5 w-8 overflow-visible"
+      >
+        <path
+          d="M30 0Q30 7 24 7H7Q1 7 1 13V14"
+          fill="none"
+          strokeWidth={2}
+          className="stroke-border"
+        />
+      </svg>
+      <span
+        aria-hidden
+        className="pointer-events-none absolute -start-4 top-7 bottom-0 w-0.5 bg-border"
+      />
+    </>
   );
 }
 
 /**
- * The run as it went: one node per step that took time or involved someone. Two that ran at once
- * sit side by side; more hang off a rail. It never draws what comes next: a run can branch.
+ * The run as it went, one line per step that took time or involved someone. Steps that ran at once
+ * hang off a branch. It never draws what comes next: a run can branch, so the rail just goes on.
  */
-function WorkflowFlow({
+function WorkflowTimeline({
   environmentId,
   rows,
   node,
@@ -692,7 +908,10 @@ function WorkflowFlow({
   loose,
   paused,
   end,
-  touched,
+  question,
+  onOpenThread,
+  openedAtMs,
+  current,
 }: {
   readonly environmentId: EnvironmentId;
   readonly rows: ReadonlyArray<WorkflowFeedRow>;
@@ -706,165 +925,255 @@ function WorkflowFlow({
   readonly paused: boolean;
   /** How the run ended, once it has. */
   readonly end: string | null;
-  /** Chips for what a step touched. */
-  readonly touched: (step: string) => ReadonlyArray<ReactNode>;
+  /** What it ended with, in a few words. */
+  /** The question a step waits on a person for, answered right under it. */
+  readonly question: (beat: WorkflowBeat) => WorkflowQuestion | null;
+  readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
+  /** When this run was opened here: only what changes after that arrives with motion. */
+  readonly openedAtMs: number;
+  /** What the pane beside the timeline shows. */
+  readonly current: string | null;
 }) {
   const gt = useGT();
-  const beatNode = (beat: WorkflowBeat) => (
-    <WorkflowBeatNode
+  const completed = node.run.status === "completed";
+  const ask = (asked: WorkflowQuestion) => (
+    <div className="ms-8 mt-1 mb-2">
+      <WorkflowQuestionCard
+        environmentId={environmentId}
+        question={asked}
+        onOpenThread={onOpenThread}
+        inline
+      />
+    </div>
+  );
+  const beatRow = (beat: WorkflowBeat, sub = false) => (
+    <WorkflowBeatRow
       environmentId={environmentId}
       beat={beat}
       child={node.children.find((child) => child.run.runId === beat.childRun?.runId) ?? null}
-      asks={node.questions.some((question) => question.name === beat.name)}
+      asks={node.questions.some((asked) => asked.name === beat.name)}
       nowMs={nowMs}
       selected={focus === `step:${beat.name}`}
+      current={current === `step:${beat.name}`}
       onPick={() => onPick(`step:${beat.name}`)}
-      touched={touched(beat.name)}
+      sub={sub}
+      openedAtMs={openedAtMs}
     />
   );
-  const waits = node.questions.length > 0;
-  const completed = node.run.status === "completed";
-  return (
-    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-80">
-      <span
-        aria-hidden
-        className={cn("mx-auto block size-2.5 rounded-full border-2 bg-background", WIRE)}
-      />
-      {rows.map((row) => {
-        if (row.kind === "quick") {
-          const key = `quick:${row.steps[0]?.name}`;
-          const names = row.steps.map((step) => step.name);
-          return (
-            <div key={key} className="flex flex-col items-center">
-              <Wire />
-              <button
-                type="button"
-                aria-current={focus === key}
+  const items: Array<{
+    readonly key: string;
+    readonly body: ReactNode;
+    /** Its steps hang off a branch, which carries the rail past them. */
+    readonly branch?: boolean;
+  }> = [];
+  for (const row of rows) {
+    if (row.kind === "quick") {
+      const key = `quick:${row.steps[0]?.name}`;
+      // Keyed by its first step, as that step's own row was, so regrouping does not remount it.
+      const itemKey = row.steps[0]?.name ?? key;
+      const names = row.steps.map((step) => step.name);
+      items.push({
+        key: itemKey,
+        body: (
+          <TimelineRow
+            tone="done"
+            // A finished step's own row turns into this one, so it is already there.
+            enters={false}
+            draw={row.endMs > openedAtMs}
+            name={
+              names.length <= 2
+                ? names.join(" · ")
+                : gt("{names} and {count} more", {
+                    names: names.slice(0, 2).join(" · "),
+                    count: names.length - 2,
+                  })
+            }
+            duration={stepTime(Math.max(0, row.endMs - row.startMs))}
+            selected={focus === key}
+            current={current === key}
+            onPick={() => onPick(key)}
+          />
+        ),
+      });
+      continue;
+    }
+    if (row.kind === "together") {
+      const running = row.beats.filter((beat) => beat.status === "running").length;
+      // Steps that only sleep or wait are under way without working.
+      const working = row.beats.some(
+        (beat) => beat.status === "running" && beat.kind !== "sleep" && beat.kind !== "wait",
+      );
+      const failed = row.beats.some((beat) => beat.status === "failed");
+      const asks = row.beats.some(
+        (beat) => beat.status === "running" && node.questions.some((q) => q.name === beat.name),
+      );
+      const startMs = Math.min(...row.beats.map((beat) => beat.startMs));
+      const endMs = Math.max(...row.beats.map((beat) => beat.endMs));
+      const first = row.beats[0];
+      items.push({
+        key: first?.name ?? "together",
+        branch: true,
+        body: (
+          <>
+            <div className="flex items-center gap-2.5 py-1.5 pe-2">
+              <StepMark
+                tone={
+                  asks
+                    ? "input"
+                    : working
+                      ? "working"
+                      : running > 0
+                        ? "quiet"
+                        : failed
+                          ? "failed"
+                          : "done"
+                }
+                pulse={startMs > openedAtMs}
+                draw={running === 0 && endMs > openedAtMs}
+              />
+              <span
                 className={cn(
-                  "flex max-w-[85%] cursor-pointer items-center gap-1 rounded-full border bg-background py-0.5 ps-1.5 pe-2 text-2xs text-muted-foreground hover:text-foreground",
-                  focus === key ? "border-primary text-foreground" : "border-border",
+                  "min-w-0 flex-1 truncate text-sm",
+                  running > 0 ? "font-medium" : "text-muted-foreground",
                 )}
-                onClick={() => onPick(key)}
               >
-                <CheckIcon aria-hidden className="size-3 shrink-0 text-success-foreground" />
-                <span className="min-w-0 truncate">
-                  {names.length <= 2
-                    ? names.join(" · ")
-                    : gt("{names} and {count} more", {
-                        names: names.slice(0, 2).join(" · "),
-                        count: names.length - 2,
-                      })}
+                {gt("{count} in parallel", { count: row.beats.length })}
+              </span>
+              {working ? (
+                <span className="text-xs text-info-foreground">
+                  {gt("{count} running", { count: running })}
                 </span>
-              </button>
+              ) : null}
+              <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
+                {stepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
+              </span>
+              <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
             </div>
-          );
-        }
-        if (row.kind === "together") {
-          const count = row.beats.length;
-          const label =
-            count <= SIDE_BY_SIDE
-              ? gt("at the same time")
-              : gt("{count} at the same time", { count });
-          return (
-            <div key={`together:${row.beats[0]?.name}`}>
-              <Wire label={label} />
-              {count <= SIDE_BY_SIDE ? (
-                <div
-                  className="grid"
-                  style={{ gridTemplateColumns: `repeat(${count}, minmax(0, 1fr))` }}
-                >
-                  {row.beats.map((beat, index) => (
-                    <div key={beat.name} className="min-w-0">
-                      <Elbow first={index === 0} />
-                      <div className="px-1">{beatNode(beat)}</div>
-                      <Elbow first={index === 0} join />
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <>
-                  <RailTurn />
-                  <div className={cn("ms-3 border-l-2", WIRE)}>
-                    {row.beats.map((beat) => (
-                      <div key={beat.name} className="relative py-1 ps-4">
-                        <span
-                          aria-hidden
-                          className={cn("absolute top-1/2 left-0 w-4 border-t-2", WIRE)}
-                        />
-                        {beatNode(beat)}
-                      </div>
-                    ))}
-                  </div>
-                  <RailTurn join />
-                </>
-              )}
-            </div>
-          );
-        }
-        return (
-          <div key={row.name}>
-            <Wire />
-            {beatNode(row)}
-          </div>
-        );
-      })}
-      {loose.map((question) => (
-        <div key={`question:${question.name}`}>
-          <Wire />
-          <FlowNode
-            tone="ask"
-            mark={<CircleHelpIcon className="size-3.5" />}
-            name={question.name}
-            line={gt("Asks you", { $context: "a workflow step waits on a person's answer" })}
-            selected={focus === `question:${question.name}`}
-            onPick={() => onPick(`question:${question.name}`)}
+            <BranchOut />
+            <ol className="relative ms-[9px] ps-4">
+              {row.beats.map((beat, index) => {
+                const firstBeat = index === 0;
+                const lastBeat = index === row.beats.length - 1;
+                const asked = question(beat);
+                return (
+                  <li key={beat.name} className="relative">
+                    <span
+                      aria-hidden
+                      className={cn(
+                        "pointer-events-none absolute start-[13px] w-0.5 bg-border",
+                        firstBeat ? "top-3.5" : "top-0",
+                        lastBeat ? "h-3.5" : "bottom-0",
+                        firstBeat && lastBeat ? "hidden" : null,
+                      )}
+                    />
+                    {lastBeat ? <BranchBack /> : null}
+                    {beatRow(beat, true)}
+                    {asked === null ? null : ask(asked)}
+                  </li>
+                );
+              })}
+            </ol>
+          </>
+        ),
+      });
+      continue;
+    }
+    const asked = question(row);
+    items.push({
+      key: row.name,
+      body: (
+        <>
+          {beatRow(row)}
+          {asked === null ? null : ask(asked)}
+        </>
+      ),
+    });
+  }
+  for (const asked of loose) {
+    // Keyed like its step's row, which replaces it once the step arrives, so it does not arrive twice.
+    items.push({
+      key: asked.name,
+      body: (
+        <>
+          <TimelineRow
+            tone="input"
+            enters={Date.parse(asked.askedAt) > openedAtMs}
+            draw={false}
+            name={asked.name}
+            verb={gt("Asks you", { $context: "a workflow step waits on a person's answer" })}
+            verbTone="input"
+            selected={focus === `question:${asked.name}`}
+            current={current === `question:${asked.name}`}
+            onPick={() => onPick(`question:${asked.name}`)}
+          />
+          {ask(asked)}
+        </>
+      ),
+    });
+  }
+  if (paused) {
+    items.push({
+      key: "pause",
+      body: (
+        <TimelineRow
+          tone="failed"
+          enters={false}
+          draw={false}
+          name={gt("Paused", { $context: "a workflow run is paused" })}
+          aside={null}
+          selected={focus === "pause"}
+          current={current === "pause"}
+          onPick={() => onPick("pause")}
+        />
+      ),
+    });
+  }
+  // A finished run needs no closing row: the header says so, and the last step is the end.
+  if (end !== null && !completed) {
+    const endedMs = Date.parse(node.run.endedAt ?? node.run.updatedAt);
+    items.push({
+      key: "end",
+      body: (
+        <TimelineRow
+          tone="ended"
+          enters={endedMs > openedAtMs}
+          draw={false}
+          name={end}
+          aside={node.run.detail}
+          selected={focus === "end"}
+          current={current === "end"}
+          onPick={() => onPick("end")}
+        />
+      ),
+    });
+  }
+  const live = end === null;
+  return (
+    <nav aria-label={gt("Steps so far")} className="w-full shrink-0 @2xl/feed:w-96">
+      <ol>
+        {items.map((item, index) => (
+          <li key={item.key} className="relative">
+            <Rail
+              first={index === 0}
+              last={item.branch === true || (index === items.length - 1 && !live)}
+            />
+            {item.body}
+          </li>
+        ))}
+      </ol>
+      {live ? (
+        <div className="flex items-start gap-2.5">
+          <span
+            aria-hidden
+            className="ms-[9px] block h-5 w-0 border-s-2 border-dashed border-border"
           />
         </div>
-      ))}
-      {paused ? (
-        <>
-          <Wire />
-          <FlowNode
-            tone="failed"
-            mark={<CircleAlertIcon className="size-3.5" />}
-            name={gt("Paused", { $context: "a workflow run is paused" })}
-            line={node.run.detail ?? ""}
-            selected={focus === "pause"}
-            onPick={() => onPick("pause")}
-          />
-        </>
       ) : null}
-      {end === null ? (
-        <>
-          <Wire live />
-          <p className="text-center text-2xs font-medium text-primary">
-            {waits
-              ? gt("goes on when you answer")
-              : node.run.status === "paused"
-                ? gt("goes on when it is resumed")
-                : null}
-          </p>
-        </>
-      ) : (
-        <>
-          <Wire />
-          <FlowNode
-            tone={completed ? "done" : "plain"}
-            mark={
-              completed ? <CheckIcon className="size-3.5" /> : <FlagIcon className="size-3.5" />
-            }
-            name={end}
-            line={completed ? "" : (node.run.detail ?? "")}
-            selected={focus === "end"}
-            onPick={() => onPick("end")}
-          />
-        </>
-      )}
     </nav>
   );
 }
 
-function WorkflowBeatNode({
+function WorkflowBeatRow({
   environmentId,
   beat,
   child,
@@ -872,7 +1181,9 @@ function WorkflowBeatNode({
   nowMs,
   selected,
   onPick,
-  touched,
+  sub,
+  openedAtMs,
+  current,
 }: {
   readonly environmentId: EnvironmentId;
   readonly beat: WorkflowBeat;
@@ -882,7 +1193,9 @@ function WorkflowBeatNode({
   readonly nowMs: number;
   readonly selected: boolean;
   readonly onPick: () => void;
-  readonly touched: ReadonlyArray<ReactNode>;
+  readonly sub: boolean;
+  readonly openedAtMs: number;
+  readonly current: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -900,98 +1213,134 @@ function WorkflowBeatNode({
     ?.find((candidate) => candidate.instanceId === shell?.modelSelection.instanceId);
   const under = beat.status === "running";
   const failed = beat.status === "failed";
-  const length = formatDuration(elapsedOf(beat));
   const said = workflowAgentSummary(beat).said;
   const answer = beat.kind === "ask" ? workflowAnswer(beat.result) : null;
   const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
-  const line = (() => {
-    if (failed) return firstSentence(beat.detail ?? gt("failed"));
+  // An agent's own approval or question needs a person as much as the workflow's does.
+  const agentAsks =
+    beat.kind === "agent" && under && shell !== null
+      ? shell.hasPendingUserInput
+        ? gt("Asks you", { $context: "a workflow step waits on a person's answer" })
+        : shell.hasPendingApprovals
+          ? gt("waits for your approval")
+          : null
+      : null;
+  // A question waits on a person until its step ends, answered or not; the list of open
+  // questions drops it a moment before the step reports done.
+  const needsYou = (under && (asks || beat.kind === "ask")) || agentAsks !== null;
+  const model = shell === null ? null : formatModelSlugName(shell.modelSelection.model);
+  const verb = (() => {
+    if (!under) return null;
+    if (agentAsks !== null) return agentAsks;
     switch (beat.kind) {
       case "agent":
-        return [
-          shell === null ? null : formatModelSlugName(shell.modelSelection.model),
-          under ? gt("working") : said === null ? null : firstSentence(said),
-        ]
-          .filter((part) => part !== null)
-          .join(" · ");
+        return shell?.runtime?.status === "preparing" || shell?.runtime?.status === "starting"
+          ? gt("starting")
+          : gt("working");
       case "ask":
-        return under
-          ? asks
-            ? gt("Asks you", { $context: "a workflow step waits on a person's answer" })
-            : gt("waiting for an answer")
-          : answer === null
-            ? gt("nobody answered")
-            : gt("You said {choice}", { choice: answer.choice });
+        // Without its question it was just answered, and the step is about to say so.
+        return asks
+          ? gt("Asks you", { $context: "a workflow step waits on a person's answer" })
+          : null;
       case "sleep":
-        return !under
-          ? gt("slept")
-          : Number.isFinite(wakes) && wakes > nowMs
-            ? gt("wakes in {duration}", { duration: formatDuration(wholeSeconds(wakes - nowMs)) })
-            : gt("about to wake");
+        return Number.isFinite(wakes) && wakes > nowMs
+          ? gt("wakes in {duration}", { duration: formatDuration(wholeSeconds(wakes - nowMs)) })
+          : gt("about to wake");
       case "wait":
-        return under ? gt("waiting") : gt("waited");
+        return gt("waiting");
       case "run":
-        return child === null ? "" : workflowRunNow(child, m);
+        return child === null ? gt("running") : workflowRunNow(child, m);
       case "step":
-        return under ? gt("running") : "";
+        return gt("running");
     }
   })();
-  const mark =
-    beat.kind === "agent" ? (
-      provider === undefined ? (
-        <BotIcon className="size-3.5" />
-      ) : (
-        <ProviderInstanceIcon
-          driverKind={provider.driver}
-          displayName={provider.displayName ?? provider.instanceId}
-          accentColor={provider.accentColor}
-          size="compact"
-        />
-      )
-    ) : beat.kind === "ask" ? (
-      <CircleHelpIcon className="size-3.5" />
-    ) : beat.kind === "sleep" ? (
-      <MoonIcon className="size-3.5" />
-    ) : beat.kind === "wait" ? (
-      <HourglassIcon className="size-3.5" />
-    ) : beat.kind === "run" ? (
-      <WorkflowChip name={beat.childRun?.workflow ?? beat.name} />
-    ) : failed ? (
-      <CircleAlertIcon className="size-3.5" />
-    ) : (
-      <CheckIcon className="size-3.5" />
-    );
+  const aside = (() => {
+    if (failed) return firstSentence(beat.detail ?? gt("failed"));
+    if (under) return null;
+    switch (beat.kind) {
+      case "agent":
+        return said === null ? null : firstSentence(said);
+      case "ask":
+        return answer === null
+          ? gt("nobody answered")
+          : gt("You said {choice}", { choice: answer.choice });
+      case "sleep":
+      case "wait":
+        return null;
+      case "run":
+        return child === null ? null : workflowRunNow(child, m);
+      case "step": {
+        const first = workflowResultLines(beat.result)[0];
+        return first === undefined
+          ? null
+          : first.label === null
+            ? first.value
+            : `${first.label}: ${first.value}`;
+      }
+    }
+  })();
+
   return (
-    <FlowNode
-      tone={failed ? "failed" : under ? (asks ? "ask" : "working") : "plain"}
-      mark={mark}
+    <TimelineRow
+      tone={
+        failed
+          ? "failed"
+          : needsYou
+            ? "input"
+            : under
+              ? beat.kind === "sleep" || beat.kind === "wait"
+                ? "quiet"
+                : "working"
+              : "done"
+      }
+      enters={beat.startMs > openedAtMs}
+      draw={!under && beat.endMs > openedAtMs}
+      lead={
+        beat.kind === "agent" && provider !== undefined ? (
+          <ProviderInstanceIcon
+            driverKind={provider.driver}
+            displayName={provider.displayName ?? provider.instanceId}
+            accentColor={provider.accentColor}
+            size="compact"
+          />
+        ) : beat.kind === "run" ? (
+          <WorkflowChip name={beat.childRun?.workflow ?? beat.name} />
+        ) : undefined
+      }
       name={beat.childRun?.title ?? beat.name}
-      line={line}
-      aside={length}
+      note={beat.kind === "agent" && (under || said === null) ? model : null}
+      verb={verb}
+      verbTone={
+        needsYou ? "input" : beat.kind === "sleep" || beat.kind === "wait" ? "quiet" : "working"
+      }
+      aside={aside}
+      {...(failed ? { asideTone: "failed" as const } : {})}
+      duration={stepTime(elapsedOf(beat))}
       selected={selected}
+      current={current}
       onPick={onPick}
-      extra={touched.length === 0 ? undefined : touched}
+      sub={sub}
     />
   );
 }
 
+// What happened reads as part of the page. A question, answered in the timeline, is the one box;
+// a pause says so in its heading and its button.
 const CARD_TONE = {
-  plain: "border-border bg-card",
-  quiet: "border-dashed border-border bg-transparent",
-  ask: "border-primary/40 bg-primary/4",
-  failed: "border-destructive/40 bg-destructive/4",
-  done: "border-success/30 bg-success/4",
+  plain: "",
+  quiet: "",
+  ask: "rounded-xl border border-warning/30 bg-warning-surface px-3 py-2.5",
+  failed: "",
+  done: "",
 } as const;
 
 function FeedCard({
   tone = "plain",
-  selected = false,
   label,
   reveal = false,
   children,
 }: {
   readonly tone?: keyof typeof CARD_TONE;
-  readonly selected?: boolean;
   readonly label?: string;
   /** Scroll it into view when it first shows. */
   readonly reveal?: boolean;
@@ -1001,11 +1350,7 @@ function FeedCard({
     <section
       ref={reveal ? revealOnMount : undefined}
       aria-label={label}
-      className={cn(
-        "h-full min-w-0 rounded-xl border px-3 py-2.5",
-        CARD_TONE[tone],
-        selected ? "ring-2 ring-primary/60" : null,
-      )}
+      className={cn("min-w-0", CARD_TONE[tone])}
     >
       {children}
     </section>
@@ -1024,11 +1369,17 @@ function CardHead({
   readonly action?: ReactNode;
 }) {
   return (
-    <div className="flex min-h-6 min-w-0 items-center gap-2">
-      {mark}
-      <span className="min-w-0 truncate text-sm font-semibold">{name}</span>
-      <span className="min-w-0 flex-1 basis-0 truncate text-xs text-muted-foreground">{sub}</span>
-      {action}
+    <div className="min-w-0">
+      <div className="flex min-w-0 items-center gap-2">
+        {mark === null || mark === undefined ? null : (
+          <span className="grid h-6 shrink-0 place-items-center">{mark}</span>
+        )}
+        <div className="min-w-0 flex-1 truncate text-base leading-6 font-semibold">{name}</div>
+        {action === undefined || action === null ? null : <div className="shrink-0">{action}</div>}
+      </div>
+      {sub === undefined || sub === null || sub === "" ? null : (
+        <div className="mt-0.5 text-xs break-words text-muted-foreground">{sub}</div>
+      )}
     </div>
   );
 }
@@ -1039,17 +1390,35 @@ function ResultLines({
   readonly lines: ReadonlyArray<{ readonly label: string | null; readonly value: string }>;
 }) {
   if (lines.length === 0) return null;
+  if (lines.every((line) => line.label === null)) {
+    return (
+      <div className="mt-3 space-y-1 text-sm">
+        {lines.map((line) => (
+          <p key={line.value} className="break-words whitespace-pre-wrap">
+            {line.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return <Facts facts={lines.map((line) => ({ label: line.label ?? "", value: line.value }))} />;
+}
+
+/** What a step left behind, as a list of names and values. */
+function Facts({
+  facts,
+}: {
+  readonly facts: ReadonlyArray<{ readonly label: string; readonly value: string }>;
+}) {
   return (
-    <div className="mt-1.5 space-y-0.5 text-sm">
-      {lines.map((line) => (
-        <p key={line.label ?? line.value} className="break-words whitespace-pre-wrap">
-          {line.label === null ? null : (
-            <span className="text-muted-foreground">{line.label}: </span>
-          )}
-          {line.value}
-        </p>
+    <dl className="mt-3 grid grid-cols-[minmax(0,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
+      {facts.map((fact) => (
+        <div key={fact.label} className="contents">
+          <dt className="truncate text-muted-foreground">{fact.label}</dt>
+          <dd className="break-words whitespace-pre-wrap">{fact.value}</dd>
+        </div>
       ))}
-    </div>
+    </dl>
   );
 }
 
@@ -1065,7 +1434,7 @@ function Note({
 }) {
   return (
     <FeedCard label={label}>
-      <p className="text-sm text-muted-foreground">{children}</p>
+      <CardHead mark={null} name={label} sub={children} />
       {detail}
     </FeedCard>
   );
@@ -1122,19 +1491,11 @@ function WorkflowBeatCard({
     case "ask": {
       const answer = workflowAnswer(beat.result);
       if (answer === null)
-        return (
-          <Note label={beat.name}>
-            {gt("nobody answered {step} in {duration}", { step: beat.name, duration: length })}
-          </Note>
-        );
+        return <Note label={beat.name}>{`${gt("nobody answered")} · ${length}`}</Note>;
       return (
         <FeedCard label={beat.name}>
-          <CardHead
-            mark={<CheckIcon className="size-3.5 text-success-foreground" />}
-            name={gt("Answered", { $context: "a person answered the workflow's question" })}
-            sub={gt("{step} · after {duration}", { step: beat.name, duration: length })}
-          />
-          <p className="mt-1 text-sm">
+          <CardHead mark={null} name={beat.name} sub={length} />
+          <p className="mt-3 text-sm">
             {answer.reason === null ? (
               <T>
                 You said{" "}
@@ -1157,43 +1518,32 @@ function WorkflowBeatCard({
       );
     }
     case "sleep": {
-      if (!under)
-        return (
-          <Note label={beat.name}>
-            {gt("slept {duration} at {step}", { duration: length, step: beat.name })}
-          </Note>
-        );
+      if (!under) return <Note label={beat.name}>{`${gt("slept")} · ${length}`}</Note>;
       const wakes = beat.detail === null ? Number.NaN : Date.parse(beat.detail);
       return (
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
             mark={<MoonIcon className="size-3.5 text-muted-foreground" />}
-            name={gt("Sleeping", { $context: "a workflow step is sleeping" })}
+            name={beat.name}
             sub={
               Number.isFinite(wakes) && wakes > nowMs
-                ? gt("{step} · wakes in {duration}", {
-                    step: beat.name,
+                ? gt("wakes in {duration}", {
                     duration: formatDuration(wholeSeconds(wakes - nowMs)),
                   })
-                : gt("{step} · about to wake", { step: beat.name })
+                : gt("about to wake")
             }
           />
         </FeedCard>
       );
     }
     case "wait":
-      if (!under)
-        return (
-          <Note label={beat.name}>
-            {gt("waited {duration} for {step}", { duration: length, step: beat.name })}
-          </Note>
-        );
+      if (!under) return <Note label={beat.name}>{`${gt("waited")} · ${length}`}</Note>;
       return (
         <FeedCard tone="quiet" label={beat.name}>
           <CardHead
             mark={<HourglassIcon className="size-3.5 text-muted-foreground" />}
-            name={gt("Waiting", { $context: "a workflow step is waiting" })}
-            sub={gt("for {step} · {duration} so far", { step: beat.name, duration: length })}
+            name={beat.name}
+            sub={gt("{duration} so far", { duration: length })}
           />
         </FeedCard>
       );
@@ -1240,8 +1590,7 @@ function WorkflowBeatCard({
       const lines = workflowResultLines(beat.result);
       return (
         <Note label={beat.name} detail={<ResultLines lines={lines} />}>
-          {beat.status === "failed" ? gt("{step} failed", { step: beat.name }) : beat.name} ·{" "}
-          {length}
+          {beat.status === "failed" ? `${gt("failed")} · ${length}` : length}
           {tries}
         </Note>
       );
@@ -1282,9 +1631,19 @@ function WorkflowAgentCard({
   const length = formatDuration(elapsedOf(beat));
   const summary = workflowAgentSummary(beat);
   const start = summary.said === null ? null : workflowSaidStart(summary.said, SAID_SHOWN);
+  const liveWord = !under
+    ? null
+    : shell?.hasPendingUserInput === true
+      ? gt("Asks you", { $context: "a workflow step waits on a person's answer" })
+      : shell?.hasPendingApprovals === true
+        ? gt("waits for your approval")
+        : shell?.runtime?.status === "preparing" || shell?.runtime?.status === "starting"
+          ? gt("starting")
+          : gt("working");
   const sub = [
     shell === null ? null : formatModelSlugName(shell.modelSelection.model),
-    under ? gt("working for {duration}", { duration: length }) : length,
+    liveWord,
+    length,
     beat.attempts > 1 ? nthTry(beat.attempts, m) : null,
     elsewhere
       ? gt("on {environment}", { environment: threadEnvironment?.label ?? threadEnvironmentId })
@@ -1293,7 +1652,7 @@ function WorkflowAgentCard({
     .filter((part) => part !== null)
     .join(" · ");
   return (
-    <FeedCard label={beat.name} selected={open}>
+    <FeedCard label={beat.name}>
       <CardHead
         mark={
           provider === undefined ? (
@@ -1322,25 +1681,27 @@ function WorkflowAgentCard({
           ) : (
             <Button
               size="compact"
-              variant={open ? "secondary" : "outline"}
+              variant={open ? "secondary" : "ghost-muted"}
               aria-pressed={open}
               onClick={() => beat.thread !== null && onOpenThread(beat.thread)}
             >
               {under
                 ? gt("Watch live")
                 : gt("Transcript", { $context: "button that opens an agent's thread" })}
+              <ArrowUpRightIcon />
             </Button>
           )
         }
       />
       {beat.status === "failed" && beat.detail ? (
-        <p className="mt-1.5 flex gap-1.5 text-sm text-destructive">
+        <p className="mt-3 flex gap-1.5 text-sm text-destructive">
           <CircleAlertIcon className="mt-0.5 size-3.5 shrink-0" />
           <span className="break-words whitespace-pre-wrap">{beat.detail}</span>
         </p>
       ) : null}
       {summary.said === null ? null : (
-        <div className="mt-1.5">
+        // Set off from the head, so headings in the reply read as the agent's, not the page's.
+        <div className="mt-3 border-t border-border/60 pt-3">
           <ChatMarkdown
             text={start !== null && !all ? start : summary.said}
             cwd={undefined}
@@ -1353,21 +1714,12 @@ function WorkflowAgentCard({
               className="mt-1 cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
               onClick={() => setAll(!all)}
             >
-              {all ? gt("Show less") : gt("Show all of it")}
+              {all ? gt("Show less") : gt("Show more")}
             </button>
           ) : null}
         </div>
       )}
-      {summary.facts.length === 0 ? null : (
-        <dl className="mt-2 flex flex-wrap gap-1.5">
-          {summary.facts.map((fact) => (
-            <div key={fact.label} className="flex gap-1 rounded-md bg-muted px-1.5 py-0.5 text-xs">
-              <dt className="text-muted-foreground">{fact.label}</dt>
-              <dd className="font-medium">{fact.value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
+      {summary.facts.length === 0 ? null : <Facts facts={summary.facts} />}
     </FeedCard>
   );
 }
@@ -1380,6 +1732,7 @@ function WorkflowPauseCard({
   nowMs,
   disabled,
   onResume,
+  kept,
 }: {
   readonly run: WorkflowRun;
   /** The step it stopped at, when the steps say which. */
@@ -1389,6 +1742,8 @@ function WorkflowPauseCard({
   readonly nowMs: number;
   readonly disabled: boolean;
   readonly onResume: () => void;
+  /** Steps before it finished, and resuming keeps them. */
+  readonly kept: boolean;
 }) {
   const gt = useGT();
   const m = useMessages();
@@ -1417,14 +1772,16 @@ function WorkflowPauseCard({
         }
         action={
           <Button size="compact" disabled={disabled} onClick={onResume}>
-            <T>Resume now</T>
+            <T>Resume</T>
           </Button>
         }
       />
-      {reason ? <p className="mt-1.5 text-sm break-words whitespace-pre-wrap">{reason}</p> : null}
-      <p className="mt-1.5 text-xs text-muted-foreground">
-        <T>Only the failed step runs again; what finished before it is kept.</T>
-      </p>
+      {reason ? <p className="mt-3 text-sm break-words whitespace-pre-wrap">{reason}</p> : null}
+      {kept ? (
+        <p className="mt-2 text-xs text-muted-foreground">
+          <T>Only the failed step runs again; what finished before it is kept.</T>
+        </p>
+      ) : null}
     </FeedCard>
   );
 }
@@ -1433,10 +1790,13 @@ function WorkflowQuestionCard({
   environmentId,
   question,
   onOpenThread,
+  inline = false,
 }: {
   readonly environmentId: EnvironmentId;
   readonly question: WorkflowQuestion;
   readonly onOpenThread: (thread: WorkflowThreadTarget) => void;
+  /** Under its step in the run, which already says that it asks. */
+  readonly inline?: boolean;
 }) {
   const gt = useGT();
   const view = readWorkflowQuestion(question);
@@ -1471,21 +1831,25 @@ function WorkflowQuestionCard({
   };
   return (
     <FeedCard tone="ask" label={view.title} reveal>
-      <p className="flex items-center gap-2 text-xs text-muted-foreground">
-        <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>
-          <T context="the workflow run waits on a person">Input</T>
-        </span>
-        <span>
-          <T>
-            asked{" "}
-            <Var>
-              <RelativeLabel value={question.askedAt} />
-            </Var>{" "}
-            · the run waits for you
-          </T>
-        </span>
-      </p>
-      <h3 className="mt-1 text-sm font-semibold break-words">{view.title}</h3>
+      {inline ? null : (
+        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+          <span className={cn("font-medium", WORKFLOW_TONE_CLASS.input)}>
+            <T context="the workflow run waits on a person">Needs you</T>
+          </span>
+          <span>
+            <T>
+              asked{" "}
+              <Var>
+                <RelativeLabel value={question.askedAt} />
+              </Var>{" "}
+              · the run waits for you
+            </T>
+          </span>
+        </p>
+      )}
+      <h3 className={cn("text-sm font-semibold break-words", inline ? null : "mt-1")}>
+        {view.title}
+      </h3>
       {view.body ? (
         <ChatMarkdown text={view.body} cwd={undefined} className="mt-1 text-sm" />
       ) : null}
@@ -1501,21 +1865,30 @@ function WorkflowQuestionCard({
             {choice}
           </Button>
         ))}
-        {reason === null ? (
-          <Button size="sm" variant="ghost" disabled={busy} onClick={() => setReason("")}>
-            <T>Add a reason</T>
-          </Button>
-        ) : null}
-        {question.thread === null || !reachable ? null : (
-          <button
-            type="button"
-            className="cursor-pointer text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
-            onClick={() => question.thread !== null && onOpenThread(question.thread)}
-          >
-            <T>Ask the agent first</T>
-          </button>
-        )}
       </div>
+      {reason === null || (question.thread !== null && reachable) ? (
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+          {reason === null ? (
+            <button
+              type="button"
+              disabled={busy}
+              className="cursor-pointer hover:text-foreground disabled:cursor-default"
+              onClick={() => setReason("")}
+            >
+              <T>Add a reason</T>
+            </button>
+          ) : null}
+          {question.thread === null || !reachable ? null : (
+            <button
+              type="button"
+              className="cursor-pointer hover:text-foreground"
+              onClick={() => question.thread !== null && onOpenThread(question.thread)}
+            >
+              <T>Ask the agent first</T>
+            </button>
+          )}
+        </div>
+      ) : null}
       {reason === null ? null : (
         <div className="mt-2">
           <Input

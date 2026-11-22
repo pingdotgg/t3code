@@ -324,7 +324,7 @@ describe("WorkflowRunsView", () => {
     // The failed agent's transcript is there to read before choosing.
     await expect.element(screen.getByRole("button", { name: "Transcript" })).toBeVisible();
     await expect.element(screen.getByText("Paused at lint")).not.toBeInTheDocument();
-    await why.getByRole("button", { name: "Resume now" }).click();
+    await why.getByRole("button", { name: "Resume" }).click();
 
     await vi.waitFor(() =>
       expect(state.commands).toEqual([["workflow resume", { runId: "sync" }]]),
@@ -396,13 +396,12 @@ describe("WorkflowRunsView", () => {
     await expect.element(transcript).toHaveAttribute("aria-pressed", "true");
     await transcript.click();
     expect(thread).toHaveBeenCalledWith("fix", { threadId: "thread-1", environmentId: null });
-    // What the run touched is under its title, and on the step that touched it, with its title
-    // there only. Each opens beside the run.
+    // What the run touched is under its title, by number alone when the title already says it.
+    // It opens beside the run.
     const touched = screen.getByRole("list", { name: "What the run touched" });
-    await expect.element(touched).toMatchTextContent(/#101.*Wrong minutes/);
-    const onStep = flow.getByRole("button", { name: "#101 Wrong minutes" });
-    await expect.element(onStep).toMatchTextContent(/^#101$/);
-    await onStep.click();
+    const onRun = touched.getByRole("button", { name: "#101 Wrong minutes" });
+    await expect.element(onRun).toMatchTextContent(/^#101$/);
+    await onRun.click();
     expect(reference).toHaveBeenCalledWith("fix", issue101);
     // This client is not connected to the linked environment, so there is nothing to open.
     await flow.getByRole("button", { name: /implement/ }).click();

@@ -267,7 +267,7 @@ export function workflowRunState(
 } {
   const { run } = node;
   const input = {
-    word: resolve(msg("Input", { $context: "workflow run status: it waits on a person" })),
+    word: resolve(msg("Needs you", { $context: "workflow run status: it waits on a person" })),
     tone: "input",
   } as const;
   const working = {

@@ -168,7 +168,7 @@ describe("the list of runs", () => {
     expect(told({ status: "waiting", detail: "sleep night" })).toBe("Sleeping: Sleeping at night");
     expect(told({ status: "waiting", detail: "ci" })).toBe("Waiting: Waiting for ci");
     expect(told({ status: "waiting", detail: "approve" }, [question("a")])).toBe(
-      "Input: Asks: Ship?",
+      "Needs you: Asks: Ship?",
     );
     expect(told({ status: "paused", detail: "build: exit 1\n  at build.ts" })).toBe(
       "Paused: build: exit 1",
@@ -191,7 +191,7 @@ describe("the list of runs", () => {
       [question("child")],
     );
     const parent = allWorkflowRunNodes(groups)[0]!;
-    expect(workflowRunState(parent).word).toBe("Input");
+    expect(workflowRunState(parent).word).toBe("Needs you");
     expect(workflowRunNow(parent)).toBe("Check web: Asks: Ship?");
   });
 
