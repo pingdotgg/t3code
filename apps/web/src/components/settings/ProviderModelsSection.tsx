@@ -350,7 +350,8 @@ export function ProviderModelsSection({
   };
 
   const handleToggleEdit = useStableCallback((slug: string) => {
-    if (!canManageCustomModels) return;
+    // A keyboard drag listens on the document, so an editor opened mid-drag would lose Space to it.
+    if (!canManageCustomModels || dragGroup !== null) return;
     editAttemptRef.current += 1;
     setEditingSlug((current) => (current === slug ? null : slug));
   });
@@ -361,6 +362,10 @@ export function ProviderModelsSection({
     onRemove: useStableCallback(handleRemove),
   };
 
+  // A slug whose model is gone (reset, or removed elsewhere) opens no editor and blocks nothing.
+  const editingEntry = canManageCustomModels
+    ? customModels.find((entry) => entry.slug === editingSlug)
+    : undefined;
   const positionInGroup: Record<ModelGroup, number> = { favorite: 0, visible: 0, hidden: 0 };
   const positions = new Map(
     visibleModels.map((model) => [model.slug, ++positionInGroup[groupOf(model)]]),
@@ -459,14 +464,12 @@ export function ProviderModelsSection({
                   const startsGroup = previous === undefined || groupOf(previous) !== group;
                   const label = startsGroup ? groupLabels[group] : null;
                   const isHidden = !model.isCustom && hiddenModelSet.has(model.slug);
-                  const editingEntry =
-                    canManageCustomModels && model.isCustom && editingSlug === model.slug
-                      ? customModels.find((entry) => entry.slug === model.slug)
-                      : undefined;
+                  const rowEditingEntry =
+                    model.isCustom && model.slug === editingEntry?.slug ? editingEntry : undefined;
                   const showHandle = !isHidden && !isFiltering;
                   // An open editor stretches its row's drop target, so reordering waits for it to
                   // close. The grip stays so the row's buttons do not shift under the cursor.
-                  const canDrag = canWritePreferences && showHandle && editingSlug === null;
+                  const canDrag = canWritePreferences && showHandle && editingEntry === undefined;
                   const item = (
                     <SortableModelItem
                       key={`${instanceId}:model:${model.slug}`}
@@ -490,11 +493,11 @@ export function ProviderModelsSection({
                         />
                       )}
                     >
-                      {editingEntry ? (
+                      {rowEditingEntry ? (
                         <CustomModelEditor
                           instanceId={instanceId}
                           driverKind={driverKind}
-                          entry={editingEntry}
+                          entry={rowEditingEntry}
                           builtInModels={builtInModels}
                           onSave={(next) => void handleSaveEdit(next)}
                           onDraftChange={() => {
