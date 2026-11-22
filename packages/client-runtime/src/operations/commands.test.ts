@@ -307,68 +307,45 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect("uses server-resolved delivery intent without fetching the full projection", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const projectionRequests: ThreadId[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
+  it.effect(
+    "sends the title seed and delivery intent for every mode without fetching the projection",
+    () =>
+      Effect.gen(function* () {
+        const commands: OrchestrationV2Command[] = [];
+        const projectionRequests: ThreadId[] = [];
+        const supervisor = yield* makeSupervisor({ commands, projects: [], projectionRequests });
 
-      for (const [mode, expectedType] of [
-        ["queue", "queue_after_active"],
-        ["auto", "start_immediately"],
-        ["steer", "start_immediately"],
-        ["restart", "start_immediately"],
-      ] as const) {
-        yield* startThreadTurn({
-          commandId: CommandId.make(`command-${mode}`),
-          threadId: v2ThreadId,
-          message: {
-            messageId: MessageId.make(`message-${mode}`),
-            role: "user",
-            text: mode,
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          dispatchMode: mode,
-        }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+        for (const [mode, expectedType] of [
+          ["start", "start_immediately"],
+          ["queue", "queue_after_active"],
+          ["auto", "start_immediately"],
+          ["steer", "start_immediately"],
+          ["restart", "start_immediately"],
+        ] as const) {
+          yield* startThreadTurn({
+            commandId: CommandId.make(`command-${mode}`),
+            threadId: v2ThreadId,
+            message: {
+              messageId: MessageId.make(`message-${mode}`),
+              role: "user",
+              text: mode,
+              attachments: [],
+            },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            titleSeed: mode,
+            dispatchMode: mode,
+          }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
-        expect(commands.at(-1)).toMatchObject({
-          type: "message.dispatch",
-          dispatchMode: { type: expectedType },
-          ...(mode === "queue" ? {} : { deliveryIntent: mode }),
-        });
-      }
-      expect(projectionRequests).toEqual([]);
-    }).pipe(Effect.provide(layerTestRandom)),
-  );
-
-  it.effect("sends the title seed when starting the first turn of an existing thread", () =>
-    Effect.gen(function* () {
-      const commands: OrchestrationV2Command[] = [];
-      const supervisor = yield* makeSupervisor({ commands, projects: [] });
-
-      yield* startThreadTurn({
-        commandId: CommandId.make("command-start-fork"),
-        threadId: v2ThreadId,
-        message: {
-          messageId: MessageId.make("message-start-fork"),
-          role: "user",
-          text: "Which toppings work best",
-          attachments: [],
-        },
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        titleSeed: "Which toppings work best",
-        dispatchMode: "start",
-      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
-
-      expect(commands.at(-1)).toMatchObject({
-        type: "message.dispatch",
-        titleSeed: "Which toppings work best",
-        dispatchMode: { type: "start_immediately" },
-      });
-    }).pipe(Effect.provide(layerTestRandom)),
+          expect(commands.at(-1)).toMatchObject({
+            type: "message.dispatch",
+            titleSeed: mode,
+            dispatchMode: { type: expectedType },
+            ...(mode === "queue" || mode === "start" ? {} : { deliveryIntent: mode }),
+          });
+        }
+        expect(projectionRequests).toEqual([]);
+      }).pipe(Effect.provide(layerTestRandom)),
   );
 
   it.effect(
