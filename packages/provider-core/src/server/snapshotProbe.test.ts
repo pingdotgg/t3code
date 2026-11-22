@@ -1,8 +1,11 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import type { ModelCapabilities } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Result from "effect/Result";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
@@ -10,6 +13,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
   isCommandMissingCause,
+  resolveProviderProbeTimeoutMs,
   parseGenericCliVersion,
   providerModelsFromSettings,
   spawnAndCollect,
@@ -157,4 +161,100 @@ describe("ProviderCommandNotFoundError", () => {
       expect(error.message).not.toContain("secret-token-value");
     });
   });
+});
+
+describe("resolveProviderProbeTimeoutMs", () => {
+  it.each([
+    "codex",
+    "claude",
+    "cursor",
+    "antigravity",
+    "grok",
+    "kiro",
+    "fx",
+    "pi",
+    "muse",
+    "opencode",
+    "acp_registry",
+  ])("uses only %s's readiness override", (provider) => {
+    const key = `T3CODE_${provider.toUpperCase()}_PROBE_TIMEOUT_MS`;
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "60000" })).toBe(60000);
+    expect(resolveProviderProbeTimeoutMs(provider, 25000, { [key]: "1000" })).toBe(25000);
+    expect(
+      resolveProviderProbeTimeoutMs(provider, 25000, { T3CODE_OTHER_PROBE_TIMEOUT_MS: "60000" }),
+    ).toBe(25000);
+  });
+  it.each([undefined, "", " ", "bad", "0", "-1", "1.5", "Infinity", "2147483648"])(
+    "retains the phase default for invalid value %s",
+    (value) => {
+      expect(
+        resolveProviderProbeTimeoutMs("claude", 25000, { T3CODE_CLAUDE_PROBE_TIMEOUT_MS: value }),
+      ).toBe(25000);
+    },
+  );
+});
+
+describe("spawnAndCollect", () => {
+  it.effect.each(["stdout", "stderr"] as const)(
+    "rejects oversized %s after draining the process streams",
+    (stream) =>
+      Effect.gen(function* () {
+        let drainedChunks = 0;
+        const chunk = new Uint8Array(1024 * 1024).fill(120);
+        const output = Stream.fromIterable(Array.from({ length: 9 }, () => chunk)).pipe(
+          Stream.tap(() =>
+            Effect.sync(() => {
+              drainedChunks += 1;
+            }),
+          ),
+        );
+        const spawner = ChildProcessSpawner.make(() =>
+          Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: stream === "stdout" ? output : Stream.empty,
+              stderr: stream === "stderr" ? output : Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          ),
+        );
+        const result = yield* spawnAndCollect(
+          "fixture-cli",
+          ChildProcess.make("fixture-cli", ["--version"]),
+        ).pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.result,
+        );
+        expect(Result.isFailure(result)).toBe(true);
+        if (Result.isFailure(result)) {
+          expect(result.failure).toMatchObject({
+            _tag: "ProviderProbeOutputLimitError",
+            stream,
+            maxBytes: 8 * 1024 * 1024,
+          });
+        }
+        expect(drainedChunks).toBe(9);
+      }),
+  );
+
+  // regression: #35262 - without forceKillAfter a timed-out probe whose CLI ignores
+  // SIGTERM waits for it to exit, so the caller's timeout never returns.
+  it.live.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "lets a timed-out probe return when the CLI ignores SIGTERM",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* spawnAndCollect(
+          "sh",
+          ChildProcess.make("sh", ["-c", 'trap "" TERM; sleep 30']),
+        ).pipe(Effect.timeoutOption("200 millis"));
+        expect(Option.isNone(result)).toBe(true);
+      }).pipe(Effect.provide(NodeServices.layer)),
+  );
 });
