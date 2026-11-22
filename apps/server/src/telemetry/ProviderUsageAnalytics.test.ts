@@ -57,6 +57,12 @@ const providers = [
     instanceId: "claudeAgent-custom",
     auth: { type: "customEndpoint" },
   }),
+  // Bedrock auth still carries the endpoint marker for a custom base URL, so a
+  // gateway-served list never vouches either.
+  provider("claudeAgent", [{ slug: "claude-bedrock-internal" }], {
+    instanceId: "claudeAgent-bedrock",
+    auth: { type: "bedrock", endpoint: "https://gateway.acme.example.com" },
+  }),
   provider("opencode", [{ slug: "ollama/acme-internal" }]),
   // Antigravity ships models before the bundled manifest lists them.
   provider("antigravity", [
@@ -364,6 +370,9 @@ describe("provider usage reporting", () => {
     // A custom endpoint's catalog is user-defined and never vouches.
     expect(label("acme-azure-deployment")).toBeUndefined();
     expect(label("claude-ops-internal")).toBeUndefined();
+    // A Bedrock instance behind a custom base URL lists a gateway's models, and
+    // its list does not vouch either.
+    expect(label("claude-bedrock-internal")).toBeUndefined();
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
