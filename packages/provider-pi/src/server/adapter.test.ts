@@ -4176,8 +4176,15 @@ describe("PiAdapterV2", () => {
       yield* fake.takeRequest("prompt");
       // Pi's message usage counts uncached input, cache reads and cache writes separately.
       const usage = { input: 6, cacheRead: 40_101, cacheWrite: 10_561, output: 123 };
+      // Session stats total every message in the session, not this turn.
       fake.queueStats({
-        tokens: { ...usage, total: 50_791 },
+        tokens: {
+          input: 1_206,
+          cacheRead: 90_202,
+          cacheWrite: 60_622,
+          output: 250,
+          total: 152_280,
+        },
         contextUsage: { tokens: 50_791, contextWindow: 1_000_000 },
       });
       yield* fake.emit({ type: "response", command: "prompt", success: true });
