@@ -1,16 +1,21 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import ReactMarkdown from "react-markdown";
+import { toHtml } from "hast-util-to-html";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { type PluggableList, unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkNormalizeListItemIndentation } from "@t3tools/shared/markdownListIndentation";
+import { remarkNormalizeListItemIndentation } from "./markdownListIndentation.ts";
+
+const processor = unified()
+  .use(remarkParse)
+  .use([remarkGfm, remarkNormalizeListItemIndentation] satisfies PluggableList)
+  .use(remarkRehype, { allowDangerousHtml: true });
 
 function renderMarkdown(markdown: string): string {
-  return renderToStaticMarkup(
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkNormalizeListItemIndentation]}>
-      {markdown}
-    </ReactMarkdown>,
-  );
+  return toHtml(processor.runSync(processor.parse(markdown), markdown), {
+    allowDangerousHtml: true,
+  });
 }
 
 describe("remarkNormalizeListItemIndentation", () => {
@@ -26,7 +31,7 @@ describe("remarkNormalizeListItemIndentation", () => {
     expect(html).not.toContain("<pre>");
     expect(html).toContain("<li>for (const step of rest.steps) {</li>");
     expect(html).toContain("<li>if (step.request.body) {</li>");
-    expect(html).toContain("<li>step.request.body = &quot;&lt;redacted&gt;&quot;;</li>");
+    expect(html).toContain('<li>step.request.body = "<redacted>";</li>');
   });
 
   it("preserves every recovered block separated by blank lines", () => {

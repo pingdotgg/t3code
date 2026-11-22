@@ -338,7 +338,9 @@ function AddTrackedFolderDialog(props: {
                   key={entry.fullPath}
                   type="button"
                   className={rowClassName}
-                  onClick={() => setQuery(appendBrowsePathSegment(query, entry.name))}
+                  onClick={() =>
+                    setQuery(appendBrowsePathSegment(browsePath.directoryPath, entry.name))
+                  }
                 >
                   <FolderIcon className="size-4 shrink-0 text-muted-foreground" />
                   <span className="min-w-0 truncate">{entry.name}</span>
