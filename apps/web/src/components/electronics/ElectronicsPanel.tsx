@@ -301,6 +301,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
       input: {
         cwd: reqCwd,
         filePath: reqFile,
+        threadId: threadRef.threadId,
         from: traceFrom.trim(),
         ...(traceTo.trim().length > 0 ? { to: traceTo.trim() } : {}),
         traversePassives,
@@ -331,7 +332,12 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
     setValidationError(null);
     void validateCmd({
       environmentId: reqEnv,
-      input: { cwd: reqCwd, filePath: reqFile, useExternalToolchain: true },
+      input: {
+        cwd: reqCwd,
+        filePath: reqFile,
+        threadId: threadRef.threadId,
+        useExternalToolchain: true,
+      },
     }).then((result) => {
       if (reqSeqRef.current.validate !== seq || !isCurrentFileContext(reqEnv, reqCwd, reqFile)) {
         return;
@@ -358,6 +364,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
       input: {
         cwd: reqCwd,
         filePath: reqFile,
+        threadId: threadRef.threadId,
         kind: simKind,
         ...(simOutputNode ? { outputNode: simOutputNode } : {}),
         useExternalToolchain: true,

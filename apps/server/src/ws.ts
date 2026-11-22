@@ -3414,19 +3414,27 @@ export const layerWsRpc = (
         [WS_METHODS.electronicsListFiles]: (input) => electronicsService.listFiles(input.cwd),
         [WS_METHODS.electronicsInspect]: (input) =>
           electronicsService.inspect(input.cwd, input.filePath),
-        [WS_METHODS.electronicsTracePath]: (input) => electronicsService.tracePath(input),
-        [WS_METHODS.electronicsValidate]: (input) =>
-          electronicsService.validate(
+        [WS_METHODS.electronicsTracePath]: (input) =>
+          electronicsService.tracePath(
+            input,
             currentSession.scopes.includes(AuthOrchestrationOperateScope)
-              ? input
-              : { ...input, useExternalToolchain: false },
+              ? input.threadId
+              : undefined,
           ),
-        [WS_METHODS.electronicsSimulate]: (input) =>
-          electronicsService.simulate(
-            currentSession.scopes.includes(AuthOrchestrationOperateScope)
-              ? input
-              : { ...input, useExternalToolchain: false },
-          ),
+        [WS_METHODS.electronicsValidate]: (input) => {
+          const canOperate = currentSession.scopes.includes(AuthOrchestrationOperateScope);
+          return electronicsService.validate(
+            canOperate ? input : { ...input, useExternalToolchain: false },
+            canOperate ? input.threadId : undefined,
+          );
+        },
+        [WS_METHODS.electronicsSimulate]: (input) => {
+          const canOperate = currentSession.scopes.includes(AuthOrchestrationOperateScope);
+          return electronicsService.simulate(
+            canOperate ? input : { ...input, useExternalToolchain: false },
+            canOperate ? input.threadId : undefined,
+          );
+        },
         [WS_METHODS.electronicsToolchainStatus]: (input) => {
           const canOperate = currentSession.scopes.includes(AuthOrchestrationOperateScope);
           if (input.refresh) {

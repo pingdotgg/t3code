@@ -137,9 +137,17 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
 
     const prefix = comp.ref[0]?.toUpperCase();
     const allowPrefixFallback = spiceMode || comp.kind === "other";
-    const firstValueToken = comp.value.trim().split(/\s+/u)[0] ?? comp.value;
+    const parseElementValue = (raw: string): number | null => {
+      const full = parseEngineeringNumber(raw, { spice: spiceMode });
+      if (full !== null) return full;
+      if (spiceMode) {
+        const firstToken = raw.trim().split(/\s+/u)[0] ?? raw;
+        return parseEngineeringNumber(firstToken, { spice: true });
+      }
+      return null;
+    };
     if (comp.kind === "resistor" || (allowPrefixFallback && prefix === "R")) {
-      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
+      const val = parseElementValue(comp.value);
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -156,7 +164,7 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
         skipped.push(`${comp.ref} (unparseable resistance "${comp.value}")`);
       }
     } else if (comp.kind === "capacitor" || (allowPrefixFallback && prefix === "C")) {
-      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
+      const val = parseElementValue(comp.value);
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -173,7 +181,7 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
         skipped.push(`${comp.ref} (unparseable capacitance "${comp.value}")`);
       }
     } else if (comp.kind === "inductor" || (allowPrefixFallback && prefix === "L")) {
-      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
+      const val = parseElementValue(comp.value);
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,

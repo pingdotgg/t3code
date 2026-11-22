@@ -186,6 +186,92 @@ function segmentToOrientedBoxDistance(
   return best;
 }
 
+interface PadGeometry {
+  readonly x: number;
+  readonly y: number;
+  readonly padWidth?: number;
+  readonly padHeight?: number;
+  readonly padRotation?: number;
+  readonly padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
+}
+
+function pointToPadDistance(px: number, py: number, pad: PadGeometry): number {
+  const halfW = (pad.padWidth ?? 0.2) / 2;
+  const halfH = (pad.padHeight ?? 0.2) / 2;
+  if (pad.padShape === "circle") {
+    const r = Math.min(halfW, halfH);
+    return Math.max(0, Math.hypot(px - pad.x, py - pad.y) - r);
+  }
+  if (pad.padShape === "oval") {
+    const rad = ((pad.padRotation ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const dx = px - pad.x;
+    const dy = py - pad.y;
+    const lx = dx * cos - dy * sin;
+    const ly = dx * sin + dy * cos;
+    const r = Math.min(halfW, halfH);
+    if (halfW >= halfH) {
+      const span = halfW - r;
+      return Math.max(0, pointToSegmentDistance(lx, ly, -span, 0, span, 0) - r);
+    }
+    const span = halfH - r;
+    return Math.max(0, pointToSegmentDistance(lx, ly, 0, -span, 0, span) - r);
+  }
+  return pointToOrientedBoxDistance(px, py, pad.x, pad.y, halfW, halfH, pad.padRotation ?? 0);
+}
+
+function segmentToPadDistance(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  pad: PadGeometry,
+): number {
+  const halfW = (pad.padWidth ?? 0.2) / 2;
+  const halfH = (pad.padHeight ?? 0.2) / 2;
+  if (pad.padShape === "circle") {
+    const r = Math.min(halfW, halfH);
+    return Math.max(0, pointToSegmentDistance(pad.x, pad.y, x1, y1, x2, y2) - r);
+  }
+  if (pad.padShape === "oval") {
+    const rad = ((pad.padRotation ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(rad);
+    const sin = Math.sin(rad);
+    const toLocal = (wx: number, wy: number) => {
+      const dx = wx - pad.x;
+      const dy = wy - pad.y;
+      return [dx * cos - dy * sin, dx * sin + dy * cos] as const;
+    };
+    const [lx1, ly1] = toLocal(x1, y1);
+    const [lx2, ly2] = toLocal(x2, y2);
+    const r = Math.min(halfW, halfH);
+    const [sx1, sy1, sx2, sy2] =
+      halfW >= halfH ? [-(halfW - r), 0, halfW - r, 0] : [0, -(halfH - r), 0, halfH - r];
+    if (segmentsIntersect(lx1, ly1, lx2, ly2, sx1, sy1, sx2, sy2)) {
+      return 0;
+    }
+    const spineDist = Math.min(
+      pointToSegmentDistance(lx1, ly1, sx1, sy1, sx2, sy2),
+      pointToSegmentDistance(lx2, ly2, sx1, sy1, sx2, sy2),
+      pointToSegmentDistance(sx1, sy1, lx1, ly1, lx2, ly2),
+      pointToSegmentDistance(sx2, sy2, lx1, ly1, lx2, ly2),
+    );
+    return Math.max(0, spineDist - r);
+  }
+  return segmentToOrientedBoxDistance(
+    x1,
+    y1,
+    x2,
+    y2,
+    pad.x,
+    pad.y,
+    halfW,
+    halfH,
+    pad.padRotation ?? 0,
+  );
+}
+
 export interface PcbCopperIslandResult {
   readonly padPoints: ReadonlyArray<{
     readonly x: number;
@@ -196,6 +282,7 @@ export interface PcbCopperIslandResult {
     readonly padWidth?: number;
     readonly padHeight?: number;
     readonly padRotation?: number;
+    readonly padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
   }>;
   readonly islandCount: number;
   readonly trackCount: number;
@@ -215,6 +302,7 @@ export function computePcbCopperIslands(
     padWidth?: number;
     padHeight?: number;
     padRotation?: number;
+    padShape?: "circle" | "oval" | "rect" | "roundrect" | "trapezoid" | "custom";
   }> = [];
   for (const comp of model.components) {
     for (const pin of comp.pins) {
@@ -236,6 +324,7 @@ export function computePcbCopperIslands(
           ...(pin.padWidth !== undefined ? { padWidth: pin.padWidth } : {}),
           ...(pin.padHeight !== undefined ? { padHeight: pin.padHeight } : {}),
           ...(pin.padRotation !== undefined ? { padRotation: pin.padRotation } : {}),
+          ...(pin.padShape !== undefined ? { padShape: pin.padShape } : {}),
         });
       }
     }
@@ -301,7 +390,8 @@ export function computePcbCopperIslands(
   const largePads: number[] = [];
   for (let p = 0; p < padPoints.length; p += 1) {
     const pad = padPoints[p]!;
-    const padExtent = Math.max(pad.padWidth ?? 0.2, pad.padHeight ?? 0.2) / 2;
+    // Use half-diagonal so rotated rectangular pads unconditionally cover all cell boundaries.
+    const padExtent = Math.hypot(pad.padWidth ?? 0.2, pad.padHeight ?? 0.2) / 2;
     const minCx = Math.floor((pad.x - padExtent) / PCB_CELL);
     const maxCx = Math.floor((pad.x + padExtent) / PCB_CELL);
     const minCy = Math.floor((pad.y - padExtent) / PCB_CELL);
@@ -327,7 +417,7 @@ export function computePcbCopperIslands(
     addPointToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
   }
 
-  // Direct via-in-pad contact using real pad geometry and via diameter (including *.Cu through-hole pads)
+  // Direct via-in-pad contact using shape-aware pad geometry and via diameter (including *.Cu through-hole pads)
   for (let v = 0; v < netVias.length; v += 1) {
     const via = netVias[v]!;
     const viaRadius = Math.max(0.01, via.size / 2);
@@ -337,27 +427,13 @@ export function computePcbCopperIslands(
       if (checkedPads.has(p)) return;
       checkedPads.add(p);
       const pad = padPoints[p]!;
-      const halfW = (pad.padWidth ?? 0.2) / 2;
-      const halfH = (pad.padHeight ?? 0.2) / 2;
       const layerMatches =
         pad.layers === undefined ||
         pad.layers.length === 0 ||
         pad.layers.some(
           (layer) => layer === "*.Cu" || layer === "*" || viaMatchesTrackLayer(via.layers, layer),
         );
-      if (
-        layerMatches &&
-        pointToOrientedBoxDistance(
-          via.x,
-          via.y,
-          pad.x,
-          pad.y,
-          halfW,
-          halfH,
-          pad.padRotation ?? 0,
-        ) <=
-          viaRadius + 0.01
-      ) {
+      if (layerMatches && pointToPadDistance(via.x, via.y, pad) <= viaRadius + 0.01) {
         union(p, viaOffset + v);
       }
     };
@@ -421,23 +497,10 @@ export function computePcbCopperIslands(
 
     const testPad = (p: number) => {
       const pad = padPoints[p]!;
-      const halfW = (pad.padWidth ?? 0.2) / 2;
-      const halfH = (pad.padHeight ?? 0.2) / 2;
       const trackHalfWidth = Math.max(0.01, segWidth / 2);
       if (
         padMatchesTrackLayer(pad.layers, seg.layer) &&
-        segmentToOrientedBoxDistance(
-          seg.x1,
-          seg.y1,
-          seg.x2,
-          seg.y2,
-          pad.x,
-          pad.y,
-          halfW,
-          halfH,
-          pad.padRotation ?? 0,
-        ) <=
-          trackHalfWidth + 0.01
+        segmentToPadDistance(seg.x1, seg.y1, seg.x2, seg.y2, pad) <= trackHalfWidth + 0.01
       ) {
         union(p, trackOffset + t);
       }
@@ -589,11 +652,20 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
     }
   }
 
-  // 2. Power rail shorts (e.g. GND shorted directly to +3V3 or +5V on the same net)
+  // 2. Power rail shorts (e.g. GND shorted directly to +3V3 or +5V on the same net).
+  // Canonicalize ground aliases (e.g. GND / AGND / DGND / VSS) into one ground category so
+  // intentionally tied ground domains are not falsely reported as power rail shorts.
   for (const net of model.nets) {
     const parts = net.name.split(" / ").map((p) => p.trim());
-    const distinctRails = parts.filter((p) => isGroundNetName(p) || isPowerNetName(p));
-    if ((net.isPower && net.isGround) || distinctRails.length > 1) {
+    const distinctRailCategories = new Set<string>();
+    for (const part of parts) {
+      if (isGroundNetName(part)) {
+        distinctRailCategories.add("__GND__");
+      } else if (isPowerNetName(part)) {
+        distinctRailCategories.add(part.toUpperCase());
+      }
+    }
+    if ((net.isPower && net.isGround) || distinctRailCategories.size > 1) {
       const firstRef = net.pins[0]?.ref;
       const comp = firstRef ? model.components.find((c) => c.ref === firstRef) : undefined;
       issues.push({

@@ -263,6 +263,29 @@ describe("ElectronicsToolchain", () => {
         }).pipe(Effect.provide(spawnerLayer));
         expect(reversedAc.result).toBeNull();
         expect(reversedAc.rejectionNote).toMatch(/startFreqHz < stopFreqHz/i);
+
+        // Explicit nonexistent DC probe node must be rejected; explicit GND returns V(GND) = 0 V
+        const missingDcProbe = yield* runNgspiceSimulation({
+          model,
+          spiceSource: goodDeck,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "div.cir"),
+          kind: "dc_op",
+          outputNode: "does_not_exist",
+        }).pipe(Effect.provide(spawnerLayer));
+        expect(missingDcProbe.result).toBeNull();
+        expect(missingDcProbe.rejectionNote).toMatch(/not found/i);
+
+        const gndDcProbe = yield* runNgspiceSimulation({
+          model,
+          spiceSource: goodDeck,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "div.cir"),
+          kind: "dc_op",
+          outputNode: "GND",
+        }).pipe(Effect.provide(spawnerLayer));
+        expect(gndDcProbe.result).not.toBeNull();
+        expect(gndDcProbe.result?.metrics[0]).toEqual({ name: "V(GND)", value: 0, unit: "V" });
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

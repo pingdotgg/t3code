@@ -59,6 +59,9 @@ export const ElectronicsPin = Schema.Struct({
   padWidth: Schema.optional(Schema.Number),
   padHeight: Schema.optional(Schema.Number),
   padRotation: Schema.optional(Schema.Number),
+  padShape: Schema.optional(
+    Schema.Literals(["circle", "oval", "rect", "roundrect", "trapezoid", "custom"]),
+  ),
 });
 export type ElectronicsPin = typeof ElectronicsPin.Type;
 
@@ -370,6 +373,7 @@ export type ElectronicsInspectInput = typeof ElectronicsInspectInput.Type;
 export const ElectronicsTracePathInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   filePath: TrimmedNonEmptyString,
+  threadId: Schema.optional(ThreadId),
   from: TrimmedNonEmptyString,
   to: Schema.optional(TrimmedNonEmptyString),
   traversePassives: Schema.optional(Schema.Boolean),
@@ -380,6 +384,7 @@ export type ElectronicsTracePathInput = typeof ElectronicsTracePathInput.Type;
 export const ElectronicsValidateInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   filePath: TrimmedNonEmptyString,
+  threadId: Schema.optional(ThreadId),
   useExternalToolchain: Schema.optional(Schema.Boolean),
 });
 export type ElectronicsValidateInput = typeof ElectronicsValidateInput.Type;
@@ -389,6 +394,7 @@ export const ElectronicsPositiveFiniteNumber = Schema.Finite.check(Schema.isGrea
 export const ElectronicsSimulateInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   filePath: TrimmedNonEmptyString,
+  threadId: Schema.optional(ThreadId),
   kind: Schema.optional(ElectronicsSimulationKind),
   outputNode: Schema.optional(TrimmedNonEmptyString),
   startFreqHz: Schema.optional(ElectronicsPositiveFiniteNumber),

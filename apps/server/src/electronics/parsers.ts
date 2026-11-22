@@ -947,7 +947,9 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
   const netCodeMap = new Map<string, number>();
 
   const topLevelNetNodes = findChildren(root, "net");
-  const hasLegacyNetTable = topLevelNetNodes.length > 0;
+  const hasLegacyNetTable = topLevelNetNodes.some(
+    (n) => n.length >= 3 && atomNumber(n[1]) !== undefined,
+  );
   for (const netNode of topLevelNetNodes) {
     const code = atomNumber(netNode[1]);
     const name = atomString(netNode[2]) ?? "";
@@ -1033,10 +1035,21 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const pins: ElectronicsPin[] = [];
     for (const pad of findChildren(fp, "pad")) {
       const padNum = atomString(pad[1]) ?? "";
+      const rawShape = atomString(pad[3])?.toLowerCase();
+      const padShape =
+        rawShape === "circle" ||
+        rawShape === "oval" ||
+        rawShape === "rect" ||
+        rawShape === "roundrect" ||
+        rawShape === "trapezoid" ||
+        rawShape === "custom"
+          ? rawShape
+          : undefined;
       const padAt = findChild(pad, "at");
       const pxLocal = atomNumber(padAt?.[1]) ?? 0;
       const pyLocal = atomNumber(padAt?.[2]) ?? 0;
-      const padRot = atomNumber(padAt?.[3]) ?? rot;
+      // KiCad stores pad `(at x y [angle])` in board coordinates, defaulting to 0° when omitted.
+      const padRot = atomNumber(padAt?.[3]) ?? 0;
       const padSize = findChild(pad, "size");
       const padW = atomNumber(padSize?.[1]);
       const padH = atomNumber(padSize?.[2]);
@@ -1054,6 +1067,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
         ...(padW !== undefined && Number.isFinite(padW) && padW > 0 ? { padWidth: padW } : {}),
         ...(padH !== undefined && Number.isFinite(padH) && padH > 0 ? { padHeight: padH } : {}),
         ...(Number.isFinite(padRot) && padRot !== 0 ? { padRotation: padRot } : {}),
+        ...(padShape !== undefined ? { padShape } : {}),
         x: wx,
         y: wy,
       });

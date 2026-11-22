@@ -758,5 +758,112 @@ ${libEntries.join("\n")}
     const cjShortModel = parseElectronicsFile("short.circuit.json", cjShort);
     const cjShortVal = runBuiltinCircuitValidation(cjShortModel);
     expect(cjShortVal.issues.some((i) => i.code === "power_rail_short")).toBe(true);
+
+    // Circuit JSON joining ground aliases (GND + VSS) must NOT falsely flag power_rail_short
+    const cjGndAliases = JSON.stringify([
+      {
+        type: "source_component",
+        source_component_id: "c1",
+        name: "J1",
+        ftype: "simple_pin_header",
+      },
+      { type: "source_port", source_port_id: "p1", source_component_id: "c1", pin_number: 1 },
+      { type: "source_port", source_port_id: "p2", source_component_id: "c1", pin_number: 2 },
+      { type: "source_net", source_net_id: "n_gnd", name: "GND" },
+      { type: "source_net", source_net_id: "n_vss", name: "VSS" },
+      {
+        type: "source_trace",
+        connected_source_port_ids: ["p1", "p2"],
+        connected_source_net_ids: ["n_gnd", "n_vss"],
+      },
+    ]);
+    const cjGndModel = parseElectronicsFile("gnd_alias.circuit.json", cjGndAliases);
+    expect(
+      runBuiltinCircuitValidation(cjGndModel).issues.some((i) => i.code === "power_rail_short"),
+    ).toBe(false);
+
+    // Circular 2mm pad at (0,0) with 0.1mm trace starting at (0.9, 0.9) has a ~0.223mm gap -> MUST NOT connect
+    const circleGapPcb = `(kicad_pcb
+  (footprint "C1" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd circle (at 0 0) (size 2 2) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "C2" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd circle (at 0 0) (size 2 2) (layers "F.Cu") (net "SIG"))
+  )
+  (segment (start 0.9 0.9) (end 5 5) (width 0.1) (layer "F.Cu") (net "SIG"))
+)`;
+    const circleGapModel = parseElectronicsFile("pcb/circle_gap.kicad_pcb", circleGapPcb);
+    expect(traceCircuitPath(circleGapModel, { from: "R1.1", to: "R2.1" }).connected).toBe(false);
+    expect(
+      runBuiltinCircuitValidation(circleGapModel).issues.some((i) => i.code === "unrouted_pcb_net"),
+    ).toBe(true);
+
+    // Rotated 45° 4x4mm square pad at (2.9, 0) crosses grid boundary x=5 and touches trace at (5.55, 0)
+    const rotPadPcb = `(kicad_pcb
+  (footprint "Big" (layer "F.Cu") (at 2.9 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0 45) (size 4 4) (layers "F.Cu") (net "BUS"))
+  )
+  (footprint "End" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "BUS"))
+  )
+  (segment (start 5.55 0) (end 10 0) (width 0.2) (layer "F.Cu") (net "BUS"))
+)`;
+    const rotPadModel = parseElectronicsFile("pcb/rot_pad.kicad_pcb", rotPadPcb);
+    expect(traceCircuitPath(rotPadModel, { from: "R1.1", to: "R2.1" }).connected).toBe(true);
+
+    // Omitted pad angle on a 90° footprint means board-frame 0° (horizontal 4x1 pad reaches x=1.9)
+    const fpRot90Pcb = `(kicad_pcb
+  (footprint "HPad" (layer "F.Cu") (at 0 0 90)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 4 1) (layers "F.Cu") (net "BUS"))
+  )
+  (footprint "End" (layer "F.Cu") (at 5 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "BUS"))
+  )
+  (segment (start 1.9 0) (end 5 0) (width 0.2) (layer "F.Cu") (net "BUS"))
+)`;
+    const fpRot90Model = parseElectronicsFile("pcb/fp_rot90.kicad_pcb", fpRot90Pcb);
+    expect(traceCircuitPath(fpRot90Model, { from: "R1.1", to: "R2.1" }).connected).toBe(true);
+
+    // Spaced schematic resistor value "1 kΩ" parses as 1000 Ω (divider outputs 2.5 V, not 4.995 V)
+    const spacedValSch = `(kicad_sch
+  (lib_symbols
+    (symbol "Device:R"
+      (symbol "R_1_1"
+        (pin passive line (at 0 2 270) (length 1) (name "1") (number "1"))
+        (pin passive line (at 0 -2 90) (length 1) (name "2") (number "2"))
+      )
+    )
+    (symbol "Simulation_SPICE:VDC"
+      (symbol "VDC_1_1"
+        (pin power_out line (at 0 2 270) (length 1) (name "+") (number "1"))
+        (pin power_in line (at 0 -2 90) (length 1) (name "-") (number "2"))
+      )
+    )
+    (symbol "power:GND" (power)
+      (symbol "GND_0_1"
+        (pin power_in line (at 0 0 90) (length 0) (name "GND") (number "1"))
+      )
+    )
+  )
+  (symbol (lib_id "Simulation_SPICE:VDC") (at 10 25 0) (unit 1) (property "Reference" "V1") (property "Value" "5"))
+  (symbol (lib_id "Device:R") (at 20 20 0) (unit 1) (property "Reference" "R1") (property "Value" "1 kΩ"))
+  (symbol (lib_id "Device:R") (at 20 30 0) (unit 1) (property "Reference" "R2") (property "Value" "1k"))
+  (symbol (lib_id "power:GND") (at 20 32 0) (unit 1) (property "Reference" "#PWR01") (property "Value" "GND"))
+  (wire (pts (xy 10 23) (xy 10 18)))
+  (wire (pts (xy 10 18) (xy 20 18)))
+  (wire (pts (xy 10 27) (xy 10 32)))
+  (wire (pts (xy 10 32) (xy 20 32)))
+  (wire (pts (xy 20 22) (xy 20 28)))
+  (label "MID" (at 20 25 0))
+)`;
+    const spacedModel = parseElectronicsFile("sch/spaced.kicad_sch", spacedValSch);
+    const spacedDc = runBuiltinMnaSimulation(spacedModel, { kind: "dc_op", outputNode: "MID" });
+    expect(spacedDc.nodeVoltages.find((n) => n.node === "MID")?.voltageV).toBeCloseTo(2.5, 4);
   });
 });

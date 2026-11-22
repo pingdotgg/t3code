@@ -747,12 +747,18 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
 
         const deckPath = path.join(tmpDir, "deck.cir");
         const requestedNode = input.outputNode?.trim();
-        const canonicalRequested =
-          requestedNode !== undefined
-            ? requestedNode.toLowerCase() === "0" || requestedNode.toLowerCase() === "gnd"
-              ? "GND"
-              : requestedNode.toLowerCase()
-            : undefined;
+        const hasExplicitOutputNode = requestedNode !== undefined && requestedNode.length > 0;
+        const canonicalRequested = hasExplicitOutputNode
+          ? requestedNode.toLowerCase() === "0" || requestedNode.toLowerCase() === "gnd"
+            ? "GND"
+            : requestedNode.toLowerCase()
+          : undefined;
+        if (hasExplicitOutputNode && canonicalRequested === "GND" && input.kind !== "dc_op") {
+          return {
+            result: null,
+            rejectionNote: `Cannot plot reference ground node "${input.outputNode}"; choose a non-ground circuit node.`,
+          };
+        }
         const targetNode =
           canonicalRequested ?? input.model.nets.find((n) => !n.isGround)?.name ?? "out";
         if (!/^[A-Za-z0-9_.:+-]+$/u.test(targetNode)) {
@@ -835,6 +841,22 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
           };
         }
 
+        const metrics: Array<{ name: string; value: number; unit: string }> = [];
+        if (input.kind === "dc_op" && hasExplicitOutputNode && canonicalRequested !== undefined) {
+          if (canonicalRequested === "GND") {
+            metrics.push({ name: "V(GND)", value: 0, unit: "V" });
+          } else {
+            const matched = nodeVoltages.find((nv) => nv.node.toLowerCase() === canonicalRequested);
+            if (!matched) {
+              return {
+                result: null,
+                rejectionNote: `Requested output node "${input.outputNode}" was not found in ngspice DC operating-point output.`,
+              };
+            }
+            metrics.push({ name: `V(${matched.node})`, value: matched.voltageV, unit: "V" });
+          }
+        }
+
         const notes = ["Simulated with local ngspice toolchain (-n -b)."];
         if (truncated) {
           notes.push("ngspice stdout was truncated at the 2 MiB output safety limit.");
@@ -865,7 +887,7 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
                     },
                   ]
                 : [],
-            metrics: [],
+            metrics,
             notes,
             simulatedAt: DateTime.formatIso(yield* DateTime.now),
           },
