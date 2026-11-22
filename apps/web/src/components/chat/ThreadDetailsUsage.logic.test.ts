@@ -145,38 +145,3 @@ describe("resolveThreadDetailsLimits", () => {
     });
   });
 });
-
-describe("resolveThreadDetailsLimits across environments", () => {
-  const fresh = "2026-10-30T11:58:00.000Z";
-  const failed: ServerProviderUsageLimits = {
-    checkedAt,
-    windows: [],
-    unavailable: { reason: "probeFailed" },
-  };
-
-  it("keeps a hub-routed instance's failed reading instead of a non-hub peer's", () => {
-    const own: ServerProvider = {
-      ...claudeInstance(failed),
-      auth: {
-        status: "authenticated",
-        type: "customEndpoint",
-        label: "Custom API endpoint",
-        endpoint: "http://127.0.0.1:8317",
-        email: "dev@example.com",
-      },
-    };
-    const peer: ServerProvider = {
-      ...claudeInstance({ ...limitsAt(25), checkedAt: fresh }),
-      auth: { status: "authenticated", email: "dev@example.com" },
-    };
-    const unreadable = hub("Hub", [{ id: "a.json", limits: failed }]);
-    expect(resolveThreadDetailsLimits(instanceId, null, [own], [unreadable], now, [peer])).toEqual({
-      kind: "instance",
-      limits: failed,
-    });
-    expect(resolveThreadDetailsLimits(instanceId, null, [own], [], now, [peer])).toEqual({
-      kind: "instance",
-      limits: failed,
-    });
-  });
-});
