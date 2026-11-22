@@ -117,6 +117,22 @@ describe("HttpMiddleware", () => {
         assert.strictEqual(response.headers.get("access-control-allow-origin"), "*")
         assert.strictEqual(response.headers.get("vary"), "Accept-Language")
       }))
+
+    it.effect.each(["GET", "OPTIONS"])(
+      "does not call the origin predicate without an Origin header (%s)",
+      (method) =>
+        Effect.gen(function*() {
+          const handler = HttpEffect.toWebHandler(
+            Effect.succeed(HttpServerResponse.empty()).pipe(HttpMiddleware.cors({
+              allowedOrigins: (origin) => origin.endsWith(".example")
+            }))
+          )
+          const response = yield* Effect.promise(() => handler(new Request("http://localhost/", { method })))
+          assert.isTrue(response.ok)
+          assert.isNull(response.headers.get("access-control-allow-origin"))
+          assert.strictEqual(response.headers.get("vary"), "Origin")
+        })
+    )
   })
 
   describe("logger", () => {
@@ -533,6 +549,7 @@ describe("HttpMiddleware", () => {
         assert(error instanceof HttpServerError.HttpServerError)
         // The message is path-only, so query values never reach exporters through it.
         assert.strictEqual(error.message, "ResponseError (500 GET /failure)")
+        assert.strictEqual(error.request.url, "/failure?token=REDACTED")
       }))
 
     it.effect("preserves the stream failure when the sent response is 500", () =>

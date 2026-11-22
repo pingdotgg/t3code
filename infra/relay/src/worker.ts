@@ -126,6 +126,13 @@ export const layer = Api.make(
       // to PlanetScale `us-west` the request pays that distance once.
       placement: { region: "aws:us-west-2" },
       domain: relayPublicDomain,
+      // Workers Logs bills per GB, and every request, queue batch, and DO call is
+      // an invocation log. Axiom traces carry the full detail; keep a sample for
+      // crashes and limit errors that never export a span.
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 0.01 },
+      },
     })),
     Effect.orDie,
   ),

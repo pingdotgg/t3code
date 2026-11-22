@@ -14,6 +14,7 @@ import { useSelectedThreadGitActions } from "../../../state/use-selected-thread-
 import { useSelectedThreadGitState } from "../../../state/use-selected-thread-git-state";
 import { useSelectedThreadWorktree } from "../../../state/use-selected-thread-worktree";
 import { vcsEnvironment } from "../../../state/vcs";
+import { useRefreshBranchesOnFocus } from "../use-refresh-branches-on-focus";
 import { SheetActionButton } from "./gitSheetComponents";
 
 type GitBranchesSheetProps = StaticScreenProps<{
@@ -26,6 +27,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   const navigation = useNavigation();
   const { selectedThread } = useThreadSelection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  useRefreshBranchesOnFocus(selectedThread?.environmentId, selectedThreadCwd);
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
   const { canChangeThreadBranch } = gitActions;
@@ -83,7 +85,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             const branch = sanitizeFeatureBranchName(newBranchName.trim());
             if (branch.length === 0) return;
             void gitActions.onCreateSelectedThreadBranch(branch).then((result) => {
-              if (result === null) return;
+              if (result === null || !navigation.isFocused()) return;
               setNewBranchName("");
               navigation.goBack();
             });
@@ -123,7 +125,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             void gitActions
               .onCreateSelectedThreadWorktree({ baseBranch, newBranch })
               .then((result) => {
-                if (result === null) return;
+                if (result === null || !navigation.isFocused()) return;
                 setWorktreeBranchName("");
                 navigation.goBack();
               });
@@ -161,7 +163,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
               disabled={!canChangeThreadBranch || busy || disabled}
               onPress={() => {
                 void gitActions.onCheckoutSelectedThreadBranch(branch.name).then((result) => {
-                  if (result === null) return;
+                  if (result === null || !navigation.isFocused()) return;
                   navigation.goBack();
                 });
               }}

@@ -6,7 +6,7 @@ import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { expect, it } from "vite-plus/test";
-import { gradePrContent } from "./grade.ts";
+import { gradePrContent, hasConventionalCommitPrefix } from "./grade.ts";
 
 effectIt.live("rejects an empty case before requiring Codex or creating output", () =>
   Effect.gen(function* () {
@@ -69,4 +69,13 @@ it.each([
   },
 ])("grades $title", ({ title, body, passed }) => {
   expect(gradePrContent({ title, body })).toBe(passed);
+});
+
+it.each([
+  { title: "feat(models): add retirement metadata", conventional: true },
+  { title: "fix!: drop legacy models", conventional: true },
+  { title: "Add retirement metadata", conventional: false },
+  { title: "Retire: legacy models", conventional: false },
+])("detects a Conventional Commit prefix in $title", ({ title, conventional }) => {
+  expect(hasConventionalCommitPrefix(title)).toBe(conventional);
 });
