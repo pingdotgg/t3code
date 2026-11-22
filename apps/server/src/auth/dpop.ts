@@ -1,8 +1,10 @@
 import {
+  DPOP_MAX_CLOCK_SKEW_SECONDS,
   type DpopVerificationFailureCode as DpopVerificationFailureCodeType,
   verifyDpopProof,
 } from "@t3tools/shared/dpop";
 import type { DpopFailureReason } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -39,6 +41,19 @@ const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailur
       return "invalid_proof";
   }
 };
+
+/**
+ * Proofs this process consumed, kept until their time window closes, so a replay check needs
+ * no disk write. Markers on disk only cover proofs an earlier process could have accepted:
+ * those have `iat` at most the skew past this process's first consume, and still wait on disk.
+ */
+export const DpopReplayGuard = Context.Reference<{
+  readonly consumed: Map<string, number>;
+  diskCheckedThroughIat: number | undefined;
+  nextSweepAt: number;
+}>("t3/auth/dpop/DpopReplayGuard", {
+  defaultValue: () => ({ consumed: new Map(), diskCheckedThroughIat: undefined, nextSweepAt: 0 }),
+});
 
 export const mapDpopReplayStoreError = (
   error: ServerSecretStore.SecretStoreError,
@@ -101,31 +116,59 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
               }),
           ),
         );
-      yield* secretStore
-        .create(
-          `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
-          new TextEncoder().encode(
-            [
-              `thumbprint=${result.thumbprint}`,
-              `jti=${result.jti}`,
-              `iat=${result.iat}`,
-              `consumedAt=${DateTime.formatIso(now)}`,
-            ].join("\n"),
+      const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
+      const guard = yield* DpopReplayGuard;
+      guard.diskCheckedThroughIat ??= nowSeconds + DPOP_MAX_CLOCK_SKEW_SECONDS;
+      if (nowSeconds >= guard.nextSweepAt) {
+        for (const [key, expiresAt] of guard.consumed) {
+          if (expiresAt < nowSeconds) guard.consumed.delete(key);
+        }
+        guard.nextSweepAt = nowSeconds + 60;
+      }
+      if (guard.consumed.has(replayKey)) {
+        yield* Effect.annotateCurrentSpan({ "environment.dpop.failure_code": "replay" });
+        return yield* new ServerAuthInvalidCredentialError({
+          diagnostic: "DPoP proof replayed.",
+          dpopFailureReason: "replay",
+        });
+      }
+      guard.consumed.set(replayKey, result.iat + DPOP_MAX_CLOCK_SKEW_SECONDS);
+      const recordMarker = secretStore.create(
+        `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
+        new TextEncoder().encode(
+          [
+            `thumbprint=${result.thumbprint}`,
+            `jti=${result.jti}`,
+            `iat=${result.iat}`,
+            `consumedAt=${DateTime.formatIso(now)}`,
+          ].join("\n"),
+        ),
+      );
+      if (result.iat > guard.diskCheckedThroughIat) {
+        // Only a later process reads the marker, so this request need not wait for the write.
+        return yield* recordMarker.pipe(
+          Effect.catch((cause) =>
+            Effect.logWarning("Failed to record DPoP replay marker", { cause }),
           ),
-        )
-        .pipe(
-          Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
-            Effect.gen(function* () {
-              const mapped = mapDpopReplayStoreError(error);
-              if (mapped._tag === "ServerAuthInvalidCredentialError") {
-                yield* Effect.annotateCurrentSpan({
-                  "environment.dpop.failure_code": mapped.dpopFailureReason,
-                });
-              }
-              return yield* mapped;
-            }),
-          ),
+          Effect.forkDetach,
+          Effect.asVoid,
         );
+      }
+      yield* recordMarker.pipe(
+        Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+          Effect.gen(function* () {
+            const mapped = mapDpopReplayStoreError(error);
+            if (mapped._tag === "ServerAuthInvalidCredentialError") {
+              yield* Effect.annotateCurrentSpan({
+                "environment.dpop.failure_code": mapped.dpopFailureReason,
+              });
+            } else {
+              guard.consumed.delete(replayKey);
+            }
+            return yield* mapped;
+          }),
+        ),
+      );
     });
   return { thumbprint: result.thumbprint, consume };
 });
