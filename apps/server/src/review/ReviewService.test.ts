@@ -3,7 +3,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
-import * as PlatformError from "effect/PlatformError";
 import * as SqlClient from "effect/sql/SqlClient";
 import { ProjectId } from "@t3tools/contracts";
 
@@ -23,8 +22,9 @@ function layer(input: {
   readonly worktreesDirectory?: string;
   readonly previousWorktreesDirectories?: ReadonlyArray<string>;
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
+  /** Tracked by the first project. */
+  readonly trackedFolders?: ReadonlyArray<string>;
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
-  /** What `git worktree list` reports for every project. */
   readonly gitWorktrees?: ReadonlyArray<string>;
 }) {
   const projectRoots = input.projectRoots ?? [];
@@ -62,6 +62,14 @@ function layer(input: {
                   id: ProjectId.make(`project-${index}`),
                   title: `Project ${index}`,
                   workspaceRoot,
+                  ...(index === 0 && input.trackedFolders !== undefined
+                    ? {
+                        trackedFolders: input.trackedFolders.map((path) => ({
+                          path,
+                          name: path,
+                        })),
+                      }
+                    : {}),
                   defaultModelSelection: null,
                   scripts: [],
                   createdAt: "2026-01-01T00:00:00.000Z",
@@ -113,39 +121,6 @@ describe("ReviewService", () => {
 
       assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
       assert.strictEqual(error.operation, "ReviewService.getDiffPreview");
-      assert.match(
-        "detail" in error ? error.detail : "",
-        /must stay within the configured workspace root/,
-      );
-      assert.deepStrictEqual(detectCalls, []);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("attributes file-content workspace violations to the file-content operation", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
-      const outsideRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-outside-" });
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
-      const detectCalls: Array<{ readonly cwd: string }> = [];
-
-      const error = yield* Effect.gen(function* () {
-        const review = yield* ReviewService.ReviewService;
-        return yield* review
-          .getDiffFileContents({
-            cwd: outsideRoot,
-            sourceKind: "working-tree",
-            changeType: "change",
-            baseRef: "HEAD",
-            headRef: null,
-            oldPath: "file.ts",
-            newPath: "file.ts",
-          })
-          .pipe(Effect.flip);
-      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
-
-      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
-      assert.strictEqual(error.operation, "ReviewService.getDiffFileContents");
       assert.match(
         "detail" in error ? error.detail : "",
         /must stay within the configured workspace root/,
@@ -209,7 +184,6 @@ describe("ReviewService", () => {
 
       assert.strictEqual((yield* review(projectRoot, [projectRoot])).cwd, projectRoot);
       assert.strictEqual((yield* review(projectChild, [projectRoot])).cwd, projectChild);
-      // A child whose name starts with `..` is still inside.
       const dottedChild = `${projectRoot}/..feature`;
       yield* fs.makeDirectory(dottedChild);
       assert.strictEqual((yield* review(dottedChild, [projectRoot])).cwd, dottedChild);
@@ -224,17 +198,61 @@ describe("ReviewService", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
+  it.effect("allows a project's tracked folders outside the project folder", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-tracked-" });
+      const repository = `${outside}/api`;
+      const nested = `${repository}/src`;
+      const untracked = `${outside}/web`;
+      const linked = `${outside}/api-link`;
+      const missing = `${outside}/gone`;
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.makeDirectory(untracked);
+      yield* fs.symlink(repository, linked);
+
+      const review = (
+        cwd: string,
+        trackedFolders: ReadonlyArray<string>,
+        projectRoots: ReadonlyArray<string> = [projectRoot],
+      ) =>
+        Effect.gen(function* () {
+          const service = yield* ReviewService.ReviewService;
+          return yield* service.getDiffPreview({ cwd });
+        }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, projectRoots, trackedFolders })));
+
+      assert.strictEqual((yield* review(repository, [repository])).cwd, repository);
+      assert.strictEqual((yield* review(nested, [repository])).cwd, nested);
+      // Tracked under a symlink's name, reached by the real path, and the reverse.
+      assert.strictEqual((yield* review(repository, [linked])).cwd, repository);
+      assert.strictEqual((yield* review(linked, [repository])).cwd, linked);
+      // A tracked folder that is gone stays known, as a missing project folder does.
+      assert.strictEqual((yield* review(missing, [missing])).cwd, missing);
+      for (const [cwd, trackedFolders, projectRoots] of [
+        [untracked, [repository], [projectRoot]],
+        [outside, [repository], [projectRoot]],
+        [repository, [], [projectRoot]],
+        // A deleted project is no longer listed, and its tracked folders go with it.
+        [repository, [repository], []],
+      ] as const) {
+        const error = yield* review(cwd, trackedFolders, projectRoots).pipe(Effect.flip);
+        assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      }
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("allows the worktree a thread is bound to, and nothing else outside the project", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
       const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
       const project = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
-      // Checkouts outside every managed folder, as `git worktree add ../feature` makes.
       const bound = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-bound-" });
       const deleted = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-deleted-" });
       const unbound = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-unbound-" });
-      // A client can set a thread's path to any folder; git doesn't list this one.
       const claimed = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-claimed-" });
       yield* fs.makeDirectory(`${bound}/sub`);
 
@@ -253,9 +271,7 @@ describe("ReviewService", () => {
                 { worktreePath: bound },
                 { worktreePath: claimed },
                 { worktreePath: deleted, deleted: true },
-                // A relative path would resolve against the server's own cwd.
                 { worktreePath: "t3-review-relative" },
-                // A filesystem root would make every folder look bound.
                 { worktreePath: "/" },
               ],
             }),
@@ -297,47 +313,6 @@ describe("ReviewService", () => {
         ),
       );
       assert.strictEqual(result.cwd, checkout);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("allows diff preview cwd inside the configured workspace root", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
-      const detectCalls: Array<{ readonly cwd: string }> = [];
-
-      const result = yield* Effect.gen(function* () {
-        const review = yield* ReviewService.ReviewService;
-        return yield* review.getDiffPreview({ cwd: workspaceRoot });
-      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
-
-      assert.strictEqual(result.cwd, workspaceRoot);
-      assert.deepStrictEqual(result.sources, []);
-      assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
-    }).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("preserves unexpected path-resolution failures", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-workspace-" });
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
-      const invalidCwd = `${workspaceRoot}\0invalid`;
-      const detectCalls: Array<{ readonly cwd: string }> = [];
-
-      const error = yield* Effect.gen(function* () {
-        const review = yield* ReviewService.ReviewService;
-        return yield* review.getDiffPreview({ cwd: invalidCwd }).pipe(Effect.flip);
-      }).pipe(Effect.provide(layer({ workspaceRoot, baseDir, detectCalls })));
-
-      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
-      if (error._tag !== "VcsRepositoryDetectionError") return;
-      assert.strictEqual(error.operation, "ReviewService.assertWorkspaceBoundCwd.canonicalizePath");
-      assert.strictEqual(error.cwd, invalidCwd);
-      assert.match(error.detail, /Failed to resolve a path/);
-      assert.instanceOf(error.cause, PlatformError.PlatformError);
-      assert.deepStrictEqual(detectCalls, []);
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 });

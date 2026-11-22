@@ -7,7 +7,8 @@ import {
   type EnvironmentId,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { T, useGT } from "gt-react";
+import { useState, type ReactNode } from "react";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 
 import { useEnvironmentSettings } from "../../hooks/useSettings";
@@ -18,7 +19,10 @@ import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { Input } from "../ui/input";
 import { WizardFooter, WizardHeader, WizardPanel, WizardPopup } from "../ui/wizard";
+import { MultipleAccountsNote } from "./MultipleAccountsNote";
 import { SettingsRow } from "./settingsLayout";
+
+const CODEX_DRIVER_KIND = ProviderDriverKind.make("codex");
 
 export function AddCodexAccountDialog({
   environmentId,
@@ -28,31 +32,32 @@ export function AddCodexAccountDialog({
 }: {
   readonly environmentId: EnvironmentId;
   readonly onClose: () => void;
+  // Told when the account is created; the dialog then runs its own sign-in.
   readonly onAccountCreated?:
     | ((instanceId: ProviderInstanceId, displayName: string) => void)
     | undefined;
   readonly renderSetup: (instanceId: ProviderInstanceId, provider: ServerProvider) => ReactNode;
 }) {
+  const gt = useGT();
   const canManageProviders = useEnvironmentScope(environmentId, AuthProvidersManageScope);
   const settings = useEnvironmentSettings(environmentId);
   const providers = useAtomValue(serverEnvironment.providersValueAtom(environmentId));
   const update = useAtomCommand(serverEnvironment.updateSettings, "Add ChatGPT account");
-  const [name, setName] = useState("Personal");
+  const [name, setName] = useState(() =>
+    gt("Personal", { $context: "default name for a ChatGPT account" }),
+  );
   const displayName = `ChatGPT - ${name.trim()}`;
   const [instanceId, setInstanceId] = useState<ProviderInstanceId | null>(null);
   const [pending, setPending] = useState(false);
   const provider = providers?.find((candidate) => candidate.instanceId === instanceId);
+  // Closes itself once the new account connects; the owner unmounts it after
+  // the close animation.
   const connected = usesChatGptSharing(provider);
-  const closeAfterConnection = useEffectEvent(onClose);
-  useEffect(() => {
-    if (connected) closeAfterConnection();
-  }, [connected]);
 
   const createAccount = async () => {
     if (pending || !name.trim() || !readEnvironmentScope(environmentId, AuthProvidersManageScope))
       return;
     setPending(true);
-    // The ID is routing identity; the name is editable and need not be unique.
     const id = ProviderInstanceId.make(`codex_${randomUUID()}`);
     const result = await update({
       environmentId,
@@ -61,7 +66,7 @@ export function AddCodexAccountDialog({
           providerInstances: {
             ...settings.providerInstances,
             [id]: {
-              driver: ProviderDriverKind.make("codex"),
+              driver: CODEX_DRIVER_KIND,
               displayName,
               enabled: true,
               config: { enabled: true, setupMode: "managed" },
@@ -71,12 +76,8 @@ export function AddCodexAccountDialog({
       },
     });
     if (result._tag === "Success") {
-      if (onAccountCreated) {
-        onAccountCreated(id, displayName);
-        onClose();
-      } else {
-        setInstanceId(id);
-      }
+      onAccountCreated?.(id, displayName);
+      setInstanceId(id);
     }
     setPending(false);
   };
@@ -87,59 +88,69 @@ export function AddCodexAccountDialog({
       onOpenChange={(open) => {
         if (!open) onClose();
       }}
+      onOpenChangeComplete={(open) => {
+        if (!open && connected) onClose();
+      }}
     >
       <WizardPopup size="wide">
         <WizardHeader
-          title={instanceId ? displayName : "Add ChatGPT account"}
-          description="Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page."
+          title={instanceId ? displayName : gt("Add ChatGPT account")}
+          description={gt(
+            "Each account has its own Codex instance and sign-in. Choose the other account on the sign-in page.",
+          )}
         />
         <WizardPanel>
           {instanceId ? (
             provider?.setup ? (
               renderSetup(instanceId, provider)
             ) : (
-              <SettingsRow title="Codex runtime" description="Preparing managed setup." />
+              <SettingsRow
+                title={gt("Codex runtime")}
+                description={gt("Preparing managed setup.")}
+              />
             )
           ) : (
             <form
               id="add-codex-account"
+              className="grid gap-3"
               onSubmit={(event) => {
                 event.preventDefault();
                 void createAccount();
               }}
             >
               <SettingsRow
-                title="Account name"
-                description="Shown in the provider list and model picker."
+                title={gt("Account name")}
+                description={gt("Shown in the provider list and model picker.")}
                 control={
                   <Input
-                    aria-label="Account name"
+                    aria-label={gt("Account name")}
                     value={name}
                     disabled={pending}
                     onChange={(event) => setName(event.target.value)}
-                    placeholder="e.g. Personal or Work"
+                    placeholder={gt("e.g. Personal or Work")}
                   />
                 }
               />
+              <MultipleAccountsNote environmentId={environmentId} driver={CODEX_DRIVER_KIND} />
             </form>
           )}
         </WizardPanel>
         <WizardFooter>
           {instanceId ? (
             <Button variant="outline" onClick={onClose}>
-              Finish later
+              <T>Finish later</T>
             </Button>
           ) : (
             <>
               <Button variant="outline" disabled={pending} onClick={onClose}>
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button
                 type="submit"
                 form="add-codex-account"
                 disabled={pending || !name.trim() || !canManageProviders}
               >
-                {pending ? "Adding account…" : "Continue"}
+                {pending ? gt("Adding account…") : gt("Continue")}
               </Button>
             </>
           )}

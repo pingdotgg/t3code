@@ -1,11 +1,18 @@
-import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import {
+  sourceControlClients,
+  type ChangeRequestTerminology,
+} from "@t3tools/client-runtime/source-control-clients";
 import type {
   PullRequestAction,
   PullRequestDetail,
   PullRequestMergeMethod,
   SourceControlProviderKind,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
+import { m, type MessageResolver } from "../../i18n/messages";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 type ActionDetail = Pick<
@@ -24,27 +31,77 @@ type ActionDetail = Pick<
 };
 
 export const MERGE_METHODS = {
-  squash: { title: "Squash and merge", description: "Combine the commits into one commit." },
-  merge: {
-    title: "Create a merge commit",
-    description: "Keep the commits and add a merge commit.",
+  squash: {
+    title: msg("Squash and merge"),
+    description: msg("Combine the commits into one commit."),
   },
-  rebase: { title: "Rebase and merge", description: "Add the commits without a merge commit." },
+  merge: {
+    title: msg("Create a merge commit"),
+    description: msg("Keep the commits and add a merge commit."),
+  },
+  rebase: {
+    title: msg("Rebase and merge"),
+    description: msg("Add the commits without a merge commit."),
+  },
+  "fast-forward": {
+    title: msg("Fast-forward merge"),
+    description: msg("Add the commits as they are. Needs the branch to contain the base."),
+  },
 } as const satisfies Record<PullRequestMergeMethod, { title: string; description: string }>;
 
-export const PR_ACTION_LABELS = {
-  merge: "Merge pull request",
-  ready: "Mark ready for review",
-  draft: "Convert to draft",
-  close: "Close pull request",
-  reopen: "Reopen pull request",
-  "update-branch": "Update branch",
-  "enable-auto-merge": "Enable auto-merge",
-  "disable-auto-merge": "Disable auto-merge",
-  revert: "Create revert pull request",
-  "delete-branch": "Delete branch",
-  "approve-workflows": "Approve workflows",
-} as const satisfies Record<PullRequestAction, string>;
+/** Select key for a merge method in translated sentences; ICU keys cannot contain "-". */
+export function mergeMethodKind(method: PullRequestMergeMethod | undefined) {
+  return method === "fast-forward" ? "fastForward" : (method ?? "other");
+}
+
+export function pullRequestActionLabel(
+  action: PullRequestAction,
+  terminology: ChangeRequestTerminology,
+  resolve: MessageResolver = m,
+): string {
+  const term = changeRequestTermKind(terminology);
+  switch (action) {
+    case "merge":
+      return resolve(
+        msg("Merge {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
+    case "ready":
+      return resolve(msg("Mark ready for review"));
+    case "draft":
+      return resolve(msg("Convert to draft"));
+    case "close":
+      return resolve(
+        msg("Close {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
+    case "reopen":
+      return resolve(
+        msg("Reopen {term, select, mr {merge request} cr {change request} other {pull request}}", {
+          term,
+        }),
+      );
+    case "update-branch":
+      return resolve(msg("Update branch"));
+    case "enable-auto-merge":
+      return resolve(msg("Enable auto-merge"));
+    case "disable-auto-merge":
+      return resolve(msg("Disable auto-merge"));
+    case "revert":
+      return resolve(
+        msg(
+          "Create revert {term, select, mr {merge request} cr {change request} other {pull request}}",
+          { term },
+        ),
+      );
+    case "delete-branch":
+      return resolve(msg("Delete branch"));
+    case "approve-workflows":
+      return resolve(msg("Approve workflows"));
+  }
+}
 
 export const PR_ACTION_ICONS = {
   merge: PullRequestGlyph.merged,
@@ -60,22 +117,22 @@ export const PR_ACTION_ICONS = {
   "approve-workflows": "checkmark",
 } as const satisfies Record<PullRequestAction, AppSymbolName>;
 
-export const ALL_PR_ACTIONS: readonly PullRequestAction[] = [
-  "merge",
-  "ready",
-  "draft",
-  "update-branch",
-  "enable-auto-merge",
-  "disable-auto-merge",
-  "approve-workflows",
-  "close",
-  "reopen",
-  "revert",
-  "delete-branch",
-];
-
 export function allowedMergeMethods(pr: ActionDetail) {
   return pr.capabilities.mergeMethods.filter((method) => pr.mergeCapabilities[method]);
+}
+
+export function resolveMergeMethod(
+  pr: ActionDetail,
+  selected: PullRequestMergeMethod | null,
+  projectDefault: PullRequestMergeMethod | null,
+  lastUsed: PullRequestMergeMethod | undefined,
+) {
+  const methods = allowedMergeMethods(pr);
+  return (
+    [selected, projectDefault, lastUsed, "squash" as const].find(
+      (method) => method != null && methods.includes(method),
+    ) ?? methods[0]
+  );
 }
 
 export function allowedUpdateMethods(pr: ActionDetail) {
@@ -112,38 +169,46 @@ export function canPerformPullRequestAction(pr: ActionDetail, action: PullReques
   }
 }
 
-export const MERGE_CONFLICT_REASON = "Resolve the branch conflicts before merging.";
-
-export function mergeUnavailableReason(pr: ActionDetail, connectionAllowsWrites: boolean) {
-  if (pr.state === "merged") return "This pull request has been merged.";
-  if (pr.state === "closed") return "Reopen this pull request before merging.";
-  if (!connectionAllowsWrites) return "This environment connection is read-only.";
+export function mergeUnavailableReason(
+  pr: ActionDetail,
+  connectionAllowsWrites: boolean,
+  terminology: ChangeRequestTerminology,
+  resolve: MessageResolver = m,
+) {
+  const term = changeRequestTermKind(terminology);
+  if (pr.state === "merged")
+    return resolve(
+      msg(
+        "This {term, select, mr {merge request} cr {change request} other {pull request}} has been merged.",
+        { term },
+      ),
+    );
+  if (pr.state === "closed")
+    return resolve(
+      msg(
+        "Reopen this {term, select, mr {merge request} cr {change request} other {pull request}} before merging.",
+        { term },
+      ),
+    );
+  if (!connectionAllowsWrites) return resolve(msg("This environment connection is read-only."));
   if (!pr.capabilities.actions.includes("merge"))
-    return "This provider does not support merging here.";
+    return resolve(msg("This provider does not support merging here."));
   if (!pr.viewerPermissions.actions.includes("merge"))
-    return "Your account cannot merge this pull request.";
-  if (pr.isDraft) return "Mark this draft ready for review before merging.";
-  if (pr.mergeability === "conflicting") return MERGE_CONFLICT_REASON;
-  if (!allowedMergeMethods(pr).length) return "This repository has no available merge methods.";
+    return resolve(
+      msg(
+        "Your account cannot merge this {term, select, mr {merge request} cr {change request} other {pull request}}.",
+        { term },
+      ),
+    );
+  if (pr.isDraft) return resolve(msg("Mark this draft ready for review before merging."));
+  if (pr.mergeability === "conflicting")
+    return resolve(msg("Resolve the branch conflicts before merging."));
+  if (!allowedMergeMethods(pr).length)
+    return resolve(msg("This repository has no available merge methods."));
   return null;
 }
 
-export function mergeSummary(
-  pr: ActionDetail & Pick<PullRequestDetail, "autoMergeMethod">,
-  connectionAllowsWrites: boolean,
-) {
-  if (pr.state === "merged") return "Merged";
-  if (pr.state === "closed") return "Closed";
-  if (pr.isDraft) return "Draft";
-  if (pr.mergeability === "conflicting") return "Has conflicts";
-  if (!connectionAllowsWrites) return "Read-only connection";
-  const allowed = allowedMergeMethods(pr);
-  const method = pr.autoMergeMethod ?? (allowed.includes("squash") ? "squash" : allowed[0]);
-  const methodLabel = method ? `${method[0]?.toUpperCase()}${method.slice(1)}` : "Merge";
-  if (pr.autoMergeEnabled) return `${methodLabel} · auto-merge on`;
-  if (mergeUnavailableReason(pr, connectionAllowsWrites)) return "Unavailable";
-  return `${methodLabel}${pr.autoMergeEnabled === false ? " · auto-merge off" : ""}`;
-}
-
-export const openOnProviderLabel = (provider: SourceControlProviderKind) =>
-  `Open on ${sourceControlClients.get(provider).label}`;
+export const openOnProviderLabel = (
+  provider: SourceControlProviderKind,
+  resolve: MessageResolver = m,
+) => resolve(msg("Open on {provider}", { provider: sourceControlClients.get(provider).label }));

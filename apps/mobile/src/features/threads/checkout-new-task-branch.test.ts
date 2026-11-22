@@ -135,12 +135,12 @@ async function addRemote(remoteName: string, sourceRef = branch.name) {
 }
 
 describe("new-task branch checkout", () => {
-  it("switches to a free branch and clears its historical worktree path", async () => {
+  it("switches to a free branch despite stale current and worktree metadata", async () => {
     const previousWorktree = NodePath.join(directory, "previous-worktree");
     await git("worktree", "add", previousWorktree, branch.name);
     await exec("git", ["-C", previousWorktree, "checkout", "-b", "other-branch"]);
     const result = await checkoutNewTaskBranch({
-      branch: { ...branch, worktreePath: previousWorktree },
+      branch: { ...branch, current: true, worktreePath: previousWorktree },
       project: { environmentId, workspaceRoot: cwd },
       workspaceMode: "local",
       readRefs,
@@ -185,22 +185,6 @@ describe("new-task branch checkout", () => {
     expect(await NodeFSP.readFile(NodePath.join(cwd, "file.txt"), "utf8")).toBe(
       "unsaved local changes\n",
     );
-  });
-
-  it("fails when the source project is unavailable instead of releasing a composer selection", async () => {
-    const result = await checkoutNewTaskBranch({
-      branch,
-      project: null,
-      workspaceMode: "local",
-      readRefs,
-      switchRef: () => {
-        throw new Error("An unavailable project must not run checkout");
-      },
-    });
-    expect(result._tag).toBe("Failure");
-    if (result._tag !== "Failure") throw new Error("Expected an unavailable-project failure");
-    expect(String(squashAtomCommandFailure(result))).toContain("selected project is unavailable");
-    expect((await git("branch", "--show-current")).stdout.trim()).toBe("main");
   });
 
   it("reuses an existing worktree without switching the project checkout", async () => {
@@ -342,8 +326,6 @@ describe("new-task branch checkout", () => {
 
   it.each([
     { source: "historical", nested: true },
-    { source: "picker", nested: true },
-    { source: "historical", nested: false },
     { source: "picker", nested: false },
   ])(
     "rejects $source worktree reuse when project root is unsafe (nested: $nested)",

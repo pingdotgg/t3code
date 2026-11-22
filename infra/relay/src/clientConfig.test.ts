@@ -1,6 +1,6 @@
 // @effect-diagnostics anyUnknownInErrorContext:off - ScratchStack.deploy is typed with `any` in its error channel by Alchemy.
 import { inMemoryState } from "alchemy/State";
-import * as Test from "alchemy/Test/Vitest";
+import * as Test from "@alchemy.run/test/Vitest";
 import * as ConfigProvider from "effect/ConfigProvider";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -13,10 +13,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { PublishClientConfig, reconcileEnvFile, tokenDigest } from "./clientConfig.ts";
 
 describe("reconcileEnvFile", () => {
-  it("adds every entry to an empty file", () => {
-    expect(reconcileEnvFile("", { A: "1", B: "2" })).toBe("A=1\nB=2\n");
-  });
-
   it("replaces stale values and keeps unrelated lines", () => {
     const existing = "KEEP=yes\nA=old\n# comment\n";
     expect(reconcileEnvFile(existing, { A: "new", B: "2" })).toBe(
@@ -41,10 +37,19 @@ describe("reconcileEnvFile", () => {
   it("replaces a quoted multi-line value whole", () => {
     expect(reconcileEnvFile('A="one\ntwo"\nKEEP=1\n', { A: "new" })).toBe("A=new\nKEEP=1\n");
     expect(reconcileEnvFile("A='x'\nKEEP=1\n", { A: "new" })).toBe("A=new\nKEEP=1\n");
+    expect(
+      reconcileEnvFile(
+        '# earlier "quote"\nA="first\nvalue"\nKEEP=1\nA=\'second\nvalue\'\nB=`third\nvalue`',
+        { A: "new", B: "updated" },
+      ),
+    ).toBe('# earlier "quote"\nA=new\nKEEP=1\nB=updated\n');
   });
 
   it("keeps later lines when a quoted value never closes", () => {
     expect(reconcileEnvFile('A="one\nKEEP=1\n', { A: "new" })).toBe("A=new\nKEEP=1\n");
+    expect(
+      reconcileEnvFile("A=\"one\nKEEP='two'\nB=`three\nKEEP=2", { A: "new", B: "updated" }),
+    ).toBe("A=new\nKEEP='two'\nB=updated\nKEEP=2\n");
   });
 
   it("leaves a commented-out assignment alone", () => {

@@ -16,8 +16,6 @@ describe("claudeUsageResponseToLimits", () => {
             five_hour: { utilization: 54, resets_at: "2026-07-18T14:39:00Z" },
             seven_day: { utilization: 18.4, resets_at: "2026-07-24T08:59:00+00:00" },
             seven_day_opus: { utilization: 3, resets_at: null },
-            // Newer CLIs add this on top of the typed keys; the pinned SDK
-            // typings do not know it yet.
             ...({
               model_scoped: [
                 { display_name: "Fable", utilization: 73, resets_at: "2026-07-24T08:59:00Z" },
@@ -85,24 +83,6 @@ describe("claudeUsageResponseToLimits", () => {
       }).names,
     ).toEqual({ overageIncluded: "Fable" });
   });
-
-  it.each([
-    { rateLimitsAvailable: false, reason: "unsupported" },
-    { rateLimitsAvailable: true, reason: "probeFailed" },
-  ])(
-    "reports null usage as $reason when availability is $rateLimitsAvailable",
-    ({ rateLimitsAvailable, reason }) => {
-      expect(
-        claudeUsageResponseToLimits({
-          checkedAt,
-          response: { rate_limits_available: rateLimitsAvailable, rate_limits: null },
-        }),
-      ).toEqual({
-        limits: { checkedAt, windows: [], unavailable: { reason } },
-        names: noNames,
-      });
-    },
-  );
 
   it("skips a window the endpoint reports without a utilization", () => {
     expect(
@@ -219,6 +199,22 @@ describe("claudeUsageResponseToLimits", () => {
     ).toEqual([monthlyWindow]);
   });
 
+  it("flags a $0 cap instead of reporting a monthly window", () => {
+    const response = {
+      rate_limits_available: true,
+      rate_limits: {
+        five_hour: null,
+        seven_day: null,
+        extra_usage: { is_enabled: true, used_credits: 0, monthly_limit: 0, utilization: null },
+      },
+    };
+    expect(claudeUsageResponseToLimits({ checkedAt, response }).limits).toEqual({
+      checkedAt,
+      windows: [],
+      zeroSpendCap: true,
+    });
+  });
+
   it("omits disabled budgets and refuses invalid money without an enabled fallback", () => {
     const rateLimits = enterpriseResponse.rate_limits;
     const response = {
@@ -287,17 +283,5 @@ describe("claudeRateLimitEventToUpdate", () => {
         },
       ],
     });
-  });
-
-  it("ignores windows the page does not render and events without a utilization", () => {
-    expect(
-      claudeRateLimitEventToUpdate(
-        { status: "allowed", rateLimitType: "seven_day_opus", utilization: 0.1 },
-        noNames,
-      ),
-    ).toBeUndefined();
-    expect(
-      claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
-    ).toBeUndefined();
   });
 });

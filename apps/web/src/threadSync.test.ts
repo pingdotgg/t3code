@@ -1,49 +1,32 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveThreadSyncPhase, threadSyncLabel } from "./threadSync";
+import { resolveThreadSyncPhase } from "./threadSync";
 
 describe("resolveThreadSyncPhase", () => {
-  it("loads when only shell data is available", () => {
-    expect(
-      resolveThreadSyncPhase({
-        detailExists: false,
-        shellExists: true,
-        status: "synchronizing",
-      }),
-    ).toBe("loading");
-  });
-
-  it("syncs when cached detail is already visible", () => {
+  it("reports a failed sync instead of syncing over cached messages", () => {
     expect(
       resolveThreadSyncPhase({
         detailExists: true,
         shellExists: true,
         status: "cached",
+        hasError: true,
       }),
-    ).toBe("syncing");
-  });
-
-  it("does not report a sync phase without a shell or after going live", () => {
+    ).toBe("failed");
     expect(
       resolveThreadSyncPhase({
         detailExists: false,
-        shellExists: false,
-        status: "empty",
+        shellExists: true,
+        status: "synchronizing",
+        hasError: true,
       }),
-    ).toBeNull();
+    ).toBe("loading");
     expect(
       resolveThreadSyncPhase({
         detailExists: true,
         shellExists: true,
-        status: "live",
+        status: "synchronizing",
+        hasError: false,
       }),
-    ).toBeNull();
-  });
-});
-
-describe("threadSyncLabel", () => {
-  it("uses the same loading and syncing language as mobile", () => {
-    expect(threadSyncLabel("loading")).toBe("Loading messages...");
-    expect(threadSyncLabel("syncing")).toBe("Syncing messages...");
+    ).toBe("syncing");
   });
 });

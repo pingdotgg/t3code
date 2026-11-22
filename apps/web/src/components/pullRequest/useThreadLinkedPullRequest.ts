@@ -1,3 +1,4 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   type EnvironmentId,
   type ProjectId,
@@ -10,28 +11,24 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { msg } from "gt-react";
 import { useEffect, useRef } from "react";
+import { m } from "~/i18n/messages";
 import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPanelStore";
 import { threadEnvironment } from "../../state/threads";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { useLinkedThreadPullRequest } from "../ThreadStatusIndicators";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 
-/**
- * The change request a thread is linked to. When the linked one is merged or
- * closed and the thread's branch has a newer open one, that one replaces it:
- * the thread is relinked on the server, and an open panel showing the old one
- * follows.
- */
+/** Relink replaced closed/merged requests to the newer open request on the same branch, moving its panel. */
 export function useThreadLinkedPullRequest(input: {
-  // Null for drafts, which have nothing to relink on the server.
   readonly serverThreadRef: ScopedThreadRef | null;
   readonly environmentId: EnvironmentId | null;
   readonly persisted: ThreadLinkedPullRequest | null;
   readonly projectId: ProjectId | null;
   readonly projectRepository: string | null;
   readonly threadBranch: string | null;
-  readonly gitStatus: VcsStatusResult | null;
+  readonly gitStatus: Pick<VcsStatusResult, "refName" | "pr"> | null;
 }) {
   const { serverThreadRef, persisted, projectId, projectRepository, threadBranch, gitStatus } =
     input;
@@ -56,6 +53,7 @@ export function useThreadLinkedPullRequest(input: {
 
   const relinkKeysRef = useRef(new Map<string, string>());
   const relinkWriteRef = useRef(Promise.resolve());
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- persists the detected PR to the server thread once per change and retargets the open right panel store
   useEffect(() => {
     if (serverThreadRef === null) return;
     const threadKey = scopedThreadKey(serverThreadRef);
@@ -94,8 +92,8 @@ export function useThreadLinkedPullRequest(input: {
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Unable to update the thread pull request",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: m(msg("Unable to update the thread pull request")),
+          description: thrownErrorMessage(error, m) ?? m(msg("An error occurred.")),
         }),
       );
     });
@@ -105,7 +103,6 @@ export function useThreadLinkedPullRequest(input: {
   return {
     linked,
     linkedKey: linked ? JSON.stringify([linked.projectId, linked.repository, linked.number]) : null,
-    // Detail is shown for the persisted link; a replacement only exists once it is merged.
     hasDetail: persisted !== null,
   };
 }

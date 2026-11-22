@@ -1,97 +1,72 @@
 import type { DesktopWslState } from "@t3tools/contracts";
-import * as Cause from "effect/Cause";
-import * as AsyncResult from "effect/reactivity/AsyncResult";
-import { AtomRegistry } from "effect/reactivity";
-import { describe, expect, it, vi } from "vite-plus/test";
+import { AsyncResult, AtomRegistry } from "effect/reactivity";
+import { expect, it, vi } from "vite-plus/test";
 
-import { createDesktopWslStateAtom } from "./desktopWslState";
+import { desktopWslAccessStateAtom, desktopWslStateAtom } from "./desktopWslState";
 
-const wslState: DesktopWslState = {
-  available: true,
+const ubuntuOnly: DesktopWslState = {
+  enabled: false,
   distro: null,
-  distros: [
-    {
-      isDefault: true,
-      name: "Ubuntu",
-      version: 2,
-    },
-  ],
-  enabled: true,
-  preflightError: null,
+  available: true,
   wslOnly: false,
+  distros: [{ name: "Ubuntu", isDefault: true, version: 2 }],
+  preflightError: null,
+};
+const withDebian: DesktopWslState = {
+  ...ubuntuOnly,
+  distros: [...ubuntuOnly.distros, { name: "Debian", isDefault: false, version: 2 }],
 };
 
-describe("desktopWslState", () => {
-  it("retains the loaded snapshot when the settings screen remounts", async () => {
-    const getWslState = vi.fn(async () => wslState);
-    const atom = createDesktopWslStateAtom(() => ({ getWslState }));
-    const registry = AtomRegistry.make();
-
-    const unmount = registry.mount(atom);
-    await vi.waitFor(() => {
-      expect(AsyncResult.value(registry.get(atom))).toEqual(
-        expect.objectContaining({ _tag: "Some", value: wslState }),
+it("refetches on every Access visit and reuses a fresh result for Search", async () => {
+  const pending = Promise.withResolvers<DesktopWslState>();
+  const getWslState = vi
+    .fn<() => Promise<DesktopWslState>>()
+    .mockResolvedValueOnce(ubuntuOnly)
+    .mockReturnValueOnce(pending.promise);
+  vi.stubGlobal("window", { desktopBridge: { getWslState } });
+  using _now = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  const tasks: Array<() => void> = [];
+  const registry = AtomRegistry.make({
+    scheduleTask: (task) => {
+      tasks.push(task);
+      return () => {};
+    },
+  });
+  const runTasks = () => {
+    for (const task of tasks.splice(0)) task();
+  };
+  const settled = (atom: typeof desktopWslStateAtom) =>
+    new Promise<DesktopWslState>((resolve) => {
+      const unsubscribe = registry.subscribe(
+        atom,
+        (result) => {
+          if (result._tag === "Success" && !result.waiting) {
+            unsubscribe();
+            resolve(result.value);
+          }
+        },
+        { immediate: true },
       );
     });
-    unmount();
+  try {
+    const closeSearch = registry.mount(desktopWslStateAtom);
+    expect(await settled(desktopWslStateAtom)).toEqual(ubuntuOnly);
+    closeSearch();
+    runTasks();
 
-    const remount = registry.mount(atom);
-    expect(AsyncResult.value(registry.get(atom))).toEqual(
-      expect.objectContaining({ _tag: "Some", value: wslState }),
-    );
+    registry.mount(desktopWslStateAtom)();
+    runTasks();
     expect(getWslState).toHaveBeenCalledTimes(1);
 
-    remount();
-    registry.dispose();
-  });
-
-  it("retains the desktop bridge failure as the load error cause", async () => {
-    const cause = new Error("wsl unavailable");
-    const atom = createDesktopWslStateAtom(() => ({
-      getWslState: async () => Promise.reject(cause),
-    }));
-    const registry = AtomRegistry.make();
-    registry.mount(atom);
-
-    await vi.waitFor(() => expect(AsyncResult.isFailure(registry.get(atom))).toBe(true));
-    const result = registry.get(atom);
-    if (!AsyncResult.isFailure(result)) throw new Error("Expected WSL state load to fail.");
-
-    expect(Cause.squash(result.cause)).toEqual(
-      expect.objectContaining({
-        _tag: "DesktopWslStateLoadError",
-        cause,
-      }),
-    );
-    registry.dispose();
-  });
-
-  it("replaces cached state with refreshed live desktop state", async () => {
-    const refreshedState: DesktopWslState = {
-      ...wslState,
-      preflightError: "WSL backend stopped unexpectedly.",
-    };
-    let currentState = wslState;
-    const getWslState = vi.fn(async () => currentState);
-    const atom = createDesktopWslStateAtom(() => ({ getWslState }));
-    const registry = AtomRegistry.make();
-    registry.mount(atom);
-
-    await vi.waitFor(() => {
-      expect(AsyncResult.value(registry.get(atom))).toEqual(
-        expect.objectContaining({ _tag: "Some", value: wslState }),
-      );
-    });
-
-    currentState = refreshedState;
-    registry.refresh(atom);
-
-    await vi.waitFor(() => {
-      expect(AsyncResult.value(registry.get(atom))).toEqual(
-        expect.objectContaining({ _tag: "Some", value: refreshedState }),
-      );
-    });
+    const closeAccess = registry.mount(desktopWslAccessStateAtom);
+    runTasks();
     expect(getWslState).toHaveBeenCalledTimes(2);
+    expect(AsyncResult.getOrThrow(registry.get(desktopWslAccessStateAtom))).toEqual(ubuntuOnly);
+    pending.resolve(withDebian);
+    expect(await settled(desktopWslAccessStateAtom)).toEqual(withDebian);
+    closeAccess();
+  } finally {
     registry.dispose();
-  });
+    vi.unstubAllGlobals();
+  }
 });

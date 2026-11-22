@@ -1,99 +1,183 @@
-import "../../index.css";
-
-import { act } from "react";
-import { createRoot, type Root } from "react-dom/client";
-import { afterEach, beforeEach, describe, expect, it } from "vite-plus/test";
-
 import { page, userEvent } from "vite-plus/test/browser";
+import { describe, expect, it, vi } from "vite-plus/test";
 
-import { Sidebar, SidebarProvider, SidebarTrigger } from "./sidebar";
-import { resolveSidebarState } from "./sidebarState";
+import "~/index.css";
 
-let root: Root;
-let container: HTMLDivElement;
+import { render } from "../../../test/render";
+import { Sidebar, SidebarProvider, SidebarRail, SidebarTrigger, useSidebar } from "./sidebar";
 
-beforeEach(async () => {
-  await page.viewport(1280, 900);
-  container = document.createElement("div");
-  document.body.append(container);
-  root = createRoot(container);
+function CollapseFromInside() {
+  const { setOpen } = useSidebar();
+  return (
+    <button type="button" onClick={() => setOpen(false)}>
+      Collapse
+    </button>
+  );
+}
+
+function Harness(props: { readonly onResize?: (width: number) => void }) {
+  return (
+    <SidebarProvider defaultOpen>
+      <Sidebar
+        collapsible="offcanvas"
+        resizable={{
+          minWidth: 200,
+          maxWidth: 600,
+          ...(props.onResize ? { onResize: props.onResize } : {}),
+        }}
+      >
+        <CollapseFromInside />
+        <SidebarRail />
+      </Sidebar>
+      <SidebarTrigger />
+    </SidebarProvider>
+  );
+}
+
+describe("Sidebar", () => {
+  it("hands focus to the outside trigger when it collapses around the focused control", async () => {
+    await page.viewport(1280, 800);
+    await using screen = await render(<Harness />, { router: false /* no routes involved */ });
+
+    await userEvent.click(screen.getByRole("button", { name: "Collapse" }));
+
+    const sidebar = screen.container.querySelector<HTMLElement>('[data-slot="sidebar"]')!;
+    await vi.waitFor(() => expect(sidebar.inert).toBe(true));
+    const trigger = screen.container.querySelector('[data-slot="sidebar-trigger"]');
+    await vi.waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it("abandons a rail drag when the sidebar collapses mid-drag", async () => {
+    await page.viewport(1280, 800);
+    const onResize = vi.fn();
+    await using screen = await render(<Harness onResize={onResize} />, {
+      router: false /* no routes involved */,
+    });
+    const rail = screen.container.querySelector<HTMLElement>('[data-sidebar="rail"]')!;
+    const { left, top } = rail.getBoundingClientRect();
+    const pointer = { bubbles: true, cancelable: true, pointerId: 1, button: 0, clientY: top + 10 };
+    const dragTo = (clientX: number) => {
+      rail.dispatchEvent(new PointerEvent("pointerdown", { ...pointer, clientX: left }));
+      rail.dispatchEvent(new PointerEvent("pointermove", { ...pointer, clientX }));
+    };
+    // A completed drag commits, so the abandoned one below is a real drag too.
+    dragTo(left + 40);
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 40 }));
+    expect(onResize).toHaveBeenCalledTimes(1);
+
+    dragTo(left + 80);
+    await userEvent.click(
+      screen.container.querySelector<HTMLElement>('[data-slot="sidebar-trigger"]')!,
+    );
+    rail.dispatchEvent(new PointerEvent("pointerup", { ...pointer, clientX: left + 80 }));
+
+    expect(onResize).toHaveBeenCalledTimes(1);
+  });
 });
 
-afterEach(async () => {
-  await act(async () => root.unmount());
-  container.remove();
+it("restores collapsed and expanded desktop state after remounting", async () => {
+  await page.viewport(1280, 800);
+  const storageKey = "sidebar_persistence_test";
+  localStorage.removeItem(storageKey);
+  const layout = () => (
+    <SidebarProvider storageKey={storageKey}>
+      <SidebarTrigger />
+    </SidebarProvider>
+  );
+  {
+    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+  }
+  {
+    await using screen = await render(layout(), { router: false /* no routes involved */ });
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(trigger);
+  }
+  await using screen = await render(layout(), { router: false /* no routes involved */ });
+  await expect
+    .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
+    .toHaveAttribute("aria-pressed", "true");
+  localStorage.removeItem(storageKey);
 });
 
-async function renderSidebar(open: boolean) {
-  await act(async () => {
-    root.render(
-      <SidebarProvider open={open}>
-        <Sidebar>
-          <SidebarTrigger data-testid="internal-trigger" />
-          <button data-testid="sidebar-control">Thread</button>
-        </Sidebar>
-        <SidebarTrigger data-testid="external-trigger" />
-        <button data-testid="content-control">Content</button>
+it("keeps the mobile sheet closed and leaves the saved desktop state alone", async () => {
+  await page.viewport(390, 844);
+  const storageKey = "sidebar_mobile_persistence_test";
+  localStorage.setItem(storageKey, "false");
+  {
+    await using screen = await render(
+      <SidebarProvider storageKey={storageKey}>
+        <SidebarTrigger />
       </SidebarProvider>,
+      { router: false /* no routes involved */ },
     );
-  });
-}
-
-function element(selector: string) {
-  const node = container.querySelector<HTMLElement>(selector);
-  if (!node) throw new Error(`Missing element: ${selector}`);
-  return node;
-}
-
-describe("responsive sidebar state", () => {
-  it("uses mobile sheet visibility for the shared responsive state", () => {
-    expect(resolveSidebarState({ isMobile: true, open: true, openMobile: false })).toBe(
-      "collapsed",
-    );
-    expect(resolveSidebarState({ isMobile: true, open: false, openMobile: true })).toBe("expanded");
-    expect(resolveSidebarState({ isMobile: false, open: true, openMobile: false })).toBe(
-      "expanded",
-    );
-  });
+    const trigger = screen.getByRole("button", { name: "Toggle Sidebar" });
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "false");
+    await userEvent.click(trigger);
+    await expect.element(trigger).toHaveAttribute("aria-pressed", "true");
+    expect(localStorage.getItem(storageKey)).toBe("false");
+  }
+  await using screen = await render(
+    <SidebarProvider storageKey={storageKey}>
+      <SidebarTrigger />
+    </SidebarProvider>,
+    { router: false /* no routes involved */ },
+  );
+  await expect
+    .element(screen.getByRole("button", { name: "Toggle Sidebar" }))
+    .toHaveAttribute("aria-pressed", "false");
+  localStorage.removeItem(storageKey);
 });
 
-describe("desktop sidebar focus", () => {
-  it("moves focus to the external toggle on collapse and restores sidebar access on expansion", async () => {
-    await renderSidebar(true);
-    const control = element('[data-testid="sidebar-control"]');
-    const sidebar = element('[data-slot="sidebar"]');
-    control.focus();
-    expect(document.activeElement).toBe(control);
+function MobileSheetMountedProbe() {
+  const { mobileSheetMounted } = useSidebar();
+  return <output aria-label="Sheet mounted">{String(mobileSheetMounted)}</output>;
+}
 
-    await renderSidebar(false);
+it("keeps closed mobile sheet contents mounted and reports the sheet only while it shows", async () => {
+  await page.viewport(390, 844);
+  await using screen = await render(
+    <SidebarProvider>
+      <Sidebar>
+        <span>Sheet contents</span>
+      </Sidebar>
+      <SidebarTrigger />
+      <MobileSheetMountedProbe />
+    </SidebarProvider>,
+    { router: false /* no routes involved */ },
+  );
+  const sheetMounted = screen.getByLabelText("Sheet mounted");
+  // Window shortcuts registered by sidebar children only work while they stay mounted.
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+  await expect.element(sheetMounted).toHaveTextContent("false");
 
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    expect(sidebar.inert).toBe(true);
-    control.focus();
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    await userEvent.keyboard("{Shift>}{Tab}{/Shift}");
-    expect(document.activeElement).not.toBe(element('[data-testid="internal-trigger"]'));
-    expect(document.activeElement).not.toBe(control);
-    await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(element('[data-testid="external-trigger"]'));
-    await userEvent.keyboard("{Tab}");
-    expect(document.activeElement).toBe(element('[data-testid="content-control"]'));
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  await expect.element(sheetMounted).toHaveTextContent("true");
 
-    await renderSidebar(true);
+  await userEvent.keyboard("{Escape}");
+  await expect.element(sheetMounted).toHaveTextContent("false");
+  expect(document.querySelector('[data-mobile="true"]')?.textContent).toContain("Sheet contents");
+});
 
-    expect(sidebar.inert).toBe(false);
-    control.focus();
-    expect(document.activeElement).toBe(control);
-  });
-
-  it("keeps focus in the content when the sidebar collapses", async () => {
-    await renderSidebar(true);
-    const control = element('[data-testid="content-control"]');
-    control.focus();
-    expect(document.activeElement).toBe(control);
-
-    await renderSidebar(false);
-
-    expect(document.activeElement).toBe(control);
-  });
+it("opens the mobile sheet without a transition while panel animations are off", async () => {
+  await page.viewport(390, 844);
+  await using screen = await render(
+    <div data-panel-animations="false">
+      <SidebarProvider>
+        <Sidebar>
+          <span>Sheet contents</span>
+        </Sidebar>
+        <SidebarTrigger />
+      </SidebarProvider>
+    </div>,
+    { router: false /* no routes involved */ },
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Toggle Sidebar" }));
+  const popup = document.querySelector<HTMLElement>('[data-mobile="true"][data-sidebar="sidebar"]');
+  expect(popup).not.toBeNull();
+  expect(getComputedStyle(popup!).transitionDuration).toBe("0s");
 });

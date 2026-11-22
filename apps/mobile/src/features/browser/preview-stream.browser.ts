@@ -32,13 +32,12 @@ const TAP_SLOP_PX = 8;
 const MULTI_CLICK_MS = 500;
 const MULTI_CLICK_SLOP_PX = 4;
 const WHEEL_LINE_PX = 16;
+const SCROLL_REPORT_PX = 24;
 const MAX_PIXEL_RATIO = 2;
-// A tap this close to an answered probe, this soon, reuses its answer. On a slow
-// link the answer lands after touch end, too late for iOS to raise the keyboard.
+// Reuse nearby probe answers: slow replies arrive too late after touch-end to raise the iOS keyboard.
 const PROBE_REUSE_PX = 24;
 const PROBE_REUSE_MS = 10_000;
-// Kept in the hidden textarea so a soft keyboard's backspace has something to
-// delete and fires `input`; Gboard's keydown carries keyCode 229 and no key.
+// A sentinel makes backspace fire input; Gboard keydown supplies only keyCode 229.
 const SENTINEL = "\u200b";
 const AGENT_CURSOR_ACTIVE_MS = 700;
 const AGENT_CURSOR_SVG =
@@ -76,14 +75,14 @@ export function start(configuration: PreviewStreamConfiguration) {
   const container = document.createElement("div");
   const canvas = document.createElement("canvas");
   canvas.setAttribute("role", "img");
-  canvas.setAttribute("aria-label", "Browser page");
+  canvas.setAttribute("aria-label", configuration.labels.page);
   const agentCursor = document.createElement("div");
   agentCursor.className = "agent-cursor";
   agentCursor.setAttribute("aria-hidden", "true");
   agentCursor.innerHTML = AGENT_CURSOR_SVG;
   container.append(canvas, agentCursor);
   const input = document.createElement("textarea");
-  input.setAttribute("aria-label", "Browser page input");
+  input.setAttribute("aria-label", configuration.labels.pageInput);
   input.autocapitalize = "off";
   input.autocomplete = "off";
   input.spellcheck = false;
@@ -199,8 +198,7 @@ export function start(configuration: PreviewStreamConfiguration) {
           probe = null;
           if (current.end === "panned") return;
           if (current.end === "acted" && current.editable === result.editable) return;
-          // Late or corrected answer: Android still raises the keyboard; iOS waits
-          // for the next tap, which can reuse this answer.
+          // Late answers can raise Android's keyboard; iOS needs another tap.
           if (result.editable) input.focus({ preventScroll: true });
           else input.blur();
         },
@@ -254,8 +252,7 @@ export function start(configuration: PreviewStreamConfiguration) {
   });
   observer.observe(container);
 
-  // iOS keeps the layout viewport under the soft keyboard; follow the visible area
-  // so the page resizes above it.
+  // iOS keeps its layout viewport under the keyboard; resize to the visual viewport.
   const visualViewport = window.visualViewport;
   const followVisualViewport = () => {
     if (!visualViewport) return;
@@ -311,12 +308,20 @@ export function start(configuration: PreviewStreamConfiguration) {
     };
   };
 
+  let scrolled = 0;
   const flushWheel = () => {
     if (wheelFrame !== null) cancelAnimationFrame(wheelFrame);
     wheelFrame = null;
     const wheel = pendingWheel;
     pendingWheel = null;
-    if (wheel) send(wheel);
+    if (!wheel) return;
+    send(wheel);
+    // The app shrinks its bar while the page scrolls down, so it only needs the direction.
+    scrolled =
+      Math.sign(scrolled) === Math.sign(wheel.deltaY) ? scrolled + wheel.deltaY : wheel.deltaY;
+    if (Math.abs(scrolled) < SCROLL_REPORT_PX) return;
+    post({ type: "scroll", direction: scrolled > 0 ? "down" : "up" });
+    scrolled = 0;
   };
   const queueWheel = (point: { x: number; y: number }, deltaX: number, deltaY: number) => {
     pendingWheel = {
@@ -602,10 +607,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     ((document.pictureInPictureEnabled === true &&
       typeof videoPrototype.requestPictureInPicture === "function") ||
       typeof videoPrototype.webkitSetPresentationMode === "function");
-  // Since the iOS 17 SDK, WebKit revokes the activation it grants an injected script when
-  // the script returns, so the native button's request must start before any await. The
-  // video is ready ahead of the tap: paused, and fed a frame only when it has none or
-  // floats, so the inline view captures nothing.
+  // WebKit revokes activation after return; start picture in picture before awaiting. Prepare paused video before the tap.
   let video: PresentationVideo | null = null;
   let track: CanvasCaptureMediaStreamTrack | null = null;
   const pictureInPictureActive = () =>
@@ -657,7 +659,7 @@ export function start(configuration: PreviewStreamConfiguration) {
       return;
     }
     if (element.readyState === HTMLMediaElement.HAVE_NOTHING) {
-      reportPictureInPicture("The page has not shown yet. Try again in a moment.");
+      reportPictureInPicture(configuration.labels.pictureInPictureNotReady);
       return;
     }
     // The page may have changed since the video's last frame. WebKit captures only on a draw.
@@ -666,7 +668,7 @@ export function start(configuration: PreviewStreamConfiguration) {
     const fail = (error: unknown) => {
       element.pause();
       reportPictureInPicture(
-        error instanceof Error ? error.message : "Picture in picture is unavailable.",
+        error instanceof Error ? error.message : configuration.labels.pictureInPictureUnavailable,
       );
     };
     if (document.pictureInPictureEnabled) {

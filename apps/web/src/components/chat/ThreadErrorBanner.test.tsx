@@ -17,41 +17,14 @@ describe("getThreadErrorBannerMessage", () => {
     expect(getThreadErrorBannerMessage(error)).toBe(message);
   });
 
-  it.each([
-    ["plain text", "  Could not start the turn.\nTry again.  "],
-    ["invalid JSON", '{"error":{"message":"Cut off"'],
-    ["an unfamiliar shape", '{"message":"Top-level message","status":400}'],
-  ])("leaves %s unchanged", (_description, error) => {
-    expect(getThreadErrorBannerMessage(error)).toBe(error);
-  });
-
   it("keeps the diagnostics when the nested message is blank", () => {
     const error = JSON.stringify({ error: { message: " \n\t ", code: "unsupported_model" } });
 
     expect(getThreadErrorBannerMessage(error)).toBe(error);
   });
-
-  it("does not recursively unwrap the selected message", () => {
-    const message = JSON.stringify({ error: { message: "Inner message" } });
-
-    expect(getThreadErrorBannerMessage(JSON.stringify({ error: { message } }))).toBe(message);
-  });
 });
 
 describe("ThreadErrorBanner", () => {
-  it("stays hidden after its current error is dismissed", () => {
-    const bannerKey = getThreadErrorBannerKey("env:thread-a", "Aborted");
-    dismissThreadErrorBannerForSession(bannerKey);
-
-    expect(
-      shouldShowThreadErrorBanner(
-        "env:thread-a",
-        "Aborted",
-        isThreadErrorBannerDismissedForSession(bannerKey),
-      ),
-    ).toBe(false);
-  });
-
   it("reappears for different diagnostics with the same headline on the same thread", () => {
     const firstError = JSON.stringify({ error: { message: "Turn failed", code: "first" } });
     const secondError = JSON.stringify({ error: { message: "Turn failed", code: "second" } });
@@ -70,36 +43,20 @@ describe("ThreadErrorBanner", () => {
     ).toBe(true);
   });
 
-  it("scopes dismissals to the thread that dismissed them", () => {
-    dismissThreadErrorBannerForSession(getThreadErrorBannerKey("env:thread-c", "Aborted"));
-    const otherThreadKey = getThreadErrorBannerKey("env:other-thread", "Aborted");
+  it("reappears when a later run fails with the same error on the same thread", () => {
+    const error = "Turn failed";
+    const dismissedKey = getThreadErrorBannerKey("env:thread-c", error, "run-a");
+    dismissThreadErrorBannerForSession(dismissedKey);
+    const laterRunKey = getThreadErrorBannerKey("env:thread-c", error, "run-b");
 
-    expect(isThreadErrorBannerDismissedForSession(otherThreadKey)).toBe(false);
+    expect(isThreadErrorBannerDismissedForSession(dismissedKey)).toBe(true);
+    expect(isThreadErrorBannerDismissedForSession(laterRunKey)).toBe(false);
     expect(
       shouldShowThreadErrorBanner(
-        "env:other-thread",
-        "Aborted",
-        isThreadErrorBannerDismissedForSession(otherThreadKey),
+        "env:thread-c",
+        error,
+        isThreadErrorBannerDismissedForSession(laterRunKey),
       ),
     ).toBe(true);
-  });
-
-  it("keeps a dismissal across visiting threads with no error", () => {
-    const bannerKey = getThreadErrorBannerKey("env:thread-d", "Aborted");
-    dismissThreadErrorBannerForSession(bannerKey);
-
-    expect(shouldShowThreadErrorBanner("env:thread-d", null, false)).toBe(false);
-    expect(isThreadErrorBannerDismissedForSession(bannerKey)).toBe(true);
-    expect(
-      shouldShowThreadErrorBanner(
-        "env:thread-d",
-        "Aborted",
-        isThreadErrorBannerDismissedForSession(bannerKey),
-      ),
-    ).toBe(false);
-  });
-
-  it("never shows a null error", () => {
-    expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
 });

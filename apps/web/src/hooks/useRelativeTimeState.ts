@@ -1,3 +1,4 @@
+import { useMessages } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import {
@@ -7,12 +8,8 @@ import {
   type RelativeTimeState,
 } from "../timestampFormat";
 
-/**
- * A "5m ago" label that re-renders only when its text changes: the snapshot is
- * the elapsed time floored to the label's precision, and one timer fires at the
- * next boundary instead of polling every second.
- */
 export function useRelativeTimeState(isoDate: string | null): RelativeTimeState {
+  const resolve = useMessages();
   const subscribe = (onChange: () => void) => {
     if (isoDate === null) return () => {};
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -32,5 +29,5 @@ export function useRelativeTimeState(isoDate: string | null): RelativeTimeState 
 
   if (isoDate === null) return { status: "missing" };
   if (elapsedMs === null) return { status: "invalid" };
-  return { status: "relative", ...formatRelativeElapsed(elapsedMs) };
+  return { status: "relative", ...formatRelativeElapsed(elapsedMs, resolve) };
 }

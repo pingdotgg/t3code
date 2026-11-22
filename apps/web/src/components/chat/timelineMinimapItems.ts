@@ -1,7 +1,12 @@
-import type { Nodes } from "mdast";
-import remarkGfm from "remark-gfm";
-import remarkParse from "remark-parse";
-import { unified } from "unified";
+import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
+import { parseThreadLinkHref } from "@t3tools/shared/threadLinks";
+import {
+  isAttachmentOnlyBootstrapPrompt,
+  replaceComposerContextReferences,
+} from "@t3tools/shared/composerContextReferences";
+import type { Nodes } from "hast";
+
+import { markdownTree } from "~/markdown/wordsHast";
 
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
@@ -25,7 +30,7 @@ export function deriveTimelineMinimapItems(
     items.push({
       id: row.id,
       rowIndex: index,
-      userText: row.message.text,
+      userText: isAttachmentOnlyBootstrapPrompt(row.message.text) ? "" : row.message.text,
       assistantText: resolveFinalAssistantTextForTurn(rows, index),
     });
   }
@@ -52,41 +57,51 @@ function resolveFinalAssistantTextForTurn(
   return finalAssistantText;
 }
 
-const markdownPreviewParser = unified().use(remarkParse).use(remarkGfm).freeze();
-
-const INLINE_PARENT_TYPES = new Set<Nodes["type"]>([
-  "paragraph",
-  "heading",
-  "tableCell",
-  "emphasis",
+// Elements whose children run together; every other element is separated by a space.
+const INLINE_PARENTS = new Set([
+  "p",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "td",
+  "th",
+  "em",
   "strong",
-  "delete",
-  "link",
-  "linkReference",
+  "del",
+  "a",
+  "code",
+  "span",
+  "sup",
+  "sub",
 ]);
 
 function markdownNodeText(node: Nodes): string {
-  if (node.type === "html") {
-    return node.value
-      .replace(/<!--[\s\S]*?(?:-->|$)/g, "")
-      .replace(/<\/?([a-z][\w-]*)(?:[^"'<>]|"[^"]*"|'[^']*')*>/gi, (_, tag: string) =>
-        /^(?:address|article|aside|blockquote|br|dd|details|div|dl|dt|figcaption|figure|footer|h[1-6]|header|hr|li|main|nav|ol|p|pre|section|summary|table|tbody|td|th|thead|tr|ul)$/i.test(
-          tag,
-        )
-          ? " "
-          : "",
-      );
-  }
-  if (node.type === "break") return " ";
-  if ("value" in node) return node.value;
-  if (node.type === "image" || node.type === "imageReference") return node.alt ?? "";
-  if (!("children" in node)) return "";
-  const separator = INLINE_PARENT_TYPES.has(node.type) ? "" : " ";
-  return node.children.map(markdownNodeText).join(separator);
+  if (node.type === "text") return node.value;
+  if (node.type === "element" && node.tagName === "br") return " ";
+  if (node.type === "element" && node.tagName === "img") return String(node.properties.alt ?? "");
+  if (node.type !== "element" && node.type !== "root") return "";
+  const separator = node.type === "element" && INLINE_PARENTS.has(node.tagName) ? "" : " ";
+  const text = node.children.map(markdownNodeText).join(separator);
+  // A thread autolink's only text is its URL.
+  return node.type === "element" && node.tagName === "a" && parseThreadLinkHref(text) !== null
+    ? "a thread"
+    : text;
 }
 
-function compactMinimapPreview(text: string | null | undefined) {
-  const compact = text?.replace(/\s+/g, " ").trim() ?? "";
+/** Markdown as one line of the text it renders, without markup or link targets. */
+export function markdownPlainText(markdown: string): string {
+  return markdownNodeText(markdownTree(markdown)).replace(/\s+/g, " ").trim();
+}
+
+// The tooltip shows a few lines; bound parsing work for long messages and streaming responses.
+function markdownMinimapPreview(markdown: string | null) {
+  if (markdown === null) return null;
+  const compact = markdownNodeText(markdownTree(markdown.slice(0, 1_500)))
+    .replace(/\s+/g, " ")
+    .trim();
   return compact.length > 0 ? compact : null;
 }
 
@@ -97,12 +112,14 @@ export function resolveTimelineMinimapPreview(
     ? null
     : {
         ...item,
-        userText: compactMinimapPreview(item.userText),
-        // The tooltip shows three lines; bound parsing work while long responses stream.
-        assistantText: compactMinimapPreview(
-          item.assistantText === null
+        // Before markdown parsing, which would reduce a citation link to "Assistant quote".
+        userText: markdownMinimapPreview(
+          item.userText === null
             ? null
-            : markdownNodeText(markdownPreviewParser.parse(item.assistantText.slice(0, 1_500))),
+            : assistantCitationsToPlainText(
+                replaceComposerContextReferences(item.userText, (reference) => reference.label),
+              ),
         ),
+        assistantText: markdownMinimapPreview(item.assistantText),
       };
 }

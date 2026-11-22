@@ -1,17 +1,8 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import {
-  ACP_STDERR_TAIL_MAX_CHARS,
-  appendAcpStderrTail,
-  sanitizeAcpStderrExcerpt,
-} from "./stderr.ts";
+import { sanitizeAcpStderrExcerpt } from "./stderr.ts";
 
 describe("AcpStderr", () => {
-  it("keeps a bounded tail of stderr chunks", () => {
-    const prefix = "x".repeat(ACP_STDERR_TAIL_MAX_CHARS);
-    expect(appendAcpStderrTail(prefix, "abc")).toBe(`${prefix.slice(3)}abc`);
-  });
-
   it("redacts home paths, pairing URLs, and tokens from stderr excerpts", () => {
     const excerpt = sanitizeAcpStderrExcerpt(
       [
@@ -58,5 +49,18 @@ describe("AcpStderr", () => {
     expect(excerpt).not.toContain("abcdefghijklmnopqrstuvwxyz012345");
     expect(excerpt).not.toContain("dXNlcjpwYXNz");
     expect(excerpt).not.toContain("ant-api-key-value");
+  });
+
+  it("redacts the whole key when its body contains underscores", () => {
+    const excerpt = sanitizeAcpStderrExcerpt(
+      [
+        "anthropic=sk-ant-api03-AbCdEf_GhIjKlMnOpQr-StUvWx_yz0123456789-AA",
+        "openai=sk-proj-AbCdEfGhIj_KlMnOpQrStUv-WxYz_0123456789",
+      ].join("\n"),
+      "/Users/ada",
+      {},
+    );
+
+    expect(excerpt).toBe("anthropic=[redacted]\nopenai=[redacted]");
   });
 });

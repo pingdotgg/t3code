@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
-import type { MarkdownNode } from "../../lib/markdownDocument";
+import { markdownReferenceDefinitions, type MarkdownNode } from "../../lib/markdownDocument";
 import { splitPullRequestBody } from "@t3tools/client-runtime/pull-request-markdown";
 import { pullRequestDescriptionContent } from "./pullRequestDescriptionContent";
 
@@ -15,6 +15,7 @@ describe("PR attachments", () => {
     } as MarkdownNode;
     const media = splitPullRequestBody(
       `${uri}\n\nhttps://drop.example.com/demo.mp4\n\nhttps://github.com/user-attachments/assets/123-abc`,
+      markdownReferenceDefinitions,
     );
     expect(pullRequestDescriptionContent(document, media).attachments).toEqual([
       { uri, caption: "Screenshot", kind: "image" },
@@ -27,12 +28,16 @@ describe("PR attachments", () => {
     ]);
   });
 
-  it("does not collect ordinary links or media examples in code", () => {
+  it("collects videos from a before/after table", () => {
     const media = splitPullRequestBody(
-      "https://example.com/docs\n\n```\nhttps://drop.example.com/demo.mp4\n```",
+      "<table>\n<tr><th>Before</th><th>After</th></tr>\n<tr><td>\n\nhttps://drop.example.com/before.mp4\n\n</td><td>\n\nhttps://drop.example.com/after.mp4\n\n</td></tr>\n</table>",
+      markdownReferenceDefinitions,
     );
     expect(
       pullRequestDescriptionContent({ type: "root" } as MarkdownNode, media).attachments,
-    ).toEqual([]);
+    ).toEqual([
+      { uri: "https://drop.example.com/before.mp4", caption: "Video", kind: "video" },
+      { uri: "https://drop.example.com/after.mp4", caption: "Video", kind: "video" },
+    ]);
   });
 });

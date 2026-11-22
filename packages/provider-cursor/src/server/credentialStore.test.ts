@@ -1,3 +1,4 @@
+import type { StoredSdkCredentials } from "@cursor/sdk";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
@@ -11,13 +12,6 @@ import * as Layer from "effect/Layer";
 import { makeCursorCredentialStore } from "./credentialStore.ts";
 
 const layerHost = Layer.provideMerge(TestProviderHost.layer(), NodeServices.layer);
-
-const legacyCredentials = {
-  version: 1 as const,
-  backendUrl: "https://api.cursor.com",
-  apiKey: "test-only-legacy-key",
-  createdAtMs: 100,
-};
 const legacyFileText = `{
   "version": 1,
   "backendUrl": "https://api.cursor.com",
@@ -62,7 +56,7 @@ it.effect.each([
       yield* (yield* host.credentials("cursor", instanceId)).set(new TextEncoder().encode(stored));
     }
     const migrated = yield* makeCursorCredentialStore(instanceId, legacyFile);
-    assert.strictEqual((yield* Effect.tryPromise(() => migrated.store.load()))?.apiKey, expected);
+    assert.strictEqual((yield* Effect.promise(() => migrated.store.load()))?.apiKey, expected);
     assert.isFalse(yield* fileSystem.exists(legacyFile));
   }).pipe(Effect.scoped, Effect.provide(layerHost)),
 );
@@ -83,22 +77,66 @@ it.effect(
         apiKeyExpiresAtMs: 1000,
         email: "test@example.com",
       };
-      yield* Effect.tryPromise(() => personal.store.save(credentials));
-      yield* Effect.tryPromise(() =>
+      yield* Effect.promise(() => personal.store.save(credentials));
+      yield* Effect.promise(() =>
         work.store.save({ ...credentials, apiKey: "test-only-work-key" }),
       );
       const restored = yield* makeStore("personal");
-      assert.deepEqual(yield* Effect.tryPromise(() => restored.store.load()), credentials);
+      assert.deepEqual(yield* Effect.promise(() => restored.store.load()), credentials);
       yield* (yield* host.credentials("cursor", "personal")).set(
         new TextEncoder().encode("damaged credential"),
       );
-      assert.isUndefined(yield* Effect.tryPromise(() => restored.store.load()));
-      yield* Effect.tryPromise(() => restored.store.save(credentials));
-      yield* Effect.tryPromise(() => restored.store.clear());
-      assert.isUndefined(yield* Effect.tryPromise(() => personal.store.load()));
+      assert.isUndefined(yield* Effect.promise(() => restored.store.load()));
+      yield* Effect.promise(() => restored.store.save(credentials));
+      yield* Effect.promise(() => restored.store.clear());
+      assert.isUndefined(yield* Effect.promise(() => personal.store.load()));
       assert.strictEqual(
-        (yield* Effect.tryPromise(() => work.store.load()))?.apiKey,
+        (yield* Effect.promise(() => work.store.load()))?.apiKey,
         "test-only-work-key",
       );
     }).pipe(Effect.provide(layerHost)),
+);
+
+it.effect.each([
+  {
+    name: "an undefined email",
+    optionalFields: { email: undefined, apiKeyExpiresAtMs: 1000 },
+    expectedFields: { apiKeyExpiresAtMs: 1000 },
+  },
+  {
+    name: "an undefined expiry",
+    optionalFields: { email: "test@example.com", apiKeyExpiresAtMs: undefined },
+    expectedFields: { email: "test@example.com" },
+  },
+  {
+    name: "both optional fields undefined",
+    optionalFields: { email: undefined, apiKeyExpiresAtMs: undefined },
+    expectedFields: {},
+  },
+  {
+    name: "both optional fields omitted",
+    optionalFields: {},
+    expectedFields: {},
+  },
+])("restores SDK credentials with $name in a new store", ({ optionalFields, expectedFields }) =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("personal");
+    const { store } = yield* makeCursorCredentialStore(instanceId);
+    const requiredFields: StoredSdkCredentials = {
+      version: 1,
+      backendUrl: "https://api.cursor.com",
+      apiKey: "test-only-key",
+      createdAtMs: 100,
+    };
+    const credentials = { ...requiredFields };
+    // Match the SDK's runtime values without relying on its stricter declarations.
+    Object.assign(credentials, optionalFields);
+    yield* Effect.promise(() => store.save(credentials));
+
+    const restored = yield* makeCursorCredentialStore(instanceId);
+    assert.deepEqual(yield* Effect.promise(() => restored.store.load()), {
+      ...requiredFields,
+      ...expectedFields,
+    });
+  }).pipe(Effect.provide(layerHost)),
 );

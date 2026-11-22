@@ -1,0 +1,12 @@
+"@effect/sql-clickhouse/ClickhouseClient#ClickhouseClient":
+  replacement: "@effect/sql-clickhouse/ClickhouseClient#ClickhouseClient"
+  note: "Retained; the service value is now a Context.Service rather than a GenericTag. The ClickhouseClient interface no longer extends SqlClient.SqlClient. Yielding the service still gives ClickhouseClient & SqlClient, but an effect that requires ClickhouseClient no longer type-checks against a SqlClient requirement annotation, and a SqlClient-only layer no longer satisfies ClickhouseClient. Annotate a layer chosen between drivers as Layer.Layer<SqlClient.SqlClient, E>."
+"@effect/sql-clickhouse/ClickhouseClient#currentClickhouseSettings":
+  replacement: "@effect/sql-clickhouse/ClickhouseClient#ClickhouseSettings"
+  note: "Renamed and changed from FiberRef to Context.Reference; prefer client.withClickhouseSettings or provide the reference as a service."
+"@effect/sql-clickhouse/ClickhouseClient#currentClientMethod":
+  replacement: "@effect/sql-clickhouse/ClickhouseClient#ClientMethod"
+  note: "Renamed and changed from FiberRef to Context.Reference; prefer client.asCommand or provide the reference as a service."
+"@effect/sql-clickhouse/ClickhouseClient#currentQueryId":
+  replacement: "@effect/sql-clickhouse/ClickhouseClient#QueryId"
+  note: "Renamed and changed from FiberRef to Context.Reference; prefer client.withQueryId or provide the reference as a service."

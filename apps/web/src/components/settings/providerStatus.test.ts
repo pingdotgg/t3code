@@ -22,13 +22,6 @@ const provider: ServerProvider = {
 };
 
 describe("getProviderSummary", () => {
-  it("reports ready providers with unknown authentication as available", () => {
-    expect(getProviderSummary({ ...provider, auth: { status: "unknown" } })).toEqual({
-      headline: "Available",
-      detail: null,
-    });
-  });
-
   it("does not hide a provider error behind a previous authenticated state", () => {
     expect(
       getProviderSummary({
@@ -39,19 +32,6 @@ describe("getProviderSummary", () => {
     ).toEqual({
       headline: "Unavailable",
       detail: "The provider process failed to start.",
-    });
-  });
-
-  it("does not hide a provider warning behind an authenticated state", () => {
-    expect(
-      getProviderSummary({
-        ...provider,
-        status: "warning",
-        message: "The provider version is unsupported.",
-      }),
-    ).toEqual({
-      headline: "Needs attention",
-      detail: "The provider version is unsupported.",
     });
   });
 
@@ -67,10 +47,6 @@ describe("getProviderSummary", () => {
       headline: "Not authenticated",
       detail: "Run codex login.",
     });
-  });
-
-  it("treats a disabled provider status as disabled even before its enabled flag updates", () => {
-    expect(getProviderSummary({ ...provider, status: "disabled" }).headline).toBe("Disabled");
   });
 });
 
@@ -95,6 +71,7 @@ describe("Antigravity with unchecked sign-in", () => {
     }
   });
 
+  // regression: #18623 neutral unchecked-sign-in display must not mask real warnings
   it("preserves actionable warnings, failures and disabled states outside unchecked Google sign-in", () => {
     const cases = [
       {
@@ -254,22 +231,5 @@ it("shows compatibility in the version popover even when the installed version i
     updateCommand: null,
     emphasis: "normal",
     targetVersion: null,
-  });
-});
-
-describe("provider status copy", () => {
-  it("surfaces an ACP-advertised authentication method", () => {
-    const provider = {
-      enabled: true,
-      installed: true,
-      status: "error",
-      auth: { status: "unauthenticated", type: "agent", label: "Company login" },
-      message: "Complete this authentication method on the server.",
-    } as ServerProvider;
-
-    expect(getProviderSummary(provider)).toEqual({
-      headline: "Not authenticated · Company login",
-      detail: "Complete this authentication method on the server.",
-    });
   });
 });

@@ -1,4 +1,4 @@
-import { AuthPreviewOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -6,7 +6,6 @@ import {
 import { recordVisitForThread } from "~/browserHistoryStore";
 import { readLocalApi } from "~/localApi";
 import { previewEnvironment } from "~/state/preview";
-import { readEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import {
@@ -14,14 +13,13 @@ import {
   resolveBrowserLinkTargetPreference,
   resolveLinkTarget,
 } from "./browserLinkTarget";
-import { BrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { isBrowserSettingsReadError, openUrlInPreview } from "./openFileInPreview";
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
 
 const NO_MODIFIER = { metaKey: false, ctrlKey: false } as const;
 
-/**
- * Failed settings reads reject without opening a browser. The promise also
- * rejects if the system-browser fallback fails.
- */
+/** Rejects on settings read failure without opening a browser, or if the system-browser fallback fails. */
 export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
   url: string,
   options?: {
@@ -40,10 +38,7 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
       url,
       event: options.event ?? NO_MODIFIER,
       preference: await resolveBrowserLinkTargetPreference(),
-      canOpenInApp:
-        targetThreadRef != null &&
-        readEnvironmentScope(targetThreadRef.environmentId, AuthPreviewOperateScope) &&
-        canOpenLinksInApp(targetThreadRef),
+      canOpenInApp: canOpenLinksInApp(targetThreadRef),
     });
     if (target === "app" && targetThreadRef) {
       const result = await openUrlInPreview({ threadRef: targetThreadRef, url, openPreview });
@@ -53,11 +48,11 @@ export function useOpenLink(threadRef: ScopedThreadRef | null | undefined): (
         return;
       }
       const failure = squashAtomCommandFailure(result);
-      if (failure instanceof BrowserSettingsReadError) throw failure;
+      if (isBrowserSettingsReadError(failure)) throw failure;
       console.error(result.cause);
     }
     const api = readLocalApi();
-    if (!api) throw new Error("Link opening is unavailable.");
+    if (!api) throw new Error(m(msg("Link opening is unavailable.")));
     await api.shell.openExternal(url);
   };
 }
