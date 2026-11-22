@@ -727,7 +727,7 @@ interface ProviderInstanceCardProps {
   ) => void;
   readonly onFavoriteModelsChange: (next: ReadonlyArray<string>) => void;
   readonly onToggleFavorite: (model: string) => void;
-  readonly onModelOrderChange: (next: ReadonlyArray<string>) => void;
+  readonly onModelOrderChange: (next: ReadonlyArray<string>) => Promise<boolean>;
   readonly onRunUpdate?: (() => void) | undefined;
   readonly onInstallRecommended?: (() => void) | undefined;
   readonly isUpdating?: boolean | undefined;

@@ -26,7 +26,7 @@ function section(props: Partial<ComponentProps<typeof ProviderModelsSection>>) {
       onHiddenModelsChange={() => {}}
       onFavoriteModelsChange={() => {}}
       onToggleFavorite={() => {}}
-      onModelOrderChange={() => {}}
+      onModelOrderChange={async () => true}
       {...props}
     />
   );

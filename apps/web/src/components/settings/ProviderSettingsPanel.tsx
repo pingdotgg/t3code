@@ -1496,10 +1496,11 @@ function ProviderInstanceRow({
           })),
         });
       }}
-      onModelOrderChange={(nextOrder) => {
-        void actions.updateModelPreferences({
+      onModelOrderChange={async (nextOrder) => {
+        const result = await actions.updateModelPreferences({
           setProviderModelOrder: { provider: instanceId, modelOrder: nextOrder },
         });
+        return result?._tag === "Success";
       }}
       onInstallRecommended={
         canInstallRecommended
