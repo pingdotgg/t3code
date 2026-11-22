@@ -2,33 +2,166 @@ name: Mobile EAS Preview (Fork)
 
 # EAS previews for fork PRs. This runs the PR's code with an Expo token: the
 # app config and plugins run on this runner; both clients build on Blacksmith
-# with preview signing credentials. The label is the maintainer's sign-off
-# that they reviewed that code, so it covers exactly the commit it was applied
-# to: this pins that commit and consumes the label before running anything. A
-# later push deploys nothing until the label is applied again.
+# with preview signing credentials.
+#
+# Dispatch manually after reviewing the PR's code, pinning the exact commit SHA
+# you reviewed:
+#
+#   gh workflow run mobile-eas-preview-fork.yml \
+#     -f pr_number=<PR_NUMBER> \
+#     -f head_sha=<40_CHAR_COMMIT_SHA>
+#
+# The validate job checks that pr_number is an open fork PR whose current head
+# is head_sha (failing fast if the PR moved since review) and removes any
+# "🚀 Mobile Continuous Deployment" label if present. A later push deploys
+# nothing until a maintainer dispatches this workflow again for the new commit.
+# To retry a failed run, use "Re-run all jobs" so validation runs again on the
+# current attempt.
 #
 # Same-repo PRs deploy on every push while labeled, via mobile-eas-preview.yml.
 
 on:
-  pull_request_target:
-    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Open fork PR number to preview
+        required: true
+        type: string
+      head_sha:
+        description: Full 40-character commit SHA reviewed on the fork PR
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 jobs:
+  # Runs before any PR code is checked out or EXPO_PREVIEW_TOKEN is accessed.
+  validate:
+    name: Validate fork PR
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: write
+    outputs:
+      pr_number: ${{ steps.check.outputs.pr_number }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
+      run_attempt: ${{ steps.check.outputs.run_attempt }}
+    steps:
+      - id: check
+        name: Validate fork PR and commit SHA
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          INPUT_HEAD_SHA: ${{ inputs.head_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          script: |
+            const defaultBranch = context.payload.repository?.default_branch;
+            if (!defaultBranch || context.ref !== `refs/heads/${defaultBranch}`) {
+              core.setFailed(
+                `This workflow must be dispatched from the default branch (${defaultBranch ?? "unknown"}), got ${context.ref}.`,
+              );
+              return;
+            }
+
+            const runAttempt = (process.env.RUN_ATTEMPT ?? "").trim();
+            if (!/^[1-9][0-9]*$/.test(runAttempt)) {
+              core.setFailed(`Invalid github.run_attempt "${runAttempt}".`);
+              return;
+            }
+
+            const rawPrNumber = (process.env.INPUT_PR_NUMBER ?? "").trim();
+            if (!/^[1-9][0-9]*$/.test(rawPrNumber)) {
+              core.setFailed(`Invalid pr_number "${rawPrNumber}": expected a positive integer.`);
+              return;
+            }
+            const prNumber = Number(rawPrNumber);
+            if (!Number.isSafeInteger(prNumber)) {
+              core.setFailed(`Invalid pr_number "${rawPrNumber}": exceeds safe integer range.`);
+              return;
+            }
+
+            const headSha = (process.env.INPUT_HEAD_SHA ?? "").trim();
+            if (!/^[0-9a-f]{40}$/.test(headSha)) {
+              core.setFailed(
+                `Invalid head_sha "${headSha}": expected a full 40-character lowercase hex commit SHA.`,
+              );
+              return;
+            }
+
+            let pull;
+            try {
+              ({ data: pull } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: prNumber,
+              }));
+            } catch (error) {
+              if (error.status === 404) {
+                core.setFailed(`PR #${prNumber} was not found.`);
+                return;
+              }
+              throw error;
+            }
+
+            if (pull.state !== "open") {
+              core.setFailed(`PR #${prNumber} is ${pull.state}; only open fork PRs can be previewed.`);
+              return;
+            }
+
+            const baseRepo = `${context.repo.owner}/${context.repo.repo}`.toLowerCase();
+            const headRepo = pull.head?.repo?.full_name ?? null;
+            if (!headRepo) {
+              core.setFailed(`PR #${prNumber} has no head repository (fork may have been deleted).`);
+              return;
+            }
+            if (headRepo.toLowerCase() === baseRepo) {
+              core.setFailed(
+                `PR #${prNumber} is a same-repository PR (${headRepo}); apply the "🚀 Mobile Continuous Deployment" label to trigger mobile-eas-preview.yml instead.`,
+              );
+              return;
+            }
+
+            if (pull.head?.sha !== headSha) {
+              core.setFailed(
+                `PR #${prNumber} head is now ${pull.head?.sha ?? "(unknown)"}, not reviewed commit ${headSha}. Review the latest commit before dispatching again.`,
+              );
+              return;
+            }
+
+            const deployLabel = "🚀 Mobile Continuous Deployment";
+            if (pull.labels?.some((label) => label.name === deployLabel)) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: prNumber,
+                  name: deployLabel,
+                });
+                core.info(`Removed "${deployLabel}" label from PR #${prNumber}.`);
+              } catch (error) {
+                if (error.status !== 404) throw error;
+                core.info(`Label "${deployLabel}" was already removed from PR #${prNumber}.`);
+              }
+            }
+
+            core.setOutput("pr_number", String(prNumber));
+            core.setOutput("head_sha", headSha);
+            core.setOutput("run_attempt", runAttempt);
+
   preview:
     name: EAS Preview
-    if: >-
-      github.event.pull_request.head.repo.full_name != github.repository &&
-      github.event.label.name == '🚀 Mobile Continuous Deployment'
+    needs: validate
+    # Require validate to have run in this attempt so partial reruns cannot
+    # reuse stale validation outputs after the PR moved or closed.
+    if: needs.validate.outputs.run_attempt == github.run_attempt
     runs-on: blacksmith-8vcpu-ubuntu-2404
     concurrency:
-      group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
+      group: mobile-eas-preview-fork-${{ needs.validate.outputs.pr_number }}
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       ios_group: ${{ steps.ios_update.outputs.group }}
       ios_client: ${{ steps.ios_client.outputs.link }}
@@ -43,29 +176,8 @@ jobs:
       NODE_OPTIONS: --max-old-space-size=8192
       MOBILE_VERSION_POLICY: fingerprint
     steps:
-      # If a maintainer removed the label first, that removal wins.
-      - id: consume
-        name: Consume the deployment label
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
-        with:
-          script: |
-            try {
-              await github.rest.issues.removeLabel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                name: context.payload.label.name,
-              });
-              core.setOutput("consumed", "true");
-            } catch (error) {
-              if (error.status !== 404) throw error;
-              core.info("The label was removed before this run could consume it. Skipping.");
-              core.setOutput("consumed", "false");
-            }
-
       - id: expo-token
         name: Check for EXPO_PREVIEW_TOKEN
-        if: steps.consume.outputs.consumed == 'true'
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
         run: |
@@ -76,22 +188,23 @@ jobs:
             echo "EXPO_PREVIEW_TOKEN is not set; skipping EAS preview."
           fi
 
-      # The head SHA from the label event, not the branch, so a push after the
-      # label cannot swap in unreviewed code. No credentials stay in .git for
-      # the PR's scripts to read.
+      # The reviewed commit SHA validated above, not a branch ref, so a push
+      # after review cannot swap in unreviewed code. No credentials stay in
+      # .git for the PR's scripts to read.
       - name: Checkout reviewed commit
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.validate.outputs.head_sha }}
           fetch-depth: 0
           # No sparse-checkout: see mobile-eas-preview.yml.
 
-      # Scripts and actions come from main, not from the PR.
+      # Scripts and actions come from the default branch, not from the PR.
       - name: Checkout trusted scripts
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.sha }}
           path: .trusted
           sparse-checkout: |
             .github/scripts
@@ -102,7 +215,7 @@ jobs:
         if: steps.expo-token.outputs.present == 'true'
         uses: ./.trusted/.github/actions/drop-checkout-credentials
 
-      # No caches: pull_request_target saves them under main's scope, where
+      # No caches: workflow_dispatch runs under main's cache scope, where
       # trusted workflows with other secrets would restore what PR code wrote.
       - name: Setup Vite+
         if: steps.expo-token.outputs.present == 'true'
@@ -179,7 +292,7 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ needs.validate.outputs.pr_number }}
         run: |
           group="$(eas update --auto --branch "pr-$PR" --platform ios --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
           echo "group=$group" >> "$GITHUB_OUTPUT"
@@ -215,7 +328,7 @@ jobs:
         shell: bash
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_PREVIEW_TOKEN }}
-          PR: ${{ github.event.pull_request.number }}
+          PR: ${{ needs.validate.outputs.pr_number }}
         run: |
           group="$(eas update --auto --branch "pr-$PR" --platform android --environment preview --non-interactive --json | sed -n '/^\[/,$p' | jq -er '.[0].group')"
           echo "group=$group" >> "$GITHUB_OUTPUT"
@@ -225,13 +338,12 @@ jobs:
   # no build record tag, so nobody else is served an APK a fork's code built.
   android-build:
     name: Android preview client
-    needs: preview
-    if: needs.preview.outputs.build == 'true'
+    needs: [validate, preview]
+    if: needs.validate.outputs.run_attempt == github.run_attempt && needs.preview.outputs.build == 'true'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
@@ -245,13 +357,14 @@ jobs:
       - name: Checkout reviewed commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.validate.outputs.head_sha }}
           fetch-depth: 0
 
-      # Scripts and actions come from main, not from the PR.
+      # Scripts and actions come from the default branch, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.sha }}
           path: .trusted
           sparse-checkout: |
             .github/scripts
@@ -289,13 +402,12 @@ jobs:
 
   ios-build:
     name: iOS preview client
-    needs: preview
-    if: needs.preview.outputs.ios_build == 'true'
+    needs: [validate, preview]
+    if: needs.validate.outputs.run_attempt == github.run_attempt && needs.preview.outputs.ios_build == 'true'
     runs-on: blacksmith-12vcpu-macos-27
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
@@ -307,13 +419,14 @@ jobs:
       - name: Checkout reviewed commit
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ needs.validate.outputs.head_sha }}
           fetch-depth: 0
 
-      # Scripts and actions come from main, not from the PR.
+      # Scripts and actions come from the default branch, not from the PR.
       - name: Checkout trusted scripts
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.sha }}
           path: .trusted
           sparse-checkout: |
             .github/scripts
@@ -351,11 +464,15 @@ jobs:
 
   comment:
     name: Mobile preview comment
-    needs: [preview, android-build, ios-build]
-    if: always() && !cancelled() && needs.preview.result == 'success'
+    needs: [validate, preview, android-build, ios-build]
+    if: >-
+      always() && !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.validate.outputs.run_attempt == github.run_attempt &&
+      needs.preview.result == 'success'
     runs-on: blacksmith-2vcpu-ubuntu-2404
     concurrency:
-      group: mobile-preview-comment-${{ github.event.pull_request.number }}
+      group: mobile-preview-comment-${{ needs.validate.outputs.pr_number }}
       cancel-in-progress: false
     permissions:
       contents: read
@@ -364,13 +481,14 @@ jobs:
       - name: Checkout comment script
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
+          ref: ${{ github.sha }}
           sparse-checkout: .github/scripts
 
       - name: Comment
         env:
           GH_TOKEN: ${{ github.token }}
-          PR: ${{ github.event.pull_request.number }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR: ${{ needs.validate.outputs.pr_number }}
+          PR_HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
           ANDROID_FINGERPRINT: ${{ needs.preview.outputs.fingerprint }}
           ANDROID_GROUP: ${{ needs.preview.outputs.group }}
           ANDROID_CLIENT: ${{ needs.android-build.outputs.client || needs.preview.outputs.client }}
