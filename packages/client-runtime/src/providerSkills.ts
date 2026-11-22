@@ -239,6 +239,7 @@ function failProviderWorkspaceSnapshotRefresh(
   state: ProviderWorkspaceSnapshotRefreshState,
   requestedAt: number,
   now: number,
+  cooldownMs = WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
 ): ProviderWorkspaceSnapshotRefreshState {
   // A newer request, or a snapshot loss, already superseded this one.
   if (state.requestedAt !== requestedAt) return state;
@@ -249,7 +250,7 @@ function failProviderWorkspaceSnapshotRefresh(
   return {
     ...state,
     requestedAt: null,
-    retryNotBefore: now + WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS,
+    retryNotBefore: cooldownMs === 0 ? null : now + cooldownMs,
     failedAttempts,
     joining: false,
   };
@@ -348,39 +349,41 @@ export function createProviderWorkspaceSnapshotRefreshAtomFamily(input: {
         // subscribes, writing would recreate the node and scan with no subscriber. A partial
         // reply arrives before the command probe ends: ask again at once to join that scan,
         // and count only the joined reply as an attempt.
-        const retryLater = (pending: boolean) => {
+        const retry = (pending: boolean, cooldownMs?: number) => {
           const node = registry.getNodes().get(refreshAtom);
           if (node === undefined || node.canBeRemoved) return;
           registry.set(refreshAtom, (state) =>
             pending && !joining && state.requestedAt === now
               ? { ...state, requestedAt: null, joining: true }
               : // @effect-diagnostics-next-line globalDate:off
-                failProviderWorkspaceSnapshotRefresh(state, now, Date.now()),
+                failProviderWorkspaceSnapshotRefresh(state, now, Date.now(), cooldownMs),
           );
         };
+        const retryLater = () => retry(false);
         void runAtomCommand(
           registry,
           input.refreshProviders,
           { environmentId, input: { instanceId, cwd, acceptPartialWorkspaceSnapshot: true } },
           { reportFailure: false },
-        ).then(
-          (result) => {
-            const refreshedProvider =
-              result._tag === "Success" ? findProvider(result.value.providers) : undefined;
-            const snapshot =
-              refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
-            // A new server timestamp proves progress even when the client clock is ahead.
-            // @effect-diagnostics-next-line globalDate:off
-            const completedAt = Date.now();
-            const refreshed =
-              hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
-              (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
-                snapshot?.checkedAt !==
-                  (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
-            if (!refreshed) retryLater(snapshot?.slashCommandsPending === true);
-          },
-          () => retryLater(false),
-        );
+        ).then((result) => {
+          const refreshedProvider =
+            result._tag === "Success" ? findProvider(result.value.providers) : undefined;
+          const snapshot =
+            refreshedProvider && resolveProviderWorkspaceSnapshot(refreshedProvider, cwd);
+          // A new server timestamp proves progress even when the client clock is ahead.
+          // @effect-diagnostics-next-line globalDate:off
+          const completedAt = Date.now();
+          const refreshed =
+            hasCompleteProviderWorkspaceSnapshot(refreshedProvider, cwd) &&
+            (hasCurrentProviderWorkspaceSnapshot(refreshedProvider, cwd, completedAt) ||
+              snapshot?.checkedAt !==
+                (provider && resolveProviderWorkspaceSnapshot(provider, cwd))?.checkedAt);
+          if (!refreshed) return retry(snapshot?.slashCommandsPending === true);
+          // A reply is dropped when the provider changed while it was in flight, such as a
+          // SessionStart rescan; ask again at once for the snapshot that change produced.
+          const held = findProvider(registry.get(input.providers(environmentId)));
+          if (!hasCompleteProviderWorkspaceSnapshot(held, cwd)) retry(false, 0);
+        }, retryLater);
         return plan.state;
       },
       (ctx, update: Update) => {
