@@ -70,9 +70,13 @@ export function resolveFilesystemReadAccess(
 
 export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
-  const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
+  // A bare drive has no separator, so it would otherwise filter its own listing by "D:".
+  const browseQuery = /^[a-zA-Z]:$/.test(query) ? `${query}\\` : query;
+  const directoryPath = isBrowsing ? getBrowseDirectoryPath(browseQuery) : "";
   const filterQuery =
-    isBrowsing && !hasTrailingPathSeparator(query) ? getBrowseLeafPathSegment(query) : "";
+    isBrowsing && !hasTrailingPathSeparator(browseQuery)
+      ? getBrowseLeafPathSegment(browseQuery)
+      : "";
   const parentPath = isBrowsing ? getBrowseParentPath(directoryPath) : null;
 
   return {

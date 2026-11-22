@@ -288,6 +288,13 @@ async function odfHtml(node: XmlNode, archive: JSZip): Promise<string> {
       "office:scripts",
       "draw:object",
       "draw:object-ole",
+      "text:table-of-content-source",
+      "text:illustration-index-source",
+      "text:table-index-source",
+      "text:object-index-source",
+      "text:user-index-source",
+      "text:alphabetical-index-source",
+      "text:bibliography-source",
     ].includes(node.name)
   )
     return "";
@@ -531,6 +538,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   let state = {
     skip: false,
     deleted: false,
+    hiddenText: false,
     bold: false,
     italic: false,
     underline: false,
@@ -553,7 +561,7 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
   };
   let run = "";
   let fallback = 0;
-  const hidden = () => state.skip || state.deleted;
+  const hidden = () => state.skip || state.deleted || state.hiddenText;
   const encoded = new Uint8Array(bytes.byteLength);
   let encodedLength = 0;
   const flush = () => {
@@ -715,10 +723,12 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "ul") state.underline = arg !== 0;
       else if (word === "ulnone") state.underline = false;
       else if (word === "deleted") state.deleted = arg !== 0;
+      else if (word === "v") state.hiddenText = arg !== 0;
       else if (word === "plain")
         state = {
           ...state,
           deleted: false,
+          hiddenText: false,
           bold: false,
           italic: false,
           underline: false,
@@ -727,7 +737,9 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
       else if (word === "uc") state.uc = Math.max(0, Math.min(10, arg));
       else if (word === "u") {
         fallback = 0;
-        emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
+        // TextEdit writes a soft line break as U+2028, where Chromium does not break the line.
+        if (arg !== 0x2028) emit(String.fromCharCode(arg < 0 ? arg + 65536 : arg));
+        else if (!hidden()) html += "<br>";
         fallback = state.uc;
       } else if (!hidden() && word === "page") finishPage();
       else if (word === "cell") emit("\t", state.skip);
@@ -736,7 +748,10 @@ export function openRtf(bytes: ArrayBuffer): OfficeWorkerResult {
         (!hidden() && (word === "par" || word === "line"))
       )
         html += "<br>";
-      else {
+      // Writers usually end the paragraph before these breaks; a second break would add a blank line.
+      else if (!hidden() && (word === "sect" || word === "column")) {
+        if (html && !html.endsWith("<br>")) html += "<br>";
+      } else {
         const character = RTF_CHARACTERS.get(word!);
         if (character) emit(character);
       }
