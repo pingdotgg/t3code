@@ -69,9 +69,9 @@ function advertisedReasoningEffort(
   option: EffectAcpSchema.SessionConfigOption | undefined,
   meta: Readonly<Record<string, unknown>> | null | undefined,
 ): AcpRegistryProbeModel["reasoningEffort"] {
-  if (option?.type !== "select" || meta == null) return undefined;
+  if (meta == null) return undefined;
   if (meta.supportsReasoningEffort === false) return null;
-  if (!Array.isArray(meta.reasoningEfforts)) return undefined;
+  if (option?.type !== "select" || !Array.isArray(meta.reasoningEfforts)) return undefined;
   const options = meta.reasoningEfforts.flatMap((level: unknown) =>
     typeof level === "object" &&
     level !== null &&
@@ -217,13 +217,22 @@ export interface AcpRegistryLiveConfiguration {
   readonly partialOptions?: boolean;
 }
 
-export function normalizeAcpRegistryLiveConfiguration(
+export interface PreparedAcpRegistryLiveConfiguration {
+  readonly catalogKey: string;
+  readonly toLiveConfiguration: (options?: {
+    readonly includeCatalog?: boolean;
+  }) => AcpRegistryLiveConfiguration;
+}
+
+/**
+ * Normalizes a registry session's advertised catalog and options once, returning a stable
+ * catalog key alongside a projection that can omit unchanged model lists.
+ */
+export function prepareAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
-  options?: { readonly includeCatalog?: boolean },
-): AcpRegistryLiveConfiguration {
-  const includeCatalog = options?.includeCatalog !== false;
+): PreparedAcpRegistryLiveConfiguration {
   const modelOption = findModelConfigOption(configOptions);
   const currentModelId =
     modelOption?.type === "select" ? modelOption.currentValue : modelState?.currentModelId;
@@ -246,53 +255,61 @@ export function normalizeAcpRegistryLiveConfiguration(
   const effortOption =
     configOptions.find((option) => option.category === "thought_level") ??
     configOptions.find(isAcpThoughtLevelOption);
+  const metaByModelId = new Map<string, EffectAcpSchema.ModelInfo["_meta"]>();
+  for (const info of modelState?.availableModels ?? []) {
+    if (!metaByModelId.has(info.modelId)) {
+      metaByModelId.set(info.modelId, info._meta);
+    }
+  }
   const advertisedModels = normalizeModels(candidates, boundedCurrentModelId).map((model) => {
-    const reasoningEffort = advertisedReasoningEffort(
-      effortOption,
-      modelState?.availableModels.find((info) => info.modelId === model.id)?._meta,
-    );
+    const reasoningEffort = advertisedReasoningEffort(effortOption, metaByModelId.get(model.id));
     return reasoningEffort === undefined ? model : { ...model, reasoningEffort };
   });
   const currentModel =
     boundedCurrentModelId === null
       ? undefined
       : advertisedModels.find((model) => model.id === boundedCurrentModelId);
-  const stripCurrentReasoning = !includeCatalog && currentModel?.reasoningEffort === null;
+  const stripCurrentReasoning = currentModel?.reasoningEffort === null;
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
     (descriptor) =>
       !stripCurrentReasoning || descriptor.type !== "select" || descriptor.role !== "reasoning",
   );
-  const modelOptionIds = new Set(
+  const modelOptionIdSet = new Set(
     configOptions
       .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
   );
+  const modelOptionIds = descriptors
+    .filter((descriptor) => modelOptionIdSet.has(descriptor.id))
+    .map((descriptor) => descriptor.id);
+  const hasModelSelect = modelOption !== undefined;
+  const resolvedCurrentModelId = currentModel === undefined ? null : currentModel.id;
   return {
-    models: includeCatalog ? advertisedModels : [],
-    currentModelId: currentModel === undefined ? null : currentModel.id,
-    configOptions: descriptors,
-    modelOptionIds: descriptors
-      .filter((descriptor) => modelOptionIds.has(descriptor.id))
-      .map((descriptor) => descriptor.id),
-    modelsFromModelSelect: includeCatalog && modelOption !== undefined,
+    catalogKey: JSON.stringify([hasModelSelect, advertisedModels]),
+    toLiveConfiguration: (options) => {
+      const includeCatalog = options?.includeCatalog !== false;
+      return {
+        models: includeCatalog ? advertisedModels : [],
+        currentModelId: resolvedCurrentModelId,
+        configOptions: descriptors,
+        modelOptionIds,
+        modelsFromModelSelect: includeCatalog && hasModelSelect,
+      };
+    },
   };
 }
 
-/**
- * Stable key for the effective normalized model catalog advertised by a registry
- * session, covering cap/overflow selection, names, provenance, and per-model reasoning.
- */
-export function acpRegistrySessionCatalogKey(
+export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
-): string {
-  const { models, modelsFromModelSelect } = normalizeAcpRegistryLiveConfiguration(
+  options?: { readonly includeCatalog?: boolean },
+): AcpRegistryLiveConfiguration {
+  return prepareAcpRegistryLiveConfiguration(
     configOptions,
-    undefined,
+    modeState,
     modelState,
-    { includeCatalog: true },
-  );
-  return JSON.stringify([modelsFromModelSelect === true, models]);
+  ).toLiveConfiguration(options);
 }
 
 const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({

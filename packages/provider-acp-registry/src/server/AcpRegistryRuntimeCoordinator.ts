@@ -36,12 +36,32 @@ export interface AcpRegistryLiveConfigurationSnapshot {
   readonly clearedThroughRevision: number;
 }
 
+interface StoredLiveConfiguration extends AcpRegistryLiveConfigurationSnapshot {
+  readonly lastPublishedConfiguration: Option.Option<AcpRegistryLiveConfiguration>;
+  readonly lastCatalogPublishedRevision: number;
+}
+
 export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
   configuration: Option.none(),
   revision: 0,
   catalogRevision: 0,
   clearedThroughRevision: 0,
 };
+
+const EMPTY_STORED_LIVE_CONFIGURATION: StoredLiveConfiguration = {
+  ...EMPTY_LIVE_CONFIGURATION_SNAPSHOT,
+  lastPublishedConfiguration: Option.none(),
+  lastCatalogPublishedRevision: 0,
+};
+
+const toPublicLiveConfigurationSnapshot = (
+  entry: StoredLiveConfiguration,
+): AcpRegistryLiveConfigurationSnapshot => ({
+  configuration: entry.configuration,
+  revision: entry.revision,
+  catalogRevision: entry.catalogRevision,
+  clearedThroughRevision: entry.clearedThroughRevision,
+});
 
 interface UrlAuthActionUpdate {
   readonly instanceId: ProviderInstanceId;
@@ -85,11 +105,9 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly clearLiveConfiguration: (instanceId: ProviderInstanceId) => Effect.Effect<void>;
     readonly clearLiveConfigurationIfRevision: (
       instanceId: ProviderInstanceId,
-      revision: number,
       options: {
         readonly catalogRevision: number;
-        readonly clearOptions?: boolean;
-        readonly retainConfiguration?: (
+        readonly retain?: (
           configuration: AcpRegistryLiveConfiguration,
         ) => Option.Option<AcpRegistryLiveConfiguration>;
       },
@@ -138,7 +156,7 @@ const make = Effect.gen(function* () {
   );
   const liveConfigurationUpdates = yield* PubSub.unbounded<LiveConfigurationUpdate>();
   const liveConfigurations = yield* Ref.make<
-    ReadonlyMap<ProviderInstanceId, AcpRegistryLiveConfigurationSnapshot>
+    ReadonlyMap<ProviderInstanceId, StoredLiveConfiguration>
   >(new Map());
   const urlAuthActionUpdates = yield* PubSub.unbounded<UrlAuthActionUpdate>();
   const pendingUrlAuthActions = yield* Ref.make(
@@ -247,15 +265,16 @@ const make = Effect.gen(function* () {
         const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
         if (
           Option.isNone(current.configuration) &&
+          Option.isNone(current.lastPublishedConfiguration) &&
           nextCleared === current.clearedThroughRevision
         ) {
           return state;
         }
         const next = new Map(state);
         next.set(instanceId, {
+          ...current,
           configuration: Option.none(),
-          revision: current.revision,
-          catalogRevision: current.catalogRevision,
+          lastPublishedConfiguration: Option.none(),
           clearedThroughRevision: nextCleared,
         });
         return next;
@@ -263,33 +282,28 @@ const make = Effect.gen(function* () {
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.clearLiveConfigurationIfRevision")(
-      function* (instanceId, revision, options) {
+      function* (instanceId, options) {
         return yield* Ref.modify(liveConfigurations, (state) => {
-          const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
+          const current = state.get(instanceId) ?? EMPTY_STORED_LIVE_CONFIGURATION;
           if (current.catalogRevision !== options.catalogRevision) {
             return [false, state] as const;
           }
-          const clearAll = options.clearOptions === true;
-          const nextCleared = clearAll
-            ? Math.max(current.clearedThroughRevision, current.revision, revision)
-            : Math.max(current.clearedThroughRevision, revision);
-          const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> = clearAll
-            ? Option.none()
-            : Option.flatMap(current.configuration, (configuration) => {
-                const withoutCatalog: AcpRegistryLiveConfiguration = {
-                  ...configuration,
-                  models: [],
-                  modelsFromModelSelect: false,
-                };
-                if (options.retainConfiguration !== undefined) {
-                  return options.retainConfiguration(withoutCatalog);
-                }
-                return withoutCatalog.configOptions.length > 0
-                  ? Option.some(withoutCatalog)
-                  : Option.none();
-              });
+          // Every revision through current.revision is either cleared or reconciled by retain.
+          const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
+          const retain = options.retain;
+          const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> =
+            retain === undefined
+              ? Option.none()
+              : Option.flatMap(current.configuration, (configuration) =>
+                  retain({
+                    ...configuration,
+                    models: [],
+                    modelsFromModelSelect: false,
+                  }),
+                );
           if (
             Equal.equals(current.configuration, nextConfiguration) &&
+            Equal.equals(current.lastPublishedConfiguration, nextConfiguration) &&
             nextCleared === current.clearedThroughRevision
           ) {
             return [true, state] as const;
@@ -298,6 +312,7 @@ const make = Effect.gen(function* () {
           next.set(instanceId, {
             ...current,
             configuration: nextConfiguration,
+            lastPublishedConfiguration: nextConfiguration,
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -307,61 +322,71 @@ const make = Effect.gen(function* () {
 
   const publishLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["publishLiveConfiguration"] =
     (instanceId, configuration) =>
-      // Serialize store + PubSub publish so concurrent sessions emit in revision order.
+      // Serialize store + PubSub publish uninterruptibly so concurrent sessions emit in revision order.
       liveConfigurationPublishPermit.withPermit(
-        Ref.modify(liveConfigurations, (state) => {
-          const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
-          const revision = current.revision + 1;
-          const hasCatalog = configuration.models.length > 0;
-          const catalogRevision = hasCatalog
-            ? current.catalogRevision + 1
-            : current.catalogRevision;
-          // Preserve an unsuperseded session catalog across options-only updates only when
-          // the update targets that catalog (or no model), keeping the default marker intact.
-          const canPreserveStoredCatalog =
-            !hasCatalog &&
-            Option.isSome(current.configuration) &&
-            current.configuration.value.models.length > 0 &&
-            (configuration.currentModelId === null ||
-              current.configuration.value.models.some(
-                (model) => model.id === configuration.currentModelId,
-              ));
-          const storedConfiguration: AcpRegistryLiveConfiguration =
-            canPreserveStoredCatalog && Option.isSome(current.configuration)
-              ? {
-                  ...configuration,
-                  models: current.configuration.value.models,
-                  ...(current.configuration.value.modelsFromModelSelect === undefined
-                    ? {}
-                    : { modelsFromModelSelect: current.configuration.value.modelsFromModelSelect }),
-                }
-              : configuration;
-          const next = new Map(state);
-          next.set(instanceId, {
-            configuration: Option.some(storedConfiguration),
-            revision,
-            catalogRevision,
-            clearedThroughRevision: current.clearedThroughRevision,
-          });
-          return [revision, next] as const;
-        }).pipe(
-          Effect.flatMap((revision) =>
-            PubSub.publish(liveConfigurationUpdates, {
-              instanceId,
-              configuration,
+        Effect.uninterruptible(
+          Ref.modify(liveConfigurations, (state) => {
+            const current = state.get(instanceId) ?? EMPTY_STORED_LIVE_CONFIGURATION;
+            const revision = current.revision + 1;
+            const hasCatalog = configuration.models.length > 0;
+            const catalogRevision = hasCatalog
+              ? current.catalogRevision + 1
+              : current.catalogRevision;
+            const lastCatalogPublishedRevision = hasCatalog
+              ? revision
+              : current.lastCatalogPublishedRevision;
+            // Preserve an unsuperseded session catalog across options-only updates only when
+            // the update targets that catalog (or no model), keeping the default marker intact.
+            const canPreserveStoredCatalog =
+              !hasCatalog &&
+              Option.isSome(current.configuration) &&
+              current.configuration.value.models.length > 0 &&
+              (configuration.currentModelId === null ||
+                current.configuration.value.models.some(
+                  (model) => model.id === configuration.currentModelId,
+                ));
+            const storedConfiguration: AcpRegistryLiveConfiguration =
+              canPreserveStoredCatalog && Option.isSome(current.configuration)
+                ? {
+                    ...configuration,
+                    models: current.configuration.value.models,
+                    ...(current.configuration.value.modelsFromModelSelect === undefined
+                      ? {}
+                      : {
+                          modelsFromModelSelect: current.configuration.value.modelsFromModelSelect,
+                        }),
+                  }
+                : configuration;
+            const next = new Map(state);
+            next.set(instanceId, {
+              configuration: Option.some(storedConfiguration),
+              lastPublishedConfiguration: Option.some(configuration),
               revision,
-            }),
+              catalogRevision,
+              lastCatalogPublishedRevision,
+              clearedThroughRevision: current.clearedThroughRevision,
+            });
+            return [revision, next] as const;
+          }).pipe(
+            Effect.flatMap((revision) =>
+              PubSub.publish(liveConfigurationUpdates, {
+                instanceId,
+                configuration,
+                revision,
+              }),
+            ),
+            Effect.asVoid,
           ),
-          Effect.asVoid,
         ),
       );
 
   const getLiveConfigurationWithRevision: AcpRegistryRuntimeCoordinator["Service"]["getLiveConfigurationWithRevision"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.getLiveConfigurationWithRevision")(
       function* (instanceId) {
-        return (
-          (yield* Ref.get(liveConfigurations)).get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT
-        );
+        const entry = (yield* Ref.get(liveConfigurations)).get(instanceId);
+        return entry === undefined
+          ? EMPTY_LIVE_CONFIGURATION_SNAPSHOT
+          : toPublicLiveConfigurationSnapshot(entry);
       },
     );
 
@@ -384,7 +409,13 @@ const make = Effect.gen(function* () {
             (afterRevision === undefined || current.revision > afterRevision)
           ) {
             deliveredRevision = current.revision;
-            yield* onUpdate(current.configuration.value, current.revision);
+            const replayConfiguration =
+              afterRevision !== undefined &&
+              current.lastCatalogPublishedRevision <= afterRevision &&
+              Option.isSome(current.lastPublishedConfiguration)
+                ? current.lastPublishedConfiguration.value
+                : current.configuration.value;
+            yield* onUpdate(replayConfiguration, current.revision);
           }
           yield* Stream.fromSubscription(subscription).pipe(
             Stream.filter((update) => update.instanceId === instanceId),

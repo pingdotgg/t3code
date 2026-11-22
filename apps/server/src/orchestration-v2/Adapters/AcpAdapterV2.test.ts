@@ -5083,7 +5083,9 @@ describe("AcpAdapterV2", () => {
           driver: ACP_TEST_DRIVER,
           capabilities: AcpProviderCapabilitiesV2,
           onSessionConfigurationUpdate: (configOptions) =>
-            Effect.sync(() => publishedConfigurations.push(configOptions)),
+            Effect.sync(() => {
+              publishedConfigurations.push(configOptions);
+            }),
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5172,13 +5174,20 @@ describe("AcpAdapterV2", () => {
               : Effect.void,
           // Holds openSession's own publication until the adapter has seen the
           // late response, so adoption overlaps session configuration.
-          onSessionConfigurationUpdate: (configOptions, _modeState, _modelState, updateOptions) =>
-            (publications++ === 0 ? Deferred.await(adoptionHandled) : Effect.void).pipe(
+          onSessionConfigurationUpdate: (configOptions, _modeState, _modelState, updateOptions) => {
+            const modelOption = configOptions.find(
+              (option) => option.category === "model" && option.type === "select",
+            );
+            const catalogKey = JSON.stringify(
+              modelOption?.type === "select" ? modelOption.options : [],
+            );
+            const includeCatalog = updateOptions?.lastCatalogKey !== catalogKey;
+            return (publications++ === 0 ? Deferred.await(adoptionHandled) : Effect.void).pipe(
               Effect.andThen(
                 Effect.sync(() =>
                   publishedConfigurations.push({
                     configOptions,
-                    includeCatalog: updateOptions?.includeCatalog,
+                    includeCatalog,
                   }),
                 ),
               ),
@@ -5187,7 +5196,9 @@ describe("AcpAdapterV2", () => {
                   ? Deferred.succeed(adopted, undefined)
                   : Effect.void,
               ),
-            ),
+              Effect.as(catalogKey),
+            );
+          },
           makeRuntime: makeMockRuntime({
             childProcessSpawner,
             mockAgentPath,
@@ -5304,14 +5315,23 @@ describe("AcpAdapterV2", () => {
             driver: ACP_TEST_DRIVER,
             capabilities: AcpProviderCapabilitiesV2,
             onSessionConfigurationUpdate: (
-              _configOptions,
+              configOptions,
               _modeState,
               _modelState,
               updateOptions,
-            ) =>
-              Effect.sync(() => {
-                publications.push({ includeCatalog: updateOptions?.includeCatalog });
-              }),
+            ) => {
+              const modelOption = configOptions.find(
+                (option) => option.category === "model" && option.type === "select",
+              );
+              const catalogKey = JSON.stringify(
+                modelOption?.type === "select" ? modelOption.options : [],
+              );
+              const includeCatalog = updateOptions?.lastCatalogKey !== catalogKey;
+              return Effect.sync(() => {
+                publications.push({ includeCatalog });
+                return catalogKey;
+              });
+            },
             makeRuntime: makeMockRuntime({
               childProcessSpawner,
               mockAgentPath,

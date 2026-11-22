@@ -40,8 +40,8 @@ import {
 import {
   acpRegistryAdvertisesModelCatalog,
   acpRegistryProbeResult,
-  acpRegistrySessionCatalogKey,
   normalizeAcpRegistryLiveConfiguration,
+  prepareAcpRegistryLiveConfiguration,
 } from "./probe.ts";
 
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -434,7 +434,28 @@ describe("acpRegistrySnapshotReadiness", () => {
     ).models.map((model) => model.capabilities?.optionDescriptors ?? []);
     expect(currentDisabled).toEqual([[], []]);
 
-    // Options-only updates (includeCatalog: false) must also strip effort on a reasoning-disabled current model.
+    // supportsReasoningEffort: false marks reasoning disabled even without an effort selector,
+    // and strips current-model reasoning consistently regardless of includeCatalog.
+    const disabledWithoutSelector = normalizeAcpRegistryLiveConfiguration([], undefined, {
+      currentModelId: "glm",
+      availableModels: [{ modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } }],
+    });
+    expect(disabledWithoutSelector.models).toEqual([
+      { id: "glm", name: "GLM", description: null, reasoningEffort: null },
+    ]);
+
+    const catalogDisabled = normalizeAcpRegistryLiveConfiguration(
+      [effort],
+      undefined,
+      {
+        currentModelId: "glm",
+        availableModels: [
+          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
+          { modelId: "opus", name: "Opus" },
+        ],
+      },
+      { includeCatalog: true },
+    );
     const optionsOnlyDisabled = normalizeAcpRegistryLiveConfiguration(
       [effort],
       undefined,
@@ -447,17 +468,12 @@ describe("acpRegistrySnapshotReadiness", () => {
       },
       { includeCatalog: false },
     );
-    expect(optionsOnlyDisabled.configOptions).toEqual([]);
+    expect(catalogDisabled.configOptions).toEqual([]);
+    expect(optionsOnlyDisabled.configOptions).toEqual(catalogDisabled.configOptions);
     expect(optionsOnlyDisabled.modelOptionIds).toEqual([]);
     const providerAfterCatalogDisable = applyAcpRegistryLiveConfiguration(
       provider,
-      normalizeAcpRegistryLiveConfiguration([effort], undefined, {
-        currentModelId: "glm",
-        availableModels: [
-          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
-          { modelId: "opus", name: "Opus" },
-        ],
-      }),
+      catalogDisabled,
       [],
     );
     expect(
@@ -988,6 +1004,27 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
     expect(afterProvisionalModelOnly.models).toBe(entitled.models);
 
+    // An options-only update with no currentModelId on a discovered catalog applies only
+    // shared options and must not overwrite the default model's own options.
+    const afterUnknownModelOptions = applyAcpRegistryLiveConfiguration(
+      entitled,
+      {
+        models: [],
+        currentModelId: null,
+        configOptions: [placeholderEffort, sharedMode],
+        modelOptionIds: ["effort"],
+        modelsFromModelSelect: false,
+      },
+      [],
+      entitled.models,
+      { preserveSingleModelCatalog: true },
+    );
+    expect(afterUnknownModelOptions.models.find((m) => m.slug === "gmodel")?.isDefault).toBe(true);
+    expect(
+      afterUnknownModelOptions.models.find((m) => m.slug === "gmodel")?.capabilities
+        ?.optionDescriptors,
+    ).toEqual([sharedMode, entitledEffort]);
+
     const replacedExplicit = applyAcpRegistryLiveConfiguration(
       entitled,
       {
@@ -1476,10 +1513,32 @@ describe("acpRegistryEnrichmentCache", () => {
         },
       ),
     ).toEqual(Option.none());
+
+    // Never promotes a live model-specific option into a probe-shared option across models.
+    expect(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [fast(true)],
+          modelOptionIds: ["fast"],
+          modelsFromModelSelect: false,
+        },
+        {
+          models: [
+            { id: "new-model", name: "new-model", description: null },
+            { id: "old-model", name: "old-model", description: null },
+          ],
+          currentModelId: "new-model",
+          configOptions: [fast(false)],
+          modelOptionIds: new Set(),
+        },
+      ),
+    ).toEqual(Option.none());
   });
 });
 
-describe("acpRegistrySessionCatalogKey", () => {
+describe("prepareAcpRegistryLiveConfiguration", () => {
   it("ignores in-cap selection and effort value tweaks while detecting overflow selection, renames, and newly normalized per-model reasoning", () => {
     const modelSelect = (
       currentValue: string,
@@ -1499,13 +1558,15 @@ describe("acpRegistrySessionCatalogKey", () => {
       name: `Model ${index}`,
     }));
 
-    const keyM0 = acpRegistrySessionCatalogKey(modelSelect("m0", choices));
-    expect(acpRegistrySessionCatalogKey(modelSelect("m1", choices))).toBe(keyM0);
-    expect(acpRegistrySessionCatalogKey(modelSelect("m256", choices))).not.toBe(keyM0);
+    const keyM0 = prepareAcpRegistryLiveConfiguration(modelSelect("m0", choices)).catalogKey;
+    expect(prepareAcpRegistryLiveConfiguration(modelSelect("m1", choices)).catalogKey).toBe(keyM0);
+    expect(prepareAcpRegistryLiveConfiguration(modelSelect("m256", choices)).catalogKey).not.toBe(
+      keyM0,
+    );
     expect(
-      acpRegistrySessionCatalogKey(
+      prepareAcpRegistryLiveConfiguration(
         modelSelect("m0", [{ value: "m0", name: "Model 0 Renamed" }, ...choices.slice(1)]),
-      ),
+      ).catalogKey,
     ).not.toBe(keyM0);
 
     // When a session initially omits the effort selector and later exposes it, another model's
@@ -1536,9 +1597,17 @@ describe("acpRegistrySessionCatalogKey", () => {
         { value: "high", name: "High" },
       ],
     });
-    const withoutEffort = acpRegistrySessionCatalogKey([], modelState);
-    const withEffortHigh = acpRegistrySessionCatalogKey([effortSelect("high")], modelState);
-    const withEffortLow = acpRegistrySessionCatalogKey([effortSelect("low")], modelState);
+    const withoutEffort = prepareAcpRegistryLiveConfiguration([], undefined, modelState).catalogKey;
+    const withEffortHigh = prepareAcpRegistryLiveConfiguration(
+      [effortSelect("high")],
+      undefined,
+      modelState,
+    ).catalogKey;
+    const withEffortLow = prepareAcpRegistryLiveConfiguration(
+      [effortSelect("low")],
+      undefined,
+      modelState,
+    ).catalogKey;
     expect(withEffortHigh).not.toBe(withoutEffort);
     expect(withEffortLow).toBe(withEffortHigh);
   });
@@ -1937,6 +2006,89 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+
+      // A reasoning-disabled model keeps its learned model_config options when switching to
+      // another model and tweaking shared options.
+      const variantLearned = yield* waitFor("model-a:mode+effort,model-b:mode+variant").pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        normalizeAcpRegistryLiveConfiguration(
+          [
+            {
+              id: "mode",
+              name: "Mode",
+              category: "mode",
+              type: "select",
+              currentValue: "ask",
+              options: [
+                { value: "ask", name: "Ask" },
+                { value: "code", name: "Code" },
+              ],
+            },
+            {
+              id: "variant",
+              name: "Variant",
+              category: "model_config",
+              type: "select",
+              currentValue: "v1",
+              options: [{ value: "v1", name: "V1" }],
+            },
+          ],
+          undefined,
+          {
+            currentModelId: "model-b",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "model-b", name: "model-b", _meta: { supportsReasoningEffort: false } },
+            ],
+          },
+        ),
+      );
+      yield* Fiber.join(variantLearned);
+
+      const modeTweaked = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot.models
+              .find((model) => model.slug === "model-a")
+              ?.capabilities?.optionDescriptors?.find((option) => option.id === "mode")
+              ?.currentValue === "code",
+        ),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        normalizeAcpRegistryLiveConfiguration(
+          [
+            {
+              id: "mode",
+              name: "Mode",
+              category: "mode",
+              type: "select",
+              currentValue: "code",
+              options: [
+                { value: "ask", name: "Ask" },
+                { value: "code", name: "Code" },
+              ],
+            },
+          ],
+          undefined,
+          {
+            currentModelId: "model-a",
+            availableModels: [
+              { modelId: "model-a", name: "model-a" },
+              { modelId: "model-b", name: "model-b", _meta: { supportsReasoningEffort: false } },
+            ],
+          },
+          { includeCatalog: false },
+        ),
+      );
+      expect(effortBySlug(Option.getOrThrow(yield* Fiber.join(modeTweaked)))).toBe(
+        "model-a:mode,model-b:mode+variant",
+      );
     }),
   );
 });
@@ -2112,16 +2264,40 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* Fiber.join(learnedEffort);
 
-        // Upstream adds a model, removes the shared legacy option, and disables reasoning on other-model.
-        yield* writeModels([
-          "new-model",
-          "old-model",
-          {
-            modelId: "other-model",
-            name: "other-model",
-            _meta: { supportsReasoningEffort: false },
-          },
-        ]);
+        // Upstream adds a model and a probe-only shared option (fast), removes the shared legacy
+        // option, and disables reasoning on other-model.
+        yield* writeModels({
+          models: [
+            "new-model",
+            "old-model",
+            {
+              modelId: "other-model",
+              name: "other-model",
+              _meta: { supportsReasoningEffort: false },
+            },
+          ],
+          configOptions: [
+            {
+              id: "fast",
+              name: "Fast",
+              category: "other",
+              type: "select",
+              currentValue: "on",
+              options: [{ value: "on", name: "On" }],
+            },
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        });
         yield* TestClock.adjust("16 minutes");
 
         const postTtl = yield* waitForEnriched().pipe(
@@ -2134,22 +2310,30 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "old-model",
           "other-model",
         ]);
-        // old-model keeps its live effort value (low) while legacy is dropped and other-model has no effort.
+        // old-model keeps its live effort value (low) alongside probe-only fast=on while legacy is dropped.
         expect(
           updated.models
             .find((model) => model.slug === "old-model")
             ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
-        ).toEqual([["effort", "low"]]);
+        ).toEqual([
+          ["fast", "on"],
+          ["effort", "low"],
+        ]);
         expect(
           updated.models
             .find((model) => model.slug === "other-model")
-            ?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
-        ).toEqual([]);
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]) ??
+            [],
+        ).toEqual([["fast", "on"]]);
         expect(
           updated.models
             .find((model) => model.slug === "new-model")
-            ?.capabilities?.optionDescriptors?.map((option) => option.id) ?? [],
-        ).toEqual(["effort"]);
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]) ??
+            [],
+        ).toEqual([
+          ["fast", "on"],
+          ["effort", "high"],
+        ]);
         // Coordinator retains live option values (with models stripped) for Copilot unsetOptionDefaults.
         expect(
           Option.map(yield* coordinator.getLiveConfiguration(identity.instanceId), (config) => ({
@@ -2158,7 +2342,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           })),
         ).toEqual(Option.some({ models: [], effort: "low" }));
 
-        // A mid-session option update (includeCatalog: false) keeps the newly probed catalog intact.
+        // A mid-session options-only update from the older superseded session (lacking probe-only
+        // fast and still carrying removed legacy) keeps the new catalog, keeps fast=on, and drops legacy.
         const effortUpdated = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) =>
@@ -2172,21 +2357,51 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* coordinator.publishLiveConfiguration(
           identity.instanceId,
-          sessionWithOptions("old-model", "high", { includeCatalog: false }),
+          sessionWithOptions("old-model", "high", { includeCatalog: false, includeLegacy: true }),
         );
+        const afterSupersededOptions = Option.getOrThrow(yield* Fiber.join(effortUpdated));
+        expect(afterSupersededOptions.models.map((model) => model.slug)).toEqual([
+          "new-model",
+          "old-model",
+          "other-model",
+        ]);
         expect(
-          Option.getOrThrow(yield* Fiber.join(effortUpdated)).models.map((model) => model.slug),
-        ).toEqual(["new-model", "old-model", "other-model"]);
+          afterSupersededOptions.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["fast", "on"],
+          ["effort", "high"],
+        ]);
+        expect(
+          afterSupersededOptions.models
+            .find((model) => model.slug === "new-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["fast", "on"],
+          ["effort", "high"],
+        ]);
 
-        // Cached refresh must reuse the cached catalog without re-probing.
+        // Cached refresh must reuse the cached catalog and probe-only options without re-probing.
         yield* writeModels(["unexpected-reprobe", "other-model"]);
         const nextCached = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.snapshot.refresh;
+        const cachedAfterSuperseded = Option.getOrThrow(yield* Fiber.join(nextCached));
+        expect(cachedAfterSuperseded.models.map((model) => model.slug)).toEqual([
+          "new-model",
+          "old-model",
+          "other-model",
+        ]);
         expect(
-          Option.getOrThrow(yield* Fiber.join(nextCached)).models.map((model) => model.slug),
-        ).toEqual(["new-model", "old-model", "other-model"]);
+          cachedAfterSuperseded.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["fast", "on"],
+          ["effort", "high"],
+        ]);
 
         // When a later post-TTL probe runs directly on old-model without effort, learned effort is dropped.
         yield* writeModels(["old-model", "new-model"]);
@@ -2466,7 +2681,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       Effect.gen(function* () {
         const probeEntered = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
+        const signOutRejected = yield* Deferred.make<void>();
         let gateNextResolve = false;
+        let injectCatalogBeforeSignOutClear = false;
         const {
           directory,
           coordinator,
@@ -2477,6 +2694,28 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         } = yield* setupPeriodicDriver({
           prefix: "acp-driver-clear-",
           initialModels: ["new-model", "old-model", "other-model"],
+          wrapCoordinator: (base) => ({
+            ...base,
+            clearLiveConfigurationIfRevision: (instanceId, options) =>
+              Effect.gen(function* () {
+                if (injectCatalogBeforeSignOutClear && options.retain === undefined) {
+                  injectCatalogBeforeSignOutClear = false;
+                  yield* base.publishLiveConfiguration(instanceId, {
+                    models: [
+                      { id: "raced-auth-a", name: "Raced Auth A", description: null },
+                      { id: "raced-auth-b", name: "Raced Auth B", description: null },
+                    ],
+                    currentModelId: "raced-auth-a",
+                    configOptions: [],
+                    modelsFromModelSelect: true,
+                  });
+                  const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+                  yield* Deferred.succeed(signOutRejected, undefined);
+                  return cleared;
+                }
+                return yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+              }),
+          }),
           onResolve: () =>
             Effect.gen(function* () {
               if (gateNextResolve) {
@@ -2666,6 +2905,27 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ]);
           }),
         );
+
+        // If a newer live catalog lands right before an unauthenticated probe clears
+        // coordinator state, clearLiveConfigurationIfRevision returns false and the stale
+        // sign-out warning must be discarded rather than overwriting the new catalog.
+        yield* writeModels({ fail: "Sign in required", code: -32000 });
+        injectCatalogBeforeSignOutClear = true;
+        const racedLiveApplied = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models.map((m) => m.slug).join() === "raced-auth-a,raced-auth-b",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(signOutRejected);
+        const racedSnap = Option.getOrThrow(yield* Fiber.join(racedLiveApplied));
+        expect(racedSnap.status).toBe("ready");
+        expect(racedSnap.auth.status).not.toBe("unauthenticated");
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
+          true,
+        );
       }),
   );
 
@@ -2845,12 +3105,16 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
   );
 
   it.effect(
-    "commits a fresh post-TTL catalog when only an options-only live update arrives in flight while enforcing disabled reasoning",
+    "commits a fresh post-TTL catalog when only an options-only live update arrives in flight while suppressing delayed raw callbacks",
     () =>
       Effect.gen(function* () {
         const secondProbeEntered = yield* Deferred.make<void>();
         const releaseSecondProbe = yield* Deferred.make<void>();
+        const delayedOptionsEntered = yield* Deferred.make<void>();
+        const releaseDelayedOptions = yield* Deferred.make<void>();
+        const delayedOptionsDone = yield* Deferred.make<void>();
         let gateNextResolve = false;
+        let holdNextOptionsCallback = false;
 
         const {
           coordinator,
@@ -2861,6 +3125,26 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         } = yield* setupPeriodicDriver({
           prefix: "acp-driver-inflight-options-",
           initialModels: ["old-model", "other-model"],
+          wrapCoordinator: (base) => ({
+            ...base,
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              base.watchLiveConfiguration(
+                instanceId,
+                (configuration, revision) =>
+                  holdNextOptionsCallback && configuration.models.length === 0
+                    ? Effect.sync(() => {
+                        holdNextOptionsCallback = false;
+                      }).pipe(
+                        Effect.andThen(Deferred.succeed(delayedOptionsEntered, undefined)),
+                        Effect.andThen(Deferred.await(releaseDelayedOptions)),
+                        Effect.andThen(onUpdate(configuration, revision)),
+                        Effect.andThen(Deferred.succeed(delayedOptionsDone, undefined)),
+                        Effect.asVoid,
+                      )
+                    : onUpdate(configuration, revision),
+                options,
+              ),
+          }),
           onResolve: () =>
             Effect.gen(function* () {
               if (gateNextResolve) {
@@ -2916,18 +3200,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         yield* Deferred.await(secondProbeEntered);
 
-        const optionsApplied = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter(
-            (snapshot) =>
-              snapshot.models
-                .find((model) => model.slug === "old-model")
-                ?.capabilities?.optionDescriptors?.find((option) => option.id === "mode")
-                ?.currentValue === "plan",
-          ),
-          Stream.runHead,
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        // Live update sets mode=plan (still valid) and effort=high (removed by the probe).
+        // Hold the raw watcher callback for this in-flight options-only revision until after the
+        // probe commits, verifying clearedThroughRevision suppresses it after retain reconciles it.
+        holdNextOptionsCallback = true;
         yield* coordinator.publishLiveConfiguration(identity.instanceId, {
           models: [],
           currentModelId: "old-model",
@@ -2957,7 +3232,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           modelOptionIds: ["effort"],
           modelsFromModelSelect: false,
         });
-        yield* Fiber.join(optionsApplied);
+        yield* Deferred.await(delayedOptionsEntered);
 
         const committed = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
@@ -2984,6 +3259,18 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
         ).toEqual([["mode", "plan"]]);
 
+        // Releasing the delayed raw watcher callback must not bring back removed effort=high.
+        yield* Deferred.succeed(releaseDelayedOptions, undefined);
+        yield* Deferred.await(delayedOptionsDone);
+        expect(
+          (yield* instance.snapshot.getSnapshot).models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["mode", "plan"],
+          ["effort", "low"],
+        ]);
+
         // Verify the fresh catalog was saved to acceptedCatalog (survives skipped readiness) and cache.
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
@@ -2999,9 +3286,20 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* writeModels(["unexpected-reprobe", "other-model"]);
         const cached = yield* waitForEnriched().pipe(Effect.forkScoped({ startImmediately: true }));
         yield* instance.snapshot.refresh;
+        const cachedSnapshot = Option.getOrThrow(yield* Fiber.join(cached));
+        expect(cachedSnapshot.models.map((model) => model.slug)).toEqual([
+          "old-model",
+          "other-model",
+          "new-model",
+        ]);
         expect(
-          Option.getOrThrow(yield* Fiber.join(cached)).models.map((model) => model.slug),
-        ).toEqual(["old-model", "other-model", "new-model"]);
+          cachedSnapshot.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["mode", "plan"],
+          ["effort", "low"],
+        ]);
       }),
   );
 

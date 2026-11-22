@@ -429,16 +429,12 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
-  readonly sessionCatalogKey?: (
-    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-    modelState: EffectAcpSchema.SessionModelState | null | undefined,
-  ) => string;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
     modelState: EffectAcpSchema.SessionModelState | null | undefined,
-    options?: { readonly includeCatalog?: boolean },
-  ) => Effect.Effect<void>;
+    options?: { readonly lastCatalogKey: string | null },
+  ) => Effect.Effect<string | void>;
   readonly onUrlElicitation?: (input: {
     readonly elicitationId: string;
     readonly url: string;
@@ -2299,31 +2295,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           epoch: current.epoch + 1,
           key: null,
         }));
-        const defaultSessionCatalogKey = (
-          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-          modelState: EffectAcpSchema.SessionModelState | null | undefined,
-        ): string => {
-          const modelOption = findModelConfigOption(configOptions);
-          if (modelOption !== undefined) {
-            return JSON.stringify([
-              "select",
-              flattenSelectChoices(modelOption.options).map((choice) => [
-                choice.value,
-                choice.name,
-                choice.description ?? null,
-              ]),
-            ]);
-          }
-          return JSON.stringify([
-            "models",
-            (modelState?.availableModels ?? []).map((model) => [
-              model.modelId,
-              model.name,
-              model.description ?? null,
-            ]),
-          ]);
-        };
-        const computeSessionCatalogKey = flavor.sessionCatalogKey ?? defaultSessionCatalogKey;
         const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
         const publishSessionConfiguration = Effect.fn("AcpAdapterV2.publishSessionConfiguration")(
           function* (targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
@@ -2335,14 +2306,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 const configOptions = yield* targetRuntime.getConfigOptions;
                 const modeState = yield* targetRuntime.getModeState;
                 const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
-                const catalogKey = computeSessionCatalogKey(configOptions, modelState);
-                const includeCatalog = key !== catalogKey;
-                yield* onSessionConfigurationUpdate(configOptions, modeState, modelState, {
-                  includeCatalog,
-                });
-                yield* Ref.update(lastPublishedCatalogKey, (current) =>
-                  current.epoch === epoch ? { epoch, key: catalogKey } : current,
+                const nextKey = yield* onSessionConfigurationUpdate(
+                  configOptions,
+                  modeState,
+                  modelState,
+                  { lastCatalogKey: key },
                 );
+                if (typeof nextKey === "string") {
+                  yield* Ref.update(lastPublishedCatalogKey, (current) =>
+                    current.epoch === epoch ? { epoch, key: nextKey } : current,
+                  );
+                }
               }),
             );
           },

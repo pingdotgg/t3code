@@ -41,10 +41,9 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
-  acpRegistrySessionCatalogKey,
   normalizeAcpRegistryCommands,
-  normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
+  prepareAcpRegistryLiveConfiguration,
 } from "./probe.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -375,17 +374,21 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                   ),
               }
             : {}),
-          sessionCatalogKey: acpRegistrySessionCatalogKey,
-          onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) =>
-            runtimeCoordinator.publishLiveConfiguration(
-              options.instanceId,
-              normalizeAcpRegistryLiveConfiguration(
-                configOptions,
-                modeState,
-                modelState,
-                updateOptions,
-              ),
-            ),
+          onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) => {
+            const prepared = prepareAcpRegistryLiveConfiguration(
+              configOptions,
+              modeState,
+              modelState,
+            );
+            return runtimeCoordinator
+              .publishLiveConfiguration(
+                options.instanceId,
+                prepared.toLiveConfiguration({
+                  includeCatalog: updateOptions?.lastCatalogKey !== prepared.catalogKey,
+                }),
+              )
+              .pipe(Effect.as(prepared.catalogKey));
+          },
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);
             if (normalizedUrl === undefined || elicitationId.trim().length === 0) {
