@@ -872,8 +872,42 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           afterCrossModelClear.pendingOptions.at(-1)?.configuration.advertisedReasoning,
         ).toEqual({ "model-d": lowEffort });
 
+        // Second probe clear: if model-x later republishes without model-b metadata and a second
+        // clear runs, model-b's retained highEffort must still survive in reasoningByModel.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-x",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: crossModelCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterSecondCrossClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterSecondCrossClear.pendingOptions.find((e) => e.revision === modelXSnap.revision),
+        ).toEqual({
+          revision: modelXSnap.revision,
+          configuration: {
+            models: [],
+            modelsFromModelSelect: false,
+            currentModelId: null,
+            configOptions: [],
+            advertisedReasoning: { "model-b": highEffort },
+            partialOptions: true,
+            preserveDefault: true,
+          },
+        });
+
         // Case 2: model-c advertises model-b: high, then another session replaces model-c without
-        // model-b metadata before model-a updates and a probe clears; model-b keeps high (never low).
+        // model-b metadata before model-a updates and a probe clears; both live replay (snapshot &
+        // watcher catch-up) and post-clear retention keep model-b: high at its original revision
+        // with preserveDefault: true so default selection is untouched.
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [
             { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
@@ -894,6 +928,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
           advertisedReasoning: { "model-b": highEffort },
         });
+        const modelCReasoningSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
           currentModelId: "model-c",
@@ -901,6 +936,76 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelOptionIds: [],
           modelsFromModelSelect: false,
         });
+        const beforeClearReplacedSnap =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(beforeClearReplacedSnap.pendingOptions).toEqual([
+          {
+            revision: modelCReasoningSnap.revision,
+            configuration: {
+              models: [],
+              modelsFromModelSelect: false,
+              currentModelId: null,
+              configOptions: [],
+              advertisedReasoning: { "model-b": highEffort },
+              preserveDefault: true,
+            },
+          },
+          {
+            revision: beforeClearReplacedSnap.revision,
+            configuration: {
+              models: [],
+              currentModelId: "model-c",
+              configOptions: [modeOption("code")],
+              modelOptionIds: [],
+              modelsFromModelSelect: false,
+            },
+          },
+        ]);
+        const replayedByWatcher: Array<{
+          readonly revision: number;
+          readonly currentModelId: string | null;
+          readonly preserveDefault: boolean | undefined;
+          readonly advertisedB: string | boolean | undefined;
+        }> = [];
+        const watcherDone = yield* Deferred.make<void>();
+        const watcherFiber = yield* coordinator
+          .watchLiveConfiguration(
+            instanceId,
+            (configuration, revision) =>
+              Effect.sync(() => {
+                replayedByWatcher.push({
+                  revision,
+                  currentModelId: configuration.currentModelId,
+                  preserveDefault: configuration.preserveDefault,
+                  advertisedB: configuration.advertisedReasoning?.["model-b"]?.currentValue,
+                });
+              }).pipe(
+                Effect.flatMap(() =>
+                  replayedByWatcher.length === 2
+                    ? Deferred.succeed(watcherDone, undefined)
+                    : Effect.void,
+                ),
+              ),
+            { afterRevision: replacedCrossCatalog.revision },
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(watcherDone);
+        yield* Fiber.interrupt(watcherFiber);
+        expect(replayedByWatcher).toEqual([
+          {
+            revision: modelCReasoningSnap.revision,
+            currentModelId: null,
+            preserveDefault: true,
+            advertisedB: "high",
+          },
+          {
+            revision: beforeClearReplacedSnap.revision,
+            currentModelId: "model-c",
+            preserveDefault: undefined,
+            advertisedB: undefined,
+          },
+        ]);
+
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
           currentModelId: "model-a",
@@ -917,11 +1022,225 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const afterReplacedCrossClear =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
+          afterReplacedCrossClear.pendingOptions.find(
+            (e) => e.revision === modelCReasoningSnap.revision,
+          ),
+        ).toEqual({
+          revision: modelCReasoningSnap.revision,
+          configuration: {
+            models: [],
+            modelsFromModelSelect: false,
+            currentModelId: null,
+            configOptions: [],
+            advertisedReasoning: { "model-b": highEffort },
+            partialOptions: true,
+            preserveDefault: true,
+          },
+        });
+        expect(
           afterReplacedCrossClear.pendingOptions.at(-1)?.configuration.advertisedReasoning,
         ).toEqual({
-          "model-b": highEffort,
           "model-d": lowEffort,
         });
+
+        // Case 3: When model-b later reports its own full option set (either with no reasoning or
+        // its own lowEffort), older pending cross-model advertisedReasoning for model-b is dropped
+        // in both live replay and post-clear retention (even if the older publisher stays or is
+        // replaced).
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null },
+            { id: "model-c", name: "Model C", description: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const dropReasoningCatalog =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        const afterModelBDroppedReasoning =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterModelBDroppedReasoning.pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["model-b"] !== undefined,
+          ),
+        ).toBe(false);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: dropReasoningCatalog.catalogRevision,
+            retain: (live) =>
+              live.currentModelId === "model-b" && live.configOptions.length === 0
+                ? Option.none()
+                : Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions,
+        ).toEqual([]);
+
+        // Case 4: After model-c advertises model-b: high and is replaced, model-b publishing its
+        // own lowEffort supersedes the orphaned highEffort so model-b keeps lowEffort after clear.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [lowEffort],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: dropReasoningCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterSelfSupersedeClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterSelfSupersedeClear.pendingOptions.map((e) => [
+            e.configuration.currentModelId,
+            e.configuration.configOptions.map((o) => o.currentValue),
+            e.configuration.advertisedReasoning?.["model-b"]?.currentValue ?? null,
+          ]),
+        ).toEqual([
+          ["model-b", ["low"], null],
+          ["model-a", ["ask"], null],
+        ]);
+
+        // Case 5: Newer cross-model advertisedReasoning (model-y: low, then model-y replaced)
+        // supersedes older cross-model advertisedReasoning (model-x: high) instead of letting
+        // model-x's stale high survive.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-x",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-y",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": lowEffort },
+        });
+        const modelYReasoningSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-y",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: dropReasoningCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterCrossSupersedeClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterCrossSupersedeClear.pendingOptions
+            .filter((e) => e.configuration.advertisedReasoning?.["model-b"] !== undefined)
+            .map((e) => [
+              e.revision,
+              e.configuration.currentModelId,
+              e.configuration.advertisedReasoning?.["model-b"]?.currentValue,
+            ]),
+        ).toEqual([[modelYReasoningSnap.revision, null, "low"]]);
+
+        // Case 6: Full clearLiveConfiguration and a fresh catalog publish both reset tracked
+        // reasoningByModel and catalogReasoningSupersededSlugs.
+        yield* coordinator.clearLiveConfiguration(instanceId);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions,
+        ).toEqual([]);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: lowEffort },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: lowEffort },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const freshCatalogAfterSupersede =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: freshCatalogAfterSupersede.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions.map(
+            (e) => e.configuration.advertisedReasoning?.["model-b"]?.currentValue,
+          ),
+        ).toEqual(["low"]);
 
         // Earlier displaced tail updates (both overflow m256 and displaced ordinary tail m255)
         // keep their tail metadata alongside preserveDefault so the driver can learn their options
@@ -970,7 +1289,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         });
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: replacedCrossCatalog.catalogRevision,
+            catalogRevision: freshCatalogAfterSupersede.catalogRevision,
             retain: (live) => Option.some({ ...live, partialOptions: true }),
           }),
         ).toBe(true);
