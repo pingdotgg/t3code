@@ -56,6 +56,28 @@ describe("sidebar shift guard", () => {
     expect(list.pressed).toEqual(["B"]);
   });
 
+  it("guards a shelf that moves as a whole but allows ordinary scrolling", async () => {
+    await using screen = await render(null);
+    const precedingList = document.createElement("div");
+    precedingList.style.height = "60px";
+    const viewport = document.createElement("div");
+    viewport.style.cssText = "height: 90px; overflow-y: auto";
+    screen.container.append(precedingList, viewport);
+    using list = mountList(viewport, ["A", "B", "C", "D"]);
+    using _clock = fakeTimers();
+
+    precedingList.remove();
+    list.guard.update();
+    await userEvent.click(list.button("A"));
+    expect(list.pressed).toEqual([]);
+
+    vi.advanceTimersByTime(500);
+    viewport.scrollTop = 40;
+    list.guard.update();
+    await userEvent.click(list.button("B"));
+    expect(list.pressed).toEqual(["B"]);
+  });
+
   it("keeps rows that did not move, or barely moved, clickable", async () => {
     await using screen = await render(null);
     using list = mountList(screen.container, ["A", "B", "C"]);

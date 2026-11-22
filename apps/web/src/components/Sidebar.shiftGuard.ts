@@ -21,9 +21,18 @@ function editsText(event: KeyboardEvent) {
 }
 
 function readTops(list: HTMLElement) {
+  // Include the list's layout displacement without counting ancestor scroll or transforms.
+  let listTop = list.offsetTop;
+  for (
+    let parent = list.offsetParent;
+    parent instanceof HTMLElement;
+    parent = parent.offsetParent
+  ) {
+    listTop += parent.offsetTop + parent.clientTop;
+  }
   const tops = new Map<HTMLElement, number>();
   for (const child of list.children) {
-    if (child instanceof HTMLElement) tops.set(child, child.offsetTop);
+    if (child instanceof HTMLElement) tops.set(child, listTop + child.offsetTop);
   }
   return tops;
 }
