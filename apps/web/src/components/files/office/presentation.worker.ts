@@ -10,17 +10,12 @@ import {
   type SlidePrimitive,
 } from "@betteroffice/pptx";
 import { slideFonts } from "./slide-fonts";
-import {
-  maxImageSide,
-  type SlideMethods,
-  type SlidePainted,
-  type SlideSummary,
-  type VectorBitmap,
-  type VectorRequest,
-} from "./slide-protocol";
+import type { SlideMethods, SlidePainted, SlideSummary } from "./slide-protocol";
+import { maxImageSide, type VectorBitmap, type VectorRequest } from "./vector-pictures";
 import { deckText } from "./slide-text";
 import { officeImageBitmap } from "./image-bitmap";
 import { serveWorker, Transfer } from "./worker-rpc";
+import { PreviewError } from "../previewFailure";
 
 // One worker holds one open PowerPoint deck: its engine, fonts, laid-out slides, decoded pictures and painting. The
 // window terminates the worker when the deck closes, which is the only way the engine's memory is given back.
@@ -113,7 +108,7 @@ function required() {
 
 /** The worker's own font set, which its canvases draw text with. */
 function workerFonts() {
-  if (!("fonts" in self)) throw new Error("This browser has no fonts in workers");
+  if (!("fonts" in self)) throw new PreviewError({ code: "presentation-no-worker-fonts" });
 
   // SAFETY: a worker's global scope is a FontFaceSource, whose `fonts` is a FontFaceSet (CSS Font Loading, exposed to
   // workers). The window's types declare it on documents only, and workers expose no FontFaceSet to check against.
