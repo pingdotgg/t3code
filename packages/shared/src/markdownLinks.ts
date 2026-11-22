@@ -2,6 +2,7 @@ import type { mediaKindFromPath } from "./mediaPreview.ts";
 import {
   isNetworkPath,
   isWindowsAbsolutePath,
+  slashWindowsDrivePath,
   stripSlashPrefixedWindowsDrive,
   workspaceRelativeFilePath,
 } from "./path.ts";
@@ -206,7 +207,9 @@ export function inlineCodeFilePathCandidate(codeText: string): string | null {
     return null;
   }
 
-  const candidate = isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/");
+  const candidate = slashWindowsDrivePath(
+    isWindowsAbsolutePath(trimmed) ? trimmed : trimmed.replaceAll("\\", "/"),
+  );
   const hasPosition = POSITION_SUFFIX_PATTERN.test(candidate);
   if (!hasPosition && !PATH_SEPARATOR_PATTERN.test(candidate)) return null;
   if (ELIDED_PATH_SEGMENT_PATTERN.test(candidate.replace(POSITION_SUFFIX_PATTERN, ""))) return null;

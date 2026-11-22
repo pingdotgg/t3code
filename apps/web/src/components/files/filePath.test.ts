@@ -5,6 +5,7 @@ import {
   fileBreadcrumbChildren,
   fileBreadcrumbs,
   isListableHostFolder,
+  joinHostPath,
   retainedBreadcrumbTrail,
 } from "./filePath";
 
@@ -16,10 +17,11 @@ describe("fileBreadcrumbs", () => {
       { label: "report.md", path: "/tmp/t3-cleanup/report.md", kind: "file" },
     ]);
     expect(fileBreadcrumbs("t3code", "C:\\Temp\\report.md")).toEqual([
-      { label: "C:", path: "C:\\", kind: "directory" },
-      { label: "Temp", path: "C:\\Temp", kind: "directory" },
-      { label: "report.md", path: "C:\\Temp\\report.md", kind: "file" },
+      { label: "C:", path: "C:/", kind: "directory" },
+      { label: "Temp", path: "C:/Temp", kind: "directory" },
+      { label: "report.md", path: "C:/Temp/report.md", kind: "file" },
     ]);
+    expect(joinHostPath("C:\\Users\\", "docs\\a.txt")).toBe("C:/Users/docs/a.txt");
     expect(fileBreadcrumbs("t3code", "\\\\server\\share\\report.md").map((c) => c.path)).toEqual([
       "\\\\server",
       "\\\\server\\share",
