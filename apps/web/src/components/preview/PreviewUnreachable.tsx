@@ -1,3 +1,4 @@
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { Dot, ExternalLink, FileDown, RotateCw, Unplug } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -16,12 +17,12 @@ interface Props {
 }
 
 const SUGGESTIONS = [
-  "Confirming the dev server is running",
-  "Checking the proxy and the firewall",
-  "Checking your connection",
+  msg("Confirming the dev server is running"),
+  msg("Checking the proxy and the firewall"),
+  msg("Checking your connection"),
 ] as const;
 
-const MOVE_SUGGESTION = "Opening it in the environment’s browser, which reaches its network";
+const MOVE_SUGGESTION = msg("Opening it in the environment’s browser, which reaches its network");
 
 export function PreviewFileNotShown({
   url,
@@ -42,19 +43,21 @@ export function PreviewFileNotShown({
           <FileDown aria-hidden className="size-4.5 text-muted-foreground" />
         </span>
         <h1 className="max-w-full break-words text-label text-foreground">
-          This file can&rsquo;t be shown here
+          <T>This file can&rsquo;t be shown here</T>
         </h1>
         <p className="max-w-full break-words text-body text-muted-foreground">
-          {fileName} from {host} was downloaded instead.
+          <T>
+            <Var>{fileName}</Var> from <Var>{host}</Var> was downloaded instead.
+          </T>
         </p>
         <div className="flex flex-wrap items-center justify-center gap-2">
           <Button type="button" variant="secondary" size="sm" onClick={onOpen}>
             <ExternalLink />
-            Open in browser
+            <T>Open in browser</T>
           </Button>
           {downloadUrl ? (
             <Button type="button" size="sm" render={<a href={downloadUrl} download={fileName} />}>
-              Download
+              <T context="verb">Download</T>
             </Button>
           ) : null}
         </div>
@@ -75,8 +78,10 @@ export function PreviewUnreachable({
   onOpenInBrowser,
   move,
 }: Props) {
+  const gt = useGT();
+  const m = useMessages();
   const host = safeHost(url) ?? url;
-  const friendly = describePreviewError(description);
+  const friendly = describePreviewError(description, m);
   const errorLabel = description.length > 0 ? description : `ERR_${Math.abs(code) || "FAILED"}`;
   const suggestions = move ? [...SUGGESTIONS, MOVE_SUGGESTION] : SUGGESTIONS;
 
@@ -95,7 +100,7 @@ export function PreviewUnreachable({
               />
             }
           >
-            {host} isn&rsquo;t responding
+            {gt("{host} isn’t responding", { host })}
           </TooltipTrigger>
           <TooltipPopup side="bottom">
             <span className="flex flex-col gap-0.5">
@@ -105,12 +110,14 @@ export function PreviewUnreachable({
           </TooltipPopup>
         </Tooltip>
         <div className="flex w-[300px] max-w-full flex-col gap-2 rounded-card surface-card-settings px-3.5 py-3 text-left">
-          <p className="text-meta text-muted-foreground">Try:</p>
+          <p className="text-meta text-muted-foreground">
+            <T>Try:</T>
+          </p>
           <ul className="flex flex-col gap-2">
             {suggestions.map((suggestion) => (
               <li key={suggestion} className="flex items-center gap-2 text-body text-foreground">
                 <Dot aria-hidden className="size-3.5 shrink-0 text-dim-foreground" />
-                {suggestion}
+                {m(suggestion)}
               </li>
             ))}
           </ul>
@@ -119,7 +126,7 @@ export function PreviewUnreachable({
           {onOpenInBrowser ? (
             <Button type="button" variant="secondary" size="sm" onClick={onOpenInBrowser}>
               <ExternalLink />
-              Open in system browser
+              <T>Open in system browser</T>
             </Button>
           ) : null}
           {move ? (
@@ -129,7 +136,7 @@ export function PreviewUnreachable({
           ) : null}
           <Button type="button" size="sm" onClick={onReload}>
             <RotateCw />
-            Retry
+            <T>Retry</T>
           </Button>
         </div>
       </div>

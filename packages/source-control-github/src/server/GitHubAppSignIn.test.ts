@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "@effect/vitest"
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -113,6 +114,7 @@ function harness(options: {
     Layer.provideMerge(SourceControlRateLimit.layer),
     Layer.provideMerge(options.settingsWritesFail === true ? failingWrites : host),
     Layer.provide(NodeCrypto.layer),
+    Layer.provide(FileSystem.layerNoop({})),
     Layer.provide(Layer.succeed(HttpClient.HttpClient, http)),
   );
   return { layer, requests };
@@ -345,6 +347,20 @@ describe("GitHubAppSignIn", () => {
         const signIn = yield* GitHubAppSignIn.GitHubAppSignIn;
         expect((yield* Effect.flip(signIn.token("github.com")))._tag).toBe("GitHubAppSessionError");
         expect(Object.keys(yield* savedSignIns)).toEqual(["github.com"]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("does not ask GitHub again after it rejects the client's credentials", () => {
+      const { layer, requests } = harness({
+        signIns: { "github.com": session({ accessTokenExpiresAt: 0 }) },
+        handle: () => ({ body: { error: "incorrect_client_credentials" } }),
+      });
+      return Effect.gen(function* () {
+        const signIn = yield* GitHubAppSignIn.GitHubAppSignIn;
+        yield* Effect.exit(signIn.token("github.com"));
+        yield* Effect.exit(signIn.token("github.com"));
+        expect(requests).toHaveLength(1);
+        expect(yield* savedSignIns).toEqual({});
       }).pipe(Effect.provide(layer));
     });
 

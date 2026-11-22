@@ -13,6 +13,7 @@ import {
   type LayoutTabDestination,
 } from "./layoutModel";
 import { useLayoutStore } from "./layoutStore";
+import { readIssueListPreferences } from "../components/issue/issueListPreferences";
 import { readPullRequestListPreferences } from "../components/pullRequest/pullRequestListPreferences";
 
 /** The page tab a URL shows in the layout. Settings and Usage open as modals over it instead. */
@@ -20,9 +21,9 @@ export function layoutRoutePage(location: {
   pathname: string;
   href: string;
 }): LayoutPageContent | null {
-  return location.pathname === "/pull-requests"
-    ? { kind: "pull-requests", href: location.href }
-    : null;
+  if (location.pathname === "/pull-requests") return { kind: "pull-requests", href: location.href };
+  if (location.pathname === "/issues") return { kind: "issues", href: location.href };
+  return null;
 }
 
 export function layoutPageHref(content: LayoutPageContent): string {
@@ -31,6 +32,9 @@ export function layoutPageHref(content: LayoutPageContent): string {
   const url = new URL(href, "http://t3.invalid");
   if (content.href === undefined && content.kind === "pull-requests") {
     url.search = defaultStringifySearch(readPullRequestListPreferences());
+  }
+  if (content.href === undefined && content.kind === "issues") {
+    url.search = defaultStringifySearch(readIssueListPreferences());
   }
   url.searchParams.delete("pane");
   return `${url.pathname}${url.search}${url.hash}`;

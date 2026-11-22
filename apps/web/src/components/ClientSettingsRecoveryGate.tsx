@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import type { ReactNode } from "react";
 
 import {
@@ -14,6 +15,7 @@ import { StandalonePage } from "./ui/standalone-page";
  * Until the first read finishes it keeps the boot splash, so no frame paints on defaults.
  */
 export function ClientSettingsRecoveryGate({ children }: { readonly children: ReactNode }) {
+  const gt = useGT();
   const status = useClientSettingsHydrationStatus();
   if (status === "pending") return <BootSplash />;
   if (status !== "failed" && status !== "retrying") return children;
@@ -22,7 +24,9 @@ export function ClientSettingsRecoveryGate({ children }: { readonly children: Re
     <StandalonePage size="bare">
       <Empty>
         <EmptyHeader>
-          <EmptyTitle>Couldn't load your settings</EmptyTitle>
+          <EmptyTitle>
+            <T>Couldn't load your settings</T>
+          </EmptyTitle>
         </EmptyHeader>
         <EmptyContent>
           <Button
@@ -32,7 +36,7 @@ export function ClientSettingsRecoveryGate({ children }: { readonly children: Re
             onClick={() => void ensureClientSettingsHydrated().catch(() => undefined)}
           >
             <RefreshIcon refreshing={retrying} />
-            {retrying ? "Retrying…" : "Retry"}
+            {retrying ? gt("Retrying…") : gt("Retry")}
           </Button>
         </EmptyContent>
       </Empty>
@@ -42,9 +46,10 @@ export function ClientSettingsRecoveryGate({ children }: { readonly children: Re
 
 /** The splash from index.html, which the first React commit replaces. */
 function BootSplash() {
+  const gt = useGT();
   return (
     <div id="boot-shell">
-      <div id="boot-shell-card" aria-label="T3 Code splash screen">
+      <div id="boot-shell-card" aria-label={gt("{product} splash screen", { product: "T3 Code" })}>
         <img id="boot-shell-logo" src="/apple-touch-icon.png" alt="T3 Code" />
       </div>
     </div>

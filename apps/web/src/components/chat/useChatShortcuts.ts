@@ -35,6 +35,14 @@ const SIDE_CHAT_PANE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
   "rightPanel.toggleMaximized",
 ]);
 
+const PANEL_TOGGLE_COMMANDS: ReadonlySet<KeybindingCommand> = new Set([
+  "rightPanel.toggle",
+  "threadPanel.toggle",
+  "diff.toggle",
+  "pullRequests.toggle",
+  "terminal.toggle",
+]);
+
 interface ChatShortcutsInput {
   readonly enabled: boolean;
   /**
@@ -117,7 +125,8 @@ export function useChatShortcuts(input: ChatShortcutsInput) {
       input.commands[command] ??
       composerShortcutCommands(input.composerRef, input.branchToolbarRef)[command] ??
       input.fallback(command);
-    if (!run || run({ event, terminalFocusOwner }) === false) return;
+    const held = event.repeat && PANEL_TOGGLE_COMMANDS.has(command);
+    if (!run || (!held && run({ event, terminalFocusOwner }) === false)) return;
     event.preventDefault();
     event.stopPropagation();
   });

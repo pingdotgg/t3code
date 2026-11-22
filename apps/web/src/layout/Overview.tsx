@@ -4,6 +4,7 @@
  */
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
+import { T, useGT } from "gt-react";
 import { PlusIcon } from "lucide-react";
 import {
   useEffect,
@@ -186,6 +187,26 @@ export function LayoutOverview() {
   useOverviewKeys();
   const phaseNow = useOverviewPhase();
   const open = phaseNow === "open" || phaseNow === "opening";
+  const staged = phaseNow !== "closed";
+  // The panes and the sidebar under the overview are aria-hidden, not inert
+  // (flipping inert restyles all they hold): focus that reaches them goes nowhere.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document focus listener held only while the overview covers the panes
+  useEffect(() => {
+    if (!staged) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          '[data-layout-stage] > [aria-hidden="true"], [data-app-sidebar][aria-hidden="true"]',
+        )
+      ) {
+        target.blur();
+      }
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => document.removeEventListener("focusin", onFocusIn, true);
+  }, [staged]);
   return (
     <>
       <LayoutHotCorner />
@@ -279,15 +300,29 @@ function closeHintHeight(): number {
 }
 
 function OverviewCloseHint() {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const closeKey = shortcutLabelForCommand(keybindings, "layout.overview");
   // The layout focus keys move the selection too ("Alt+Shift+Left" reads as
   // "Alt+Shift+arrows"); a rebinding off the arrows is left unnamed.
   const focusKey = shortcutLabelForCommand(keybindings, "layout.focusLeft");
   const focusModifiers = focusKey?.endsWith("Left") ? focusKey.slice(0, -"Left".length) : null;
-  const focusArrows = focusModifiers
-    ? `${focusModifiers}${focusModifiers.endsWith("+") ? "" : " "}arrows`
+  const focusPrefix = focusModifiers
+    ? `${focusModifiers}${focusModifiers.endsWith("+") ? "" : " "}`
     : null;
+  const hint =
+    focusPrefix !== null
+      ? closeKey
+        ? gt(
+            "hjkl, arrows or {modifiers}arrows to move, Enter to open, {closeKey} or Esc to close",
+            { modifiers: focusPrefix, closeKey },
+          )
+        : gt("hjkl, arrows or {modifiers}arrows to move, Enter to open, Esc to close", {
+            modifiers: focusPrefix,
+          })
+      : closeKey
+        ? gt("hjkl or arrows to move, Enter to open, {closeKey} or Esc to close", { closeKey })
+        : gt("hjkl or arrows to move, Enter to open, Esc to close");
   return createPortal(
     <div
       // Its own row of window chrome (black chrome tokens too), above the stage,
@@ -298,8 +333,7 @@ function OverviewCloseHint() {
       className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex h-(--workspace-chrome-row-height) items-center justify-center bg-(--app-chrome-background) text-meta text-dim-foreground motion-safe:transition-opacity motion-safe:starting:opacity-0"
       style={overviewZoomTransition()}
     >
-      {focusArrows ? `hjkl, arrows or ${focusArrows}` : "hjkl or arrows"} to move, Enter to open,{" "}
-      {closeKey ? `${closeKey} or ` : ""}Esc to close
+      {hint}
     </div>,
     document.body,
   );
@@ -1073,6 +1107,7 @@ export function OverviewStageOverlay({
   stage: OverviewStageLayout;
   phase: OverviewPhase;
 }) {
+  const gt = useGT();
   const choose = useChooseOverviewTab();
   const { rows, scale, gap } = stage;
   const [drag, setDrag] = useState<OverviewDrag | null>(null);
@@ -1207,8 +1242,9 @@ export function OverviewStageOverlay({
     <div
       data-layout-overview=""
       role="dialog"
-      aria-label="Workspaces overview"
-      className={cn("absolute inset-0", !open && "pointer-events-none")}
+      aria-label={gt("Workspaces overview")}
+      // Zooming back in it still takes every press, so none reaches the panes under it.
+      className="absolute inset-0"
     >
       {rows.map((row) => {
         const focusedRow = row.workspace.id === focusedRowId;
@@ -1246,6 +1282,7 @@ export function OverviewStageOverlay({
                   data-overview-pane-focused={focused ? "true" : undefined}
                   className={cn(
                     "absolute cursor-pointer rounded-pane",
+                    !open && "pointer-events-none",
                     dragging && "bg-background/60",
                   )}
                   style={paneBox(slot)}
@@ -1354,7 +1391,7 @@ function NewWorkspaceLine({ style }: { style: React.CSSProperties }) {
       <div className="h-1 w-[min(700px,80%)] rounded-full bg-strong-foreground" />
       <div className="absolute flex h-6.5 items-center gap-1.5 rounded-control bg-strong-foreground px-2.5 text-meta text-background shadow-lg">
         <PlusIcon aria-hidden className="size-3.25" />
-        New workspace
+        <T>New workspace</T>
       </div>
     </div>
   );

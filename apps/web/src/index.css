@@ -379,6 +379,52 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
     border-end-start-radius: var(--workspace-pane-window-radius);
     corner-end-start-shape: var(--workspace-pane-window-shape);
   }
+
+  /* Workspace panes draw their own corners (split panes clip, cuts paint), the
+     same curve unless the window reports its own. A rounded clip around
+     other rounded clips makes the compositor redraw the whole workspace
+     offscreen on every scrolled frame, so the inset clips square then. */
+  [data-slot="sidebar"][data-variant="inset"] ~ [data-slot="sidebar-inset"][data-pane-cuts] {
+    --workspace-pane-window-radius: max(
+      0px,
+      var(--desktop-window-corner-radius, 0px) - var(--workspace-pane-inset)
+    );
+  }
+
+  [data-slot="sidebar-inset"][data-pane-cuts]:not([data-split-panes]) {
+    border-start-start-radius: min(
+      var(--radius-pane),
+      1000 * var(--desktop-window-corner-radius, 0px)
+    );
+    border-end-start-radius: min(
+      var(--radius-pane),
+      1000 * var(--desktop-window-corner-radius, 0px)
+    );
+  }
+
+  /* Under a reported window curve the lone pane keeps that rounded clip. */
+  [data-slot="sidebar-inset"] > [data-pane-cut] {
+    --pane-cut: max(0px, 14px - 1000 * var(--desktop-window-corner-radius, 0px));
+  }
+
+  /* A notch squares the corner it covers (see [data-pane-notched]). */
+  .black-chrome
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"][data-pane-notched]
+    > [data-pane-cut="start-top"],
+  .black-chrome
+    [data-slot="sidebar"][data-variant="inset"]
+    ~ [data-slot="sidebar-inset"][data-pane-notched-right]
+    > [data-pane-cut="end-top"] {
+    display: none;
+  }
+}
+
+/* Below md the lone pane is full-bleed. */
+@media (width < 48rem) {
+  [data-slot="sidebar-inset"] > [data-pane-cut] {
+    display: none;
+  }
 }
 
 /* redesign: shell */
@@ -504,27 +550,30 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --pane-cut-center: 0 100%;
 }
 
-:is(
-  [data-pane-cut="end-notch"],
-  [data-pane-cut="start-after-notch"],
-  [data-pane-cut="end-before-notch"]
-) {
-  &::before {
-    content: none;
-  }
-
-  & > span {
-    position: sticky;
-    flex: none;
-    container-type: scroll-state;
-  }
-
-  & > span > span {
-    display: block;
-  }
+/* Plain lists, not :is(): a pseudo-element subject under :is() is tried on every
+   element, and an :is() ancestor keeps Blink's ancestor filter from rejecting spans. */
+[data-pane-cut="end-notch"]::before,
+[data-pane-cut="start-after-notch"]::before,
+[data-pane-cut="end-before-notch"]::before {
+  content: none;
 }
 
-:is([data-pane-cut="end-notch"], [data-pane-cut="end-before-notch"]) > span {
+[data-pane-cut="end-notch"] > span,
+[data-pane-cut="start-after-notch"] > span,
+[data-pane-cut="end-before-notch"] > span {
+  position: sticky;
+  flex: none;
+  container-type: scroll-state;
+}
+
+[data-pane-cut="end-notch"] > span > span,
+[data-pane-cut="start-after-notch"] > span > span,
+[data-pane-cut="end-before-notch"] > span > span {
+  display: block;
+}
+
+[data-pane-cut="end-notch"] > span,
+[data-pane-cut="end-before-notch"] > span {
   right: 0;
 }
 
@@ -536,7 +585,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   visibility: hidden;
 }
 
-:is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) > span > span {
+[data-pane-cut="start-after-notch"] > span > span,
+[data-pane-cut="end-before-notch"] > span > span {
   opacity: 0;
   transition: opacity var(--panel-animation-duration, 150ms) ease-out;
 }
@@ -600,7 +650,12 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
       [data-slot="sidebar"][data-variant="inset"]
       ~ [data-slot="sidebar-inset"]
       [data-layout-pane-id][data-pane-notched]
-      > :is([data-pane-cut="start-after-notch"], [data-pane-cut="end-before-notch"]) {
+      > [data-pane-cut="start-after-notch"],
+    .black-chrome
+      [data-slot="sidebar"][data-variant="inset"]
+      ~ [data-slot="sidebar-inset"]
+      [data-layout-pane-id][data-pane-notched]
+      > [data-pane-cut="end-before-notch"] {
       display: none;
     }
   }
@@ -794,6 +849,8 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-input: var(--contrast-input);
   --color-border: var(--contrast-border);
   --color-destructive: var(--destructive);
+  /* Text only; named themes set --destructive-text and --primary-text. */
+  --text-color-destructive: var(--destructive-text, var(--destructive));
   --color-destructive-fill-foreground: var(--destructive-fill-foreground);
   --color-accent-foreground: var(--contrast-accent-foreground);
   --color-accent: var(--accent);
@@ -816,6 +873,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --color-secondary: var(--secondary);
   --color-primary-foreground: var(--primary-foreground);
   --color-primary: var(--primary);
+  --text-color-primary: var(--primary-text, var(--primary));
   --color-popover-foreground: var(--contrast-popover-foreground);
   --color-popover: var(--popover);
   --color-card: var(--card);
@@ -1130,12 +1188,25 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
   --well-fill: var(--raised-fill);
   --well-rim: var(--raised-rim);
   --well-shadow: var(--raised-shadow);
+}
 
-  &:is(:hover, [data-pressed]):not([data-popup-open]) {
-    --well-fill: var(--raised-hover-fill);
-    --well-rim: var(--raised-hover-rim);
-    --well-shadow: var(--raised-hover-shadow);
-  }
+/* Not nested above: a state under a selector list compiles to one :is() that every
+   element tries. The preview's repeated class keeps that :is()'s specificity. */
+:root:is(:not([data-surface-style]), [data-surface-style="gradient-rim"])
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well:not([data-surface-preview] *):is(:hover, [data-pressed]):not([data-popup-open]),
+[data-surface-preview="gradient-rim"]
+  :where(
+    [data-slot="select-trigger"],
+    [data-slot="combobox-trigger"],
+    [data-settings-picker]
+  ).surface-well.surface-well.surface-well:is(:hover, [data-pressed]):not([data-popup-open]) {
+  --well-fill: var(--raised-hover-fill);
+  --well-rim: var(--raised-hover-rim);
+  --well-shadow: var(--raised-hover-shadow);
 }
 
 :where([data-slot="checkbox"], [data-slot="radio"])[data-unchecked]:not([aria-invalid="true"]) {
@@ -1873,9 +1944,8 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --bp-sidebar-shift: calc(var(--sidebar-width) * -1);
 }
 
-[data-panel-animations="true"]
-  > [data-chrome-art-layer="dev"]
-  :is([data-bp-sidebar], [data-bp-at="pane-left"]) {
+[data-panel-animations="true"] > [data-chrome-art-layer="dev"] [data-bp-sidebar],
+[data-panel-animations="true"] > [data-chrome-art-layer="dev"] [data-bp-at="pane-left"] {
   transition: translate var(--panel-animation-duration) ease-out;
 }
 
@@ -2015,7 +2085,7 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
 
 @utility live-activity-focus-aligned {
   width: calc(100% - var(--live-activity-focus-width) - var(--live-activity-focus-width));
-  margin-left: var(--live-activity-focus-width);
+  margin-inline-start: var(--live-activity-focus-width);
 }
 
 @property --assistant-citation-highlight-opacity {
@@ -2258,7 +2328,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     }
   }
 
-  :is(html[data-theme-id="t3-chat"], html[data-theme-id="ocean"], html[data-theme-id="iris"]) {
+  html[data-theme-id="t3-chat"],
+  html[data-theme-id="ocean"],
+  html[data-theme-id="iris"] {
     --stage-night-top: color-mix(in oklch, var(--stage-art-top) 38%, var(--stage-night-base-top));
     --stage-night-mid: color-mix(in oklch, var(--stage-art-mid) 38%, var(--stage-night-base-mid));
     --stage-night-bottom: color-mix(
@@ -2280,13 +2352,11 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
     --stage-night-line: color-mix(in oklch, var(--stage-art-line) 82%, oklch(1 0 0));
   }
 
-  :is(
-    html[data-theme-id="t3-chat"],
-    html[data-theme-id="grove"],
-    html[data-theme-id="ocean"],
-    html[data-theme-id="ember"],
-    html[data-theme-id="iris"]
-  ) {
+  html[data-theme-id="t3-chat"],
+  html[data-theme-id="grove"],
+  html[data-theme-id="ocean"],
+  html[data-theme-id="ember"],
+  html[data-theme-id="iris"] {
     --stage-art-celeste-highlight: var(--stage-art-highlight);
     --stage-art-celeste-secondary: var(--stage-art-secondary);
     --stage-art-violet-highlight: var(--stage-art-highlight);
@@ -2977,29 +3047,27 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --terminal-cursor: var(--app-theme-terminal-cursor);
   --terminal-selection-background: var(--app-theme-terminal-selection-background);
 
-  /* Design-system tiers and recipe fills derived from the theme's roles. Rims,
-     shadows and hover overlays keep the appearance's black or white alpha. */
+  /* Design-system tiers and recipe fills derived from the theme's roles. Filled
+     controls tint their rim from their fill; other rims, shadows and hover
+     overlays keep the appearance's black or white alpha. */
   --strong-foreground: color-mix(
     in oklab,
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  /* Light palettes' muted text sits closer to the canvas than the default's;
+     84% keeps dim text at the default's contrast. */
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   --well-shade: 2.5%;
-  --well-switch-shade: 14%;
-  --raised-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 94%, white),
-    color-mix(in srgb, var(--popover) 94%, white)
-  );
-  --raised-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 90%, white),
-    color-mix(in srgb, var(--popover) 90%, white)
-  );
-  --danger-hover-fill: linear-gradient(
-    color-mix(in srgb, var(--popover) 92%, var(--destructive)),
-    color-mix(in srgb, var(--popover) 92%, var(--destructive))
-  );
+  --well-switch-shade: 16%;
+  --raised-base: var(--popover);
   --lit-fill: linear-gradient(var(--primary), var(--primary));
+  --lit-rim: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--primary) 45%, white),
+    color-mix(in srgb, var(--primary) 0%, transparent)
+  );
   --lit-hover-fill: linear-gradient(var(--message-action-hover), var(--message-action-hover));
   --destructive-fill: linear-gradient(var(--destructive), var(--destructive));
   --destructive-hover-fill: linear-gradient(
@@ -3033,11 +3101,6 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --tray-fill: linear-gradient(var(--card), var(--card));
   --composer-fill: linear-gradient(var(--surface-raised), var(--surface-raised));
   --bubble-fill: linear-gradient(var(--message-surface), var(--message-surface));
-  --kbd-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--popover), white 12%),
-    color-mix(in srgb, var(--popover), white 6%)
-  );
   --kbd-popover-fill: linear-gradient(
     180deg,
     color-mix(in srgb, var(--popover), white 8%),
@@ -3058,12 +3121,12 @@ html[data-theme-id]:not([data-theme-id=""]) {
     color-mix(in srgb, var(--primary-foreground), black 8%) 50%,
     color-mix(in srgb, var(--primary-foreground), black 3%) 100%
   );
+  /* Off knobs are the default's flat light knob in the overlay's hue; a popover-colored
+     knob vanishes into a dark track. Tinted tracks run lighter than the default's, so
+     the knob is lighter too to keep the default's contrast. */
   --gloss-off-thumb-fill: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--popover), white 12%) 0%,
-    var(--popover) 50%,
-    color-mix(in srgb, var(--popover), black 8%) 50%,
-    color-mix(in srgb, var(--popover), black 3%) 100%
+    oklch(from var(--popover) 0.994 c h),
+    oklch(from var(--popover) 0.994 c h)
   );
   /* Solid neutrals the default palette spells out as greys; named themes
      derive them from their roles so nothing stays grey on a tinted pane. */
@@ -3078,7 +3141,8 @@ html[data-theme-id]:not([data-theme-id=""]) {
   --provider-mark: var(--muted-foreground);
   --code-gutter: var(--dim-foreground);
   --search-line-number: var(--dim-foreground);
-  --kbd-lit-foreground: color-mix(in oklab, var(--primary-foreground) 55%, var(--primary));
+  /* A theme's action fill leaves no room to dim the hint below its label. */
+  --kbd-lit-foreground: var(--primary-foreground);
   --sidebar-settled-title: color-mix(in oklab, var(--sidebar-muted-foreground) 85%, var(--sidebar));
   --sidebar-settled-label: color-mix(in oklab, var(--sidebar-muted-foreground) 75%, var(--sidebar));
   --sidebar-settled-meta: color-mix(in oklab, var(--sidebar-muted-foreground) 65%, var(--sidebar));
@@ -3118,10 +3182,170 @@ html[data-theme-id]:not([data-theme-id=""]) {
   );
 
   @variant dark {
+    --dim-mix: 72%;
     --well-shade: 16%;
     --well-switch-shade: 30%;
+    --gloss-off-thumb-fill: linear-gradient(
+      oklch(from var(--popover) 0.975 c h),
+      oklch(from var(--popover) 0.975 c h)
+    );
     --app-scrollbar-thumb: color-mix(in srgb, var(--foreground) 36%, transparent);
     --app-scrollbar-thumb-hover: color-mix(in srgb, var(--foreground) 45%, transparent);
+    /* Some dark palettes paint the overlay role well above the canvas. Controls on
+       the page step up from the surface role instead, as the default's do. */
+    --raised-base: var(--card);
+    /* How far the overlay sits above the raised base, as an oklch lightness:
+       (popover + (1 - base)) / 2, doubled, minus one. Zero when they match. */
+    --overlay-lift: oklch(
+      from color-mix(in oklab, var(--popover), oklch(from var(--raised-base) calc(1 - l) 0 0))
+        calc(l * 2 - 1) 0 0
+    );
+  }
+
+  /* The default light primary is near-black, so its keycap shows no box. */
+  @variant light {
+    --kbd-lit-fill: transparent;
+  }
+}
+
+/* Raised controls sit one step above the surface they are on: the page's surface
+   role (dark, above), or the overlay inside menus, popovers and dialogs (below). */
+html[data-theme-id]:not([data-theme-id=""]),
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-popover,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-palette,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-dialog,
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] .surface-tooltip {
+  --raised-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 94%, white),
+    color-mix(in srgb, var(--raised-base) 94%, white)
+  );
+  --raised-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 90%, white),
+    color-mix(in srgb, var(--raised-base) 90%, white)
+  );
+  --danger-hover-fill: linear-gradient(
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive)),
+    color-mix(in srgb, var(--raised-base) 92%, var(--destructive))
+  );
+  --kbd-fill: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--raised-base), white 12%),
+    color-mix(in srgb, var(--raised-base), white 6%)
+  );
+}
+
+/* Secondary text was tuned for the canvas. On an overlay lifted above it, each
+   tier moves up by the same lightness so it keeps its distance from its ground.
+   Other surface styles repaint overlays from the canvas and keep their own tiers. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  @variant dark {
+    --overlay-muted-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-muted-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-dim-foreground: oklab(
+      from color-mix(in oklab, var(--contrast-dim-foreground), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-placeholder: oklab(
+      from color-mix(in oklab, var(--contrast-placeholder), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-secondary-label: oklab(
+      from color-mix(in oklab, var(--contrast-secondary-label), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+    --overlay-icon-muted: oklab(
+      from color-mix(in oklab, var(--contrast-icon-muted), var(--overlay-lift)) calc(l * 2)
+        calc(a * 2) calc(b * 2)
+    );
+  }
+}
+
+/* One rule per surface: a variant under a selector list compiles to one :is() that
+   every element tries. */
+html[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim"] {
+  & .surface-popover {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-palette {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-dialog {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+
+  & .surface-tooltip {
+    @variant dark {
+      --raised-base: var(--popover);
+      --contrast-muted-foreground: var(--overlay-muted-foreground);
+      --contrast-dim-foreground: var(--overlay-dim-foreground);
+      --contrast-placeholder: var(--overlay-placeholder);
+      --contrast-secondary-label: var(--overlay-secondary-label);
+      --contrast-icon-muted: var(--overlay-icon-muted);
+    }
+  }
+}
+
+/* --primary and --destructive are fills in named themes; their text keeps the
+   hue at a readable lightness. Re-resolved where a subtree redefines --primary.
+   One rule per subject: a variant under a selector list compiles to one :is() that
+   every element tries. The root repeats [data-theme-id] to keep the list's specificity. */
+html[data-theme-id]:not([data-theme-id=""]) {
+  &[data-theme-id] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
+  }
+
+  & [data-chrome-scope] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
+  }
+
+  & [data-app-sidebar] {
+    @variant light {
+      --primary-text: oklch(from var(--primary) min(l, 0.55) c h);
+      --destructive-text: oklch(from var(--destructive) min(l, 0.55) c h);
+    }
+    @variant dark {
+      --primary-text: oklch(from var(--primary) max(l, 0.76) c h);
+      --destructive-text: oklch(from var(--destructive) max(l, 0.76) c h);
+    }
   }
 }
 
@@ -3323,16 +3547,58 @@ html[data-theme-id] [data-app-sidebar] {
     var(--foreground) 45%,
     var(--appearance-contrast-target)
   );
-  --dim-foreground: color-mix(in oklab, var(--muted-foreground) 72%, var(--background));
+  --dim-mix: 84%;
+  --dim-foreground: color-mix(in oklab, var(--muted-foreground) var(--dim-mix), var(--background));
   border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 10%, transparent);
 
   @variant dark {
+    --dim-mix: 72%;
     border-color: color-mix(in srgb, var(--contrast-sidebar-foreground) 8%, transparent);
   }
 }
 
 html[data-theme-id] [data-mobile="true"] [data-app-sidebar] {
   --dim-foreground: var(--sidebar-muted-foreground);
+}
+
+/* Theme row fills are mid-tone accents, so meta on the active or selected row
+   leans toward the sidebar text to keep the default's contrast. */
+html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
+  [data-app-sidebar]
+  .bg-sidebar-row-active,
+html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome)
+  [data-app-sidebar]
+  .surface-sidebar-row-selected {
+  --secondary-label: color-mix(
+    in oklab,
+    var(--app-theme-secondary-label) 40%,
+    var(--sidebar-foreground)
+  );
+  --muted-foreground: color-mix(
+    in oklab,
+    var(--app-theme-muted-foreground) 50%,
+    var(--sidebar-foreground)
+  );
+  --dim-foreground: color-mix(
+    in oklab,
+    var(--sidebar-muted-foreground) 65%,
+    var(--sidebar-foreground)
+  );
+  --contrast-muted-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--muted-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-secondary-label: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--secondary-label) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
+  --contrast-dim-foreground: color-mix(
+    in oklab,
+    color-mix(in oklab, var(--dim-foreground) var(--appearance-contrast-base), var(--background)),
+    var(--appearance-contrast-target) var(--appearance-contrast-boost)
+  );
 }
 
 /* T3 Chat's panel divider is deliberately pink, and its resize affordance
@@ -3381,6 +3647,7 @@ html:root[data-theme-id="t3-code-classic"] {
        Without those borders they need the default theme's spacing between steps. */
     --card: color-mix(in srgb, var(--background) 97.5%, white);
     --popover: color-mix(in srgb, var(--background) 97%, white);
+    --raised-base: var(--popover);
     --surface-raised: color-mix(in srgb, var(--background) 94%, white);
     --info-foreground: var(--color-blue-400);
     --success-foreground: var(--color-emerald-400);
@@ -3439,14 +3706,25 @@ html:root[data-theme-id="t3-code-classic"] .surface-dialog {
   }
 }
 
-html:root[data-theme-id="t3-code-classic"] :is(.surface-popover, .surface-palette) {
+html:root[data-theme-id="t3-code-classic"] .surface-popover,
+html:root[data-theme-id="t3-code-classic"] .surface-palette {
   background: var(
     --style-overlay-background,
     color-mix(in srgb, var(--popover) 83.6%, transparent)
   );
   border-color: var(--style-border, color-mix(in srgb, var(--foreground) 10%, transparent));
   backdrop-filter: var(--style-backdrop, blur(12px) saturate(1.14));
+}
 
+/* One rule per surface: a variant under a selector list compiles to one :is() that
+   every element tries. */
+html:root[data-theme-id="t3-code-classic"] .surface-popover {
+  @variant dark {
+    backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
+  }
+}
+
+html:root[data-theme-id="t3-code-classic"] .surface-palette {
   @variant dark {
     backdrop-filter: var(--style-backdrop, blur(16px) saturate(1.08));
   }
@@ -3474,8 +3752,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome:is(
     [data-surface-style="aqua-blue"]
   )
   [data-chrome-scope],
-html:root[data-theme-id="t3-code-classic"]
-  :is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]) {
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="aqua-gloss-full"],
+html:root[data-theme-id="t3-code-classic"] [data-surface-preview="aqua-blue"] {
   --lit-fill: linear-gradient(
     var(--primary),
     color-mix(in srgb, var(--primary) 92%, black) 50%,
@@ -4421,6 +4699,12 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
     &[data-theme-id]:not([data-theme-id=""])[data-surface-style="gradient-rim-everywhere"] > body,
     &[data-theme-id]:not([data-theme-id=""]) [data-surface-preview="gradient-rim-everywhere"] {
       --lit-fill: linear-gradient(var(--primary), var(--primary)) !important;
+      /* The default's lift would clip a colored primary to a white rim. */
+      --lit-rim: linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--primary) 45%, white),
+        color-mix(in srgb, var(--primary) 0%, transparent)
+      ) !important;
     }
   }
 }
@@ -4569,7 +4853,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --tree-row-selected-rim: var(--sidebar-row-selected-rim) !important;
 }
 
-:is([data-slot="checkbox-indicator"], [data-slot="radio-indicator"]) {
+[data-slot="checkbox-indicator"],
+[data-slot="radio-indicator"] {
   border: var(--checked-indicator-border, 0px) solid transparent;
 }
 
@@ -4665,9 +4950,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --command-footer-shadow: none;
 }
 
+/* The repeated class keeps the specificity of the :is() this replaced. */
 :where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
   [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
-  > :is([data-slot="toggle"][data-variant="segmented"][data-pressed], .surface-raised) {
+  > [data-slot="toggle"][data-variant="segmented"][data-pressed],
+:where(:root[data-surface-style="flat"], [data-surface-preview="flat"])
+  [data-slot="toggle-group"]:is([data-variant="segmented"], [data-variant="segmented-slide"])
+  > .surface-raised.surface-raised.surface-raised {
   background: color-mix(in srgb, var(--flat-high) 88%, var(--foreground));
 }
 
@@ -4840,7 +5129,9 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 }
 
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
-  :is(.chat-markdown-codeblock, .chat-markdown-table-container) {
+  .chat-markdown-codeblock,
+:root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
+  .chat-markdown-table-container {
   --well-fill: var(--style-container-fill);
 }
 
@@ -4857,7 +5148,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 /* Aqua's gloss stays on controls. Pane tabs and the composer body keep the default style's
    calm faces, so the split does not run across the app's structure. */
 :root:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"]) > body,
-:is([data-surface-preview="aqua-gloss-full"], [data-surface-preview="aqua-blue"]),
+[data-surface-preview="aqua-gloss-full"],
+[data-surface-preview="aqua-blue"],
 :root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-chrome-scope] {
   --pane-tab-fill: transparent;
@@ -4920,7 +5212,8 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --sidebar-row-selected-rim: transparent !important;
 }
 
-:root[data-surface-style="gradient-rim-everywhere"] :is(.surface-card, .surface-card-settings) {
+:root[data-surface-style="gradient-rim-everywhere"] .surface-card,
+:root[data-surface-style="gradient-rim-everywhere"] .surface-card-settings {
   border: 1px solid transparent;
 }
 
@@ -5215,7 +5508,9 @@ body {
    which multiplied idle GPU cost. The overlay's 0.035 opacity lives in the
    SVG rect instead. Surfaces that float over the body (e.g. the inset main
    card) must opt in via the surface-grain utility, or they lose the
-   grain's subtle brightening and stand out against the body. */
+   grain's subtle brightening and stand out against the body.
+   surfaceGrainTile.ts swaps the SVG for the same pixels as a bitmap once
+   the app is idle: raster re-runs the noise filter on every repainted tile. */
 :root {
   --surface-grain: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
   --surface-grain-size: 256px 256px;
@@ -5490,6 +5785,14 @@ body {
   list-style-type: decimal;
 }
 
+/* Spaces a user typed at the start of a line, which Markdown would otherwise drop. pre-wrap, not
+   pre, so an indent wider than the bubble wraps instead of pushing the line's text out of view.
+   Not selectable, so a selection, a drag or a copy carries the text as it did before. */
+.chat-markdown.user-message-markdown [data-leading-whitespace] {
+  white-space: pre-wrap;
+  user-select: none;
+}
+
 .chat-markdown li + li {
   margin-top: 0.25rem;
 }
@@ -5539,20 +5842,15 @@ body {
   color: var(--info-foreground);
 }
 
+/* One selector, not a list: the build wraps a list holding :has() in one :is() that
+   every element tries. */
 .chat-markdown
   a:not(
     .chat-markdown-file-link,
     :has([data-slot="context-chip-label"]),
     [data-response-card],
     [data-markdown-image-link]
-  ):hover,
-.chat-markdown
-  a:not(
-    .chat-markdown-file-link,
-    :has([data-slot="context-chip-label"]),
-    [data-response-card],
-    [data-markdown-image-link]
-  ):focus-visible {
+  ):is(:hover, :focus-visible) {
   background-image: radial-gradient(circle, currentcolor 0.75px, transparent 1px);
   background-position: left bottom;
   background-repeat: repeat-x;
@@ -5764,7 +6062,8 @@ body {
 }
 
 /* Bound prose at word boundaries without splitting identifiers to fit the lane. */
-.chat-markdown-table-container :is(th, td) {
+.chat-markdown-table-container th,
+.chat-markdown-table-container td {
   @apply text-body text-foreground;
   padding: 0.5rem 0.75rem;
   text-align: start;
@@ -5785,7 +6084,8 @@ body {
   border-bottom: 1px solid var(--hairline);
 }
 
-.chat-markdown-table-container :is(th, td):not(:last-child) {
+.chat-markdown-table-container th:not(:last-child),
+.chat-markdown-table-container td:not(:last-child) {
   border-inline-end: 1px solid var(--hairline);
 }
 
@@ -5797,7 +6097,8 @@ body {
   --table-header-fill: var(--flat-high);
   --hairline: var(--flat-hairline);
 
-  & :is(th, td):not(:last-child) {
+  & th:not(:last-child),
+  & td:not(:last-child) {
     border-inline-end-width: 0;
   }
 
@@ -5919,10 +6220,11 @@ body {
   --bubble-inline-code: var(--bubble-well-fill);
 }
 
-:root
-  .surface-bubble
-  .user-message-markdown
-  :is(.chat-markdown-table-container, .chat-markdown-codeblock, pre) {
+/* :where(pre) lets Blink bucket the rule by tag; the :is() after it keeps the class weight
+   pre had inside one :is() with the classes. */
+:root .surface-bubble .user-message-markdown .chat-markdown-table-container,
+:root .surface-bubble .user-message-markdown .chat-markdown-codeblock,
+:root .surface-bubble .user-message-markdown :where(pre):is(pre, .chat-markdown-codeblock) {
   --well-fill: var(--bubble-well-fill);
   --well-rim: var(--bubble-well-rim);
   --style-code-fill: var(--bubble-well-fill);
@@ -5942,8 +6244,10 @@ body {
   --contrast-foreground: var(--bubble-markdown-foreground);
 }
 
-/* Formula cells keep their natural width and scroll with the table. */
-.chat-markdown-table-container :is(th, td):has([data-markdown-math]) {
+/* Formula cells keep their natural width and scroll with the table. One rule per cell,
+   kept apart: the build merges equal neighbors into a list and wraps a list holding
+   :has() in one :is() that every element tries. */
+.chat-markdown-table-container th:has([data-markdown-math]) {
   max-width: none;
 }
 
@@ -5954,6 +6258,10 @@ body {
   opacity: 1;
   --app-scrollbar-thumb: color-mix(in srgb, var(--muted-foreground) 60%, transparent);
   --app-scrollbar-thumb-hover: color-mix(in srgb, var(--muted-foreground) 80%, transparent);
+}
+
+.chat-markdown-table-container td:has([data-markdown-math]) {
+  max-width: none;
 }
 
 :root {
@@ -6125,7 +6433,9 @@ body {
 }
 
 /* The editor and its placeholder; .ProseMirror outranks Tiptap's injected base CSS, which
-   disables ligatures. Ligatures match sent messages. */
+   disables ligatures. Ligatures match sent messages. Chromium reshapes edited text from a reused
+   prefix that assumes two characters of context, so long contextual runs (Fira Code's dots)
+   vanish; any non-zero word-spacing makes it reshape the whole run instead. */
 .composer-text,
 .composer-text.ProseMirror {
   line-height: 1.25rem;
@@ -6133,6 +6443,7 @@ body {
   overflow-wrap: break-word;
   font-variant-ligatures: normal;
   font-feature-settings: normal;
+  word-spacing: 0.01px;
 }
 
 .composer-prompt-body {
@@ -6150,14 +6461,21 @@ body {
 /* Past one line the actions drop to the bottom corner, so the text keeps their column clear
    (the first line's width is unchanged); a float can't follow the last line there. */
 .composer-prompt-body[data-composer-multiline]
-  :is([data-composer-empty="false"] [data-testid="composer-editor"], [data-composer-placeholder]) {
+  :is([data-composer-empty="false"] [data-testid="composer-editor"]),
+.composer-prompt-body[data-composer-multiline]
+  [data-composer-placeholder][data-composer-placeholder] {
   padding-inline-end: calc(
     var(--composer-actions-width, 100px) + var(--composer-actions-gap) + var(--spacing)
   );
+}
 
-  &::before {
-    display: none;
-  }
+/* Separate from the rule above: a nested pseudo-element under a selector list compiles to
+   one :is() that every element tries. The repeated attribute keeps the list's specificity. */
+.composer-prompt-body[data-composer-multiline]
+  :is([data-composer-empty="false"] [data-testid="composer-editor"])::before,
+.composer-prompt-body[data-composer-multiline]
+  [data-composer-placeholder][data-composer-placeholder]::before {
+  display: none;
 }
 
 .composer-prompt-body[data-composer-overflow]
@@ -6387,8 +6705,11 @@ body {
    it, and at its end stops there instead of carrying the strip along (pen
    ZlxmK). Anywhere else in a pane the swipe scrolls the strip. Only real
    scrollers: on a clipping wrapper (overflow hidden) "contain" would stop
-   every swipe from reaching the strip. */
-[data-layout-strip] [data-layout-pane-id] :is(pre, .overflow-x-auto, .overflow-x-scroll) {
+   every swipe from reaching the strip. :where(pre) lets Blink bucket the rule by tag;
+   the :is() after it keeps the class weight pre had inside one :is() with the classes. */
+[data-layout-strip] [data-layout-pane-id] :where(pre):is(pre, .overflow-x-auto),
+[data-layout-strip] [data-layout-pane-id] .overflow-x-auto,
+[data-layout-strip] [data-layout-pane-id] .overflow-x-scroll {
   overscroll-behavior-x: contain;
 }
 
@@ -6439,6 +6760,11 @@ body {
   syntax: "*";
   inherits: false;
 }
+@property --strip-fade-start-shown {
+  syntax: "<number>";
+  inherits: false;
+  initial-value: 1;
+}
 
 [data-slot="sidebar-inset"] {
   /* Pane tokens resolved outside the chrome scope of the bar. */
@@ -6449,6 +6775,7 @@ body {
 }
 
 [data-pane-join],
+[data-pane-join-foot],
 [data-pane-bar-corner] {
   display: none;
 }
@@ -6526,12 +6853,16 @@ body {
     }
     /* The joined first tab's side runs straight down the pane's edge, so the
        pane's corner under it gives way (data-pane-join-start, PaneTabs.tsx). */
-    & :is([data-pane-bar-corner="start"], [data-pane-cut="start-notch"]) {
+    & [data-pane-bar-corner="start"],
+    & [data-pane-cut="start-notch"] {
       transition: opacity var(--panel-animation-duration, 150ms) ease-out;
     }
     & [data-pane-join-start] [data-pane-bar-corner="start"],
-    & [data-layout-pane-id]:has([data-pane-join-start]) > [data-pane-cut="start-notch"] {
+    & [data-layout-pane-id][data-pane-joined-start] > [data-pane-cut="start-notch"] {
       opacity: 0;
+    }
+    & [data-pane-join-start] [data-pane-notch=""] [data-layout-tab-strip] {
+      --strip-fade-start-shown: 0;
     }
     & [data-pane-bar-corner="end"] {
       inset-inline-end: 0;
@@ -6557,8 +6888,14 @@ body {
          (ScrollArea's scrollFade); its end fades before the control that
          overlaps the rim's tail. PaneTabs sets the overflow. At the pane's
          edge its start begins past the ear room the pane clips. */
-      --strip-fade-lead: calc(var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)));
-      --strip-fade-start: min(1.5rem, var(--strip-overflow-start, 0px));
+      --strip-fade-lead: calc(
+        var(--pane-join-ear) * (1 - var(--pane-titlebar-inset, 0)) *
+          var(--strip-overflowing-start, 0)
+      );
+      --strip-fade-start: calc(
+        min(1.5rem, var(--strip-overflow-start, 0px)) * var(--strip-fade-start-shown)
+      );
+      transition: --strip-fade-start-shown var(--panel-animation-duration, 150ms) ease-out;
       --strip-fade-end: min(1.5rem, var(--strip-overflow-end, 0px));
       --strip-fade-end-at: calc(100% - var(--pane-join-tail) * var(--strip-overflowing-end, 0));
       mask-image: linear-gradient(
@@ -6575,18 +6912,21 @@ body {
 
     /* The shape draws the active tab. Its label reads as active once the
        shape has landed under it ([data-joined], PaneTabs.tsx), and the tab
-       it left reads as a plain one from then on. */
+       it left reads as a plain one from then on. The repeated attribute keeps
+       the specificity of the :is() these two selectors replaced. */
     &
       [data-pane-notch=""]
       [data-layout-tab-strip]
-      :is(.surface-pane-tab:not([data-hidden-terminal-chip]), [data-active-tab="true"]) {
+      .surface-pane-tab:not([data-hidden-terminal-chip]),
+    &
+      [data-pane-notch=""]
+      [data-layout-tab-strip]
+      [data-active-tab="true"][data-active-tab="true"] {
       background: none;
       box-shadow: none;
     }
-    &
-      [data-pane-notch=""]
-      [data-layout-tab-strip]
-      :is(.surface-pane-tab, [data-active-tab="true"]):not([data-joined]) {
+    & [data-pane-notch=""] [data-layout-tab-strip] .surface-pane-tab:not([data-joined]),
+    & [data-pane-notch=""] [data-layout-tab-strip] [data-active-tab="true"]:not([data-joined]) {
       color: var(--pane-bar-muted);
     }
     & [data-pane-notch=""] [data-layout-tab-strip] [data-joined] {
@@ -6599,17 +6939,15 @@ body {
 
     /* A hovered tab shows the joined tab's outline, without its ears, in a
        faint pane fill, under the joined shape so it never dents it. */
-    &
-      [data-pane-notch=""]:not([data-pane-notch-unfocused])
-      [data-layout-tab-strip]
-      :is([data-layout-pane-tab], [data-tab-key]):not([data-joined]):is(
-        :hover,
-        .group\/tab:hover > *
-      ) {
-      position: relative;
-      background: none;
+    & [data-pane-notch=""]:not([data-pane-notch-unfocused]) [data-layout-tab-strip] {
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *),
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *) {
+        position: relative;
+        background: none;
+      }
 
-      &::before {
+      & [data-layout-pane-tab]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before,
+      & [data-tab-key]:not([data-joined]):is(:hover, .group\/tab:hover > *)::before {
         content: "";
         position: absolute;
         z-index: -2;
@@ -6640,11 +6978,8 @@ body {
     & [data-layout-pane-id][data-pane-notched] > [data-pane-cut$="notch"] {
       top: calc(anchor(--pane-notch top) + var(--pane-notch-height) - var(--pane-join-shift));
     }
+    /* PaneTabs.tsx markPaneLit writes --pane-lit-* onto these cuts. */
     & [data-layout-pane-id] > [data-pane-cut$="notch"] {
-      --pane-lit-start: inherit;
-      --pane-lit-end: inherit;
-      --pane-lit-panel-start: inherit;
-      --pane-lit-panel-end: inherit;
       --pane-lit-from: min(var(--pane-lit-start, 100000px), var(--pane-lit-panel-start, 100000px));
       --pane-lit-to: max(var(--pane-lit-end, -100000px), var(--pane-lit-panel-end, -100000px));
     }
@@ -6697,7 +7032,8 @@ body {
       /* A cap: corner, side and ear. The end cap is the start one mirrored. */
       /* Their own layers: a slide begun on a press keeps moving while the
          switch's render holds the main thread. */
-      & :is([data-jc], [data-jm]) {
+      & [data-jc],
+      & [data-jm] {
         will-change: translate, scale;
       }
 
@@ -6781,8 +7117,9 @@ body {
         mask: linear-gradient(to right, transparent, #000);
       }
 
+      /* PANE_JOIN_MIDDLE_PX wide, scaled to the tab's middle (PaneTabs.tsx). */
       & [data-jm] {
-        width: 1px;
+        width: 256px;
         height: 100%;
         transform-origin: 0 0;
         translate: calc(var(--jx) + var(--r)) 0;
@@ -6797,14 +7134,75 @@ body {
         background: var(--pane-join-rim) 0 0 / var(--pane-join-rim-size) no-repeat;
       }
 
-      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jr],
+      & [data-jer],
+      & [data-jt],
       & [data-jm]::after {
         transition: opacity var(--panel-animation-duration, 150ms) ease-out;
       }
     }
 
+    /* A resting tab's foot is pane fill in the bar's own box over a notch cut
+       from the bar, so it ends on the bar's edge: the tab's layers raster
+       apart from the bar, and at a fractional zoom showed its last row or
+       covered a row of content (PaneTabs.tsx, markJoinFoot). */
+    & [data-pane-notch=""][data-pane-join-footed] {
+      --e: var(--pane-join-ear);
+      --pane-join-foot-l: calc(100vw + var(--pane-join-foot-x) + var(--e));
+      --pane-join-foot-r: calc(
+        100vw + var(--pane-join-foot-x) + var(--pane-join-foot-w) - var(--e)
+      );
+
+      &::before {
+        clip-path: polygon(
+          0 -10px,
+          100% -10px,
+          100% calc(100% + 10px),
+          calc(var(--pane-join-foot-r) + 5.5px) calc(100% + 10px),
+          calc(var(--pane-join-foot-r) + 5.5px) 100%,
+          calc(var(--pane-join-foot-r) + 3.5px) calc(100% - 1px),
+          calc(var(--pane-join-foot-r) + 2.5px) calc(100% - 2px),
+          var(--pane-join-foot-r) calc(100% - 3px),
+          var(--pane-join-foot-l) calc(100% - 3px),
+          calc(var(--pane-join-foot-l) - 2.5px) calc(100% - 2px),
+          calc(var(--pane-join-foot-l) - 3.5px) calc(100% - 1px),
+          calc(var(--pane-join-foot-l) - 5.5px) 100%,
+          calc(var(--pane-join-foot-l) - 5.5px) calc(100% + 10px),
+          0 calc(100% + 10px)
+        );
+      }
+
+      & > [data-layout-tab-strip-slot] > [data-pane-join-foot] {
+        /* Inside the ear fill's edge, which still draws it. */
+        --ear-in: transparent calc(var(--e) + 0.5px), var(--pane-join-fill) calc(var(--e) + 1.5px);
+        display: block;
+        position: absolute;
+        z-index: -1;
+        inset-block-start: calc(var(--pane-join-shift) * -1);
+        inset-inline-start: var(--pane-join-foot-x);
+        width: var(--pane-join-foot-w);
+        height: var(--pane-notch-height);
+        background:
+          radial-gradient(circle var(--e) at 0 0, var(--ear-in)) 0 100% / var(--e) var(--e)
+            no-repeat,
+          radial-gradient(circle var(--e) at 100% 0, var(--ear-in)) 100% 100% / var(--e) var(--e)
+            no-repeat,
+          linear-gradient(var(--pane-join-fill), var(--pane-join-fill)) var(--e) 100% /
+            calc(100% - 2 * var(--e)) 4px no-repeat;
+        pointer-events: none;
+      }
+
+      /* The body's own fill ends inside the foot. */
+      & [data-pane-join] [data-jf],
+      & [data-pane-join] [data-jm] {
+        height: calc(100% - 2px);
+      }
+    }
+
     & [data-pane-notch-unfocused] [data-pane-join] {
-      & :is([data-jr], [data-jer], [data-jt]),
+      & [data-jr],
+      & [data-jer],
+      & [data-jt],
       & [data-jm]::after {
         opacity: 0.45;
       }

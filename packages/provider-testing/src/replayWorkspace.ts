@@ -6,6 +6,8 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { unsetInheritedGitRepositoryEnv } from "@t3tools/shared/testing/gitRepositoryEnv";
 
 class ReplayFixtureGitCommandError extends Schema.TaggedError<ReplayFixtureGitCommandError>()(
   "ReplayFixtureGitCommandError",
@@ -29,7 +31,10 @@ function runGit(
 > {
   return Effect.gen(function* () {
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const exitCode = yield* spawner.exitCode(ChildProcess.make("git", args, { cwd }));
+    const env = unsetInheritedGitRepositoryEnv(process.env, yield* HostProcess.Platform);
+    const exitCode = yield* spawner.exitCode(
+      ChildProcess.make("git", args, { cwd, env, extendEnv: true }),
+    );
     if (Number(exitCode) !== 0) {
       return yield* new ReplayFixtureGitCommandError({
         command: `git ${args.join(" ")}`,

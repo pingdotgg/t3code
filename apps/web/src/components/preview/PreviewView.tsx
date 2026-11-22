@@ -1,3 +1,5 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -30,6 +32,7 @@ import {
   resolveAddressBarInput,
   resolveSearchUrlTemplate,
 } from "@t3tools/shared/preview";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 
 import {
@@ -48,7 +51,10 @@ import {
   updatePreviewServerSnapshot,
   useThreadPreviewState,
 } from "~/previewStateStore";
-import { resolveDiscoveredServerUrl } from "~/browser/browserTargetResolver";
+import {
+  resolveDiscoveredServerUrl,
+  resolveExternalServerUrl,
+} from "~/browser/browserTargetResolver";
 import { useEnvironmentSupportsServerBrowser } from "~/state/entities";
 import {
   useEnvironment,
@@ -87,10 +93,15 @@ import { useBrowserLayoutZoomFactor } from "~/browser/useBrowserLayoutZoomFactor
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
 import { isBrowserSettingsReadError } from "~/browser/openFileInPreview";
 import { PreviewFileNotShown, PreviewUnreachable } from "./PreviewUnreachable";
+import type { MessageResolver } from "~/i18n/messages";
 import { revealInFileExplorerLabel } from "./fileExplorerLabel";
 import { Badge } from "~/components/ui/badge";
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
-import { alternatePreviewRuntime, useRendersServerTabNatively } from "~/browser/previewRuntime";
+import {
+  alternatePreviewRuntime,
+  useDesktopLoadsLoopback,
+  useRendersServerTabNatively,
+} from "~/browser/previewRuntime";
 import {
   ServerBrowserSurface,
   handoffServerBrowserFrame,
@@ -127,8 +138,11 @@ interface Props {
 function previewProfileName(
   profiles: ReadonlyArray<{ readonly id: string; readonly name: string }>,
   profileId: string,
+  resolve: MessageResolver,
 ): string {
-  return profiles.find((profile) => profile.id === profileId)?.name ?? "Removed profile";
+  return (
+    profiles.find((profile) => profile.id === profileId)?.name ?? resolve(msg("Removed profile"))
+  );
 }
 
 const localApi = typeof window === "undefined" ? null : ensureLocalApi();
@@ -176,6 +190,8 @@ export function PreviewView({
   visible,
   onSendAnnotation,
 }: Props) {
+  const gt = useGT();
+  const messages = useMessages();
   const urlInputRef = useRef<HTMLInputElement | null>(null);
   const [find, setFind] = useState<{ tabId: string; requestId: number } | null>(null);
   const [pickActive, setPickActive] = useState(false);
@@ -202,9 +218,10 @@ export function PreviewView({
   const environmentHttpBaseUrl = useEnvironmentHttpBaseUrl(threadRef.environmentId);
   const open = useAtomCommand(previewEnvironment.open);
   const closePreview = useAtomCommand(previewEnvironment.close, "preview close");
-  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? "the environment";
+  const environmentLabel = useEnvironment(threadRef.environmentId)?.label ?? null;
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverBrowser = useEnvironmentSupportsServerBrowser(threadRef.environmentId);
+  const desktopLoadsLoopback = useDesktopLoadsLoopback(threadRef.environmentId);
   const adjust = useAtomCommand(previewEnvironment.adjust, "preview appearance or zoom");
 
   usePreviewSession(threadRef);
@@ -256,7 +273,7 @@ export function PreviewView({
   }, [serverToolbarShown]);
   const [serverControlledTabId, setServerControlledTabId] = useState<string | null>(null);
   const serverInputDisabled = isServerTab && serverControlledTabId !== runtimeTabId;
-  const [serverFrameTabId, setServerFrameTabId] = useState<string | null>(null);
+  const [serverStreamSettledTabId, setServerStreamSettledTabId] = useState<string | null>(null);
   // A desktop page that mounted before its tab went headless leaves its stale state here.
   const desktopOverlay =
     tabId && !isServerTab ? (previewState.desktopByTabId[tabId] ?? null) : null;
@@ -275,13 +292,13 @@ export function PreviewView({
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = !reopening && navStatus._tag === "Idle";
   const serverStreamPending =
-    isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
+    isServerTab && !showEmptyState && !isUnreachable && serverStreamSettledTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";
   const viewport = snapshot?.viewport ?? FILL_PREVIEW_VIEWPORT;
   const browserDefaults = useBrowserDefaults();
   // IPC interprets undefined profile ids as all profiles.
   const activeProfileId = snapshot?.profileId ?? DEFAULT_BROWSER_PROFILE_ID;
-  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId);
+  const activeProfileName = previewProfileName(browserDefaults.profiles, activeProfileId, messages);
   const panelRect = useBrowserSurfaceStore((state) =>
     runtimeTabId ? (state.byTabId[runtimeTabId]?.rect ?? null) : null,
   );
@@ -341,7 +358,7 @@ export function PreviewView({
       if (isBrowserSettingsReadError(error)) {
         toastManager.add({
           type: "error",
-          title: "Unable to open browser",
+          title: gt("Unable to open browser"),
           description: error.message,
         });
       }
@@ -364,12 +381,10 @@ export function PreviewView({
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not open this address",
+        title: gt("Could not open this address"),
         description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
-          : error instanceof Error
-            ? error.message
-            : "An error occurred.",
+          ? gt("Enter an http or https URL.")
+          : (thrownErrorMessage(error, m) ?? gt("An error occurred.")),
       });
     }
   };
@@ -386,12 +401,10 @@ export function PreviewView({
     } catch (error) {
       toastManager.add({
         type: "error",
-        title: "Could not open this address",
+        title: gt("Could not open this address"),
         description: isPreviewUrlNormalizationError(error)
-          ? "Enter an http or https URL."
-          : error instanceof Error
-            ? error.message
-            : "An error occurred.",
+          ? gt("Enter an http or https URL.")
+          : (thrownErrorMessage(error, m) ?? gt("An error occurred.")),
       });
     }
   };
@@ -416,8 +429,8 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to change the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("Unable to change the browser tab"),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
       return;
     }
@@ -448,7 +461,7 @@ export function PreviewView({
     !isUnreachable;
   const handleFind = () => {
     if (!canFindInPage) {
-      toastManager.add({ type: "info", title: "Find on page isn't available for this page" });
+      toastManager.add({ type: "info", title: gt("Find on page isn't available for this page") });
       return;
     }
     setFind((previous) => ({ tabId: runtimeTabId, requestId: (previous?.requestId ?? 0) + 1 }));
@@ -508,7 +521,9 @@ export function PreviewView({
 
   const handleOpenInBrowser = () => {
     if (!localApi || !url) return;
-    void localApi.shell.openExternal(url).catch(() => undefined);
+    // A desktop tab's localhost is the environment's; the system browser needs its own route there.
+    const externalUrl = isServerTab ? url : resolveExternalServerUrl(threadRef.environmentId, url);
+    void localApi.shell.openExternal(externalUrl).catch(() => undefined);
   };
 
   const handleFocusUrl = () => {
@@ -519,10 +534,15 @@ export function PreviewView({
     threadRef.environmentId,
     primaryEnvironmentId,
     serverBrowser,
+    desktopLoadsLoopback,
     snapshot,
   );
   const moveLabel =
-    moveTarget === "server" ? `Open in ${environmentLabel}'s browser` : "Open on this computer";
+    moveTarget === "server"
+      ? environmentLabel === null
+        ? gt("Open in the environment's browser")
+        : gt("Open in {environment}''s browser", { environment: environmentLabel })
+      : gt("Open on this computer");
   const handleMoveTab = async () => {
     if (!moveTarget || !tabId || !snapshot) return;
     const result = await openPreviewSession({
@@ -545,8 +565,8 @@ export function PreviewView({
       const error = squashAtomCommandFailure(result);
       toastManager.add({
         type: "error",
-        title: "Unable to move the browser tab",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("Unable to move the browser tab"),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
       return;
     }
@@ -623,8 +643,8 @@ export function PreviewView({
     void operation(runtimeTabId).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to update popped-out preview",
-        description: error instanceof Error ? error.message : "An error occurred.",
+        title: gt("Unable to update popped-out preview"),
+        description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
       });
     });
   };
@@ -645,8 +665,8 @@ export function PreviewView({
                 toastId,
                 stackedThreadToast({
                   type: "error",
-                  title: "Unable to copy recording path",
-                  description: "Clipboard API unavailable.",
+                  title: gt("Unable to copy recording path"),
+                  description: gt("Clipboard API unavailable."),
                   actionProps: revealAction,
                 }),
               );
@@ -667,8 +687,8 @@ export function PreviewView({
                   toastId,
                   stackedThreadToast({
                     type: "error",
-                    title: "Unable to copy recording path",
-                    description: error instanceof Error ? error.message : "An error occurred.",
+                    title: gt("Unable to copy recording path"),
+                    description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
                     actionProps: revealAction,
                   }),
                 );
@@ -677,7 +697,7 @@ export function PreviewView({
           };
 
           const revealAction = {
-            children: revealInFileExplorerLabel(navigator.platform),
+            children: revealInFileExplorerLabel(navigator.platform, messages),
             onClick: () => void bridge.revealArtifact(artifact.path),
           };
           const updateRecordingToast = () => {
@@ -685,11 +705,11 @@ export function PreviewView({
               toastId,
               stackedThreadToast({
                 type: "success",
-                title: "Recording saved",
+                title: gt("Recording saved"),
                 actionProps: revealAction,
                 data: {
                   secondaryActionProps: {
-                    children: pathCopied ? "Copied!" : "Copy path",
+                    children: pathCopied ? gt("Copied!") : gt("Copy path"),
                     disabled: pathCopied,
                     onClick: copyPath,
                   },
@@ -702,11 +722,11 @@ export function PreviewView({
           toastId = toastManager.add(
             stackedThreadToast({
               type: "success",
-              title: "Recording saved",
+              title: gt("Recording saved"),
               actionProps: revealAction,
               data: {
                 secondaryActionProps: {
-                  children: "Copy path",
+                  children: gt("Copy path"),
                   onClick: copyPath,
                 },
                 secondaryActionVariant: "secondary",
@@ -717,8 +737,8 @@ export function PreviewView({
         (error) => {
           toastManager.add({
             type: "error",
-            title: "Unable to stop recording",
-            description: error instanceof Error ? error.message : "An error occurred.",
+            title: gt("Unable to stop recording"),
+            description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
           });
         },
       );
@@ -726,11 +746,11 @@ export function PreviewView({
     }
     if (record) {
       void startBrowserRecording(runtimeTabId, threadRef, tabId).catch((error) => {
-        const description = error instanceof Error ? error.message : "An error occurred.";
+        const description = thrownErrorMessage(error, m) ?? gt("An error occurred.");
         if (isBrowserRecordingStartCancelledError(error)) return;
         toastManager.add({
           type: "error",
-          title: "Unable to start recording",
+          title: gt("Unable to start recording"),
           description,
         });
       });
@@ -739,7 +759,7 @@ export function PreviewView({
     void bridge.captureScreenshot(runtimeTabId).then(
       (artifact) => {
         const revealAction = {
-          children: revealInFileExplorerLabel(navigator.platform),
+          children: revealInFileExplorerLabel(navigator.platform, messages),
           onClick: () => void bridge.revealArtifact(artifact.path),
         };
         let pathCopied = false;
@@ -748,7 +768,7 @@ export function PreviewView({
 
         const updateScreenshotToast = (
           type: "success" | "error" = "success",
-          title = "Screenshot saved",
+          title = gt("Screenshot saved"),
           description?: string,
         ) => {
           toastManager.update(
@@ -758,7 +778,7 @@ export function PreviewView({
               title,
               description,
               actionProps: {
-                children: imageCopied ? "Copied!" : "Copy image",
+                children: imageCopied ? gt("Copied!") : gt("Copy image"),
                 disabled: imageCopied,
                 onClick: copyImage,
               },
@@ -767,7 +787,7 @@ export function PreviewView({
                   {
                     id: "copy-path",
                     props: {
-                      children: pathCopied ? "Copied!" : "Copy path",
+                      children: pathCopied ? gt("Copied!") : gt("Copy path"),
                       disabled: pathCopied,
                       onClick: copyPath,
                     },
@@ -786,8 +806,8 @@ export function PreviewView({
           if (!navigator.clipboard?.writeText) {
             updateScreenshotToast(
               "error",
-              "Unable to copy screenshot path",
-              "Clipboard API unavailable.",
+              gt("Unable to copy screenshot path"),
+              gt("Clipboard API unavailable."),
             );
             return;
           }
@@ -804,8 +824,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot path",
-                error instanceof Error ? error.message : "An error occurred.",
+                gt("Unable to copy screenshot path"),
+                thrownErrorMessage(error, m) ?? gt("An error occurred."),
               );
             },
           );
@@ -824,8 +844,8 @@ export function PreviewView({
             (error) => {
               updateScreenshotToast(
                 "error",
-                "Unable to copy screenshot",
-                error instanceof Error ? error.message : "An error occurred.",
+                gt("Unable to copy screenshot"),
+                thrownErrorMessage(error, m) ?? gt("An error occurred."),
               );
             },
           );
@@ -834,9 +854,9 @@ export function PreviewView({
         toastId = toastManager.add(
           stackedThreadToast({
             type: "success",
-            title: "Screenshot saved",
+            title: gt("Screenshot saved"),
             actionProps: {
-              children: "Copy image",
+              children: gt("Copy image"),
               onClick: copyImage,
             },
             data: {
@@ -844,7 +864,7 @@ export function PreviewView({
                 {
                   id: "copy-path",
                   props: {
-                    children: "Copy path",
+                    children: gt("Copy path"),
                     onClick: copyPath,
                   },
                 },
@@ -860,8 +880,8 @@ export function PreviewView({
       (error) => {
         toastManager.add({
           type: "error",
-          title: "Unable to capture screenshot",
-          description: error instanceof Error ? error.message : "An error occurred.",
+          title: gt("Unable to capture screenshot"),
+          description: thrownErrorMessage(error, m) ?? gt("An error occurred."),
         });
       },
     );
@@ -939,8 +959,8 @@ export function PreviewView({
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Could not capture the picked element",
-            description: "The annotation was kept without the screenshot.",
+            title: gt("Could not capture the picked element"),
+            description: gt("The annotation was kept without the screenshot."),
           }),
         );
       }
@@ -1049,6 +1069,7 @@ export function PreviewView({
     <div
       className="flex min-h-0 flex-1 flex-col bg-background"
       data-thread-key={scopedThreadKey(threadRef)}
+      data-preview-view
     >
       {pickActive && runtimeTabId && annotationVoice ? (
         <PreviewAnnotationSpeech
@@ -1087,7 +1108,9 @@ export function PreviewView({
         pickActive={pickActive}
         pickDisabled={!tabId || isUnreachable}
         pickDisabledReason={
-          isUnreachable ? "Page didn't load. Pick is unavailable until the page renders" : undefined
+          isUnreachable
+            ? gt("Page didn't load. Pick is unavailable until the page renders")
+            : undefined
         }
         leadingActions={
           activeProfileId !== browserDefaults.profileId ? (
@@ -1169,7 +1192,8 @@ export function PreviewView({
                     : null
                 }
                 visible={visible}
-                onFirstFrame={() => setServerFrameTabId(runtimeTabId)}
+                onFirstFrame={() => setServerStreamSettledTabId(runtimeTabId)}
+                onNoFrames={() => setServerStreamSettledTabId(runtimeTabId)}
                 onControl={(control) =>
                   setServerControlledTabId(control?.controller === "you" ? runtimeTabId : null)
                 }
@@ -1190,7 +1214,7 @@ export function PreviewView({
           ) : (
             <div className="flex h-full items-center justify-center p-8 text-center">
               <p className="max-w-sm text-body text-muted-foreground">
-                This tab is open in the T3 Code desktop app.
+                <T>This tab is open in the T3 Code desktop app.</T>
               </p>
             </div>
           )

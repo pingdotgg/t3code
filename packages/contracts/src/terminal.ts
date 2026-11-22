@@ -287,6 +287,7 @@ export type TerminalSummary = typeof TerminalSummary.Type;
 const TerminalMetadataSnapshotEvent = Schema.Struct({
   type: Schema.Literal("snapshot"),
   terminals: Schema.Array(TerminalSummary),
+  managerId: Schema.optional(Schema.String),
 });
 
 const TerminalMetadataUpsertEvent = Schema.Struct({

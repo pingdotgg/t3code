@@ -321,9 +321,11 @@ function confirm(monitor: Monitor, trigger: string, firstIds: Set<string>) {
   toastedThreads.add(monitor.threadKey);
   const id = toastManager.add({
     type: "warning",
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Developer diagnostic, off in production unless enabled from the console.
     title: "timeline gap diagnostic recorded",
     timeout: 0,
     actionProps: {
+      // oxlint-disable-next-line t3code/no-untranslated-copy -- Developer diagnostic, off in production unless enabled from the console.
       children: "copy report",
       onClick: () => {
         toastManager.close(id);

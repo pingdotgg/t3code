@@ -1,3 +1,4 @@
+import { msg } from "gt-react";
 import type { PluggableList } from "unified";
 import type { Root, RootContent } from "mdast";
 import {
@@ -6,6 +7,7 @@ import {
 } from "@t3tools/client-runtime/work-log/presentation";
 import { isJavaScriptReplTool } from "@t3tools/shared/toolActivity";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { type TimelineWorkEntry, type TimelineRow } from "./timelineRowContext";
 import { type WorkEntryIconName } from "./TimelineToolActivityIcon";
 
@@ -94,6 +96,7 @@ export function buildToolCallExpandedBody(
   workEntry: TimelineWorkEntry,
   workspaceRoot: string | undefined,
   visibleLabel: string,
+  resolve: MessageResolver = m,
 ): string | null {
   const blocks: string[] = [];
   const seen = new Set<string>([visibleLabel.trim()]);
@@ -112,7 +115,9 @@ export function buildToolCallExpandedBody(
             "input" in workEntry.toolData
           ? workEntry.toolData.input
           : undefined;
-    if (input !== undefined) addBlock(`Tool input\n${JSON.stringify(input, null, 2)}`);
+    if (input !== undefined) {
+      addBlock(resolve(msg("Tool input\n{input}", { input: JSON.stringify(input, null, 2) })));
+    }
   }
   const command = workEntry.command?.trim();
   const raw = workEntryRawCommand(workEntry);
@@ -170,7 +175,7 @@ export function workEntryIconName(workEntry: TimelineWorkEntry): WorkEntryIconNa
     isJavaScriptReplTool(workEntry.structuredPayload.toolName)
   )
     return "code";
-  const toolPresentation = resolveWorkEntryToolPresentation(workEntry);
+  const toolPresentation = resolveWorkEntryToolPresentation(workEntry, undefined, m);
   if (toolPresentation) return toolPresentation.icon;
   const action = toolGroupAction(workEntry);
   if (action !== "other") return toolGroupSummaryIconName(action);
@@ -252,5 +257,6 @@ export function remarkThoughtPreview(fallback: string) {
   };
 }
 
-export const THOUGHT_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thought"]];
-export const THINKING_PREVIEW_PLUGINS: PluggableList = [[remarkThoughtPreview, "Thinking"]];
+export function thoughtPreviewPlugins(fallback: string): PluggableList {
+  return [[remarkThoughtPreview, fallback]];
+}

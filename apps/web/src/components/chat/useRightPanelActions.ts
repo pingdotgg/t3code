@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import { AuthTerminalOperateScope } from "@t3tools/contracts";
 import { useEnvironmentScope } from "../../state/session";
@@ -12,7 +15,7 @@ import { isPreviewSupportedInRuntime } from "../../previewStateStore";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { ThreadPreviewState } from "../../previewStateStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
-import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
+import { type ScopedThreadRef, type RunId, type PreviewSessionSnapshot } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   isAtomCommandInterrupted,
@@ -51,7 +54,8 @@ interface RightPanelActionsInput {
   readonly isServerThread: boolean;
   /** A side chat pane; the main view already answers preview bus actions. */
   readonly embedded: boolean;
-  readonly isGitRepo: boolean;
+  /** The thread has a diff to show: a Git folder, or turns that changed tracked repositories. */
+  readonly diffAvailable: boolean;
   readonly browserAvailable: boolean;
   readonly canOperatePreview: boolean;
   readonly diffOpen: boolean;
@@ -78,7 +82,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     threadPanelPresentation,
     isServerThread,
     embedded,
-    isGitRepo,
+    diffAvailable,
     browserAvailable,
     canOperatePreview,
     diffOpen,
@@ -109,12 +113,13 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
       useRightPanelStore.getState().toggle(activeThreadRef, "pull-requests");
     });
   };
-  const createBrowserSurface = (profileId?: string) => {
+  const createBrowserSurface = (profileId?: string, duplicateFrom?: PreviewSessionSnapshot) => {
     if (!activeThreadRef || !canOperatePreview) return;
     void addBrowserSurface({
       threadRef: activeThreadRef,
       openPreview,
       ...(profileId === undefined ? {} : { profileId }),
+      ...(duplicateFrom === undefined ? {} : { duplicateFrom }),
     }).then((result) => {
       if (result._tag !== "Failure" || isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
@@ -122,15 +127,21 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
         toastManager.add(
           stackedThreadToast({
             type: "error",
-            title: "Unable to open browser",
-            description: error.message,
+            title: m(msg("Unable to open browser")),
+            description: errorDisplayMessage(error, m) ?? error.message,
           }),
         );
       }
     });
   };
+  const duplicateBrowserSurface = (surface: RightPanelSurface) => {
+    if (surface.kind !== "preview" || !surface.resourceId) return;
+    const snapshot = activePreviewState.sessions[surface.resourceId];
+    if (snapshot) createBrowserSurface(undefined, snapshot);
+  };
+  const duplicateBrowserSurfaceStable = useStableCallback(duplicateBrowserSurface);
   const addDiffSurface = () => {
-    if (!activeThreadRef || !isServerThread || !isGitRepo) return;
+    if (!activeThreadRef || !isServerThread || !diffAvailable) return;
     useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
     useRightPanelStore.getState().open(activeThreadRef, "diff");
     onDiffPanelOpen?.();
@@ -213,7 +224,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const openSidePaneDefault = (): boolean => {
     if (!activeThreadRef) return false;
     const opensOn = getLayoutBehavior().sidePaneOpensOn;
-    if ((opensOn === "diff" || opensOn === "last-used") && isServerThread && isGitRepo)
+    if ((opensOn === "diff" || opensOn === "last-used") && isServerThread && diffAvailable)
       return (addDiffSurface(), true);
     if ((opensOn === "files" || opensOn === "last-used") && activeProject)
       return (addFilesSurface(), true);
@@ -231,7 +242,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   // "Open beside…" (palette, new tab page) reaches the focused chat's side
   // pane and terminal through this registration.
   const browserBesideAvailable = canOperatePreview && browserAvailable;
-  const diffBesideAvailable = isServerThread && isGitRepo;
+  const diffBesideAvailable = isServerThread && diffAvailable;
   const projectBesideAvailable = activeProject !== null;
   const besideAvailable = (() => {
     const available = new Set<LayoutBesideKind>();
@@ -308,6 +319,7 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
 
   return {
     shortcuts,
+    duplicateBrowserSurfaceStable,
     onOpenToolDiffStable,
     onOpenTurnDiffStable,
     openChangesFromThreadPanelStable,

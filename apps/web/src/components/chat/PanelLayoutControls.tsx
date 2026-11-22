@@ -1,4 +1,5 @@
 import { ListFilterIcon, Maximize2Icon, Minimize2Icon } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { memo } from "react";
 
@@ -29,6 +30,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
   onToggleThreadPanel,
   disabledReason = null,
 }: PanelLayoutControlsProps) {
+  const gt = useGT();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   if (mobileSidebarSheetMounted) return null;
   const threadPanelToggle = (
@@ -37,7 +39,7 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
       aria-expanded={threadPanelOpen}
       onClick={threadPanelPresentation === "popover" ? undefined : onToggleThreadPanel}
       disabled={disabledReason !== null}
-      aria-label="Toggle thread details panel"
+      aria-label={gt("Toggle thread details panel")}
       variant="ghost"
       size="icon-sm"
     >
@@ -54,12 +56,10 @@ export const PanelLayoutControls = memo(function PanelLayoutControls({
         )}
       </TooltipTrigger>
       <TooltipPopup side="bottom">
-        {disabledReason ?? (
-          <>
-            Toggle thread details
-            {threadPanelShortcutLabel ? ` (${threadPanelShortcutLabel})` : ""}
-          </>
-        )}
+        {disabledReason ??
+          (threadPanelShortcutLabel
+            ? gt("Toggle thread details ({shortcut})", { shortcut: threadPanelShortcutLabel })
+            : gt("Toggle thread details"))}
       </TooltipPopup>
     </Tooltip>
   );
@@ -82,9 +82,10 @@ export const RightPanelMaximizeControl = memo(function RightPanelMaximizeControl
   maximized: boolean;
   onToggle: () => void;
 }) {
+  const gt = useGT();
   const mobileSidebarSheetMounted = useMobileSidebarSheetMounted();
   if (mobileSidebarSheetMounted) return null;
-  const label = maximized ? "Restore panel size" : "Maximize panel";
+  const label = maximized ? gt("Restore panel size") : gt("Maximize panel");
   return (
     <Tooltip>
       <TooltipTrigger

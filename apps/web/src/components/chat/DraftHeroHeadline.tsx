@@ -3,6 +3,7 @@ import { composerDraftHasUserContent, useComposerDraftStore } from "~/composerDr
 import { resolveEnvironmentMachineKind, type ScopedProjectRef } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { isScratchProject } from "@t3tools/client-runtime/state/projects";
+import { useGT, useMessages } from "gt-react";
 import {
   FolderPlusIcon,
   FoldersIcon,
@@ -56,6 +57,7 @@ interface DraftHeroHeadlineProps {
  * way to every project, then the no-project and add-project rows.
  */
 export function useProjectPickerModel(activeProjectRef: ScopedProjectRef | null) {
+  const messages = useMessages();
   const projects = useProjects();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -105,6 +107,7 @@ export function useProjectPickerModel(activeProjectRef: ScopedProjectRef | null)
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const scratchOffReason = scratchUnavailableReason(
     activeProjectRef?.environmentId ?? primaryEnvironmentId,
+    messages,
   );
 
   const { canPinProjectGroup, toggleProjectGroupPin } = useProjectPin();
@@ -177,6 +180,7 @@ export function ProjectPickerRows({
   /** The launcher offers usable actions without explanatory copy. */
   readonly concise?: boolean;
 }) {
+  const gt = useGT();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const renderProjectRow = (entry: ProjectPickerEntry) => {
     const { group, targetProject } = entry;
@@ -214,7 +218,11 @@ export function ProjectPickerRows({
                   <Button
                     variant="ghost-muted"
                     size="icon-micro"
-                    aria-label={pinned ? `Unpin ${group.displayName}` : `Pin ${group.displayName}`}
+                    aria-label={
+                      pinned
+                        ? gt("Unpin {name}", { name: group.displayName })
+                        : gt("Pin {name}", { name: group.displayName })
+                    }
                     aria-pressed={pinned}
                     onClick={() => model.toggleProjectGroupPin(group)}
                   />
@@ -222,7 +230,7 @@ export function ProjectPickerRows({
               >
                 {pinned ? <PinOffIcon /> : <PinIcon />}
               </TooltipTrigger>
-              <TooltipPopup side="top">{pinned ? "Unpin" : "Pin"}</TooltipPopup>
+              <TooltipPopup side="top">{pinned ? gt("Unpin") : gt("Pin")}</TooltipPopup>
             </Tooltip>
           ) : null
         }
@@ -233,20 +241,24 @@ export function ProjectPickerRows({
     <>
       {model.pinnedEntries.length > 0 ? (
         <>
-          {groupLabels ? <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel> : null}
+          {groupLabels ? <DraftProjectGroupLabel>{gt("Pinned")}</DraftProjectGroupLabel> : null}
           {model.pinnedEntries.map(renderProjectRow)}
         </>
       ) : null}
       {model.recentEntries.length > 0 ? (
         <>
-          {groupLabels ? <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel> : null}
+          {groupLabels ? (
+            <DraftProjectGroupLabel>
+              {gt("Recent", { $context: "recently used projects" })}
+            </DraftProjectGroupLabel>
+          ) : null}
           {model.recentEntries.map(renderProjectRow)}
         </>
       ) : null}
       {model.menuEntries.length > 0 ? (
         <DraftProjectRow
           icon={<FoldersIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="All projects…"
+          label={gt("All projects…")}
           detail={String(model.menuEntries.length)}
           onSelect={onAllProjects ?? model.openAllProjects}
         />
@@ -258,8 +270,8 @@ export function ProjectPickerRows({
         <DraftProjectRow
           selected={scratchSelected}
           icon={<MessageSquareDashedIcon className="size-4 shrink-0 text-muted-foreground" />}
-          label="No project"
-          detail={concise ? "" : "Its own folder, no git"}
+          label={gt("No project")}
+          detail={concise ? "" : gt("Its own folder, no git")}
           shortcut={model.noProjectShortcut}
           onSelect={onNoProject}
           {...(onFocusNoProject ? { onFocus: onFocusNoProject } : {})}
@@ -267,8 +279,8 @@ export function ProjectPickerRows({
       ) : null}
       <DraftProjectRow
         icon={<FolderPlusIcon className="size-4 shrink-0 text-muted-foreground" />}
-        label="Add project…"
-        detail={concise ? "" : "Open a folder or clone a repository"}
+        label={gt("Add project…")}
+        detail={concise ? "" : gt("Open a folder or clone a repository")}
         onSelect={model.openAddProject}
       />
     </>
@@ -280,6 +292,7 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
+  const gt = useGT();
   const model = useProjectPickerModel(activeProjectRef);
   const { projects, environments, activeProjectKey, scratchTargetEnvironmentId } = model;
   const setLogicalProjectDraftThreadId = useComposerDraftStore(
@@ -355,12 +368,12 @@ export function DraftHeroHeadline({
 
   // The hero used to be a sentence; screen readers still get one.
   const headingLabel = isScratchDraft
-    ? "What should we work on?"
+    ? gt("What should we work on?")
     : hasResolvedProject
-      ? `What should we build in ${activeProjectTitle}?`
+      ? gt("What should we build in {project}?", { project: activeProjectTitle })
       : model.canChooseProject
-        ? "Choose a project to start"
-        : "Add a project to start";
+        ? gt("Choose a project to start")
+        : gt("Add a project to start");
 
   if (isScratchDraft && isTriageDraftPrompt) {
     const environment = environments.find(
@@ -379,7 +392,7 @@ export function DraftHeroHeadline({
       <h1 className="sr-only">{headingLabel}</h1>
       <div
         role="list"
-        aria-label="Projects"
+        aria-label={gt("Projects")}
         className="flex min-h-0 flex-col gap-0.5 overflow-y-auto"
       >
         <ProjectPickerRows

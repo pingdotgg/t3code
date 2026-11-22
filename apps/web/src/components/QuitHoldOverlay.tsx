@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { useSyncExternalStore } from "react";
 
 import { isMacPlatform } from "../lib/utils";
@@ -50,11 +51,14 @@ const readQuitHint = () => visibleMode;
 
 export function QuitHoldOverlay() {
   const visibleMode = useSyncExternalStore(subscribeQuitHint, readQuitHint, readQuitHint);
+  const gt = useGT();
 
   if (!visibleMode) return null;
   const shortcut = isMacPlatform(navigator.platform) ? "⌘Q" : "Ctrl+Q";
   const message =
-    visibleMode === "hold" ? `Hold ${shortcut} to quit` : `Press ${shortcut} again to quit`;
+    visibleMode === "hold"
+      ? gt("Hold {shortcut} to quit", { shortcut })
+      : gt("Press {shortcut} again to quit", { shortcut });
   return (
     <div
       role="status"

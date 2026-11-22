@@ -239,6 +239,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getThreadHistoryPage: () => Effect.die("unused"),
     getTimelinePage: () => Effect.die("Unused timeline read"),
     getMessageCount: () => Effect.die("unused message count"),
+    getRunCount: () => Effect.die("unused run count"),
     getMessagesById: () => Effect.die("unused messages by id"),
     getTurnItem: () => Effect.die("unused turn item read"),
     getThreadRecords: () => Effect.die("unused record read"),
@@ -250,6 +251,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
     getProjectThreadRecords: () => Effect.die("unused project record read"),
     listProjectThreads: unused,
     sendToThread: unused,
+    submitRunOutput: unused,
     assertProviderInstanceEnabled: unused,
     isProviderInstanceEnabledForProject: unused,
     hasReceipt: unused,
@@ -291,9 +293,13 @@ const makeTestRelay = Effect.fnUntraced(function* (
         authorization: new Headers(init?.headers).get("authorization"),
         state: payload.state,
       });
-      return Promise.resolve(
-        options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
-      );
+      try {
+        return Promise.resolve(
+          options.respond?.(publications.length) ?? Response.json({ ok: true, deliveries: [] }),
+        );
+      } catch (error) {
+        return Promise.reject(error);
+      }
     },
     { preconnect: () => {} },
   );
@@ -969,6 +975,43 @@ describe("AgentAwarenessRelay", () => {
       yield* TestClock.adjust("5 seconds");
       yield* relay.drain;
       assert.equal(publications.at(-1)?.state ?? null, null);
+    }),
+  );
+
+  it.effect("delivers a completion once the network returns after the retry budget runs out", () =>
+    Effect.gen(function* () {
+      let networkUp = true;
+      const delivered: Array<string | null> = [];
+      const { relay, currentShell, publications } = yield* makeTestRelay({
+        respond: (attempt) => {
+          if (!networkUp) throw new TypeError("fetch failed: getaddrinfo EAI_AGAIN");
+          delivered.push(publications[attempt - 1]?.state?.phase ?? null);
+          return Response.json({ ok: true, deliveries: [] });
+        },
+      });
+      yield* relay.publishThread(THREAD_ID);
+      networkUp = false;
+      yield* Ref.set(currentShell, shell({ status: "completed" }));
+      yield* relay.publishThread(THREAD_ID);
+      yield* TestClock.adjust("5 seconds");
+      yield* relay.drain;
+      for (const delay of [
+        "1 second",
+        "2 seconds",
+        "4 seconds",
+        "8 seconds",
+        "16 seconds",
+      ] as const) {
+        yield* TestClock.adjust(delay);
+        yield* relay.drain;
+      }
+      assert.equal(publications.length, 7);
+      assert.deepEqual(delivered, ["running"]);
+
+      networkUp = true;
+      yield* TestClock.adjust("10 minutes");
+      yield* relay.drain;
+      assert.deepEqual(delivered, ["running", "completed"]);
     }),
   );
 

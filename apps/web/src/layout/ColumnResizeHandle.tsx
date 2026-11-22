@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { MoveHorizontalIcon, MoveVerticalIcon } from "lucide-react";
 import {
   useEffect,
@@ -8,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 
+import { flushSync } from "react-dom";
 import { settleStripCamera } from "../motion/stripCamera";
 import {
   LAYOUT_COLUMN_WIDTH_PRESETS,
@@ -38,7 +40,6 @@ const FRACTION_LABELS = new Map<number, string>([
   [1 / 3, "⅓"],
   [1 / 2, "½"],
   [2 / 3, "⅔"],
-  [1, "Full"],
 ]);
 
 function fractionLabel(value: number, snapped: number | null): string {
@@ -165,11 +166,13 @@ export function LayoutResizeHandles({
   scrollerRef: RefObject<HTMLDivElement | null>;
   onPreview: (preview: { layout: LayoutState; heldStripPx: number } | null) => void;
 }) {
+  const gt = useGT();
   const [drag, setDrag] = useState<ActiveDrag | null>(null);
   const [keyboardHandle, setKeyboardHandle] = useState<string | null>(null);
   const dragRef = useRef<ActiveDrag | null>(null);
   const baseLayoutRef = useRef<LayoutState>(layout);
   const frameRef = useRef<number | null>(null);
+  const shownDragRef = useRef<ActiveDrag | null>(null);
   const pointerRef = useRef({ x: 0, y: 0, scrollLeft: 0 });
   const heldStripPxRef = useRef(0);
 
@@ -249,16 +252,24 @@ export function LayoutResizeHandles({
     const next = dragAtPointer(active, event);
     if (next.value === active.value) return;
     dragRef.current = next;
-    // Pointer streams can outpace paint. Lay out the strip once per frame,
-    // always using the latest pointer, without dropping the release position.
+    // Committed now, before the frame's rAF callbacks, so the frame's first layout read lays
+    // out the new widths once; a commit left to the scheduler lands after paint. Pointer
+    // streams can outpace paint: a later move in the same frame waits for this frame's rAF.
     if (frameRef.current !== null) return;
+    showDrag(next);
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = null;
       const latest = dragRef.current;
-      if (!latest) return;
-      setDrag(latest);
+      if (latest && latest !== shownDragRef.current) showDrag(latest);
+    });
+  };
+
+  const showDrag = (shown: ActiveDrag) => {
+    shownDragRef.current = shown;
+    flushSync(() => {
+      setDrag(shown);
       onPreview({
-        layout: applyDrag(baseLayoutRef.current, latest),
+        layout: applyDrag(baseLayoutRef.current, shown),
         heldStripPx: heldStripPxRef.current,
       });
     });
@@ -368,7 +379,7 @@ export function LayoutResizeHandles({
           key={`pane:${pane.id}`}
           role="separator"
           aria-orientation="horizontal"
-          aria-label="Resize pane"
+          aria-label={gt("Resize pane")}
           aria-valuenow={Math.round(pane.size * 100)}
           tabIndex={0}
           className="absolute z-30 cursor-row-resize touch-none select-none outline-none [-webkit-app-region:no-drag]"
@@ -432,7 +443,7 @@ export function LayoutResizeHandles({
         key={`column:${column.id}`}
         role="separator"
         aria-orientation="vertical"
-        aria-label="Resize column"
+        aria-label={gt("Resize column")}
         aria-valuenow={Math.round(width * 100)}
         tabIndex={0}
         className="absolute inset-y-0 z-30 cursor-col-resize touch-none select-none outline-none [-webkit-app-region:no-drag]"
@@ -491,6 +502,8 @@ export function LayoutResizeHandles({
  * (pen buCpT, KQQhW, Fgh35). Static paint; it only moves with the pointer.
  */
 function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: number }) {
+  const gt = useGT();
+  const size = fractionLabel(drag.value, drag.snapped);
   if (drag.kind === "column") {
     const edge = drag.columnLeft + drag.value;
     const toPct = (viewportUnits: number) => `${(viewportUnits / stripWidth) * 100}%`;
@@ -503,7 +516,11 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: n
         <ResizePill
           style={{ left: toPct(edge), top: "58%" }}
           icon={<MoveHorizontalIcon className="size-3.25" />}
-          label={`${fractionLabel(drag.value, drag.snapped)} width`}
+          label={
+            drag.snapped === 1
+              ? gt("Full width", { $context: "column size while resizing" })
+              : gt("{size} width", { size })
+          }
         />
       </div>
     );
@@ -524,7 +541,11 @@ function ResizeFeedback({ drag, stripWidth }: { drag: ResizeGuide; stripWidth: n
       <ResizePill
         style={{ left: `calc(${left} + ${width} / 2)`, top: `${edge * 100}%` }}
         icon={<MoveVerticalIcon className="size-3.25" />}
-        label={`${fractionLabel(drag.value, drag.snapped)} height`}
+        label={
+          drag.snapped === 1
+            ? gt("Full height", { $context: "pane size while resizing" })
+            : gt("{size} height", { size })
+        }
       />
     </div>
   );

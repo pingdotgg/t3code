@@ -86,6 +86,10 @@ vi.mock("~/state/use-atom-command", () => ({
           : () => Promise.resolve({ _tag: "Success", value: {} }),
 }));
 vi.mock("~/state/query", () => ({ formatEnvironmentQueryError: () => "Device failed" }));
+// The real closed-view store imports the right panel store back, so loading it would wait on this mock.
+vi.mock("~/closedViewStore", () => ({
+  useClosedViewStore: { getState: () => ({ remember: () => "" }) },
+}));
 vi.mock("~/rightPanelStore", async (importOriginal) => ({
   ...(await importOriginal<typeof import("~/rightPanelStore")>()),
   useRightPanelStore: {
@@ -139,14 +143,7 @@ const deferred = () => {
 let container: HTMLDivElement;
 // Fixed key and a changing threadRef, as the retained device surface mounts it.
 const devicePanel = (threadRef: ScopedThreadRef, surface = picker) => (
-  <DevicePanel
-    key="device-panel"
-    mode="embedded"
-    threadRef={threadRef}
-    surface={surface}
-    visible
-    onDismissSetup={() => undefined}
-  />
+  <DevicePanel key="device-panel" mode="embedded" threadRef={threadRef} surface={surface} visible />
 );
 const startButton = () => container.querySelector<HTMLButtonElement>('[aria-label="Start Phone"]');
 const click = (button: HTMLButtonElement | null) =>

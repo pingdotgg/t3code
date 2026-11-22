@@ -2,6 +2,7 @@ import {
   CheckpointScopeId,
   CommandId,
   type OrchestrationV2Checkpoint,
+  type OrchestrationV2CheckpointScope,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
@@ -13,12 +14,16 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import * as CheckpointService from "./CheckpointService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProjectionStore from "./ProjectionStore.ts";
+
+// Git processes are already capped server-wide; this keeps one thread from taking every slot.
+const REPOSITORY_CAPTURE_CONCURRENCY = 6;
 
 export class CheckpointCaptureExecutionError extends Schema.TaggedError<CheckpointCaptureExecutionError>()(
   "CheckpointCaptureExecutionError",
@@ -65,8 +70,9 @@ export const layer: Layer.Layer<
       readonly runId: RunId;
       readonly scopeId: CheckpointScopeId;
     }) {
+      const context = yield* projections.getCheckpointCaptureContext(input.threadId, input);
       const { run, rootNode, scope, providerThread, preservedCheckpointOrdinals, sideChat } =
-        yield* projections.getCheckpointCaptureContext(input.threadId, input);
+        context;
       // Stopped runs remain terminal; their checkpoint is the next message's rollback point.
       const stopped = run?.status === "interrupted" || run?.status === "cancelled";
 
@@ -113,23 +119,126 @@ export const layer: Layer.Layer<
           capturedAt: run.requestedAt,
           forceMissing: sideChat,
         });
-      const threadStartCheckpoint =
-        baselineOrdinalWithinScope === 0 || isPreserved(0) ? null : yield* materializeBaseline(0);
-      const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
-        ? null
-        : yield* materializeBaseline(baselineOrdinalWithinScope);
-      const checkpoint = yield* checkpoints.capture({
-        scope,
-        runId: run.id,
-        nodeId: rootNode.id,
-        ordinalWithinScope: run.ordinal,
-        appRunOrdinal: run.ordinal,
-        capturedAt,
-        forceMissing: sideChat,
+      // The tracked Git folders the thread reaches now. One added since the turn began has no
+      // baseline, so its first checkpoint lists no files; one removed is simply not captured.
+      const repositoryScopes =
+        sideChat || context.thread === undefined
+          ? []
+          : yield* checkpoints.repositoryScopes({ rootScope: scope, ...context.thread });
+      const nested =
+        repositoryScopes.length === 0
+          ? undefined
+          : yield* checkpoints.nestedScopePaths([scope, ...repositoryScopes]);
+      const excluded = (target: OrchestrationV2CheckpointScope) => {
+        const excludePaths = nested?.get(target.id);
+        return excludePaths === undefined ? {} : { excludePaths };
+      };
+      // Each scope is checked on its own, so a retried capture fills only what is missing.
+      const captureRoot = Effect.gen(function* () {
+        const threadStartCheckpoint =
+          baselineOrdinalWithinScope === 0 || isPreserved(0) ? null : yield* materializeBaseline(0);
+        const baselineCheckpoint = isPreserved(baselineOrdinalWithinScope)
+          ? null
+          : yield* materializeBaseline(baselineOrdinalWithinScope);
+        const checkpoint = yield* checkpoints.capture({
+          scope,
+          runId: run.id,
+          nodeId: rootNode.id,
+          ordinalWithinScope: run.ordinal,
+          appRunOrdinal: run.ordinal,
+          capturedAt,
+          forceMissing: sideChat,
+          ...excluded(scope),
+        });
+        return { threadStartCheckpoint, baselineCheckpoint, checkpoint };
       });
+      const recordedScopes = new Map(
+        context.repositoryScopes.map((recorded) => [recorded.id, recorded]),
+      );
+      const captureRepository = Effect.fnUntraced(function* (
+        prepared: OrchestrationV2CheckpointScope,
+      ) {
+        const recorded = recordedScopes.get(prepared.id);
+        // A recorded scope keeps the run that first used it; only a renamed folder rewrites it.
+        const changed =
+          recorded === undefined ||
+          recorded.cwd !== prepared.cwd ||
+          recorded.label !== prepared.label;
+        const target =
+          recorded === undefined
+            ? prepared
+            : changed
+              ? {
+                  ...prepared,
+                  runId: recorded.runId,
+                  nodeId: recorded.nodeId,
+                  createdAt: recorded.createdAt,
+                }
+              : recorded;
+        const captured = yield* checkpoints.captureRepository({
+          scope: target,
+          runId: run.id,
+          nodeId: rootNode.id,
+          ordinalWithinScope: run.ordinal,
+          capturedAt,
+          baselineCapturedAt: run.requestedAt,
+          baselineRecorded: context.repositoryScopesWithBaseline.includes(target.id),
+          ...excluded(target),
+        });
+        // Only a repository with something to show is recorded, so the rest cost no events,
+        // rows or bytes on the wire.
+        return Option.match(captured, {
+          onNone: () => [],
+          onSome: (capture) => [{ scope: changed ? target : null, ...capture }],
+        });
+      });
+      const [{ threadStartCheckpoint, baselineCheckpoint, checkpoint }, repositoryCaptures] =
+        yield* Effect.all(
+          [
+            captureRoot,
+            Effect.forEach(repositoryScopes, captureRepository, {
+              concurrency: REPOSITORY_CAPTURE_CONCURRENCY,
+            }),
+          ],
+          { concurrency: 2 },
+        );
       // Omit delegatedCompletion to preserve cohort writes made after capture loaded the run.
       const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
       const commandId = CommandId.make(`command:effect:checkpoint.capture:${run.id}`);
+      const checkpointEvent = (payload: OrchestrationV2Checkpoint) =>
+        Effect.map(ids.allocate.event({ threadId: input.threadId, commandId }), (id) => ({
+          id,
+          type: "checkpoint.captured" as const,
+          threadId: input.threadId,
+          ...(payload.runId === null ? {} : { runId: payload.runId }),
+          nodeId: payload.nodeId,
+          driver: providerThread.driver,
+          providerInstanceId: run.providerInstanceId,
+          occurredAt: capturedAt,
+          payload,
+        }));
+      const repositoryEvents = yield* Effect.forEach(repositoryCaptures.flat(), (capture) =>
+        Effect.gen(function* () {
+          return [
+            ...(capture.scope === null
+              ? []
+              : [
+                  {
+                    id: yield* ids.allocate.event({ threadId: input.threadId, commandId }),
+                    type: "checkpoint-scope.created" as const,
+                    threadId: input.threadId,
+                    runId: run.id,
+                    nodeId: rootNode.id,
+                    providerInstanceId: run.providerInstanceId,
+                    occurredAt: capturedAt,
+                    payload: capture.scope,
+                  },
+                ]),
+            ...(capture.baseline === null ? [] : [yield* checkpointEvent(capture.baseline)]),
+            yield* checkpointEvent(capture.checkpoint),
+          ];
+        }),
+      );
       yield* eventSink.commitCommand({
         commandId,
         threadId: input.threadId,
@@ -137,6 +246,8 @@ export const layer: Layer.Layer<
         acceptedAt: capturedAt,
         effects: [],
         events: [
+          // Root records come last: a client that takes the latest ordinal-0 baseline gets the thread's.
+          ...repositoryEvents.flat(),
           ...(threadStartCheckpoint === null
             ? []
             : [

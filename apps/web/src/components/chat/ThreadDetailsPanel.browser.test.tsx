@@ -87,13 +87,20 @@ import { PopoverCreateHandle } from "../ui/popover";
 import { ChatCanvasContext } from "./ChatCanvasContext";
 import { resolveChatCanvasLayout } from "./chatCanvasLayout";
 import { ThreadDetailsPanel } from "./ThreadDetailsPanel";
+import { THREAD_DETAILS_CARD_GAP } from "./threadDetailsCardLayout";
 
 const threadRef: ScopedThreadRef = {
   environmentId: EnvironmentId.make("environment"),
   threadId: ThreadId.make("thread"),
 };
 const container = { width: 1200, height: 800 };
-const placement = { x: 916, y: 0, right: 12, width: 272, height: 400 } as const;
+const placement = {
+  x: 928 - THREAD_DETAILS_CARD_GAP,
+  y: 0,
+  right: THREAD_DETAILS_CARD_GAP,
+  width: 272,
+  height: 400,
+} as const;
 const linkedPullRequest: ThreadPullRequestLink = {
   host: "github.com",
   repository: "pingdotgg/t3code",
@@ -171,7 +178,13 @@ function Panel({ fixture }: { fixture: ReturnType<typeof setup> }) {
         onAddProjectScript={scriptResult}
         onUpdateProjectScript={scriptResult}
         onDeleteProjectScript={scriptResult}
-        usage={{ providerInstanceId: null, providers: [], sources: [], contextWindow: null }}
+        usage={{
+          providerInstanceId: null,
+          model: null,
+          providers: [],
+          sources: [],
+          contextWindow: null,
+        }}
       />
     </ChatCanvasContext>
   );

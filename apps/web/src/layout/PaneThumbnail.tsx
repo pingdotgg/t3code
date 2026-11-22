@@ -1,5 +1,6 @@
 import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/environment";
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react";
 import {
   ArrowUpIcon,
   FolderPlusIcon,
@@ -372,6 +373,7 @@ function ThumbnailPickerRows({
   selectedProjectKey: string | null;
   scratchSelected: boolean;
 }) {
+  const gt = useGT();
   const projectRow = ({ group, targetProject }: ProjectPickerEntry) => (
     <DraftProjectRow
       key={group.projectKey}
@@ -406,20 +408,24 @@ function ThumbnailPickerRows({
     <>
       {model.pinnedEntries.length > 0 ? (
         <>
-          <DraftProjectGroupLabel>Pinned</DraftProjectGroupLabel>
+          <DraftProjectGroupLabel>
+            {gt("Pinned", { $context: "project picker group" })}
+          </DraftProjectGroupLabel>
           {model.pinnedEntries.map(projectRow)}
         </>
       ) : null}
       {recentEntries.length > 0 ? (
         <>
-          <DraftProjectGroupLabel>Recent</DraftProjectGroupLabel>
+          <DraftProjectGroupLabel>
+            {gt("Recent", { $context: "project picker group" })}
+          </DraftProjectGroupLabel>
           {recentEntries.map(projectRow)}
         </>
       ) : null}
       {hiddenProjectCount > 0 ? (
         <DraftProjectRow
           icon={<ThumbnailIcon name="folders" className={iconClass} />}
-          label="All projects…"
+          label={gt("All projects…")}
           detail={String(model.menuEntries.length)}
           onSelect={noop}
         />
@@ -432,10 +438,10 @@ function ThumbnailPickerRows({
           selected={scratchSelected}
           disabled={model.scratchWorkspaceRoot === null}
           icon={<ThumbnailIcon name="message-square-dashed" className={iconClass} />}
-          label="No project"
+          label={gt("No project")}
           detail={
             model.scratchWorkspaceRoot !== null
-              ? "Its own folder, no git"
+              ? gt("Its own folder, no git")
               : (model.scratchOffReason ?? "")
           }
           shortcut={model.scratchWorkspaceRoot !== null ? model.noProjectShortcut : null}
@@ -444,8 +450,8 @@ function ThumbnailPickerRows({
       ) : null}
       <DraftProjectRow
         icon={<ThumbnailIcon name="folder-plus" className={iconClass} />}
-        label="Add project…"
-        detail="Open a folder or clone a repository"
+        label={gt("Add project…")}
+        detail={gt("Open a folder or clone a repository")}
         onSelect={noop}
       />
     </>
@@ -603,6 +609,7 @@ function inlineMarkdown(text: string): ReactNode[] {
 
 /** The composer tray at rest: the prompt or its placeholder, the send pill and the branch. */
 function ComposerThumbnail({ prompt, branch }: { prompt: string; branch: string | null }) {
+  const messages = useMessages();
   return (
     <div className="chat-composer-lane w-full pt-1.5 pb-4 sm:pt-2">
       <div className="relative z-10 mx-auto w-full max-w-(--chat-content-max-width)">
@@ -616,7 +623,7 @@ function ComposerThumbnail({ prompt, branch }: { prompt: string; branch: string 
                     prompt ? "text-foreground" : "text-placeholder",
                   )}
                 >
-                  {prompt || COMPOSER_PROMPT_PLACEHOLDER}
+                  {prompt || messages(COMPOSER_PROMPT_PLACEHOLDER)}
                 </div>
                 <span className="flex size-8 shrink-0 items-center justify-center">
                   <ThumbnailIcon name="paperclip" className="size-[15px] text-composer-icon" />

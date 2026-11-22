@@ -1,5 +1,6 @@
 import { T3CHAT_PLAN_TUNNEL_LIMITS, type RelayT3ChatLink } from "@t3tools/contracts/relay";
 import { MessageSquareIcon } from "lucide-react";
+import { T, useGT, Var } from "gt-react";
 import type { ReactNode } from "react";
 
 import { useManagedTunnelUsage } from "../../cloud/managedRelayState";
@@ -12,35 +13,53 @@ import {
 } from "./ClerkUserProfilePage";
 import { useT3ChatLink } from "./useT3ChatLink";
 
-const upgradeLink = (
-  <InlineButton
-    render={<a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />}
-  >
-    Upgrade on T3 Chat
-  </InlineButton>
-);
-
 function planLabel(link: RelayT3ChatLink): ReactNode {
   switch (link.plan) {
     case "premier":
       return (
         <>
-          <span className="block">Premier</span>
-          <span className="block">Up to {T3CHAT_PLAN_TUNNEL_LIMITS.premier} tunnels</span>
+          <span className="block">
+            <T context="T3 Chat plan name">Premier</T>
+          </span>
+          <span className="block">
+            <T>
+              Up to <Var>{T3CHAT_PLAN_TUNNEL_LIMITS.premier}</Var> tunnels
+            </T>
+          </span>
         </>
       );
     case "pro":
       return (
         <>
-          <span className="block">Pro</span>
           <span className="block">
-            Up to {T3CHAT_PLAN_TUNNEL_LIMITS.pro} tunnels. {upgradeLink} to Premier for{" "}
-            {T3CHAT_PLAN_TUNNEL_LIMITS.premier}.
+            <T context="T3 Chat plan name">Pro</T>
+          </span>
+          <span className="block">
+            <T>
+              Up to <Var>{T3CHAT_PLAN_TUNNEL_LIMITS.pro}</Var> tunnels.{" "}
+              <InlineButton
+                render={
+                  <a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />
+                }
+              >
+                Upgrade on T3 Chat
+              </InlineButton>{" "}
+              to Premier for <Var>{T3CHAT_PLAN_TUNNEL_LIMITS.premier}</Var>.
+            </T>
           </span>
         </>
       );
     case "free":
-      return <>{upgradeLink} for more tunnels</>;
+      return (
+        <T>
+          <InlineButton
+            render={<a href={T3CHAT_SUBSCRIPTION_URL} target="_blank" rel="noopener noreferrer" />}
+          >
+            Upgrade on T3 Chat
+          </InlineButton>{" "}
+          for more tunnels
+        </T>
+      );
   }
 }
 
@@ -48,6 +67,7 @@ function planLabel(link: RelayT3ChatLink): ReactNode {
 export function T3ChatUserProfilePage() {
   const { linkState, pending, linkUrl, link: handleLink, unlink: handleUnlink } = useT3ChatLink();
   const usage = useManagedTunnelUsage();
+  const gt = useGT();
 
   const data = linkState.data;
   const link = data?.link ?? null;
@@ -55,7 +75,10 @@ export function T3ChatUserProfilePage() {
   return (
     <ClerkUserProfilePage
       title="T3 Chat"
-      description={`Link a paid T3 Chat account for more T3 Connect tunnels: up to ${T3CHAT_PLAN_TUNNEL_LIMITS.pro} with Pro, ${T3CHAT_PLAN_TUNNEL_LIMITS.premier} with Premier.`}
+      description={gt(
+        "Link a paid T3 Chat account for more T3 Connect tunnels: up to {pro} with Pro, {premier} with Premier.",
+        { pro: T3CHAT_PLAN_TUNNEL_LIMITS.pro, premier: T3CHAT_PLAN_TUNNEL_LIMITS.premier },
+      )}
       action={
         <ClerkUserProfileRefreshButton
           disabled={pending !== null}
@@ -66,12 +89,14 @@ export function T3ChatUserProfilePage() {
     >
       {linkState.error ? (
         <div className="border-t py-3 text-meta" role="alert">
-          <p className="text-label text-destructive-foreground">Could not load T3 Chat link</p>
+          <p className="text-label text-destructive-foreground">
+            <T>Could not load T3 Chat link</T>
+          </p>
           <p className="mt-0.5 text-muted-foreground">{linkState.error}</p>
         </div>
       ) : data === null ? null : !data.available ? (
         <p className="border-t py-4 text-meta text-muted-foreground">
-          This T3 Connect server does not support T3 Chat linking.
+          <T>This T3 Connect server does not support T3 Chat linking.</T>
         </p>
       ) : (
         <ul className="border-t">
@@ -79,13 +104,13 @@ export function T3ChatUserProfilePage() {
             <div className="flex items-start gap-4">
               <div className="min-w-0 flex-1">
                 <h3 className="truncate text-label leading-4.5 text-foreground">
-                  {link ? link.email : "Not linked"}
+                  {link ? link.email : gt("Not linked")}
                 </h3>
                 <p className="mt-1 text-meta leading-4.5 text-muted-foreground">
                   {link ? (
                     planLabel(link)
                   ) : linkUrl ? (
-                    <>
+                    <T>
                       Confirm on{" "}
                       <InlineButton
                         render={<a href={linkUrl} target="_blank" rel="noopener noreferrer" />}
@@ -93,9 +118,9 @@ export function T3ChatUserProfilePage() {
                         t3.chat
                       </InlineButton>
                       , then select Refresh.
-                    </>
+                    </T>
                   ) : (
-                    "You confirm the link on t3.chat."
+                    gt("You confirm the link on t3.chat.")
                   )}
                 </p>
               </div>
@@ -106,11 +131,11 @@ export function T3ChatUserProfilePage() {
                   disabled={pending !== null}
                   onClick={() => void handleUnlink()}
                 >
-                  {pending === "unlink" ? "Unlinking…" : "Unlink"}
+                  {pending === "unlink" ? gt("Unlinking…") : gt("Unlink")}
                 </Button>
               ) : (
                 <Button size="sm" disabled={pending !== null} onClick={() => void handleLink()}>
-                  {pending === "link" ? "Opening…" : "Link T3 Chat"}
+                  {pending === "link" ? gt("Opening…") : gt("Link T3 Chat")}
                 </Button>
               )}
             </div>

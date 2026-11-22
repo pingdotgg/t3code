@@ -1,4 +1,5 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import { CornerDownLeftIcon, Undo2Icon } from "lucide-react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -18,6 +19,7 @@ export function DiffReviewTray({
   commentIds: ReadonlyArray<string>;
   onDismiss: () => void;
 }) {
+  const gt = useGT();
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.reviewComments ?? EMPTY_REVIEW_COMMENTS,
@@ -34,9 +36,10 @@ export function DiffReviewTray({
         <p className="flex min-w-0 items-center gap-1.5 text-label text-foreground">
           <CornerDownLeftIcon aria-hidden className="size-3.5 shrink-0 text-ring" />
           <span className="truncate">
-            {liveIds.length === 1
-              ? "1 comment added to the composer"
-              : `${liveIds.length} comments added to the composer`}
+            {gt(
+              "{count, plural, one {{count} comment added to the composer} other {{count} comments added to the composer}}",
+              { count: liveIds.length },
+            )}
           </span>
         </p>
         <div className="flex items-center gap-2">
@@ -49,10 +52,10 @@ export function DiffReviewTray({
             }}
           >
             <Undo2Icon />
-            Undo
+            <T>Undo</T>
           </Button>
           <Button size="sm" variant="secondary" className="ml-auto" onClick={onDismiss}>
-            Keep reviewing
+            <T>Keep reviewing</T>
           </Button>
         </div>
       </div>

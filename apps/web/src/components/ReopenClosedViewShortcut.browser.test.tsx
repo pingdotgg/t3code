@@ -292,6 +292,7 @@ describe("root reopen shortcut", () => {
       expect(useClosedViewStore.getState().entries).toEqual([]);
     },
   );
+  // The layout host forwards tab close and new tab from a focused page as key chords.
   it("forwards address-bar focus and zoom from a focused desktop page", async () => {
     setup();
     await using _shortcut = await renderShortcut();

@@ -143,6 +143,18 @@ export function useDictationShortcut(input: ShortcutInput) {
         speech.cancel();
         return;
       }
+      // An error only clears from its own editor, and Esc still reaches whatever else it closes.
+      if (
+        event.key === "Escape" &&
+        speech.state.phase === "error" &&
+        !inOtherShortcutTarget(id.current, event) &&
+        (current.current.targetRef?.current?.contains(event.target as Node) ||
+          current.current.ownsFocus?.() ||
+          event.target === document.body)
+      ) {
+        speech.cancel();
+        return;
+      }
       const { keybindings, terminalOpen, modelPickerOpen, disabled } = current.current;
       const previewFocus = current.current.previewFocus ?? false;
       const command = resolveShortcutCommand(event, keybindings, {

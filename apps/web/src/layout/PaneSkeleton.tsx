@@ -59,9 +59,47 @@ const NOTCH_CORNER_STYLE: CSSProperties = {
 };
 
 /**
+ * A mini pane's active tab joined to its pane, like the app's connected pane
+ * tabs (index.css): pane fill rising above the pane's top edge, round on top,
+ * with a concave ear into that edge. Render it on the chrome, flush with the
+ * pane's square top-left corner and right above it.
+ */
+export function PaneJoinTab({
+  radius,
+  className,
+  style,
+  children,
+}: {
+  /** Both top corners and the ear. */
+  radius: number;
+  className?: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  return (
+    <span
+      className={cn("relative flex min-w-0 items-center bg-background", className)}
+      style={{ borderStartStartRadius: radius, borderStartEndRadius: radius, ...style }}
+    >
+      {children}
+      <span
+        aria-hidden
+        className="absolute bottom-0 left-full"
+        style={{
+          width: radius,
+          height: radius,
+          background: `radial-gradient(circle ${radius}px at 100% 0, transparent ${radius - 0.5}px, var(--background) ${radius + 0.5}px)`,
+        }}
+      />
+    </span>
+  );
+}
+
+/**
  * A mini pane's tab in a notch cut into the pane's top-left corner, in the
- * window chrome color like the app's pane notch (pen tmkl7). Render it at
- * the pane's top-left; the pane's top and left edges round into it.
+ * window chrome color like the app's pane notch under light, black chrome
+ * (pen tmkl7). Render it at the pane's top-left; the pane's top and left
+ * edges round into it.
  */
 export function PaneNotchTab({
   className,

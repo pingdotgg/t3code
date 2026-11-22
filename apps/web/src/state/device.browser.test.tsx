@@ -173,7 +173,6 @@ it("reports a failed first device load and retries it", async () => {
         }}
         surface={{ id: "device", kind: "device" }}
         visible
-        onDismissSetup={() => undefined}
       />
     </RegistryContext.Provider>,
   );

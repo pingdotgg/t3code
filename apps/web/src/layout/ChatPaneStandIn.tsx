@@ -1,4 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { useGT } from "gt-react";
 
 import { ChatHeader } from "../components/chat/ChatHeader";
 import {
@@ -17,6 +18,7 @@ const ignore = () => {};
 /** Use the real chat header over an inert body until ChatView mounts, so a new pane paints
  * immediately without shifting its chrome. */
 export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
+  const gt = useGT();
   const draft = useComposerDraftStore((store) =>
     target.kind === "draft" ? store.getDraftSession(target.draftId) : null,
   );
@@ -56,7 +58,7 @@ export function ChatPaneStandIn({ target }: { target: ThreadRouteTarget }) {
             <ChatHeader
               activeThreadEnvironmentId={threadRef.environmentId}
               activeThreadId={threadRef.threadId}
-              activeThreadTitle={thread?.title ?? "New thread"}
+              activeThreadTitle={thread?.title ?? gt("New thread")}
               isServerThread={target.kind === "server"}
               activeProject={project ?? null}
               parentThreadLink={null}

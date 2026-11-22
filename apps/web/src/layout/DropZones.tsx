@@ -1,3 +1,4 @@
+import { T, useMessages } from "gt-react";
 import { AppWindowIcon, AtSignIcon, Columns2Icon, Layers2Icon, Rows2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -283,13 +284,14 @@ function LayoutTabGhostLabel({ tab }: { tab: LayoutTab }) {
 }
 
 function DraggedContentLabel({ source }: { source: LayoutDragContentSource }) {
+  const messages = useMessages();
   if (source.kind !== "surface" || source.surface.kind === "thread-terminal") {
     return <LayoutTabGhostLabel tab={{ id: "dragged", content: layoutDragContent(source) }} />;
   }
   return (
     <GhostLabel
       icon={<ThreadSurfaceTabIcon threadRef={source.threadRef} surface={source.surface} />}
-      title={surfaceTabTitle(source.surface, null)}
+      title={surfaceTabTitle(source.surface, null, undefined, messages)}
     />
   );
 }
@@ -330,6 +332,7 @@ export function LayoutDropZones() {
     );
   });
   const threadGhost = useThreadContextDragGhost();
+  const messages = useMessages();
   if (!state) return null;
   const zone = state.target ? targetZone(state, state.target) : null;
   const into = state.target && !fillsBlank ? intoTabs(state, state.target) : null;
@@ -363,7 +366,7 @@ export function LayoutDropZones() {
         {zone && state.target ? (
           <DropPill x={zone.left + zone.width / 2} y={zone.top + zone.height / 2}>
             <PillIcon target={state.target} />
-            {layoutDropLabel(state.target, into?.reorder ?? false)}
+            {layoutDropLabel(state.target, into?.reorder ?? false, messages)}
           </DropPill>
         ) : null}
         {state.composer ? (
@@ -372,7 +375,7 @@ export function LayoutDropZones() {
             y={state.composer.top - MENTION_PILL_LIFT}
           >
             <AtSignIcon aria-hidden className="size-3.25 shrink-0" />
-            Mention thread
+            <T>Mention thread</T>
           </DropPill>
         ) : null}
       </div>

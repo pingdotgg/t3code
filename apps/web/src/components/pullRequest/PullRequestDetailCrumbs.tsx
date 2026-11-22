@@ -1,14 +1,18 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { useGT, useMessages } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { resolvePullRequestState } from "./pullRequestPresentation";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
+
+import { changeRequestTermKind } from "./changeRequestTerm";
 
 interface CrumbsPullRequest {
   readonly url: string;
@@ -19,24 +23,37 @@ interface CrumbsPullRequest {
   readonly isDraft: boolean;
 }
 
-const openNumberContextMenu = (event: ReactMouseEvent, detail: CrumbsPullRequest): void => {
+/** What a detail's crumbs name: where it lives, and its own key linking to the host. */
+export interface WorkItemCrumbsSubject {
+  readonly url: string;
+  /** The repository or tracker scope, such as `owner/repo` or a Linear team. */
+  readonly scope: string;
+  readonly scopeUrl: string | null;
+  /** `#123`, or a tracker's own key. */
+  readonly keyLabel: string;
+  readonly keyAriaLabel: string;
+  /** The host's name in "Open on GitHub" and the link's context menu. */
+  readonly openLabel: string;
+}
+
+const openKeyContextMenu = (event: ReactMouseEvent, subject: WorkItemCrumbsSubject): void => {
   event.preventDefault();
   event.stopPropagation();
   void showPullRequestLinkContextMenu({
-    url: detail.url,
-    openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
+    url: subject.url,
+    openLabel: subject.openLabel,
     position: { x: event.clientX, y: event.clientY },
   });
 };
 
 function BackButton({
   onBack,
-  focusable,
-  plural,
+  label,
+  tooltip,
 }: {
   onBack: () => void;
-  focusable: boolean;
-  plural: string;
+  label: string;
+  tooltip: string;
 }) {
   return (
     <Tooltip>
@@ -45,31 +62,31 @@ function BackButton({
           <Button
             size="icon-xs"
             variant="ghost-muted"
-            {...(focusable ? {} : { tabIndex: -1 })}
             onClick={onBack}
             className="-ms-1.25"
-            aria-label={`Back to this thread's ${plural}`}
+            aria-label={label}
           >
             <ArrowLeftIcon aria-hidden className="size-3.5" />
           </Button>
         }
       />
-      <TooltipPopup side="top">Back to {plural}</TooltipPopup>
+      <TooltipPopup side="top">{tooltip}</TooltipPopup>
     </Tooltip>
   );
 }
 
-function NumberLink({
-  detail,
+function KeyLink({
+  subject,
+  threadRef = null,
   toneClassName,
   openOnHostText,
-  focusable,
 }: {
-  detail: CrumbsPullRequest;
+  subject: WorkItemCrumbsSubject;
+  threadRef?: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
-  focusable: boolean;
 }) {
+  const openLink = useOpenLink(threadRef);
   return (
     <span className={cn("inline-flex shrink-0", toneClassName)}>
       <Tooltip>
@@ -77,15 +94,14 @@ function NumberLink({
           render={
             <InlineButton
               tone={null}
-              {...(focusable ? {} : { tabIndex: -1 })}
-              onClick={() => void readLocalApi()?.shell.openExternal(detail.url)}
+              onClick={(event) => void openLink(subject.url, { event }).catch(console.error)}
               onAuxClick={(event) => {
-                if (event.button === 1) void readLocalApi()?.shell.openExternal(detail.url);
+                if (event.button === 1) void openLink(subject.url, { event }).catch(console.error);
               }}
-              onContextMenu={(event) => openNumberContextMenu(event, detail)}
-              aria-label={`Open ${sourceControlClients.get(detail.provider).changeRequest.singular} #${detail.number} on host`}
+              onContextMenu={(event) => openKeyContextMenu(event, subject)}
+              aria-label={subject.keyAriaLabel}
             >
-              #{detail.number}
+              {subject.keyLabel}
               <ExternalLinkIcon aria-hidden className="size-[13px]" />
             </InlineButton>
           }
@@ -96,8 +112,82 @@ function NumberLink({
   );
 }
 
+/**
+ * A detail's first line, shared by pull requests and issues: back, the scope, the key in its
+ * state's ink, and a badge for any state but open.
+ */
+export function WorkItemDetailCrumbs({
+  subject,
+  threadRef = null,
+  toneClassName,
+  openOnHostText,
+  badge,
+  back,
+  children,
+}: {
+  subject: WorkItemCrumbsSubject | null;
+  threadRef?: ScopedThreadRef | null;
+  toneClassName: string | null;
+  openOnHostText: string;
+  badge?: ReactNode;
+  back?: { readonly onBack: () => void; readonly label: string; readonly tooltip: string };
+  children?: ReactNode;
+}) {
+  const gt = useGT();
+  const openLink = useOpenLink(threadRef);
+  return (
+    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
+      {subject && toneClassName ? (
+        <>
+          {back ? <BackButton {...back} /> : null}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                subject.scopeUrl ? (
+                  <InlineButton
+                    tone="muted"
+                    className="min-w-16 shrink @max-sm/pr-header:hidden"
+                    onClick={(event) => {
+                      if (subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
+                    onAuxClick={(event) => {
+                      if (event.button === 1 && subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
+                  >
+                    <span className="truncate">{subject.scope}</span>
+                  </InlineButton>
+                ) : (
+                  <span className="min-w-16 truncate @max-sm/pr-header:hidden">
+                    {subject.scope}
+                  </span>
+                )
+              }
+            />
+            <TooltipPopup side="top">
+              {subject.scopeUrl
+                ? gt("Open {repository} repository", { repository: subject.scope })
+                : subject.scope}
+            </TooltipPopup>
+          </Tooltip>
+          <KeyLink
+            subject={subject}
+            threadRef={threadRef}
+            toneClassName={toneClassName}
+            openOnHostText={openOnHostText}
+          />
+          {badge}
+          {children}
+        </>
+      ) : null}
+    </div>
+  );
+}
+
 export function PullRequestDetailCrumbs({
   detail,
+  threadRef = null,
   toneClassName,
   repositoryUrl,
   openOnHostText,
@@ -105,70 +195,73 @@ export function PullRequestDetailCrumbs({
   children,
 }: {
   detail: CrumbsPullRequest | null;
+  threadRef?: ScopedThreadRef | null;
   toneClassName: string | null;
   repositoryUrl: string | null;
   openOnHostText: string;
   onBack: (() => void) | undefined;
   children?: ReactNode;
 }) {
-  const state = detail ? resolvePullRequestState(detail) : null;
+  const gt = useGT();
+  const messages = useMessages();
+  const state = detail ? resolvePullRequestState(detail, messages) : null;
+  const term = detail
+    ? changeRequestTermKind(sourceControlClients.get(detail.provider).changeRequest)
+    : null;
   return (
-    <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
-      {detail && toneClassName && state ? (
-        <>
-          {onBack ? (
-            <BackButton
-              onBack={onBack}
-              focusable
-              plural={sourceControlClients.get(detail.provider).changeRequest.plural}
-            />
-          ) : null}
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                repositoryUrl ? (
-                  <InlineButton
-                    tone="muted"
-                    className="min-w-16 shrink @max-sm/pr-header:hidden"
-                    onClick={() => void readLocalApi()?.shell.openExternal(repositoryUrl)}
-                  >
-                    <span className="truncate">{detail.repository}</span>
-                  </InlineButton>
-                ) : (
-                  <span className="min-w-16 truncate @max-sm/pr-header:hidden">
-                    {detail.repository}
-                  </span>
-                )
-              }
-            />
-            <TooltipPopup side="top">
-              {repositoryUrl ? `Open ${detail.repository} repository` : detail.repository}
-            </TooltipPopup>
-          </Tooltip>
-          <NumberLink
-            detail={detail}
-            toneClassName={toneClassName}
-            openOnHostText={openOnHostText}
-            focusable
-          />
-          {detail.state !== "open" || detail.isDraft ? (
-            <Badge
-              size="status"
-              variant={
-                detail.state === "merged"
-                  ? "merged"
-                  : detail.state === "closed"
-                    ? "error"
-                    : "secondary"
-              }
-            >
-              <state.Icon aria-hidden />
-              <span className="@max-sm/pr-header:sr-only">{state.label}</span>
-            </Badge>
-          ) : null}
-          {children}
-        </>
-      ) : null}
-    </div>
+    <WorkItemDetailCrumbs
+      threadRef={threadRef}
+      subject={
+        detail && term
+          ? {
+              url: detail.url,
+              scope: detail.repository,
+              scopeUrl: repositoryUrl,
+              keyLabel: `#${detail.number}`,
+              keyAriaLabel: gt(
+                "Open {term, select, mr {merge request} cr {change request} other {pull request}} #{number} on host",
+                { term, number: detail.number },
+              ),
+              openLabel: openOnHostLabel(sourceControlClients.get(detail.provider)),
+            }
+          : null
+      }
+      toneClassName={state ? toneClassName : null}
+      openOnHostText={openOnHostText}
+      {...(onBack && term
+        ? {
+            back: {
+              onBack,
+              label: gt(
+                "Back to this thread's {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
+                { term },
+              ),
+              tooltip: gt(
+                "Back to {term, select, mr {merge requests} cr {change requests} other {pull requests}}",
+                { term },
+              ),
+            },
+          }
+        : {})}
+      badge={
+        detail && state && (detail.state !== "open" || detail.isDraft) ? (
+          <Badge
+            size="status"
+            variant={
+              detail.state === "merged"
+                ? "merged"
+                : detail.state === "closed"
+                  ? "error"
+                  : "secondary"
+            }
+          >
+            <state.Icon aria-hidden />
+            <span className="@max-sm/pr-header:sr-only">{state.label}</span>
+          </Badge>
+        ) : null
+      }
+    >
+      {children}
+    </WorkItemDetailCrumbs>
   );
 }

@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, type ComponentProps, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 /** Groups may span virtualized timeline items. Each part owns its trailing space. */
@@ -37,12 +37,19 @@ type RowContent = {
   wrapLabel?: boolean;
 };
 
-function WorkLogLine({ icon, label, trailing, wrapLabel }: RowContent) {
+const focusRingClassName =
+  "rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
+
+type LineProps = Omit<ComponentProps<"div">, "className" | "style" | "children">;
+
+function WorkLogLine({ icon, label, trailing, wrapLabel, ...lineProps }: RowContent & LineProps) {
   return (
     <div
+      {...lineProps}
       className={cn(
         "flex min-h-6 min-w-0 gap-1.25 text-body select-none min-[640px]:[--type-body:0.8125rem] min-[640px]:[--type-label:0.8125rem] [&_*]:select-none",
         wrapLabel ? "items-start" : "items-center",
+        lineProps.role === "button" && focusRingClassName,
       )}
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-1.25">
@@ -104,13 +111,11 @@ export function WorkLogTarget({ children, mono = false }: { children: ReactNode;
   );
 }
 
-const interactionClassName =
-  "cursor-pointer hover:surface-ghost-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
-
-function rowClassName(interactive: boolean) {
+function rowClassName(interactive: boolean, focusable = interactive) {
   return cn(
     "group/timeline-row relative w-full min-w-0 rounded-md pe-1.5 text-left transition-colors",
-    interactive && interactionClassName,
+    interactive && "cursor-pointer hover:surface-ghost-hover",
+    focusable && focusRingClassName,
   );
 }
 
@@ -129,20 +134,36 @@ export function WorkLogButton({
   );
 }
 
-/** Div disclosure permits selectable detail and nested actions. */
+type RowProps = Omit<ComponentProps<"div">, "className" | "style"> & {
+  toggle?: LineProps | undefined;
+};
+
+/**
+ * Div disclosure permits selectable detail and nested actions. `toggle` goes on
+ * the header line only: assistive tech hides a button's children.
+ */
 export function WorkLogRow({
   icon,
   label,
   trailing,
   wrapLabel = false,
+  toggle,
   children,
   ...rowProps
-}: RowContent & Omit<ComponentProps<"div">, "className" | "style">) {
-  const className = rowClassName(rowProps.onClick !== undefined);
+}: RowContent & RowProps) {
+  const className = rowClassName(rowProps.onClick !== undefined, false);
+  const detailsId = useId();
   return (
     <div {...rowProps} className={className}>
-      <WorkLogLine icon={icon} label={label} trailing={trailing} wrapLabel={wrapLabel} />
-      {children}
+      <WorkLogLine
+        aria-controls={toggle ? detailsId : undefined}
+        {...toggle}
+        icon={icon}
+        label={label}
+        trailing={trailing}
+        wrapLabel={wrapLabel}
+      />
+      {toggle ? <div id={detailsId}>{children}</div> : children}
     </div>
   );
 }

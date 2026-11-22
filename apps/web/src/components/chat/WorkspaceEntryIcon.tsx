@@ -1,5 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
+import { useMessages } from "gt-react";
 
 import { useFileMetadata } from "../../hooks/useFileMetadata";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -28,11 +29,12 @@ export function WorkspaceEntryTooltip(props: {
   cwd?: string | undefined;
 }) {
   const metadata = useFileMetadata(props.environmentId, props.path, props.cwd);
+  const messages = useMessages();
   return (
     <>
       <span className="block">{props.label ?? props.path}</span>
       {metadata?.byteLength === undefined ? null : (
-        <span className="block">{formatAttachmentSize(metadata.byteLength)}</span>
+        <span className="block">{formatAttachmentSize(metadata.byteLength, messages)}</span>
       )}
     </>
   );

@@ -5,6 +5,7 @@
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
 import type { ContextMenuItem, RunId, ScopedThreadRef } from "@t3tools/contracts";
 import { useSyncExternalStore, type PointerEvent as ReactPointerEvent } from "react";
+import { msg } from "gt-react";
 
 import {
   dropThreadContext,
@@ -31,6 +32,7 @@ import { isScrollingWorkspacesEnabled } from "./layoutBehavior";
 import { useDiffPanelStore } from "../diffPanelStore";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { notePaneDrop } from "../motion/paneDrop";
+import { m, type MessageResolver } from "../i18n/messages";
 import {
   rightPanelHostRef,
   selectThreadRightPanelState,
@@ -49,6 +51,7 @@ export type LayoutDragSource =
   | { kind: "tab"; tabId: string }
   | { kind: "thread"; threadRef: ScopedThreadRef }
   | { kind: "pull-requests" }
+  | { kind: "issues" }
   | {
       kind: "surface";
       threadRef: ScopedThreadRef;
@@ -274,19 +277,27 @@ export function isLayoutDropUseful(
 }
 
 /** The label on the pill under the pointer (pen MI18S "Side by side", nYpzc "Below"). */
-export function layoutDropLabel(target: LayoutDropTarget, reorder: boolean): string {
-  if (target.kind === "into") return reorder ? "Move here" : "Add as tab";
+export function layoutDropLabel(
+  target: LayoutDropTarget,
+  reorder: boolean,
+  resolve: MessageResolver = m,
+): string {
+  if (target.kind === "into") {
+    return reorder ? resolve(msg("Move here")) : resolve(msg("Add as tab"));
+  }
   if (target.kind === "extend") {
-    return target.edge === "bottom" ? "New workspace" : "New column";
+    return target.edge === "bottom"
+      ? resolve(msg("New workspace"))
+      : resolve(msg("New column", { $context: "where a dragged pane lands" }));
   }
   switch (target.side) {
     case "left":
     case "right":
-      return "Side by side";
+      return resolve(msg("Side by side", { $context: "where a dragged pane lands" }));
     case "up":
-      return "Above";
+      return resolve(msg("Above", { $context: "where a dragged pane lands" }));
     case "down":
-      return "Below";
+      return resolve(msg("Below", { $context: "where a dragged pane lands" }));
   }
 }
 
@@ -295,6 +306,7 @@ export function layoutDragContent(source: LayoutDragContentSource): LayoutTabCon
     return { kind: "chat", target: { kind: "server", threadRef: source.threadRef } };
   }
   if (source.kind === "pull-requests") return { kind: "pull-requests" };
+  if (source.kind === "issues") return { kind: "issues" };
   if (source.kind === "new-tab") return source.content;
   return {
     kind: "surface",
@@ -518,8 +530,12 @@ function openLayoutDragSurface(threadRef: ScopedThreadRef, surface: LayoutDragSu
       return panels.openTerminal(threadRef, surface.resourceId);
     case "pull-request":
       return panels.openPullRequest(threadRef, surface);
-    case "side-chat":
-      return panels.openSideChat(threadRef, surface.threadId);
+    case "issue":
+      return panels.openIssue(threadRef, surface);
+    case "thread":
+      return panels.openThread(threadRef, surface.threadId);
+    case "linked-thread":
+      return panels.openLinkedThread(threadRef, surface);
   }
 }
 
@@ -556,7 +572,7 @@ export function withOpenThreadToTheSideItem<T extends string>(
 ): ContextMenuItem<T | typeof OPEN_THREAD_TO_THE_SIDE_MENU_ID>[] {
   if (!canOpenThreadToTheSide(threadRef)) return [...items];
   return [
-    { id: OPEN_THREAD_TO_THE_SIDE_MENU_ID, label: "Open to the side", icon: "panel-right" },
+    { id: OPEN_THREAD_TO_THE_SIDE_MENU_ID, label: m(msg("Open to the side")), icon: "panel-right" },
     ...items.map((item, index) => (index === 0 ? { ...item, separatorBefore: true } : item)),
   ];
 }

@@ -9,6 +9,7 @@ import {
   TriangleAlertIcon,
 } from "lucide-react";
 import type { PullRequestState } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 export const PullRequestGlyph = {
   pullRequest: GitPullRequestArrowIcon,
@@ -32,22 +33,22 @@ export interface PullRequestStatePresentation {
 
 export const PULL_REQUEST_STATE_PRESENTATION = {
   open: {
-    label: "Open",
+    label: msg("Open", { $context: "pull request state" }),
     toneClassName: "text-success-foreground",
     Icon: PullRequestGlyph.pullRequest,
   },
   draft: {
-    label: "Draft",
+    label: msg("Draft", { $context: "pull request state" }),
     toneClassName: "text-dim-foreground",
     Icon: PullRequestGlyph.draft,
   },
   closed: {
-    label: "Closed",
+    label: msg("Closed", { $context: "pull request state" }),
     toneClassName: "text-error-foreground",
     Icon: PullRequestGlyph.closed,
   },
   merged: {
-    label: "Merged",
+    label: msg("Merged", { $context: "pull request state" }),
     toneClassName: "text-merged-foreground",
     Icon: PullRequestGlyph.merged,
   },

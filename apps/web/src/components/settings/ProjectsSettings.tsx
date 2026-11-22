@@ -1,4 +1,5 @@
 import { EnvironmentId } from "@t3tools/contracts";
+import { T, useGT } from "gt-react";
 import {
   FolderOpenIcon,
   FolderPlusIcon,
@@ -47,7 +48,7 @@ export function ProjectsSettings() {
               onClick={() => selectScope(selectEnvironmentAxis(value, ALL_ENVIRONMENTS_VALUE))}
             >
               <LayersIcon />
-              Show all environments
+              <T>Show all environments</T>
             </Button>
           ) : null}
         </div>
@@ -92,13 +93,14 @@ function AddProjectButton({ primary = false }: { primary?: boolean }) {
       onClick={() => openCommandPalette({ open: "add-project" })}
     >
       <FolderPlusIcon />
-      Add project
+      <T>Add project</T>
     </Button>
   );
 }
 
 /** With no project in scope: every project to pick from, or what a project holds when there are none. */
 function ProjectChooser() {
+  const gt = useGT();
   const { search, selectScope } = useSettingsScope();
   const groups = projectScopeMenuGroups(useSettingsProjectGroups(), search);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -109,8 +111,10 @@ function ProjectChooser() {
       <SettingsPageContainer centered className="max-w-[648px] gap-4">
         <SettingsEmptyState
           icon={<FolderOpenIcon />}
-          title="No projects yet"
-          description="A project is a folder T3 Code works in. Add one to set its name, icon, checkouts and actions here."
+          title={gt("No projects yet")}
+          description={gt(
+            "A project is a folder T3 Code works in. Add one to set its name, icon, checkouts and actions here.",
+          )}
         >
           <div className="flex flex-wrap justify-center gap-2">
             <AddProjectButton primary />
@@ -121,29 +125,29 @@ function ProjectChooser() {
                 onClick={() => void startScratchThread(scratchTarget)}
               >
                 <MessageSquareDashedIcon />
-                Chat without a project
+                <T>Chat without a project</T>
               </Button>
             ) : null}
           </div>
-          <SettingsEmptyTiles title="What you'll set for each project">
+          <SettingsEmptyTiles title={gt("What you'll set for each project")}>
             <SettingsEmptyTile
               icon={<PencilIcon />}
-              title="Name and icon"
-              description="Shown in the sidebar"
+              title={gt("Name and icon")}
+              description={gt("Shown in the sidebar")}
             >
               {SKELETON_LINES}
             </SettingsEmptyTile>
             <SettingsEmptyTile
               icon={<GitBranchIcon />}
-              title="Checkouts"
-              description="One per machine"
+              title={gt("Checkouts")}
+              description={gt("One per machine")}
             >
               {SKELETON_LINES}
             </SettingsEmptyTile>
             <SettingsEmptyTile
               icon={<PlayIcon />}
-              title="Actions"
-              description="Dev server, typecheck…"
+              title={gt("Actions")}
+              description={gt("Dev server, typecheck…")}
             >
               {SKELETON_LINES}
             </SettingsEmptyTile>
@@ -156,18 +160,20 @@ function ProjectChooser() {
     <SettingsPageContainer centered className="max-w-[648px] gap-4">
       <SettingsEmptyState
         icon={<FolderOpenIcon />}
-        title="Choose a project"
-        description="Choose a project to manage its name, icon, checkouts and actions."
+        title={gt("Choose a project")}
+        description={gt("Choose a project to manage its name, icon, checkouts and actions.")}
       >
         <AddProjectButton />
       </SettingsEmptyState>
-      <SettingsSection title="Your projects">
+      <SettingsSection title={gt("Your projects")}>
         <div className="p-1">
           {groups.map((group) => {
             const location =
               group.memberProjects.length === 1
                 ? group.memberProjects[0]?.workspaceRoot
-                : `${group.memberProjects.length} checkouts`;
+                : gt("{count, plural, one {{count} checkout} other {{count} checkouts}}", {
+                    count: group.memberProjects.length,
+                  });
             return (
               <Tooltip key={group.projectKey}>
                 <TooltipTrigger
@@ -175,7 +181,7 @@ function ProjectChooser() {
                     <Button
                       variant="ghost"
                       className="w-full justify-start"
-                      aria-label={`Open ${group.displayName} settings`}
+                      aria-label={gt("Open {project} settings", { project: group.displayName })}
                       onClick={() => selectScope(selectProjectAxis(search, group.projectKey))}
                     />
                   }

@@ -1,4 +1,7 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
+import { msg } from "gt-react";
+
+import { m } from "./i18n/messages";
 
 import { MENU_ITEM_ROW_CLASS, MENU_SUB_TRIGGER_ROW_CLASS } from "./components/ui/menu";
 import { prepareFocusReturn } from "./components/ui/focus-return";
@@ -499,7 +502,7 @@ export function showContextMenuFallback<T extends string>(
       // Theme CSS styles menus through this documented hook, like the component menus.
       menu.dataset.slot = "menu-popup";
       menu.setAttribute("role", "menu");
-      menu.setAttribute("aria-label", parentTrigger?.textContent ?? "Context menu");
+      menu.setAttribute("aria-label", parentTrigger?.textContent ?? m(msg("Context menu")));
       menu.tabIndex = -1;
 
       // Size to the content and scroll only past the viewport; clampMenuPosition

@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useGT } from "gt-react";
 import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
@@ -337,6 +338,7 @@ function TerminalHintPill({
   hint: Extract<LayoutHintState, { kind: "terminal" }>;
   leaving: boolean;
 }) {
+  const gt = useGT();
   const thread = useThreadShell(hint.threadRef);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcut = shortcutLabelForCommand(keybindings, "terminal.toggle");
@@ -352,7 +354,7 @@ function TerminalHintPill({
       )}
     >
       <span className="min-w-0 truncate text-meta text-foreground">
-        Terminal for {thread?.title ?? "New thread"}
+        {gt("Terminal for {title}", { title: thread?.title ?? gt("New thread") })}
       </span>
       {shortcut ? (
         <span className="kbd-in-popover flex shrink-0">
@@ -370,9 +372,10 @@ function TerminalHintPill({
 function useLayoutWorkspaceName(workspace: LayoutWorkspace | null): string {
   const lead = workspace ? selectLayoutWorkspaceLeadTab(workspace) : null;
   const label = useLayoutTabLabel(lead ?? NO_LEAD_TAB);
-  if (!workspace) return "Workspace";
+  const gt = useGT();
+  if (!workspace) return gt("Workspace", { $context: "a set of panes in the layout" });
   if (workspace.name) return workspace.name;
-  if (!lead) return "Empty workspace";
+  if (!lead) return gt("Empty workspace");
   return label.title;
 }
 
@@ -442,6 +445,7 @@ function WorkspaceHintPill({
 }
 
 function ColumnHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "column" }> }) {
+  const gt = useGT();
   const leaving = useHintLifetime(hint.id);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const label = hint.command ? shortcutLabelForCommand(keybindings, hint.command) : null;
@@ -466,7 +470,7 @@ function ColumnHintPill({ hint }: { hint: Extract<LayoutHintState, { kind: "colu
         ))}
       </span>
       <span className="min-w-0 truncate text-meta text-foreground">
-        Column {hint.index + 1} of {hint.count}
+        {gt("Column {index} of {count}", { index: hint.index + 1, count: hint.count })}
       </span>
       {keys ? (
         <span className="kbd-in-popover flex shrink-0">

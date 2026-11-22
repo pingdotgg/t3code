@@ -11,6 +11,9 @@ import {
 } from "@t3tools/contracts";
 import { getProviderClient } from "@t3tools/client-runtime/provider-clients";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 import { deriveProviderSettingsFields, type SettingsFormDefinition } from "./ProviderSettingsForm";
 
@@ -34,6 +37,7 @@ interface SecretProviderUse {
 export function secretProviderUses(
   settings: SecretUseSettings,
   providerId: string,
+  resolve: MessageResolver = m,
 ): ReadonlyArray<SecretProviderUse> {
   const uses = (
     definition: SettingsFormDefinition,
@@ -42,7 +46,9 @@ export function secretProviderUses(
     value: unknown,
   ): ReadonlyArray<SecretProviderUse> => {
     const labels = new Map(
-      deriveProviderSettingsFields(definition).map((field) => [field.key, field.label] as const),
+      deriveProviderSettingsFields(definition, undefined, resolve).map(
+        (field) => [field.key, field.label] as const,
+      ),
     );
     return secretReferencesInSettings(definition.settingsSchema, value).flatMap(
       ({ field, key, reference }) =>
@@ -115,8 +121,10 @@ export function secretProviderUses(
         ? [
             {
               id: `voice:${provider}`,
-              // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's secret usage label; the redesign restyles it later.
-              label: `Voice · ${CLOUD_SPEECH_LABELS[provider]}`,
+              label: resolve(
+                // oxlint-disable-next-line t3code/no-dot-separated-text -- Main's secret usage label; the redesign restyles it later.
+                msg("Voice · {provider}", { provider: CLOUD_SPEECH_LABELS[provider] }),
+              ),
             },
           ]
         : [];

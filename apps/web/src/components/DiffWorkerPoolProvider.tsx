@@ -2,6 +2,7 @@ import { WorkerPoolContext, useWorkerPool } from "@pierre/diffs/react";
 import { WorkerPoolManager } from "@pierre/diffs/worker";
 import DiffsWorker from "@pierre/diffs/worker/worker.js?worker";
 import * as Schema from "effect/Schema";
+import { T } from "gt-react";
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { getRenderedAppearance, subscribeRenderedAppearance } from "../hooks/useTheme";
 import { resolveDiffThemeName } from "../lib/diffRendering";
@@ -103,11 +104,28 @@ function acquireDiffWorkerPool(poolSize: number) {
 
 // Plain-text views do not queue a highlight task that could retry a blank first render.
 function DiffWorkerReady({ failed, children }: { failed: boolean; children?: ReactNode }) {
-  const workerPool = useWorkerPool();
+  const ready = useDiffWorkerPoolReady(useWorkerPool(), failed);
+  return ready ? (
+    children
+  ) : (
+    <div
+      role="status"
+      className="flex min-h-0 flex-1 items-center justify-center p-4 text-meta text-muted-foreground"
+    >
+      <T>Loading code...</T>
+    </div>
+  );
+}
+
+/** A null pool is one whose worker died: its views render plain text instead of waiting. */
+export function useDiffWorkerPoolReady(
+  workerPool: WorkerPoolManager | null | undefined,
+  failed?: boolean,
+) {
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
     ? readyPool === workerPool || workerPool.isInitialized() || !workerPool.isWorkingPool()
-    : failed || typeof window === "undefined";
+    : (failed ?? workerPool === null) || typeof window === "undefined";
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- initializes the diff worker pool and marks it ready when its async startup settles
   useEffect(() => {
@@ -123,16 +141,7 @@ function DiffWorkerReady({ failed, children }: { failed: boolean; children?: Rea
     };
   }, [ready, workerPool]);
 
-  return ready ? (
-    children
-  ) : (
-    <div
-      role="status"
-      className="flex min-h-0 flex-1 items-center justify-center p-4 text-meta text-muted-foreground"
-    >
-      Loading code...
-    </div>
-  );
+  return ready;
 }
 
 // Module-level so the subscribe identity is stable: a new one would release and reacquire

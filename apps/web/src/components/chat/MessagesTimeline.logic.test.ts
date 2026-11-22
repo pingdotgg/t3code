@@ -46,6 +46,7 @@ import {
   resolveAssistantMessageCopyState,
   type MessagesTimelineRow,
   workEntryDisplayLabel,
+  workEntryReadOutput,
 } from "./MessagesTimeline.logic";
 import { workEntryIconName } from "./TimelineWorkEntryRow.logic";
 import { presentSlashCommand } from "./timelineSlashCommands";
@@ -1842,6 +1843,12 @@ describe("deriveMessagesTimelineRows", () => {
           message("third-steer", 25, "user", "steer"),
           edit("edit-after-steers", 28, 30),
           message("final", 30, "assistant"),
+          {
+            kind: "event",
+            id: "late-subagent",
+            createdAt: time(50),
+            projectedItem: { item: { type: "subagent", status: "completed", runId } } as never,
+          },
         ],
         latestRun: { runId, status, startedAt: time(0), completedAt: time(30) },
         isWorking: false,
@@ -1870,6 +1877,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       `turn-fold:${runId}`,
       "final",
+      "late-subagent",
     ]);
     expect(collapsed[5]).toMatchObject({
       createdAt: time(0),
@@ -1890,6 +1898,7 @@ describe("deriveMessagesTimelineRows", () => {
       `turn-fold:${runId}`,
       "work-toggle:edit-before-steers",
       "final",
+      "late-subagent",
     ]);
     expect(expanded[6]).toMatchObject({ hiddenCount: 3 });
 
@@ -1907,6 +1916,7 @@ describe("deriveMessagesTimelineRows", () => {
       "third-steer",
       [`turn-fold:${runId}:steer:third-steer`, "Continued for 5s", null],
       "final",
+      "late-subagent",
     ]);
   });
 
@@ -6740,5 +6750,16 @@ describe("slash command prompts", () => {
     for (const text of ["/usr/bin/foo is broken", "/usr is broken", "/tmp", "$doctor"]) {
       expect(commandOf(rowsFor([prompt(text)])), text).toBeUndefined();
     }
+  });
+});
+
+describe("workEntryReadOutput", () => {
+  it("joins relative paths to the workspace root but keeps home paths as written", () => {
+    expect(
+      workEntryReadOutput(
+        { changedFiles: ["src/app.ts", "~/.claude/CLAUDE.md", "~\\.gitconfig"] },
+        "/workspace/t3code",
+      ),
+    ).toBe("/workspace/t3code/src/app.ts\n~/.claude/CLAUDE.md\n~/.gitconfig");
   });
 });

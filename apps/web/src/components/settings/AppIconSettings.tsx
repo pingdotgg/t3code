@@ -1,4 +1,5 @@
 import { DEFAULT_APP_ICON } from "@t3tools/shared/appIcons";
+import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { APP_ICON_OPTIONS, appIconOption } from "../../appIcon";
@@ -14,22 +15,28 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { SettingResetButton, SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 function AppIconPickerDialog(props: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const current = appIconOption(useClientSettings((settings) => settings.appIcon));
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>App icon</DialogTitle>
-          <DialogDescription>Used for the Dock, taskbar, and browser tab.</DialogDescription>
+          <DialogTitle>
+            <T>App icon</T>
+          </DialogTitle>
+          <DialogDescription>
+            <T>Used for the Dock, taskbar, and browser tab.</T>
+          </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          <div aria-label="App icon" className="grid grid-cols-3 gap-3" role="group">
+          <div aria-label={gt("App icon")} className="grid grid-cols-3 gap-3" role="group">
             {APP_ICON_OPTIONS.map((option) => {
               const isActive = option.id === current.id;
               return (
@@ -47,7 +54,7 @@ function AppIconPickerDialog(props: {
                         isActive ? "text-foreground" : "text-muted-foreground",
                       )}
                     >
-                      {option.label}
+                      {messages(option.label)}
                     </span>
                   </span>
                 </ContentButton>
@@ -61,17 +68,20 @@ function AppIconPickerDialog(props: {
 }
 
 export function AppIconRow() {
+  const gt = useGT();
+  const messages = useMessages();
+  const searchableSetting = useSearchableSetting();
   const [open, setOpen] = useState(false);
   const appIcon = useClientSettings((settings) => settings.appIcon);
   const current = appIconOption(appIcon);
   return (
     <SettingsRow
       {...searchableSetting("app-icon")}
-      description="Choose the icon for the Dock, taskbar, and browser tab on this device."
+      description={gt("Choose the icon for the Dock, taskbar, and browser tab on this device.")}
       resetAction={
         current.id !== DEFAULT_APP_ICON ? (
           <SettingResetButton
-            label="app icon"
+            ariaLabel={gt("Reset app icon to default")}
             onClick={() => void updateClientSettings({ appIcon: DEFAULT_APP_ICON })}
           />
         ) : null
@@ -80,7 +90,7 @@ export function AppIconRow() {
         <div className="w-full sm:w-40">
           <Button className="w-full" onClick={() => setOpen(true)} size="sm" variant="secondary">
             <img alt="" className="size-4" draggable={false} src={current.src} />
-            {current.label}
+            {messages(current.label)}
           </Button>
           <AppIconPickerDialog onOpenChange={setOpen} open={open} />
         </div>

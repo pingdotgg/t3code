@@ -62,8 +62,10 @@ import * as Stream from "effect/Stream";
 import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as SynchronizedRef from "effect/SynchronizedRef";
+import { msg } from "gt-i18n";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { m } from "../i18n/messages.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import {
   MENU_ACTION_CHANNEL,
@@ -2086,6 +2088,51 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
   });
 
+  // Clears a tab's dead guest so callers see "no webview" until the renderer registers a new one.
+  const detachDestroyedWebContents = Effect.fn("PreviewManager.detachDestroyedWebContents")(
+    function* (tabId: string, webContentsId: number) {
+      const expectedAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
+      yield* withTabLifecycleLock(
+        tabId,
+        Effect.gen(function* () {
+          const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          const currentAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
+          const currentWebContents = webContents.fromId(webContentsId);
+          if (
+            currentTab?.webContentsId !== webContentsId ||
+            currentAttachment !== expectedAttachment ||
+            (currentWebContents && !currentWebContents.isDestroyed())
+          ) {
+            return;
+          }
+          yield* Effect.all(
+            [
+              detachControlSession(webContentsId),
+              detachListeners(webContentsId),
+              cancelPickElement(tabId),
+            ],
+            { concurrency: 3, discard: true },
+          );
+          const detached = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
+            const current = tabs.get(tabId);
+            if (current?.webContentsId !== webContentsId) {
+              return [Option.none<PreviewTabState>(), tabs] as const;
+            }
+            const { favicon: _favicon, ...currentWithoutFavicon } = current;
+            const next: PreviewTabState = { ...currentWithoutFavicon, webContentsId: null };
+            return [
+              Option.some(next),
+              replaceMap(tabs, (copy) => {
+                copy.set(tabId, next);
+              }),
+            ] as const;
+          });
+          if (Option.isSome(detached)) yield* emitIfCurrent(tabId, detached.value);
+        }),
+      );
+    },
+  );
+
   // URL tabs can paint before registerWebview; set the background at attach time.
   const prepareWebview = Effect.fn("PreviewManager.prepareWebview")(function* (
     wc: Electron.WebContents,
@@ -2105,7 +2152,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     wc.once("destroyed", () => {
       guestLoadFailures.delete(webContentsId);
-      runFork(hideDestroyedGuest(webContentsId));
+      runFork(
+        Effect.gen(function* () {
+          yield* hideDestroyedGuest(webContentsId);
+          const tabId = yield* tabIdForWebContents(webContentsId);
+          if (tabId) yield* detachDestroyedWebContents(tabId, webContentsId);
+        }),
+      );
       runFork(detachControlSession(webContentsId));
     });
     yield* ensureControlSession(wc).pipe(
@@ -2181,45 +2234,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const webContentsId = pending.webContentsId;
     const wc = webContents.fromId(webContentsId);
     if (!wc || wc.isDestroyed()) {
-      const expectedAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
-      yield* withTabLifecycleLock(
-        tabId,
-        Effect.gen(function* () {
-          const currentTab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
-          const currentAttachment = (yield* Ref.get(attachedRef)).get(webContentsId);
-          const currentWebContents = webContents.fromId(webContentsId);
-          if (
-            currentTab?.webContentsId !== webContentsId ||
-            currentAttachment !== expectedAttachment ||
-            (currentWebContents && !currentWebContents.isDestroyed())
-          ) {
-            return;
-          }
-          yield* Effect.all(
-            [
-              detachControlSession(webContentsId),
-              detachListeners(webContentsId),
-              cancelPickElement(tabId),
-            ],
-            { concurrency: 3, discard: true },
-          );
-          const detached = yield* SynchronizedRef.modify(tabsRef, (tabs) => {
-            const current = tabs.get(tabId);
-            if (current?.webContentsId !== webContentsId) {
-              return [Option.none<PreviewTabState>(), tabs] as const;
-            }
-            const { favicon: _favicon, ...currentWithoutFavicon } = current;
-            const next: PreviewTabState = { ...currentWithoutFavicon, webContentsId: null };
-            return [
-              Option.some(next),
-              replaceMap(tabs, (copy) => {
-                copy.set(tabId, next);
-              }),
-            ] as const;
-          });
-          if (Option.isSome(detached)) yield* emitIfCurrent(tabId, detached.value);
-        }),
-      );
+      yield* detachDestroyedWebContents(tabId, webContentsId);
       return;
     }
     yield* leaveBusyPage(wc);
@@ -2294,6 +2309,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       Effect.catchTags({
         PreviewTabNotFoundError: () => Effect.void,
         PreviewWebContentsNotFoundError: () => Effect.void,
+        PreviewWebviewNotInitializedError: () => Effect.void,
       }),
     );
 
@@ -3205,7 +3221,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
               height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
               minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,
               minHeight: PICTURE_IN_PICTURE_MIN_HEIGHT,
-              title: title.length > 0 ? `Preview · ${title}` : "Browser preview",
+              title:
+                title.length > 0
+                  ? m(msg("Preview · {title}"), { title })
+                  : m(msg("Browser preview")),
               show: false,
               alwaysOnTop: true,
               autoHideMenuBar: true,
@@ -3666,6 +3685,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
+  // A hidden or locked window draws no frames, so a guest it hid stays unpainted until unthrottled.
+  const serverCaptureLeases = new Map<string, { readonly tabId: string; readonly lease: symbol }>();
   const updateServerTabCapturing = Effect.fn("PreviewManager.updateServerTabCapturing")(
     function* (painting: {
       readonly key: { readonly threadId: string; readonly tabId: string };
@@ -3676,6 +3697,25 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           candidate.serverTab?.threadId === painting.key.threadId &&
           candidate.serverTab.tabId === painting.key.tabId,
       );
+      const key = `${painting.key.threadId}\u0000${painting.key.tabId}`;
+      const held = serverCaptureLeases.get(key);
+      if (!painting.active && held) {
+        serverCaptureLeases.delete(key);
+        yield* stopFrameCapture(held.tabId, held.lease);
+      } else if (painting.active && !held && tab) {
+        const lease = Symbol("server-capture");
+        yield* startFrameCapture(tab.tabId, lease).pipe(
+          Effect.andThen(
+            Effect.sync(() => serverCaptureLeases.set(key, { tabId: tab.tabId, lease })),
+          ),
+          Effect.catch((error) =>
+            Effect.logWarning("Failed to unthrottle a server tab for its capture.", {
+              tabId: tab.tabId,
+              error,
+            }),
+          ),
+        );
+      }
       if (tab && tab.capturing !== painting.active) {
         yield* update(tab.tabId, { capturing: painting.active });
       }

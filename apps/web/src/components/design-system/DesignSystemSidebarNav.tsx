@@ -1,3 +1,4 @@
+/* oxlint-disable t3code/no-untranslated-copy -- Dev-only design catalog (loaded behind import.meta.env.DEV); its sample copy stays English. */
 import { Link } from "@tanstack/react-router";
 import { SwatchBookIcon } from "lucide-react";
 

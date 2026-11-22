@@ -1,3 +1,5 @@
+import { sourceControlInstallHintText } from "@t3tools/client-runtime/contract-labels";
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -12,10 +14,12 @@ import type {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import * as Option from "effect/Option";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { CheckIcon, ChevronDownIcon, GlobeIcon, LockIcon } from "lucide-react";
 import { useId, useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { useSourceControlPublishRepositoryAction } from "~/state/sourceControlActions";
 import { cn } from "~/lib/utils";
 import { useEnvironmentQuery } from "~/state/query";
@@ -83,36 +87,48 @@ interface PublishProviderReadiness {
   readonly hint: string | null;
 }
 
-function getPublishProviderReadiness(input: {
-  provider: SourceControlProviderKind;
-  sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
-}): PublishProviderReadiness {
+function getPublishProviderReadiness(
+  input: {
+    provider: SourceControlProviderKind;
+    sourceControlProviders: ReadonlyArray<SourceControlProviderDiscoveryItem>;
+  },
+  resolve: MessageResolver = m,
+): PublishProviderReadiness {
   const discovered = input.sourceControlProviders.find(
     (provider) => provider.kind === input.provider,
   );
   if (!discovered) {
     return {
       ready: false,
-      hint: "Provider status unavailable. Open Settings -> Source control and rescan.",
+      hint: resolve(
+        msg("Provider status unavailable. Open Settings -> Source control & issues and rescan."),
+      ),
     };
   }
   if (discovered.status !== "available") {
-    return { ready: false, hint: discovered.installHint };
+    return { ready: false, hint: sourceControlInstallHintText(discovered.installHint, resolve) };
   }
   if (discovered.auth.status === "unauthenticated") {
     return {
       ready: false,
       hint:
         Option.getOrNull(discovered.auth.detail) ??
-        `${discovered.label} is not authenticated. Open Settings -> Source control for setup guidance.`,
+        resolve(
+          msg(
+            "{provider} is not authenticated. Open Settings -> Source control & issues for setup guidance.",
+            {
+              provider: discovered.label,
+            },
+          ),
+        ),
     };
   }
   return { ready: true, hint: null };
 }
 
 const VISIBILITY_HINTS = {
-  private: { Icon: LockIcon, text: "Only invited people can see it." },
-  public: { Icon: GlobeIcon, text: "Anyone on the web can see it." },
+  private: { Icon: LockIcon, text: msg("Only invited people can see it.") },
+  public: { Icon: GlobeIcon, text: msg("Anyone on the web can see it.") },
 } as const satisfies Record<
   SourceControlRepositoryVisibility,
   { readonly Icon: typeof LockIcon; readonly text: string }
@@ -127,6 +143,7 @@ function PublishProviderTile(props: {
   readonly onSelect: () => void;
   readonly onOpenSetup: () => void;
 }) {
+  const gt = useGT();
   const { option, readiness } = props;
   const tile = (
     <Toggle
@@ -154,7 +171,8 @@ function PublishProviderTile(props: {
     <Tooltip>
       <TooltipTrigger render={tile} />
       <TooltipPopup side="top">
-        {readiness.hint ?? "Open Settings -> Source control to configure this provider."}
+        {readiness.hint ??
+          gt("Open Settings -> Source control & issues to configure this provider.")}
       </TooltipPopup>
     </Tooltip>
   );
@@ -175,6 +193,8 @@ export interface PublishRepositoryDialogProps {
  * page: provider, owner and name, visibility, and the remote's protocol.
  */
 export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
+  const gt = useGT();
+  const messages = useMessages();
   const openLink = useOpenLink(props.threadRef);
   const navigate = useNavigate();
   const ownerFieldId = useId();
@@ -201,10 +221,13 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
   const discoveredProviders = sourceControlDiscovery.data?.sourceControlProviders;
 
   const readinessByProvider = (provider: SourceControlProviderKind) =>
-    getPublishProviderReadiness({
-      provider,
-      sourceControlProviders: discoveredProviders ?? [],
-    });
+    getPublishProviderReadiness(
+      {
+        provider,
+        sourceControlProviders: discoveredProviders ?? [],
+      },
+      messages,
+    );
   const offeredProviderOptions = PUBLISH_PROVIDER_OPTIONS.filter((option) =>
     isSourceControlProviderOffered(props.offeredProviders, option.value),
   );
@@ -256,7 +279,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
       if (result._tag === "Failure") {
         if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
-          setPublishError(error instanceof Error ? error.message : "An error occurred.");
+          setPublishError(thrownErrorMessage(error, m) ?? gt("An error occurred."));
         }
         return;
       }
@@ -297,12 +320,20 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
           <>
             <DialogHeader>
               <DialogTitle>
-                {publishResult.status === "pushed" ? "Repository published" : "Repository created"}
+                {publishResult.status === "pushed"
+                  ? gt("Repository published")
+                  : gt("Repository created")}
               </DialogTitle>
               <DialogDescription>
                 {publishResult.status === "pushed"
-                  ? `${publishResult.branch} is now live on ${providerOption.label}.`
-                  : `Remote "${publishResult.remoteName}" is set up. Make a commit and push it to share your code.`}
+                  ? gt("{branch} is now live on {provider}.", {
+                      branch: publishResult.branch,
+                      provider: providerOption.label,
+                    })
+                  : gt(
+                      'Remote "{remote}" is set up. Make a commit and push it to share your code.',
+                      { remote: publishResult.remoteName },
+                    )}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
@@ -322,28 +353,32 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   void openLink(publishResult.repository.url).catch(() => undefined);
                 }}
               >
-                Open on {providerOption.label}
+                <T>
+                  Open on <Var>{providerOption.label}</Var>
+                </T>
               </Button>
               <Button size="standard" onClick={() => handleOpenChange(false)}>
-                Done
+                <T context="button, closes the finished publish dialog">Done</T>
               </Button>
             </DialogFooter>
           </>
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Publish repository</DialogTitle>
+              <DialogTitle>{gt("Publish repository")}</DialogTitle>
               <DialogDescription>
-                Pick where to host it, then point us at a repo to push to.
+                {gt("Pick where to host it, then point us at a repo to push to.")}
               </DialogDescription>
             </DialogHeader>
             <DialogPanel>
               <div className="flex flex-col gap-1.5">
-                <Label render={<span />}>Provider</Label>
+                <Label render={<span />}>
+                  <T>Provider</T>
+                </Label>
                 <div
                   className="grid grid-cols-3 gap-1.5 sm:grid-cols-6"
                   role="group"
-                  aria-label="Provider"
+                  aria-label={gt("Provider")}
                 >
                   {offeredProviderOptions.map((option) => (
                     <PublishProviderTile
@@ -372,12 +407,14 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     size="sm"
                     value={owner}
                     onChange={(event) => setOwnerOverride(event.target.value)}
-                    placeholder="owner"
+                    placeholder={gt("owner", { $context: "placeholder, repository owner" })}
                     disabled={isPending}
                   />
                 </div>
                 <div className="flex min-w-0 flex-col gap-1.5">
-                  <Label htmlFor={nameFieldId}>Repository</Label>
+                  <Label htmlFor={nameFieldId}>
+                    <T>Repository</T>
+                  </Label>
                   <Input
                     id={nameFieldId}
                     size="sm"
@@ -389,7 +426,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                       event.preventDefault();
                       submit();
                     }}
-                    placeholder="repository"
+                    placeholder={gt("repository", { $context: "placeholder, repository name" })}
                     disabled={isPending}
                   />
                 </div>
@@ -397,10 +434,12 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
               <div className="grid grid-cols-2 gap-3">
                 <div className="flex min-w-0 flex-col gap-1.5">
-                  <Label render={<span />}>Visibility</Label>
+                  <Label render={<span />}>
+                    <T>Visibility</T>
+                  </Label>
                   <ToggleGroup
                     className="w-full"
-                    aria-label="Visibility"
+                    aria-label={gt("Visibility")}
                     value={[visibility]}
                     onValueChange={(next) => {
                       const value = next[0];
@@ -409,18 +448,20 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     disabled={isPending}
                   >
                     <Toggle className="flex-1" value="private">
-                      Private
+                      {gt("Private")}
                     </Toggle>
                     <Toggle className="flex-1" value="public">
-                      Public
+                      {gt("Public")}
                     </Toggle>
                   </ToggleGroup>
                 </div>
                 <div className="flex min-w-0 flex-col gap-1.5">
-                  <Label render={<span />}>Remote</Label>
+                  <Label render={<span />}>
+                    <T context="git remote">Remote</T>
+                  </Label>
                   <ToggleGroup
                     className="w-full"
-                    aria-label="Remote protocol"
+                    aria-label={gt("Remote protocol")}
                     value={[protocol]}
                     onValueChange={(next) => {
                       const value = next[0];
@@ -441,7 +482,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               <div className="flex items-center justify-between gap-3">
                 <p className="flex min-w-0 items-center gap-2 text-body text-muted-foreground">
                   <visibilityHint.Icon className="size-3.5 shrink-0" aria-hidden />
-                  <span className="truncate">{visibilityHint.text}</span>
+                  <span className="truncate">{messages(visibilityHint.text)}</span>
                 </p>
                 <Button
                   variant="ghost-muted"
@@ -449,7 +490,7 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                   onClick={() => setAdvancedOpen((open) => !open)}
                   aria-expanded={advancedOpen}
                 >
-                  Remote name
+                  <T>Remote name</T>
                   <ChevronDownIcon
                     className={cn("size-3.5 transition-transform", !advancedOpen && "-rotate-90")}
                     aria-hidden
@@ -458,7 +499,9 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
               </div>
               {advancedOpen ? (
                 <div className="flex flex-col gap-1.5">
-                  <Label htmlFor={remoteNameFieldId}>Remote name</Label>
+                  <Label htmlFor={remoteNameFieldId}>
+                    <T>Remote name</T>
+                  </Label>
                   <Input
                     id={remoteNameFieldId}
                     size="sm"
@@ -472,7 +515,9 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
 
               {publishError && !isPending ? (
                 <Alert variant="error">
-                  <AlertTitle>Publish failed</AlertTitle>
+                  <AlertTitle>
+                    <T>Publish failed</T>
+                  </AlertTitle>
                   <AlertDescription>{publishError}</AlertDescription>
                 </Alert>
               ) : null}
@@ -484,17 +529,17 @@ export function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                 disabled={isPending}
                 onClick={() => handleOpenChange(false)}
               >
-                Cancel
+                <T>Cancel</T>
               </Button>
               <Button size="standard" disabled={!canSubmit} onClick={submit}>
                 {isPending ? (
                   <>
                     <Spinner size="sm" aria-hidden />
-                    Publishing...
+                    <T>Publishing...</T>
                   </>
                 ) : (
                   <>
-                    Publish
+                    <T context="verb">Publish</T>
                     <DialogSubmitKbd />
                   </>
                 )}

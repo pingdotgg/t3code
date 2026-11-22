@@ -8,6 +8,7 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
@@ -131,6 +132,7 @@ export function AnnotatableCodeView({
   onCommentAdded,
   onFileCollapsedChange,
 }: AnnotatableCodeViewProps) {
+  const gt = useGT();
   const addReviewComment = useComposerDraftStore((store) => store.addReviewComment);
   const removeReviewComment = useComposerDraftStore((store) => store.removeReviewComment);
   const reviewComments = useComposerDraftStore(
@@ -321,8 +323,8 @@ export function AnnotatableCodeView({
                 rangeLabel={entry.rangeLabel}
                 createdAt={entry.createdAt}
                 // Saved comments here are read back from the composer draft they live in.
-                stateLabel={entry.kind === "comment" ? "In composer" : undefined}
-                submitLabel="Done"
+                stateLabel={entry.kind === "comment" ? gt("In composer") : undefined}
+                submitLabel={gt("Done", { $context: "button, saves a file comment" })}
                 text={entry.kind === "draft" ? draftText : entry.text}
                 onTextChange={setDraftText}
                 onCancel={() => removeEntry(entry.id)}

@@ -10,6 +10,7 @@ import {
 } from "@t3tools/client-runtime/connection";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/reactivity";
+import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { ChevronRightIcon } from "lucide-react";
 
 import { APP_VERSION } from "~/branding";
@@ -28,6 +29,7 @@ import { stackedThreadToast, toastManager } from "../ui/toast";
  * the headline do not re-render on every attempt.
  */
 export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
+  const m = useMessages();
   const environmentId = environment.environmentId;
   const state = AsyncResult.getOrElse(
     useAtomValue(environmentCatalog.stateAtom(environmentId)),
@@ -39,15 +41,18 @@ export function useConnectionDiagnosis(environment: EnvironmentPresentation) {
   const phase = environment.connection.phase;
   const diagnosis =
     environment.entry.enabled && phase !== "connected" && phase !== "unsupported"
-      ? presentConnectionDiagnosis({
-          hostLabel: environment.label,
-          state,
-          via: relayOnly ? "relay" : "direct",
-          // With a direct route as well, the relay's health says nothing about the route in use.
-          relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
-          clientVersion: APP_VERSION,
-          serverVersion: environment.serverConfig?.environment.serverVersion,
-        })
+      ? presentConnectionDiagnosis(
+          {
+            hostLabel: environment.label,
+            state,
+            via: relayOnly ? "relay" : "direct",
+            // With a direct route as well, the relay's health says nothing about the route in use.
+            relayStatus: relayOnly ? Option.getOrNull(relayStatus ?? Option.none()) : null,
+            clientVersion: APP_VERSION,
+            serverVersion: environment.serverConfig?.environment.serverVersion,
+          },
+          m,
+        )
       : null;
   return { diagnosis, state, relayOnly };
 }
@@ -62,16 +67,22 @@ export function ConnectionDiagnosisHeadline({
 }
 
 const HOP_MARK = { ok: "✓", failed: "✕", unchecked: "–" } as const;
-const HOP_NOTE = { ok: "", failed: "Failed", unchecked: "Not checked" } as const;
+const HOP_NOTE = {
+  ok: "",
+  failed: msg("Failed", { $context: "connection hop status" }),
+  unchecked: msg("Not checked"),
+} as const;
 
 /** Ticks once per second, and only while a retry is scheduled, so the list around it does not re-render. */
 function RetryCountdown({ retryAt }: { readonly retryAt: number }) {
-  return useDeadlinePassed(retryAt) ? "retrying" : <RetryCountdownTicker retryAt={retryAt} />;
+  const gt = useGT();
+  return useDeadlinePassed(retryAt) ? gt("retrying") : <RetryCountdownTicker retryAt={retryAt} />;
 }
 
 function RetryCountdownTicker({ retryAt }: { readonly retryAt: number }) {
+  const gt = useGT();
   const seconds = Math.ceil((retryAt - useNowSecond()) / 1_000);
-  return <>{seconds > 0 ? `retrying in ${seconds}s` : "retrying"}</>;
+  return <>{seconds > 0 ? gt("retrying in {seconds}s", { seconds }) : gt("retrying")}</>;
 }
 
 /** The collapsed failure: the full headline, then the retry state and a Details toggle. */
@@ -94,12 +105,16 @@ export function ConnectionDiagnosisSummary({
       <p className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} />}>
-            {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : "Retry paused"}
+            {retryAt !== null ? <RetryCountdown retryAt={retryAt} /> : <T>Retry paused</T>}
           </TooltipTrigger>
-          <TooltipPopup side="top">Attempt {attempt}</TooltipPopup>
+          <TooltipPopup side="top">
+            <T>
+              Attempt <Var>{attempt}</Var>
+            </T>
+          </TooltipPopup>
         </Tooltip>
         <InlineButton tone="muted" type="button" aria-expanded={expanded} onClick={onToggle}>
-          Details
+          <T>Details</T>
           <ChevronRightIcon
             aria-hidden
             className={cn(
@@ -125,13 +140,19 @@ export function ConnectionDiagnosisPanel({
   readonly onRetry: () => void;
   readonly onAddRoute: (() => void) | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { copyToClipboard } = useCopyToClipboard({
-    target: "connection diagnostics",
+    target: {
+      target: "connection diagnostics",
+      unavailableMessage: msg("Clipboard API is unavailable while copying connection diagnostics."),
+      failureMessage: msg("Failed to copy connection diagnostics to the clipboard."),
+    },
     onError: (error) =>
       toastManager.add(
         stackedThreadToast({
           type: "error",
-          title: "Could not copy diagnostics",
+          title: gt("Could not copy diagnostics"),
           description: error.message,
         }),
       ),
@@ -151,12 +172,14 @@ export function ConnectionDiagnosisPanel({
               {HOP_MARK[hop.result]}
             </span>
             <span className={cn(hop.result === "ok" && "text-foreground")}>{hop.label}</span>
-            <span>{HOP_NOTE[hop.result]}</span>
+            <span>{m(HOP_NOTE[hop.result])}</span>
           </li>
         ))}
       </ol>
       <div>
-        <p className="text-meta text-foreground">What to try</p>
+        <p className="text-meta text-foreground">
+          <T>What to try</T>
+        </p>
         <ol className="list-decimal pl-4 text-muted-foreground">
           {diagnosis.steps.map((step) => (
             <li key={step}>{step}</li>
@@ -167,7 +190,7 @@ export function ConnectionDiagnosisPanel({
             tone="muted"
             render={<a href={diagnosis.moreInfoUrl} target="_blank" rel="noreferrer" />}
           >
-            More info
+            <T>More info</T>
           </InlineButton>
         ) : null}
       </div>
@@ -181,7 +204,7 @@ export function ConnectionDiagnosisPanel({
       </dl>
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="xs" variant="secondary" onClick={onRetry}>
-          Retry now
+          <T>Retry now</T>
         </Button>
         <Button
           type="button"
@@ -192,11 +215,11 @@ export function ConnectionDiagnosisPanel({
             copyToClipboard(text, undefined);
           }}
         >
-          Copy diagnostics
+          <T>Copy diagnostics</T>
         </Button>
         {onAddRoute ? (
           <Button type="button" size="xs" variant="secondary" onClick={onAddRoute}>
-            Add direct route
+            <T>Add direct route</T>
           </Button>
         ) : null}
       </div>

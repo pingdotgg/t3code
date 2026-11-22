@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import {
   type CSSProperties,
   type FocusEvent,
@@ -87,7 +88,8 @@ function returnFocus(
 function PreviewPanelShellFrame(
   props: PreviewPanelShellProps & { inlineSize: PreviewPanelInlineSize },
 ) {
-  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? "Workspace panel");
+  const gt = useGT();
+  const panelArea = workspaceAreaProps("panel", 4, props.workspaceLabel ?? gt("Workspace panel"));
   const isInline = props.mode === "inline";
   const pane = isInline && props.pane === true;
   const collapsible = isInline && props.open !== undefined;
@@ -96,7 +98,8 @@ function PreviewPanelShellFrame(
   const hostRef = useRef<HTMLDivElement | null>(null);
   const returnedFocus = useRef(false);
   const focusOrigin = useRef<HTMLElement | null>(null);
-  const lastBlurred = useRef<EventTarget | null>(null);
+  // Weak: a panel kept across tab switches would otherwise hold the last tab's content once removed.
+  const lastBlurred = useRef<WeakRef<EventTarget> | null>(null);
   const { width, handlers, observeRow } = props.inlineSize;
   // Width animates only for an open or close. Any other width change disables
   // the transition in the same commit that changes the width, so the browser
@@ -134,7 +137,7 @@ function PreviewPanelShellFrame(
   // Focus moving within the panel, portalled menus included, first blurs an element of it.
   const rememberFocusOrigin = (event: FocusEvent<HTMLDivElement>) => {
     const from = event.relatedTarget;
-    if (from === null || from === lastBlurred.current) return;
+    if (from === null || from === lastBlurred.current?.deref()) return;
     focusOrigin.current = from instanceof HTMLElement ? from : null;
   };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- on unmount, returns DOM focus to where it came from if removal dropped it on the body
@@ -172,7 +175,7 @@ function PreviewPanelShellFrame(
       ref={attachHost}
       onFocus={rememberFocusOrigin}
       onBlur={(event) => {
-        lastBlurred.current = event.target;
+        lastBlurred.current = new WeakRef(event.target);
       }}
       {...(props.workspaceArea ? panelArea : {})}
       data-workspace-focus-key={props.workspaceFocusKey}

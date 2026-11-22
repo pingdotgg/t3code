@@ -17,6 +17,7 @@ import {
   type LayoutTabContent,
 } from "./layoutModel";
 import { readThreadLineage } from "../state/entities";
+import { ISSUES_PANEL_REF, PULL_REQUESTS_PANEL_REF } from "../rightPanelStore";
 import type { ThreadRouteTarget } from "../threadRoutes";
 import { useLayoutStore } from "./layoutStore";
 import type { LauncherSurfaceKind } from "../components/SurfaceLauncher";
@@ -184,6 +185,16 @@ export function closeLayoutTabByUser(tabId: string, options: { bulk?: boolean } 
       }
       return;
     }
+  }
+  if (location && (tab?.content.kind === "issues" || tab?.content.kind === "pull-requests")) {
+    useClosedViewStore.getState().remember({
+      kind: "page",
+      threadRef: tab.content.kind === "issues" ? ISSUES_PANEL_REF : PULL_REQUESTS_PANEL_REF,
+      page: tab.content.kind,
+      ...(tab.content.href === undefined ? {} : { href: tab.content.href }),
+      paneId: location.pane.id,
+      index: location.tabIndex,
+    });
   }
   store.closeTabByUser(tabId);
 }

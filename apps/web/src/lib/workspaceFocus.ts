@@ -340,7 +340,9 @@ export function createWorkspaceFocusController(doc: Document) {
         ? (candidates.find((element) => element.dataset.workspaceArea === "composer") ??
           candidates.find(
             (element) =>
-              element.dataset.workspaceArea === "pull-requests" || element.matches("main"),
+              element.dataset.workspaceArea === "pull-requests" ||
+              element.dataset.workspaceArea === "issues" ||
+              element.matches("main"),
           ) ??
           candidates.find((element) => element.dataset.workspaceArea === "conversation") ??
           candidates.find((element) => element.dataset.workspaceArea === "panel") ??
@@ -468,6 +470,8 @@ export function createWorkspaceFocusController(doc: Document) {
       if (
         doc.activeElement !== doc.body ||
         !doc.hasFocus() ||
+        // Scrolling swaps these out; focusing elsewhere would pull a screen reader's cursor along.
+        lost.closest("[inert][data-workspace-scroll-swap]") ||
         (isWorkspaceElementVisible(lost) && !lost.matches(":disabled"))
       )
         return;
@@ -607,6 +611,8 @@ export function startWorkspaceFocus(router: AnyRouter): () => void {
   const stopRoute = router.subscribe("onResolved", ({ fromLocation, toLocation }) => {
     if (toLocation.pathname === "/pull-requests" && fromLocation?.pathname !== "/pull-requests")
       requestWorkspaceFocus({ area: "pull-requests" });
+    if (toLocation.pathname === "/issues" && fromLocation?.pathname !== "/issues")
+      requestWorkspaceFocus({ area: "issues" });
   });
   return () => {
     stopPanels();
@@ -629,10 +635,11 @@ export function requestWorkspaceFocus(target: WorkspaceFocusTarget) {
 
 /** Puts the keyboard in the message box of the side chat a surface tab shows. */
 export function requestSideChatComposerFocus(threadRef: ScopedThreadRef, surfaceId: string) {
+  const threadId = surfaceId.slice("thread:".length);
   requestWorkspaceFocus({
     area: "panel",
     surface: { threadKey: scopedThreadKey(threadRef), surfaceId },
-    selector: `[data-side-chat-pane="${CSS.escape(surfaceId.slice("side-chat:".length))}"] [data-workspace-area="composer"] [contenteditable="true"]`,
+    selector: `[data-side-chat-pane="${CSS.escape(threadId)}"] [data-workspace-area="composer"] [contenteditable="true"]`,
   });
 }
 

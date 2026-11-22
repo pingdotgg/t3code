@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 
 import { ProviderSettingsPanel } from "../components/settings/ProviderSettingsPanel";
 import { useSettingsScope } from "../components/settings/SettingsScopeContext";
@@ -13,12 +14,13 @@ function SettingsProvidersRoute() {
       : undefined;
   const { environment, scope } = useSettingsScope();
   const { resumeEnvironmentId } = Route.useSearch();
+  const gt = useGT();
   if (!environment) {
     return (
       <p className="p-8 text-body text-muted-foreground">
         {scope.kind === "environment"
-          ? `Reconnect ${scope.label} to set up its providers.`
-          : "Connect an environment to set up its providers."}
+          ? gt("Reconnect {label} to set up its providers.", { label: scope.label })
+          : gt("Connect an environment to set up its providers.")}
       </p>
     );
   }
