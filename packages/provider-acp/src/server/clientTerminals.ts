@@ -138,8 +138,9 @@ export interface AcpClientTerminalsOptions {
 function acpTerminalCommand(input: {
   readonly request: EffectAcpSchema.CreateTerminalRequest;
   readonly shellCommands?: boolean | undefined;
-  /** Windows only: the shell source runs here instead of Node's cmd.exe. */
+  /** Bash for shell source, instead of Node's cmd.exe or /bin/sh. */
   readonly posixShell: string | undefined;
+  readonly isWindows: boolean;
   readonly defaultCwd: string;
   readonly environment: NodeJS.ProcessEnv;
   readonly forceKillAfter: Duration.Input;
@@ -153,7 +154,9 @@ function acpTerminalCommand(input: {
   if (isShellSource && input.posixShell !== undefined) {
     // Native tools write in the console code page and output is decoded as UTF-8. The spawner
     // hides the window, so each terminal has its own console and the change stays inside it.
-    const source = `chcp.com 65001 >/dev/null 2>&1\n${input.request.command}`;
+    const source = input.isWindows
+      ? `chcp.com 65001 >/dev/null 2>&1\n${input.request.command}`
+      : input.request.command;
     return ChildProcess.make(input.posixShell, ["-c", source], options);
   }
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
@@ -182,7 +185,8 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
 ): Effect.fn.Return<AcpClientTerminals, never, ChildProcessSpawner.ChildProcessSpawner> {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const forceKillAfter = options.forceKillAfter ?? "5 seconds";
-  const isWindows = yield* HostProcess.isWindows;
+  const platform = yield* HostProcess.Platform;
+  const isWindows = platform === "win32";
   const resolveExecutable = yield* SpawnExecutableResolution;
   const creationPermit = yield* Semaphore.make(1);
   const terminals = new Map<string, ManagedAcpTerminal>();
@@ -260,13 +264,15 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
             Object.entries(sessionEnvironment ?? {}),
             (request.env ?? []).map((variable) => [variable.name, variable.value] as const),
           ]);
-          // Agents that send shell source write bash; Node's shell on Windows is cmd.exe.
-          const gitExecutable =
-            isWindows && options.shellCommands === true
-              ? yield* Effect.promise(async () => resolveExecutable("git", "win32", environment))
-              : undefined;
+          // Agents that send shell source write bash; Node's shell is cmd.exe or /bin/sh.
           const posixShell =
-            gitExecutable === undefined ? undefined : gitForWindowsBash(gitExecutable);
+            options.shellCommands === true
+              ? yield* Effect.promise(async () => {
+                  if (!isWindows) return resolveExecutable("bash", platform, environment);
+                  const git = await resolveExecutable("git", "win32", environment);
+                  return git === undefined ? undefined : gitForWindowsBash(git);
+                })
+              : undefined;
           const terminalScope = yield* Scope.make();
           const child = yield* restore(
             spawner
@@ -275,6 +281,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
                   request,
                   shellCommands: options.shellCommands,
                   posixShell,
+                  isWindows,
                   defaultCwd: options.defaultCwd,
                   environment,
                   forceKillAfter,
