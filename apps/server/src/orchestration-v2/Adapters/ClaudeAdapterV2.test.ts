@@ -8464,6 +8464,108 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // Summarized display cannot mark a progress update, so only the second of two
+  // thinking blocks before a tool call becomes text; default display omits the first block's text.
+  const plan = "Planning the check";
+  const update = "Found it: the memory file is the cause.";
+  it.effect.each([
+    {
+      model: "claude-opus-5-5",
+      texts: [plan, update],
+      expected: ["reasoning", "assistant_message"],
+    },
+    {
+      model: "claude-fable-5-1",
+      texts: [plan, update],
+      expected: ["reasoning", "assistant_message"],
+    },
+    { model: "claude-opus-5", texts: [plan, update], expected: ["reasoning", "reasoning"] },
+    { model: "claude-sonnet-4-6", texts: [plan, update], expected: ["reasoning", "reasoning"] },
+    { model: "claude-opus-5-5", texts: [plan], expected: ["reasoning"] },
+    { model: "claude-opus-5-5", texts: [plan, " \n "], expected: ["reasoning", "reasoning"] },
+    {
+      model: "claude-opus-5-5",
+      texts: ["", update],
+      expected: ["assistant_message"],
+      shown: [update],
+    },
+    {
+      model: "claude-opus-5-5",
+      texts: [" \n ", update],
+      expected: ["reasoning", "assistant_message"],
+    },
+    { model: "claude-opus-5", texts: ["", update], expected: ["reasoning"], shown: [update] },
+  ] as ReadonlyArray<{
+    readonly model: string;
+    readonly texts: ReadonlyArray<string>;
+    readonly expected: ReadonlyArray<string>;
+    readonly shown?: ReadonlyArray<string>;
+  }>)(
+    "shows $model thinking $texts before a tool call as $expected",
+    ({ model, texts, expected, shown }) =>
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make(`thinking-before-tool-${model}`),
+            text: "Check the file",
+            attachments: [],
+          }),
+        );
+        const snapshot = (uuid: string, content: ReadonlyArray<Record<string, unknown>>) =>
+          claudeSdkFrame({
+            type: "assistant",
+            uuid,
+            session_id: WAKE_NATIVE_SESSION,
+            parent_tool_use_id: null,
+            message: { id: "reply-message", model, content },
+          });
+        const frames = [
+          ...texts.map((thinking, index) =>
+            snapshot(`thinking-snapshot-${index}`, [
+              { type: "thinking", thinking, signature: "sig" },
+            ]),
+          ),
+          snapshot("tool-snapshot", [
+            { type: "tool_use", id: "tool-1", name: "Bash", input: { command: "ls" } },
+          ]),
+          makeResultFrame({ uuid: "tool-result", result: "" }),
+        ];
+        for (const frame of frames) yield* Queue.offer(harness.sdkMessages, frame);
+        yield* Queue.take(harness.terminalReceipts);
+        const latest = new Map(
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" &&
+            (event.turnItem.type === "reasoning" || event.turnItem.type === "assistant_message")
+              ? [[event.turnItem.id, event.turnItem] as const]
+              : [],
+          ),
+        );
+        const items = [...latest.values()];
+        assert.deepEqual(
+          items.map((item) => item.type),
+          [...expected],
+        );
+        assert.deepEqual(
+          items.map((item) => item.text),
+          [...(shown ?? texts)],
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   // regression: #17270 root text_delta frames stream the reply before the block's snapshot
   it.effect("streams Claude assistant text deltas before the completed snapshot", () =>
     Effect.gen(function* () {
