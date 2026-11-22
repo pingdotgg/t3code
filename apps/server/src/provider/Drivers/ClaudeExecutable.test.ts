@@ -1,9 +1,20 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import * as FileSystem from "effect/FileSystem";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 import * as Effect from "effect/Effect";
 
-import { ClaudeExecutableFileCheck, resolveClaudeSdkExecutablePath } from "./ClaudeExecutable.ts";
+import {
+  ClaudeExecutableFileCheck,
+  claudeProgramReader,
+  claudeProgramWasReplaced,
+  resolveClaudeSdkExecutablePath,
+} from "./ClaudeExecutable.ts";
 
 const NPM_DIR = "C:\\Users\\dev\\AppData\\Roaming\\npm";
 const NPM_SHIM = `${NPM_DIR}\\claude.cmd`;
@@ -99,5 +110,73 @@ describe("resolveClaudeSdkExecutablePath", () => {
         ),
       ).toBe("claude");
     }),
+  );
+});
+
+describe("claudeProgramReader", () => {
+  /** An install as the Claude installer lays it out: one file per version and a link. */
+  const makeInstall = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "claude-program-" });
+    const bin = NodePath.join(root, "bin");
+    const link = NodePath.join(bin, "claude");
+    const version = (name: string) => {
+      const file = NodePath.join(root, "versions", name);
+      NodeFS.mkdirSync(NodePath.dirname(file), { recursive: true });
+      NodeFS.writeFileSync(file, "#!/bin/sh\n", { mode: 0o755 });
+      return file;
+    };
+    NodeFS.mkdirSync(bin);
+    NodeFS.symlinkSync(version("1.0.0"), link);
+    return {
+      bin,
+      link,
+      update: () => {
+        NodeFS.unlinkSync(link);
+        NodeFS.symlinkSync(version("1.0.1"), link);
+      },
+    };
+  });
+
+  it.effect("reports an update that repoints the installed link", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { link, update } = yield* makeInstall;
+        const readProgram = yield* claudeProgramReader(link, {});
+        const startedFrom = yield* readProgram;
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
+        update();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(true);
+        // A CLI started now runs the new version.
+        const current = yield* readProgram;
+        expect(claudeProgramWasReplaced(current, yield* readProgram)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("follows a bare command name through PATH", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bin, update } = yield* makeInstall;
+        const readProgram = yield* claudeProgramReader("claude", { PATH: bin });
+        const startedFrom = yield* readProgram;
+        expect(startedFrom).toBeDefined();
+        update();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(true);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("reports nothing for a program it cannot find", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { bin, update } = yield* makeInstall;
+        const readProgram = yield* claudeProgramReader("claude-missing", { PATH: bin });
+        const startedFrom = yield* readProgram;
+        expect(startedFrom).toBeUndefined();
+        update();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
   );
 });
