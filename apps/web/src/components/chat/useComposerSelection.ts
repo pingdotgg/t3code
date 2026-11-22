@@ -25,10 +25,12 @@ import {
   threadHasStarted,
 } from "../../lib/chatThreadActions";
 import {
+  composerTargetKey,
   type DraftThreadEnvMode,
   isSameModel,
   useComposerDraftStore,
 } from "../../composerDraftStore";
+import { cancelHeldComposerSend } from "./preparingComposerImages";
 import {
   getStartedThreadModelChangeBlockReason,
   deriveLockedProvider,
@@ -96,6 +98,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
 
   const handleRuntimeModeChange = (mode: RuntimeMode) => {
     if (mode === runtimeMode) return;
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     setComposerDraftRuntimeMode(composerDraftTarget, mode);
     if (isLocalDraftThread) {
       setDraftThreadContext(composerDraftTarget, { runtimeMode: mode });
@@ -135,6 +138,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
     options?: { focusComposer?: boolean },
   ) => {
     if (!activeThread) return;
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     const entry = providerStatuses.find((snapshot) => snapshot.instanceId === instanceId);
     const resolvedDriverKind = entry?.driver ?? null;
     if (
@@ -240,6 +244,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   const onProviderModelSelectStable = useStableCallback(onProviderModelSelect);
   const onEnvModeChange = (mode: DraftThreadEnvMode) => {
     if (multipleModelSelections !== null) return;
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     if (canOverrideServerThreadEnvMode) {
       if (activeThread) setPendingServerThreadEnvModeEntry({ threadId: activeThread.id, mode });
       scheduleComposerFocus();
@@ -263,6 +268,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   // re-renders the branch toolbar and thread details panel with it.
   const activeThreadId = activeThread?.id;
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     if (canOverrideServerThreadEnvMode && activeThreadId !== undefined) {
       setPendingServerThreadStartFromOriginByThreadId((current) =>
         current[activeThreadId] === nextStartFromOrigin
