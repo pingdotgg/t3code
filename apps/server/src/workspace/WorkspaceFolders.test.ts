@@ -193,6 +193,43 @@ it.layer(NodeServices.layer)("WorkspaceFolders", (it) => {
     }),
   );
 
+  it.effect("does not walk a project's folders when t3.json ignores the whole project", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const workspaceRoot = yield* makeTempDir;
+      for (const folder of ["api/.git", "src/web/.git", "notes"]) {
+        yield* fileSystem.makeDirectory(path.join(workspaceRoot, folder), { recursive: true });
+      }
+      yield* fileSystem.writeFileString(
+        path.join(workspaceRoot, "t3.json"),
+        JSON.stringify({ ignoreRepositories: ["."] }),
+      );
+      const probed: Array<string> = [];
+      const counting = FileSystem.FileSystem.of({
+        ...fileSystem,
+        readDirectory: (target, options) => {
+          probed.push(target);
+          return fileSystem.readDirectory(target, options);
+        },
+        stat: (target) => {
+          probed.push(target);
+          return fileSystem.stat(target);
+        },
+      });
+
+      const found = yield* WorkspaceFolders.discoverFolders(workspaceRoot).pipe(
+        Effect.provideService(FileSystem.FileSystem, counting),
+      );
+
+      assert.deepEqual(found, []);
+      assert.deepEqual(
+        probed.filter((target) => target !== workspaceRoot),
+        [],
+      );
+    }),
+  );
+
   it.effect("keeps the folders someone added when a project holds more than fit", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
