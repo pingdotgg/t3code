@@ -10523,6 +10523,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           yield* Ref.set(runtimeRestartRequired, true);
                         }
                       }
+                      // Devin answers session/cancel without ending commands in T3's terminals.
+                      if (
+                        turnInput.requestRuntimeRestart === true &&
+                        clientTerminals !== undefined
+                      ) {
+                        const sessionId = yield* Ref.get(activeSessionId);
+                        if (sessionId !== null) yield* clientTerminals.killSession(sessionId);
+                      }
                       const stopped = yield* Deferred.await(context.completed).pipe(
                         Effect.timeoutOption(ACP_STOP_CONFIRM_TIMEOUT_MS),
                       );

@@ -121,6 +121,8 @@ export interface AcpClientTerminals {
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
   readonly readCommandLine: (terminalId: string) => string | undefined;
+  /** Kills a session's running commands and waits for their exit; the agent can still read them. */
+  readonly killSession: (sessionId: string) => Effect.Effect<void>;
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -411,6 +413,30 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   const readCommandLine: AcpClientTerminals["readCommandLine"] = (terminalId) =>
     terminals.get(terminalId)?.commandLine;
 
+  // Taking the creation permit lets an in-flight terminal/create register before the sweep.
+  const killSession: AcpClientTerminals["killSession"] = (sessionId) =>
+    creationPermit
+      .withPermit(
+        Effect.sync(() =>
+          Array.from(terminals.values()).filter(
+            (terminal) =>
+              terminal.sessionId === sessionId &&
+              !terminal.released &&
+              terminal.exitStatus === undefined,
+          ),
+        ),
+      )
+      .pipe(
+        Effect.flatMap((live) =>
+          Effect.forEach(
+            live,
+            (terminal) => terminal.kill.pipe(Effect.andThen(Deferred.await(terminal.exit))),
+            { concurrency: "unbounded", discard: true },
+          ),
+        ),
+        Effect.uninterruptible,
+      );
+
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
     Effect.suspend(() =>
       Effect.forEach(
@@ -447,6 +473,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     release: logged("terminal/release", release),
     readOutputSnapshot,
     readCommandLine,
+    killSession,
     disposeAll,
   };
 });
