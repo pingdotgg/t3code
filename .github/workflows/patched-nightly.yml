@@ -816,9 +816,10 @@ jobs:
       # The tag means "delivered", so it follows the upload.
       - name: Record the TestFlight build
         env:
-          GH_TOKEN: ${{ github.token }}
+          # The tagged commit contains workflow files, so only the release token may push it.
+          RELEASE_TOKEN: ${{ secrets.PATCHED_NIGHTLY_RELEASE_TOKEN }}
           KEY: ${{ needs.mobile_native_check.outputs.key }}
         run: |
           git tag -f -a "testflight/$KEY" -m "TestFlight build for ${{ needs.resolve.outputs.release_tag }}"
-          git push -f origin "refs/tags/testflight/$KEY"
+          git push -f "https://x-access-token:${RELEASE_TOKEN}@github.com/${{ github.repository }}" "refs/tags/testflight/$KEY"
           echo "Uploaded to TestFlight and recorded testflight/$KEY" >> "$GITHUB_STEP_SUMMARY"
