@@ -203,18 +203,16 @@ export function useConnectLinkedEnvironment(
   const connect = async () => {
     setState({ phase: "connecting" });
     const startedOn = router.state.location.href;
-    const hasTab = (state: ReturnType<typeof useRightPanelStore.getState>) =>
-      selectThreadRightPanelState(state.byThreadKey, panelRef).surfaces.some(
-        (tab) => tab.id === surface.id,
-      );
-    let tabClosed = panelRef !== null && !hasTab(useRightPanelStore.getState());
+    let tabClosed = false;
     // A tab can close and reopen with the same ID while pairing is in flight.
     const stopWatchingTab =
       panelRef === null
         ? undefined
         : useRightPanelStore.subscribe((state) => {
-            if (!tabClosed && !hasTab(state)) tabClosed = true;
+            const { surfaces } = selectThreadRightPanelState(state.byThreadKey, panelRef);
+            if (!surfaces.some((tab) => tab.id === surface.id)) tabClosed = true;
           });
+    // Pairing takes a moment; a user who has gone elsewhere since is not moved again.
     const stayed = () => !tabClosed && router.state.location.href === startedOn;
     const outcome = await connectLinkedEnvironment({
       label: surface.label,
