@@ -5,7 +5,6 @@ import * as NodeZlib from "node:zlib";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, assert, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import { ChildProcessSpawner } from "effect/process";
 
@@ -17,14 +16,12 @@ const mockedExecute = vi.fn<AzureDevOpsCli.AzureDevOpsCli["Service"]["execute"]>
 
 const layer = it.layer(
   AzureDevOpsPullRequestCli.layer.pipe(
-    Layer.provideMerge(
-      Layer.mergeAll(
-        Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
-          execute: mockedExecute,
-        }),
-        NodeServices.layer,
-      ),
+    Layer.provide(
+      Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({
+        execute: mockedExecute,
+      }),
     ),
+    Layer.provide(NodeServices.layer),
   ),
 );
 
@@ -440,28 +437,18 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("sends a multi-line description through a file, which survives a Windows az.cmd", () =>
+  it.effect("sends a multi-line description over stdin, which survives a Windows az.cmd", () =>
     Effect.gen(function* () {
-      const body = "## Summary\n\nline two\nline three";
-      const fileSystem = yield* FileSystem.FileSystem;
-      let sentDescription: string | undefined;
-      mockedExecute.mockImplementation((input) => {
-        const file = input.args.find((arg) => arg.startsWith("--description=@"));
-        if (file === undefined) return Effect.succeed(output("{}"));
-        return fileSystem.readFileString(file.slice("--description=@".length)).pipe(
-          Effect.map((content) => {
-            sentDescription = content;
-            return output("{}");
-          }),
-          Effect.orDie,
-        );
-      });
+      const body = "- rewrote the page\n\nline three";
+      mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
-      yield* cli.updatePullRequest({ cwd: "/w", number: 42, body });
+      yield* cli.updatePullRequest({ cwd: "/w", number: 42, title: "Page", body });
 
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(argsOfCall(0)).toContain("--description=@-");
       expect(argsOfCall(0).filter((arg) => arg.includes("\n"))).toEqual([]);
-      expect(sentDescription).toBe(body);
+      expect(mockedExecute.mock.calls[0]?.[0].stdin).toBe(body);
     }),
   );
 
@@ -487,8 +474,11 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             : [];
         });
         expect(fileReads).not.toContain("notes.txt");
-        // A title read over stdin reaches az wherever it runs; the description goes by file.
-        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual(["@notes.txt"]);
+        // Each `@` value goes over stdin, which reaches az wherever it runs; one per call.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual([
+          "@notes.txt",
+          "@notes.txt",
+        ]);
       }),
   );
 

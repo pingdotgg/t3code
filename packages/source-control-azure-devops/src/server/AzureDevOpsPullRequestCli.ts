@@ -103,26 +103,8 @@ export class AzureDevOpsReviewerNameError extends Schema.TaggedError<AzureDevOps
   }
 }
 
-export class AzureDevOpsDescriptionFileError extends Schema.TaggedError<AzureDevOpsDescriptionFileError>()(
-  "AzureDevOpsDescriptionFileError",
-  {
-    command: Schema.Literal("az"),
-    cwd: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
-  get detail(): string {
-    return "Could not write the pull request description to a temporary file.";
-  }
-
-  override get message(): string {
-    return `Azure CLI failed in updatePullRequest: ${this.detail}`;
-  }
-}
-
 export type AzureDevOpsPullRequestCliError =
   | AzureDevOpsCli.AzureDevOpsCliError
-  | AzureDevOpsDescriptionFileError
   | AzureDevOpsPullRequestReadError
   | AzureDevOpsPullRequestIncompleteError
   | AzureDevOpsReviewerNameError
@@ -398,23 +380,6 @@ export const make = Effect.gen(function* () {
             );
       }),
     );
-
-  const writeDescriptionFile = Effect.fn("AzureDevOpsPullRequestCli.writeDescriptionFile")(
-    function* (cwd: string, body: string) {
-      const file = yield* fileSystem.makeTempFileScoped({
-        prefix: "t3code-pr-body-",
-        suffix: ".md",
-      });
-      yield* fileSystem.writeFileString(file, body);
-      return file;
-    },
-    (effect, cwd) =>
-      effect.pipe(
-        Effect.mapError(
-          (cause) => new AzureDevOpsDescriptionFileError({ command: "az", cwd, cause }),
-        ),
-      ),
-  );
 
   /** Azure's items route requires a leading slash. */
   const toItemPath = (path: string) => (path.startsWith("/") ? path : `/${path}`);
@@ -871,30 +836,41 @@ export const make = Effect.gen(function* () {
       },
     ),
 
-    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function* (input) {
-      const title =
-        input.title === undefined ? undefined : AzureDevOpsCli.textOption("--title", input.title);
-      const descriptionFile =
-        input.body === undefined ? undefined : yield* writeDescriptionFile(input.cwd, input.body);
-      yield* azure.execute({
-        cwd: input.cwd,
-        args: [
-          "repos",
-          "pr",
-          "update",
-          ...detectArgs,
-          "--id",
-          String(input.number),
-          ...(title === undefined ? [] : [title.arg]),
-          // cmd.exe ends a Windows az.cmd line at a newline, so the description goes by file.
-          ...(descriptionFile === undefined ? [] : [`--description=@${descriptionFile}`]),
-          "--only-show-errors",
-          "--output",
-          "json",
-        ],
-        ...(title?.stdin === undefined ? {} : { stdin: title.stdin }),
-      });
-    }, Effect.scoped),
+    updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
+      const fields = [
+        ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
+        // cmd.exe ends a Windows az.cmd line at a newline, so the description goes over stdin.
+        ...(input.body === undefined ? [] : [{ arg: "--description=@-", stdin: input.body }]),
+      ];
+      // az has one stdin, so each value read from it needs its own call.
+      const batches =
+        fields.filter((field) => field.stdin !== undefined).length > 1
+          ? fields.map((field) => [field])
+          : [fields];
+      return Effect.forEach(
+        batches,
+        (batch) => {
+          const stdin = batch.find((field) => field.stdin !== undefined)?.stdin;
+          return azure.execute({
+            cwd: input.cwd,
+            args: [
+              "repos",
+              "pr",
+              "update",
+              ...detectArgs,
+              "--id",
+              String(input.number),
+              ...batch.map((field) => field.arg),
+              "--only-show-errors",
+              "--output",
+              "json",
+            ],
+            ...(stdin === undefined ? {} : { stdin }),
+          });
+        },
+        { discard: true },
+      );
+    }),
   });
 });
 
