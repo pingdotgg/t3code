@@ -1,6 +1,7 @@
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useAtomValue } from "@effect/atom-react";
 import { createFileRoute, useRouter } from "@tanstack/react-router";
 import { T, useGT } from "gt-react";
 import { useEffect, useEffectEvent, useRef, useState } from "react";
@@ -13,6 +14,7 @@ import { HostedEmptyState } from "../components/HostedEmptyState";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../components/ui/empty";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
+import { environmentCatalog } from "../connection/catalog";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import {
   readProject,
@@ -21,6 +23,8 @@ import {
   useVisibleThreadShells,
 } from "../state/entities";
 import { useEnvironments } from "../state/environments";
+import { environmentServerConfigsAtom } from "../state/server";
+import { useAtomCommand } from "../state/use-atom-command";
 
 function ChatIndexRouteView() {
   const { authGateState } = Route.useRouteContext();
@@ -39,6 +43,8 @@ function IndexDraftLanding() {
   const threads = useVisibleThreadShells();
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const handleNewThread = useNewThreadHandler();
+  const retryEnvironment = useAtomCommand(environmentCatalog.retryNow);
+  const serverConfigs = useAtomValue(environmentServerConfigsAtom);
   const router = useRouter();
   // Read at effect time; this page can stay mounted while the router is already navigating away.
   const isStillOnIndex = useEffectEvent(() => router.state.location.pathname === "/");
@@ -52,11 +58,19 @@ function IndexDraftLanding() {
       "updated_at",
     )[0] ?? null;
   const attempt = startState.retryRequest;
+  // Cached projects show before their environment connects; the handler refuses to guess until it does.
+  const configLoaded =
+    mostRecentProject !== null && serverConfigs.has(mostRecentProject.environmentId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- starts a draft thread in the most recent project and navigates to it while still on the index
   useEffect(() => {
     // Starting a draft after the user has left would replace the page they picked.
-    if (mostRecentProject === null || startedAttemptRef.current === attempt || !isStillOnIndex()) {
+    if (
+      mostRecentProject === null ||
+      !configLoaded ||
+      startedAttemptRef.current === attempt ||
+      !isStillOnIndex()
+    ) {
       return;
     }
     const projectRef = scopeProjectRef(mostRecentProject.environmentId, mostRecentProject.id);
@@ -67,18 +81,22 @@ function IndexDraftLanding() {
     void handleNewThread(projectRef, { replace: true })
       .then((opened) => {
         if (opened === null) {
-          setStartState((state) => ({ ...state, retryRequest: state.retryRequest + 1 }));
+          setStartState((state) => ({ ...state, failed: true }));
         }
       })
       .catch(() => {
         setStartState((state) => ({ ...state, failed: true }));
       });
-  }, [attempt, handleNewThread, mostRecentProject]);
+  }, [attempt, configLoaded, handleNewThread, mostRecentProject]);
 
   if (mostRecentProject !== null) {
-    return startState.failed ? (
-      <DraftStartError
+    return !configLoaded || startState.failed ? (
+      <DraftStartNotice
+        waitingForSettings={!configLoaded}
         onRetry={() => {
+          if (!configLoaded) {
+            void retryEnvironment(mostRecentProject.environmentId);
+          }
           setStartState((state) => ({
             failed: false,
             retryRequest: state.retryRequest + 1,
@@ -91,7 +109,13 @@ function IndexDraftLanding() {
   return bootstrapped ? <NoProjectsHero /> : null;
 }
 
-function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
+function DraftStartNotice({
+  waitingForSettings,
+  onRetry,
+}: {
+  readonly waitingForSettings: boolean;
+  readonly onRetry: () => void;
+}) {
   const gt = useGT();
   const contentArea = workspaceAreaProps("home", 1, gt("Home", { $context: "the home screen" }));
   return (
@@ -104,10 +128,18 @@ function DraftStartError({ onRetry }: { readonly onRetry: () => void }) {
       <Empty className="flex-1">
         <EmptyHeader className="max-w-md">
           <EmptyTitle>
-            <T>Couldn’t start a new thread</T>
+            {waitingForSettings ? (
+              gt("Environment settings are still loading")
+            ) : (
+              <T>Couldn’t start a new thread</T>
+            )}
           </EmptyTitle>
           <EmptyDescription>
-            <T>The project is still available. Try opening the draft again.</T>
+            {waitingForSettings ? (
+              gt("Wait for this environment to finish connecting, then try again.")
+            ) : (
+              <T>The project is still available. Try opening the draft again.</T>
+            )}
           </EmptyDescription>
           <div className="mt-5 flex justify-center">
             <Button size="sm" onClick={onRetry}>
