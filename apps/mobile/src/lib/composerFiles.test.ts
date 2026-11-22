@@ -1,10 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import { PROVIDER_SEND_TURN_MAX_IMAGE_BYTES } from "@t3tools/contracts";
 import type { ImagePickerAsset } from "expo-image-picker";
-import * as NodeFS from "node:fs";
-import * as NodeOS from "node:os";
-import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
 // Bytes of image files the tests create, so stored attachments can be read back and measured.
 const imageFiles = new Map<string, string>();
@@ -710,35 +706,20 @@ describe("composer file attachments", () => {
     );
   });
 
-  it("attaches a picked file with a long valid filename", async () => {
-    using directory = NodeFS.mkdtempDisposableSync(
-      NodePath.join(NodeOS.tmpdir(), "composer-picked-file-"),
-    );
-    const pickerCopy = NodePath.join(directory.path, "picker.txt");
-    NodeFS.writeFileSync(pickerCopy, "Text contents");
+  it("keeps the app-owned copy of a long valid filename within the filesystem limit", async () => {
     const name = `${"a".repeat(246)}.txt`;
     mocks.pickFile.mockResolvedValue({
       canceled: false,
-      assets: [
-        { uri: NodeURL.pathToFileURL(pickerCopy).href, name, mimeType: "text/plain", size: 13 },
-      ],
-    });
-    sizeOtherFilesAs(13);
-    // Use the filesystem's filename length limit when creating the app-owned copy.
-    mocks.copy.mockImplementation((source: string, destination: string) => {
-      NodeFS.copyFileSync(
-        NodeURL.fileURLToPath(source),
-        NodePath.join(directory.path, NodePath.basename(NodeURL.fileURLToPath(destination))),
-      );
+      assets: [{ uri: "file:///downloads/long.txt", name, mimeType: "text/plain", size: 42 }],
     });
 
     const result = await pickComposerFiles({ existingCount: 0 });
 
-    expect(
-      result.files.map((file) => file.name),
-      "The long picked filename should appear as a composer attachment",
-    ).toEqual([name]);
     expect(result.error).toBeNull();
+    expect(result.files.map((file) => file.name)).toEqual([name]);
+    const storedName = result.files[0]!.fileUri.split("/").at(-1)!;
+    expect(storedName).toHaveLength(255);
+    expect(storedName).toMatch(/^attachment-id-a+\.txt$/);
   });
 
   it("preserves Android picker metadata instead of using the content URI document id", async () => {
