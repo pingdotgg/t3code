@@ -41,12 +41,19 @@ test(
     await browser.keyboard.press("Control+p");
     await screen.getByPlaceholder("Search files…").fill("budget.xlsx");
     await screen.getByRole("option", "budget.xlsx", { exact: false }).tap();
-    await screen.getByRole("tab", "Overview").waitFor({ timeout: 120_000 });
+    await browser
+      .locator('[data-active-tab="true"]')
+      .getByText("budget.xlsx", { exact: true })
+      .waitFor();
+    // Cold dev servers can reload while optimizing the Office workers.
+    await browser
+      .locator('[role="tablist"] button[aria-selected="true"]')
+      .waitFor({ timeout: 120_000 });
 
     // Deliver both keystrokes before the worker can report the first sheet switch.
     await browser.evaluate(() => {
       const first = document.querySelector<HTMLButtonElement>(
-        '[role="tablist"] [role="tab"][aria-selected="true"]',
+        '[role="tablist"] button[aria-selected="true"]',
       )!;
       first.focus();
       for (let press = 0; press < 2; press++)
@@ -55,7 +62,9 @@ test(
         );
       return null;
     });
-    await screen.getByRole("grid", /Actuals|Forecast/).waitFor();
+    await browser
+      .locator('[role="grid"]:is([aria-label="Actuals"], [aria-label="Forecast"])')
+      .waitFor();
     await app.screenshot("after-two-right-arrows");
     await expect
       .poll(() =>
