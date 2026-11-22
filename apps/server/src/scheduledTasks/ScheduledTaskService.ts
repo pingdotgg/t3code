@@ -35,6 +35,7 @@ import * as Mac from "effect/crypto/Mac";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Exit from "effect/Exit";
 import * as Duration from "effect/Duration";
@@ -1947,7 +1948,14 @@ export const layer = Layer.effect(
                 ${loggedBody},
                 ${input.request.body.byteLength}, ${truncated ? 1 : 0}, ${input.outcome},
                 ${input.signatureVerified ? 1 : 0}, ${encodeMissingFieldsJson(input.missing)},
-                ${input.renderedPrompt?.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) ?? null},
+                ${
+                  input.renderedPrompt?.slice(
+                    0,
+                    splitsSurrogatePair(input.renderedPrompt, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)
+                      ? WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1
+                      : WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT,
+                  ) ?? null
+                },
                 ${input.error ?? null}
               WHERE EXISTS (SELECT 1 FROM scheduled_tasks WHERE task_id = ${input.taskId})
               -- A held request retried after a rate limit reuses its relay
@@ -2636,7 +2644,7 @@ export const layer = Layer.effect(
               } else {
                 if (taskJson !== null)
                   yield* sql`UPDATE scheduled_task_webhook_pending SET task_json = ${taskJson} WHERE delivery_id = ${entry.delivery_id}`;
-                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
+                yield* sql`UPDATE scheduled_task_webhook_deliveries SET outcome = 'accepted', error = NULL, rendered_prompt = ${rendered.prompt.slice(0, splitsSurrogatePair(rendered.prompt, WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT) ? WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT - 1 : WEBHOOK_DELIVERY_LOG_PROMPT_LIMIT)}, missing_fields_json = ${encodeMissingFieldsJson(rendered.missing)} WHERE delivery_id = ${entry.delivery_id}`;
                 if (!(yield* runWebhookDelivery(task, entry.delivery_id, rendered.prompt))) return;
               }
               yield* remove;
