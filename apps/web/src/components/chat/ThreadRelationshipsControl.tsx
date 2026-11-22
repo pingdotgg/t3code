@@ -59,6 +59,7 @@ import {
 } from "lucide-react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { useRef, useState, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import type { MessageResolver } from "~/i18n/messages";
 
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
@@ -105,6 +106,7 @@ import {
 // stay bounded inside the card and popup.
 const THREAD_LINEAGE_INITIAL_COUNT = 6;
 const THREAD_LINEAGE_PAGE_COUNT = 12;
+const MENU_ITEM = '[role="menuitem"]';
 
 function resolveThreadLineageWindow<Row>(
   rows: ReadonlyArray<Row>,
@@ -123,6 +125,15 @@ function ThreadLineageRowList(props: {
   const gt = useGT();
   const listRef = useRef<HTMLUListElement>(null);
   const showMore = () => {
+    if (props.menu) {
+      // A menu refocuses its highlighted item, which this page removes; move focus to a revealed row.
+      const firstNewRow = listRef.current?.children.length ?? 0;
+      flushSync(props.onShowMore);
+      const row = listRef.current?.children[firstNewRow];
+      const item = row?.matches(MENU_ITEM) ? row : row?.querySelector(MENU_ITEM);
+      if (item instanceof HTMLElement) item.focus();
+      return;
+    }
     const exhausting = props.hiddenCount <= THREAD_LINEAGE_PAGE_COUNT;
     props.onShowMore();
     // The button unmounts on the final page; focus the list so focus isn't dropped.
