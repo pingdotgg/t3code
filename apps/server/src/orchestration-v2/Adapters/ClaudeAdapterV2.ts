@@ -5141,8 +5141,11 @@ function formatClaudeUsageLimitWait(waitMs: number): string {
 }
 
 interface ActiveClaudeTurnContext {
-  retryBudgetFailure?: OrchestrationV2ProviderFailure;
-  // Set when the prompt starts or a request goes out; cleared by the turn's next frame.
+  stall?: {
+    readonly failure: OrchestrationV2ProviderFailure;
+    readonly threadDisposition: "reusable" | "broken";
+  };
+  // Set when the prompt starts or Claude reports a request or compaction; cleared by progress.
   unansweredRequestSince?: DateTime.Utc | undefined;
   readonly queryPolicy: ClaudeRuntimeQueryPolicy;
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
@@ -6611,7 +6614,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (retry === undefined) return;
             yield* failStalledTurn(
               context,
-              { ...retry.failure, retryable: false },
+              { failure: { ...retry.failure, retryable: false }, threadDisposition: "reusable" },
               Effect.map(isCurrentRetry, (current) => current !== undefined),
             );
           },
@@ -6630,12 +6633,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           if (!(yield* isUnanswered)) return;
           yield* failStalledTurn(
             context,
-            makeProviderFailure({
-              class: "transport_error",
-              code: "claude_request_unanswered",
-              message: `Claude sent nothing for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
-              retryable: false,
-            }),
+            {
+              failure: makeProviderFailure({
+                class: "transport_error",
+                code: "claude_request_unanswered",
+                message: `Claude made no progress for ${PROVIDER_RETRY_BUDGET_MS / 60_000} minutes. The API or a gateway in front of it is not responding.`,
+                retryable: false,
+              }),
+              // Resuming a session stuck compacting compacts it again, so the next turn starts fresh.
+              threadDisposition: context.compaction?.status === "running" ? "broken" : "reusable",
+            },
             // Once the stop is sent, a frame clearing the silence must not skip forced settlement.
             Effect.map(Ref.get(activeTurn), (active) => active === context),
           );
@@ -6643,12 +6650,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
 
         const failStalledTurn = Effect.fn("ClaudeAdapterV2.failStalledTurn")(function* (
           context: ActiveClaudeTurnContext,
-          failure: OrchestrationV2ProviderFailure,
+          stall: NonNullable<ActiveClaudeTurnContext["stall"]>,
           stillStalled: Effect.Effect<boolean>,
         ) {
           // A user Stop already in flight keeps its interrupted outcome.
           if ((yield* Ref.get(interruptedTurns)).has(context.providerTurnId)) return;
-          context.retryBudgetFailure = failure;
+          context.stall = stall;
           const liveQuery = yield* Ref.get(queryContext);
           yield* interruptTurn({
             providerThread: context.input.providerThread,
@@ -9573,11 +9580,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly threadDisposition?: "reusable" | "broken";
           readonly result?: SDKResultMessage;
         }) {
-          // A turn stopped by the retry budget settles as failed with the retry's error.
-          const retryBudgetFailure = requested.context.retryBudgetFailure;
+          // A turn stopped by a stall deadline settles as failed with the stall's error.
+          const stall = requested.context.stall;
           const input =
-            requested.status === "interrupted" && retryBudgetFailure !== undefined
-              ? { ...requested, status: "failed" as const, failure: retryBudgetFailure }
+            requested.status === "interrupted" && stall !== undefined
+              ? { ...requested, status: "failed" as const, ...stall }
               : requested;
           input.context.steersClosed = true;
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
@@ -11000,15 +11007,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             if (
               (message.type === "system" &&
                 message.subtype === "status" &&
-                message.status === "requesting") ||
+                message.status !== null) ||
               (lifecycle?.state === "started" && lifecycle.uuid === context.promptUuid)
             ) {
-              const since = yield* DateTime.now;
-              context.unansweredRequestSince = since;
-              yield* failUnansweredRequest(context, since).pipe(
-                Effect.delay(PROVIDER_RETRY_BUDGET_MS),
-                Effect.forkIn(sessionScope),
-              );
+              // Claude repeats a stuck request or compaction status; a repeat is not progress.
+              if (context.unansweredRequestSince === undefined) {
+                const since = yield* DateTime.now;
+                context.unansweredRequestSince = since;
+                yield* failUnansweredRequest(context, since).pipe(
+                  Effect.delay(PROVIDER_RETRY_BUDGET_MS),
+                  Effect.forkIn(sessionScope),
+                );
+              }
             } else if (
               // Background tasks from earlier turns keep streaming while the root request hangs.
               // Only the root starts depth-1 tasks, so such a start (a forked skill) is this turn's.
@@ -14029,9 +14039,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   ),
                 ),
               );
-              yield* existing.query.close.pipe(Effect.ignore);
             }
-            const closed = yield* Deferred.await(existing.closed).pipe(
+            // A wedged CLI can leave the close pending too; Force stop is offered instead.
+            const closed = yield* Deferred.isDone(existing.closed).pipe(
+              Effect.flatMap((done) => (done ? Effect.void : Effect.ignore(existing.query.close))),
+              Effect.andThen(Deferred.await(existing.closed)),
               Effect.timeoutOption(CLAUDE_STOP_CONFIRM_TIMEOUT_MS),
             );
             if (Option.isSome(closed)) {
@@ -14299,7 +14311,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // Marked first so a concurrent Stop skips or tolerates writes to the closing CLI;
             // the scope interrupts the stream fiber, so it may never mark its query closed.
             yield* Deferred.succeed(existing.closed, undefined);
-            yield* existing.query.close.pipe(Effect.ignore);
+            yield* existing.query.close.pipe(Effect.ignore, Effect.timeoutOption("10 seconds"));
           }
           yield* Effect.yieldNow;
           yield* queryRunner.assertComplete.pipe(
@@ -14323,8 +14335,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           }
 
           existing.stopping = true;
-          yield* existing.query.close.pipe(Effect.ignore);
-          const closed = yield* Deferred.await(existing.closed).pipe(
+          const closed = yield* existing.query.close.pipe(
+            Effect.ignore,
+            Effect.andThen(Deferred.await(existing.closed)),
             Effect.timeoutOption("10 seconds"),
           );
           if (Option.isSome(closed)) {
@@ -14490,6 +14503,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               readonly importedNativeSession?: boolean;
             }) {
               const nativeThreadId = threadInput.providerThread.nativeThreadRef?.nativeId;
+              // A live session still holds a broken thread; refusing makes turn start open a fresh one.
+              if (threadInput.providerThread.status === "error") {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CLAUDE_PROVIDER,
+                  detail: `Claude session ${nativeThreadId} stopped responding and needs a fresh session.`,
+                });
+              }
               if (nativeThreadId !== undefined && nativeThreadId !== null) {
                 const recordedTitle = threadInput.providerThread.nativeMetadata?.title;
                 if (recordedTitle !== undefined && recordedTitle !== null) {

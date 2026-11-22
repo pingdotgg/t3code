@@ -12881,6 +12881,104 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  // regression: #24842 Claude repeated "compacting" every 30 seconds for 26 minutes
+  it.effect("fails a turn stuck compacting and starts the next one in a fresh session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) => Queue.shutdown(sdkMessages),
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("attempt-claude-stuck-compacting"),
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      for (let index = 0; index < 20; index++) {
+        yield* harness.offerAndWait(
+          claudeSdkFrame({
+            type: "system",
+            subtype: "status",
+            status: "compacting",
+            uuid: `00000000-0000-4000-8000-0000000248${String(index).padStart(2, "0")}`,
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        yield* TestClock.adjust("30 seconds");
+      }
+      const terminal = yield* Queue.take(harness.terminalReceipts);
+      assert.equal(terminal.status, "failed");
+      if (terminal.status !== "failed") return;
+      assert.equal(terminal.failure.code, "claude_request_unanswered");
+      assert.equal(terminal.threadDisposition, "broken");
+      const resumed = yield* Effect.exit(
+        harness.runtime.resumeThread({
+          providerThread: { ...harness.providerThread, status: "error" },
+        }),
+      );
+      assert.isTrue(Exit.isFailure(resumed), "a broken Claude session must not be resumed");
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect("offers Force stop when a Stop's SDK close never resolves", () =>
+    Effect.gen(function* () {
+      const sdkGate = yield* Deferred.make<void>();
+      const harness = yield* makeWakeHarnessWithOptions({
+        close: (sdkMessages) =>
+          Deferred.await(sdkGate).pipe(Effect.andThen(Queue.shutdown(sdkMessages))),
+      });
+      // Added after the harness so it runs first and session disposal is not left hanging.
+      yield* Effect.addFinalizer(() => Deferred.succeed(sdkGate, undefined));
+      const attemptId = RunAttemptId.make("attempt-claude-stop-close-hangs");
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId,
+          text: "Continue.",
+          attachments: [],
+        }),
+      );
+      const stopping = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: (yield* IdAllocator.IdAllocatorV2).derive.providerTurn({
+            driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+            nativeTurnId: `turn:${attemptId}`,
+          }),
+        })
+        .pipe(Effect.flip, Effect.forkScoped);
+      yield* TestClock.adjust("10 seconds");
+      const stopError = yield* Fiber.join(stopping);
+      assert.equal(stopError._tag, "ProviderAdapterInterruptTimeoutError");
+      assert.lengthOf(harness.terminalEvents(), 0);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect.each(["api_error", "overloaded_status"] as const)(
     "fails a success-shaped Claude result with %s",
     (terminalReason) =>
