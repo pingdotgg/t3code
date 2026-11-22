@@ -36,6 +36,16 @@ const existingCeilings = (ceilings: Record<string, number>) =>
     NodeFS.existsSync(NodeURL.fileURLToPath(new URL(file, import.meta.url))),
   );
 
+/** Per-file debt ceilings for the design-system rules, generated into lint-ceilings.json. */
+const lintCeilings: Record<string, Record<string, number>> = JSON.parse(
+  NodeFS.readFileSync(new URL("./lint-ceilings.json", import.meta.url), "utf8"),
+);
+const generatedCeilings = (rule: string) =>
+  existingCeilings(lintCeilings[rule] ?? {}).map(([file, maxOccurrences]) => {
+    const options: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
+    return { files: [file], rules: { [rule]: options } };
+  });
+
 const RESTRICTED_IMPORT_PATHS = [
   {
     name: "react-native",
@@ -385,6 +395,13 @@ export default defineConfig({
           "apps/web/src/**/*.test.{ts,tsx}",
         ],
         rules: { "t3code/no-raw-type-classes": "error" },
+      },
+      {
+        // Surfaces come from the surface-* utilities and radius tokens, not hand-built
+        // bg, border, rounded and shadow classes that the surface styles cannot repaint.
+        files: ["apps/web/src/**"],
+        excludeFiles: ["apps/web/src/components/ui/**", "apps/web/src/**/*.test.{ts,tsx}"],
+        rules: { "t3code/no-raw-surface": "error" },
       },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
@@ -983,6 +1000,7 @@ export default defineConfig({
         const rule: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
         return { files: [file], rules: { "t3code/no-raw-type-classes": rule } };
       }),
+      ...generatedCeilings("t3code/no-raw-surface"),
     ],
     options: {
       reportUnusedDisableDirectives: "error",
