@@ -73,6 +73,7 @@ const PROBE_SUCCESS_TTL_MS = 15 * 60 * 1_000;
 const PROBE_PROVISIONAL_TTL_MS = 30 * 1_000;
 const REGISTRY_INDEX_MAX_AGE_MS = 15 * 60 * 1_000;
 const REGISTRY_FAILURE_BACKOFF_MS = 60 * 1_000;
+const FALLBACK_RETRY_BACKOFF_MS = 60 * 1_000;
 
 function acpRegistryProbeTtlMs(provider: ServerProvider): number {
   const discoveredModels = provider.models.filter((model) => !model.isCustom);
@@ -584,16 +585,26 @@ interface CheckedAcpRegistryReadiness {
   readonly launchIdentity: string | null;
   readonly indexRevision: number | null;
   readonly fallback?: boolean;
+  readonly fallbackTargetIndexRevision?: number | null;
+  readonly retryFailedUpgrade?: boolean;
   readonly probeFailed?: boolean;
 }
 
 interface ActiveFallbackState {
   readonly targetLaunchIdentity: string | null;
   readonly targetVersion: string | null;
+  readonly targetIndexRevision: number | null;
   readonly fallbackVersion: string | null;
   readonly fallbackLaunchIdentity: string | null;
   readonly failedAtMs: number;
   readonly message: string;
+}
+
+interface FailedUpgradeTargetState {
+  readonly targetLaunchIdentity: string | null;
+  readonly status: ServerProvider["status"];
+  readonly auth: ServerProvider["auth"];
+  readonly message: string | undefined;
 }
 
 function runtimeIdentityFor(
@@ -643,6 +654,8 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     readonly fallback?: boolean;
     readonly fallbackTargetLaunchIdentity?: string | null;
     readonly fallbackTargetVersion?: string | null;
+    readonly fallbackTargetIndexRevision?: number | null;
+    readonly failedTargetLaunchIdentity?: string | null;
     readonly probeFailed?: boolean;
   },
   never,
@@ -707,6 +720,7 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
       launchIdentity: null,
       indexRevision: inspectedIndexRevision,
       cacheable: false,
+      failedTargetLaunchIdentity: inspected.success.launchIdentity ?? null,
       probeFailed: true,
     };
   }
@@ -770,8 +784,11 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     ...(resolved.fallback
       ? {
           fallback: true,
-          fallbackTargetLaunchIdentity: inspected.success.launchIdentity ?? null,
-          fallbackTargetVersion: inspected.success.version,
+          fallbackTargetLaunchIdentity:
+            resolved.failedTarget?.launchIdentity ?? inspected.success.launchIdentity ?? null,
+          fallbackTargetVersion: resolved.failedTarget?.version ?? inspected.success.version,
+          fallbackTargetIndexRevision:
+            resolved.failedTarget?.indexRevision ?? inspectedIndexRevision,
         }
       : {}),
   };
@@ -951,6 +968,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
     const activeRuntimeIdentity = yield* Ref.make<string | null>(null);
+    const lastSuccessfulRuntime = yield* Ref.make<{
+      readonly identity: string;
+      readonly provider: ServerProvider;
+    } | null>(null);
+    const failedUpgradeTarget = yield* Ref.make<FailedUpgradeTargetState | null>(null);
     const clearLiveState = (
       options?: AcpRegistryRuntimeCoordinator.AcpRegistryClearLiveStateOptions,
     ) =>
@@ -964,6 +986,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ).pipe(
         Effect.andThen(clearLearnedModels),
         Effect.andThen(Ref.set(activeRuntimeIdentity, options?.preserveRuntimeIdentity ?? null)),
+        Effect.andThen(
+          options?.preserveRuntimeIdentity === undefined
+            ? Ref.set(lastSuccessfulRuntime, null).pipe(
+                Effect.andThen(Ref.set(failedUpgradeTarget, null)),
+              )
+            : Effect.void,
+        ),
       );
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
@@ -1059,8 +1088,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           Effect.all({
             version: Ref.get(reportedLocalVersion),
             fallbackState: Ref.get(activeFallback),
+            failedUpgrade: Ref.get(failedUpgradeTarget),
+            lastRuntime: Ref.get(lastSuccessfulRuntime),
+            activeIdentity: Ref.get(activeRuntimeIdentity),
           }).pipe(
-            Effect.map(({ version, fallbackState }) => {
+            Effect.map(({ version, fallbackState, failedUpgrade, lastRuntime, activeIdentity }) => {
               const withLocalVersion =
                 snapshot.installed && snapshot.version === null && version !== null
                   ? { ...snapshot, version }
@@ -1072,15 +1104,65 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 launchIdentity !== null &&
                 launchIdentity === fallbackState.targetLaunchIdentity
               ) {
+                const preservedBase =
+                  lastRuntime !== null &&
+                  fallbackState.fallbackLaunchIdentity !== null &&
+                  lastRuntime.identity === fallbackState.fallbackLaunchIdentity
+                    ? applyRegistryReadinessMetadata(lastRuntime.provider, withLocalVersion)
+                    : withLocalVersion;
                 return {
                   snapshot: {
-                    ...withLocalVersion,
+                    ...preservedBase,
+                    checkedAt: withLocalVersion.checkedAt,
+                    installed: true,
                     version: fallbackState.fallbackVersion,
-                    message: withLocalVersion.message ?? fallbackState.message,
+                    status: withLocalVersion.enabled ? ("ready" as const) : ("disabled" as const),
+                    message: fallbackState.message,
                   },
                   launchIdentity: fallbackState.fallbackLaunchIdentity,
                   indexRevision,
                   fallback: true as const,
+                  fallbackTargetIndexRevision: fallbackState.targetIndexRevision,
+                  retryFailedUpgrade: false as const,
+                  preserveStatus: undefined as ServerProvider["status"] | undefined,
+                  preserveMessage: fallbackState.message as string | undefined,
+                };
+              }
+              if (
+                options?.preserveActiveFallback === true &&
+                failedUpgrade !== null &&
+                lastRuntime !== null &&
+                activeIdentity !== null &&
+                lastRuntime.identity === activeIdentity &&
+                withLocalVersion.installed &&
+                launchIdentity !== null &&
+                launchIdentity === failedUpgrade.targetLaunchIdentity
+              ) {
+                const { message: _previousMessage, ...lastProviderWithoutMessage } =
+                  lastRuntime.provider;
+                return {
+                  snapshot: {
+                    ...lastProviderWithoutMessage,
+                    checkedAt: withLocalVersion.checkedAt,
+                    installed: true,
+                    status: withLocalVersion.enabled ? failedUpgrade.status : ("disabled" as const),
+                    auth:
+                      failedUpgrade.auth.status === "unauthenticated"
+                        ? failedUpgrade.auth
+                        : lastProviderWithoutMessage.auth,
+                    ...(failedUpgrade.message !== undefined
+                      ? { message: failedUpgrade.message }
+                      : {}),
+                  },
+                  launchIdentity: lastRuntime.identity,
+                  indexRevision,
+                  fallback: false as const,
+                  fallbackTargetIndexRevision: null as number | null,
+                  retryFailedUpgrade: true as const,
+                  preserveStatus: (withLocalVersion.enabled ? failedUpgrade.status : "disabled") as
+                    | ServerProvider["status"]
+                    | undefined,
+                  preserveMessage: failedUpgrade.message,
                 };
               }
               return {
@@ -1088,47 +1170,70 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 launchIdentity,
                 indexRevision,
                 fallback: false as const,
+                fallbackTargetIndexRevision: null as number | null,
+                retryFailedUpgrade: false as const,
+                preserveStatus: undefined as ServerProvider["status"] | undefined,
+                preserveMessage: undefined as string | undefined,
               };
             }),
           ),
         ),
-        Effect.flatMap(({ snapshot, launchIdentity, indexRevision, fallback }) => {
-          const nextIdentity = snapshot.installed
-            ? runtimeIdentityFor(snapshot, launchIdentity)
-            : null;
-          return Ref.modify(activeRuntimeIdentity, (previousIdentity) => {
-            if (
-              options?.seedActiveRuntimeIdentity === true &&
-              snapshot.installed &&
-              previousIdentity === null &&
-              nextIdentity !== null
-            ) {
-              return [nextIdentity, nextIdentity] as const;
-            }
-            return [previousIdentity, previousIdentity] as const;
-          }).pipe(
-            Effect.flatMap((previousIdentity) => {
-              const runtimeChanged =
-                previousIdentity !== null &&
-                nextIdentity !== null &&
-                previousIdentity !== nextIdentity;
-              return withLiveRuntimeState(snapshot, {
-                applySessionLiveState: options?.applySessionLiveState ?? true,
-                sessionRuntimeIdentity: nextIdentity,
-                requireMatchingRuntimeIdentity: runtimeChanged,
-                useLearnedModels: !runtimeChanged,
-                persistLearnedModels: !runtimeChanged,
-              }).pipe(
-                Effect.map(({ provider }) => ({
-                  snapshot: provider,
-                  launchIdentity,
-                  indexRevision,
-                  ...(fallback ? { fallback: true } : {}),
-                })),
-              );
-            }),
-          );
-        }),
+        Effect.flatMap(
+          ({
+            snapshot,
+            launchIdentity,
+            indexRevision,
+            fallback,
+            fallbackTargetIndexRevision,
+            retryFailedUpgrade,
+            preserveStatus,
+            preserveMessage,
+          }) => {
+            const nextIdentity = snapshot.installed
+              ? runtimeIdentityFor(snapshot, launchIdentity)
+              : null;
+            return Ref.modify(activeRuntimeIdentity, (previousIdentity) => {
+              if (
+                options?.seedActiveRuntimeIdentity === true &&
+                snapshot.installed &&
+                previousIdentity === null &&
+                nextIdentity !== null
+              ) {
+                return [nextIdentity, nextIdentity] as const;
+              }
+              return [previousIdentity, previousIdentity] as const;
+            }).pipe(
+              Effect.flatMap((previousIdentity) => {
+                const runtimeChanged =
+                  previousIdentity !== null &&
+                  nextIdentity !== null &&
+                  previousIdentity !== nextIdentity;
+                return withLiveRuntimeState(snapshot, {
+                  applySessionLiveState: options?.applySessionLiveState ?? true,
+                  sessionRuntimeIdentity: nextIdentity,
+                  requireMatchingRuntimeIdentity: runtimeChanged,
+                  useLearnedModels: !runtimeChanged,
+                  persistLearnedModels: !runtimeChanged,
+                }).pipe(
+                  Effect.map(({ provider }) => ({
+                    snapshot:
+                      preserveMessage !== undefined || preserveStatus !== undefined
+                        ? {
+                            ...provider,
+                            ...(preserveStatus !== undefined ? { status: preserveStatus } : {}),
+                            ...(preserveMessage !== undefined ? { message: preserveMessage } : {}),
+                          }
+                        : provider,
+                    launchIdentity,
+                    indexRevision,
+                    ...(fallback ? { fallback: true, fallbackTargetIndexRevision } : {}),
+                    ...(retryFailedUpgrade ? { retryFailedUpgrade: true } : {}),
+                  })),
+                );
+              }),
+            );
+          },
+        ),
       );
     const checkProvider = inspectReadiness({
       seedActiveRuntimeIdentity: true,
@@ -1172,6 +1277,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     });
     const liveSnapshotSemaphore = yield* Semaphore.make(1);
     const invalidateEnrichmentCache = Ref.set(activeFallback, null).pipe(
+      Effect.andThen(Ref.set(failedUpgradeTarget, null)),
       Effect.andThen(
         Ref.update(enrichmentCache, (current) => ({
           invalidationGeneration: current.invalidationGeneration + 1,
@@ -1201,7 +1307,49 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         liveGenerationByRuntime: cacheState.liveGenerationByRuntime,
       };
       const cached = cacheState.entry;
-      if (
+      if (target.fallback === true) {
+        const fallbackState = yield* Ref.get(activeFallback);
+        // Enforce fallback retry backoff before probing so 30s provisional cache expiry on
+        // 1-model agents cannot re-trigger downloads or reset failedAtMs inside the 60s window.
+        if (
+          fallbackState !== null &&
+          now >= fallbackState.failedAtMs &&
+          now - fallbackState.failedAtMs < FALLBACK_RETRY_BACKOFF_MS
+        ) {
+          const targetIdentity = runtimeIdentityFor(target.snapshot, target.launchIdentity);
+          const cachedMatchesTarget =
+            cached !== null &&
+            cached.provider.version === target.snapshot.version &&
+            (cached.launchIdentity === undefined ||
+              target.launchIdentity === null ||
+              cached.launchIdentity === target.launchIdentity);
+          const lastRuntime = cachedMatchesTarget ? null : yield* Ref.get(lastSuccessfulRuntime);
+          const baseFallbackProvider = cachedMatchesTarget
+            ? cached.provider
+            : lastRuntime !== null && lastRuntime.identity === targetIdentity
+              ? lastRuntime.provider
+              : target.snapshot;
+          return {
+            provider: {
+              ...applyRegistryReadinessMetadata(baseFallbackProvider, target.snapshot),
+              checkedAt: target.snapshot.checkedAt,
+              status: target.snapshot.enabled ? ("ready" as const) : ("disabled" as const),
+              message: fallbackState.message,
+            },
+            launchIdentity: target.launchIdentity,
+            indexRevision: target.indexRevision,
+            fallback: true,
+            fallbackTargetLaunchIdentity: fallbackState.targetLaunchIdentity,
+            fallbackTargetVersion: fallbackState.targetVersion,
+            fallbackTargetIndexRevision: fallbackState.targetIndexRevision,
+            failedTargetLaunchIdentity: null,
+            probeFailed: false,
+            fromCache: true,
+            captured,
+          };
+        }
+      } else if (
+        target.retryFailedUpgrade !== true &&
         cached !== null &&
         isAcpRegistryCacheValid(
           cached,
@@ -1215,15 +1363,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           provider: {
             ...applyRegistryReadinessMetadata(cached.provider, target.snapshot),
             checkedAt: target.snapshot.checkedAt,
-            ...(target.fallback && target.snapshot.message !== undefined
-              ? { message: target.snapshot.message }
-              : {}),
           },
           launchIdentity: target.launchIdentity,
           indexRevision: target.indexRevision,
-          fallback: target.fallback === true,
-          fallbackTargetLaunchIdentity: target.launchIdentity,
-          fallbackTargetVersion: target.snapshot.version,
+          fallback: false,
+          fallbackTargetLaunchIdentity: null,
+          fallbackTargetVersion: null,
+          fallbackTargetIndexRevision: null,
+          failedTargetLaunchIdentity: null,
           probeFailed: false,
           fromCache: true,
           captured,
@@ -1237,6 +1384,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         fallback,
         fallbackTargetLaunchIdentity,
         fallbackTargetVersion,
+        fallbackTargetIndexRevision,
+        failedTargetLaunchIdentity,
         probeFailed,
       } = yield* enrichProvider;
       if (effectiveConfig.source === "local" && enriched.status === "ready") {
@@ -1267,6 +1416,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         fallback: fallback === true,
         fallbackTargetLaunchIdentity: fallbackTargetLaunchIdentity ?? target.launchIdentity,
         fallbackTargetVersion: fallbackTargetVersion ?? target.snapshot.version,
+        fallbackTargetIndexRevision: fallbackTargetIndexRevision ?? target.indexRevision,
+        failedTargetLaunchIdentity: failedTargetLaunchIdentity ?? null,
         probeFailed: probeFailed === true,
         fromCache: false,
         captured,
@@ -1302,7 +1453,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   snapshot,
                   launchIdentity: latest.launchIdentity,
                   indexRevision: latest.indexRevision,
-                  ...(latest.fallback ? { fallback: true } : {}),
+                  ...(latest.fallback
+                    ? {
+                        fallback: true,
+                        fallbackTargetIndexRevision: latest.fallbackTargetIndexRevision ?? null,
+                      }
+                    : {}),
+                  ...(latest.retryFailedUpgrade ? { retryFailedUpgrade: true } : {}),
                 }
               : { snapshot, launchIdentity: null, indexRevision: null },
           ),
@@ -1337,6 +1494,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 inspected.success.status === "ready" &&
                 inspected.success.launchIdentity === incomingIdentity
               ) {
+                yield* Ref.update(activeFallback, (current) =>
+                  current?.targetLaunchIdentity === incomingIdentity ? null : current,
+                );
+                yield* Ref.update(failedUpgradeTarget, (current) =>
+                  current?.targetLaunchIdentity === incomingIdentity ? null : current,
+                );
                 yield* triggerSnapshotRefresh;
               }
             }).pipe(
@@ -1411,6 +1574,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   fallback,
                   fallbackTargetLaunchIdentity,
                   fallbackTargetVersion,
+                  fallbackTargetIndexRevision,
+                  failedTargetLaunchIdentity,
                   probeFailed,
                   fromCache,
                   captured,
@@ -1432,17 +1597,34 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           };
                         }
                         if (probeFailed && provider.installed && previousIdentity !== null) {
-                          // The new runtime failed before resolving/starting; keep the active runtime's
-                          // identity, installed version, and live state intact so running sessions survive.
-                          const currentSnapshot = yield* getSnapshot;
-                          const preservedVersion =
-                            currentSnapshot.installed &&
-                            currentSnapshot.version !== null &&
-                            currentSnapshot.version !== provider.version
-                              ? currentSnapshot.version
-                              : provider.version;
-                          const { provider: nextSnapshot } = yield* withLiveRuntimeState(
-                            { ...provider, version: preservedVersion },
+                          // The new runtime failed before resolving/starting; keep the last known
+                          // working runtime's identity, version, models, and live state intact so
+                          // running sessions survive across repeated refreshes.
+                          const lastRuntime = yield* Ref.get(lastSuccessfulRuntime);
+                          const isUpgradeFailure =
+                            failedTargetLaunchIdentity !== null &&
+                            failedTargetLaunchIdentity !== previousIdentity;
+                          const preservedBase: ServerProvider =
+                            lastRuntime !== null && lastRuntime.identity === previousIdentity
+                              ? (() => {
+                                  const { message: _previousMessage, ...base } =
+                                    lastRuntime.provider;
+                                  return {
+                                    ...base,
+                                    checkedAt: provider.checkedAt,
+                                    status: provider.status,
+                                    auth:
+                                      provider.auth.status === "unauthenticated"
+                                        ? provider.auth
+                                        : base.auth,
+                                    ...(provider.message !== undefined
+                                      ? { message: provider.message }
+                                      : {}),
+                                  };
+                                })()
+                              : provider;
+                          const { provider: nextSnapshotRaw } = yield* withLiveRuntimeState(
+                            preservedBase,
                             {
                               sessionRuntimeIdentity: previousIdentity,
                               requireMatchingRuntimeIdentity: false,
@@ -1450,9 +1632,26 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               persistLearnedModels: false,
                             },
                           );
+                          const nextSnapshot = isUpgradeFailure
+                            ? {
+                                ...nextSnapshotRaw,
+                                status: provider.status,
+                                ...(provider.message !== undefined
+                                  ? { message: provider.message }
+                                  : {}),
+                              }
+                            : nextSnapshotRaw;
                           const published = yield* tryPublishSnapshot(nextSnapshot);
                           if (published) {
                             yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
+                            if (isUpgradeFailure) {
+                              yield* Ref.set(failedUpgradeTarget, {
+                                targetLaunchIdentity: failedTargetLaunchIdentity,
+                                status: provider.status,
+                                auth: provider.auth,
+                                message: provider.message,
+                              });
+                            }
                           }
                           return {
                             published,
@@ -1467,6 +1666,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             publishedIdentity: previousIdentity,
                           };
                         }
+                        const existingFallback = fallback ? yield* Ref.get(activeFallback) : null;
                         const fallbackMessage =
                           fallback && !fromCache
                             ? fallbackTargetVersion !== null &&
@@ -1474,10 +1674,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               fallbackTargetVersion !== provider.version
                               ? `Could not install ${effectiveConfig.agentId} ${fallbackTargetVersion}; using installed ${provider.version}. Will retry on the next refresh.`
                               : "Could not install the latest agent update; using the previously installed version. Will retry on the next refresh."
-                            : undefined;
-                        const existingFallback = fallback ? yield* Ref.get(activeFallback) : null;
-                        const effectiveMessage =
-                          provider.message ?? fallbackMessage ?? existingFallback?.message;
+                            : existingFallback?.message;
+                        const effectiveMessage = fallback
+                          ? (fallbackMessage ?? provider.message)
+                          : provider.message;
                         const providerToPublish =
                           fallback && effectiveMessage !== undefined
                             ? { ...provider, message: effectiveMessage }
@@ -1486,31 +1686,48 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           previousIdentity !== null &&
                           resolvedIdentity !== null &&
                           previousIdentity !== resolvedIdentity;
-                        const { provider: nextSnapshot, appliedLiveConfiguration } =
+                        const { provider: nextSnapshotRaw, appliedLiveConfiguration } =
                           yield* withLiveRuntimeState(providerToPublish, {
                             sessionRuntimeIdentity: resolvedIdentity,
                             requireMatchingRuntimeIdentity: runtimeChanged,
                             useLearnedModels: !runtimeChanged,
                             persistLearnedModels: false,
                           });
+                        const nextSnapshot =
+                          fallback && effectiveMessage !== undefined
+                            ? { ...nextSnapshotRaw, message: effectiveMessage }
+                            : nextSnapshotRaw;
                         const published = yield* tryPublishSnapshot(nextSnapshot);
                         if (published) {
                           if (!providerToPublish.installed) {
                             yield* Ref.set(activeFallback, null);
+                            yield* Ref.set(failedUpgradeTarget, null);
+                            yield* Ref.set(lastSuccessfulRuntime, null);
                             if (previousIdentity !== null || current.entry !== null) {
                               yield* clearLiveState();
                               yield* invalidateEnrichmentCache;
                             }
                             yield* Ref.set(expectedRuntimeIdentity, null);
                           } else {
+                            const previousLastSuccessful = yield* Ref.get(lastSuccessfulRuntime);
+                            if (!probeFailed) {
+                              yield* Ref.set(failedUpgradeTarget, null);
+                            }
                             if (fallback && !fromCache) {
-                              const failedAtMs = yield* Clock.currentTimeMillis;
+                              const now = yield* Clock.currentTimeMillis;
+                              const keepFailedAt =
+                                existingFallback !== null &&
+                                existingFallback.targetLaunchIdentity ===
+                                  fallbackTargetLaunchIdentity &&
+                                now >= existingFallback.failedAtMs &&
+                                now - existingFallback.failedAtMs < FALLBACK_RETRY_BACKOFF_MS;
                               yield* Ref.set(activeFallback, {
                                 targetLaunchIdentity: fallbackTargetLaunchIdentity,
                                 targetVersion: fallbackTargetVersion,
+                                targetIndexRevision: fallbackTargetIndexRevision,
                                 fallbackVersion: providerToPublish.version,
                                 fallbackLaunchIdentity: launchIdentity,
-                                failedAtMs,
+                                failedAtMs: keepFailedAt ? existingFallback.failedAtMs : now,
                                 message:
                                   fallbackMessage ??
                                   existingFallback?.message ??
@@ -1523,7 +1740,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               yield* clearLiveState({ preserveRuntimeIdentity: resolvedIdentity });
                               yield* Ref.update(retiredRuntimeIdentities, (retired) => {
                                 const next = new Set(retired);
-                                next.add(previousIdentity);
+                                // Retire only a runtime that actually succeeded; a never-installed
+                                // target replaced during cold fallback stays eligible to reconcile.
+                                if (previousLastSuccessful?.identity === previousIdentity) {
+                                  next.add(previousIdentity);
+                                }
                                 next.delete(resolvedIdentity);
                                 return next;
                               });
@@ -1549,6 +1770,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               }
                               yield* Ref.set(expectedRuntimeIdentity, resolvedIdentity);
                             }
+                            if (!probeFailed && resolvedIdentity !== null) {
+                              const { message: _fallbackMsg, ...cleanProvider } = nextSnapshotRaw;
+                              yield* Ref.set(lastSuccessfulRuntime, {
+                                identity: resolvedIdentity,
+                                provider: fallback ? cleanProvider : nextSnapshotRaw,
+                              });
+                            }
                           }
                         }
                         return {
@@ -1558,7 +1786,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                                 snapshot: providerToPublish,
                                 launchIdentity,
                                 indexRevision,
-                                ...(fallback ? { fallback: true } : {}),
+                                ...(fallback
+                                  ? {
+                                      fallback: true,
+                                      fallbackTargetIndexRevision,
+                                    }
+                                  : {}),
                                 ...(probeFailed ? { probeFailed: true } : {}),
                               }
                             : null,
@@ -1600,11 +1833,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     if (!gate.accepted) return gate.reconcileIdentity;
                     const current = yield* getSnapshot;
                     if (!current.installed) return undefined;
-                    yield* tryPublishSnapshot({
+                    const published = yield* tryPublishSnapshot({
                       ...current,
                       slashCommands,
                       skills,
                     });
+                    if (published && !gate.runtimeTransitioning) {
+                      const activeId = yield* Ref.get(activeRuntimeIdentity);
+                      if (activeId !== null) {
+                        yield* Ref.update(lastSuccessfulRuntime, (prev) =>
+                          prev !== null && prev.identity === activeId
+                            ? {
+                                identity: prev.identity,
+                                provider: { ...prev.provider, slashCommands, skills },
+                              }
+                            : prev,
+                        );
+                      }
+                    }
                     return undefined;
                   }),
                 )
@@ -1621,16 +1867,47 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     const current = yield* getSnapshot;
                     if (!current.installed) return undefined;
                     const learned = gate.runtimeTransitioning ? [] : yield* Ref.get(learnedModels);
-                    const next = applyAcpRegistryLiveConfiguration(
+                    const applied = applyAcpRegistryLiveConfiguration(
                       current,
                       configuration,
                       effectiveConfig.customModels,
                       learned.length > 0 ? learned : current.models,
                     );
+                    const activeId = yield* Ref.get(activeRuntimeIdentity);
+                    const fallbackState = yield* Ref.get(activeFallback);
+                    const failedUpgrade = yield* Ref.get(failedUpgradeTarget);
+                    const effectiveIdentity = meta.runtimeIdentity ?? activeId ?? gate.expected;
+                    const preserveFallbackMessage =
+                      fallbackState !== null &&
+                      fallbackState.fallbackLaunchIdentity !== null &&
+                      effectiveIdentity === fallbackState.fallbackLaunchIdentity;
+                    const preserveUpgradeFailure =
+                      !preserveFallbackMessage &&
+                      failedUpgrade !== null &&
+                      activeId !== null &&
+                      failedUpgrade.targetLaunchIdentity !== activeId;
+                    const next = preserveFallbackMessage
+                      ? { ...applied, message: fallbackState.message }
+                      : preserveUpgradeFailure
+                        ? {
+                            ...applied,
+                            status: applied.enabled ? failedUpgrade.status : applied.status,
+                            ...(failedUpgrade.message !== undefined
+                              ? { message: failedUpgrade.message }
+                              : {}),
+                          }
+                        : applied;
                     const published = yield* tryPublishSnapshot(next);
                     if (!published) return undefined;
                     if (!gate.runtimeTransitioning && next.models !== current.models) {
                       yield* Ref.set(learnedModels, next.models);
+                    }
+                    if (!gate.runtimeTransitioning && activeId !== null) {
+                      yield* Ref.update(lastSuccessfulRuntime, (prev) =>
+                        prev !== null && prev.identity === activeId
+                          ? { identity: prev.identity, provider: applied }
+                          : prev,
+                      );
                     }
                     const now = yield* Clock.currentTimeMillis;
                     yield* Ref.update(enrichmentCache, (cache) =>
@@ -1775,21 +2052,31 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             initialProbe.published && initialProbe.readiness !== null
               ? initialProbe.readiness
               : initialReadiness;
+          const fallbackTargetRevision =
+            publishedReadiness.fallbackTargetIndexRevision ?? initialReadiness.indexRevision;
           if (
             initialProbe.published &&
             publishedReadiness.fallback &&
-            initialReadiness.indexRevision !== null &&
-            initialReadiness.indexRevision >= revision
+            fallbackTargetRevision !== null &&
+            fallbackTargetRevision >= revision
           ) {
             const fallbackState = yield* Ref.get(activeFallback);
             const now = yield* Clock.currentTimeMillis;
             if (
               fallbackState === null ||
               (now >= fallbackState.failedAtMs &&
-                now - fallbackState.failedAtMs < REGISTRY_FAILURE_BACKOFF_MS)
+                now - fallbackState.failedAtMs < FALLBACK_RETRY_BACKOFF_MS)
             ) {
               return;
             }
+          }
+          if (
+            initialProbe.published &&
+            publishedReadiness.probeFailed &&
+            publishedReadiness.indexRevision !== null &&
+            publishedReadiness.indexRevision >= revision
+          ) {
+            return;
           }
           if (
             initialProbe.published &&

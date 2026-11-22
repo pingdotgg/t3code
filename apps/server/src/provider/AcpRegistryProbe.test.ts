@@ -8,9 +8,12 @@ import * as Layer from "effect/Layer";
 import { ProviderInstanceId } from "@t3tools/contracts";
 import { AcpRegistrySettings } from "@t3tools/provider-acp-registry/settings";
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
@@ -577,4 +580,66 @@ await import(pathToFileURL(agentPath).href);
       ).reason,
     ).toBe("probe_failed");
   });
+
+  it.effect(
+    "does not count slow catalog resolution against the 60s ACP probe timeout and forwards failedTarget",
+    () =>
+      Effect.gen(function* () {
+        const resolveStarted = yield* Deferred.make<void>();
+        const failedTarget: AcpRegistrySupport.AcpRegistryFailedTarget = {
+          version: "2.0.0",
+          launchIdentity: "v2-identity",
+          indexRevision: 4,
+        };
+        const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+          search: () => Effect.die("unused search"),
+          prepare: () => Effect.die("unused prepare"),
+          refreshIndex: () => Effect.die("unused refreshIndex"),
+          invalidateIndex: () => Effect.die("unused invalidateIndex"),
+          inspect: () => Effect.die("unused inspect"),
+          uninstallManagedBinary: () => Effect.die("unused uninstall"),
+          resolve: () =>
+            Deferred.succeed(resolveStarted, undefined).pipe(
+              Effect.andThen(Effect.sleep("2 minutes")),
+              Effect.as({
+                agent: {
+                  id: "mock-agent",
+                  name: "Mock Agent",
+                  version: "1.0.0",
+                  description: "ACP probe timeout-split test agent",
+                  distribution: { npx: { package: "mock-agent@1.0.0" } },
+                },
+                distribution: "npx" as const,
+                launchIdentity: "v1-identity",
+                fallback: true,
+                failedTarget,
+                spawn: {
+                  command: "node",
+                  args: [mockAgentPath],
+                  env: { ...process.env, T3_ACP_AVAILABLE_COMMANDS: "status" },
+                },
+              }),
+            ),
+        });
+        const probeFiber = yield* probeAcpRegistryConfiguration({
+          instanceId,
+          settings: decodeSettings({ agentId: "mock-agent" }),
+          cwd: process.cwd(),
+          environment: process.env,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.await(resolveStarted);
+        yield* TestClock.adjust("2 minutes");
+        const result = yield* Fiber.join(probeFiber);
+        expect(result.probe.ready).toBe(true);
+        expect(result.resolved).toMatchObject({
+          distribution: "npx",
+          launchIdentity: "v1-identity",
+          fallback: true,
+          failedTarget,
+        });
+      }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
 });

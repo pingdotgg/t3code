@@ -1865,10 +1865,41 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(probeResolveAttempts).toBe(resolvesBeforeBackoffRefresh);
         expect(backoffSnapshots.every((snapshot) => snapshot.version === "3.0.0")).toBe(true);
         expect(
+          backoffSnapshots.every((snapshot) => snapshot.message === fallbackSnapshot.message),
+        ).toBe(true);
+        expect(
           backoffSnapshots.every((snapshot) =>
             snapshot.slashCommands.some((command) => command.name === "v3-live-cmd"),
           ),
         ).toBe(true);
+
+        // Live configuration updates during fallback must also preserve the fallback warning message.
+        const v3LiveConfigDuringFallback = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.models.some((model) =>
+              model.capabilities?.optionDescriptors.some((opt) => opt.id === "fallback-effort"),
+            ),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration([
+            {
+              id: "fallback-effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [{ value: "high", name: "High" }],
+            },
+          ]),
+        );
+        const liveFallbackSnapshot = Option.getOrThrow(
+          yield* Fiber.join(v3LiveConfigDuringFallback),
+        );
+        expect(liveFallbackSnapshot.message).toBe(fallbackSnapshot.message);
 
         // Once backoff expires, recovering without invalidating the cached 4.0.0 index still upgrades
         // because fallback did not acknowledge the 4.0.0 revision.
@@ -1886,12 +1917,98 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(v4Snapshot.message).toBeUndefined();
         expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "4.0.0"))).toBe(true);
 
-        // A freshly created instance on a cached failing 5.0.0 index falls back to 4.0.0 in a single
-        // probe without double-probing when refreshIndex does not advance the revision.
+        // A 1-model agent (30s provisional cache TTL) still respects the 60s fallback backoff at +31s,
+        // and invalidateCaches clears activeFallback so the next refresh retries immediately.
         remoteVersion = "5.0.0";
         failArchiveDownload = true;
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const singleModelInstanceId = ProviderInstanceId.make("acpRegistry_single_model_backoff");
+        const singleModelFallbackDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(singleModelFallbackDone, Exit.void);
+          }
+        };
+        const singleModelInstance = yield* AcpRegistryDriver.create({
+          instanceId: singleModelInstanceId,
+          displayName: "Single Model Backoff",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(Tracer.Tracer, testTracer),
+        );
+        yield* Deferred.await(singleModelFallbackDone);
+        onEnrichmentEnd = null;
+        const soloFallbackSnapshot = yield* singleModelInstance.snapshot.getSnapshot;
+        expect(soloFallbackSnapshot.version).toBe("4.0.0");
+        expect(soloFallbackSnapshot.message).toContain("5.0.0");
+
+        // Narrow the cached fallback entry to a single explicit model (30s provisional TTL).
+        const soloModelApplied = yield* singleModelInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.models.some((model) => model.slug === "solo-v4-model"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          singleModelInstanceId,
+          normalizeAcpRegistryLiveConfiguration([
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "solo-v4-model",
+              options: [{ value: "solo-v4-model", name: "Solo V4" }],
+            },
+          ]),
+        );
+        const soloAppliedSnapshot = Option.getOrThrow(yield* Fiber.join(soloModelApplied));
+        expect(soloAppliedSnapshot.models.map((model) => model.slug)).toEqual(["solo-v4-model"]);
+        expect(soloAppliedSnapshot.message).toBe(soloFallbackSnapshot.message);
+
+        const resolvesBeforeSolo31s = probeResolveAttempts;
+        const solo31sDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(solo31sDone, Exit.void);
+          }
+        };
+        yield* TestClock.adjust("31 seconds");
+        yield* singleModelInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, testTracer),
+        );
+        yield* Deferred.await(solo31sDone);
+        onEnrichmentEnd = null;
+        expect(probeResolveAttempts).toBe(resolvesBeforeSolo31s);
+        const soloAfter31s = yield* singleModelInstance.snapshot.getSnapshot;
+        expect(soloAfter31s.message).toBe(soloFallbackSnapshot.message);
+        expect(soloAfter31s.models.map((model) => model.slug)).toEqual(["solo-v4-model"]);
+
+        // Calling invalidateCaches clears activeFallback and retries immediately even inside 60s.
+        yield* singleModelInstance.invalidateCaches ?? Effect.void;
+        const soloAfterInvalidateDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(soloAfterInvalidateDone, Exit.void);
+          }
+        };
+        yield* singleModelInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, testTracer),
+        );
+        yield* Deferred.await(soloAfterInvalidateDone);
+        onEnrichmentEnd = null;
+        expect(probeResolveAttempts).toBe(resolvesBeforeSolo31s + 1);
+
+        // When inspect() sees cached 5.0.0 while resolve() refreshes to failing 6.0.0 and falls back
+        // to 4.0.0, activeFallback records 6.0.0 (from resolved.failedTarget), stays in backoff for
+        // 6.0.0, and does NOT retire never-installed 6.0.0 so external 6.0.0 live state reconciles.
+        remoteVersion = "6.0.0";
+        yield* realCatalog.invalidateIndex();
         const resolvesBeforeFreshFallback = probeResolveAttempts;
         const freshFallbackDone = yield* Deferred.make<void>();
         onEnrichmentEnd = (exit) => {
@@ -1899,8 +2016,9 @@ describe("AcpRegistryDriver registry recovery", () => {
             Deferred.doneUnsafe(freshFallbackDone, Exit.void);
           }
         };
+        const freshInstanceId = ProviderInstanceId.make("acpRegistry_fallback_single_probe");
         const freshInstance = yield* AcpRegistryDriver.create({
-          instanceId: ProviderInstanceId.make("acpRegistry_fallback_single_probe"),
+          instanceId: freshInstanceId,
           displayName: "Fallback Single Probe",
           enabled: true,
           environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
@@ -1911,8 +2029,34 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         yield* Deferred.await(freshFallbackDone);
         onEnrichmentEnd = null;
-        expect((yield* freshInstance.snapshot.getSnapshot).version).toBe("4.0.0");
+        const freshFallbackSnapshot = yield* freshInstance.snapshot.getSnapshot;
+        expect(freshFallbackSnapshot.version).toBe("4.0.0");
+        expect(freshFallbackSnapshot.message).toContain("6.0.0");
         expect(probeResolveAttempts).toBe(resolvesBeforeFreshFallback + 1);
+
+        // External 6.0.0 live state clears activeFallback and reconciles freshInstance to 6.0.0.
+        failArchiveDownload = false;
+        const v6Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v6Inspection.status).toBe("ready");
+        const v6Identity = v6Inspection.status === "ready" ? v6Inspection.launchIdentity! : "";
+        const freshReconciledToV6 = yield* freshInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "6.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((command) => command.name === "v6-external-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          freshInstanceId,
+          { slashCommands: [{ name: "v6-external-cmd" }], skills: [] },
+          v6Identity,
+        );
+        const reconciledV6Snapshot = Option.getOrThrow(yield* Fiber.join(freshReconciledToV6));
+        expect(reconciledV6Snapshot.version).toBe("6.0.0");
+        expect(reconciledV6Snapshot.message).toBeUndefined();
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 
@@ -2755,6 +2899,21 @@ describe("AcpRegistryDriver registry recovery", () => {
 
         // 0. Same-runtime live config update arriving while a v1 probe is in flight discards the
         // older v1 probe so stale probe models cannot overwrite newer live configuration.
+        // Publish an option-only update (models: []) so without the generation guard the stale
+        // probe's ["v1-stale-probe-a", "v1-stale-probe-b"] catalog would overwrite ["model-a", "model-b"].
+        let onEnrichmentSpanEnd: ((exit: Exit.Exit<unknown, unknown>) => void) | null = null;
+        const enrichmentTracer: Tracer.Tracer = {
+          span(options) {
+            const inner = Tracer.nativeTracer.span(options);
+            if (options.name !== "AcpRegistryDriver.publishEnrichment") return inner;
+            const origEnd = inner.end.bind(inner);
+            inner.end = (endTime, exit) => {
+              origEnd(endTime, exit);
+              onEnrichmentSpanEnd?.(exit);
+            };
+            return inner;
+          },
+        };
         yield* instance.invalidateCaches ?? Effect.void;
         yield* fileSystem.writeFileString(
           modelsPath,
@@ -2775,46 +2934,53 @@ describe("AcpRegistryDriver registry recovery", () => {
           ),
           Effect.forkScoped({ startImmediately: true }),
         );
-        yield* instance.snapshot.refresh;
+        const v1StaleEnrichmentDone = yield* Deferred.make<void>();
+        onEnrichmentSpanEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(v1StaleEnrichmentDone, Exit.void);
+          }
+        };
+        yield* instance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         yield* Deferred.await(v1ProbeGate.started);
         const v1NewerLiveApplied = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) =>
-            snapshot.models.some((model) => model.slug === "v1-newer-live-a"),
+            snapshot.models.some((model) =>
+              model.capabilities?.optionDescriptors.some((opt) => opt.id === "v1-live-effort"),
+            ),
           ),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* coordinator.publishLiveConfiguration(
           identity.instanceId,
-          normalizeAcpRegistryLiveConfiguration([], undefined, {
-            currentModelId: "v1-newer-live-a",
-            availableModels: [
-              { modelId: "v1-newer-live-a", name: "v1-newer-live-a" },
-              { modelId: "v1-newer-live-b", name: "v1-newer-live-b" },
-            ],
-          }),
+          normalizeAcpRegistryLiveConfiguration([
+            {
+              id: "v1-live-effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [{ value: "high", name: "High" }],
+            },
+          ]),
           v1Identity,
         );
         expect(Option.isSome(yield* Fiber.join(v1NewerLiveApplied))).toBe(true);
         yield* Deferred.succeed(v1ProbeGate.release, undefined);
-        const v1SettledAfterRelease = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter((snapshot) =>
-            snapshot.slashCommands.some((command) => command.name === "v1-after-superseded-probe"),
-          ),
-          Stream.runHead,
-          Effect.forkScoped({ startImmediately: true }),
-        );
-        yield* coordinator.publishAvailableCommands(
-          identity.instanceId,
-          { slashCommands: [{ name: "v1-after-superseded-probe" }], skills: [] },
-          v1Identity,
-        );
-        const v1AfterSuperseded = Option.getOrThrow(yield* Fiber.join(v1SettledAfterRelease));
+        yield* Deferred.await(v1StaleEnrichmentDone);
+        onEnrichmentSpanEnd = null;
         yield* Fiber.interrupt(v1ProbeCollector);
-        expect(v1AfterSuperseded.models.map((model) => model.slug)).toEqual([
-          "v1-newer-live-a",
-          "v1-newer-live-b",
-        ]);
+        const v1AfterSuperseded = yield* instance.snapshot.getSnapshot;
+        // Without isProbeStillCurrent, the released probe would overwrite ["default"] with
+        // ["v1-stale-probe-a", "v1-stale-probe-b"] because the live update sent models: [].
+        expect(v1AfterSuperseded.models.map((model) => model.slug)).toEqual(["default"]);
+        expect(
+          v1AfterSuperseded.models.some((model) =>
+            model.capabilities?.optionDescriptors.some((opt) => opt.id === "v1-live-effort"),
+          ),
+        ).toBe(true);
         expect(
           v1ProbeSnapshots.every(
             (snapshot) => !snapshot.models.some((model) => model.slug === "v1-stale-probe-a"),
@@ -3012,7 +3178,18 @@ describe("AcpRegistryDriver registry recovery", () => {
           v2Identity,
         );
         const observedAfterRace = yield* Fiber.join(liveRaceSnapshots);
-        expect(inspectCalls).toBe(inspectsBeforeRetiredV1);
+        // Trigger a subsequent unmatched identity inspect on driverScope to drain any concurrently
+        // forked fibers from retired v1 updates: exactly 1 inspect (for the sentinel) must run.
+        const retiredDrainDone = yield* Deferred.make<void>();
+        onInspectCallback = () => Deferred.succeed(retiredDrainDone, undefined).pipe(Effect.asVoid);
+        yield* coordinator.publishAvailableCommands(
+          identity.instanceId,
+          { slashCommands: [{ name: "sentinel-after-retired" }], skills: [] },
+          "retired-drain-sentinel",
+        );
+        yield* Deferred.await(retiredDrainDone);
+        onInspectCallback = null;
+        expect(inspectCalls).toBe(inspectsBeforeRetiredV1 + 1);
         expect(
           observedAfterRace.every(
             (snapshot) =>
@@ -3101,7 +3278,8 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(inspectCalls).toBe(inspectsBeforeUnmatched + 1);
 
         // 6. A failed upgrade probe (4.0.0 fails before resolving/starting) must NOT report 4.0.0 as
-        // installed, wipe v3 coordinator state, or reject subsequent v3 live updates.
+        // installed, drop v3's discovered models, wipe v3 coordinator state, or reject v3 live updates—
+        // even across repeated refreshes while 4.0.0 remains broken.
         remoteVersion = "4.0.0";
         failProbeSpawn = true;
         yield* realCatalog.invalidateIndex();
@@ -3113,6 +3291,10 @@ describe("AcpRegistryDriver registry recovery", () => {
         yield* instance.snapshot.refresh;
         const warningSnapshot = Option.getOrThrow(yield* Fiber.join(failedUpgradeWarning));
         expect(warningSnapshot.version).toBe("3.0.0");
+        expect(warningSnapshot.models.map((model) => model.slug)).toEqual([
+          "v3-model-a",
+          "v3-model-b",
+        ]);
         expect(warningSnapshot.slashCommands).toEqual([{ name: "v3-still-active" }]);
         expect(
           yield* coordinator.getAvailableCommands(identity.instanceId, {
@@ -3133,7 +3315,59 @@ describe("AcpRegistryDriver registry recovery", () => {
           v3Identity,
         );
         expect(Option.isSome(yield* Fiber.join(v3AfterFailedUpgrade))).toBe(true);
+
+        // A second refresh while 4.0.0 is still failing must stay on 3.0.0 without flickering to
+        // 4.0.0 and must preserve v3's discovered models and live commands.
+        const secondFailedRefreshSnapshots: Array<ServerProvider> = [];
+        const secondFailedCollector = yield* instance.snapshot.streamChanges.pipe(
+          Stream.runForEach((snapshot) =>
+            Effect.sync(() => {
+              secondFailedRefreshSnapshots.push(snapshot);
+            }),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const secondFailedDone = yield* Deferred.make<void>();
+        onEnrichmentSpanEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(secondFailedDone, Exit.void);
+          }
+        };
+        yield* instance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(secondFailedDone);
+        onEnrichmentSpanEnd = null;
+        yield* Fiber.interrupt(secondFailedCollector);
+        expect(secondFailedRefreshSnapshots.every((snapshot) => snapshot.version === "3.0.0")).toBe(
+          true,
+        );
+        const afterSecondFailed = yield* instance.snapshot.getSnapshot;
+        expect(afterSecondFailed.version).toBe("3.0.0");
+        expect(afterSecondFailed.status).toBe("warning");
+        expect(afterSecondFailed.models.map((model) => model.slug)).toEqual([
+          "v3-model-a",
+          "v3-model-b",
+        ]);
+        expect(afterSecondFailed.slashCommands).toEqual([{ name: "v3-after-failed-v4" }]);
+
+        // Once 4.0.0 recovers, the next refresh cleanly upgrades and clears the warning.
         failProbeSpawn = false;
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["v4-model-a", "v4-model-b"]));
+        const recoveredToV4 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "4.0.0" &&
+              snapshot.status === "ready" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const v4Recovered = Option.getOrThrow(yield* Fiber.join(recoveredToV4));
+        expect(v4Recovered.models.map((model) => model.slug)).toEqual(["v4-model-a", "v4-model-b"]);
+        expect(v4Recovered.message).toBeUndefined();
 
         // 7. Disposing a driver instance removes its coordinator state and marks earlier metadata stale.
         const disposedInstanceId = ProviderInstanceId.make("acpRegistry_disposed_cleanup");

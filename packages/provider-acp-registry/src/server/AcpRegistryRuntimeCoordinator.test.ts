@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { ProviderInstanceId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -175,29 +176,85 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(yield* Fiber.join(request)).toBe(true);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
 
-      // Consent must be rejected at the exact expiry boundary as well as after it.
-      const expiringSeen = yield* Deferred.make<void>();
+      // Decouple current-time reads from TestClock sleep so the exact expiry boundary (>=) is
+      // tested in both getUrlAuthAction and acceptUrlAuthentication while the request is pending.
+      const baseClock = yield* Clock.Clock;
+      let clockNowMs = 0;
+      const decoupledClock: Clock.Clock = {
+        ...baseClock,
+        currentTimeMillisUnsafe: () => clockNowMs,
+        currentTimeMillis: Effect.sync(() => clockNowMs),
+        currentTimeNanosUnsafe: () => BigInt(clockNowMs) * 1_000_000n,
+        currentTimeNanos: Effect.sync(() => BigInt(clockNowMs) * 1_000_000n),
+        monotonicTimeNanosUnsafe: () => BigInt(clockNowMs) * 1_000_000n,
+        monotonicTimeNanos: Effect.sync(() => BigInt(clockNowMs) * 1_000_000n),
+        sleep: (duration) => baseClock.sleep(duration),
+      };
+      const withDecoupledClock = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+        effect.pipe(Effect.provideService(Clock.Clock, decoupledClock));
+
+      // Consent must still succeed 1 ms before expiry while the request is pending.
+      const beforeExpirySeen = yield* Deferred.make<void>();
       const expiringWatcher = yield* coordinator
         .watchUrlAuthAction(instanceId, (current) =>
-          current?.elicitationId === "login-expiring"
-            ? Deferred.succeed(expiringSeen, undefined).pipe(Effect.asVoid)
+          current?.elicitationId === "login-before-expiry"
+            ? Deferred.succeed(beforeExpirySeen, undefined).pipe(Effect.asVoid)
             : Effect.void,
         )
         .pipe(Effect.forkChild);
-      const expiringRequest = yield* coordinator
-        .requestUrlAuthentication(instanceId, {
+      const beforeExpiryRequest = yield* withDecoupledClock(
+        coordinator.requestUrlAuthentication(instanceId, {
+          ...action,
+          elicitationId: "login-before-expiry",
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(beforeExpirySeen);
+      clockNowMs = 10 * 60 * 1_000 - 1;
+      expect(
+        Option.isSome(yield* withDecoupledClock(coordinator.getUrlAuthAction(instanceId))),
+      ).toBe(true);
+      expect(
+        yield* withDecoupledClock(
+          coordinator.acceptUrlAuthentication({
+            instanceId,
+            elicitationId: "login-before-expiry",
+          }),
+        ),
+      ).toBe(true);
+      expect(yield* Fiber.join(beforeExpiryRequest)).toBe(true);
+      yield* Fiber.interrupt(expiringWatcher);
+
+      // Consent must be rejected at the exact expiry millisecond while the timeout has not fired.
+      clockNowMs = 0;
+      const exactExpirySeen = yield* Deferred.make<void>();
+      const exactExpiryWatcher = yield* coordinator
+        .watchUrlAuthAction(instanceId, (current) =>
+          current?.elicitationId === "login-expiring"
+            ? Deferred.succeed(exactExpirySeen, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        )
+        .pipe(Effect.forkChild);
+      const expiringRequest = yield* withDecoupledClock(
+        coordinator.requestUrlAuthentication(instanceId, {
           ...action,
           elicitationId: "login-expiring",
-        })
-        .pipe(Effect.forkChild);
-      yield* Deferred.await(expiringSeen);
-      yield* TestClock.adjust("10 minutes");
-      expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
+        }),
+      ).pipe(Effect.forkChild);
+      yield* Deferred.await(exactExpirySeen);
+      clockNowMs = 10 * 60 * 1_000;
+      expect(expiringRequest.pollUnsafe()).toBeUndefined();
       expect(
-        yield* coordinator.acceptUrlAuthentication({ instanceId, elicitationId: "login-expiring" }),
+        Option.isNone(yield* withDecoupledClock(coordinator.getUrlAuthAction(instanceId))),
+      ).toBe(true);
+      expect(
+        yield* withDecoupledClock(
+          coordinator.acceptUrlAuthentication({ instanceId, elicitationId: "login-expiring" }),
+        ),
       ).toBe(false);
+      expect(expiringRequest.pollUnsafe()).toBeUndefined();
+      yield* TestClock.adjust("10 minutes");
       expect(yield* Fiber.join(expiringRequest)).toBe(false);
-      yield* Fiber.interrupt(expiringWatcher);
+      yield* Fiber.interrupt(exactExpiryWatcher);
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
@@ -421,6 +478,55 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         );
         yield* Deferred.await(replayDone);
         expect(replayedNames).toEqual(["cmd-reused", "cmd-reused-c", "cmd-after-watch"]);
+
+        // 6. Concurrent publications for the same runtime are serialized so watchers always finish
+        // on the exact latest committed state returned by get().
+        const concurrentCount = 12;
+        const concurrentStartLength = replayedNames.length;
+        const concurrentDone = yield* Deferred.make<void>();
+        const concurrentWatcher = yield* coordinator
+          .watchAvailableCommands(instanceId, (commands) =>
+            Effect.gen(function* () {
+              const name = commands.slashCommands[0]?.name ?? "empty";
+              if (name.startsWith("concurrent-")) {
+                replayedNames.push(name);
+                if (replayedNames.length - concurrentStartLength >= concurrentCount) {
+                  yield* Deferred.succeed(concurrentDone, undefined);
+                }
+              }
+            }),
+          )
+          .pipe(Effect.forkChild);
+        // Wait for initial replay of concurrentWatcher before firing the concurrent batch.
+        const concurrentReady = yield* Deferred.make<void>();
+        const syncWatcher = yield* coordinator
+          .watchAvailableCommands(instanceId, () =>
+            Deferred.succeed(concurrentReady, undefined).pipe(Effect.asVoid),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(concurrentReady);
+        yield* Fiber.interrupt(syncWatcher);
+        yield* Effect.all(
+          Array.from({ length: concurrentCount }, (_, index) =>
+            coordinator.publishAvailableCommands(
+              instanceId,
+              { slashCommands: [{ name: `concurrent-${index}` }], skills: [] },
+              "runtime-b",
+            ),
+          ),
+          { concurrency: "unbounded", discard: true },
+        );
+        yield* Deferred.await(concurrentDone);
+        const committedLatest = Option.getOrThrow(
+          yield* coordinator.getAvailableCommands(instanceId, {
+            runtimeIdentity: "runtime-b",
+            requireMatchingRuntimeIdentity: true,
+          }),
+        );
+        expect(replayedNames[replayedNames.length - 1]).toBe(
+          committedLatest.slashCommands[0]?.name,
+        );
+        yield* Fiber.interrupt(concurrentWatcher);
         yield* Fiber.interrupt(secondWatcher);
         yield* Fiber.interrupt(watcher);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),

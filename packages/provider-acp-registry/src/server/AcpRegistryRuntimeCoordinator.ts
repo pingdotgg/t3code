@@ -202,6 +202,7 @@ interface LiveStateChannelNames {
 const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveStateChannel")(
   function* <T>(names: LiveStateChannelNames) {
     const updates = yield* PubSub.unbounded<ChannelUpdate<T>>();
+    const publishPermit = yield* Semaphore.make(1);
     const stateRef = yield* Ref.make<ChannelState<T>>({
       revision: 0,
       instances: new Map(),
@@ -255,24 +256,37 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
       value: T,
       runtimeIdentity?: string,
     ) {
-      const event = yield* Ref.modify(stateRef, (state) => {
-        const revision = state.revision + 1;
-        const existing = state.instances.get(instanceId);
-        const lifetime = existing?.lifetime ?? revision;
-        const nextEntries = new Map(existing?.entries);
-        nextEntries.set(runtimeIdentity, { value, runtimeIdentity, revision, lifetime });
-        const nextInstances = new Map(state.instances);
-        nextInstances.set(instanceId, {
-          lifetime,
-          entries: nextEntries,
-          latestKey: runtimeIdentity,
-          hasLatest: true,
-          clear: existing?.clear,
-        });
-        const update: ChannelUpdate<T> = { instanceId, value, runtimeIdentity, revision, lifetime };
-        return [update, { revision, instances: nextInstances }] as const;
-      });
-      yield* PubSub.publish(updates, event);
+      // Serialize state commit and PubSub publication so watchers always observe monotonic revisions.
+      yield* publishPermit.withPermits(1)(
+        Effect.uninterruptible(
+          Ref.modify(stateRef, (state) => {
+            const revision = state.revision + 1;
+            const existing = state.instances.get(instanceId);
+            const lifetime = existing?.lifetime ?? revision;
+            const nextEntries = new Map(existing?.entries);
+            nextEntries.set(runtimeIdentity, { value, runtimeIdentity, revision, lifetime });
+            const nextInstances = new Map(state.instances);
+            nextInstances.set(instanceId, {
+              lifetime,
+              entries: nextEntries,
+              latestKey: runtimeIdentity,
+              hasLatest: true,
+              clear: existing?.clear,
+            });
+            const update: ChannelUpdate<T> = {
+              instanceId,
+              value,
+              runtimeIdentity,
+              revision,
+              lifetime,
+            };
+            return [update, { revision, instances: nextInstances }] as const;
+          }).pipe(
+            Effect.flatMap((event) => PubSub.publish(updates, event)),
+            Effect.asVoid,
+          ),
+        ),
+      );
     });
 
     const get = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.get}`)(function* (
@@ -299,17 +313,22 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
       return inst.hasLatest ? validEntry(inst.entries.get(inst.latestKey)) : Option.none<T>();
     });
 
-    const watch = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.watch}`)(function* (
+    const watch = (
       instanceId: ProviderInstanceId,
       onUpdate: (value: T, meta: AcpRegistryLiveUpdateMeta) => Effect.Effect<void>,
-    ) {
-      yield* Effect.scoped(
+    ) =>
+      Effect.scoped(
         Effect.gen(function* () {
-          // Subscribe before reading to avoid missing publications.
-          const subscription = yield* PubSub.subscribe(updates);
-          const snapshot = yield* Ref.get(stateRef);
+          // Trace subscription setup once without keeping a long-lived parent span around callbacks.
+          const { subscription, snapshot } = yield* Effect.gen(function* () {
+            // Subscribe before reading to avoid missing publications.
+            const sub = yield* PubSub.subscribe(updates);
+            const snap = yield* Ref.get(stateRef);
+            return { subscription: sub, snapshot: snap };
+          }).pipe(Effect.withSpan(`AcpRegistryRuntimeCoordinator.${names.watch}.subscribe`));
           const snapshotRevision = snapshot.revision;
           const inst = snapshot.instances.get(instanceId);
+          const lastDeliveredByRuntime = new Map<string | undefined, number>();
           const metaFor = (
             runtimeIdentity: string | undefined,
             revision: number,
@@ -336,15 +355,21 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
                   )
                   .toSorted((left, right) => left.revision - right.revision);
           for (const entry of replayed) {
+            lastDeliveredByRuntime.set(entry.runtimeIdentity, entry.revision);
             yield* onUpdate(
               entry.value,
               metaFor(entry.runtimeIdentity, entry.revision, entry.lifetime),
             );
           }
           yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter(
-              (update) => update.instanceId === instanceId && update.revision > snapshotRevision,
-            ),
+            Stream.filter((update) => {
+              if (update.instanceId !== instanceId) return false;
+              if (update.revision <= snapshotRevision) return false;
+              const lastDelivered = lastDeliveredByRuntime.get(update.runtimeIdentity) ?? 0;
+              if (update.revision <= lastDelivered) return false;
+              lastDeliveredByRuntime.set(update.runtimeIdentity, update.revision);
+              return true;
+            }),
             Stream.runForEach((update) =>
               onUpdate(
                 update.value,
@@ -354,7 +379,6 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
           );
         }),
       );
-    });
 
     return { clear, publish, get, watch } as const;
   },
@@ -524,8 +548,11 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.scoped(
       Effect.gen(function* () {
-        const subscription = yield* PubSub.subscribe(urlAuthActionUpdates);
-        const current = yield* getUrlAuthAction(instanceId);
+        const { subscription, current } = yield* Effect.gen(function* () {
+          const sub = yield* PubSub.subscribe(urlAuthActionUpdates);
+          const cur = yield* getUrlAuthAction(instanceId);
+          return { subscription: sub, current: cur };
+        }).pipe(Effect.withSpan("AcpRegistryRuntimeCoordinator.watchUrlAuthAction.subscribe"));
         if (Option.isSome(current)) {
           yield* onUpdate(current.value);
         }

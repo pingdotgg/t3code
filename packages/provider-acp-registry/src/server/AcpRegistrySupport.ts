@@ -68,6 +68,7 @@ const REGISTRY_REQUEST_TIMEOUT = "30 seconds";
 // Searches reuse an index fetched this recently; prepare always fetches the latest.
 const REGISTRY_SEARCH_MAX_AGE_MS = 5 * 60 * 1_000;
 const ARCHIVE_REQUEST_TIMEOUT = "20 minutes";
+const ARCHIVE_EXTRACT_TIMEOUT = "5 minutes";
 const PACKAGE_INSTALL_TIMEOUT = "20 minutes";
 const PACKAGE_QUERY_TIMEOUT = "30 seconds";
 
@@ -414,6 +415,11 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
         (agent) => [`${agent.id}\0${encodeURIComponent(agent.version)}`, agent] as const,
       ),
     );
+    const legacyBaselinesResult = yield* readLegacyBaselinesFile(
+      fileSystem,
+      path.join(registryDirectory, BINARY_LEGACY_BASELINES_FILENAME),
+    );
+    const legacyBaselines = legacyBaselinesResult.ok ? legacyBaselinesResult.baselines : undefined;
     for (const agent of (yield* listDirectories(installsDirectory)).toSorted()) {
       const versions = (yield* listDirectories(path.join(installsDirectory, agent))).toSorted(
         (left, right) =>
@@ -427,49 +433,78 @@ export const acpRegistryManagedBinaryDirectories = Effect.fn("acpRegistryManaged
             .binary?.[candidateTarget];
           const preferredCommandSegments =
             binaryTarget === undefined ? undefined : normalizeRegistryCommandPath(binaryTarget.cmd);
-          const preferredArtifactDir =
-            binaryTarget === undefined
-              ? undefined
-              : binaryArtifactDirName(candidateTarget, binaryTarget);
+          const targetKey =
+            binaryTarget === undefined ? undefined : binaryArtifactIdentityKey(binaryTarget);
+          const slotKey = legacyBaselineSlotKey(agent, version, candidateTarget);
           const matchingEntries = versionEntries.filter((entry) =>
             isBinaryPlatformEntry(entry, candidateTarget),
           );
-          const inspectedSlots = yield* Effect.forEach(matchingEntries, (entry) =>
+          const inspectedRaw = yield* Effect.forEach(matchingEntries, (entry) =>
             Effect.gen(function* () {
               const installRoot = path.join(versionRoot, entry);
               const rawReceipt = yield* fileSystem
                 .readFileString(path.join(installRoot, BINARY_ARTIFACT_RECEIPT_FILENAME))
                 .pipe(Effect.option);
               const receipt = Option.flatMap(rawReceipt, decodeBinaryArtifactReceipt);
-              const isPreferred = entry === preferredArtifactDir;
-              const isPrimary = entry === candidateTarget;
-              // Skip un-receipted artifact-scoped leftovers; they cannot be valid installs.
-              if (!isPreferred && Option.isNone(receipt) && !isPrimary) {
-                return Option.none<{
-                  readonly rank: number;
-                  readonly mtimeMs: number;
-                  readonly isPrimary: boolean;
-                  readonly entry: string;
-                  readonly directory: string;
-                }>();
-              }
-              const receiptSegments = Option.isSome(receipt)
-                ? normalizeRegistryCommandPath(receipt.value.cmd)
-                : undefined;
-              const segments = isPreferred
-                ? (preferredCommandSegments ?? receiptSegments)
-                : (receiptSegments ?? (isPrimary ? preferredCommandSegments : undefined));
-              const directory =
-                segments === undefined
-                  ? installRoot
-                  : path.join(installRoot, ...segments.slice(0, -1));
-              const mtimeMs = yield* fileSystem.stat(installRoot).pipe(
-                Effect.map((info) => (Option.isSome(info.mtime) ? info.mtime.value.getTime() : 0)),
-                Effect.orElseSucceed(() => 0),
-              );
-              const rank = isPreferred ? 0 : Option.isSome(receipt) ? 1 : 2;
-              return Option.some({ rank, mtimeMs, isPrimary, entry, directory });
+              return { entry, installRoot, receipt };
             }),
+          );
+          const hasReceiptedSlot = inspectedRaw.some((slot) => Option.isSome(slot.receipt));
+          const inspectedSlots = yield* Effect.forEach(
+            inspectedRaw,
+            ({ entry, installRoot, receipt }) =>
+              Effect.gen(function* () {
+                const isPrimary = entry === candidateTarget;
+                const receiptMatchesTarget =
+                  binaryTarget !== undefined &&
+                  Option.isSome(receipt) &&
+                  binaryArtifactReceiptMatches(receipt.value, binaryTarget);
+                // Skip un-receipted artifact-scoped leftovers; they cannot be valid installs.
+                if (Option.isNone(receipt) && !isPrimary) {
+                  return Option.none<{
+                    readonly rank: number;
+                    readonly mtimeMs: number;
+                    readonly isPrimary: boolean;
+                    readonly entry: string;
+                    readonly directory: string;
+                  }>();
+                }
+                // Skip superseded legacy primary slots once a receipted slot exists or a baseline disagrees.
+                if (Option.isNone(receipt) && isPrimary) {
+                  const baselineSuperseded =
+                    targetKey !== undefined &&
+                    (legacyBaselines === undefined ||
+                      (legacyBaselines[slotKey] !== undefined &&
+                        legacyBaselines[slotKey] !== targetKey));
+                  if (hasReceiptedSlot || baselineSuperseded) {
+                    return Option.none<{
+                      readonly rank: number;
+                      readonly mtimeMs: number;
+                      readonly isPrimary: boolean;
+                      readonly entry: string;
+                      readonly directory: string;
+                    }>();
+                  }
+                }
+                const receiptSegments = Option.isSome(receipt)
+                  ? normalizeRegistryCommandPath(receipt.value.cmd)
+                  : undefined;
+                const segments = receiptMatchesTarget
+                  ? (preferredCommandSegments ?? receiptSegments)
+                  : (receiptSegments ?? (isPrimary ? preferredCommandSegments : undefined));
+                const directory =
+                  segments === undefined
+                    ? installRoot
+                    : path.join(installRoot, ...segments.slice(0, -1));
+                const mtimeMs = yield* fileSystem.stat(installRoot).pipe(
+                  Effect.map((info) =>
+                    Option.isSome(info.mtime) ? info.mtime.value.getTime() : 0,
+                  ),
+                  Effect.orElseSucceed(() => 0),
+                );
+                const rank = receiptMatchesTarget ? 0 : Option.isSome(receipt) ? 1 : 2;
+                return Option.some({ rank, mtimeMs, isPrimary, entry, directory });
+              }),
           );
           const orderedSlots = inspectedSlots
             .filter(Option.isSome)
@@ -542,12 +577,19 @@ export function resolveAcpRegistryDistribution(input: {
   return undefined;
 }
 
+export interface AcpRegistryFailedTarget {
+  readonly version: string;
+  readonly launchIdentity: string;
+  readonly indexRevision: number;
+}
+
 export interface ResolvedAcpRegistryAgent {
   readonly agent?: AcpRegistryAgent;
   readonly distribution: AcpRegistryDistributionKind | "local";
   readonly launchIdentity?: string;
   readonly indexRevision?: number;
   readonly fallback?: boolean;
+  readonly failedTarget?: AcpRegistryFailedTarget;
   readonly spawn: AcpSessionRuntime.AcpSpawnInput;
 }
 
@@ -656,7 +698,7 @@ const INSTALL_LOCK_STALE_MS = 5 * 60 * 1_000;
 const PREPARED_BINARY_RESERVATION_MS = 30 * 1_000;
 
 const BINARY_ARTIFACT_RECEIPT_FILENAME = ".t3-artifact.json";
-const BINARY_LEGACY_BASELINE_FILENAME = ".t3-legacy-baseline.json";
+const BINARY_LEGACY_BASELINES_FILENAME = "legacy-baselines.json";
 const BINARY_ARTIFACT_SLOT_HASH_LENGTH = 12;
 const DOWNLOAD_RETRY_REGISTRY_BACKOFF_MS = 60 * 1_000;
 
@@ -673,13 +715,39 @@ const decodeBinaryArtifactReceipt = Schema.decodeUnknownOption(
   Schema.fromJsonString(AcpRegistryBinaryArtifactReceipt),
 );
 
-const AcpRegistryBinaryLegacyBaseline = Schema.Struct({
-  artifactKey: Schema.String,
-});
-const decodeBinaryLegacyBaseline = Schema.decodeUnknownOption(
-  Schema.fromJsonString(AcpRegistryBinaryLegacyBaseline),
+const AcpRegistryLegacyBaselines = Schema.Record(Schema.String, Schema.String);
+const decodeLegacyBaselines = Schema.decodeUnknownOption(
+  Schema.fromJsonString(AcpRegistryLegacyBaselines),
 );
-const encodeBinaryLegacyBaseline = (artifactKey: string): string => JSON.stringify({ artifactKey });
+
+type LegacyBaselinesReadResult =
+  | { readonly ok: true; readonly baselines: Readonly<Record<string, string>> }
+  | { readonly ok: false };
+
+function legacyBaselineSlotKey(
+  agentId: string,
+  encodedVersion: string,
+  candidateTarget: AcpRegistryPlatformTarget,
+): string {
+  return `${agentId}\0${encodedVersion}\0${candidateTarget}`;
+}
+
+function readLegacyBaselinesFile(
+  fileSystem: FileSystem.FileSystem,
+  baselinesPath: string,
+): Effect.Effect<LegacyBaselinesReadResult> {
+  return fileSystem.readFileString(baselinesPath).pipe(
+    Effect.map((raw): LegacyBaselinesReadResult => {
+      const decoded = decodeLegacyBaselines(raw);
+      return Option.isSome(decoded) ? { ok: true, baselines: decoded.value } : { ok: false };
+    }),
+    Effect.catch((error) =>
+      Effect.succeed<LegacyBaselinesReadResult>(
+        error.reason._tag === "NotFound" ? { ok: true, baselines: {} } : { ok: false },
+      ),
+    ),
+  );
+}
 
 function safeDecodeVersionDir(value: string): string {
   try {
@@ -689,27 +757,62 @@ function safeDecodeVersionDir(value: string): string {
   }
 }
 
+const NUMERIC_VERSION_IDENTIFIER = /^(?:0|[1-9]\d*)$/u;
+const DIGITS_ONLY = /^\d+$/u;
+
+function compareNumericStrings(left: string, right: string): number {
+  const a = left.replace(/^0+(?=\d)/u, "");
+  const b = right.replace(/^0+(?=\d)/u, "");
+  if (a.length !== b.length) return a.length - b.length;
+  return compareText(a, b);
+}
+
 function compareRegistryVersions(left: string, right: string): number {
   const splitVersion = (raw: string) => {
     const stripped = raw.replace(/^v(?=\d)/iu, "").split("+", 1)[0] ?? raw;
     const hyphenIndex = stripped.indexOf("-");
     const core = hyphenIndex === -1 ? stripped : stripped.slice(0, hyphenIndex);
     const prerelease = hyphenIndex === -1 ? undefined : stripped.slice(hyphenIndex + 1);
-    return { core: core.split("."), prerelease };
+    return {
+      core: core.split("."),
+      prerelease: prerelease === undefined ? undefined : prerelease.split("."),
+    };
   };
   const a = splitVersion(left);
   const b = splitVersion(right);
   const maxLen = Math.max(a.core.length, b.core.length);
   for (let index = 0; index < maxLen; index += 1) {
-    const diff = (a.core[index] ?? "0").localeCompare(b.core[index] ?? "0", undefined, {
-      numeric: true,
-    });
+    const aPart = a.core[index] ?? "0";
+    const bPart = b.core[index] ?? "0";
+    if (aPart === bPart) continue;
+    const diff =
+      DIGITS_ONLY.test(aPart) && DIGITS_ONLY.test(bPart)
+        ? compareNumericStrings(aPart, bPart)
+        : compareText(aPart, bPart);
     if (diff !== 0) return diff;
   }
   if (a.prerelease === undefined && b.prerelease === undefined) return 0;
   if (a.prerelease === undefined) return 1;
   if (b.prerelease === undefined) return -1;
-  return a.prerelease.localeCompare(b.prerelease, undefined, { numeric: true });
+  // SemVer 2.0.0 §11.4: numeric identifiers compare numerically and have lower precedence than
+  // non-numeric identifiers, which compare lexically in ASCII order.
+  const minPre = Math.min(a.prerelease.length, b.prerelease.length);
+  for (let index = 0; index < minPre; index += 1) {
+    const aId = a.prerelease[index]!;
+    const bId = b.prerelease[index]!;
+    if (aId === bId) continue;
+    const aIsNum = NUMERIC_VERSION_IDENTIFIER.test(aId);
+    const bIsNum = NUMERIC_VERSION_IDENTIFIER.test(bId);
+    if (aIsNum && bIsNum) {
+      const diff = compareNumericStrings(aId, bId);
+      if (diff !== 0) return diff;
+      continue;
+    }
+    if (aIsNum) return -1;
+    if (bIsNum) return 1;
+    return compareText(aId, bId);
+  }
+  return a.prerelease.length - b.prerelease.length;
 }
 
 function binaryArtifactIdentityKey(target: typeof AcpRegistryBinaryTarget.Type): string {
@@ -893,6 +996,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const registryUrl = input.registryUrl ?? ACP_REGISTRY_URL;
   const registryDirectory = path.join(input.cacheDir, "acp-registry");
   const registryCachePath = path.join(registryDirectory, "registry.json");
+  const legacyBaselinesPath = path.join(registryDirectory, BINARY_LEGACY_BASELINES_FILENAME);
   const installsDirectory = input.toolsDir;
   const agentInstallRoot = (agent: AcpRegistryAgent) =>
     path.join(installsDirectory, agent.id, encodeURIComponent(agent.version));
@@ -941,7 +1045,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const preparedBinaryReservations = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   // In-memory mirror of durable legacy baselines so disk write errors still keep a superseded
   // pre-receipt binary from matching a newly published artifact at the same version.
-  const legacyBaselineByInstallRoot = new Map<string, string>();
+  const legacyBaselineBySlotKey = new Map<string, string>();
 
   const runtimeTempDir = input.runtimeTempDir;
   if (runtimeTempDir !== undefined) {
@@ -1198,66 +1302,118 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return { registry, text: collected.text };
   });
 
+  const writeLegacyBaselinesAtomically = (baselines: Readonly<Record<string, string>>) =>
+    random.uuidV4().pipe(
+      Effect.flatMap((id) => {
+        const temporaryPath = `${legacyBaselinesPath}.${process.pid}-${id}.tmp`;
+        return fileSystem
+          .makeDirectory(registryDirectory, { recursive: true })
+          .pipe(
+            Effect.andThen(fileSystem.writeFileString(temporaryPath, JSON.stringify(baselines))),
+            Effect.andThen(fileSystem.rename(temporaryPath, legacyBaselinesPath)),
+            Effect.ensuring(fileSystem.remove(temporaryPath, { force: true }).pipe(Effect.ignore)),
+          );
+      }),
+    );
+
   const recordLegacyBaselines = Effect.fn("AcpRegistryCatalog.recordLegacyBaselines")(function* (
     inMemoryPrevious: AcpRegistryIndex | undefined,
     nextIndex: AcpRegistryIndex,
   ) {
-    if (platformTarget === undefined) return;
+    if (platformTarget === undefined) return true;
     const candidates = resolveAcpRegistryPlatformTargetCandidates(platformTarget);
-    const pendingLegacyInstalls: Array<{
+    const listDirectories = (directory: string) =>
+      fileSystem.readDirectory(directory).pipe(Effect.orElseSucceed((): Array<string> => []));
+    const unreceiptedLegacySlots: Array<{
       readonly agentId: string;
-      readonly version: string;
+      readonly encodedVersion: string;
       readonly candidateTarget: AcpRegistryPlatformTarget;
-      readonly nextTarget: typeof AcpRegistryBinaryTarget.Type;
-      readonly installRoot: string;
-      readonly baselinePath: string;
+      readonly slotKey: string;
     }> = [];
-    for (const nextAgent of nextIndex.agents) {
-      if (nextAgent.distribution.binary === undefined) continue;
-      for (const candidateTarget of candidates) {
-        const nextTarget = nextAgent.distribution.binary[candidateTarget];
-        if (nextTarget === undefined) continue;
-        const installRoot = path.join(agentInstallRoot(nextAgent), candidateTarget);
-        const baselinePath = path.join(installRoot, BINARY_LEGACY_BASELINE_FILENAME);
-        if (legacyBaselineByInstallRoot.has(installRoot)) continue;
-        const installExists = yield* fileSystem
-          .exists(installRoot)
-          .pipe(Effect.orElseSucceed(() => false));
-        if (!installExists) continue;
-        const hasReceipt = yield* fileSystem
-          .exists(path.join(installRoot, BINARY_ARTIFACT_RECEIPT_FILENAME))
-          .pipe(Effect.orElseSucceed(() => false));
-        if (hasReceipt) continue;
-        const hasBaseline = yield* fileSystem
-          .exists(baselinePath)
-          .pipe(Effect.orElseSucceed(() => false));
-        if (hasBaseline) continue;
-        pendingLegacyInstalls.push({
-          agentId: nextAgent.id,
-          version: nextAgent.version,
-          candidateTarget,
-          nextTarget,
-          installRoot,
-          baselinePath,
-        });
+    for (const agentId of yield* listDirectories(installsDirectory)) {
+      const agentRoot = path.join(installsDirectory, agentId);
+      for (const encodedVersion of yield* listDirectories(agentRoot)) {
+        const versionRoot = path.join(agentRoot, encodedVersion);
+        for (const candidateTarget of candidates) {
+          const installRoot = path.join(versionRoot, candidateTarget);
+          const installExists = yield* fileSystem
+            .exists(installRoot)
+            .pipe(Effect.orElseSucceed(() => false));
+          if (!installExists) continue;
+          const hasReceipt = yield* fileSystem
+            .exists(path.join(installRoot, BINARY_ARTIFACT_RECEIPT_FILENAME))
+            .pipe(Effect.orElseSucceed(() => false));
+          if (hasReceipt) continue;
+          unreceiptedLegacySlots.push({
+            agentId,
+            encodedVersion,
+            candidateTarget,
+            slotKey: legacyBaselineSlotKey(agentId, encodedVersion, candidateTarget),
+          });
+        }
       }
     }
-    if (pendingLegacyInstalls.length === 0) return;
+    if (unreceiptedLegacySlots.length === 0) return true;
+    const existingDisk = yield* readLegacyBaselinesFile(fileSystem, legacyBaselinesPath);
+    if (!existingDisk.ok) return false;
+    const unpersistedSlots = unreceiptedLegacySlots.filter((slot) => {
+      const existingBaseline = existingDisk.baselines[slot.slotKey];
+      if (existingBaseline !== undefined) {
+        legacyBaselineBySlotKey.set(slot.slotKey, existingBaseline);
+        return false;
+      }
+      return true;
+    });
+    if (unpersistedSlots.length === 0) return true;
+
     const previousIndex = inMemoryPrevious ?? Option.getOrUndefined(yield* readCachedRegistry);
-    if (previousIndex === undefined) return;
-    const previousById = new Map(previousIndex.agents.map((agent) => [agent.id, agent] as const));
-    for (const pending of pendingLegacyInstalls) {
-      const previousAgent = previousById.get(pending.agentId);
-      if (previousAgent === undefined || previousAgent.version !== pending.version) continue;
-      const previousTarget = previousAgent.distribution.binary?.[pending.candidateTarget];
+    const previousById = new Map(
+      (previousIndex?.agents ?? []).map((agent) => [agent.id, agent] as const),
+    );
+    const nextById = new Map(nextIndex.agents.map((agent) => [agent.id, agent] as const));
+    const newBaselines: Record<string, string> = {};
+    let hasUpdates = false;
+    for (const slot of unpersistedSlots) {
+      const existingInMemory = legacyBaselineBySlotKey.get(slot.slotKey);
+      if (existingInMemory !== undefined) {
+        newBaselines[slot.slotKey] = existingInMemory;
+        hasUpdates = true;
+        continue;
+      }
+      const previousAgent = previousById.get(slot.agentId);
+      if (
+        previousAgent === undefined ||
+        encodeURIComponent(previousAgent.version) !== slot.encodedVersion
+      ) {
+        continue;
+      }
+      const previousTarget = previousAgent.distribution.binary?.[slot.candidateTarget];
       if (previousTarget === undefined) continue;
       const previousKey = binaryArtifactIdentityKey(previousTarget);
-      if (binaryArtifactIdentityKey(pending.nextTarget) === previousKey) continue;
-      legacyBaselineByInstallRoot.set(pending.installRoot, previousKey);
-      yield* fileSystem
-        .writeFileString(pending.baselinePath, encodeBinaryLegacyBaseline(previousKey))
-        .pipe(Effect.ignore);
+      const nextAgent = nextById.get(slot.agentId);
+      const nextTarget =
+        nextAgent !== undefined && encodeURIComponent(nextAgent.version) === slot.encodedVersion
+          ? nextAgent.distribution.binary?.[slot.candidateTarget]
+          : undefined;
+      // Record the legacy artifact whenever the slot's artifact changes, version bumps, or disappears
+      // so a later rollback or repackage at the same version never mistakes the legacy install for it.
+      if (nextTarget !== undefined && binaryArtifactIdentityKey(nextTarget) === previousKey) {
+        continue;
+      }
+      legacyBaselineBySlotKey.set(slot.slotKey, previousKey);
+      newBaselines[slot.slotKey] = previousKey;
+      hasUpdates = true;
     }
+    if (!hasUpdates) return true;
+    const mergedBaselines = { ...existingDisk.baselines, ...newBaselines };
+    return yield* writeLegacyBaselinesAtomically(mergedBaselines).pipe(
+      Effect.as(true),
+      Effect.catch(() =>
+        Effect.logDebug(
+          "Could not persist ACP Registry legacy baselines; keeping existing disk registry cache.",
+        ).pipe(Effect.as(false)),
+      ),
+    );
   });
 
   const refreshRegistry = Effect.fn("AcpRegistryCatalog.refreshRegistry")(function* (options?: {
@@ -1307,7 +1463,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const result = yield* fetchRegistry().pipe(
           Effect.flatMap(({ registry, text }) =>
             recordLegacyBaselines(current.index, registry).pipe(
-              Effect.andThen(writeRegistryCache(text)),
+              Effect.flatMap((baselinesPersisted) =>
+                baselinesPersisted ? writeRegistryCache(text) : Effect.void,
+              ),
               Effect.as({ index: registry, refreshed: true as const }),
             ),
           ),
@@ -1451,6 +1609,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       readonly cwd?: string;
       readonly env?: NodeJS.ProcessEnv;
       readonly timeout?: Duration.Input;
+      readonly nonZeroExitReason?: AcpRegistryErrorReason;
       readonly truncatedOutputReason?: AcpRegistryErrorReason;
       readonly maxStdoutBytes?: number;
     } = {},
@@ -1488,7 +1647,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       );
       if (Number(exitCode) !== 0) {
         return yield* new AcpRegistryError({
-          reason: "install_failed",
+          reason: options.nonZeroExitReason ?? "install_failed",
           detail: `ACP Registry install command '${command}' exited with code ${Number(exitCode)}: ${stderr.trim()}`,
         });
       }
@@ -1930,6 +2089,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       installRoot,
       artifactRoot,
       platformTarget: matchedPlatformTarget,
+      slotKey: legacyBaselineSlotKey(
+        agent.id,
+        encodeURIComponent(agent.version),
+        matchedPlatformTarget,
+      ),
       executablePath: path.join(installRoot, ...commandSegments),
       artifactExecutablePath: path.join(artifactRoot, ...commandSegments),
     };
@@ -1992,17 +2156,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         }
       }
       const currentKey = binaryArtifactIdentityKey(target);
-      const memoryBaseline = legacyBaselineByInstallRoot.get(paths.installRoot);
+      const memoryBaseline = legacyBaselineBySlotKey.get(paths.slotKey);
       if (memoryBaseline !== undefined) {
         return memoryBaseline === currentKey;
       }
-      const baselinePath = path.join(paths.installRoot, BINARY_LEGACY_BASELINE_FILENAME);
-      if (!(yield* fileSystem.exists(baselinePath).pipe(Effect.orElseSucceed(() => false)))) {
+      const diskResult = yield* readLegacyBaselinesFile(fileSystem, legacyBaselinesPath);
+      if (!diskResult.ok) {
+        return false;
+      }
+      const diskBaseline = diskResult.baselines[paths.slotKey];
+      if (diskBaseline === undefined) {
         return true;
       }
-      const rawBaseline = yield* fileSystem.readFileString(baselinePath).pipe(Effect.option);
-      const decoded = Option.flatMap(rawBaseline, decodeBinaryLegacyBaseline);
-      return Option.isSome(decoded) && decoded.value.artifactKey === currentKey;
+      legacyBaselineBySlotKey.set(paths.slotKey, diskBaseline);
+      return diskBaseline === currentKey;
     },
   );
 
@@ -2051,21 +2218,22 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       });
     }
     const { commandSegments, installRoot, artifactRoot } = paths;
-    const validateSlot = (slot: { readonly root: string; readonly executablePath: string }) =>
+    const validateCachedSlot = (slot: { readonly root: string; readonly executablePath: string }) =>
       assertExecutableInRoot(slot.root, slot.executablePath).pipe(
-        Effect.mapError((cause) =>
-          isAcpRegistryError(cause)
-            ? cause
-            : new AcpRegistryError({
-                reason: "install_failed",
-                detail: `Could not validate cached ACP Registry agent ${agent.id}.`,
-                cause,
-              }),
+        Effect.mapError(
+          (cause) =>
+            new AcpRegistryError({
+              reason: "install_failed",
+              detail: isAcpRegistryError(cause)
+                ? cause.detail
+                : `Could not validate cached ACP Registry agent ${agent.id}.`,
+              cause,
+            }),
         ),
       );
     const cachedSlot = yield* findMatchingBinarySlot(paths, target);
     if (Option.isSome(cachedSlot)) {
-      return yield* validateSlot(cachedSlot.value);
+      return yield* validateCachedSlot(cachedSlot.value);
     }
 
     yield* fileSystem.makeDirectory(path.dirname(installRoot), { recursive: true }).pipe(
@@ -2094,10 +2262,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return yield* Effect.gen(function* () {
       const lockedSlot = yield* findMatchingBinarySlot(paths, target);
       if (Option.isSome(lockedSlot)) {
-        return yield* assertExecutableInRoot(
-          lockedSlot.value.root,
-          lockedSlot.value.executablePath,
-        );
+        return yield* validateCachedSlot(lockedSlot.value);
       }
       const primaryExists = yield* fileSystem
         .exists(installRoot)
@@ -2202,7 +2367,15 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               : platform === "win32"
                 ? ["-tf", archivePath]
                 : undefined;
-        const listingOptions = { maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES };
+        const listingOptions = {
+          maxStdoutBytes: MAX_ARCHIVE_LISTING_BYTES,
+          timeout: ARCHIVE_EXTRACT_TIMEOUT,
+          nonZeroExitReason: "archive_invalid",
+        } as const;
+        const extractOptions = {
+          timeout: ARCHIVE_EXTRACT_TIMEOUT,
+          nonZeroExitReason: "archive_invalid",
+        } as const;
         const entries =
           listArgs === undefined
             ? yield* runCommand("unzip", ["-Z1", archivePath], listingOptions)
@@ -2214,10 +2387,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           });
         }
         if (kind === "zip" && platform !== "win32") {
-          yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot]);
+          yield* runCommand("unzip", ["-q", archivePath, "-d", extractionRoot], extractOptions);
         } else {
           const extractFlag = kind === "tar_gz" ? "-xzf" : kind === "tar_bz2" ? "-xjf" : "-xf";
-          yield* runCommand(tarCommand, [extractFlag, archivePath, "-C", extractionRoot]);
+          yield* runCommand(
+            tarCommand,
+            [extractFlag, archivePath, "-C", extractionRoot],
+            extractOptions,
+          );
         }
       }
 
@@ -2234,7 +2411,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         encodeBinaryArtifactReceipt(agent, target),
       );
       // Recheck right before promotion in case a stale-lock takeover let another installer publish
-      // a valid receipt-matching slot while this staging download was in flight.
+      // a valid receipt-matching slot while this staging download was in flight. Never remove an
+      // existing destinationRoot before rename so a concurrent publisher's directory cannot be deleted.
       const concurrentSlot = yield* findMatchingBinarySlot(paths, target);
       if (Option.isSome(concurrentSlot)) {
         const validated = yield* assertExecutableInRoot(
@@ -2244,10 +2422,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         if (Option.isSome(validated)) {
           return validated.value;
         }
-      }
-      if (destinationRoot === artifactRoot) {
-        // Only remove an un-receipted or invalid leftover at the content-addressed slot.
-        yield* fileSystem.remove(destinationRoot, { recursive: true, force: true });
       }
       const promotedPath = yield* fileSystem.rename(extractionRoot, destinationRoot).pipe(
         Effect.andThen(() => assertExecutableInRoot(destinationRoot, destinationExecutable)),
@@ -2556,6 +2730,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       readonly effectiveEnvironment: NodeJS.ProcessEnv;
       readonly indexRevision?: number;
       readonly fallback?: boolean;
+      readonly failedTarget?: AcpRegistryFailedTarget;
     }) {
       const baseSpawnEnvironment = {
         ...input.effectiveEnvironment,
@@ -2579,6 +2754,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         }),
         ...(input.indexRevision === undefined ? {} : { indexRevision: input.indexRevision }),
         ...(input.fallback ? { fallback: true } : {}),
+        ...(input.failedTarget === undefined ? {} : { failedTarget: input.failedTarget }),
         spawn: {
           command: input.command,
           args: input.distribution.args,
@@ -2596,6 +2772,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     cwd: string,
     environment: NodeJS.ProcessEnv | undefined,
     registry: AcpRegistryIndex,
+    indexRevision: number,
   ) {
     if (settings.commandPath.trim().length > 0 || platformTarget === undefined) {
       return Option.none<ResolvedAcpRegistryAgent>();
@@ -2610,6 +2787,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     if (distribution === undefined || distribution.kind !== "binary") {
       return Option.none<ResolvedAcpRegistryAgent>();
     }
+    const failedTarget: AcpRegistryFailedTarget = {
+      version: agent.version,
+      launchIdentity: registryLaunchIdentity({ version: agent.version, distribution }),
+      indexRevision,
+    };
     const effectiveEnvironment = environment ?? hostEnvironment;
     return yield* withInstallPermit(agent.id)(
       Effect.gen(function* () {
@@ -2702,6 +2884,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 cwd,
                 effectiveEnvironment,
                 fallback: true,
+                failedTarget,
               });
               return Option.some(resolved);
             }
@@ -2809,7 +2992,23 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           (error) => canFallbackOnError(error.reason),
           (error) =>
             Effect.gen(function* () {
+              const agentId = settings.agentId.trim();
+              const artifactSignatureIn = (index: AcpRegistryIndex) => {
+                const agent = index.agents.find((candidate) => candidate.id === agentId);
+                if (agent === undefined) return undefined;
+                const distribution = resolveAcpRegistryDistribution({
+                  agent,
+                  preference: settings.distribution,
+                  platformTarget,
+                });
+                if (distribution === undefined) return agent.version;
+                if (distribution.kind === "binary" && distribution.binaryTarget !== undefined) {
+                  return `${agent.version}\0${binaryArtifactIdentityKey(distribution.binaryTarget)}`;
+                }
+                return registryLaunchIdentity({ version: agent.version, distribution });
+              };
               let activeRegistry = registry;
+              let activeRevision = indexRevision;
               let activeError = error;
               if (error.reason === "download_failed") {
                 const refreshed = yield* Effect.result(
@@ -2817,22 +3016,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 );
                 if (Result.isSuccess(refreshed)) {
                   const { index: latest, indexRevision: latestRevision } = refreshed.success;
-                  const agentId = settings.agentId.trim();
-                  const artifactSignatureIn = (index: AcpRegistryIndex) => {
-                    const agent = index.agents.find((candidate) => candidate.id === agentId);
-                    if (agent === undefined) return undefined;
-                    const distribution = resolveAcpRegistryDistribution({
-                      agent,
-                      preference: settings.distribution,
-                      platformTarget,
-                    });
-                    if (distribution === undefined) return agent.version;
-                    if (distribution.kind === "binary" && distribution.binaryTarget !== undefined) {
-                      return `${agent.version}\0${binaryArtifactIdentityKey(distribution.binaryTarget)}`;
-                    }
-                    return registryLaunchIdentity({ version: agent.version, distribution });
-                  };
-                  if (artifactSignatureIn(latest) !== artifactSignatureIn(registry)) {
+                  if (artifactSignatureIn(latest) !== artifactSignatureIn(activeRegistry)) {
                     const retried = yield* Effect.result(
                       resolveWithRegistry(settings, cwd, environment, latest, latestRevision),
                     );
@@ -2841,15 +3025,42 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                       return yield* retried.failure;
                     }
                     activeRegistry = latest;
+                    activeRevision = latestRevision;
                     activeError = retried.failure;
                   }
                 }
+              }
+              // Check the latest published index before falling back so concurrent removals,
+              // incompatibilities, or fixes are honored even on checksum/archive failures.
+              const latestState = yield* Ref.get(registryState);
+              if (
+                latestState.index !== undefined &&
+                latestState.indexRevision > activeRevision &&
+                artifactSignatureIn(latestState.index) !== artifactSignatureIn(activeRegistry)
+              ) {
+                const retried = yield* Effect.result(
+                  resolveWithRegistry(
+                    settings,
+                    cwd,
+                    environment,
+                    latestState.index,
+                    latestState.indexRevision,
+                  ),
+                );
+                if (Result.isSuccess(retried)) return retried.success;
+                if (!canFallbackOnError(retried.failure.reason)) {
+                  return yield* retried.failure;
+                }
+                activeRegistry = latestState.index;
+                activeRevision = latestState.indexRevision;
+                activeError = retried.failure;
               }
               const fallback = yield* resolveFallbackInstalledBinary(
                 settings,
                 cwd,
                 environment,
                 activeRegistry,
+                activeRevision,
               );
               if (Option.isSome(fallback)) return fallback.value;
               return yield* activeError;
@@ -2938,6 +3149,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                   }),
               ),
             );
+            if (removed) {
+              for (const key of legacyBaselineBySlotKey.keys()) {
+                if (key.startsWith(`${safeAgentId}\0`)) {
+                  legacyBaselineBySlotKey.delete(key);
+                }
+              }
+            }
             return { agentId: safeAgentId, removed };
           }),
         ),

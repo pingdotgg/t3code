@@ -388,6 +388,7 @@ export interface AcpRegistryConfigurationProbeResolved {
   readonly launchIdentity?: string;
   readonly indexRevision?: number;
   readonly fallback?: boolean;
+  readonly failedTarget?: AcpRegistrySupport.AcpRegistryFailedTarget;
 }
 
 export interface AcpRegistryConfigurationProbeResult {
@@ -659,6 +660,9 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
           ? {}
           : { indexRevision: result.resolved.indexRevision }),
         ...(result.resolved.fallback ? { fallback: true } : {}),
+        ...(result.resolved.failedTarget === undefined
+          ? {}
+          : { failedTarget: result.resolved.failedTarget }),
       },
     };
   },
