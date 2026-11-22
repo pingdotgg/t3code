@@ -1,6 +1,6 @@
 //! `ThreadManagementService.awaitBackgroundTasks` (`apps/server/src/orchestration-v2/`):
 //! marks background tasks the thread's agent waits on, so the thread stays Working while they
-//! run. `/mcp`'s `t3_background_wait` calls it for its calling thread.
+//! run. `/mcp`'s `conn_background_wait` calls it for its calling thread.
 //!
 //! The engine finds the thread's active provider thread and the live session that owns it,
 //! asks that session ([`conn_provider::Session::await_background_tasks`]) with a 15 second

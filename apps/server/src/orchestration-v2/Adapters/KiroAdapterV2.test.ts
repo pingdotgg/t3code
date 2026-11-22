@@ -1270,7 +1270,7 @@ describe("KiroAdapterV2 early Stop", () => {
 });
 
 describe("KiroAdapterV2 MCP tools", () => {
-  // Probed live on Kiro 2.33.1 against a stdio MCP server named t3-code, without
+  // Probed live on Kiro 2.33.1 against a stdio MCP server named conn, without
   // the permission round trip. Kiro titles the call "@t3-code/html_render", names
   // it in `tool_id`, and keeps only the result's text.
   it.effect("shows T3's html_render as T3's tool with the page T3 published", () =>
@@ -1278,8 +1278,8 @@ describe("KiroAdapterV2 MCP tools", () => {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       const toolCallId = "tooluse_4N3LnlI9PRlphUtzdBQGDD";
       const args = { html: "<p>hi</p>", title: "Probe", height: 120 };
-      const rawInput = { tool_id: "t3-code::html_render", arguments: args };
-      const kiroMeta = { kiro: { serverName: "t3-code", toolOrigin: "default" } };
+      const rawInput = { tool_id: "conn::html_render", arguments: args };
+      const kiroMeta = { kiro: { serverName: "conn", toolOrigin: "default" } };
       const page = { attachmentId: "kiro-mcp-html-render-page", title: "Probe", height: 120 };
       yield* runKiroScript({
         scenario: "mcp-html-render",
@@ -1338,7 +1338,7 @@ describe("KiroAdapterV2 MCP tools", () => {
             const completed = items.at(-1);
             assert.deepEqual(
               items.map((item) => item.toolName),
-              items.map(() => "t3-code.html_render"),
+              items.map(() => "conn.html_render"),
             );
             assert.equal(completed?.status, "completed");
             assert.deepEqual(completed?.input, args);

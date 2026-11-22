@@ -108,8 +108,12 @@ function tool(
   return { displayName, labels, icon, summaryAction };
 }
 
-// Codex registers "t3-code-direct" for T3 tools kept out of Code Mode.
+// Codex registers "conn-direct" for tools kept out of Code Mode. The t3 names are what threads
+// recorded before the server was renamed.
 const T3_MCP_SERVER_ALIASES = new Set([
+  "conn",
+  "conn-direct",
+  "conn_direct",
   "t3-code",
   "t3_code",
   "t3code",
@@ -229,28 +233,31 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   request_secret: tool(["Ask for", "Asking for", "Asked for", "a secret"], "secret-request"),
   create_threads: tool(["Create", "Creating", "Created", "Conn threads"], "thread-create"),
-  t3_thread_start: tool(["Start", "Starting", "Started", "a Conn thread"], "thread-create"),
-  t3_thread_list: tool(["List", "Listing", "Listed", "Conn threads"], "thread-list"),
-  t3_thread_read: tool(["Read", "Reading", "Read", "a Conn thread"], "thread-read"),
-  t3_thread_send: tool(["Send", "Sending", "Sent", "to a Conn thread"], "thread-send"),
-  t3_thread_wait: tool(["Wait", "Waiting", "Waited", "for a Conn thread"], "thread-wait"),
-  t3_workflow_stop: tool(
+  conn_thread_start: tool(["Start", "Starting", "Started", "a Conn thread"], "thread-create"),
+  conn_thread_list: tool(["List", "Listing", "Listed", "Conn threads"], "thread-list"),
+  conn_thread_read: tool(["Read", "Reading", "Read", "a Conn thread"], "thread-read"),
+  conn_thread_send: tool(["Send", "Sending", "Sent", "to a Conn thread"], "thread-send"),
+  conn_thread_wait: tool(["Wait", "Waiting", "Waited", "for a Conn thread"], "thread-wait"),
+  conn_workflow_stop: tool(
     ["Stop", "Stopping", "Requested a stop for", "a workflow"],
     "workflow-stop",
   ),
-  t3_background_wait: tool(
+  conn_background_wait: tool(
     ["Update", "Updating", "Updated", "background waits"],
     "background-wait",
   ),
-  t3_thread_interrupt: tool(
+  conn_thread_interrupt: tool(
     ["Interrupt", "Interrupting", "Requested an interrupt of", "a Conn thread"],
     "thread-interrupt",
   ),
-  t3_worktree_handoff: tool(
+  conn_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],
     "worktree-handoff",
   ),
-  t3_worktree_status: tool(["Get", "Getting", "Got", "thread worktree status"], "worktree-status"),
+  conn_worktree_status: tool(
+    ["Get", "Getting", "Got", "thread worktree status"],
+    "worktree-status",
+  ),
   preview_status: tool(["Get", "Getting", "Got", "preview browser status"], "browser", "browser"),
   preview_open: tool(
     ["Open", "Opening", "Opened", "a page in the preview browser"],
@@ -379,91 +386,106 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Run", "Running", "Requested a run of", "a scheduled task"],
     "schedule-run",
   ),
-  t3_queue: tool(["Manage", "Managing", "Managed", "queued messages"], "queue-edit"),
-  t3_pending_request: tool(
+  conn_queue: tool(["Manage", "Managing", "Managed", "queued messages"], "queue-edit"),
+  conn_pending_request: tool(
     ["Handle", "Handling", "Handled", "pending questions"],
     "question-respond",
   ),
-  t3_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),
-  t3_queue_read: tool(["Read", "Reading", "Read", "a queued message"], "queue-read"),
-  t3_queue_edit: tool(["Edit", "Editing", "Edited", "a queued message"], "queue-edit"),
-  t3_queue_cancel: tool(
+  conn_queue_list: tool(["List", "Listing", "Listed", "queued messages"], "queue-list"),
+  conn_queue_read: tool(["Read", "Reading", "Read", "a queued message"], "queue-read"),
+  conn_queue_edit: tool(["Edit", "Editing", "Edited", "a queued message"], "queue-edit"),
+  conn_queue_cancel: tool(
     ["Cancel", "Canceling", "Requested cancellation of", "a queued run"],
     "queue-cancel",
   ),
-  t3_queue_reorder: tool(["Reorder", "Reordering", "Reordered", "a queued run"], "queue-reorder"),
-  t3_queue_promote_to_steer: tool(
+  conn_queue_reorder: tool(["Reorder", "Reordering", "Reordered", "a queued run"], "queue-reorder"),
+  conn_queue_promote_to_steer: tool(
     ["Steer with", "Steering with", "Requested steering with", "a queued message"],
     "queue-steer",
   ),
-  t3_pending_request_list: tool(
+  conn_pending_request_list: tool(
     ["List", "Listing", "Listed", "pending questions"],
     "question-list",
   ),
-  t3_pending_request_read: tool(["Read", "Reading", "Read", "pending questions"], "question-read"),
-  t3_pending_request_respond: tool(
+  conn_pending_request_read: tool(
+    ["Read", "Reading", "Read", "pending questions"],
+    "question-read",
+  ),
+  conn_pending_request_respond: tool(
     ["Answer", "Answering", "Answered", "pending questions"],
     "question-respond",
   ),
-  t3_thread_configuration: tool(
+  conn_thread_configuration: tool(
     ["Read", "Reading", "Read", "thread configuration"],
     "thread-configuration",
   ),
-  t3_thread_configure: tool(["Use", "Using", "Used", "thread model settings"], "thread-configure"),
-  t3_thread_transfer: tool(["Use", "Using", "Used", "thread transfers"], "thread-fork"),
-  t3_thread_fork: tool(["Fork", "Forking", "Requested a fork of", "this thread"], "thread-fork"),
-  t3_thread_merge_back: tool(
+  conn_thread_configure: tool(
+    ["Use", "Using", "Used", "thread model settings"],
+    "thread-configure",
+  ),
+  conn_thread_transfer: tool(["Use", "Using", "Used", "thread transfers"], "thread-fork"),
+  conn_thread_fork: tool(["Fork", "Forking", "Requested a fork of", "this thread"], "thread-fork"),
+  conn_thread_merge_back: tool(
     ["Merge", "Merging", "Requested a merge of", "thread context"],
     "thread-merge",
   ),
-  t3_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
-  t3_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
-  t3_thread_organize: tool(["Organize", "Organizing", "Organized", "a thread"], "thread-organize"),
-  t3_thread_update: tool(
+  conn_thread_search: tool(["Search", "Searching", "Searched", "thread content"], "thread-search"),
+  conn_thread_transfers: tool(["Read", "Reading", "Read", "thread transfers"], "thread-transfers"),
+  conn_thread_organize: tool(
+    ["Organize", "Organizing", "Organized", "a thread"],
+    "thread-organize",
+  ),
+  conn_thread_update: tool(
     ["Update", "Updating", "Updated", "Conn thread metadata"],
     "thread-update",
   ),
-  t3_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
-  t3_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
-  t3_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
-  t3_environment_read: tool(
+  conn_worktree_list: tool(["List", "Listing", "Listed", "workspace branches"], "worktree-list"),
+  conn_preview_list: tool(["List", "Listing", "Listed", "preview tabs"], "browser", "browser"),
+  conn_preview_close: tool(["Close", "Closing", "Closed", "a preview tab"], "browser", "browser"),
+  conn_environment_read: tool(
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
-  t3_environment_links: tool(
+  conn_environment_links: tool(
     ["List", "Listing", "Listed", "linked environments"],
     "environment-links",
   ),
-  t3_environment_link: tool(
+  conn_environment_link: tool(
     ["Ask to link", "Asking to link", "Asked to link", "an environment"],
     "environment-link",
   ),
-  t3_environment_unlink: tool(
+  conn_environment_unlink: tool(
     ["Forget", "Forgetting", "Forgot", "a linked environment"],
     "environment-unlink",
   ),
-  t3_environment_preferences_update: tool(
+  conn_environment_preferences_update: tool(
     ["Update", "Updating", "Updated", "environment preferences"],
     "environment-update",
   ),
-  t3_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
-  t3_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
-  t3_thread_launch: tool(["Launch", "Launching", "Launched", "a project thread"], "thread-create"),
-  t3_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
-  t3_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
-  t3_project_create: tool(["Register", "Registering", "Registered", "a project"], "project-create"),
-  t3_project_update: tool(["Update", "Updating", "Updated", "a project"], "project-update"),
-  t3_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
-  t3_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
-  t3_attachment_prepare_upload: tool(
+  conn_theme_read: tool(["Read", "Reading", "Read", "themes"], "theme-read"),
+  conn_theme_set: tool(["Set", "Setting", "Set", "the theme"], "theme-set"),
+  conn_thread_launch: tool(
+    ["Launch", "Launching", "Launched", "a project thread"],
+    "thread-create",
+  ),
+  conn_project_list: tool(["List", "Listing", "Listed", "projects"], "project-list"),
+  conn_project_read: tool(["Read", "Reading", "Read", "a project"], "project-read"),
+  conn_project_create: tool(
+    ["Register", "Registering", "Registered", "a project"],
+    "project-create",
+  ),
+  conn_project_update: tool(["Update", "Updating", "Updated", "a project"], "project-update"),
+  conn_project_delete: tool(["Delete", "Deleting", "Deleted", "a project"], "project-delete"),
+  conn_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  conn_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",
   ),
-  t3_attachment_discard: tool(
+  conn_attachment_discard: tool(
     ["Discard", "Discarding", "Discarded", "a pending attachment"],
     "attachment-discard",
   ),
-  t3_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
+  conn_thread_send_attachments: tool(["Send", "Sending", "Sent", "attachments"], "attachment-send"),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
   send_to_user: tool(["Send", "Sending", "Sent", "a message"], "send-to-user"),
@@ -491,6 +513,13 @@ function resolveT3McpToolName(value: string): string | null {
   return name;
 }
 
+// Threads recorded before the rename call the conn_ tools t3_.
+function upgradeLegacyToolName(tool: string): string {
+  if (!tool.startsWith("t3_")) return tool;
+  const current = `conn_${tool.slice(3)}`;
+  return Object.hasOwn(T3_MCP_TOOLS, current) ? current : tool;
+}
+
 // ACP tool prefixes vary; match loosely but require a known display-name entry.
 function parseT3McpToolName(value: string): string | null {
   const label = normalizeT3McpToolLabel(value);
@@ -500,26 +529,34 @@ function parseT3McpToolName(value: string): string | null {
     return server !== undefined &&
       tool !== undefined &&
       T3_MCP_SERVER_ALIASES.has(server.toLowerCase())
-      ? tool
+      ? upgradeLegacyToolName(tool)
       : null;
   }
 
   const namespaceMatch =
-    /^(?<server>t3[-_]code[-_]direct|t3-code|t3_code|t3code)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
+    /^(?<server>conn[-_]direct|conn|t3[-_]code[-_]direct|t3-code|t3_code|t3code)(?:[.:/]|\s*·\s*)(?<tool>.+)$/i.exec(
       label,
     );
   if (namespaceMatch?.groups) {
-    return namespaceMatch.groups.tool ?? null;
+    const tool = namespaceMatch.groups.tool;
+    return tool === undefined ? null : upgradeLegacyToolName(tool);
   }
 
-  const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
-  const candidate = prefixed?.groups?.tool ?? label;
-  if (Object.hasOwn(T3_MCP_TOOLS, candidate)) return candidate;
+  const prefixed = /^(?:mcp[-_]{1,2})?(?:conn|t3[-_ ]?code)(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(
+    label,
+  );
+  // `conn_thread_list` also matches the loose prefix; an unknown remainder falls back to the label.
+  for (const raw of [prefixed?.groups?.tool, label]) {
+    const candidate = raw === undefined ? undefined : upgradeLegacyToolName(raw);
+    if (candidate !== undefined && Object.hasOwn(T3_MCP_TOOLS, candidate)) return candidate;
+  }
   // OpenCode 2 thread prefixes can contain underscores; choose the longest known tool-name suffix.
-  if (!/^t3-code-/i.test(label)) return null;
+  if (!/^(?:conn|t3-code)-/i.test(label)) return null;
   let longest: string | null = null;
   for (const tool of Object.keys(T3_MCP_TOOLS)) {
-    if (label.endsWith(`_${tool}`) && tool.length > (longest?.length ?? 0)) longest = tool;
+    const legacy = tool.startsWith("conn_") ? `t3_${tool.slice(5)}` : null;
+    const matches = label.endsWith(`_${tool}`) || (legacy !== null && label.endsWith(`_${legacy}`));
+    if (matches && tool.length > (longest?.length ?? 0)) longest = tool;
   }
   return longest;
 }
@@ -537,12 +574,14 @@ const asSummaryInput = (input: unknown): SummaryInput | undefined =>
 /** Action tools present each call as the single-purpose tool its action replaced. */
 const ACTION_TOOLS: Readonly<Record<string, (action: string) => string | undefined>> = {
   preview_act: (action) => `preview_${action}`,
-  t3_queue: (action) => `t3_queue_${action}`,
-  t3_pending_request: (action) => `t3_pending_request_${action}`,
-  t3_thread_transfer: (action) =>
-    ({ fork: "t3_thread_fork", merge_back: "t3_thread_merge_back", status: "t3_thread_transfers" })[
-      action
-    ],
+  conn_queue: (action) => `conn_queue_${action}`,
+  conn_pending_request: (action) => `conn_pending_request_${action}`,
+  conn_thread_transfer: (action) =>
+    ({
+      fork: "conn_thread_fork",
+      merge_back: "conn_thread_merge_back",
+      status: "conn_thread_transfers",
+    })[action],
 };
 
 /** Pass the call's input so an action tool resolves to the labels and summary of its action. */
@@ -563,7 +602,7 @@ export function resolveT3McpToolDefinition(
 const ACTION_SUMMARIES: Readonly<
   Record<string, (input: SummaryInput) => T3McpToolSummaryAction | undefined>
 > = {
-  t3_thread_configure: ({ modelSelection }) =>
+  conn_thread_configure: ({ modelSelection }) =>
     modelSelection === undefined ? "thread-configuration" : "thread-configure",
   schedule_task: ({ scheduledTaskId }) =>
     scheduledTaskId === undefined ? "schedule-create" : "schedule-update",

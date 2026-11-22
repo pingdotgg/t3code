@@ -245,42 +245,45 @@ impl<'a> Client<'a> {
 /// A forwarded result is checked against its tool's success shape (`PeerMcpClient`).
 #[test]
 fn forwarded_results_must_match_their_tool() {
-    assert!(!crate::tool_result_matches("t3_thread_launch", &json!({})));
     assert!(!crate::tool_result_matches(
-        "t3_thread_search",
+        "conn_thread_launch",
+        &json!({})
+    ));
+    assert!(!crate::tool_result_matches(
+        "conn_thread_search",
         &json!({"matches": "none"})
     ));
     assert!(crate::tool_result_matches(
-        "t3_thread_search",
+        "conn_thread_search",
         &json!({"matches": [], "extra": true})
     ));
     assert!(!crate::tool_result_matches("no_such_tool", &json!({})));
     // Union results (left out of `tools/list`) are checked too: an empty answer is refused.
     for tool in [
-        "t3_thread_organize",
-        "t3_pending_request",
-        "t3_queue",
-        "t3_thread_configure",
-        "t3_workflow_stop",
+        "conn_thread_organize",
+        "conn_pending_request",
+        "conn_queue",
+        "conn_thread_configure",
+        "conn_workflow_stop",
     ] {
         assert!(catalog::result_schema(tool).is_some(), "{tool}");
     }
-    assert!(!crate::tool_result_matches("t3_queue", &json!({})));
+    assert!(!crate::tool_result_matches("conn_queue", &json!({})));
     assert!(!crate::tool_result_matches(
-        "t3_workflow_stop",
+        "conn_workflow_stop",
         &Value::Null
     ));
     assert!(crate::tool_result_matches(
-        "t3_thread_organize",
+        "conn_thread_organize",
         &json!({"sequence": 3})
     ));
     // T3 decodes `1.0` as the integer 1; a string past `maxLength` is refused.
     assert!(crate::tool_result_matches(
-        "t3_thread_organize",
+        "conn_thread_organize",
         &json!({"sequence": 3.0})
     ));
     assert!(!crate::tool_result_matches(
-        "t3_thread_organize",
+        "conn_thread_organize",
         &json!({"sequence": 3.5})
     ));
     let long = "x".repeat(241);
@@ -400,21 +403,29 @@ async fn transport_answers_as_the_typescript_server() {
     let bogus = c
         .request(
             "tools/call",
-            json!({"name": "t3_thread_list", "arguments": {"bogus": 1}}),
+            json!({"name": "conn_thread_list", "arguments": {"bogus": 1}}),
         )
         .await;
     assert_eq!(bogus["error"]["code"], -32602);
     assert!(
         bogus["error"]["message"].as_str().unwrap().starts_with(
-            "Invalid parameters for tool 't3_thread_list': Unknown argument \"bogus\""
+            "Invalid parameters for tool 'conn_thread_list': Unknown argument \"bogus\""
         )
     );
     let (code, _) = c
-        .failure("t3_project_list", json!({"environmentId": "elsewhere"}))
+        .failure("conn_project_list", json!({"environmentId": "elsewhere"}))
         .await;
     assert_eq!(code, "capability_denied");
+    c.ok("conn_project_list", json!({"environmentId": "env-test"}))
+        .await;
+    // The pre-rename name still reaches the tool, and only the new name is listed.
     c.ok("t3_project_list", json!({"environmentId": "env-test"}))
         .await;
+    assert!(!names.iter().any(|name| name.starts_with("t3_")));
+    let unknown = c
+        .request("tools/call", json!({"name": "t3_nope", "arguments": {}}))
+        .await;
+    assert_eq!(unknown["error"]["message"], "Tool 't3_nope' not found");
 
     // A session answers only the credential that opened it.
     let other = Client {
@@ -450,12 +461,13 @@ async fn swamp_drives_a_thread_from_outside() {
     let f = fixture("swamp");
     let mut c = Client::open(&f.service, client(true)).await;
 
-    let projects = c.ok("t3_project_list", json!({})).await;
+    let projects = c.ok("conn_project_list", json!({})).await;
     assert_eq!(projects["projects"][0]["workspaceRoot"], ROOT);
     let project = projects["projects"][0]["id"].as_str().unwrap().to_owned();
     assert_eq!(project, project_id());
-    c.ok("t3_project_read", json!({"projectId": project})).await;
-    c.ok("t3_environment_read", json!({})).await;
+    c.ok("conn_project_read", json!({"projectId": project}))
+        .await;
+    c.ok("conn_environment_read", json!({})).await;
 
     let launch = json!({
         "projectId": project, "title": "Task", "message": "hello",
@@ -463,7 +475,7 @@ async fn swamp_drives_a_thread_from_outside() {
         "runtimeMode": "full-access", "interactionMode": "default",
         "workspaceStrategy": {"type": "root"}, "clientRequestId": "operation-1",
     });
-    let launched = c.ok("t3_thread_launch", launch.clone()).await;
+    let launched = c.ok("conn_thread_launch", launch.clone()).await;
     let thread = launched["threadId"].as_str().unwrap().to_owned();
     assert!(
         launched["link"]
@@ -473,7 +485,7 @@ async fn swamp_drives_a_thread_from_outside() {
     );
     let run = launched["runId"].as_str().unwrap().to_owned();
     // A retry with the same id returns the same run and starts no second turn.
-    let again = c.ok("t3_thread_launch", launch).await;
+    let again = c.ok("conn_thread_launch", launch).await;
     assert_eq!(
         (again["threadId"].as_str(), again["runId"].as_str()),
         (Some(thread.as_str()), Some(run.as_str()))
@@ -481,7 +493,7 @@ async fn swamp_drives_a_thread_from_outside() {
 
     let waited = c
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": thread, "runId": run, "timeoutMs": 10_000}),
         )
         .await;
@@ -492,7 +504,7 @@ async fn swamp_drives_a_thread_from_outside() {
 
     let read = c
         .ok(
-            "t3_thread_read",
+            "conn_thread_read",
             json!({"threadId": thread, "view": "activity", "afterPosition": -1, "limit": 100}),
         )
         .await;
@@ -510,7 +522,7 @@ async fn swamp_drives_a_thread_from_outside() {
     let first = read["items"][0]["position"].as_i64().unwrap();
     let rest = c
         .ok(
-            "t3_thread_read",
+            "conn_thread_read",
             json!({"threadId": thread, "view": "activity", "afterPosition": first, "limit": 100}),
         )
         .await;
@@ -520,30 +532,32 @@ async fn swamp_drives_a_thread_from_outside() {
     );
 
     let sent = c
-        .ok("t3_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
+        .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
         .await;
     assert_eq!(sent["delivery"], "started");
     let resent = c
-        .ok("t3_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
+        .ok("conn_thread_send", json!({"threadId": thread, "message": "again", "mode": "queue", "clientRequestId": "operation-2"}))
         .await;
     assert_eq!(resent["runId"], sent["runId"]);
     c.ok(
-        "t3_thread_wait",
+        "conn_thread_wait",
         json!({"threadId": thread, "runId": sent["runId"]}),
     )
     .await;
-    let listed = c.ok("t3_thread_list", json!({"projectId": project})).await;
+    let listed = c
+        .ok("conn_thread_list", json!({"projectId": project}))
+        .await;
     assert_eq!(listed["total"], 1);
     assert_eq!(listed["threads"][0]["status"], "completed");
     let pending = c
         .ok(
-            "t3_pending_request",
+            "conn_pending_request",
             json!({"action": "list", "threadId": thread}),
         )
         .await;
     assert_eq!(pending, json!({"requestIds": []}));
     assert_eq!(
-        c.ok("t3_thread_interrupt", json!({"threadId": thread}))
+        c.ok("conn_thread_interrupt", json!({"threadId": thread}))
             .await["status"],
         "no_active_run"
     );
@@ -551,7 +565,7 @@ async fn swamp_drives_a_thread_from_outside() {
     // Steer needs a running turn.
     let (code, _) = c
         .failure(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": thread, "message": "nudge", "mode": "steer"}),
         )
         .await;
@@ -560,13 +574,13 @@ async fn swamp_drives_a_thread_from_outside() {
     // Interrupt a running turn. A message queued meanwhile waits behind it.
     let hang = c
         .ok(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": thread, "message": "hang"}),
         )
         .await;
     let busy = c
         .ok(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": thread, "message": "busy", "mode": "queue"}),
         )
         .await;
@@ -574,21 +588,21 @@ async fn swamp_drives_a_thread_from_outside() {
     assert_eq!(busy["status"], "queued");
     let timed_out = c
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": thread, "runId": hang["runId"], "timeoutMs": 50}),
         )
         .await;
     assert_eq!(timed_out["timedOut"], true);
     let stopped = c
         .ok(
-            "t3_thread_interrupt",
+            "conn_thread_interrupt",
             json!({"threadId": thread, "runId": hang["runId"]}),
         )
         .await;
     assert_eq!(stopped["status"], "interrupt_requested");
     let ended = c
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": thread, "runId": hang["runId"], "timeoutMs": 10_000}),
         )
         .await;
@@ -596,24 +610,24 @@ async fn swamp_drives_a_thread_from_outside() {
 
     let renamed = c
         .ok(
-            "t3_thread_update",
+            "conn_thread_update",
             json!({"threadId": thread, "action": "rename", "title": "Renamed"}),
         )
         .await;
     assert_eq!(renamed["title"], "Renamed");
     let found = c
         .ok(
-            "t3_thread_search",
+            "conn_thread_search",
             json!({"query": "renam", "projectId": project}),
         )
         .await;
     assert_eq!(found["matches"][0]["threadId"], thread.as_str());
     let by_text = c
-        .ok("t3_thread_search", json!({"query": "echo: hello"}))
+        .ok("conn_thread_search", json!({"query": "echo: hello"}))
         .await;
     assert_eq!(by_text["matches"][0]["source"], "assistant");
     let (code, _) = c
-        .failure("t3_thread_read", json!({"threadId": "nope"}))
+        .failure("conn_thread_read", json!({"threadId": "nope"}))
         .await;
     assert_eq!(code, "thread_not_found");
     not_offered(&mut c, "delegate_task", json!({"task": "x"})).await;
@@ -623,10 +637,10 @@ async fn swamp_drives_a_thread_from_outside() {
 async fn a_read_only_client_cannot_write() {
     let f = fixture("readonly");
     let mut c = Client::open(&f.service, client(false)).await;
-    c.ok("t3_thread_list", json!({"allProjects": true})).await;
+    c.ok("conn_thread_list", json!({"allProjects": true})).await;
     let (code, message) = c
         .failure(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({"projectId": project_id(), "title": "x"}),
         )
         .await;
@@ -644,7 +658,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     let mut swamp = Client::open(&f.service, client(true)).await;
     let parent = swamp
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": "Parent", "message": "hang",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
@@ -655,7 +669,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     let parent_id = parent["threadId"].as_str().unwrap().to_owned();
     swamp
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": parent_id, "timeoutMs": 50}),
         )
         .await;
@@ -672,12 +686,12 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     let agent = Caller::Thread(f.service.resolve_thread_token(token).unwrap());
     assert!(f.service.resolve_thread_token("forged").is_none());
     assert_eq!(
-        entry.claude_mcp_config()["mcpServers"]["t3-code"]["headers"]["Authorization"],
+        entry.claude_mcp_config()["mcpServers"]["conn"]["headers"]["Authorization"],
         entry.authorization.as_str()
     );
 
     let mut c = Client::open(&f.service, agent).await;
-    let mine = c.ok("t3_thread_list", json!({})).await;
+    let mine = c.ok("conn_thread_list", json!({})).await;
     assert_eq!(mine["currentThreadId"], parent_id.as_str());
     assert!(
         mine["threads"][0]["link"]
@@ -724,7 +738,7 @@ async fn an_agent_delegates_a_task_and_is_woken() {
     );
     let child = task["childThreadId"].as_str().unwrap().to_owned();
     c.ok(
-        "t3_thread_wait",
+        "conn_thread_wait",
         json!({"threadId": child, "timeoutMs": 10_000}),
     )
     .await;
@@ -861,7 +875,7 @@ async fn launch_as_swamp(
 ) -> String {
     let launched = swamp
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": title, "message": message,
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
@@ -907,12 +921,15 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
     let respond = json!({"action": "respond", "threadId": full, "requestId": "r1", "answers": {}});
     for (tool, args) in [
         (
-            "t3_thread_update",
+            "conn_thread_update",
             json!({"threadId": full, "action": "rename", "title": "pwned"}),
         ),
-        ("t3_thread_send", json!({"threadId": full, "message": "x"})),
-        ("t3_thread_interrupt", json!({"threadId": full})),
-        ("t3_pending_request", respond),
+        (
+            "conn_thread_send",
+            json!({"threadId": full, "message": "x"}),
+        ),
+        ("conn_thread_interrupt", json!({"threadId": full})),
+        ("conn_pending_request", respond),
     ] {
         let (code, _) = agent.failure(tool, args).await;
         assert_eq!(code, "runtime_mode_escalation_denied", "{tool}");
@@ -920,14 +937,14 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
     // Normal cases: its own thread, and a thread within its modes.
     let renamed = agent
         .ok(
-            "t3_thread_update",
+            "conn_thread_update",
             json!({"action": "rename", "title": "Mine"}),
         )
         .await;
     assert_eq!(renamed["title"], "Mine");
     let (code, message) = agent
         .failure(
-            "t3_pending_request",
+            "conn_pending_request",
             json!({"action": "respond", "requestId": "r1", "answers": {}}),
         )
         .await;
@@ -940,19 +957,19 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
     );
     let child = agent
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({"title": "Child", "message": "hang"}),
         )
         .await;
     let child = child["threadId"].as_str().unwrap().to_owned();
     agent
         .ok(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": child, "message": "more", "mode": "queue"}),
         )
         .await;
     agent
-        .ok("t3_thread_interrupt", json!({"threadId": child}))
+        .ok("conn_thread_interrupt", json!({"threadId": child}))
         .await;
     let task = agent.ok("delegate_task", json!({"task": "hang"})).await;
     let task_id = task["taskId"].as_str().unwrap().to_owned();
@@ -969,19 +986,22 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
     )
     .await;
     let dead = [
-        ("t3_thread_launch", json!({"title": "Late"})),
+        ("conn_thread_launch", json!({"title": "Late"})),
         (
-            "t3_thread_update",
+            "conn_thread_update",
             json!({"threadId": child, "action": "rename", "title": "x"}),
         ),
         (
-            "t3_thread_update",
+            "conn_thread_update",
             json!({"action": "rename", "title": "x"}),
         ),
-        ("t3_thread_send", json!({"threadId": child, "message": "x"})),
-        ("t3_thread_interrupt", json!({"threadId": child})),
         (
-            "t3_pending_request",
+            "conn_thread_send",
+            json!({"threadId": child, "message": "x"}),
+        ),
+        ("conn_thread_interrupt", json!({"threadId": child})),
+        (
+            "conn_pending_request",
             json!({"action": "respond", "threadId": child, "requestId": "r1", "answers": {}}),
         ),
         ("delegate_task", json!({"task": "x"})),
@@ -1000,10 +1020,12 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
         );
     }
     // Reads stay open to it.
-    agent.ok("t3_thread_read", json!({"threadId": child})).await;
+    agent
+        .ok("conn_thread_read", json!({"threadId": child}))
+        .await;
     agent
         .ok(
-            "t3_pending_request",
+            "conn_pending_request",
             json!({"action": "list", "threadId": child}),
         )
         .await;
@@ -1012,7 +1034,7 @@ async fn writes_need_a_live_caller_within_the_target_limits() {
     let idle = launch_as_swamp(&mut swamp, "Idle", "done", "full-access", "default").await;
     swamp
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": idle, "timeoutMs": 10_000}),
         )
         .await;
@@ -1044,7 +1066,7 @@ impl conn_engine::EngineHost for WorktreeHost {
     }
 }
 
-/// `t3_thread_launch` with `workspaceStrategy: {type: "worktree"}` goes to the engine's
+/// `conn_thread_launch` with `workspaceStrategy: {type: "worktree"}` goes to the engine's
 /// worktree launch, as the T3 server's does; the result has the same shape as a root launch.
 #[tokio::test(flavor = "current_thread")]
 async fn launch_prepares_a_worktree() {
@@ -1053,7 +1075,7 @@ async fn launch_prepares_a_worktree() {
     let mut c = Client::open(&f.service, client(true)).await;
     let launched = c
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": "Isolated", "message": "hello",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
@@ -1088,7 +1110,7 @@ async fn launch_prepares_a_worktree() {
     assert_eq!(projection["thread"]["branch"], "feature/x");
     // A retry replays the first launch and makes no second worktree.
     c.ok(
-        "t3_thread_launch",
+        "conn_thread_launch",
         json!({
             "projectId": project_id(), "title": "Isolated", "message": "hello",
             "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
@@ -1193,7 +1215,7 @@ async fn until_provider_turn(f: &Fixture, thread_id: &str) {
     panic!("no provider turn ran on {thread_id}");
 }
 
-/// `t3_background_wait` (`toolkits/orchestrator`): `actsAsCaller`; the calling thread's live
+/// `conn_background_wait` (`toolkits/orchestrator`): `actsAsCaller`; the calling thread's live
 /// session marks the ids it runs, the rest come back unmatched; T3's codes and messages.
 #[tokio::test(flavor = "current_thread")]
 async fn background_wait_marks_the_callers_tasks() {
@@ -1201,7 +1223,7 @@ async fn background_wait_marks_the_callers_tasks() {
     let mut swamp = Client::open(&f.service, client(true)).await;
     let mut reader = Client::open(&f.service, client(false)).await;
     for c in [&mut swamp, &mut reader] {
-        not_offered(c, "t3_background_wait", json!({"taskIds": ["bg-1"]})).await;
+        not_offered(c, "conn_background_wait", json!({"taskIds": ["bg-1"]})).await;
     }
 
     let live = launch_as_swamp(
@@ -1222,12 +1244,12 @@ async fn background_wait_marks_the_callers_tasks() {
         json!({"taskIds": "bg-1"}),
         json!({"taskIds": ["bg-1"], "waiting": "yes"}),
     ] {
-        let (code, message) = rpc_error(&mut agent, "t3_background_wait", args.clone()).await;
+        let (code, message) = rpc_error(&mut agent, "conn_background_wait", args.clone()).await;
         assert_eq!(code, -32602, "{args}: {message}");
     }
     let (code, message) = rpc_error(
         &mut agent,
-        "t3_background_wait",
+        "conn_background_wait",
         json!({"taskIds": ["bg-1", " "]}),
     )
     .await;
@@ -1235,23 +1257,23 @@ async fn background_wait_marks_the_callers_tasks() {
         (code, message.as_str()),
         (
             -32602,
-            "Invalid parameters for tool 't3_background_wait': Expected a non-blank string\n  at [\"taskIds\"][1]"
+            "Invalid parameters for tool 'conn_background_wait': Expected a non-blank string\n  at [\"taskIds\"][1]"
         )
     );
 
     // Plan mode and the narrowest runtime mode may use it: it marks only this thread's work.
     let marked = agent
-        .ok("t3_background_wait", json!({"taskIds": [" bg-1 ", "x"]}))
+        .ok("conn_background_wait", json!({"taskIds": [" bg-1 ", "x"]}))
         .await;
     assert_eq!(marked, json!({"matched": ["bg-1"], "unmatched": ["x"]}));
     let (code, message) = agent
-        .failure("t3_background_wait", json!({"taskIds": ["x"]}))
+        .failure("conn_background_wait", json!({"taskIds": ["x"]}))
         .await;
     assert_eq!(code, "invalid_request");
     assert!(message.starts_with("None of these IDs is running background work"));
     let cleared = agent
         .ok(
-            "t3_background_wait",
+            "conn_background_wait",
             json!({"taskIds": ["x", "bg-1"], "waiting": false}),
         )
         .await;
@@ -1263,7 +1285,7 @@ async fn background_wait_marks_the_callers_tasks() {
     )
     .await;
     let (code, _) = agent
-        .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
+        .failure("conn_background_wait", json!({"taskIds": ["bg-1"]}))
         .await;
     assert_eq!(code, "parent_not_active");
 }
@@ -1279,7 +1301,7 @@ async fn background_wait_on_a_provider_without_a_roster() {
     until_provider_turn(&f, &live).await;
     let mut agent = Client::open(&f.service, agent_of(&f, &live)).await;
     let refused = agent
-        .failure("t3_background_wait", json!({"taskIds": ["bg-1"]}))
+        .failure("conn_background_wait", json!({"taskIds": ["bg-1"]}))
         .await;
     assert_eq!(
         refused,
@@ -1311,7 +1333,7 @@ async fn until_field(f: &Fixture, thread_id: &str, field: &str, want: &Value) ->
     false
 }
 
-/// `t3_thread_organize` (`toolkits/thread/handlers.ts`): `writesThreads([threadId])`, one
+/// `conn_thread_organize` (`toolkits/thread/handlers.ts`): `writesThreads([threadId])`, one
 /// engine command per action, and the own agent's settle deferred to the end of its turn.
 #[tokio::test(flavor = "current_thread")]
 async fn organize_writes_as_the_typescript_server() {
@@ -1324,7 +1346,7 @@ async fn organize_writes_as_the_typescript_server() {
     let mut reader = Client::open(&f.service, client(false)).await;
     let (code, _) = reader
         .failure(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "pin"}),
         )
         .await;
@@ -1333,28 +1355,28 @@ async fn organize_writes_as_the_typescript_server() {
     for action in ["pin", "archive", "settle", "mark_unread"] {
         let (code, _) = agent
             .failure(
-                "t3_thread_organize",
+                "conn_thread_organize",
                 json!({"threadId": full, "action": action}),
             )
             .await;
         assert_eq!(code, "runtime_mode_escalation_denied", "{action}");
     }
     let (code, message) = agent
-        .failure("t3_thread_organize", json!({"action": "snooze"}))
+        .failure("conn_thread_organize", json!({"action": "snooze"}))
         .await;
     assert_eq!(
         (code.as_str(), message.as_str()),
         ("invalid_request", "snooze requires snoozedUntil.")
     );
     let (code, _) = swamp
-        .failure("t3_thread_organize", json!({"action": "pin"}))
+        .failure("conn_thread_organize", json!({"action": "pin"}))
         .await;
     assert_eq!(code, "target_required");
 
     // Normal cases from outside: pin, unpin, archive, unarchive, snooze, unsnooze.
     let pinned = swamp
         .ok(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "pin"}),
         )
         .await;
@@ -1370,32 +1392,34 @@ async fn organize_writes_as_the_typescript_server() {
             .map(|t| t["pinned"].clone())
     };
     let list = swamp
-        .ok("t3_thread_list", json!({"allProjects": true}))
+        .ok("conn_thread_list", json!({"allProjects": true}))
         .await;
     assert_eq!(pinned_in(&list), Some(Value::Bool(true)));
-    let read = swamp.ok("t3_thread_read", json!({"threadId": full})).await;
+    let read = swamp
+        .ok("conn_thread_read", json!({"threadId": full}))
+        .await;
     assert_eq!(read["thread"]["pinned"], true);
     swamp
         .ok(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "unpin"}),
         )
         .await;
     assert!(thread_field(&f, &full, "pinnedAt").await.is_null());
     let list = swamp
-        .ok("t3_thread_list", json!({"allProjects": true}))
+        .ok("conn_thread_list", json!({"allProjects": true}))
         .await;
     assert_eq!(pinned_in(&list), Some(Value::Bool(false)));
     swamp
         .ok(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "snooze", "snoozedUntil": "2099-01-01T00:00:00.000Z"}),
         )
         .await;
     assert!(thread_field(&f, &full, "snoozedUntil").await.is_string());
     swamp
         .ok(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "unsnooze"}),
         )
         .await;
@@ -1403,7 +1427,7 @@ async fn organize_writes_as_the_typescript_server() {
     // A running thread cannot settle from outside: the engine refuses.
     let (code, _) = swamp
         .failure(
-            "t3_thread_organize",
+            "conn_thread_organize",
             json!({"threadId": full, "action": "settle"}),
         )
         .await;
@@ -1413,17 +1437,17 @@ async fn organize_writes_as_the_typescript_server() {
     // turn completes (a steer completes the fake turn).
     let mut own = Client::open(&f.service, agent_of(&f, &narrow)).await;
     let deferred = own
-        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .ok("conn_thread_organize", json!({"action": "settle"}))
         .await;
     assert_eq!(deferred, json!({"settlesWhenTurnEnds": true}));
     // A second request while one waits adds no second waiter.
-    own.ok("t3_thread_organize", json!({"action": "settle"}))
+    own.ok("conn_thread_organize", json!({"action": "settle"}))
         .await;
     assert_eq!(crate::lock(&f.service.settling).len(), 1);
     assert!(thread_field(&f, &narrow, "settledAt").await.is_null());
     swamp
         .ok(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": narrow, "message": "finish", "mode": "steer"}),
         )
         .await;
@@ -1441,10 +1465,10 @@ async fn organize_writes_as_the_typescript_server() {
     let other = launch_as_swamp(&mut swamp, "Other", "hang", "auto", "default").await;
     let mut other_agent = Client::open(&f.service, agent_of(&f, &other)).await;
     other_agent
-        .ok("t3_thread_organize", json!({"action": "settle"}))
+        .ok("conn_thread_organize", json!({"action": "settle"}))
         .await;
     swamp
-        .ok("t3_thread_interrupt", json!({"threadId": other}))
+        .ok("conn_thread_interrupt", json!({"threadId": other}))
         .await;
     for _ in 0..100 {
         if crate::lock(&f.service.settling).is_empty() {
@@ -1462,12 +1486,12 @@ async fn organize_writes_as_the_typescript_server() {
     )
     .await;
     let (code, _) = other_agent
-        .failure("t3_thread_organize", json!({"action": "unarchive"}))
+        .failure("conn_thread_organize", json!({"action": "unarchive"}))
         .await;
     assert_eq!(code, "parent_not_active");
 }
 
-/// `t3_queue` and `t3_thread_configure` (`toolkits/thread/handlers.ts`): reads are open, writes
+/// `conn_queue` and `conn_thread_configure` (`toolkits/thread/handlers.ts`): reads are open, writes
 /// take `writesThreads([threadId])`; queue writes are the engine's queued-run commands.
 #[tokio::test(flavor = "current_thread")]
 async fn queue_and_configure_follow_the_typescript_server() {
@@ -1479,7 +1503,7 @@ async fn queue_and_configure_follow_the_typescript_server() {
     for text in ["first", "second", &"x".repeat(1_200)] {
         let sent = swamp
             .ok(
-                "t3_thread_send",
+                "conn_thread_send",
                 json!({"threadId": full, "message": text, "mode": "queue"}),
             )
             .await;
@@ -1489,27 +1513,27 @@ async fn queue_and_configure_follow_the_typescript_server() {
     // Refusals first: a read-only client and a narrower agent may read but not write.
     let mut reader = Client::open(&f.service, client(false)).await;
     reader
-        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .ok("conn_queue", json!({"threadId": full, "action": "list"}))
         .await;
     let (code, _) = reader
         .failure(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
         )
         .await;
     assert_eq!(code, "capability_denied");
     let mut agent = Client::open(&f.service, agent_of(&f, &narrow)).await;
     let read = agent
-        .ok("t3_thread_configure", json!({"threadId": full}))
+        .ok("conn_thread_configure", json!({"threadId": full}))
         .await;
     assert_eq!(read["runtimeMode"], "full-access");
     for (tool, args) in [
         (
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "cancel", "queuedRunId": queued[0]}),
         ),
         (
-            "t3_thread_configure",
+            "conn_thread_configure",
             json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"}}),
         ),
     ] {
@@ -1518,7 +1542,7 @@ async fn queue_and_configure_follow_the_typescript_server() {
     }
     let (code, message) = swamp
         .failure(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "edit", "queuedRunId": queued[0]}),
         )
         .await;
@@ -1530,7 +1554,7 @@ async fn queue_and_configure_follow_the_typescript_server() {
     // Reads: send order, paging, the 1,000-character list cut and the 16,000 read cut.
     let list = swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "list", "limit": 2}),
         )
         .await;
@@ -1544,7 +1568,7 @@ async fn queue_and_configure_follow_the_typescript_server() {
     assert_eq!(list["nextCursor"], 2);
     let rest = swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "list", "cursor": 2}),
         )
         .await;
@@ -1553,7 +1577,7 @@ async fn queue_and_configure_follow_the_typescript_server() {
     assert_eq!(rest["nextCursor"], Value::Null);
     let one = swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "read", "queuedRunId": queued[2]}),
         )
         .await;
@@ -1565,60 +1589,60 @@ async fn queue_and_configure_follow_the_typescript_server() {
     // Writes: edit, reorder to the end with null, cancel; each answers its sequence.
     swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "edit", "queuedRunId": queued[0], "text": "edited"}),
         )
         .await;
     let edited = swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "read", "queuedRunId": queued[0]}),
         )
         .await;
     assert_eq!(edited["text"], "edited");
     let moved = swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "reorder", "queuedRunId": queued[0], "beforeRunId": null}),
         )
         .await;
     assert!(moved["sequence"].as_u64().unwrap() > 0);
     let order = swamp
-        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .ok("conn_queue", json!({"threadId": full, "action": "list"}))
         .await;
     assert_eq!(order["items"][2]["queuedRunId"], queued[0].as_str());
     swamp
         .ok(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
         )
         .await;
     let (code, _) = swamp
         .failure(
-            "t3_queue",
+            "conn_queue",
             json!({"threadId": full, "action": "cancel", "queuedRunId": queued[1]}),
         )
         .await;
     assert_eq!(code, "orchestration_error");
     let left = swamp
-        .ok("t3_queue", json!({"threadId": full, "action": "list"}))
+        .ok("conn_queue", json!({"threadId": full, "action": "list"}))
         .await;
     assert_eq!(left["items"].as_array().unwrap().len(), 2);
 
     // configure: the same provider instance sets the model.
     swamp
         .ok(
-            "t3_thread_configure",
+            "conn_thread_configure",
             json!({"threadId": full, "modelSelection": {"instanceId": "claudeAgent", "model": "claude-sonnet-5-5"}}),
         )
         .await;
     let read = swamp
-        .ok("t3_thread_configure", json!({"threadId": full}))
+        .ok("conn_thread_configure", json!({"threadId": full}))
         .await;
     assert_eq!(read["modelSelection"]["model"], "claude-sonnet-5-5");
 }
 
-/// `t3_thread_search` on the engine's message index (`searchThreads` in `ThreadSearch.ts`):
+/// `conn_thread_search` on the engine's message index (`searchThreads` in `ThreadSearch.ts`):
 /// title hits first, then one message hit per other thread, with a fifth of the slots kept
 /// for message hits; subagent and archived threads stay out.
 #[tokio::test(flavor = "current_thread")]
@@ -1657,7 +1681,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
     for thread in by_title.iter().chain([&by_message, &archived]) {
         swamp
             .ok(
-                "t3_thread_wait",
+                "conn_thread_wait",
                 json!({"threadId": thread, "timeoutMs": 10_000}),
             )
             .await;
@@ -1670,7 +1694,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
 
     let found = swamp
         .ok(
-            "t3_thread_search",
+            "conn_thread_search",
             json!({"query": "zebra", "projectId": project_id()}),
         )
         .await;
@@ -1698,7 +1722,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
     // limit 5: one slot of five stays for the message hit.
     let found = swamp
         .ok(
-            "t3_thread_search",
+            "conn_thread_search",
             json!({"query": "zebra", "limit": 5, "projectId": project_id()}),
         )
         .await;
@@ -1711,7 +1735,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
     assert_eq!(sources, ["title", "title", "title", "title", "assistant"]);
     // limit 4: no slot (4 / 5 = 0), titles only.
     let found = swamp
-        .ok("t3_thread_search", json!({"query": "zebra", "limit": 4}))
+        .ok("conn_thread_search", json!({"query": "zebra", "limit": 4}))
         .await;
     assert!(
         found["matches"]
@@ -1723,7 +1747,7 @@ async fn search_puts_titles_first_and_keeps_slots_for_messages() {
     // Another project's scope finds nothing.
     let found = swamp
         .ok(
-            "t3_thread_search",
+            "conn_thread_search",
             json!({"query": "zebra", "projectId": "project:other"}),
         )
         .await;
@@ -2304,7 +2328,7 @@ async fn workflow_stop_reports_the_same_failure_and_write_guards_as_t3() {
     let mut c = Client::open(&f.service, client(true)).await;
     assert_eq!(
         c.failure(
-            "t3_workflow_stop",
+            "conn_workflow_stop",
             json!({"threadId":"none", "subagentId":"none"})
         )
         .await,
@@ -2317,7 +2341,7 @@ async fn workflow_stop_reports_the_same_failure_and_write_guards_as_t3() {
         .request(
             "tools/call",
             json!({
-                "name":"t3_workflow_stop", "arguments":{"threadId":" ","subagentId":"task"}
+                "name":"conn_workflow_stop", "arguments":{"threadId":" ","subagentId":"task"}
             }),
         )
         .await;
@@ -2325,7 +2349,7 @@ async fn workflow_stop_reports_the_same_failure_and_write_guards_as_t3() {
     let mut c = Client::open(&f.service, client(false)).await;
     assert_eq!(
         c.failure(
-            "t3_workflow_stop",
+            "conn_workflow_stop",
             json!({"threadId":"none", "subagentId":"none"})
         )
         .await
@@ -2390,7 +2414,7 @@ async fn deferred_clients_load_tools_by_provider_session_and_receive_list_change
             &headers(&pairs),
             request(
                 "tools/call",
-                json!({"name":"tool_search","arguments":{"query":"T3_WORKFLOW_STOP"}}),
+                json!({"name":"tool_search","arguments":{"query":"CONN_WORKFLOW_STOP"}}),
             )
             .as_bytes(),
         )
@@ -2412,7 +2436,7 @@ async fn deferred_clients_load_tools_by_provider_session_and_receive_list_change
     assert_eq!(events[0]["method"], "notifications/tools/list_changed");
     assert_eq!(
         events[1]["result"]["structuredContent"]["tools"][0]["name"],
-        "t3_workflow_stop"
+        "conn_workflow_stop"
     );
     let list = f
         .service
@@ -2424,7 +2448,7 @@ async fn deferred_clients_load_tools_by_provider_session_and_receive_list_change
         )
         .await;
     let loaded: Value = serde_json::from_str(list.body.as_deref().unwrap()).unwrap();
-    assert!(names(&loaded).contains(&"t3_workflow_stop".into()));
+    assert!(names(&loaded).contains(&"conn_workflow_stop".into()));
     let ordinary = client
         .raw(json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}))
         .await
@@ -3001,7 +3025,7 @@ async fn html_render_publishes_for_live_callers_and_guards_file_access() {
 async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
     let f = fixture("html-preview");
     let mut client = Client::open(&f.service, client(true)).await;
-    let launched=client.ok("t3_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview","runtimeMode":"approval-required"})).await;
+    let launched=client.ok("conn_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview","runtimeMode":"approval-required"})).await;
     let thread = launched["threadId"].as_str().unwrap();
     let caller = Caller::Thread(ThreadCaller {
         thread_id: thread.into(),
@@ -3014,7 +3038,7 @@ async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
     });
     let mut agent = Client::open(&f.service, caller).await;
     client
-        .ok("t3_thread_interrupt", json!({"threadId":thread}))
+        .ok("conn_thread_interrupt", json!({"threadId":thread}))
         .await;
     for (args, message) in [
         (json!({}), "Pass exactly one of html or path."),
@@ -3072,7 +3096,7 @@ async fn html_preview_validates_before_launch_and_reads_without_a_live_turn() {
 async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chrome() {
     let f = fixture("browser-tools");
     let mut client = Client::open(&f.service, client(true)).await;
-    let launched=client.ok("t3_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview tools","runtimeMode":"full-access"})).await;
+    let launched=client.ok("conn_thread_launch",json!({"projectId":project_id(),"message":"hang","title":"Preview tools","runtimeMode":"full-access"})).await;
     let thread = launched["threadId"].as_str().unwrap();
     let mut blocked = agent_of(&f, thread);
     if let Caller::Thread(caller) = &mut blocked {
@@ -3095,12 +3119,12 @@ async fn browser_tools_share_t3_empty_results_and_failures_without_launching_chr
     assert_eq!(status["available"], false);
     assert_eq!(status["tabs"], json!([]));
     assert_eq!(
-        agent.ok("t3_preview_list", json!({})).await["sessions"],
+        agent.ok("conn_preview_list", json!({})).await["sessions"],
         json!([])
     );
     assert_eq!(
         agent
-            .ok("t3_preview_close", json!({"tabId":"missing"}))
+            .ok("conn_preview_close", json!({"tabId":"missing"}))
             .await,
         json!({})
     );
@@ -3226,7 +3250,7 @@ async fn test_logins_save_find_and_hide_secrets() {
     .await;
     swamp
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId":thread,"timeoutMs":1000}),
         )
         .await;
@@ -3573,7 +3597,7 @@ fn forge_tools_are_hidden_only_without_a_forge() {
     assert!(catalog::list_for(&agent, true, true).contains("\"name\":\"ci_logs\""));
 }
 
-/// `t3_project_create`, `t3_project_update` and `t3_project_delete` on the engine; the scratch
+/// `conn_project_create`, `conn_project_update` and `conn_project_delete` on the engine; the scratch
 /// project is refused as T3's `isScratchProject` refuses it.
 #[tokio::test(flavor = "current_thread")]
 async fn project_writes_create_update_delete_and_keep_scratch() {
@@ -3582,7 +3606,7 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
     let root = f.dir.join("made");
     let made = c
         .ok(
-            "t3_project_create",
+            "conn_project_create",
             json!({"title": "Made", "workspaceRoot": root, "createWorkspaceRootIfMissing": true}),
         )
         .await;
@@ -3595,7 +3619,7 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
     );
     let (code, message) = c
         .failure(
-            "t3_project_create",
+            "conn_project_create",
             json!({"title": "Again", "workspaceRoot": root}),
         )
         .await;
@@ -3608,12 +3632,12 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
     );
     let renamed = c
         .ok(
-            "t3_project_update",
+            "conn_project_update",
             json!({"projectId": id, "title": "Renamed"}),
         )
         .await;
     assert_eq!(renamed["title"], "Renamed");
-    let deleted = c.ok("t3_project_delete", json!({"projectId": id})).await;
+    let deleted = c.ok("conn_project_delete", json!({"projectId": id})).await;
     assert!(!deleted["deletedAt"].is_null());
     let scratch = f
         .service
@@ -3624,7 +3648,7 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
         .unwrap();
     let (code, message) = c
         .failure(
-            "t3_project_delete",
+            "conn_project_delete",
             json!({"projectId": scratch["projectId"]}),
         )
         .await;
@@ -3635,7 +3659,7 @@ async fn project_writes_create_update_delete_and_keep_scratch() {
     );
 }
 
-/// `t3_thread_transfer`: a fork of a finished run, its transfer in `status` on the fork, a
+/// `conn_thread_transfer`: a fork of a finished run, its transfer in `status` on the fork, a
 /// merge-back refused before the fork has a finished run, then one after it, pending on the
 /// source.
 #[tokio::test(flavor = "current_thread")]
@@ -3644,7 +3668,7 @@ async fn thread_transfer_forks_and_reports_status() {
     let mut c = Client::open(&f.service, client(true)).await;
     let launched = c
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": "Source", "message": "hello",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},
@@ -3655,13 +3679,13 @@ async fn thread_transfer_forks_and_reports_status() {
         .await;
     let source = launched["threadId"].as_str().unwrap().to_owned();
     c.ok(
-        "t3_thread_wait",
+        "conn_thread_wait",
         json!({"threadId": source, "runId": launched["runId"], "timeoutMs": 10_000}),
     )
     .await;
     let fork = c
         .ok(
-            "t3_thread_transfer",
+            "conn_thread_transfer",
             // The fake host takes no checkpoints, so the run is named, not `latest_stable`.
             json!({"threadId": source, "action": "fork", "title": "Forked",
                 "sourcePoint": {"type": "run", "runId": launched["runId"]}}),
@@ -3674,7 +3698,7 @@ async fn thread_transfer_forks_and_reports_status() {
     );
     let status = c
         .ok(
-            "t3_thread_transfer",
+            "conn_thread_transfer",
             json!({"threadId": target, "action": "status"}),
         )
         .await;
@@ -3684,7 +3708,7 @@ async fn thread_transfer_forks_and_reports_status() {
     assert_eq!(transfers[0]["targetThreadId"], target);
     let (code, message) = c
         .failure(
-            "t3_thread_transfer",
+            "conn_thread_transfer",
             json!({"threadId": target, "action": "merge_back", "targetThreadId": source}),
         )
         .await;
@@ -3695,18 +3719,18 @@ async fn thread_transfer_forks_and_reports_status() {
     );
     let sent = c
         .ok(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": target, "message": "fork work"}),
         )
         .await;
     c.ok(
-        "t3_thread_wait",
+        "conn_thread_wait",
         json!({"threadId": target, "runId": sent["runId"], "timeoutMs": 10_000}),
     )
     .await;
     let merged = c
         .ok(
-            "t3_thread_transfer",
+            "conn_thread_transfer",
             json!({"threadId": target, "action": "merge_back", "targetThreadId": source,
                 "sourcePoint": {"type": "run", "runId": sent["runId"]}}),
         )
@@ -3714,7 +3738,7 @@ async fn thread_transfer_forks_and_reports_status() {
     assert_eq!(merged["targetThreadId"], source);
     let status = c
         .ok(
-            "t3_thread_transfer",
+            "conn_thread_transfer",
             json!({"threadId": source, "action": "status"}),
         )
         .await;
@@ -3732,7 +3756,7 @@ async fn fill_credential_answers_with_a_status_only() {
     let mut outside = Client::open(&f.service, client(true)).await;
     let launched = outside
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": "Fill", "message": "hang",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},

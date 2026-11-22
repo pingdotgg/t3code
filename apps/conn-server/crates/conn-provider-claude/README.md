@@ -69,9 +69,9 @@ result equal, byte for byte.
 - **Options:** model, effort and settings from the catalog; `title`; tools preset;
   `permissionMode` (+ `allowDangerouslySkipPermissions` for bypass); `includePartialMessages`;
   `promptSuggestions: false`; `sessionId` or `resume` (+ `resumeSessionAt`); `allowedTools`
-  with `mcp__t3-code__*` when the session has `t3-code`; adaptive thinking with summaries;
+  with `mcp__conn__*` when the session has `conn`; adaptive thinking with summaries;
   `settings`; `supportedDialogKinds: ["resume_return"]`; `env`; the `claude_code` system prompt
-  preset with T3's append text (runtime info, pull request linking, and with `t3-code` the
+  preset with T3's append text (runtime info, pull request linking, and with `conn` the
   orchestration and background-wait text); `extraArgs {"thinking-display": "summarized"}`;
   `additionalDirectories` (cwd, attachments); `cwd`.
 - **Environment:** the host environment, `CLAUDE_CODE_ENTRYPOINT=t3-code` (or the user's or
@@ -93,7 +93,7 @@ result equal, byte for byte.
   `claudeRuntimeQueryPolicyForRuntimePolicy` over the runtime mode, interaction mode,
   `approvalPolicy` and `sandboxPolicy` kind: a read-only sandbox gives the tools
   `["Read","Glob","Grep"]` (also as `allowedTools` with `access: fullAccess`) and the read-only
-  `t3-code` tools; `approvalPolicy: never` gives `dontAsk` or bypass; plan mode with approvals
+  `conn` tools; `approvalPolicy: never` gives `dontAsk` or bypass; plan mode with approvals
   off denies every tool that would ask. The T3 server sets the two policies only through
   `RuntimePolicy.layerWithOverride` (its replay harness); its engine never does, and neither
   does ours.
@@ -254,7 +254,7 @@ Normalized in the comparison:
   T3 uses the real path. Only the first 8 tailed calls of a turn are tailed.
 - **Task list:** starts from the task tools it sees; TS first reads the list Claude saved on
   disk.
-- **Tool titles:** T3's own `/mcp` tools (`t3-code` and its aliases) get no presentation, as
+- **Tool titles:** T3's own `/mcp` tools (`conn` and its aliases) get no presentation, as
   T3; T3 decides by its tool table, this provider by the server name. `normalizeMcpHttpUrl`
   keeps an icon URL as sent, where T3 normalizes it with `new URL`.
 - **Attachments:** PDFs stay path-only. No skill splitting of slash commands. The 28 MiB

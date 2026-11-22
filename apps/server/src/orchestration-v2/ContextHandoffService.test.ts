@@ -200,7 +200,7 @@ it.effect("caps the side chat context block without summarizing discarded parent
     assert.isTrue(context.isWellFormed());
     assert.isTrue(
       context.endsWith(
-        `Use t3_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
+        `Use conn_thread_read on thread ${parentThreadId} to see the main thread's live state.`,
       ),
     );
 

@@ -38,14 +38,14 @@ const STUB = NodePath.join(HERE, "codex-stub.mjs");
 
 /**
  * Scenarios: a recorded fixture, optionally changed.
- * - `mcp`: the thread has T3's MCP session (`t3-code` servers, additionalContext).
+ * - `mcp`: the thread has T3's MCP session (`conn` servers, additionalContext).
  * - `attachments`: the first message carries an image and a file.
  * - `setModelBefore`: a `set_model` step before the message with this index.
  */
 const SCENARIOS = {
   simple: { fixture: "simple", covers: "initialize, fresh thread and turn" },
   resume: { fixture: "provider_thread_resume", covers: "a resumed thread on a new process" },
-  mcp: { fixture: "simple", mcp: true, covers: "a turn with the t3-code MCP server" },
+  mcp: { fixture: "simple", mcp: true, covers: "a turn with the conn MCP server" },
   device: { fixture: "simple", mcp: true, device: true, covers: "a turn whose MCP session has the device tools" },
   approval: { fixture: "tool_call_read_only_on_request", covers: "an approval and its answer" },
   login: {
@@ -86,7 +86,7 @@ const SCENARIOS = {
       },
       launchArgs: "--profile work -c sandbox_mode=workspace-write --search --oss",
       mcpServers: [
-        { name: "t3-code", enabled: true },
+        { name: "conn", enabled: true },
         { name: "dotted.name", enabled: true },
         { name: "off", enabled: false },
       ],

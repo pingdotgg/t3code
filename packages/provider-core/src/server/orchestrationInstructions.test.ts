@@ -16,7 +16,7 @@ describe("T3 device instructions", () => {
     }
     assert.notInclude(T3_CODE_DEVICE_TOOL_INSTRUCTIONS, "ToolSearch");
     const loadLine =
-      " Load them with ToolSearch `select:mcp__t3-code__device_list,mcp__t3-code__device_open,mcp__t3-code__device_screenshot,mcp__t3-code__device_close`.";
+      " Load them with ToolSearch `select:mcp__conn__device_list,mcp__conn__device_open,mcp__conn__device_screenshot,mcp__conn__device_close`.";
     assert.include(T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH, loadLine);
     assert.equal(
       T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH.replace(loadLine, ""),

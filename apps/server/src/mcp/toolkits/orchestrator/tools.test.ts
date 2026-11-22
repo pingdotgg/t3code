@@ -7,8 +7,8 @@ import { OrchestratorToolkit } from "./tools.ts";
 
 // Oversized page sizes clamp on decode, so the schema has no `maximum`; Codex also drops
 // bounds from its TypeScript view. The description is the only place a model sees a limit.
-it("states t3_thread_read page size limits in the parameter descriptions", () => {
-  const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.t3_thread_read) as {
+it("states conn_thread_read page size limits in the parameter descriptions", () => {
+  const schema = Tool.getJsonSchema(OrchestratorToolkit.tools.conn_thread_read) as {
     readonly properties: Readonly<Record<string, { readonly description?: string }>>;
   };
   const limits = { limit: "100", runLimit: "50", maxCharsPerItem: "20000" };
@@ -17,9 +17,9 @@ it("states t3_thread_read page size limits in the parameter descriptions", () =>
   }
 });
 
-it("refuses a t3_thread_update whose fields do not fit its action", () => {
+it("refuses a conn_thread_update whose fields do not fit its action", () => {
   const decode = Schema.decodeUnknownExit(
-    OrchestratorToolkit.tools.t3_thread_update.parametersSchema,
+    OrchestratorToolkit.tools.conn_thread_update.parametersSchema,
   );
   expect(Exit.isFailure(decode({ action: "rename" }))).toBe(true);
   expect(Exit.isFailure(decode({ action: "regenerate_title", title: "New" }))).toBe(true);

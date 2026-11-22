@@ -1696,7 +1696,7 @@ impl Session for ClaudeSession {
             let Some(name) = item
                 .get("toolName")
                 .and_then(Value::as_str)
-                .filter(|n| n.starts_with("mcp__") && !n.starts_with("mcp__t3-code__"))
+                .filter(|n| n.starts_with("mcp__") && !n.starts_with("mcp__conn__"))
             else {
                 return Ok(None);
             };

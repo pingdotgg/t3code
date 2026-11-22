@@ -527,38 +527,38 @@ mod tests {
 
     #[test]
     fn checks_arguments_like_the_typescript_decoder() {
-        let (list, order) = tool("t3_thread_list").unwrap();
+        let (list, order) = tool("conn_thread_list").unwrap();
         let schema = list["inputSchema"].clone();
         let mut args = json!({"bogus": 1}).as_object().unwrap().clone();
         assert_eq!(
-            check_arguments("t3_thread_list", &schema, &order, &mut args).unwrap_err(),
+            check_arguments("conn_thread_list", &schema, &order, &mut args).unwrap_err(),
             "Unknown argument \"bogus\". Accepted arguments: environmentId, projectId, allProjects, statuses, titleContains, settled, snoozed, includeSubagents, cursor, limit."
         );
-        let (wait, wait_order) = tool("t3_thread_wait").unwrap();
+        let (wait, wait_order) = tool("conn_thread_wait").unwrap();
         let wait = wait["inputSchema"].clone();
         let mut args = Map::new();
         assert_eq!(
-            check_arguments("t3_thread_wait", &wait, &wait_order, &mut args).unwrap_err(),
+            check_arguments("conn_thread_wait", &wait, &wait_order, &mut args).unwrap_err(),
             "Missing key\n  at [\"threadId\"]"
         );
         let mut args = json!({"threadId": "t", "runId": null})
             .as_object()
             .unwrap()
             .clone();
-        check_arguments("t3_thread_wait", &wait, &wait_order, &mut args).unwrap();
+        check_arguments("conn_thread_wait", &wait, &wait_order, &mut args).unwrap();
         assert!(!args.contains_key("runId"));
         let mut args = json!({"threadId": 5}).as_object().unwrap().clone();
-        assert!(check_arguments("t3_thread_wait", &wait, &wait_order, &mut args).is_err());
+        assert!(check_arguments("conn_thread_wait", &wait, &wait_order, &mut args).is_err());
         // T3 #30976: a limit above the maximum passes, and the tool clamps it.
         let mut args = json!({"limit": 101}).as_object().unwrap().clone();
-        check_arguments("t3_thread_list", &schema, &order, &mut args).unwrap();
+        check_arguments("conn_thread_list", &schema, &order, &mut args).unwrap();
         let mut args = json!({"limit": 0}).as_object().unwrap().clone();
-        assert!(check_arguments("t3_thread_list", &schema, &order, &mut args).is_err());
+        assert!(check_arguments("conn_thread_list", &schema, &order, &mut args).is_err());
         let mut args = json!({"statuses": ["running"]})
             .as_object()
             .unwrap()
             .clone();
-        check_arguments("t3_thread_list", &schema, &order, &mut args).unwrap();
+        check_arguments("conn_thread_list", &schema, &order, &mut args).unwrap();
         // String lengths count UTF-16 units, as a JavaScript string's length.
         let (send, send_order) = tool("send_to_user").unwrap();
         let send = send["inputSchema"].clone();
@@ -581,7 +581,7 @@ mod tests {
             );
         }
         // Integer bounds read as Effect's; `null` stays only where the schema takes it.
-        let (queue, queue_order) = tool("t3_queue").unwrap();
+        let (queue, queue_order) = tool("conn_queue").unwrap();
         let queue = queue["inputSchema"].clone();
         for (args, problem) in [
             (
@@ -601,7 +601,7 @@ mod tests {
         ] {
             let mut args = args.as_object().unwrap().clone();
             assert_eq!(
-                check_arguments("t3_queue", &queue, &queue_order, &mut args).err(),
+                check_arguments("conn_queue", &queue, &queue_order, &mut args).err(),
                 problem.map(str::to_owned)
             );
         }
@@ -609,7 +609,7 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        check_arguments("t3_queue", &queue, &queue_order, &mut args).unwrap();
+        check_arguments("conn_queue", &queue, &queue_order, &mut args).unwrap();
         assert_eq!(args.get("beforeRunId"), Some(&Value::Null));
         assert!(!args.contains_key("queuedRunId"));
     }

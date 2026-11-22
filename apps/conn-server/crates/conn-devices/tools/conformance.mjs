@@ -458,10 +458,10 @@ await compare("hub proxy MJPEG still frame", async (s) => {
 const launched = await Promise.all(servers.map(async (server) => {
   const session = new McpSession(server.origin, server.mcpAuthorization);
   await session.initialize();
-  const projects = await session.callTool("t3_project_list", {});
+  const projects = await session.callTool("conn_project_list", {});
   const projectId = projects.result.structuredContent.projects.find((p) => p.title === "parity")?.id
     ?? projects.result.structuredContent.projects[0].id;
-  const reply = await session.callTool("t3_thread_launch", {
+  const reply = await session.callTool("conn_thread_launch", {
     projectId, title: "Devices", message: "hang",
     modelSelection: { instanceId: "claudeAgent", model: "claude-haiku-5-5" }, runtimeMode: "full-access",
     workspaceStrategy: { type: "root" }, clientRequestId: "devices",

@@ -782,7 +782,7 @@ impl Inner {
     }
 
     fn has_t3_mcp(&self) -> bool {
-        self.config.mcp_servers.iter().any(|s| s.name == "t3-code")
+        self.config.mcp_servers.iter().any(|s| s.name == "conn")
     }
 
     /// Applies outs: events to the engine, replies to the agent, a flush timer. Runs under
@@ -1509,13 +1509,13 @@ pub(crate) fn system_env() -> Box<dyn Env + Sync> {
 mod mcp_tests {
     use serde_json::json;
 
-    /// The `t3-code` entry as `acpMcpContext` builds it for a flavor without `mcpOverHttp`:
+    /// The `conn` entry as `acpMcpContext` builds it for a flavor without `mcpOverHttp`:
     /// the stdio bridge, also for an agent that offers neither `http` nor `acp`.
     #[test]
     fn grok_gets_t3s_stdio_bridge() {
         let server = conn_provider::McpServer {
             device_tools: false,
-            name: "t3-code".into(),
+            name: "conn".into(),
             url: "http://127.0.0.1:1/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer t".into())],
         };
@@ -1532,7 +1532,7 @@ mod mcp_tests {
             let entry: serde_json::Value = serde_json::from_str(&entries[0].to_line()).unwrap();
             assert_eq!(
                 entry,
-                json!({"name": "t3-code", "command": "/bin/conn-server", "args": ["acp-mcp-bridge"], "env": [
+                json!({"name": "conn", "command": "/bin/conn-server", "args": ["acp-mcp-bridge"], "env": [
                     {"name": "ELECTRON_RUN_AS_NODE", "value": "1"},
                     {"name": "T3_ACP_MCP_ENDPOINT", "value": "http://127.0.0.1:1/mcp"},
                     {"name": "T3_ACP_MCP_AUTHORIZATION", "value": "Bearer t"}

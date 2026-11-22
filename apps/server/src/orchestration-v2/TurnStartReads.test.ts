@@ -448,7 +448,7 @@ it.effect.each(["sqlite"] as const)(
           ...item,
           id: TurnItemId.make("attachment:recording"),
           type: "dynamic_tool",
-          toolName: "mcp__t3-code__preview_recording_stop",
+          toolName: "mcp__conn__preview_recording_stop",
           input: {},
           output: [
             { type: "text", text: JSON.stringify({ id: recordingId, mimeType: "video/webm" }) },

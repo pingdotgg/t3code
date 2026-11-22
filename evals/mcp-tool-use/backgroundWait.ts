@@ -1,6 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /**
- * T3's real `t3_background_wait` handler and ThreadManagementService over a Claude session.
+ * T3's real `conn_background_wait` handler and ThreadManagementService over a Claude session.
  * Only the adapter is the eval's: like Claude's, it matches task IDs against the session's
  * running background work, which the case lists in `world.backgroundTasks`.
  */
@@ -47,7 +47,7 @@ const providerSessionId = ProviderSessionId.make("provider-session:mcp-tool-use-
 const providerInstanceId = ProviderInstanceId.make("claudeAgent");
 const driver = ProviderDriverKind.make("claudeAgent");
 
-/** Calls T3's `t3_background_wait` with `running` as the session's running background task IDs. */
+/** Calls T3's `conn_background_wait` with `running` as the session's running background task IDs. */
 export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWait")(function* (
   running: ReadonlyArray<string>,
 ) {
@@ -111,8 +111,8 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
   type Entry = Parameters<McpServer.McpServer["Service"]["addTool"]>[0];
   // The registry keeps each tool's handler; its public type lists only definitions.
   const tools = Context.get(context, McpServer.McpServer).tools as ReadonlyArray<Entry>;
-  const entry = tools.find((tool) => tool.tool.name === "t3_background_wait");
-  if (entry === undefined) return yield* Effect.die(new Error("T3 has no t3_background_wait."));
+  const entry = tools.find((tool) => tool.tool.name === "conn_background_wait");
+  if (entry === undefined) return yield* Effect.die(new Error("T3 has no conn_background_wait."));
   const scope: McpInvocationContext.McpThreadInvocationScope = {
     environmentId: EnvironmentId.make("00000000-0000-4000-8000-0000000000e0"),
     requestNamespace: "mcp-tool-use-eval",
@@ -146,7 +146,7 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
       .flatMap((part) => (part.type === "text" ? [part.text] : []))
       .join("\n");
     if (text === "Tool execution failed due to an internal server error.") {
-      return yield* Effect.die(new Error("t3_background_wait hit a defect in T3 or the eval."));
+      return yield* Effect.die(new Error("conn_background_wait hit a defect in T3 or the eval."));
     }
     return { text, isError: result.isError === true };
   });

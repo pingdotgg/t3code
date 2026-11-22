@@ -708,7 +708,7 @@ const WATCH_FROM_SUBAGENT: &str = "This thread is a subagent, so it cannot watch
 /// `PullRequestProjectNotFoundError`.
 pub(super) fn project_not_found(repository: &str) -> String {
     format!(
-        "No project in this environment is a checkout of {repository}, so its pull requests cannot be read here. Add one with t3_project_create."
+        "No project in this environment is a checkout of {repository}, so its pull requests cannot be read here. Add one with conn_project_create."
     )
 }
 

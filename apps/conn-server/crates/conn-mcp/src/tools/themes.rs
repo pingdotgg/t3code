@@ -1,4 +1,4 @@
-//! `t3_theme_read` and `t3_theme_set` (`mcp/toolkits/theme`, `EnvironmentThemeService`).
+//! `conn_theme_read` and `conn_theme_set` (`mcp/toolkits/theme`, `EnvironmentThemeService`).
 
 use conn_files::themes::{self, Refused, Themes};
 use serde_json::{Map, Value, json};
@@ -31,7 +31,7 @@ async fn refresh(themes: &Themes) -> Result<themes::Snapshot, ToolError> {
         .map_err(|_| unavailable())
 }
 
-/// `t3_theme_read` (`reads`): the default theme, the built-in and published themes, one
+/// `conn_theme_read` (`reads`): the default theme, the built-in and published themes, one
 /// published theme's file when asked, and the guide.
 pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let themes = service(cx)?;
@@ -79,7 +79,7 @@ pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(result)
 }
 
-/// `t3_theme_set` (`writesEnvironment`): publishes `theme` under `themeId` when given, then
+/// `conn_theme_set` (`writesEnvironment`): publishes `theme` under `themeId` when given, then
 /// makes the theme and `appearance` the environment's defaults. A failed select puts back the
 /// file the publish replaced.
 pub(super) async fn set(cx: &Cx<'_>, args: &Args) -> ToolResult {

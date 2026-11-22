@@ -178,14 +178,14 @@ try {
     if (reply.result?.isError !== false) throw new Error(`${name}: ${JSON.stringify(reply)}`);
     return reply.result.structuredContent;
   };
-  const projects = await tool("t3_project_list", {});
+  const projects = await tool("conn_project_list", {});
   const project = projects.projects.find((p) => p.workspaceRoot === NodeFS.realpathSync(workspace));
   const threads = [];
   for (let n = 1; n <= turns; n++) {
     const index = (n - 1) % threadCount;
     let run;
     if (threads[index] === undefined) {
-      run = await tool("t3_thread_launch", {
+      run = await tool("conn_thread_launch", {
         projectId: project.id,
         title: `Memory ${index + 1}`,
         message: `Turn ${n}`,
@@ -203,9 +203,9 @@ try {
         acceptDeferredWork: true,
       });
     } else {
-      run = await tool("t3_thread_send", { threadId: threads[index], message: `Turn ${n}`, mode: "queue" });
+      run = await tool("conn_thread_send", { threadId: threads[index], message: `Turn ${n}`, mode: "queue" });
     }
-    const waited = await tool("t3_thread_wait", { threadId: run.threadId, runId: run.runId, timeoutMs: 60_000 });
+    const waited = await tool("conn_thread_wait", { threadId: run.threadId, runId: run.runId, timeoutMs: 60_000 });
     if (waited.status !== "completed") throw new Error(`turn ${n}: ${JSON.stringify(waited)}`);
   }
   await sleep(2000);

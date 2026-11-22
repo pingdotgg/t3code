@@ -54,7 +54,7 @@ pub(super) async fn read(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .ok_or_else(|| fail("invalid_request", "The project was not found."))
 }
 
-/// `t3_environment_read`. Preferences are the settings defaults: this server has no
+/// `conn_environment_read`. Preferences are the settings defaults: this server has no
 /// settings store.
 pub(super) fn environment(cx: &Cx<'_>) -> Value {
     let config = cx.config();
@@ -298,7 +298,7 @@ pub(super) fn default_model_selection(cx: &Cx<'_>) -> Option<Value> {
         })
 }
 
-// ---- t3_project_create, t3_project_update, t3_project_delete, t3_project_clone ----------
+// ---- conn_project_create, conn_project_update, conn_project_delete, conn_project_clone ----------
 // (`apps/server/src/mcp/toolkits/project/handlers.ts`), on the engine's `projects.*` calls.
 
 /// `unavailable`: a failure the caller cannot act on.
@@ -363,7 +363,7 @@ pub(super) async fn create(cx: &super::Cx<'_>, args: &Args) -> ToolResult {
         {
             return Err(fail(
                 "invalid_request",
-                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with t3_project_update.",
+                "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with conn_project_update.",
             ));
         }
         let created = cx

@@ -831,7 +831,7 @@ export function gradeDevice(expect: typeof DeviceExpect.Type | undefined, run: D
   const add = (check: string, pass: boolean) => checks.push({ check, pass });
   if (expect.briefs !== undefined) {
     const briefs = run.calls.filter((call) =>
-      ["delegate_task", "t3_thread_launch"].includes(call.tool),
+      ["delegate_task", "conn_thread_launch"].includes(call.tool),
     );
     add("device briefs count", briefs.length >= expect.briefs);
     for (const [i, call] of briefs.entries()) {

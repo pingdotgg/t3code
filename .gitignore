@@ -18,6 +18,7 @@ build/
 release/
 release-mock/
 .t3
+.conn
 .idea/
 apps/web/.playwright
 apps/web/playwright-report

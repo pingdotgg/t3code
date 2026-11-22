@@ -1,5 +1,5 @@
 //! The agent wiring, end to end: a Conn Server with the scripted fake provider, one thread,
-//! and that thread's `t3-code` MCP entry written as a Claude `--mcp-config` file. Start
+//! and that thread's `conn` MCP entry written as a Claude `--mcp-config` file. Start
 //! `claude --mcp-config <file>` against it to act as that thread's agent.
 //!
 //! `cargo run -p conn-server --example mcp_agent -- <state-dir> <project-dir> <config-out>`

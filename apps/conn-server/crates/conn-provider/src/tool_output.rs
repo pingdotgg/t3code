@@ -22,12 +22,21 @@ pub fn resolve_t3_mcp_tool_id(name: &str) -> Option<&str> {
             suffix.eq_ignore_ascii_case("complete") || suffix.eq_ignore_ascii_case("completed")
         })
         .map_or(name, |(head, _)| head.trim_end_matches(js_whitespace));
-    let known = |name: &str| TOOL_NAMES.contains(&name);
+    // A known tool by its current name; threads recorded before the rename call the conn_ tools t3_.
+    let current = |tool: &str| -> Option<&'static str> {
+        let tool = tool
+            .strip_prefix("t3_")
+            .map_or_else(|| tool.to_owned(), |rest| format!("conn_{rest}"));
+        TOOL_NAMES.iter().copied().find(|known| *known == tool)
+    };
     let lower = name.to_ascii_lowercase();
     if let Some(rest) = name.get(5..).filter(|_| lower.starts_with("mcp__"))
         && let Some((server, tool)) = rest.split_once("__")
     {
         return [
+            "conn",
+            "conn-direct",
+            "conn_direct",
             "t3-code",
             "t3_code",
             "t3code",
@@ -35,10 +44,13 @@ pub fn resolve_t3_mcp_tool_id(name: &str) -> Option<&str> {
             "t3_code_direct",
         ]
         .contains(&server.to_ascii_lowercase().as_str())
-        .then_some(tool)
-        .filter(|tool| known(tool));
+        .then(|| current(tool))
+        .flatten();
     }
     for prefix in [
+        "conn-direct",
+        "conn_direct",
+        "conn",
         "t3-code-direct",
         "t3_code_direct",
         "t3_code-direct",
@@ -56,7 +68,7 @@ pub fn resolve_t3_mcp_tool_id(name: &str) -> Option<&str> {
                     .map(|(_, after)| after.trim_start_matches(js_whitespace))
             });
             if let Some(tool) = tool {
-                return known(tool).then_some(tool);
+                return current(tool);
             }
         }
     }
@@ -71,32 +83,37 @@ pub fn resolve_t3_mcp_tool_id(name: &str) -> Option<&str> {
             (count > 0).then(|| s.get(count..)).flatten()
         })
         .unwrap_or(&lower);
-    for prefix in ["t3-code", "t3_code", "t3 code", "t3code"] {
+    for prefix in ["conn", "t3-code", "t3_code", "t3 code", "t3code"] {
         if let Some(suffix) = rest.strip_prefix(prefix) {
             let original = name.get(name.len() - suffix.len()..).unwrap_or_default();
             let tool = original
                 .strip_prefix("__")
                 .or_else(|| original.strip_prefix(['-', '_', '.', ':', '/', ' ']));
-            if let Some(tool) = tool.filter(|tool| known(tool)) {
+            if let Some(tool) = tool.and_then(current) {
                 return Some(tool);
             }
         }
     }
-    if known(name) {
-        return Some(name);
+    if let Some(tool) = current(name) {
+        return Some(tool);
     }
-    if !lower.starts_with("t3-code-") {
+    if !lower.starts_with("conn-") && !lower.starts_with("t3-code-") {
         return None;
     }
+    let ends_with = |suffix: &str| {
+        name.strip_suffix(suffix)
+            .is_some_and(|prefix| prefix.ends_with('_'))
+    };
     TOOL_NAMES
         .iter()
         .copied()
         .filter(|tool| {
-            name.strip_suffix(tool)
-                .is_some_and(|prefix| prefix.ends_with('_'))
+            ends_with(tool)
+                || tool
+                    .strip_prefix("conn_")
+                    .is_some_and(|rest| ends_with(&format!("t3_{rest}")))
         })
         .max_by_key(|tool| tool.len())
-        .and_then(|tool| name.get(name.len() - tool.len()..))
 }
 
 #[derive(Default)]
@@ -516,7 +533,7 @@ mod tests {
     fn html_references_use_the_shared_resolver_and_normalizer() {
         let output = json!({"htmlRender":{"attachmentId":"page", "title":" Page ", "height":1}});
         for name in [
-            "mcp__t3-code__html_render",
+            "mcp__conn__html_render",
             "t3-code-thread_1_html_render",
             "execute",
         ] {
@@ -532,7 +549,7 @@ mod tests {
                 .is_none()
         );
         assert_eq!(
-            resolve_t3_mcp_tool_id("t3-code-thread_opencode2-adapter_delegate_task"),
+            resolve_t3_mcp_tool_id("conn-thread_opencode2-adapter_delegate_task"),
             Some("delegate_task")
         );
         assert_eq!(

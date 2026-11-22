@@ -517,7 +517,7 @@
 ### Out of Scope Settings (`[-]`)
 - `[-]` **Global / Environment / Project `SettingsScopeContext` axis bar & `SettingInheritance` badges** (`_chat.settings.tsx:50-175`, `SettingsScopeContext.tsx`) — `docs/scope.md` #13 (`Subset`: flat Orbit-synced profile + minimal per-project overrides).
 - `[-]` **Custom Keybindings JSON/capture editor** (`_chat.settings.keybindings.tsx`) — `docs/scope.md` #13 (`Subset`: drop custom keybindings editor).
-- `[-]` **Visual Theme Editor, Inspector Spotlight & `t3_theme_set` / Theme Import** (`ThemeEditorPanel.tsx`, `ThemeImportDialog.tsx`) — `docs/scope.md` #2 & #30 (`Drop`).
+- `[-]` **Visual Theme Editor, Inspector Spotlight & `conn_theme_set` / Theme Import** (`ThemeEditorPanel.tsx`, `ThemeImportDialog.tsx`) — `docs/scope.md` #2 & #30 (`Drop`).
 - `[-]` **Labs / Beta settings page (`Boring sidebar`, `Guest links`, `Linked environments`, `Simlock`, `Legacy plan mode`, `Legacy context meter`)** (`_chat.settings.labs.tsx`, `settingsSearch.ts:503-534,795-805`) — `docs/scope.md` #13 (`Subset`: drop Labs).
 - `[-]` **SnapShots settings page & shortcut recorder** (`_chat.settings.snap-shot.tsx`, `SnapShotSettings.tsx`) — `docs/scope.md` #26 (`Drop`).
 - `[-]` **Sharing & Access / T3 Connect managed tunnel / Clerk Sign-In / Peer Links / QR Pairing / Load Balancing** (`_chat.settings.access.tsx`, `SettingsSidebarNav.tsx:444-451`, `settingsSearch.ts:1195-1289`) — `docs/scope.md` #1 (`Orbit`), #3 (`Drop`), #27 (`Drop`).

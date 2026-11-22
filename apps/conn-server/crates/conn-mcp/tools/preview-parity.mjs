@@ -107,7 +107,7 @@ export async function previewParity(binary, browser) {
   }
   const cases = [
     { tool: "preview_status", args: {} },
-    { tool: "t3_preview_list", args: {} },
+    { tool: "conn_preview_list", args: {} },
     { tool: "preview_open", args: { profileId: "missing-profile", reuseExistingTab: false } },
     ...[
       "preview_open",
@@ -122,7 +122,7 @@ export async function previewParity(binary, browser) {
       "preview_wait_for",
       "preview_recording_start",
       "preview_recording_stop",
-      "t3_preview_close",
+      "conn_preview_close",
     ]
       .map((tool) => ({
         tool,
@@ -138,7 +138,7 @@ export async function previewParity(binary, browser) {
             preview_wait_for: { text: "Ready" },
           }[tool] ?? {},
       }))
-      .map((c) => (c.tool === "t3_preview_close" ? { ...c, args: { tabId: "missing" } } : c)),
+      .map((c) => (c.tool === "conn_preview_close" ? { ...c, args: { tabId: "missing" } } : c)),
     { tool: "html_preview", args: {} },
     { tool: "html_preview", args: { html: "<p>x</p>", path: "/missing.html" } },
     { tool: "html_preview", args: { html: "<style>body{height:100vh}</style>" } },
@@ -197,7 +197,7 @@ export async function previewParity(binary, browser) {
       { tool: "preview_recording_start", args: {} },
       { tool: "preview_act", args: { action: "click", locator: 'role=button[name="Press me"]' } },
       { tool: "preview_recording_stop", args: {} },
-      { tool: "t3_preview_close", args: { tabId: "$first" } },
+      { tool: "conn_preview_close", args: { tabId: "$first" } },
       { tool: "preview_status", args: {} },
     );
   }

@@ -628,7 +628,7 @@ impl Context {
                     Some("humanControl") => "A human controls this browser tab. Wait until they release control.".into(),
                     Some("tabRequired") => "Multiple browser tabs belong to this session. Pass a tabId from preview_open or from the tabs listed by preview_status.".into(),
                     Some("dialogPending") => "A browser dialog is pending. Read preview_status and resolve it with preview_dialog.".into(),
-                    Some("tabLimit") => "Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.".into(),
+                    Some("tabLimit") => "Too many server browser tabs are open. Close one with conn_preview_close, or reuse a tabId from preview_status tabs.".into(),
                     Some("closed") => "This browser tab is closed. Call preview_open.".into(),
                     Some("interrupted") => "Browser control changed. Take a fresh snapshot before trying again.".into(),
                     _ => format!("Preview automation {op} was interrupted on client {client}."),

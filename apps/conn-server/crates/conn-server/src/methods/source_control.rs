@@ -65,7 +65,7 @@ fn host_inputs(deps: &Deps) -> HostInputs {
     }
 }
 
-/// `sourceControl.cloneRepository` for `t3_project_clone` (`conn_mcp::McpConfig`).
+/// `sourceControl.cloneRepository` for `conn_project_clone` (`conn_mcp::McpConfig`).
 pub(crate) fn clone_host(deps: &Deps) -> conn_mcp::MethodHost {
     let inputs = host_inputs(deps);
     Arc::new(move |input: Value| {

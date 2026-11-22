@@ -289,7 +289,7 @@ async fn run_scenario(
                         mcp_servers: if scenario["mcp"] == true {
                             vec![McpServer {
                                 device_tools: scenario["device"] == true,
-                                name: "t3-code".into(),
+                                name: "conn".into(),
                                 url: "http://127.0.0.1:3773/mcp".into(),
                                 headers: vec![(
                                     "Authorization".into(),

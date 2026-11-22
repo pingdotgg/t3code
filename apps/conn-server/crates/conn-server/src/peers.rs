@@ -907,7 +907,7 @@ impl PeerLinks {
             PeerLinkError::new(
                 "unknown_link",
                 format!(
-                    "This environment is not linked to {environment_id}. t3_environment_links lists the linked ones."
+                    "This environment is not linked to {environment_id}. conn_environment_links lists the linked ones."
                 ),
             )
         };
@@ -1458,7 +1458,7 @@ fn outcome_notice(card: &Value, outcome: &Map<String, Value>) -> (String, Value)
         }
         Some("failed") => (
             format!(
-                "Linking {target} failed: {}. Call t3_environment_link again if the user still wants it.",
+                "Linking {target} failed: {}. Call conn_environment_link again if the user still wants it.",
                 outcome
                     .get("failure")
                     .and_then(Value::as_str)
@@ -2028,7 +2028,7 @@ mod tests {
     }
 
     /// A forwarded result is decoded with the tool's success shape (`PeerMcpClient`): a peer
-    /// answering `{}` to `t3_thread_launch` did not launch anything.
+    /// answering `{}` to `conn_thread_launch` did not launch anything.
     #[tokio::test(flavor = "current_thread")]
     async fn a_forwarded_result_must_match_the_tool() {
         let (peers, _) = links_with_a_running_thread("shape").await;
@@ -2054,7 +2054,7 @@ mod tests {
         let refused = peers
             .call(PeerCall {
                 environment_id: "environment:peer".into(),
-                tool: "t3_thread_launch".into(),
+                tool: "conn_thread_launch".into(),
                 arguments: Map::new(),
                 limits: conn_mcp::PeerLimits {
                     runtime_mode: "full-access".into(),

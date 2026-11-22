@@ -41,7 +41,7 @@ fn required<'a>(args: &'a Args, name: &str) -> Result<&'a Value, ToolError> {
         .ok_or_else(|| fail("invalid_request", format!("This action needs `{name}`.")))
 }
 
-/// `t3_thread_organize`: `writesThreads([threadId])`, then one engine command. A thread's own
+/// `conn_thread_organize`: `writesThreads([threadId])`, then one engine command. A thread's own
 /// agent that settles its thread mid-turn gets `settlesWhenTurnEnds` and the thread settles
 /// after the run completes (`ThreadManagementService.settleThread`).
 pub(super) async fn organize(cx: &Cx<'_>, args: &Args) -> ToolResult {
@@ -295,7 +295,7 @@ fn queue_entry(projection: &Value, run_id: &str, limit: usize) -> Option<Value> 
     }))
 }
 
-/// `t3_queue`: `list` and `read` read; the other actions are `writesThreads([threadId])` and
+/// `conn_queue`: `list` and `read` read; the other actions are `writesThreads([threadId])` and
 /// one queued-run command each.
 pub(super) async fn queue(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let action = str_arg(args, "action").unwrap_or_default();
@@ -347,7 +347,7 @@ pub(super) async fn queue(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({ "sequence": sequence }))
 }
 
-/// `t3_thread_configure`: without `modelSelection` it reads the thread's selection and
+/// `conn_thread_configure`: without `modelSelection` it reads the thread's selection and
 /// modes; with it, `writesThreads([threadId])` and `thread.model-selection.set` (same
 /// provider instance) or `provider.switch` (`modelSelectionCommandType`).
 pub(super) async fn configure(cx: &Cx<'_>, args: &Args) -> ToolResult {
@@ -378,7 +378,7 @@ pub(super) async fn configure(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({ "sequence": sequence }))
 }
 
-/// `t3_thread_transfer` (`toolkits/thread/handlers.ts`): `status` reads the thread's context
+/// `conn_thread_transfer` (`toolkits/thread/handlers.ts`): `status` reads the thread's context
 /// transfers; `fork` and `merge_back` are `writesThreads([threadId, targetThreadId])` and one
 /// engine command each.
 pub(super) async fn transfer(cx: &Cx<'_>, args: &Args) -> ToolResult {

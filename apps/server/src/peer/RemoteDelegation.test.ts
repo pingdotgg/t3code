@@ -2057,7 +2057,7 @@ it.effect("stopping the parent stops follow-up work on a task there that has its
       });
 
       // The parent sends the thread there a follow-up, which starts a run there as a new task.
-      const sent = yield* a.call("t3_thread_send", {
+      const sent = yield* a.call("conn_thread_send", {
         environmentId: box.environmentId,
         threadId: delegated.remoteChild.threadId,
         message: "Now run the slow suite too.",
@@ -2120,12 +2120,12 @@ it.effect.each([
         yield* Deferred.succeed(thread.finished, undefined);
         yield* taskResult(a, delegated.taskId);
 
-        const sendFollowUp = a.call("t3_thread_send", {
+        const sendFollowUp = a.call("conn_thread_send", {
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Now run the slow suite too.",
         });
-        const sendQueued = a.call("t3_thread_send", {
+        const sendQueued = a.call("conn_thread_send", {
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Then the flaky suite.",
@@ -2189,12 +2189,12 @@ it.effect.each([
         yield* Deferred.succeed(thread.finished, undefined);
         yield* taskResult(a, delegated.taskId);
 
-        const followUp = yield* a.call("t3_thread_send", {
+        const followUp = yield* a.call("conn_thread_send", {
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Now run the slow suite too.",
         });
-        yield* a.call("t3_thread_send", {
+        yield* a.call("conn_thread_send", {
           environmentId: box.environmentId,
           threadId: delegated.remoteChild.threadId,
           message: "Then the flaky suite.",
@@ -2267,7 +2267,7 @@ it.effect("a follow-up sent after the parent's own run ended is still a task", (
         ],
       });
 
-      const sent = yield* a.call("t3_thread_send", {
+      const sent = yield* a.call("conn_thread_send", {
         environmentId: box.environmentId,
         threadId: delegated.remoteChild.threadId,
         message: "Now run the slow suite too.",
@@ -2327,7 +2327,7 @@ it.effect("a delayed Stop acknowledgement leaves a newer Stop owed", () =>
       });
       yield* Deferred.await(thread.stopStarted);
       // Work starts after the first Stop landed there, but before its acknowledgement returns.
-      const sent = yield* a.call("t3_thread_send", {
+      const sent = yield* a.call("conn_thread_send", {
         environmentId: box.environmentId,
         threadId: delegated.remoteChild.threadId,
         message: "Run another check.",

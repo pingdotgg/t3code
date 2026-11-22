@@ -6,7 +6,7 @@ import { LAB_PHONE_SCREENSHOT } from "./phoneScreenshot.mts";
 export type LabEntry =
   /** A message you typed. Starts a turn. */
   | { readonly kind: "user"; readonly text: string; readonly minutesAgo: number }
-  /** Another thread sent this through t3_thread_send. Shows as the folded "Agent" pill. */
+  /** Another thread sent this through conn_thread_send. Shows as the folded "Agent" pill. */
   | {
       readonly kind: "agentMessage";
       readonly from: string;

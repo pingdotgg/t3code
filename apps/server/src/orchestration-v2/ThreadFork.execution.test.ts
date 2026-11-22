@@ -1025,7 +1025,7 @@ it.effect("a side chat of a busy parent points history recovery at the parent", 
     assert.equal(started.contextTransfers[0]?.resolution?.strategy, "portable_context");
     const handoff = started.contextHandoffs.find((item) => item.strategy === "full_thread_summary");
     const coverage = handoff?.history?.coverage ?? "";
-    assert.include(coverage, `t3_thread_read({threadId:"${parentId}"`);
+    assert.include(coverage, `conn_thread_read({threadId:"${parentId}"`);
     assert.notInclude(coverage, `threadId:"${sideChatId}"`);
     assert.isFalse(started.turnItems.some((item) => item.type === "handoff"));
   }).pipe(Effect.provide(forkCases[0]!.layer)),
@@ -1511,7 +1511,7 @@ it.effect("a side chat opened during the parent's first turn starts from a diges
     assert.notInclude(handoff!.summaryText, "PARENT_QUEUED_MARKER");
     assert.include(handoff!.summaryText, "- User: PARENT_IMPORTED_MARKER");
     assert.include(handoff!.summaryText, "- User: PARENT_RUNNING_MARKER");
-    assert.include(handoff!.summaryText, `t3_thread_read on thread ${parentId}`);
+    assert.include(handoff!.summaryText, `conn_thread_read on thread ${parentId}`);
     assert.equal(
       started.messages.find((message) => message.role === "user")?.text,
       "What is the main thread doing?",

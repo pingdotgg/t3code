@@ -99,7 +99,7 @@
       "prompt": [
        {
         "type": "text",
-        "text": "<t3_code_instructions>\n<any>\n</t3_code_instructions>\n\n<user_request>\nUse request_user_input to ask one multiple-choice clarifying question about whether this fixture should prefer strict schemas or UI flexibility. After receiving the answer, respond exactly: plan questions fixture complete\n</user_request>"
+        "text": "<conn_instructions>\n<any>\n</conn_instructions>\n\n<user_request>\nUse request_user_input to ask one multiple-choice clarifying question about whether this fixture should prefer strict schemas or UI flexibility. After receiving the answer, respond exactly: plan questions fixture complete\n</user_request>"
        },
        {
         "type": "text",

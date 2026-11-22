@@ -80,10 +80,10 @@ it.effect.each([
       ),
     );
     const listed = yield* toolkit
-      .handle("t3_preview_list", {})
+      .handle("conn_preview_list", {})
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     const closed = yield* toolkit
-      .handle("t3_preview_close", { tabId: tab.tabId })
+      .handle("conn_preview_close", { tabId: tab.tabId })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
     if (projectAccess) {
       expect(listed.at(-1)?.result).toMatchObject({ sessions: [tab], nextCursor: null });

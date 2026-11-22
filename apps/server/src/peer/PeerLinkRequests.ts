@@ -188,7 +188,7 @@ const make = Effect.gen(function* () {
       // The card is shown in, and answered from, the caller's own thread.
       const threadScope = yield* McpInvocationContext.requireThreadScope(
         scope,
-        "t3_environment_link",
+        "conn_environment_link",
       );
       const threadId = threadScope.thread.threadId;
       if (!(yield* peerLinks.enabled)) {
@@ -472,7 +472,7 @@ const outcomeNotice = (
     }
     case "failed":
       return {
-        text: `Linking ${target} failed: ${outcome.failure ?? "the other environment refused"}. Call t3_environment_link again if the user still wants it.`,
+        text: `Linking ${target} failed: ${outcome.failure ?? "the other environment refused"}. Call conn_environment_link again if the user still wants it.`,
         notification: {
           source: { kind: "background_task" },
           outcome: "failed",

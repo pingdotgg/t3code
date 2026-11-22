@@ -152,7 +152,7 @@ const trimCodex = (native: Native) => {
   input.push({
     type: "message",
     role: "developer",
-    content: [{ type: "input_text", text: "<t3_code_runtime></t3_code_runtime>" }],
+    content: [{ type: "input_text", text: "<conn_runtime></conn_runtime>" }],
   });
   const { reasoning, instructions, text, tool_choice } = native;
   return { reasoning, instructions, text, tool_choice, input };

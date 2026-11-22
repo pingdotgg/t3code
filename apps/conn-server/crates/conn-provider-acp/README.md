@@ -59,7 +59,7 @@ write is built from `ordered::J`, which keeps T3's key order.
   `mcpServers`, then `session/set_model` when the selection names another model than the
   session's, or (protocol 1) a reasoning effort the model offers, as `_meta.reasoningEffort`;
   a rejected effort is dropped and the switch sent again without it.
-- **`/mcp` (`acpMcpContext`, `sessionMcpServers`):** the `t3-code` server goes as the stdio
+- **`/mcp` (`acpMcpContext`, `sessionMcpServers`):** the `conn` server goes as the stdio
   bridge `{name, command, args: ["acp-mcp-bridge"], env: [ELECTRON_RUN_AS_NODE=1,
   T3_ACP_MCP_ENDPOINT, T3_ACP_MCP_AUTHORIZATION]}`; as `{type: http, …}` only when the
   agent offers HTTP and the flavor sets `mcpOverHttp` (T3: Grok, Kiro and fx no;

@@ -38,7 +38,7 @@ const shared = {
     ThreadCommandExecutor.ThreadCommandExecutor,
   ],
 };
-const EnvironmentReadTool = Tool.make("t3_environment_read", {
+const EnvironmentReadTool = Tool.make("conn_environment_read", {
   ...shared,
   description:
     "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
@@ -53,7 +53,7 @@ const EnvironmentReadTool = Tool.make("t3_environment_read", {
 })
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false);
-const EnvironmentPreferencesTool = Tool.make("t3_environment_preferences_update", {
+const EnvironmentPreferencesTool = Tool.make("conn_environment_preferences_update", {
   ...shared,
   description:
     "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",

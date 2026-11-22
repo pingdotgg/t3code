@@ -324,9 +324,9 @@
         }
       },
       {
-        "name": "t3_workflow_stop",
+        "name": "conn_workflow_stop",
         "title": "Stop a workflow",
-        "description": "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `t3_thread_read` 'activity'. Stops only the workflow, not the thread.",
+        "description": "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `conn_thread_read` 'activity'. Stops only the workflow, not the thread.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -1419,7 +1419,7 @@
         }
       },
       {
-        "name": "t3_thread_list",
+        "name": "conn_thread_list",
         "title": "List Conn threads",
         "description": "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
         "inputSchema": {
@@ -1960,7 +1960,7 @@
         }
       },
       {
-        "name": "t3_thread_read",
+        "name": "conn_thread_read",
         "title": "Read a Conn thread",
         "description": "Read any thread by id. View `messages` (default) or `activity` (all items). Newest first; older: `beforePosition=earlierPosition`; from the start: `afterPosition=-1`, then `nextPosition`. Cut-off text: `itemId`, `textOffset=nextTextOffset`. Reading a child's final result marks it delivered. In your reply, name it as its `link` verbatim.",
         "inputSchema": {
@@ -2868,7 +2868,7 @@
         }
       },
       {
-        "name": "t3_thread_update",
+        "name": "conn_thread_update",
         "title": "Update Conn thread metadata",
         "description": "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
         "inputSchema": {
@@ -3003,7 +3003,7 @@
         }
       },
       {
-        "name": "t3_thread_send",
+        "name": "conn_thread_send",
         "title": "Send to a Conn thread",
         "description": "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
         "inputSchema": {
@@ -3115,7 +3115,7 @@
         }
       },
       {
-        "name": "t3_thread_wait",
+        "name": "conn_thread_wait",
         "title": "Wait for a Conn thread",
         "description": "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
         "inputSchema": {
@@ -3240,7 +3240,7 @@
         }
       },
       {
-        "name": "t3_thread_interrupt",
+        "name": "conn_thread_interrupt",
         "title": "Interrupt a Conn thread",
         "description": "Interrupt a top-level thread's running turn. No `runId`: newest running turn. No effect when idle. For a delegate, use `task_cancel`.",
         "inputSchema": {
@@ -3410,7 +3410,7 @@
         }
       },
       {
-        "name": "t3_thread_search",
+        "name": "conn_thread_search",
         "description": "Search active threads by title, branch, PR, project, then message text. Skips subagent threads. `projectId`: one project, else yours, else all outside a thread. Not exhaustive.",
         "inputSchema": {
           "type": "object",
@@ -3530,7 +3530,7 @@
         }
       },
       {
-        "name": "t3_thread_configure",
+        "name": "conn_thread_configure",
         "description": "Read a thread's provider, model, and modes, or set its provider, model, and options with `modelSelection`. Omit `threadId` for this thread. Permission modes stay. Values from `orchestrator_capabilities`.",
         "inputSchema": {
           "type": "object",
@@ -3563,7 +3563,7 @@
         }
       },
       {
-        "name": "t3_thread_transfer",
+        "name": "conn_thread_transfer",
         "description": "Move context between threads. Omit `threadId` for this thread. fork: copy it from `sourcePoint` (default latest stable run) into a new thread with the same setup; no turn runs yet. merge_back: merge it from `sourcePoint` into a related `targetThreadId` in the same project. status: its context transfers.",
         "inputSchema": {
           "type": "object",
@@ -3623,7 +3623,7 @@
         }
       },
       {
-        "name": "t3_thread_organize",
+        "name": "conn_thread_organize",
         "title": "Organize a thread",
         "description": "Pin, snooze, settle, archive, or mark a thread unread. Omit `threadId` for this thread. `snooze` needs `snoozedUntil`. Settling this thread applies at turn end. A failed turn or queued message leaves it active.",
         "inputSchema": {
@@ -3666,7 +3666,7 @@
         }
       },
       {
-        "name": "t3_pending_request",
+        "name": "conn_pending_request",
         "description": "Pending user questions in a thread. Omit `threadId` for this thread. list: their ids; approvals are not listed. read: one by `requestId`. respond: answer one with `answers`; this cannot approve a permission request.",
         "inputSchema": {
           "type": "object",
@@ -3704,7 +3704,7 @@
         }
       },
       {
-        "name": "t3_queue",
+        "name": "conn_queue",
         "description": "Manage a thread's queued messages. Omit `threadId` for this thread. list: send order, paged by `cursor` and `limit`. read: up to 16,000 chars of one. edit: replace its `text`; attachments stay. cancel. reorder: before `beforeRunId`, or to the end with null. promote_to_steer: send it now as steering to active `targetRunId`. Writes fail once the run is no longer queued.",
         "inputSchema": {
           "type": "object",
@@ -3760,8 +3760,8 @@
         }
       },
       {
-        "name": "t3_attachment_prepare_upload",
-        "description": "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
+        "name": "conn_attachment_prepare_upload",
+        "description": "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `conn_thread_send_attachments` with the returned `attachmentId`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -3864,7 +3864,7 @@
         }
       },
       {
-        "name": "t3_attachment_discard",
+        "name": "conn_attachment_discard",
         "description": "Discard a pending upload (not a sent attachment).",
         "inputSchema": {
           "type": "object",
@@ -3885,7 +3885,7 @@
         }
       },
       {
-        "name": "t3_thread_send_attachments",
+        "name": "conn_thread_send_attachments",
         "description": "Send uploaded attachments as a new message to a thread. No retry key. Target modes cannot exceed yours. Success does not mean the provider read them or finished.",
         "inputSchema": {
           "type": "object",
@@ -4007,8 +4007,8 @@
         }
       },
       {
-        "name": "t3_thread_launch",
-        "description": "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `t3_thread_read` or `t3_thread_wait`. Mention it with its `link`.",
+        "name": "conn_thread_launch",
+        "description": "Create one new top-level thread, bound to its workspace before the agent starts. Task in `message`. Omit `projectId`, model and modes to inherit yours (outside a thread, pass `projectId` or `scratch`); modes cannot exceed yours. After an error or lost reply, retry with the same `clientRequestId`. Follow it with `conn_thread_read` or `conn_thread_wait`. Mention it with its `link`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -4277,7 +4277,7 @@
         }
       },
       {
-        "name": "t3_project_list",
+        "name": "conn_project_list",
         "description": "List projects, or a linked environment's with environmentId. Pages can shift.",
         "inputSchema": {
           "type": "object",
@@ -4794,7 +4794,7 @@
         }
       },
       {
-        "name": "t3_project_read",
+        "name": "conn_project_read",
         "description": "Read one project: workspace and saved scripts.",
         "inputSchema": {
           "type": "object",
@@ -5284,8 +5284,8 @@
         }
       },
       {
-        "name": "t3_project_create",
-        "description": "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `t3_project_clone` if needed.",
+        "name": "conn_project_create",
+        "description": "Register a project folder. `createWorkspaceRootIfMissing` creates it; a registered folder is rejected. No `workspaceRoot`: makes a git repo from `title` with README, icon, first commit (`commitError` on failure; project still exists). Clone first with `conn_project_clone` if needed.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -5855,7 +5855,7 @@
         }
       },
       {
-        "name": "t3_project_update",
+        "name": "conn_project_update",
         "description": "Update one project's settings. Omitted fields are unchanged.",
         "inputSchema": {
           "type": "object",
@@ -6484,7 +6484,7 @@
         }
       },
       {
-        "name": "t3_project_delete",
+        "name": "conn_project_delete",
         "description": "Delete one project. Nonempty needs `force: true`. Folder on disk stays.",
         "inputSchema": {
           "type": "object",
@@ -6977,8 +6977,8 @@
         }
       },
       {
-        "name": "t3_project_clone",
-        "description": "Clone a repository (`destinationPath` new or empty). Register after with `t3_project_create`, with the same `environmentId`.",
+        "name": "conn_project_clone",
+        "description": "Clone a repository (`destinationPath` new or empty). Register after with `conn_project_create`, with the same `environmentId`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -7066,7 +7066,7 @@
         }
       },
       {
-        "name": "t3_environment_read",
+        "name": "conn_environment_read",
         "description": "Read this server's identity and preferences. Providers and models: `orchestrator_capabilities`.",
         "inputSchema": {
           "type": "object",
@@ -7207,7 +7207,7 @@
         }
       },
       {
-        "name": "t3_environment_preferences_update",
+        "name": "conn_environment_preferences_update",
         "description": "Update environment-wide preferences. Live full-access or default caller thread only. Omitted fields are unchanged; `customInstructions: ''` clears it.",
         "inputSchema": {
           "type": "object",
@@ -7346,8 +7346,8 @@
         }
       },
       {
-        "name": "t3_theme_read",
-        "description": "Read Conn's own themes and the guide to restyle it: color roles and CSS selectors. Call before `t3_theme_set`.",
+        "name": "conn_theme_read",
+        "description": "Read Conn's own themes and the guide to restyle it: color roles and CSS selectors. Call before `conn_theme_set`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -7531,7 +7531,7 @@
         }
       },
       {
-        "name": "t3_theme_set",
+        "name": "conn_theme_set",
         "description": "Restyle Conn itself, only when the user asks. With `theme`, publish it as `themeId` (same id updates it) and switch this server's web app and this machine's desktop app to it, not remote desktop apps. Without `theme`, switch to a built-in or published `themeId`. `appearance` sets light, dark, or system mode. Live full-access or default caller thread only.",
         "inputSchema": {
           "type": "object",
@@ -7626,7 +7626,7 @@
         }
       },
       {
-        "name": "t3_worktree_list",
+        "name": "conn_worktree_list",
         "description": "List branch refs and checkout paths for a thread's workspace. Omit `threadId` for this thread. Detached worktrees with no branch are left out.",
         "inputSchema": {
           "type": "object",

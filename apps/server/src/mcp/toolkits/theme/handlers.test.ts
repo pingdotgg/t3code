@@ -64,8 +64,8 @@ it.effect("applies the theme through the service and reports a refusal as an inv
     );
     yield* Effect.gen(function* () {
       const toolkit = yield* ThemeToolkit;
-      const call = (params: Parameters<typeof toolkit.handle<"t3_theme_set">>[1]) =>
-        toolkit.handle("t3_theme_set", params).pipe(
+      const call = (params: Parameters<typeof toolkit.handle<"conn_theme_set">>[1]) =>
+        toolkit.handle("conn_theme_set", params).pipe(
           Stream.unwrap,
           Stream.runCollect,
           Effect.map((parts) => parts.at(-1)?.result),

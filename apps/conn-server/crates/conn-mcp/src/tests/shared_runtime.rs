@@ -84,7 +84,7 @@ while IFS= read -r line; do
 done
 "#;
 
-/// The `t3-code` bearer tokens the app-server got, one per `thread/start` or
+/// The `conn` bearer tokens the app-server got, one per `thread/start` or
 /// `thread/resume` line, in order.
 fn tokens(log: &std::path::Path, method: &str) -> Vec<String> {
     let text = std::fs::read_to_string(log).unwrap_or_default();
@@ -93,7 +93,7 @@ fn tokens(log: &std::path::Path, method: &str) -> Vec<String> {
         .filter_map(|line| {
             let value: Value = serde_json::from_str(line).ok()?;
             let config = &value["params"]["config"];
-            let auth = config["mcp_servers.t3-code"]["http_headers"]["Authorization"].as_str()?;
+            let auth = config["mcp_servers.conn"]["http_headers"]["Authorization"].as_str()?;
             Some(auth.strip_prefix("Bearer ")?.to_owned())
         })
         .collect()
@@ -138,7 +138,7 @@ async fn a_handoff_on_a_shared_codex_process_keeps_and_reuses_the_credential() {
     let mut c = Client::open(&f.service, client(true)).await;
     let mut launch = async |title: &str| {
         c.ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": title, "message": "hang",
                 "modelSelection": {"instanceId": "codex", "model": "gpt-6-luna"},
@@ -168,14 +168,14 @@ async fn a_handoff_on_a_shared_codex_process_keeps_and_reuses_the_credential() {
     let mut moving = Client::open(&f.service, caller).await;
     let moved = moving
         .ok(
-            "t3_worktree_handoff",
+            "conn_worktree_handoff",
             json!({"branch": "feature/shared", "startFromOrigin": false, "continuationPrompt": "go on"}),
         )
         .await;
     assert_eq!(moved["continuation"]["status"], "scheduled");
     let ended = c
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": one, "timeoutMs": 10000}),
         )
         .await;
@@ -199,7 +199,7 @@ async fn a_handoff_on_a_shared_codex_process_keeps_and_reuses_the_credential() {
     assert_eq!(resumed, std::slice::from_ref(&first), "{text}");
     let caller = agent(&f, &first).expect("the credential survives the handoff");
     let mut continuation = Client::open(&f.service, caller).await;
-    let status = continuation.ok("t3_worktree_status", json!({})).await;
+    let status = continuation.ok("conn_worktree_status", json!({})).await;
     assert_eq!(status["worktreePath"], moved["worktreePath"]);
     assert_eq!(status["branch"], "feature/shared");
     assert!(

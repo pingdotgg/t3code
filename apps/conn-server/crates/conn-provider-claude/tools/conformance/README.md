@@ -50,7 +50,7 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | -------------------------- | --------------------------------------------------------------- |
 | `fresh_turn`               | first turn: argv, env, `initialize`, prompt                     |
 | `resumed_turn`             | a new provider session on the same thread (`--resume`)          |
-| `mcp_turn`                 | the `t3-code` MCP server: allow rule, system prompt, `mcp_set_servers` |
+| `mcp_turn`                 | the `conn` MCP server: allow rule, system prompt, `mcp_set_servers` |
 | `permission`               | approval-required: two `can_use_tool` prompts, decline and accept |
 | `interrupt`                | `interrupt` during output, the CLI closed, then a second turn in a new CLI (`--resume`): 2 starts |
 | `interrupt_twice`          | the same twice: the resumed CLI is interrupted and closed too; 3 starts |
@@ -62,9 +62,9 @@ A stdin line that differs only in JSON key order is reported as such and fails t
 | `live_selection_effort`    | a new effort sent to the running turn: `apply_flag_settings` during the turn |
 | `live_selection_model`     | a new model sent to the running turn: nothing until the next turn |
 | `stop_background_idle`     | Stop with no turn running while a background task holds the CLI (`interruptTurn` with `requestRuntimeRestart` on the settled turn): the CLI is closed, the next turn resumes in a new one; 2 starts. Its first script is constructed (`constructed/README.md`) |
-| `stop_during_boot`         | Stop while the CLI boots (with `t3-code`; the stub never answers `initialize`): T3's worker interrupts `startTurn`, ours abandons the start. Both kill the CLI (no clean exit, no prompt), then the next turn runs in a new CLI; 2 starts. Fails when our side closes instead of aborting |
+| `stop_during_boot`         | Stop while the CLI boots (with `conn`; the stub never answers `initialize`): T3's worker interrupts `startTurn`, ours abandons the start. Both kill the CLI (no clean exit, no prompt), then the next turn runs in a new CLI; 2 starts. Fails when our side closes instead of aborting |
 | `stop_during_mcp_registration` | The same while the stub holds `mcp_set_servers`                |
-| `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `t3-code`: `dontAsk`, the read-only tools and allow rules |
+| `read_only_sandbox`        | `approvalPolicy: never` and a read-only sandbox (`policyOverride`), with `conn`: `dontAsk`, the read-only tools and allow rules |
 | `instance_binary_home`     | a second instance (`claudeLow`) with a `~` binary path (spaces around it) and a `~` home path with `.` in it |
 | `instance_environment`     | an instance environment: plain, sensitive, `CLAUDE_CONFIG_DIR` with `~`, a `~` in another variable (not expanded), `CLAUDE_CODE_ENTRYPOINT` |
 | `instance_launch_args`     | `launchArgs`: extra flags (one repeated), `--add-dir` (repeated, variadic), both append flags, `--settings` with a comment and a trailing comma |

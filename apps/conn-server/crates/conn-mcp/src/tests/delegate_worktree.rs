@@ -178,7 +178,7 @@ async fn a_worktree_child_gets_its_own_checkout_from_the_parent_commit() {
     // The child ran, in its checkout.
     agent
         .ok(
-            "t3_thread_wait",
+            "conn_thread_wait",
             json!({"threadId": child, "timeoutMs": 10_000}),
         )
         .await;
@@ -230,7 +230,7 @@ async fn a_parent_without_git_is_refused() {
     assert!(host.requests.lock().unwrap().is_empty());
     let parent_id = parent["threadId"].as_str().unwrap();
     let read = agent
-        .ok("t3_thread_read", json!({"threadId": parent_id}))
+        .ok("conn_thread_read", json!({"threadId": parent_id}))
         .await;
     assert!(!read.to_string().contains("delegated-task"), "{read}");
 }
@@ -250,7 +250,7 @@ async fn a_parent_commit_missing_from_the_project_is_refused() {
     let mut c = Client::open(&f.service, client(true)).await;
     let parent = c
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({
                 "projectId": project_id(), "title": "Parent", "message": "hang",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"},

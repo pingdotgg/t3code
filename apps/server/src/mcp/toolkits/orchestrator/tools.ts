@@ -128,9 +128,9 @@ const TaskCancelTool = Tool.make("task_cancel", {
   .annotate(Tool.Destructive, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
-const WorkflowStopTool = Tool.make("t3_workflow_stop", {
+const WorkflowStopTool = Tool.make("conn_workflow_stop", {
   description:
-    "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `t3_thread_read` 'activity'. Stops only the workflow, not the thread.",
+    "Stop a running Claude workflow in a thread. `subagentId`: coordinator from `conn_thread_read` 'activity'. Stops only the workflow, not the thread.",
   parameters: Schema.Struct({
     environmentId: OrchestratorMcpEnvironmentTarget,
     ...OrchestrationV2StopWorkflowInput.fields,
@@ -143,7 +143,7 @@ const WorkflowStopTool = Tool.make("t3_workflow_stop", {
   .annotate(Tool.Title, "Stop a workflow")
   .annotate(Tool.Destructive, true);
 
-const BackgroundWaitTool = Tool.make("t3_background_wait", {
+const BackgroundWaitTool = Tool.make("conn_background_wait", {
   description:
     "Keep this thread in Working while background work runs. Pass its task ID once started. Not for work left running (dev server, watcher). `waiting=false` clears. Doesn't stop tasks. Claude/OpenCode only.",
   parameters: Schema.Struct({
@@ -223,7 +223,7 @@ const RequestSecretTool = Tool.make("request_secret", {
 
 const CreateThreadsTool = Tool.make("create_threads", {
   description:
-    "Create new top-level threads in this checkout. Not delegation. One thread or its own worktree: `t3_thread_launch`. Project, branch, and worktree inherit.",
+    "Create new top-level threads in this checkout. Not delegation. One thread or its own worktree: `conn_thread_launch`. Project, branch, and worktree inherit.",
   parameters: OrchestratorMcpCreateThreadsInput,
   success: OrchestratorMcpCreateThreadsResult,
   failure: OrchestratorMcpFailure,
@@ -235,7 +235,7 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
-const ThreadListTool = Tool.make("t3_thread_list", {
+const ThreadListTool = Tool.make("conn_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
   parameters: OrchestratorMcpThreadListInput,
@@ -249,7 +249,7 @@ const ThreadListTool = Tool.make("t3_thread_list", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const ThreadReadTool = Tool.make("t3_thread_read", {
+const ThreadReadTool = Tool.make("conn_thread_read", {
   description:
     "Read any thread by id. View `messages` (default) or `activity` (all items). Newest first; older: `beforePosition=earlierPosition`; from the start: `afterPosition=-1`, then `nextPosition`. Cut-off text: `itemId`, `textOffset=nextTextOffset`. Reading a child's final result marks it delivered. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadReadInput,
@@ -264,7 +264,7 @@ const ThreadReadTool = Tool.make("t3_thread_read", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const ThreadUpdateTool = Tool.make("t3_thread_update", {
+const ThreadUpdateTool = Tool.make("conn_thread_update", {
   description:
     "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
   // Keeps the input's action/field check, which rebuilding the struct would drop.
@@ -281,7 +281,7 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
 
-const ThreadSendTool = Tool.make("t3_thread_send", {
+const ThreadSendTool = Tool.make("conn_thread_send", {
   description:
     "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
   parameters: OrchestratorMcpThreadSendInput,
@@ -294,7 +294,7 @@ const ThreadSendTool = Tool.make("t3_thread_send", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
-const ThreadWaitTool = Tool.make("t3_thread_wait", {
+const ThreadWaitTool = Tool.make("conn_thread_wait", {
   description:
     "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
   parameters: OrchestratorMcpThreadWaitInput,
@@ -308,7 +308,7 @@ const ThreadWaitTool = Tool.make("t3_thread_wait", {
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true);
 
-const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
+const ThreadInterruptTool = Tool.make("conn_thread_interrupt", {
   description:
     "Interrupt a top-level thread's running turn. No `runId`: newest running turn. No effect when idle. For a delegate, use `task_cancel`.",
   parameters: OrchestratorMcpThreadInterruptInput,
@@ -320,9 +320,9 @@ const ThreadInterruptTool = Tool.make("t3_thread_interrupt", {
   .annotate(Tool.Title, "Interrupt a Conn thread")
   .annotate(Tool.Destructive, true);
 
-const EnvironmentLinksTool = Tool.make("t3_environment_links", {
+const EnvironmentLinksTool = Tool.make("conn_environment_links", {
   description:
-    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `t3_environment_link`.",
+    "List linked environments (the user's other machines) and whether each answers now. Pass one's `environmentId` to a tool to act there; `delegate_task` takes `target.environmentId`. Expired: link it again with `conn_environment_link`.",
   success: OrchestratorMcpEnvironmentLinksResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return",
@@ -334,7 +334,7 @@ const EnvironmentLinksTool = Tool.make("t3_environment_links", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
-const EnvironmentLinkTool = Tool.make("t3_environment_link", {
+const EnvironmentLinkTool = Tool.make("conn_environment_link", {
   description:
     "Ask the user to link another machine, in a card. For a machine the user names that is not linked. Pass `hint` from their words, `environmentId` when one names it (already linked: returns `linked`), `url` only when the user gave an address. Returns `pending`; the outcome arrives as a message in this thread. Do not wait, poll, or call it again to check. Never ask for a pairing code in chat.",
   parameters: OrchestratorMcpEnvironmentLinkInput,
@@ -348,7 +348,7 @@ const EnvironmentLinkTool = Tool.make("t3_environment_link", {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
-const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
+const EnvironmentUnlinkTool = Tool.make("conn_environment_unlink", {
   description:
     "Forget a linked environment. That machine's Connections list its session until revoked there.",
   parameters: OrchestratorMcpEnvironmentUnlinkInput,

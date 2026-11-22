@@ -44,7 +44,7 @@ export function tsCredential(directory) {
       const config = at === undefined || at === -1 ? undefined : JSON.parse(record.argv[at + 1]);
       const message = record.stdin?.map((line) => typeof line === "string" ? JSON.parse(line) : line)
         .find((message) => message.request?.subtype === "mcp_set_servers");
-      const server = config?.mcpServers?.["t3-code"] ?? message?.request.servers?.["t3-code"];
+      const server = config?.mcpServers?.["conn"] ?? message?.request.servers?.["conn"];
       if (server?.headers?.Authorization) return server;
     }
   });

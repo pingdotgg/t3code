@@ -2,9 +2,9 @@
 // Peer links between two servers: T3 → T3 is the reference; Conn → Conn, Conn → T3 and
 // T3 → Conn take the same steps and must give the same answers, after ids, addresses and
 // times are replaced by placeholders. Steps: `peerLinks.*` over `/ws`, the link's MCP OAuth
-// sign-in with a peer-link pairing code, `t3_environment_links`, tools forwarded with
+// sign-in with a peer-link pairing code, `conn_environment_links`, tools forwarded with
 // `environmentId` (reads, a refusal from the peer, a mode the link refuses here),
-// `t3_environment_unlink`, and the peer's client list. No model is called; every server gets a
+// `conn_environment_unlink`, and the peer's client list. No model is called; every server gets a
 // temp home and a free loopback port.
 // Usage: peer-links-diff.mjs <conn-server binary (replay_server)>. Needs `vp i` in the monorepo.
 import { McpSession } from "../../conn-mcp/tools/mcp-client.mjs";
@@ -99,7 +99,7 @@ async function run(a, b) {
   record("list, linked", await rpc(a, "peerLinks.list", {}));
   const model = { instanceId: "claudeAgent", model: "claude-haiku-5-5" };
   const projectOf = async (session) =>
-    outcome(await session.callTool("t3_project_list", {})).ok?.projects?.[0]?.id;
+    outcome(await session.callTool("conn_project_list", {})).ok?.projects?.[0]?.id;
 
   // The fence: work the link starts there carries its session; below full access the link
   // changes only that work.
@@ -107,23 +107,23 @@ async function run(a, b) {
   await bSession.initialize();
   const bProject = await projectOf(bSession);
   const own = outcome(
-    await bSession.callTool("t3_thread_launch", {
+    await bSession.callTool("conn_thread_launch", {
       projectId: bProject, title: "B's own", message: "hang", modelSelection: model,
       runtimeMode: "auto", workspaceStrategy: { type: "root" }, clientRequestId: `b-own-${run}`,
     }),
   );
-  const launched = await tool("t3_thread_launch", {
+  const launched = await tool("conn_thread_launch", {
     environmentId: b.id, projectId: bProject, title: "From the link", message: "hang",
     modelSelection: model, runtimeMode: "auto", workspaceStrategy: { type: "root" },
     clientRequestId: `peer-launch-${run}`,
   });
-  record("t3_thread_launch there", shapeOf(launched));
-  const again = await tool("t3_thread_launch", {
+  record("conn_thread_launch there", shapeOf(launched));
+  const again = await tool("conn_thread_launch", {
     environmentId: b.id, projectId: bProject, title: "From the link", message: "hang",
     modelSelection: model, runtimeMode: "auto", workspaceStrategy: { type: "root" },
     clientRequestId: `peer-launch-${run}`,
   });
-  record("t3_thread_launch there, retried: same thread", again.ok?.threadId === launched.ok?.threadId);
+  record("conn_thread_launch there, retried: same thread", again.ok?.threadId === launched.ok?.threadId);
   const shell = await (
     await fetch(`${b.origin}/api/orchestration/shell`, {
       headers: { authorization: `Bearer ${b.bearer}`, "x-t3-orchestration-protocol": "2" },
@@ -136,22 +136,22 @@ async function run(a, b) {
     hasSession: typeof row.linkOrigin.sessionId === "string",
   });
   record(
-    "t3_thread_send there to the peer's own thread: fenced",
-    await tool("t3_thread_send", { environmentId: b.id, threadId: own.ok?.threadId, message: "x", mode: "queue" }),
+    "conn_thread_send there to the peer's own thread: fenced",
+    await tool("conn_thread_send", { environmentId: b.id, threadId: own.ok?.threadId, message: "x", mode: "queue" }),
   );
   record(
-    "t3_thread_send there to the link's thread",
-    shapeOf(await tool("t3_thread_send", {
+    "conn_thread_send there to the link's thread",
+    shapeOf(await tool("conn_thread_send", {
       environmentId: b.id, threadId: launched.ok?.threadId, message: "x", mode: "queue", clientRequestId: `peer-send-${run}`,
     })),
   );
   record(
-    "t3_thread_read there",
-    shapeOf((await tool("t3_thread_read", { environmentId: b.id, threadId: launched.ok?.threadId })).ok?.thread ?? null),
+    "conn_thread_read there",
+    shapeOf((await tool("conn_thread_read", { environmentId: b.id, threadId: launched.ok?.threadId })).ok?.thread ?? null),
   );
   record(
-    "t3_thread_interrupt there",
-    (await tool("t3_thread_interrupt", { environmentId: b.id, threadId: launched.ok?.threadId, stop: true })).ok?.threadId ===
+    "conn_thread_interrupt there",
+    (await tool("conn_thread_interrupt", { environmentId: b.id, threadId: launched.ok?.threadId, stop: true })).ok?.threadId ===
       launched.ok?.threadId,
   );
   await bSession.close();
@@ -160,7 +160,7 @@ async function run(a, b) {
   const aProject = await projectOf(session);
   a.forget();
   const agentThread = outcome(
-    await session.callTool("t3_thread_launch", {
+    await session.callTool("conn_thread_launch", {
       projectId: aProject, title: "Agent", message: "hang", modelSelection: model,
       runtimeMode: "full-access", workspaceStrategy: { type: "root" }, clientRequestId: `agent-${run}`,
     }),
@@ -168,24 +168,24 @@ async function run(a, b) {
   const credential = await a.credential();
   const agent = new McpSession(new URL(credential.url).origin, credential.headers.Authorization);
   await agent.initialize();
-  const ask = async (args) => outcome(await agent.callTool("t3_environment_link", args));
+  const ask = async (args) => outcome(await agent.callTool("conn_environment_link", args));
   const cardShape = (value) => normalize(value, []).replace(/turn-item:link-request:[^"]+/g, "<card>");
-  record("agent t3_environment_links", await outcome(await agent.callTool("t3_environment_links", {})));
-  const listed = outcome(await agent.callTool("t3_thread_list", { environmentId: b.id, allProjects: true }));
+  record("agent conn_environment_links", await outcome(await agent.callTool("conn_environment_links", {})));
+  const listed = outcome(await agent.callTool("conn_thread_list", { environmentId: b.id, allProjects: true }));
   record(
-    "agent t3_thread_list there: the link's thread, as a chip",
+    "agent conn_thread_list there: the link's thread, as a chip",
     listed.ok
       ? listed.ok.threads
           .filter((t) => t.threadId === launched.ok?.threadId)
           .map((t) => ({ title: t.title, chip: t.link.startsWith("[From the link](t3-thread://v2/") }))
       : listed,
   );
-  record("agent t3_environment_link: both url and environmentId", await ask({ url: b.origin, environmentId: b.id }));
-  record("agent t3_environment_link: a linked machine", await ask({ environmentId: b.id }));
+  record("agent conn_environment_link: both url and environmentId", await ask({ url: b.origin, environmentId: b.id }));
+  record("agent conn_environment_link: a linked machine", await ask({ environmentId: b.id }));
   const card = await ask({ hint: "the other box", reason: "parity", clientRequestId: "card-1" });
-  record("agent t3_environment_link: a card", cardShape(card));
+  record("agent conn_environment_link: a card", cardShape(card));
   const cardAgain = await ask({ hint: "the other box", reason: "parity", clientRequestId: "card-1" });
-  record("agent t3_environment_link: the same card again", cardAgain.ok?.turnItemId === card.ok?.turnItemId);
+  record("agent conn_environment_link: the same card again", cardAgain.ok?.turnItemId === card.ok?.turnItemId);
   record(
     "answerRequest: decline",
     await rpc(a, "peerLinks.answerRequest", { threadId: agentThread, turnItemId: card.ok?.turnItemId, answer: { type: "decline" } }),
@@ -194,7 +194,7 @@ async function run(a, b) {
     "answerRequest: answered twice",
     await rpc(a, "peerLinks.answerRequest", { threadId: agentThread, turnItemId: card.ok?.turnItemId, answer: { type: "decline" } }),
   );
-  record("agent t3_environment_link: the declined card", await ask({ hint: "the other box", reason: "parity", clientRequestId: "card-1" }));
+  record("agent conn_environment_link: the declined card", await ask({ hint: "the other box", reason: "parity", clientRequestId: "card-1" }));
   const second = await ask({ hint: "x", reason: "parity", clientRequestId: "card-2", requestedAccess: "auto" });
   record(
     "answerRequest: use an existing link",
@@ -202,7 +202,7 @@ async function run(a, b) {
       threadId: agentThread, turnItemId: second.ok?.turnItemId, answer: { type: "use-existing", environmentId: b.id },
     }),
   );
-  record("agent t3_environment_link: the card that linked", await ask({ hint: "x", reason: "parity", clientRequestId: "card-2", requestedAccess: "auto" }));
+  record("agent conn_environment_link: the card that linked", await ask({ hint: "x", reason: "parity", clientRequestId: "card-2", requestedAccess: "auto" }));
   const third = await ask({ url: b.origin, reason: "parity", clientRequestId: "card-3" });
   record(
     "answerRequest: link with a spent code",
@@ -211,7 +211,7 @@ async function run(a, b) {
       answer: { type: "link", urls: [b.origin], access: "auto", pairingCode: code },
     }),
   );
-  record("agent t3_environment_link: the card that failed", await ask({ url: b.origin, reason: "parity", clientRequestId: "card-3" }));
+  record("agent conn_environment_link: the card that failed", await ask({ url: b.origin, reason: "parity", clientRequestId: "card-3" }));
   const fresh = await mint("auto");
   const fourth = await ask({ url: b.origin, reason: "parity", clientRequestId: "card-4" });
   record(
@@ -221,8 +221,8 @@ async function run(a, b) {
       answer: { type: "link", urls: [b.origin], access: "auto", pairingCode: fresh },
     }),
   );
-  record("agent t3_environment_link: the card that relinked", await ask({ url: b.origin, reason: "parity", clientRequestId: "card-4" }));
-  record("agent t3_environment_unlink", await outcome(await agent.callTool("t3_environment_unlink", { environmentId: "environment:none" })));
+  record("agent conn_environment_link: the card that relinked", await ask({ url: b.origin, reason: "parity", clientRequestId: "card-4" }));
+  record("agent conn_environment_unlink", await outcome(await agent.callTool("conn_environment_unlink", { environmentId: "environment:none" })));
   // Each answer that closed a card woke the agent with a notification message.
   const snapshot = await (
     await fetch(`${a.origin}/api/orchestration/threads/${encodeURIComponent(agentThread)}`, {
@@ -245,32 +245,32 @@ async function run(a, b) {
       .sort((x, y) => JSON.stringify(x).localeCompare(JSON.stringify(y))),
   );
   await agent.close();
-  await session.callTool("t3_thread_interrupt", { threadId: agentThread, stop: true });
-  record("t3_environment_links", await tool("t3_environment_links", {}));
+  await session.callTool("conn_thread_interrupt", { threadId: agentThread, stop: true });
+  record("conn_environment_links", await tool("conn_environment_links", {}));
   // Known: the descriptor here does not detect `platform.machine` (parity.mjs accepts it too).
-  const read = await tool("t3_environment_read", { environmentId: b.id });
+  const read = await tool("conn_environment_read", { environmentId: b.id });
   if (read.ok?.platform) delete read.ok.platform.machine;
-  record("t3_environment_read there", read);
-  const projects = await tool("t3_project_list", { environmentId: b.id });
+  record("conn_environment_read there", read);
+  const projects = await tool("conn_project_list", { environmentId: b.id });
   const project = projects.ok?.projects?.[0];
-  record("t3_project_list there", {
+  record("conn_project_list there", {
     ...projects,
     ok: projects.ok && {
       ...projects.ok,
       projects: projects.ok.projects.map((p) => ({ ...p, id: "<p>", workspaceRoot: "<root>", title: "<title>" })),
     },
   });
-  record("t3_thread_list there, no project", await tool("t3_thread_list", { environmentId: b.id }));
+  record("conn_thread_list there, no project", await tool("conn_thread_list", { environmentId: b.id }));
   // Thread lists hold each server's own threads; compare one entry's shape.
-  const threads = await tool("t3_thread_list", { environmentId: b.id, allProjects: true });
-  record("t3_thread_list there", threads.ok ? shapeOf({ ...threads.ok, threads: threads.ok.threads.slice(0, 1) }) : threads);
+  const threads = await tool("conn_thread_list", { environmentId: b.id, allProjects: true });
+  record("conn_thread_list there", threads.ok ? shapeOf({ ...threads.ok, threads: threads.ok.threads.slice(0, 1) }) : threads);
   record(
-    "t3_thread_read there: unknown thread",
-    await tool("t3_thread_read", { environmentId: b.id, threadId: "thread:missing" }),
+    "conn_thread_read there: unknown thread",
+    await tool("conn_thread_read", { environmentId: b.id, threadId: "thread:missing" }),
   );
   record(
-    "t3_thread_launch there above the link's access",
-    await tool("t3_thread_launch", {
+    "conn_thread_launch there above the link's access",
+    await tool("conn_thread_launch", {
       environmentId: b.id,
       projectId: project?.id ?? "p",
       title: "x",
@@ -280,12 +280,12 @@ async function run(a, b) {
     }),
   );
   record(
-    "t3_thread_interrupt there: unknown thread",
-    await tool("t3_thread_interrupt", { environmentId: b.id, threadId: "thread:missing" }),
+    "conn_thread_interrupt there: unknown thread",
+    await tool("conn_thread_interrupt", { environmentId: b.id, threadId: "thread:missing" }),
   );
   record(
-    "t3_thread_wait there: unknown thread",
-    await tool("t3_thread_wait", { environmentId: b.id, threadId: "thread:missing", timeoutMs: 10 }),
+    "conn_thread_wait there: unknown thread",
+    await tool("conn_thread_wait", { environmentId: b.id, threadId: "thread:missing", timeoutMs: 10 }),
   );
   // The peer lists the link as a bot client named after this environment.
   const clients = await (
@@ -303,10 +303,10 @@ async function run(a, b) {
       ),
     ),
   ]);
-  record("t3_environment_unlink", await tool("t3_environment_unlink", { environmentId: b.id }));
+  record("conn_environment_unlink", await tool("conn_environment_unlink", { environmentId: b.id }));
   record(
-    "t3_thread_list there after unlink",
-    await tool("t3_thread_list", { environmentId: b.id }),
+    "conn_thread_list there after unlink",
+    await tool("conn_thread_list", { environmentId: b.id }),
   );
   record("unlink again", await rpc(a, "peerLinks.unlink", { environmentId: b.id }));
   record("list after unlink", await rpc(a, "peerLinks.list", {}));
@@ -326,7 +326,7 @@ const reference = await run(t1, t2);
 if (process.argv.includes("--show")) for (const [step, value] of reference) console.log(`T3 → T3 ${step}: ${value}`);
 // Known differences, each with its reason. They must stay exactly these.
 const KNOWN = new Map([
-  // T3's `t3_thread_wait` on an unknown thread answers from its projection store; ours from the
+  // T3's `conn_thread_wait` on an unknown thread answers from its projection store; ours from the
   // engine. Both refuse with thread_not_found; the texts differ (README, conn-mcp "Tools").
 ]);
 for (const [label, a, b] of [

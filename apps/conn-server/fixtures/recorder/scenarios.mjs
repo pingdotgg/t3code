@@ -966,7 +966,7 @@ async function rustMcp(ctx) {
   await rustHaikuDraft(ctx, "Full access");
   await send(
     ctx,
-    "Call the t3_thread_list tool of the t3-code MCP server once, then reply with exactly: mcp ok",
+    "Call the conn_thread_list tool of the conn MCP server once, then reply with exactly: mcp ok",
   );
   await waitTurnEnd(ctx, 180_000);
   await ctx.page
@@ -975,14 +975,14 @@ async function rustMcp(ctx) {
     .waitFor({ timeout: 30_000 });
   if (
     !ctx.cap.lines.some(
-      (l) => l.dir === "out" && JSON.stringify(l.frame).includes("t3_thread_list"),
+      (l) => l.dir === "out" && JSON.stringify(l.frame).includes("conn_thread_list"),
     )
   ) {
-    throw new Error("no t3_thread_list tool row reached the client");
+    throw new Error("no conn_thread_list tool row reached the client");
   }
   // The tool answered with the thread list, not an error.
   if (!sentOut(ctx, "currentThreadId")) {
-    throw new Error("t3_thread_list returned no thread list");
+    throw new Error("conn_thread_list returned no thread list");
   }
   await ctx.shotAlways("mcp-tool");
 }

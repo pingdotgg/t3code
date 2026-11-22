@@ -61,7 +61,7 @@ const skipped = fixtures.filter((f) => expected.has(f));
 const scenarios = fixtures.filter((f) => !expected.has(f));
 
 // The `/mcp` scenario: `simple` with a T3 MCP session for its thread, so `session/new` carries
-// the `t3-code` server (the stdio bridge for Grok) and the prompt the T3 tool notes.
+// the `conn` server (the stdio bridge for Grok) and the prompt the T3 tool notes.
 const MCP_SCENARIO = "simple";
 const MCP = { endpoint: "http://127.0.0.1:9/mcp", authorization: "Bearer conformance-token" };
 

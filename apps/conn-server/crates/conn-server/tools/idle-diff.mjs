@@ -346,7 +346,7 @@ class Side {
     this.mcp = new McpSession(this.origin, authorization);
     await this.mcp.initialize();
     this.addProject();
-    const projects = await this.tool("t3_project_list", {});
+    const projects = await this.tool("conn_project_list", {});
     this.projectId = projects.projects.find((p) => p.title === "work")?.id;
     if (this.projectId === undefined) throw new Error(`${this.name}: project add left no project`);
   }
@@ -926,7 +926,7 @@ const both = (pair, f) => Promise.all(pair.map(f));
 
 const launch = (side, extra = {}) =>
   side
-    .tool("t3_thread_launch", {
+    .tool("conn_thread_launch", {
       projectId: side.projectId,
       title: "Idle check",
       modelSelection: { instanceId: "codex", model: extra.model ?? "gpt-6-luna" },
@@ -941,7 +941,7 @@ const launch = (side, extra = {}) =>
       return result;
     });
 const send = (side, message, mode) =>
-  side.tool("t3_thread_send", { threadId: side.threadId, message, ...(mode ? { mode } : {}) });
+  side.tool("conn_thread_send", { threadId: side.threadId, message, ...(mode ? { mode } : {}) });
 const terminal = (status) => ["completed", "failed", "interrupted", "cancelled"].includes(status);
 
 const SCENARIOS = [
@@ -1041,7 +1041,7 @@ const SCENARIOS = [
       // The recording waits for `turn/interrupt`: the turn runs until we stop it.
       const notes = await threadWhere(pair, "running", (t) => t.status === "running");
       await compare(pair, "a running turn (before stop)", notes);
-      await both(pair, (side) => side.tool("t3_thread_interrupt", { threadId: side.threadId }));
+      await both(pair, (side) => side.tool("conn_thread_interrupt", { threadId: side.threadId }));
       await compare(pair, "a turn being stopped", await gate(pair, "turn/interrupt"));
       await both(pair, (side) => side.release("turn/interrupt"));
       await compare(pair, "a stopped turn", await threadWhere(pair, "interrupted", (t) => terminal(t.status)));

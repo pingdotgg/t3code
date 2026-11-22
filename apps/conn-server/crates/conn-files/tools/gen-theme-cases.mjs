@@ -1,5 +1,5 @@
 // T3's environment theme rules, recorded for the Rust tests and the server:
-// - src/themes/upstream.json: the guide `t3_theme_read` returns, the built-in theme ids and the
+// - src/themes/upstream.json: the guide `conn_theme_read` returns, the built-in theme ids and the
 //   ids nobody may publish (packages/shared themeCss.ts and themePalettes.ts).
 // - src/themes/cases.json: `EnvironmentThemeFile` decoded from JSON, its pretty encoding,
 //   `environmentThemeFileHasColors`, and `themeCssLoadsRemoteFiles`, for chosen inputs.

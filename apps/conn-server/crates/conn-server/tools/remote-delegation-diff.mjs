@@ -4,7 +4,7 @@
 // and reply texts are replaced by placeholders. An agent in A (a turn that stays running)
 // delegates a task with `target.environmentId` B; the child runs there as an ordinary thread
 // with `delegatedFrom`, and its end completes the task in A, which wakes the agent. A forwarded
-// `t3_thread_send` to that thread is a follow-up: a new task in A, completed the same way.
+// `conn_thread_send` to that thread is a follow-up: a new task in A, completed the same way.
 // Then the refusals, a cancel of a finished task, a send to a thread that is no task, and a
 // retry. No model is called: T3's Claude CLI stand-in replays a two-turn transcript on B, Conn
 // runs the fake provider.
@@ -75,7 +75,7 @@ async function run(a, b) {
   await session.initialize();
   const bSession = new McpSession(b.origin, b.mcp);
   await bSession.initialize();
-  const projectOf = async (s) => outcome(await s.callTool("t3_project_list", {})).ok?.projects?.[0]?.id;
+  const projectOf = async (s) => outcome(await s.callTool("conn_project_list", {})).ok?.projects?.[0]?.id;
   const model = { instanceId: "claudeAgent", model: "claude-haiku-5-5" };
 
   const code = (await post(b, "/api/auth/pairing-token", { label: "delegation", access: "auto", purpose: "peer-link" }))
@@ -88,7 +88,7 @@ async function run(a, b) {
   // The agent in A: its turn starts and stays running, so it can delegate.
   a.forget();
   const agentThread = outcome(
-    await session.callTool("t3_thread_launch", {
+    await session.callTool("conn_thread_launch", {
       projectId: await projectOf(session), title: "Agent", message: "hang", modelSelection: model,
       runtimeMode: "full-access", workspaceStrategy: { type: "root" }, clientRequestId: `agent-${run}`,
     }),
@@ -197,22 +197,22 @@ async function run(a, b) {
   );
 
   // A follow-up: a send there to the finished task's thread is a new task here.
-  const sent = await tool("t3_thread_send", {
+  const sent = await tool("conn_thread_send", {
     environmentId: b.id, threadId: child, message: "Again.", mode: "queue", clientRequestId: `again-${run}`,
   });
   const followUp = sent.ok?.taskId;
   ids.push([followUp, "<follow-up>"], [sent.ok?.runId, "<follow-up-run>"], [sent.ok?.messageId, "<message>"]);
-  record("t3_thread_send there to the task's thread: a follow-up task", {
+  record("conn_thread_send there to the task's thread: a follow-up task", {
     ...sent,
     ok: sent.ok && { ...sent.ok, status: sent.ok.status === "starting" ? "running" : sent.ok.status },
   });
-  const resent = await tool("t3_thread_send", {
+  const resent = await tool("conn_thread_send", {
     environmentId: b.id, threadId: child, message: "Again.", mode: "queue", clientRequestId: `again-${run}`,
   });
-  record("t3_thread_send there, retried: the same follow-up", resent.ok?.taskId === followUp);
+  record("conn_thread_send there, retried: the same follow-up", resent.ok?.taskId === followUp);
   record("the follow-up ends there and wakes the agent here", await until(followUp));
   record("the follow-up finishes", task(await tool("task_status", { taskId: followUp })));
-  const recorded = outcome(await agent.callTool("t3_thread_read", { threadId: agentThread, view: "activity", limit: 100 }));
+  const recorded = outcome(await agent.callTool("conn_thread_read", { threadId: agentThread, view: "activity", limit: 100 }));
   record(
     "the follow-up record in the parent",
     (recorded.ok?.items ?? [])
@@ -223,19 +223,19 @@ async function run(a, b) {
 
   // A send to a thread there that is no task stays a plain send.
   const plain = (
-    await tool("t3_thread_launch", {
+    await tool("conn_thread_launch", {
       environmentId: b.id, projectId: bProject, title: "Not a task", modelSelection: model,
       workspaceStrategy: { type: "root" }, clientRequestId: `plain-${run}`,
     })
   ).ok?.threadId;
-  const plainSend = await tool("t3_thread_send", { environmentId: b.id, threadId: plain, message: "hi", mode: "queue" });
-  record("t3_thread_send there to a thread that is no task", plainSend.ok ? "taskId" in plainSend.ok : plainSend);
+  const plainSend = await tool("conn_thread_send", { environmentId: b.id, threadId: plain, message: "hi", mode: "queue" });
+  record("conn_thread_send there to a thread that is no task", plainSend.ok ? "taskId" in plainSend.ok : plainSend);
 
   record("task_cancel of a finished task", await tool("task_cancel", { taskId, clientRequestId: `cancel-${run}` }));
   record("task_status after the cancel", task(await tool("task_status", { taskId })));
 
   await agent.close();
-  await session.callTool("t3_thread_interrupt", { threadId: agentThread, stop: true });
+  await session.callTool("conn_thread_interrupt", { threadId: agentThread, stop: true });
   await rpc(a, "peerLinks.unlink", { environmentId: b.id });
   await session.close();
   await bSession.close();

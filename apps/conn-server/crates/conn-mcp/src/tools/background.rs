@@ -1,4 +1,4 @@
-//! `t3_background_wait` (`toolkits/orchestrator`): the calling thread's agent marks the
+//! `conn_background_wait` (`toolkits/orchestrator`): the calling thread's agent marks the
 //! background tasks it waits on, so its thread stays Working while they run; `waiting: false`
 //! clears the mark. The engine asks the thread's live provider session
 //! (`ThreadManagementService.awaitBackgroundTasks`); only Claude keeps such a roster.

@@ -99,7 +99,7 @@ The process ends with the probe: stdin closed, SIGTERM to the group, SIGKILL aft
   - `mcp_optional_startup_grace_ms: 10000`
   - `features.concurrent_reasoning_summaries: true`
   - `shell_environment_policy.set.T3CODE_THREAD_ID: <app thread id>`
-  - with T3 MCP: `mcp_servers.t3-code` and `mcp_servers.t3-code-direct` (URL, bearer header,
+  - with T3 MCP: `mcp_servers.conn` and `mcp_servers.conn-direct` (URL, bearer header,
     65-minute tool timeout)
 
   The result is `{"thread": {"id", "createdAt", "updatedAt", ...}, "model", ...}`. The native

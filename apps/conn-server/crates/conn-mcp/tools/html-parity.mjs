@@ -200,7 +200,7 @@ export async function htmlParity(binary) {
       // Clients extract the same reference from the provider's dynamic tool output.
       const extracted =
         got.value === undefined ||
-        htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: got.value }) !==
+        htmlRenderFromToolItem({ toolName: "mcp__conn__html_render", output: got.value }) !==
           undefined;
       const canonical = (x) =>
         JSON.stringify(x, (_, v) =>

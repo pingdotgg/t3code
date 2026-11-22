@@ -31,23 +31,23 @@ const shared = {
     SecureRandom.SecureRandom,
   ],
 };
-const AttachmentUploadTool = Tool.make("t3_attachment_prepare_upload", {
+const AttachmentUploadTool = Tool.make("conn_attachment_prepare_upload", {
   ...shared,
   description:
-    "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `t3_thread_send_attachments` with the returned `attachmentId`.",
+    "Get an upload URL. POST the file's exact bytes to `uploadUrl` (else this server's `relativeUrl`), then send via `conn_thread_send_attachments` with the returned `attachmentId`.",
   parameters: Schema.Struct({ upload: AttachmentCreateUploadUrlInput }),
   success: Schema.Struct({
     ...AttachmentCreateUploadUrlResult.fields,
     uploadUrl: Schema.optionalKey(Schema.String),
   }),
 }).annotate(Tool.Destructive, true);
-const AttachmentDiscardTool = Tool.make("t3_attachment_discard", {
+const AttachmentDiscardTool = Tool.make("conn_attachment_discard", {
   ...shared,
   description: "Discard a pending upload (not a sent attachment).",
   parameters: AttachmentDeleteInput,
   success: Schema.Struct({}),
 }).annotate(Tool.Destructive, true);
-const AttachmentSendTool = Tool.make("t3_thread_send_attachments", {
+const AttachmentSendTool = Tool.make("conn_thread_send_attachments", {
   ...shared,
   dependencies: [...shared.dependencies, DocumentText.DocumentText],
   description:

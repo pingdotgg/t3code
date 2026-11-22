@@ -665,14 +665,14 @@ mod tests {
 
     #[test]
     fn mcp_servers_are_turned_off_as_t3() {
-        let names = ["t3-code".to_owned(), "a.b".to_owned()];
+        let names = ["conn".to_owned(), "a.b".to_owned()];
         assert_eq!(
             mcp_servers_off(&names).as_deref(),
-            Some(r#"mcp_servers={"t3-code"={enabled=false},"a.b"={enabled=false}}"#)
+            Some(r#"mcp_servers={"conn"={enabled=false},"a.b"={enabled=false}}"#)
         );
         assert_eq!(
             mcp_server_off_flags(&names),
-            ["--config", "mcp_servers.t3-code.enabled=false"]
+            ["--config", "mcp_servers.conn.enabled=false"]
         );
     }
 

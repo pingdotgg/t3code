@@ -60,12 +60,12 @@ pub fn additional_context(model: &str, effort: Option<&str>, tools: ToolAvailabi
     let mut context = Map::new();
     for (index, section) in ORCHESTRATION_SECTIONS.iter().enumerate() {
         context.insert(
-            format!("t3_code_orchestration_{:02}", index + 1),
+            format!("conn_orchestration_{:02}", index + 1),
             entry(section),
         );
     }
     context.insert(
-        "t3_code_runtime".into(),
+        "conn_runtime".into(),
         entry(&runtime_instructions("Codex", model, effort)),
     );
     let tool_text = [
@@ -77,7 +77,7 @@ pub fn additional_context(model: &str, effort: Option<&str>, tools: ToolAvailabi
     .collect::<Vec<_>>()
     .join("\n\n");
     if !tool_text.is_empty() {
-        context.insert("t3_code_tools".into(), entry(&tool_text));
+        context.insert("conn_tools".into(), entry(&tool_text));
     }
     Value::Object(context)
 }

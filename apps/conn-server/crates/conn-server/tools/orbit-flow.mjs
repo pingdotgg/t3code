@@ -217,7 +217,7 @@ try {
     `GET /api/auth/session: authenticated, scopes ${session.scopes?.join(" ")}, expires ${session.expiresAt}`,
   );
 
-  step("MCP as Swamp: t3_project_list, t3_thread_launch, t3_thread_wait, t3_thread_read");
+  step("MCP as Swamp: conn_project_list, conn_thread_launch, conn_thread_wait, conn_thread_read");
   const mcp = new McpSession(origin, `Bearer ${token}`);
   const init = await mcp.initialize();
   ok(`initialize: protocol ${init.result?.protocolVersion}`);
@@ -226,10 +226,10 @@ try {
     if (reply.result?.isError !== false) fail(`${name}: ${JSON.stringify(reply)}`);
     return reply.result.structuredContent;
   };
-  const projects = await tool("t3_project_list", {});
+  const projects = await tool("conn_project_list", {});
   const project = projects.projects.find((p) => p.workspaceRoot === NodeFS.realpathSync(workspace));
   if (project === undefined) fail(`project not listed: ${JSON.stringify(projects)}`);
-  ok(`t3_project_list: ${project.title} ${project.id}`);
+  ok(`conn_project_list: ${project.title} ${project.id}`);
   const launchArgs = {
     projectId: project.id,
     title: "Orbit flow",
@@ -240,25 +240,25 @@ try {
     workspaceStrategy: { type: "root" },
     clientRequestId: "operation-1",
   };
-  const launched = await tool("t3_thread_launch", launchArgs);
-  const again = await tool("t3_thread_launch", launchArgs);
+  const launched = await tool("conn_thread_launch", launchArgs);
+  const again = await tool("conn_thread_launch", launchArgs);
   if (again.threadId !== launched.threadId || again.runId !== launched.runId)
     fail("a retried launch made a second thread or run");
-  ok(`t3_thread_launch: ${launched.threadId} run ${launched.runId} (retry returns the same)`);
-  const waited = await tool("t3_thread_wait", {
+  ok(`conn_thread_launch: ${launched.threadId} run ${launched.runId} (retry returns the same)`);
+  const waited = await tool("conn_thread_wait", {
     threadId: launched.threadId,
     runId: launched.runId,
     timeoutMs: 180_000,
   });
-  ok(`t3_thread_wait: ${waited.status}${waited.timedOut ? " (timed out)" : ""}`);
-  const read = await tool("t3_thread_read", {
+  ok(`conn_thread_wait: ${waited.status}${waited.timedOut ? " (timed out)" : ""}`);
+  const read = await tool("conn_thread_read", {
     threadId: launched.threadId,
     view: "activity",
     afterPosition: -1,
   });
   const text = JSON.stringify(read);
   if (!/orbit ok/i.test(text)) fail(`the answer is not in the read: ${text.slice(0, 600)}`);
-  ok(`t3_thread_read activity: ${read.items?.length} items, the answer is there`);
+  ok(`conn_thread_read activity: ${read.items?.length} items, the answer is there`);
 
   // `swamp/ansible/task-copy-turn.yml`, in its order, then `t3_copy_rpc.mjs`.
   step("task turn: read settings.json and model-manifest.json, check the model");

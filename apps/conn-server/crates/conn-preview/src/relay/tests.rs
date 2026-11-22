@@ -195,7 +195,7 @@ fn remote_errors_read_as_t3_reports_them() {
         message(
             json!({"_tag":"PreviewAutomationControlInterruptedError","message":"","detail":"tabLimit"})
         ),
-        "Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs."
+        "Too many server browser tabs are open. Close one with conn_preview_close, or reuse a tabId from preview_status tabs."
     );
     assert_eq!(
         message(

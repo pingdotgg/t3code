@@ -778,7 +778,7 @@ describe("section merge", () => {
       mode: "system",
       contrast: 100,
       themes: {
-        light: { id: "t3-code", source: "stock" },
+        light: { id: "conn", source: "stock" },
         dark: { id: "ocean", source: "builtin" },
       },
       customThemes: [],

@@ -1649,7 +1649,7 @@ it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits
       id: TurnItemId.make("item:thread-wait:active"),
       runId: run.id,
       type: "dynamic_tool" as const,
-      toolName: "mcp__t3_code__t3_thread_wait",
+      toolName: "mcp__conn__conn_thread_wait",
       input: { threadId: "child-thread" },
       status: "running" as const,
     };
@@ -1663,7 +1663,7 @@ it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits
     const foreign = {
       ...wait,
       id: TurnItemId.make("item:thread-wait:foreign"),
-      toolName: "weather.t3_thread_wait",
+      toolName: "weather.conn_thread_wait",
     };
     yield* updateItem(foreign);
     yield* assertBlocked(false);
@@ -1745,7 +1745,7 @@ it.effect("SQL shells flag only an active turn blocked solely on T3 thread waits
     const delegation = {
       ...wait,
       id: TurnItemId.make("item:thread-wait:delegation"),
-      toolName: "t3-code-thread_opencode2-adapter_delegate_task",
+      toolName: "conn-thread_opencode2-adapter_delegate_task",
       input: { task: "Review", mode: "async" },
     };
     yield* updateItem(delegation);
@@ -4769,11 +4769,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         });
       for (const inline of [
         { toolName: "t3-code.delegate_task" },
-        { toolName: "mcp__t3_code__delegate_task" },
+        { toolName: "mcp__conn__delegate_task" },
         { toolName: "mcp__docs__search", output: { next: "Delegate-Task" } },
         { toolName: "view_image", viewedImagePath: "/repo/screenshot.png" },
         { toolName: "mcp__docs__chart", output: { [MCP_APP_OUTPUT_KEY]: { uri: "ui://chart" } } },
-        { toolName: "mcp__t3-code__send_to_user" },
+        { toolName: "mcp__conn__send_to_user" },
         // OpenCode Code Mode reports a nested send_to_user call as one `execute` item.
         { toolName: "execute", output: JSON.stringify({ sentMessage: "Draft" }) },
       ]) {

@@ -853,7 +853,7 @@ This also holds when the server runs on another machine (Beast, mini, nick-vm).
 Only `preview_cdp_endpoint` stays on the tab's host, because it listens on
 loopback. Upstream does not have the relay, and its agent copy says desktop
 tabs cannot be reached from another machine. On 2026-10-28, a sync brought in
-such a `t3_preview_list` description (upstream #24850), and agents on Beast
+such a `conn_preview_list` description (upstream #24850), and agents on Beast
 refused to drive Nick's tabs. In every sync, read upstream's changes to the
 preview tool descriptions and agent instructions, and keep or rewrite any line
 that limits agents to server tabs. The guard
@@ -1285,7 +1285,7 @@ Sources:
 
 Typing `@` in the composer offers other T3 Code environments alongside threads
 and files. Picking one inserts a machine chip. Messages carry only the
-environment ID and label. The agent is told to use `t3_environment_link` before
+environment ID and label. The agent is told to use `conn_environment_link` before
 delegating there.
 
 Web persists `environmentContexts` on the composer draft and restores them on

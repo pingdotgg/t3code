@@ -845,7 +845,7 @@ impl Preview {
                     .count()
                     >= spec()?.agent_tab_limit
             {
-                return Err(Error("Too many server browser tabs are open. Close one with t3_preview_close, or reuse a tabId from preview_status tabs.".into()));
+                return Err(Error("Too many server browser tabs are open. Close one with conn_preview_close, or reuse a tabId from preview_status tabs.".into()));
             }
         }
         // Explicit persistent profiles need separate Chrome processes to preserve their on-disk partition.

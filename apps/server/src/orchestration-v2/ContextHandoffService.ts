@@ -257,7 +257,7 @@ export function makeSideChatContext(input: {
     "You are in a side chat beside the main thread. The main thread may still be running in the same worktree. Answer the user's questions; do not continue or redo the main thread's task.";
   const header = "Main thread activity since this side chat's starting point:";
   const truncated = "- Earlier items truncated.";
-  const footer = `Use t3_thread_read on thread ${input.parentThreadId} to see the main thread's live state.`;
+  const footer = `Use conn_thread_read on thread ${input.parentThreadId} to see the main thread's live state.`;
   const kept: Array<string> = [];
   let omitted = false;
   // The cap covers the whole block, so the fixed lines are reserved before any digest line.

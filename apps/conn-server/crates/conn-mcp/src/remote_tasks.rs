@@ -4,7 +4,7 @@
 //! child thread, and a follower completes it (`delegated_task.remote.complete`) when the thread
 //! there ends, so the parent wakes as it does for a local child.
 //!
-//! A forwarded `t3_thread_send` that started or queued a run on the thread of one of the
+//! A forwarded `conn_thread_send` that started or queued a run on the thread of one of the
 //! caller's finished remote tasks is a follow-up: that run is a new task here, whose id the
 //! send returns ([`follow_up`]). Cancelling a task, or a Stop of its parent, stops its thread
 //! there; the follower carries a stop that could not be sent at once, across restarts.
@@ -278,7 +278,7 @@ impl McpService {
         }
         args.insert("clientRequestId".into(), json!(format!("{key}:{thread}")));
         let environment = remote["environmentId"].as_str().unwrap_or_default();
-        self.there(scope, environment, "t3_thread_interrupt", args)
+        self.there(scope, environment, "conn_thread_interrupt", args)
             .await
             .map(|_| ())
     }
@@ -312,7 +312,7 @@ impl McpService {
                 args.insert("afterPosition".into(), position.clone());
             }
             let read = self
-                .there(scope, environment, "t3_thread_read", args)
+                .there(scope, environment, "conn_thread_read", args)
                 .await?;
             if run.is_none() {
                 run = read["recentRuns"]
@@ -367,7 +367,7 @@ impl McpService {
             args.insert("textOffset".into(), text_offset);
             args.insert("maxCharsPerItem".into(), json!(20_000));
             let rest = self
-                .there(scope, environment, "t3_thread_read", args)
+                .there(scope, environment, "conn_thread_read", args)
                 .await?;
             let Some(part) = rest["items"].as_array().and_then(|i| i.first()) else {
                 break;
@@ -590,7 +590,7 @@ impl McpService {
         // A thread there whose run ended may still wait on its own tasks.
         args.insert("untilDelegatedWorkSettled".into(), json!(true));
         let waited = tokio::select! {
-            waited = self.there(&scope, environment, "t3_thread_wait", args) => waited?,
+            waited = self.there(&scope, environment, "conn_thread_wait", args) => waited?,
             () = ended_here(&mut stream, task) => return Ok(false),
         };
         if waited["timedOut"] == true {
@@ -809,7 +809,7 @@ async fn resolve_project(
         args.insert("cursor".into(), cursor.clone());
         args.insert("limit".into(), json!(100));
         let listed = cx
-            .forward("t3_project_list", args, environment.to_owned())
+            .forward("conn_project_list", args, environment.to_owned())
             .await?;
         for project in listed["projects"].as_array().into_iter().flatten() {
             if project["repositoryIdentity"]["canonicalKey"] == key.as_str() {
@@ -829,7 +829,7 @@ async fn resolve_project(
         [] => Err(fail(
             "invalid_request",
             format!(
-                "No project there has this repository ({key}). Pass target.projectId; t3_project_list with this environmentId lists them. To bring the repository there, use t3_project_clone and then t3_project_create with this environmentId."
+                "No project there has this repository ({key}). Pass target.projectId; conn_project_list with this environmentId lists them. To bring the repository there, use conn_project_clone and then conn_project_create with this environmentId."
             ),
         )),
         many => Err(fail(
@@ -881,7 +881,7 @@ pub(crate) async fn delegate(
     if args.get("isolation").and_then(Value::as_str) == Some("worktree") {
         return Err(fail(
             "invalid_request",
-            "A task in a linked environment runs in that project's checkout; isolation \"worktree\" is not supported there. Omit isolation, or use t3_thread_launch with environmentId and a worktree workspaceStrategy.",
+            "A task in a linked environment runs in that project's checkout; isolation \"worktree\" is not supported there. Omit isolation, or use conn_thread_launch with environmentId and a worktree workspaceStrategy.",
         ));
     }
     // The provider and model inherit as for a task here. Another provider there has no model
@@ -987,7 +987,7 @@ pub(crate) async fn delegate(
         }),
     );
     let launched = cx
-        .forward("t3_thread_launch", launch, environment.to_owned())
+        .forward("conn_thread_launch", launch, environment.to_owned())
         .await?;
     let label = match cx.config().peers.as_deref() {
         Some(peers) => peers
@@ -1281,7 +1281,7 @@ async fn run_status(cx: &Cx<'_>, parent: &Value, row: &Value) -> Option<String> 
         .there(
             &scope,
             remote["environmentId"].as_str().unwrap_or_default(),
-            "t3_thread_read",
+            "conn_thread_read",
             args,
         )
         .await

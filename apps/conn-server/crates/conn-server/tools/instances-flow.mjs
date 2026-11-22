@@ -269,11 +269,11 @@ try {
 
   const mcp = new McpSession(origin, `Bearer ${token}`);
   await mcp.initialize();
-  const projects = (await mcp.callTool("t3_project_list", {})).result.structuredContent;
+  const projects = (await mcp.callTool("conn_project_list", {})).result.structuredContent;
   const project = projects.projects.find((p) => p.workspaceRoot === NodeFS.realpathSync(workspace));
   let request = 0;
   const launch = (instanceId, model) =>
-    mcp.callTool("t3_thread_launch", {
+    mcp.callTool("conn_thread_launch", {
       projectId: project.id,
       title: `instances ${instanceId}`,
       message: "Reply with exactly: ok",

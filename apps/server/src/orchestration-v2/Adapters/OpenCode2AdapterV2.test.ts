@@ -95,8 +95,8 @@ const event = (
 const durable = { durable: { aggregateID: SESSION, seq: 1, version: 1 } };
 
 const mcpRules = [
-  { action: "t3-code-*", resource: "*", effect: "deny" },
-  { action: "t3-code-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
+  { action: "conn-*", resource: "*", effect: "deny" },
+  { action: "conn-thread_opencode2-adapter_*", resource: "*", effect: "allow" },
 ];
 const t3Rules = [{ action: "*", resource: "*", effect: "allow" }, ...mcpRules];
 const TITLE = "Prime check";
@@ -191,7 +191,7 @@ const withInstructions = (
         ...entries.slice(0, at),
         out("session.instructions.entry.put", {
           sessionID: SESSION,
-          key: "t3-code",
+          key: "conn",
           value: "<any>",
         }),
         reply("session.instructions.entry.put", null),
@@ -831,7 +831,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         [
           out("session.instructions.entry.put", {
             sessionID: SESSION,
-            key: "t3-code",
+            key: "conn",
             value: "<any>",
           }),
           reply("session.instructions.entry.put", null),
@@ -3579,7 +3579,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         promptAccepted,
         out("session.instructions.entry.put", {
           sessionID: otherId,
-          key: "t3-code",
+          key: "conn",
           value: "<any>",
         }),
         reply("session.instructions.entry.put", null),
@@ -4273,7 +4273,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     (toolName) =>
       Effect.gen(function* () {
         const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-wait" };
-        const name = toolName.startsWith("mcp__") ? toolName : `t3-code-web_${toolName}`;
+        const name = toolName.startsWith("mcp__") ? toolName : `conn-web_${toolName}`;
         const input =
           toolName !== "delegate_task"
             ? { html: "<p>Preview</p>" }
@@ -4926,7 +4926,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     Effect.gen(function* () {
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
+      const server = "conn-thread_opencode2-adapter";
       const pages = [
         { html: "<p>orbits</p>", title: "Orbits", height: 480 },
         { html: "<p>scale</p>", title: "Scale", height: 1490 },
@@ -4960,7 +4960,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                   input: { html: pages[0]!.html, width: 728 },
                 },
                 { tool: `${server}.html_render`, status: "completed", input: pages[0] },
-                { tool: "t3-code-thread_other.html_render", status: "completed", input: pages[1] },
+                { tool: "conn-thread_other.html_render", status: "completed", input: pages[1] },
                 { tool: `${server}.html_render`, status: "completed", input: pages[1] },
               ],
               truncated: false,
@@ -5003,7 +5003,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const metadata = {
         toolCalls: [
           {
-            tool: "t3-code-thread_opencode2-adapter.html_render",
+            tool: "conn-thread_opencode2-adapter.html_render",
             status: "completed",
             input: page,
           },
@@ -5179,7 +5179,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         browserToolsAvailable: false,
       });
       yield* Effect.addFinalizer(() => mcpSessions.clear(threadId));
-      const server = "t3-code-thread_opencode2-adapter";
+      const server = "conn-thread_opencode2-adapter";
       const add = out("mcp.add", {
         server,
         "location[directory]": WORK,
@@ -5206,7 +5206,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           reply("mcp.add", { status: 500, body: { message: "MCP unavailable" } }),
           out("session.instructions.entry.put", {
             sessionID: SESSION,
-            key: "t3-code",
+            key: "conn",
             value: buildRuntimeInstructions({ harness: "OpenCode", model: bigPickle.model }),
           }),
           reply("session.instructions.entry.put", null),
@@ -5236,7 +5236,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       const child = ThreadId.make(
         "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Asubproject-b-round1",
       );
-      const server = "t3-code-aa73fa1e03099934";
+      const server = "conn-aa73fa1e03099934";
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       yield* mcpSessions.set({
         environmentId: EnvironmentId.make("environment:opencode2-adapter"),
@@ -5256,7 +5256,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionInfo({
             permissions: [
               { action: "*", resource: "*", effect: "allow" },
-              { action: "t3-code-*", resource: "*", effect: "deny" },
+              { action: "conn-*", resource: "*", effect: "deny" },
               { action: `${server}_*`, resource: "*", effect: "allow" },
             ],
           }),
@@ -5307,11 +5307,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         "thread:delegated-task:command%3Amcp%3A48bef2bf-6d0e-4f7a-9c3b-2e5d8a1f7c40%3Adelegate-task%3Around2",
       ];
       const names = yield* Effect.forEach(ids, t3McpServerName);
-      for (const name of names) assert.match(name, /^t3-code-[A-Za-z0-9_-]{1,56}$/);
+      for (const name of names) assert.match(name, /^conn-[A-Za-z0-9_-]{1,56}$/);
       assert.equal(new Set(names).size, ids.length);
       assert.deepEqual(yield* Effect.forEach(ids, t3McpServerName), names);
-      assert.equal(names[0], "t3-code-63abb5df2b188bdd");
-      assert.equal(yield* t3McpServerName(threadId), "t3-code-thread_opencode2-adapter");
+      assert.equal(names[0], "conn-63abb5df2b188bdd");
+      assert.equal(yield* t3McpServerName(threadId), "conn-thread_opencode2-adapter");
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
 
@@ -6269,7 +6269,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         replyData("session.form.list", []),
         ...promptInto(SESSION, "msg_recorded_turn_a"),
         ...steerInto(SESSION, "msg_recorded_steer_a"),
-        out("session.instructions.entry.put", { sessionID: OTHER, key: "t3-code", value: "<any>" }),
+        out("session.instructions.entry.put", { sessionID: OTHER, key: "conn", value: "<any>" }),
         reply("session.instructions.entry.put", null),
         ...promptInto(OTHER, "msg_recorded_turn_b"),
         ...steerInto(OTHER, "msg_recorded_steer_b"),
@@ -6342,7 +6342,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         out("session.form.list", { sessionID: OTHER }),
         replyData("session.form.list", []),
         ...promptInto(SESSION, "msg_recorded_turn_a"),
-        out("session.instructions.entry.put", { sessionID: OTHER, key: "t3-code", value: "<any>" }),
+        out("session.instructions.entry.put", { sessionID: OTHER, key: "conn", value: "<any>" }),
         reply("session.instructions.entry.put", null),
         ...promptInto(OTHER, "msg_recorded_turn_b"),
         event("session.execution.succeeded", { sessionID: SESSION }),
@@ -6848,8 +6848,8 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           sessionID: FORK,
           permissions: [
             { action: "*", resource: "*", effect: "allow" },
-            { action: "t3-code-*", resource: "*", effect: "deny" },
-            { action: "t3-code-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
+            { action: "conn-*", resource: "*", effect: "deny" },
+            { action: "conn-thread_opencode2-adapter_fork_*", resource: "*", effect: "allow" },
           ],
         }),
         reply("session.update", null),

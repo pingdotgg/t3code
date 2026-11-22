@@ -310,7 +310,7 @@ pub(crate) fn select_history(
 pub(crate) fn coverage(thread_id: &str, covered: &Value, items: &[Value]) -> String {
     let id = |item: Option<&Value>| item.map_or_else(|| "none".to_owned(), |i| js_text(&i["id"]));
     format!(
-        "Provider context handoff. Thread: {thread_id}. Covered app runs: {}-{}.\nSource item range: {} through {}.\nRecover an omitted item only when the request needs it, with t3_thread_read({{threadId:\"{thread_id}\",view:\"activity\",itemId:\"<omitted item ID>\",maxCharsPerItem:4000}}); continue long text with textOffset=nextTextOffset until null. Items included below need no read. Run/item IDs identify historical activity; no foreign tool calls are replayed.",
+        "Provider context handoff. Thread: {thread_id}. Covered app runs: {}-{}.\nSource item range: {} through {}.\nRecover an omitted item only when the request needs it, with conn_thread_read({{threadId:\"{thread_id}\",view:\"activity\",itemId:\"<omitted item ID>\",maxCharsPerItem:4000}}); continue long text with textOffset=nextTextOffset until null. Items included below need no read. Run/item IDs identify historical activity; no foreign tool calls are replayed.",
         js_text(&covered["from"]),
         js_text(&covered["to"]),
         id(items.first()),
@@ -521,7 +521,7 @@ pub(crate) fn plan_delivery(
             let detail = match h["history"]["coverage"].as_str() {
                 Some(text) => text.to_owned(),
                 None => format!(
-                    "From thread {}, runs {}-{}. Recover history with t3_thread_read, view=activity, afterPosition=-1; paginate with afterPosition=nextPosition, and use itemId/textOffset for long items.",
+                    "From thread {}, runs {}-{}. Recover history with conn_thread_read, view=activity, afterPosition=-1; paginate with afterPosition=nextPosition, and use itemId/textOffset for long items.",
                     js_text(&h["threadId"]),
                     js_text(&h["coveredRunOrdinals"]["from"]),
                     js_text(&h["coveredRunOrdinals"]["to"]),
@@ -544,7 +544,7 @@ pub(crate) fn plan_delivery(
             .map(|h| js_text(&h["threadId"]))
             .unwrap_or_default();
         coverage = format!(
-            "Context handoff ({}). {} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with t3_thread_read({{threadId:\"{first_thread}\",view:\"activity\",itemId:\"<omitted item ID>\",maxCharsPerItem:4000}}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.",
+            "Context handoff ({}). {} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with conn_thread_read({{threadId:\"{first_thread}\",view:\"activity\",itemId:\"<omitted item ID>\",maxCharsPerItem:4000}}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.",
             strategies.join(", "),
             pending.len()
         );

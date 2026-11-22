@@ -83,7 +83,7 @@ async fn forwards_with_the_callers_limits_and_a_scoped_retry_key() {
     swamp
         .request(
             "tools/call",
-            json!({"name": "t3_thread_wait", "arguments": {
+            json!({"name": "conn_thread_wait", "arguments": {
                 "environmentId": "env-peer", "threadId": "t", "timeoutMs": 999_999,
             }}),
         )
@@ -91,7 +91,7 @@ async fn forwards_with_the_callers_limits_and_a_scoped_retry_key() {
     swamp
         .request(
             "tools/call",
-            json!({"name": "t3_thread_send", "arguments": {
+            json!({"name": "conn_thread_send", "arguments": {
                 "environmentId": "env-peer", "threadId": "t", "message": "hi",
                 "clientRequestId": "k",
             }}),
@@ -117,7 +117,7 @@ async fn forwards_with_the_callers_limits_and_a_scoped_retry_key() {
     // A mode above the link's access is refused here, with the link named.
     let (code, message) = swamp
         .failure(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({"environmentId": "env-peer", "projectId": "p", "title": "x", "runtimeMode": "full-access"}),
         )
         .await;
@@ -133,15 +133,18 @@ async fn forwards_with_the_callers_limits_and_a_scoped_retry_key() {
     );
     // This environment's own id stays here.
     swamp
-        .ok("t3_environment_read", json!({"environmentId": "env-test"}))
+        .ok(
+            "conn_environment_read",
+            json!({"environmentId": "env-test"}),
+        )
         .await;
     assert_eq!(crate::lock(&peers.calls).len(), 2);
-    let links = swamp.ok("t3_environment_links", json!({})).await;
+    let links = swamp.ok("conn_environment_links", json!({})).await;
     assert_eq!(links["environmentId"], "env-test");
     assert_eq!(links["links"][0]["status"], "reachable");
     let unlinked = swamp
         .ok(
-            "t3_environment_unlink",
+            "conn_environment_unlink",
             json!({"environmentId": "env-peer"}),
         )
         .await;
@@ -149,7 +152,7 @@ async fn forwards_with_the_callers_limits_and_a_scoped_retry_key() {
         unlinked,
         json!({"environmentId": "env-peer", "removed": true})
     );
-    let (code, _) = swamp.failure("t3_environment_link", json!({})).await;
+    let (code, _) = swamp.failure("conn_environment_link", json!({})).await;
     assert_eq!(
         code, "thread_credential_required",
         "a card needs a calling thread"
@@ -172,17 +175,17 @@ async fn links_off_hides_the_link_tools_and_keeps_calls_here() {
         .iter()
         .filter_map(|t| t["name"].as_str())
         .collect();
-    assert!(!names.contains(&"t3_environment_links"));
-    assert!(names.contains(&"t3_environment_preferences_update"));
+    assert!(!names.contains(&"conn_environment_links"));
+    assert!(names.contains(&"conn_environment_preferences_update"));
     let reply = swamp
         .request(
             "tools/call",
-            json!({"name": "t3_environment_links", "arguments": {}}),
+            json!({"name": "conn_environment_links", "arguments": {}}),
         )
         .await;
     assert_eq!(reply["error"]["code"], -32602, "a hidden tool is not found");
     let (code, message) = swamp
-        .failure("t3_thread_list", json!({"environmentId": "env-peer"}))
+        .failure("conn_thread_list", json!({"environmentId": "env-peer"}))
         .await;
     assert_eq!(code, "capability_denied");
     assert!(message.starts_with("Linked environments is off on this machine"));
@@ -205,7 +208,7 @@ async fn a_peer_links_work_stays_within_its_link() {
     let mut link = Client::open(&f.service, linked("auto")).await;
     let started = link
         .ok(
-            "t3_thread_launch",
+            "conn_thread_launch",
             json!({"projectId": project_id(), "title": "linked", "message": "hang",
                 "modelSelection": {"instanceId": "claudeAgent", "model": "claude-haiku-5-5"}}),
         )
@@ -226,18 +229,18 @@ async fn a_peer_links_work_stays_within_its_link() {
     );
     let (code, message) = link
         .failure(
-            "t3_thread_send",
+            "conn_thread_send",
             json!({"threadId": own, "message": "x", "mode": "queue"}),
         )
         .await;
     assert_eq!(code, "capability_denied");
     assert!(message.contains("it may change only threads that link started"));
     link.ok(
-        "t3_thread_send",
+        "conn_thread_send",
         json!({"threadId": started["threadId"], "message": "x", "mode": "queue"}),
     )
     .await;
-    let (code, message) = link.failure("t3_environment_links", json!({})).await;
+    let (code, message) = link.failure("conn_environment_links", json!({})).await;
     assert_eq!(code, "capability_denied");
     assert!(
         message.contains("it cannot use this environment's links"),
@@ -245,7 +248,7 @@ async fn a_peer_links_work_stays_within_its_link() {
     );
     let (code, _) = link
         .failure(
-            "t3_environment_unlink",
+            "conn_environment_unlink",
             json!({"environmentId": "env-peer"}),
         )
         .await;
@@ -253,7 +256,7 @@ async fn a_peer_links_work_stays_within_its_link() {
     // A full-access link is not fenced.
     let mut full = Client::open(&f.service, linked("full-access")).await;
     full.ok(
-        "t3_thread_send",
+        "conn_thread_send",
         json!({"threadId": own, "message": "x", "mode": "queue"}),
     )
     .await;
@@ -284,16 +287,16 @@ async fn a_native_session_needs_the_scopes_settings_and_links_need() {
     let mut device = Client::open(&f.service, operate_only).await;
     for (tool, args, scope) in [
         (
-            "t3_environment_preferences_update",
+            "conn_environment_preferences_update",
             json!({"newWorktreesStartFromOrigin": false}),
             "settings:write",
         ),
         (
-            "t3_environment_unlink",
+            "conn_environment_unlink",
             json!({"environmentId": "env-peer"}),
             "access:write",
         ),
-        ("t3_environment_links", json!({}), "access:read"),
+        ("conn_environment_links", json!({}), "access:read"),
     ] {
         let (code, message) = device.failure(tool, args).await;
         assert_eq!(code, "capability_denied", "{tool}");
@@ -317,11 +320,11 @@ async fn a_native_session_needs_the_scopes_settings_and_links_need() {
     let mut admin = Client::open(&f.service, granted).await;
     admin
         .ok(
-            "t3_environment_unlink",
+            "conn_environment_unlink",
             json!({"environmentId": "env-peer"}),
         )
         .await;
-    admin.ok("t3_environment_links", json!({})).await;
+    admin.ok("conn_environment_links", json!({})).await;
 }
 
 /// The fence fails closed: when the calling thread cannot be read, the caller is not taken for
@@ -376,7 +379,7 @@ async fn a_native_sessions_scopes_hold_for_a_linked_environment() {
     let mut device = Client::open(&f.service, operate_only).await;
     let (code, message) = device
         .failure(
-            "t3_environment_preferences_update",
+            "conn_environment_preferences_update",
             json!({"environmentId": "env-peer", "newWorktreesStartFromOrigin": false}),
         )
         .await;

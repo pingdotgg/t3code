@@ -99,7 +99,7 @@
       "prompt": [
        {
         "type": "text",
-        "text": "<t3_code_instructions>\n<any>\n</t3_code_instructions>\n\n<user_request>\nRead /tmp/claude-replay-tool_call_read_only/package.json and /tmp/claude-replay-tool_call_read_only/tsconfig.json, then answer exactly: read only tool fixture complete\n</user_request>"
+        "text": "<conn_instructions>\n<any>\n</conn_instructions>\n\n<user_request>\nRead /tmp/claude-replay-tool_call_read_only/package.json and /tmp/claude-replay-tool_call_read_only/tsconfig.json, then answer exactly: read only tool fixture complete\n</user_request>"
        },
        {
         "type": "text",

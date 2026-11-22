@@ -25,7 +25,7 @@ it("counts each person once and leaves out bots", () => {
     { subject: "chore: bump (#3)", authorName: "dependabot[bot]" },
     { subject: "fix: direct push by a PR author", authorName: "Ada Lovelace" },
     { subject: "fix: direct push by someone else", authorName: "Grace Hopper" },
-    { subject: "chore: direct push by a bot", authorName: "t3-code[bot]" },
+    { subject: "chore: direct push by a bot", authorName: "conn[bot]" },
     { subject: "fix(web): four (#4)", authorName: "Linus T" },
     { subject: "fix: direct push by a PR author with no profile name", authorName: "Linus T" },
     { subject: "fix(web): five, whose PR did not resolve (#5)", authorName: "Ken T" },

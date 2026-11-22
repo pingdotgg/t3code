@@ -309,10 +309,10 @@ fn thread_config(app_thread_id: Option<&str>, mcp: &[McpServer]) -> Value {
 
 /// `CODEX_DIRECT_ONLY_T3_TOOLS`: Code Mode runs a blocking wait or delegate wait as a nested
 /// call, and the model keeps polling it; the direct-only server makes it a plain tool call.
-const DIRECT_ONLY_TOOLS: [&str; 2] = ["t3_thread_wait", "delegate_task"];
+const DIRECT_ONLY_TOOLS: [&str; 2] = ["conn_thread_wait", "delegate_task"];
 
 /// `mcp_servers.<name>` overrides for one server, as `codexThreadRuntimeParams` builds them.
-/// T3's own server (`t3-code`) splits in two: [`DIRECT_ONLY_TOOLS`] go on a direct-only
+/// T3's own server (`conn`) splits in two: [`DIRECT_ONLY_TOOLS`] go on a direct-only
 /// server, out of code mode, so a wait never runs inside a script.
 fn mcp_server_config(server: &McpServer) -> Vec<(String, Value)> {
     let entry = |extra: Value| {
@@ -331,7 +331,7 @@ fn mcp_server_config(server: &McpServer) -> Vec<(String, Value)> {
         entry
     };
     let name = &server.name;
-    if name != "t3-code" {
+    if name != "conn" {
         return vec![(format!("mcp_servers.{name}"), entry(json!({})))];
     }
     vec![
@@ -724,20 +724,20 @@ mod tests {
     fn t3_code_splits_its_wait_tool_onto_a_direct_server() {
         let server = McpServer {
             device_tools: false,
-            name: "t3-code".into(),
+            name: "conn".into(),
             url: "http://127.0.0.1:3773/mcp".into(),
             headers: vec![("Authorization".into(), "Bearer abc".into())],
         };
         let config = &thread_params(Some("t1"), None, None, &[server])["config"];
-        let main = &config["mcp_servers.t3-code"];
-        let direct = &config["mcp_servers.t3-code-direct"];
+        let main = &config["mcp_servers.conn"];
+        let direct = &config["mcp_servers.conn-direct"];
         assert_eq!(
             main["disabled_tools"],
-            json!(["t3_thread_wait", "delegate_task"])
+            json!(["conn_thread_wait", "delegate_task"])
         );
         assert_eq!(
             direct["enabled_tools"],
-            json!(["t3_thread_wait", "delegate_task"])
+            json!(["conn_thread_wait", "delegate_task"])
         );
         assert_eq!(direct["http_headers"]["Authorization"], "Bearer abc");
         assert_eq!(main["tool_timeout_sec"], MCP_TOOL_TIMEOUT_SECS);

@@ -167,13 +167,13 @@ impl CodexSession {
             .map_err(|detail| ProviderError::Protocol { detail })?
         };
         // TS: `hasT3Mcp` when the thread has an MCP session; the engine passes it as the
-        // `t3-code` server, with the session's `device` capability. Browser tools on: the
+        // `conn` server, with the session's `device` capability. Browser tools on: the
         // session carries no finer answer (TS reads `browserToolsAvailable`).
         let t3_tools = inner
             .lock()
             .mcp_servers
             .iter()
-            .find(|s| s.name == "t3-code")
+            .find(|s| s.name == "conn")
             .map(|s| ToolAvailability {
                 device: s.device_tools,
                 ..ToolAvailability::default()

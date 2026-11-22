@@ -8,35 +8,35 @@
   "retainedSessions": 256,
   "cases": [
     {
-      "query": "T3_WORKFLOW_STOP",
+      "query": "CONN_WORKFLOW_STOP",
       "names": [
-        "t3_workflow_stop"
+        "conn_workflow_stop"
       ]
     },
     {
       "query": "thread",
       "names": [
         "create_threads",
-        "t3_thread_list",
-        "t3_thread_read",
-        "t3_thread_update",
-        "t3_thread_send",
-        "t3_thread_wait",
-        "t3_thread_interrupt",
-        "t3_thread_search",
-        "t3_thread_configure",
-        "t3_thread_transfer"
+        "conn_thread_list",
+        "conn_thread_read",
+        "conn_thread_update",
+        "conn_thread_send",
+        "conn_thread_wait",
+        "conn_thread_interrupt",
+        "conn_thread_search",
+        "conn_thread_configure",
+        "conn_thread_transfer"
       ]
     },
     {
       "query": "project",
       "names": [
-        "t3_project_list",
-        "t3_project_read",
-        "t3_project_create",
-        "t3_project_update",
-        "t3_project_delete",
-        "t3_project_clone",
+        "conn_project_list",
+        "conn_project_read",
+        "conn_project_create",
+        "conn_project_update",
+        "conn_project_delete",
+        "conn_project_clone",
         "preview_cdp_endpoint",
         "annotations_list",
         "list_scheduled_tasks",
@@ -47,23 +47,23 @@
       "query": "thread thread",
       "names": [
         "create_threads",
-        "t3_thread_list",
-        "t3_thread_read",
-        "t3_thread_update",
-        "t3_thread_send",
-        "t3_thread_wait",
-        "t3_thread_interrupt",
-        "t3_thread_search",
-        "t3_thread_configure",
-        "t3_thread_transfer"
+        "conn_thread_list",
+        "conn_thread_read",
+        "conn_thread_update",
+        "conn_thread_send",
+        "conn_thread_wait",
+        "conn_thread_interrupt",
+        "conn_thread_search",
+        "conn_thread_configure",
+        "conn_thread_transfer"
       ]
     },
     {
-      "query": "t3_thread_read",
+      "query": "conn_thread_read",
       "names": [
-        "t3_thread_read",
-        "t3_workflow_stop",
-        "t3_thread_launch"
+        "conn_thread_read",
+        "conn_workflow_stop",
+        "conn_thread_launch"
       ]
     },
     {
@@ -80,12 +80,12 @@
         "schedule_task",
         "list_scheduled_tasks",
         "delete_scheduled_task",
-        "t3_environment_links",
-        "t3_environment_link",
-        "t3_environment_unlink",
+        "conn_environment_links",
+        "conn_environment_link",
+        "conn_environment_unlink",
         "run_scheduled_task_now",
-        "t3_environment_read",
-        "t3_environment_preferences_update",
+        "conn_environment_read",
+        "conn_environment_preferences_update",
         "preview_navigate"
       ]
     }

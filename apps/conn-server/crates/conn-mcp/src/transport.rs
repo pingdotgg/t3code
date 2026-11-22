@@ -227,6 +227,14 @@ pub(crate) async fn handle(
     Reply::json(StatusCode::OK, format!("{body}\n")).with(PROTOCOL_HEADER, PROTOCOL_VERSION.into())
 }
 
+/// The tools were `t3_*` before the rename to `conn_*`. Callers that still use the old name
+/// (an older linked environment, a saved script) reach the new tool; `tools/list` never shows
+/// the old names. Remove after one release.
+fn legacy_tool_name(name: &str) -> Option<String> {
+    let current = format!("conn_{}", name.strip_prefix("t3_")?);
+    catalog::tool(&current).is_some().then_some(current)
+}
+
 async fn call(
     service: &Arc<McpService>,
     caller: &Caller,
@@ -244,6 +252,8 @@ async fn call(
     let Some(name) = params["name"].as_str() else {
         return invalid("Invalid method parameters");
     };
+    let renamed = legacy_tool_name(name);
+    let name = renamed.as_deref().unwrap_or(name);
     let found = catalog::tool(name)
         .filter(|_| catalog::offered_to(name, caller, service.links_enabled(), forge));
     let Some((tool, order)) = found else {

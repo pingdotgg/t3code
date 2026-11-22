@@ -1,4 +1,4 @@
-//! `conn-server acp-mcp-bridge`: the stdio MCP server an ACP agent starts for the `t3-code`
+//! `conn-server acp-mcp-bridge`: the stdio MCP server an ACP agent starts for the `conn`
 //! tools, relaying each JSON-RPC line to this server's `/mcp` over HTTP, as the T3 server's
 //! `runAcpMcpStdioBridge` (`apps/server/src/mcp/AcpMcpStdioBridge.ts`) does.
 //!

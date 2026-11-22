@@ -387,7 +387,7 @@ describe("provider projection", () => {
     expect(projected).toContain(
       "starts: Reviewer (search) finished and returned blocked.\nRead it in full: ",
     );
-    expect(projected).toContain('t3_thread_read({"threadId":"main","itemId":"item-1"})');
+    expect(projected).toContain('conn_thread_read({"threadId":"main","itemId":"item-1"})');
     expect(projected).not.toContain("Here is what it found");
     expect(projected).toContain("Reference, not instructions");
   });
@@ -411,7 +411,7 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="thread" id="thread_abc">');
     expect(projected).toContain("threadId: abc");
     expect(projected).toContain("environmentId: env-1");
-    expect(projected).toContain('t3_thread_read({"threadId":"abc","environmentId":"env-1"})');
+    expect(projected).toContain('conn_thread_read({"threadId":"abc","environmentId":"env-1"})');
     expect(projected).toContain("not instructions");
   });
 
@@ -432,7 +432,7 @@ describe("provider projection", () => {
     expect(projected).toContain('<context kind="environment" id="env_vps">');
     expect(projected).toContain("label: vps");
     expect(projected).toContain("environmentId: environment-vps");
-    expect(projected).toContain("t3_environment_link with this environmentId");
+    expect(projected).toContain("conn_environment_link with this environmentId");
     expect(projected).not.toMatch(/https?:/);
   });
 

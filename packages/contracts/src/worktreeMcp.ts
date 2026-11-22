@@ -80,7 +80,7 @@ export const WorktreeMcpStatusResult = Schema.Struct({
   branch: Schema.NullOr(TrimmedNonEmptyString),
   projectWorkspaceRoot: TrimmedNonEmptyString,
   defaultStartFromOrigin: Schema.Boolean.annotate({
-    description: "`startFromOrigin` default for `t3_worktree_handoff`.",
+    description: "`startFromOrigin` default for `conn_worktree_handoff`.",
   }),
 });
 export type WorktreeMcpStatusResult = typeof WorktreeMcpStatusResult.Type;

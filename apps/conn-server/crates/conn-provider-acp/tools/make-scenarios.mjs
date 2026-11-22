@@ -75,7 +75,7 @@ function turn(second, { n, text, wrapped, answer, extra = [] }) {
         {
           type: "text",
           text: wrapped
-            ? `<t3_code_instructions>\n<any>\n</t3_code_instructions>\n\n<user_request>\n${text}\n</user_request>`
+            ? `<conn_instructions>\n<any>\n</conn_instructions>\n\n<user_request>\n${text}\n</user_request>`
             : text,
         },
       ];

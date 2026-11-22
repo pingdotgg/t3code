@@ -12,7 +12,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
     let caller = cx.require_thread("This tool")?;
     let read = matches!(
         name,
-        "preview_status" | "t3_preview_list" | "preview_snapshot" | "preview_wait_for"
+        "preview_status" | "conn_preview_list" | "preview_snapshot" | "preview_wait_for"
     );
     if !read {
         cx.writing_caller().await?;
@@ -21,7 +21,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
     let preview = cx.config().preview.as_ref().ok_or_else(|| {
         ToolError::Message("Preview automation is unavailable for this thread.".into())
     })?;
-    if name == "t3_preview_close" {
+    if name == "conn_preview_close" {
         let listed = preview.list(&caller.thread_id);
         let runtime = listed
             .get("sessions")
@@ -49,7 +49,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
             Some(_) => {}
         }
     }
-    if name == "t3_preview_list" {
+    if name == "conn_preview_list" {
         let mut result = preview.list(&caller.thread_id);
         let cursor = args.get("cursor").and_then(Value::as_u64).unwrap_or(0) as usize;
         let limit = args.get("limit").and_then(Value::as_u64).unwrap_or(20) as usize;
@@ -80,7 +80,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
         "preview_evaluate" => "evaluate",
         "preview_dialog" => "dialog",
         "preview_cdp_endpoint" => "cdpEndpoint",
-        "t3_preview_close" => "close",
+        "conn_preview_close" => "close",
         _ => {
             return Err(fail(
                 "capability_denied",
@@ -113,7 +113,7 @@ pub(super) async fn call(cx: &Cx<'_>, name: &str, args: &Args) -> ToolResult {
     };
     let tab = str_arg(args, "tabId");
     let (desktop_input, timeout_ms) = desktop_input(name, args);
-    let routed = if name == "t3_preview_close" {
+    let routed = if name == "conn_preview_close" {
         None
     } else {
         relay(

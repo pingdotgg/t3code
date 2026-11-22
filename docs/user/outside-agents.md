@@ -88,13 +88,13 @@ devices, and worktree handoff. They still appear in an outside agent's tool
 list, but calling one returns an error saying it needs an agent running inside
 T3 Code.
 
-- To hand off work, start a thread with `t3_thread_launch`, then follow it with
-  `t3_thread_wait` or `t3_thread_read`, instead of `create_threads` or
+- To hand off work, start a thread with `conn_thread_launch`, then follow it with
+  `conn_thread_wait` or `conn_thread_read`, instead of `create_threads` or
   `delegate_task`.
 - Tools that default to the caller's own project or thread need an explicit
   `projectId` or `threadId`.
-- To list threads across projects, call `t3_thread_list` with
-  `allProjects: true`, or use `t3_thread_search`.
+- To list threads across projects, call `conn_thread_list` with
+  `allProjects: true`, or use `conn_thread_search`.
 
 ## Claude Code
 

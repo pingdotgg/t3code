@@ -47,7 +47,7 @@ const fail = (_tag, detail) => ({
 });
 const cases = [
   { tool: "preview_status", args: {} },
-  { tool: "t3_preview_list", args: {} },
+  { tool: "conn_preview_list", args: {} },
   {
     tool: "preview_snapshot",
     args: { tabId: "$desktop" },
@@ -79,8 +79,8 @@ const cases = [
   { tool: "preview_recording_start", args: {} },
   { tool: "preview_open", args: { tabId: "$desktop", url: "http://localhost:3001", open: false }, reply: status("http://localhost:3001/") },
   { tool: "preview_status", args: {} },
-  { tool: "t3_preview_close", args: { tabId: "$desktop" } },
-  { tool: "t3_preview_list", args: {} },
+  { tool: "conn_preview_close", args: { tabId: "$desktop" } },
+  { tool: "conn_preview_list", args: {} },
 ];
 
 /** Puts the real desktop tab id where a case says `$desktop`. */

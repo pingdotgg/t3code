@@ -11,7 +11,7 @@ import { unavailable } from "../../threadAccess.ts";
 import { ThemeToolkit } from "./tools.ts";
 
 export const layer = McpToolAccess.toLayer(ThemeToolkit, {
-  t3_theme_read: McpToolAccess.reads(({ themeId }) =>
+  conn_theme_read: McpToolAccess.reads(({ themeId }) =>
     Effect.gen(function* () {
       const themes = yield* EnvironmentTheme.EnvironmentThemeService;
       const {
@@ -43,7 +43,7 @@ export const layer = McpToolAccess.toLayer(ThemeToolkit, {
       };
     }),
   ),
-  t3_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme, appearance }, check) =>
+  conn_theme_set: McpToolAccess.writesEnvironment(({ themeId, theme, appearance }, check) =>
     Effect.gen(function* () {
       const input =
         themeId !== undefined

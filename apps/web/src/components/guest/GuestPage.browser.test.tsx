@@ -99,7 +99,7 @@ const items: ReadonlyArray<OrchestrationV2TurnItem> = [
   {
     ...itemBase("visual", 2),
     type: "dynamic_tool",
-    toolName: "mcp__t3-code__html_render",
+    toolName: "mcp__conn__html_render",
     input: null,
     output: { htmlRender: { attachmentId: "thread-a-1", title: "Chart", height: 200 } },
   },

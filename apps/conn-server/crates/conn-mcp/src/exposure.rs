@@ -119,18 +119,18 @@ mod tests {
     #[test]
     fn search_loads_exact_names_and_evicts_the_oldest_session() {
         let mut exposure = Exposure::default();
-        assert!(!exposure.listed("s", "t3_workflow_stop"));
+        assert!(!exposure.listed("s", "conn_workflow_stop"));
         assert!(exposure.listed("s", "delegate_task"));
-        let found = exposure.search("s", "T3_WORKFLOW_STOP");
-        assert_eq!(found.first().unwrap()["name"], "t3_workflow_stop");
-        assert!(exposure.listed("s", "t3_workflow_stop"));
-        assert!(!exposure.listed("other", "t3_workflow_stop"));
+        let found = exposure.search("s", "CONN_WORKFLOW_STOP");
+        assert_eq!(found.first().unwrap()["name"], "conn_workflow_stop");
+        assert!(exposure.listed("s", "conn_workflow_stop"));
+        assert!(!exposure.listed("other", "conn_workflow_stop"));
         assert!(exposure.search("s", "@!!").is_empty());
         assert!(exposure.search("s", "thread").len() <= MAX_RESULTS);
         for i in 0..MAX_SESSIONS {
-            exposure.search(&i.to_string(), "t3_project_read");
+            exposure.search(&i.to_string(), "conn_project_read");
         }
-        assert!(!exposure.listed("s", "t3_workflow_stop"));
+        assert!(!exposure.listed("s", "conn_workflow_stop"));
         assert_eq!(exposure.loaded.len(), MAX_SESSIONS);
         let reference: Value =
             serde_json::from_str(include_str!("../fixtures/tool-search.json")).unwrap();

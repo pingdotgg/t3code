@@ -164,7 +164,7 @@ async fn open(
     let mcp_servers = if mcp {
         vec![McpServer {
             device_tools: device,
-            name: "t3-code".into(),
+            name: "conn".into(),
             url: MCP_URL.into(),
             headers: vec![("Authorization".into(), MCP_AUTHORIZATION.into())],
         }]

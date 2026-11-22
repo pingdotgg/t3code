@@ -31,7 +31,7 @@ const approvalRequiredThreads = Effect.gen(function* () {
   };
 });
 
-/** Archives a thread as an outside agent does: `t3_thread_organize` on the server's MCP endpoint. */
+/** Archives a thread as an outside agent does: `conn_thread_organize` on the server's MCP endpoint. */
 const archiveOverMcp = Effect.fn("scenario.archiveOverMcp")(function* (
   baseUrl: string,
   threadId: string,
@@ -82,7 +82,7 @@ const archiveOverMcp = Effect.fn("scenario.archiveOverMcp")(function* (
   const result = yield* send({
     id: 2,
     method: "tools/call",
-    params: { name: "t3_thread_organize", arguments: { threadId, action: "archive" } },
+    params: { name: "conn_thread_organize", arguments: { threadId, action: "archive" } },
   });
   if (result.includes('"isError":true')) {
     return yield* new ScenarioError({ message: `Archive failed: ${result}` });

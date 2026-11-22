@@ -35,7 +35,7 @@ section 3 keeps the dated binary measurements.
 Five points carry the rest of the document:
 
 1. **A container is already served.** Every method a container needs is served, and since
-   2026-11-14 every `/mcp` tool too: `t3_background_wait`, which our Claude instructions tell
+   2026-11-14 every `/mcp` tool too: `conn_background_wait`, which our Claude instructions tell
    the agent to call, is served as T3 serves it. A Stop during a Claude cold start now ends the
    run at once, as in T3 (it waited for the boot, up to about 6.5 minutes).
    Orbit's task-turn path also uses four CLI items; they are built (section 1b).
@@ -483,12 +483,12 @@ fork makes them possible: the contract outside the provider protocols becomes ou
 
 | Need | Today | Proposal |
 | --- | --- | --- |
-| Answer a pending question | Interrupt the run, then send the answer as a new turn (`development-containers.md:1605`) | `t3_pending_request` with `action: respond`, served now on `/mcp` |
-| Interrupt | `t3_copy_rpc.mjs`: a one-minute session, a ticket, `/ws`, `run.interrupt` | `t3_thread_interrupt`, served now |
-| Send and wait | `t3 thread send --wait --json` | `t3_thread_send` plus `t3_thread_wait`, served now |
+| Answer a pending question | Interrupt the run, then send the answer as a new turn (`development-containers.md:1605`) | `conn_pending_request` with `action: respond`, served now on `/mcp` |
+| Interrupt | `t3_copy_rpc.mjs`: a one-minute session, a ticket, `/ws`, `run.interrupt` | `conn_thread_interrupt`, served now |
+| Send and wait | `t3 thread send --wait --json` | `conn_thread_send` plus `conn_thread_wait`, served now |
 | List providers and models | `cat settings.json` and `model-manifest.json` | `orchestrator_capabilities`, served now |
-| Effort per turn | Five provider instances with `CLAUDE_CODE_EFFORT_LEVEL`, because "Claude Code takes `CLAUDE_CODE_EFFORT_LEVEL` over the `--effort` that T3 passes" (`:1623`) | Effort as a model option on the turn. The client already sends options with `thread.model-selection.set`. Whether `t3_thread_send` or `t3_thread_configure` takes the effort is **to check**. The router env file must not set the variable. |
-| Token use per turn | "T3's CLI reports no token use" (`TaskCopyTurnProjection.php:20`) | Usage is in the thread projection; expose it in `t3_thread_read` |
+| Effort per turn | Five provider instances with `CLAUDE_CODE_EFFORT_LEVEL`, because "Claude Code takes `CLAUDE_CODE_EFFORT_LEVEL` over the `--effort` that T3 passes" (`:1623`) | Effort as a model option on the turn. The client already sends options with `thread.model-selection.set`. Whether `conn_thread_send` or `conn_thread_configure` takes the effort is **to check**. The router env file must not set the variable. |
+| Token use per turn | "T3's CLI reports no token use" (`TaskCopyTurnProjection.php:20`) | Usage is in the thread projection; expose it in `conn_thread_read` |
 | A service credential | Sessions from the CLI | A 4b token with `sub: swamp` and `orchestration:operate` |
 
 The Conn Server already accepts an environment session on `/mcp`. So the only server work
@@ -711,7 +711,7 @@ Every stage is built and proven in isolation first:
 | Stage | Proven before it (checkable) | State that moves | How it ships and starts | In isolation, in practice | First live step | Way back |
 | --- | --- | --- | --- | --- | --- | --- |
 | 0. The isolated client copy | The copy builds with its own identity. The 22 recorder scenarios pass against the Conn Server in the copy. No file in `nckrtl/conn` changes. | None | A separate repository or fork branch of the client, never merged into Conn | Its own bundle id, URL scheme and data folder, so it never reads Conn's saved environments | Nick installs the copy beside Conn | Delete the copy |
-| 1. Orbit containers | (a) is complete: `t3_background_wait` (done 2026-11-14); the four CLI items (built 2026-11-14) or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
+| 1. Orbit containers | (a) is complete: `conn_background_wait` (done 2026-11-14); the four CLI items (built 2026-11-14) or Swamp on `/mcp`. Orbit's container flow passes in a scratch container on Linux. The 4b verifier, if chosen. The section 7 flags hide what a container does not serve. A week of real use shows no "not supported" on the paths people take. | New containers start fresh. An existing container keeps settings, keybindings, its environment id, attachments and annotations (same files). Threads, pairings and scheduled tasks need the converter (below). | The musl binary in the agent bundle; `bin/t3` points at it (`DROP-IN.md` §6a) | A scratch Instance only, opened from the isolated client copy | One new scratch Instance with the Conn Server, with Nick's word | Point `bin/t3` back at the T3 tarball, then `try-restart` |
 | 2. The Mac mini | (b) for what Nick uses there: `peerLinks`, linked environments, scheduled tasks, PR panels. A supervisor for `server.restart`. The converter, proven on a **copy** of a T3 home that Nick makes. | Threads and projects: one import event per thread from T3's projection rows, keeping ids. Scheduled tasks: from the `scheduled_tasks` table into JSON. Settings secrets: from `secrets/*.bin` back into `settings.json`. Sessions **cannot** move (T3 signs tokens; we store hashes), so devices pair again. | A launchd service running `conn-server serve`, with its own `--base-dir` and port | A second server with its own state folder and port, beside the T3 server; the T3 service is untouched | The isolated client connects to it; Nick runs one orchestrator thread there | Stop the Conn Server service; the T3 server never stopped |
 | 3. The Mac with the desktop app | (b) for the desktop: previews and the agent browser, devices, PR panels, provider sign-in. A native spawn path (no `ELECTRON_RUN_AS_NODE`, `--bootstrap-fd 3`). A replacement for fds 4 to 7 (updates, telemetry, the in-app browser), or an explicit drop. Signed binaries. | As stage 2, from a copy of the Mac's T3 home | The binary in the isolated desktop copy's bundle. The desktop updates the server by updating itself. The SDK host could run on Electron's own Node (`ELECTRON_RUN_AS_NODE`) instead of a 152 MB single executable [estimate]. | The isolated desktop copy, with its own data folder and home; Conn's desktop keeps its T3 server | Nick uses the isolated desktop for one project | Use the normal Conn app |
 | 4. The T3 server leaves Conn | Stages 1 to 3 have run for an agreed time. The loose fork's merge gate (section 10) works. | None new | Conn's desktop and mobile take the client copy's changes | Only now does `nckrtl/conn` change | A Conn release with the Conn Server | The previous Conn release, which still bundles the T3 server |
@@ -937,7 +937,7 @@ Surfaces Nick's container and host use need (the start list for a later client p
 - **Conn's own edits inside upstream files.** The checkout has no `upstream` remote, so I
   could not measure how far Conn has already moved from T3 Code.
 - **The client's churn per area.** The measurement did not finish in time.
-- **Whether `t3_thread_send` or `t3_thread_configure` carries effort.**
+- **Whether `conn_thread_send` or `conn_thread_configure` carries effort.**
 - **The brief's timing facts** (6.9 s, 1 s per call, 6 s for 48 servers): not in Orbit's
   code or docs.
 
@@ -1240,42 +1240,42 @@ C is the container verdict, H the host verdict. "Size if built": S under 300 lin
 | `save_test_login` | yes | X | U |  | test logins |
 | `schedule_task` | yes | U | N |  | scheduled tasks |
 | `send_to_user` | yes | N | N |  | core orchestration |
-| `t3_attachment_discard` | yes | U | N |  | attachments between threads |
-| `t3_attachment_prepare_upload` | yes | U | N |  | attachments between threads |
-| `t3_background_wait` | yes | N | N |  | agents wait on background commands; named in T3's instructions |
-| `t3_environment_link` | yes | X | N |  | linked machines |
-| `t3_environment_links` | yes | X | N |  | linked machines |
-| `t3_environment_preferences_update` | yes | X | N |  | linked machines |
-| `t3_environment_read` | yes | N | N |  | core orchestration |
-| `t3_environment_unlink` | yes | X | N |  | linked machines |
-| `t3_pending_request` | yes | N | N |  | core orchestration |
-| `t3_preview_close` | yes | U | N |  | agent browser; needs headless Chromium on the server |
-| `t3_preview_list` | yes | U | N |  | agent browser; needs headless Chromium on the server |
-| `t3_project_clone` | no | O | U | M | Orbit owns projects in a container |
-| `t3_project_create` | no | O | U | M | Orbit owns projects in a container |
-| `t3_project_delete` | no | O | U | M | Orbit owns projects in a container |
-| `t3_project_list` | yes | N | N |  | core orchestration |
-| `t3_project_read` | yes | N | N |  | core orchestration |
-| `t3_project_update` | no | O | U | M | Orbit owns projects in a container |
-| `t3_queue` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_theme_read` | no | X | U | S | client theme |
-| `t3_theme_set` | no | X | U | S | client theme |
-| `t3_thread_configure` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_interrupt` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_launch` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_list` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_organize` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_read` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_search` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_send` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_send_attachments` | yes | U | N |  | attachments between threads |
-| `t3_thread_transfer` | no | X | U | L | move a thread between machines |
-| `t3_thread_update` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_thread_wait` | yes | N | N |  | core orchestration; Swamp's service calls |
-| `t3_workflow_stop` | yes | U | U |  |  |
-| `t3_worktree_handoff` | yes | U | N |  | worktree hand-off |
-| `t3_worktree_list` | yes | U | N |  | worktree hand-off |
-| `t3_worktree_status` | yes | U | N |  | worktree hand-off |
+| `conn_attachment_discard` | yes | U | N |  | attachments between threads |
+| `conn_attachment_prepare_upload` | yes | U | N |  | attachments between threads |
+| `conn_background_wait` | yes | N | N |  | agents wait on background commands; named in T3's instructions |
+| `conn_environment_link` | yes | X | N |  | linked machines |
+| `conn_environment_links` | yes | X | N |  | linked machines |
+| `conn_environment_preferences_update` | yes | X | N |  | linked machines |
+| `conn_environment_read` | yes | N | N |  | core orchestration |
+| `conn_environment_unlink` | yes | X | N |  | linked machines |
+| `conn_pending_request` | yes | N | N |  | core orchestration |
+| `conn_preview_close` | yes | U | N |  | agent browser; needs headless Chromium on the server |
+| `conn_preview_list` | yes | U | N |  | agent browser; needs headless Chromium on the server |
+| `conn_project_clone` | no | O | U | M | Orbit owns projects in a container |
+| `conn_project_create` | no | O | U | M | Orbit owns projects in a container |
+| `conn_project_delete` | no | O | U | M | Orbit owns projects in a container |
+| `conn_project_list` | yes | N | N |  | core orchestration |
+| `conn_project_read` | yes | N | N |  | core orchestration |
+| `conn_project_update` | no | O | U | M | Orbit owns projects in a container |
+| `conn_queue` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_theme_read` | no | X | U | S | client theme |
+| `conn_theme_set` | no | X | U | S | client theme |
+| `conn_thread_configure` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_interrupt` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_launch` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_list` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_organize` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_read` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_search` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_send` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_send_attachments` | yes | U | N |  | attachments between threads |
+| `conn_thread_transfer` | no | X | U | L | move a thread between machines |
+| `conn_thread_update` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_thread_wait` | yes | N | N |  | core orchestration; Swamp's service calls |
+| `conn_workflow_stop` | yes | U | U |  |  |
+| `conn_worktree_handoff` | yes | U | N |  | worktree hand-off |
+| `conn_worktree_list` | yes | U | N |  | worktree hand-off |
+| `conn_worktree_status` | yes | U | N |  | worktree hand-off |
 | `task_cancel` | yes | N | N |  | core orchestration |
 | `task_status` | yes | N | N |  | core orchestration |
 | `tool_search` | yes | U | U |  |  |

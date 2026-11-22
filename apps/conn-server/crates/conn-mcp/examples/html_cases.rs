@@ -171,7 +171,7 @@ async fn run(state: PathBuf, input: Value) -> Result<Value, Error> {
     let client_headers = open(&service, &client).await?;
     let mut agents = Vec::new();
     for runtime in ["full-access", "approval-required"] {
-        let launch = call(&service, &client, &client_headers,"t3_thread_launch",json!({"projectId":SqliteEngine::project_id_for(&state.to_string_lossy()),"message":"hang","title":"HTML parity","runtimeMode":runtime,"interactionMode":"plan","modelSelection":{"instanceId":"claudeAgent","model":"test"}})).await?;
+        let launch = call(&service, &client, &client_headers,"conn_thread_launch",json!({"projectId":SqliteEngine::project_id_for(&state.to_string_lossy()),"message":"hang","title":"HTML parity","runtimeMode":runtime,"interactionMode":"plan","modelSelection":{"instanceId":"claudeAgent","model":"test"}})).await?;
         let thread_id = launch
             .pointer("/result/structuredContent/threadId")
             .and_then(Value::as_str)

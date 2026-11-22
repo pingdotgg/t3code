@@ -10,7 +10,7 @@ const worktree = NodePath.dirname(import.meta.dirname);
 // T3 runs setup in the background, so agents can start before it ends.
 // `setup-running` holds this PID until setup ends with `setup-done` or
 // `setup-failed`, so agents wait instead of racing it with their own `vp i`.
-const markerDir = NodePath.join(worktree, ".t3");
+const markerDir = NodePath.join(worktree, ".conn");
 const runningMarker = NodePath.join(markerDir, "setup-running");
 const doneMarker = NodePath.join(markerDir, "setup-done");
 const failedMarker = NodePath.join(markerDir, "setup-failed");

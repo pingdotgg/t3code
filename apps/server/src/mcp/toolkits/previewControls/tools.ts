@@ -23,7 +23,7 @@ const shared = {
     PreviewAutomationBroker.PreviewAutomationBroker,
   ],
 };
-const PreviewListTool = Tool.make("t3_preview_list", {
+const PreviewListTool = Tool.make("conn_preview_list", {
   ...shared,
   description:
     "List this thread's preview tabs, on this server and in the user's desktop app. `preview_*` tools drive both kinds from here, also when the desktop app is on another machine.",
@@ -39,7 +39,7 @@ const PreviewListTool = Tool.make("t3_preview_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
-const PreviewCloseTool = Tool.make("t3_preview_close", {
+const PreviewCloseTool = Tool.make("conn_preview_close", {
   ...shared,
   description:
     "Close one preview tab this thread owns. Use it on a tab you opened for your own check when you finish.",

@@ -68,7 +68,7 @@ pub struct ClaudeConfig {
     /// How long background work (a running subagent, a pending continuation) may keep an idle
     /// query alive. T3: 4 hours.
     pub idle_max_hold: Duration,
-    /// Text appended to the system prompt when the session has a `t3-code` MCP server
+    /// Text appended to the system prompt when the session has a `conn` MCP server
     /// (`T3_CODE_ORCHESTRATION_INSTRUCTIONS` and the adapter's own texts in TS;
     /// `conn_mcp::CLAUDE_INSTRUCTIONS`).
     pub mcp_instructions: Option<String>,
@@ -89,30 +89,30 @@ pub const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 /// T3's `DEFAULT_MAX_IDLE_PIN_MS`.
 pub const DEFAULT_IDLE_MAX_HOLD: Duration = Duration::from_secs(4 * 60 * 60);
 /// The MCP server name whose tools T3 allows without asking.
-pub const T3_MCP_SERVER: &str = "t3-code";
+pub const T3_MCP_SERVER: &str = "conn";
 /// `CLAUDE_T3_MCP_TOOL_WILDCARD`.
-pub const T3_MCP_WILDCARD: &str = "mcp__t3-code__*";
+pub const T3_MCP_WILDCARD: &str = "mcp__conn__*";
 /// `CLAUDE_READ_ONLY_ALLOWED_TOOLS`.
 pub const READ_ONLY_TOOLS: &[&str] = &["Read", "Glob", "Grep"];
-/// `CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS`: the `t3-code` tools annotated read-only.
+/// `CLAUDE_READ_ONLY_T3_MCP_ALLOWED_TOOLS`: the `conn` tools annotated read-only.
 pub const READ_ONLY_T3_MCP_TOOLS: &[&str] = &[
-    "mcp__t3-code__orchestrator_capabilities",
-    "mcp__t3-code__list_scheduled_tasks",
-    "mcp__t3-code__t3_background_wait",
-    "mcp__t3-code__t3_thread_list",
-    "mcp__t3-code__t3_thread_wait",
-    "mcp__t3-code__t3_worktree_status",
-    "mcp__t3-code__t3_worktree_list",
-    "mcp__t3-code__t3_project_list",
-    "mcp__t3-code__t3_project_read",
-    "mcp__t3-code__t3_thread_search",
-    "mcp__t3-code__t3_preview_list",
-    "mcp__t3-code__t3_environment_read",
-    "mcp__t3-code__t3_environment_links",
-    "mcp__t3-code__t3_theme_read",
-    "mcp__t3-code__html_preview",
-    "mcp__t3-code__html_render",
-    "mcp__t3-code__send_to_user",
+    "mcp__conn__orchestrator_capabilities",
+    "mcp__conn__list_scheduled_tasks",
+    "mcp__conn__conn_background_wait",
+    "mcp__conn__conn_thread_list",
+    "mcp__conn__conn_thread_wait",
+    "mcp__conn__conn_worktree_status",
+    "mcp__conn__conn_worktree_list",
+    "mcp__conn__conn_project_list",
+    "mcp__conn__conn_project_read",
+    "mcp__conn__conn_thread_search",
+    "mcp__conn__conn_preview_list",
+    "mcp__conn__conn_environment_read",
+    "mcp__conn__conn_environment_links",
+    "mcp__conn__conn_theme_read",
+    "mcp__conn__html_preview",
+    "mcp__conn__html_render",
+    "mcp__conn__send_to_user",
 ];
 
 impl ClaudeConfig {
@@ -373,7 +373,7 @@ pub struct QueryInput {
     /// `resumeSessionAt`: continue from this message (rollback, fork).
     pub resume_at: Option<String>,
     pub title: Option<String>,
-    /// The session has the `t3-code` MCP server (its servers go in by `setMcpServers`).
+    /// The session has the `conn` MCP server (its servers go in by `setMcpServers`).
     pub t3_mcp: bool,
     /// That server offers the device tools: T3's device text follows the MCP text, and
     /// subagents get it at their start.
@@ -561,7 +561,7 @@ pub fn query_options(
 
 /// The CLI's environment (`options.env`), from the host's: T3's changes in order, then
 /// `T3CODE_THREAD_ID`. `settings_entrypoint` is `env.CLAUDE_CODE_ENTRYPOINT` from Claude's user
-/// or managed settings, which wins over `t3-code` (`mergeClaudeProcessEnvironment`).
+/// or managed settings, which wins over `conn` (`mergeClaudeProcessEnvironment`).
 pub fn query_env(
     config: &ClaudeConfig,
     thread_id: &str,

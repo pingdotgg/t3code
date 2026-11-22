@@ -162,7 +162,7 @@ four hours, most of it reading upstream changes and finishing the tools.
   query, `serverTime`, and the `/mcp` thread list and read changes are followed and tested.
 - **New upstream, not served:** `pullRequests.subscribeLinkedThreadRefreshes`; HTTP
   `/api/auth/connect-devices/approve` and `/revoke` (T3 Connect device approval); the `/mcp`
-  tools `send_to_user`, `t3_theme_read`, `t3_theme_set`; environment themes.
+  tools `send_to_user`, `conn_theme_read`, `conn_theme_set`; environment themes.
 - **Tools changed:** see the table above; the report starts with "What to do".
 
 ## Rehearsing on a copy of a state folder

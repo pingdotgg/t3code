@@ -57,7 +57,7 @@ pub(super) async fn project(cx: &Cx<'_>, thread: &Value) -> ToolResult {
 }
 
 async fn load(cx: &Cx<'_>) -> ToolResult {
-    let caller = cx.require_thread("t3_worktree_status")?;
+    let caller = cx.require_thread("conn_worktree_status")?;
     cx.projection(&caller.thread_id).await.map_err(|e| match e {
         ToolError::Failure {
             code: "thread_not_found",
@@ -140,7 +140,7 @@ impl Drop for InFlight {
 }
 
 pub(super) async fn handoff(cx: &Cx<'_>, args: &Args) -> ToolResult {
-    let caller = cx.require_thread("t3_worktree_handoff")?;
+    let caller = cx.require_thread("conn_worktree_handoff")?;
     cx.writing_caller().await?;
     config(cx)?;
     {

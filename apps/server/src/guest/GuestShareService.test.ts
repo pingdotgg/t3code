@@ -562,7 +562,7 @@ it.effect("gives a fork's guest the commands the fork shows from its source thre
     const render = yield* writeItem("item:render", {
       type: "dynamic_tool",
       status: "completed",
-      toolName: "mcp__t3-code__html_render",
+      toolName: "mcp__conn__html_render",
       input: {},
       output: [
         {

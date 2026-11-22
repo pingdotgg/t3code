@@ -3011,7 +3011,7 @@ impl crate::EngineHost for RecordingHost {
         Some(crate::AgentTools {
             servers: vec![conn_provider::McpServer {
                 device_tools: false,
-                name: "t3-code".into(),
+                name: "conn".into(),
                 url: "http://127.0.0.1:1/mcp".into(),
                 headers: vec![(
                     "Authorization".into(),
@@ -3086,7 +3086,7 @@ async fn the_host_grants_tools_claims_attachments_and_hears_closes() {
     dispatch(&engine, first).await;
     let p = run_to_end(&engine, "t1", "run:t1:1").await;
     assert_eq!(p["messages"][0]["attachments"][0]["id"], "t1-1");
-    assert_eq!(provider.mcp_servers.lock().unwrap()[0].name, "t3-code");
+    assert_eq!(provider.mcp_servers.lock().unwrap()[0].name, "conn");
     assert_eq!(
         host.sessions.lock().unwrap()[0].project_id.as_deref(),
         Some(project_id().as_str())

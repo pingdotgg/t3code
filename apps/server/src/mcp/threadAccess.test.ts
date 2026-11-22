@@ -29,7 +29,7 @@ const client: McpInvocationContext.McpInvocationScope = {
 };
 
 const linksHint =
-  "Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.";
+  "Thread ids belong to one environment: for a thread on a linked one, find it with `conn_environment_links` and pass its `environmentId` to a tool that takes one.";
 
 const readBare = (
   existing: ReadonlyArray<OrchestrationV2ThreadShell | ThreadId>,
@@ -67,7 +67,7 @@ it.effect("tells a caller with linked environments that the thread may be on one
     const error = yield* readBare([], { ...client, linkedEnvironments: true });
 
     expect(error.code).toBe("thread_not_found");
-    expect(error.message).toContain("t3_environment_links");
+    expect(error.message).toContain("conn_environment_links");
     expect(error.message).toContain("environmentId");
 
     const linksOff = yield* readBare([], { ...client, linkedEnvironments: false });

@@ -18,7 +18,7 @@ export async function toolOutputParity(binary) {
   const htmlCases = htmlTests.split('describe("htmlRenderFromToolItem",')[1];
   if (!htmlCases) throw new Error("T3 HTML reference test moved");
   names.push(...[...htmlCases.matchAll(/\["([^"]+)",/g)].map((m) => m[1]));
-  names.push("mcp__t3-code__other__html_render", "t3-code-direct__html_render", "mcp-_t3_code_html_render", "t3-code-thread_opencode2-adapter_delegate_task", "t3-code-thread_opencode2-adapter_not_a_tool", "HTML_render", "t3-code\u0085·html_render", "t3-code\ufeff·\ufeffhtml_render", "\ufeffmcp__t3-code__html_render", "\u0085html_render");
+  names.push("mcp__conn__other__html_render", "t3-code-direct__html_render", "mcp-_t3_code_html_render", "t3-code-thread_opencode2-adapter_delegate_task", "conn-thread_opencode2-adapter_not_a_tool", "conn-thread_opencode2-adapter_delegate_task", "t3-code-thread_x_t3_thread_wait", "mcp__t3-code__t3_thread_list", "conn.conn_thread_list", "HTML_render", "conn\u0085·html_render", "conn\ufeff·\ufeffhtml_render", "\ufeffmcp__conn__html_render", "\u0085html_render");
   const reference = { htmlRender: { attachmentId: "owner-00000000-0000-4000-8000-000000000001-html", title: " Page ", height: 100 } };
   const items = names.map((toolName) => ({ toolName, output: reference }));
   // Result envelopes and edge cases from toolOutput.test.ts and htmlRender.test.ts.

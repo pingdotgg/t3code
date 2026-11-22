@@ -41,7 +41,7 @@ first few milliseconds) still does.
   config. The contract has no event for the environment alone; Conn clients replace their
   config with each snapshot (`applyServerConfigProjection`), as after a reconnect.
 - `server.getConfig`, the `welcome` and `ready` events of a new `subscribeServerConfig` or
-  `subscribeServerLifecycle`, `/mcp` (`t3_environment_read`, project tools) and peer links use
+  `subscribeServerLifecycle`, `/mcp` (`conn_environment_read`, project tools) and peer links use
   the new label from then on. An open lifecycle stream does not get a second `welcome`.
 
 The T3 server reads both only at start; a rename there needs a restart.

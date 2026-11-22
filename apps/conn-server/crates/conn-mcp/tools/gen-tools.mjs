@@ -224,7 +224,7 @@ const catalog = implemented.map((name) => {
 });
 // One compact tool per line: conn-mcp splices these bytes into `tools/list` unparsed.
 const text = catalog.map((tool) => `${JSON.stringify(tool)}\n`).join("");
-// The orchestration text T3 appends to an agent's system prompt when it has `t3-code`.
+// The orchestration text T3 appends to an agent's system prompt when it has `conn`.
 const { T3_CODE_ORCHESTRATION_INSTRUCTIONS } = await import(
   NodeURL.pathToFileURL(
     NodePath.join(repo, "packages/provider-core/src/server/orchestrationInstructions.ts"),
@@ -278,7 +278,7 @@ const { ORCHESTRATOR_MCP_RUNNING_TASK_NEXT } = await import(
 const runningTaskNextOut = NodePath.join(here, "..", "src", "running-task-next.txt");
 // Arguments that keep an explicit `null`. T3 decodes with the JSON codec of each tool's
 // schema (`decodeAsAdvertised`), which reads `null` as omitted unless the field itself takes
-// `null` (`Schema.NullOr`, as `t3_queue`'s `beforeRunId`). The advertised JSON schema drops
+// `null` (`Schema.NullOr`, as `conn_queue`'s `beforeRunId`). The advertised JSON schema drops
 // that `null` branch, so ask each implemented tool's Effect schema directly.
 const Schema = await pkg("effect/Schema");
 const Exit = await pkg("effect/Exit");
@@ -315,7 +315,7 @@ const linkedTargets = implemented
   .map((name) => `${name}\n`);
 if (linkedTargets.length === 0) throw new Error("No tool takes a linked environment: the target check moved");
 const linkedTargetsOut = NodePath.join(here, "..", "src", "linked-targets.txt");
-// What `t3_environment_read` and `t3_environment_preferences_update` report for settings that
+// What `conn_environment_read` and `conn_environment_preferences_update` report for settings that
 // were never changed: T3's own `preferences` of `ServerSettings` decoded from `{}`.
 const { ServerSettings } = await import(
   NodeURL.pathToFileURL(NodePath.join(repo, "packages/contracts/src/index.ts")).href
@@ -343,11 +343,11 @@ const initiallyListed = searchTools
   .map((tool) => tool.name);
 const searchCases = [];
 for (const query of [
-  "T3_WORKFLOW_STOP",
+  "CONN_WORKFLOW_STOP",
   "thread",
   "project",
   "thread thread",
-  "t3_thread_read",
+  "conn_thread_read",
   "@!!",
   "tool_search",
   "environment, schedule",
@@ -357,10 +357,10 @@ for (const query of [
 }
 const searchOut = NodePath.join(here, "..", "fixtures", "tool-search.json");
 for (let index = 0; index < 300; index++) {
-  await Effect.runPromise(exposure.search(`session-${index}`, "t3_workflow_stop"));
+  await Effect.runPromise(exposure.search(`session-${index}`, "conn_workflow_stop"));
 }
 const retainedSessions = Array.from({ length: 300 }, (_, index) => index).filter((index) =>
-  exposure.isListed(`session-${index}`, "t3_workflow_stop"),
+  exposure.isListed(`session-${index}`, "conn_workflow_stop"),
 ).length;
 const searchText = JSON.stringify({ initiallyListed, retainedSessions, cases: searchCases }, null, 2) + "\n";
 const exposureSource = NodeFS.readFileSync(NodePath.join(repo, "apps/server/src/mcp/McpToolExposure.ts"), "utf8");
@@ -409,7 +409,7 @@ const threadInputs = {};
 for (const [module,name] of [["attachment","AttachmentToolkit"],["worktree","WorktreeToolkit"],["orchestrator","OrchestratorToolkit"],["toolSearch","ToolSearchToolkit"],["credentials","CredentialsToolkit"],["panels","PanelsToolkit"],["theme","ThemeToolkit"],["pullRequests","PullRequestsToolkit"]]) {
   const toolkit = (await src(`mcp/toolkits/${module}/tools.ts`))[name];
   for (const [name,tool] of Object.entries(toolkit.tools)) {
-    if (!["create_threads","t3_attachment_prepare_upload","t3_attachment_discard","t3_thread_send_attachments","t3_worktree_handoff","t3_worktree_list","t3_workflow_stop","tool_search","save_test_login","request_credentials","database_query","mcp_call","mcp_connect","t3_theme_read","t3_theme_set","pull_request_create"].includes(name)) continue;
+    if (!["create_threads","conn_attachment_prepare_upload","conn_attachment_discard","conn_thread_send_attachments","conn_worktree_handoff","conn_worktree_list","conn_workflow_stop","tool_search","save_test_login","request_credentials","database_query","mcp_call","mcp_connect","conn_theme_read","conn_theme_set","pull_request_create"].includes(name)) continue;
     threadInputs[name] = schemaRule(tool.parametersSchema.ast, "decode");
   }
 }

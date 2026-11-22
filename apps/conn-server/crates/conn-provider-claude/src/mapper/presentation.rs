@@ -17,6 +17,9 @@ pub(crate) struct Presentation {
 /// T3's own `/mcp` server names (`T3_MCP_SERVER_ALIASES`). T3 shows its own tools with
 /// labels of their own (`resolveT3McpToolDefinition`), so they get no presentation here.
 const T3_SERVERS: &[&str] = &[
+    "conn",
+    "conn-direct",
+    "conn_direct",
     "t3-code",
     "t3_code",
     "t3code",
@@ -357,7 +360,7 @@ mod tests {
             Some(json!({"key": "mcp:firecrawl", "name": "Firecrawl", "kind": "integration"}))
         );
         assert_eq!(
-            for_tool_use("mcp__t3-code__t3_thread_list", "x", None),
+            for_tool_use("mcp__conn__conn_thread_list", "x", None),
             Presentation::default()
         );
         assert_eq!(for_tool_use("Bash", "x", None), Presentation::default());

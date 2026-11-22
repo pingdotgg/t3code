@@ -71,7 +71,7 @@ dies, open turns end as failed, and the next call starts a new process and resum
 - **Turn policy:** per turn, from the runtime mode (table in `PROTOCOL.md`), or the policy's
   `approval_policy` / `sandbox_policy` override (sandbox decoded as TS does), so model, effort
   and mode changes apply on the next turn.
-- **Turn context:** with the `t3-code` MCP server, `additionalContext` carries T3's
+- **Turn context:** with the `conn` MCP server, `additionalContext` carries T3's
   orchestration, runtime and tool text, byte for byte (`tools/gen-instructions.mjs`).
 - **Attachments:** a path line per attachment in the text (`attachmentPrompt.ts`), and GIF,
   JPEG, PNG and WebP images inline as data URLs, from `CodexConfig::attachments_dir`.

@@ -68,18 +68,18 @@ pub const LINKS_OFF_HERE: &str =
 /// methods require (`peerLinks.*`, `server.updateSettings`).
 pub(crate) fn native_scope(tool: &str) -> Option<&'static str> {
     match tool {
-        "t3_environment_links" => Some("access:read"),
-        "t3_environment_link" | "t3_environment_unlink" => Some("access:write"),
-        "t3_environment_preferences_update" => Some("settings:write"),
+        "conn_environment_links" => Some("access:read"),
+        "conn_environment_link" | "conn_environment_unlink" => Some("access:write"),
+        "conn_environment_preferences_update" => Some("settings:write"),
         _ => None,
     }
 }
 
 /// What `threadNotFound` adds while links are on, for a caller that may use them.
-pub(crate) const THREAD_IDS_HINT: &str = " Thread ids belong to one environment: for a thread on a linked one, find it with `t3_environment_links` and pass its `environmentId` to a tool that takes one.";
+pub(crate) const THREAD_IDS_HINT: &str = " Thread ids belong to one environment: for a thread on a linked one, find it with `conn_environment_links` and pass its `environmentId` to a tool that takes one.";
 
 const NOT_LISTED: &str =
-    "Not listed: not linked yet. Call t3_environment_link with a hint from the user's words.";
+    "Not listed: not linked yet. Call conn_environment_link with a hint from the user's words.";
 
 fn full_access(limits: &crate::tools::Limits) -> Result<(), ToolError> {
     if limits.runtime_mode == "full-access" && limits.interaction_mode == "default" {
@@ -134,7 +134,7 @@ pub struct LinkInfo {
     pub expired: bool,
 }
 
-/// An agent's `t3_environment_link` call, checked here.
+/// An agent's `conn_environment_link` call, checked here.
 #[derive(Clone, Debug)]
 pub struct LinkAsk {
     pub thread_id: String,
@@ -264,21 +264,21 @@ impl Cx<'_> {
     async fn remote_check(&self, tool: &str, args: &Args) -> Result<(), ToolError> {
         let action = args.get("action").and_then(Value::as_str);
         let reads = match tool {
-            "t3_pending_request" => action != Some("respond"),
-            "t3_queue" => matches!(action, Some("list" | "read")),
-            "t3_thread_transfer" => action == Some("status"),
-            "t3_thread_configure" => !args.contains_key("modelSelection"),
+            "conn_pending_request" => action != Some("respond"),
+            "conn_queue" => matches!(action, Some("list" | "read")),
+            "conn_thread_transfer" => action == Some("status"),
+            "conn_thread_configure" => !args.contains_key("modelSelection"),
             "orchestrator_capabilities"
-            | "t3_thread_list"
-            | "t3_thread_read"
-            | "t3_thread_wait"
-            | "t3_thread_search"
-            | "t3_project_list"
-            | "t3_project_read"
-            | "t3_environment_read"
+            | "conn_thread_list"
+            | "conn_thread_read"
+            | "conn_thread_wait"
+            | "conn_thread_search"
+            | "conn_project_list"
+            | "conn_project_read"
+            | "conn_environment_read"
             | "list_scheduled_tasks"
             | "list_thread_pull_requests"
-            | "t3_worktree_list"
+            | "conn_worktree_list"
             | "read_pull_request_guide"
             | "pull_request_read"
             | "pull_request_list"
@@ -295,10 +295,10 @@ impl Cx<'_> {
         if matches!(
             tool,
             "run_scheduled_task_now"
-                | "t3_environment_preferences_update"
-                | "t3_project_create"
-                | "t3_project_update"
-                | "t3_project_delete"
+                | "conn_environment_preferences_update"
+                | "conn_project_create"
+                | "conn_project_update"
+                | "conn_project_delete"
         ) && !(limits.runtime_mode == "full-access" && limits.interaction_mode == "default")
         {
             return Err(fail("capability_denied", FULL_ACCESS_REQUIRED));
@@ -403,7 +403,7 @@ pub(crate) fn scope_request(args: &mut Args, tool: &str, namespace: &str) {
         let scoped = format!("fwd:{}", conn_support::hex::hex(&digest));
         args.insert("clientRequestId".into(), json!(scoped));
     }
-    if tool == "t3_thread_wait" {
+    if tool == "conn_thread_wait" {
         let asked = args
             .get("timeoutMs")
             .and_then(Value::as_i64)
@@ -415,7 +415,7 @@ pub(crate) fn scope_request(args: &mut Args, tool: &str, namespace: &str) {
     }
 }
 
-/// `t3_environment_links` (`PeerForwarding.links`).
+/// `conn_environment_links` (`PeerForwarding.links`).
 pub(crate) async fn links(cx: &Cx<'_>) -> ToolResult {
     cx.forwarding_caller().await?;
     let Some(peers) = cx.peers().filter(|p| p.enabled()) else {
@@ -445,7 +445,7 @@ pub(crate) async fn links(cx: &Cx<'_>) -> ToolResult {
     }))
 }
 
-/// `t3_environment_unlink`: forgets the link here; the peer lists the session until revoked.
+/// `conn_environment_unlink`: forgets the link here; the peer lists the session until revoked.
 pub(crate) async fn unlink(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.environment_writer().await?;
     let environment = args
@@ -466,10 +466,10 @@ pub(crate) async fn unlink(cx: &Cx<'_>, args: &Args) -> ToolResult {
     Ok(json!({"environmentId": environment, "removed": removed}))
 }
 
-/// `t3_environment_link`: a card in the calling thread; returns at once.
+/// `conn_environment_link`: a card in the calling thread; returns at once.
 pub(crate) async fn link(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.environment_writer().await?;
-    let thread = cx.require_thread("t3_environment_link")?.clone();
+    let thread = cx.require_thread("conn_environment_link")?.clone();
     let Some(peers) = cx.peers().filter(|p| p.enabled()) else {
         return Err(fail("capability_denied", LINKS_OFF_HERE));
     };
@@ -533,7 +533,7 @@ pub(crate) fn preferences(settings: &Map<String, Value>) -> Value {
     out
 }
 
-/// `t3_environment_preferences_update`: the omitted fields stay as they are.
+/// `conn_environment_preferences_update`: the omitted fields stay as they are.
 pub(crate) async fn preferences_update(cx: &Cx<'_>, args: &Args) -> ToolResult {
     cx.environment_writer().await?;
     let Some(settings) = &cx.config().settings else {

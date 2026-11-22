@@ -337,35 +337,35 @@ const NO_GH = {
 // Per-server state the calls refer to: project and thread ids differ.
 const context = [{}, {}];
 const steps = [
-  ["t3_workflow_stop", () => ({ threadId: "thread:none", subagentId: "workflow:none" })],
-  ["t3_workflow_stop", () => ({ threadId: " ", subagentId: "workflow:none" })],
-  ["tool_search", () => ({ query: "t3_workflow_stop" })],
+  ["conn_workflow_stop", () => ({ threadId: "thread:none", subagentId: "workflow:none" })],
+  ["conn_workflow_stop", () => ({ threadId: " ", subagentId: "workflow:none" })],
+  ["tool_search", () => ({ query: "conn_workflow_stop" })],
   ["mcp_call", () => ({ tool: "weather", arguments: {} })],
   ["mcp_connect", () => ({ name: "stub", url: "http://127.0.0.1:1/mcp" })],
   ["mcp_connect", () => ({ name: "stub" })],
   [
-    "t3_project_list",
+    "conn_project_list",
     () => ({}),
     (c, v) => (c.projectId = v.projects.find((p) => p.title === "parity")?.id ?? v.projects[0].id),
   ],
-  ["t3_project_read", (c) => ({ projectId: c.projectId }), (c, v) => (c.projectRoot = v.workspaceRoot)],
+  ["conn_project_read", (c) => ({ projectId: c.projectId }), (c, v) => (c.projectRoot = v.workspaceRoot)],
   // Project writes: a registered folder, a new folder, an update, a delete, and refusals.
-  ["t3_project_create", (c) => ({ title: "Again", workspaceRoot: c.projectRoot })],
-  ["t3_project_create", () => ({ title: "From title", scripts: [] })],
-  ["t3_project_create", (c) => ({ title: "Missing", workspaceRoot: `${c.projectRoot}-missing` })],
+  ["conn_project_create", (c) => ({ title: "Again", workspaceRoot: c.projectRoot })],
+  ["conn_project_create", () => ({ title: "From title", scripts: [] })],
+  ["conn_project_create", (c) => ({ title: "Missing", workspaceRoot: `${c.projectRoot}-missing` })],
   [
-    "t3_project_create",
+    "conn_project_create",
     (c) => ({ title: "Made", workspaceRoot: `${c.projectRoot}-made`, createWorkspaceRootIfMissing: true }),
     (c, v) => (c.madeId = v.id),
     { same: (v) => [v.title, v.scripts, v.archivedAt, v.pinnedAt] },
   ],
-  ["t3_project_update", (c) => ({ projectId: c.madeId, title: "Renamed" }), undefined, { same: (v) => [v.title] }],
-  ["t3_project_update", () => ({ projectId: "project:none", title: "x" })],
-  ["t3_project_delete", (c) => ({ projectId: c.madeId }), undefined, { same: (v) => [v.title, v.deletedAt === null] }],
-  ["t3_project_delete", () => ({ projectId: "project:none" })],
-  ["t3_project_clone", (c) => ({ remoteUrl: `${c.projectRoot}-no-such-repo`, destinationPath: `${c.projectRoot}-clone` })],
-  ["t3_project_clone", () => ({})],
-  ["t3_environment_read", () => ({})],
+  ["conn_project_update", (c) => ({ projectId: c.madeId, title: "Renamed" }), undefined, { same: (v) => [v.title] }],
+  ["conn_project_update", () => ({ projectId: "project:none", title: "x" })],
+  ["conn_project_delete", (c) => ({ projectId: c.madeId }), undefined, { same: (v) => [v.title, v.deletedAt === null] }],
+  ["conn_project_delete", () => ({ projectId: "project:none" })],
+  ["conn_project_clone", (c) => ({ remoteUrl: `${c.projectRoot}-no-such-repo`, destinationPath: `${c.projectRoot}-clone` })],
+  ["conn_project_clone", () => ({})],
+  ["conn_environment_read", () => ({})],
   ["orchestrator_capabilities", () => ({}), undefined, { view: claudeOnly, same: claudeModels }],
   [
     "orchestrator_capabilities",
@@ -373,14 +373,14 @@ const steps = [
     undefined,
     { view: claudeOnly, same: claudeModels },
   ],
-  ["t3_thread_list", () => ({ allProjects: true })],
-  ["t3_thread_list", () => ({})],
+  ["conn_thread_list", () => ({ allProjects: true })],
+  ["conn_thread_list", () => ({})],
   // T3 #30976: a limit above the maximum is clamped, not refused.
-  ["t3_thread_list", () => ({ allProjects: true, limit: 200 })],
-  ["t3_project_list", () => ({ limit: 200 })],
+  ["conn_thread_list", () => ({ allProjects: true, limit: 200 })],
+  ["conn_project_list", () => ({ limit: 200 })],
   // A worktree thread without a message starts no turn, so it runs without --model too.
   [
-    "t3_thread_launch",
+    "conn_thread_launch",
     (c) => ({
       projectId: c.projectId,
       title: "Parity worktree",
@@ -394,26 +394,26 @@ const steps = [
     { noTurn: true },
   ],
   [
-    "t3_workflow_stop",
+    "conn_workflow_stop",
     (c) => ({ threadId: c.idleThreadId, subagentId: "workflow:none" }),
     undefined,
     { noTurn: true },
   ],
-  ["t3_worktree_list", (c) => ({threadId:c.idleThreadId, refKind:"local"})],
-  ["t3_worktree_list", () => ({threadId:"thread:none"})],
-  ["t3_worktree_list", () => ({})],
-  ["t3_worktree_status", () => ({})],
-  ["t3_worktree_handoff", () => ({branch:"parity/hidden"})],
+  ["conn_worktree_list", (c) => ({threadId:c.idleThreadId, refKind:"local"})],
+  ["conn_worktree_list", () => ({threadId:"thread:none"})],
+  ["conn_worktree_list", () => ({})],
+  ["conn_worktree_status", () => ({})],
+  ["conn_worktree_handoff", () => ({branch:"parity/hidden"})],
   ["create_threads", () => ({threads:[{title:"Hidden"}]})],
-  ["t3_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), async (c,v,server) => {
+  ["conn_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), async (c,v,server) => {
     c.upload = v;
     const uploaded = await fetch(`${server.origin}${v.relativeUrl}`,{method:"POST",body:"abc"});
     if (!uploaded.ok) throw new Error(`fixture upload: ${uploaded.status} ${await uploaded.text()}`);
   }],
-  ["t3_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
-  ["t3_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
-  ["t3_thread_send_attachments", (c) => ({threadId:c.idleThreadId,attachments:[{type:"file",id:"other-00000000-0000-4000-8000-000000000001-txt",name:"note.txt",mimeType:"text/plain",sizeBytes:3}]})],
-  // t3_thread_organize on the idle worktree thread: every action, then the refusals.
+  ["conn_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
+  ["conn_attachment_discard", (c) => ({attachmentId:c.upload?.attachmentId ?? "pending-00000000-0000-4000-8000-000000000001-txt"})],
+  ["conn_thread_send_attachments", (c) => ({threadId:c.idleThreadId,attachments:[{type:"file",id:"other-00000000-0000-4000-8000-000000000001-txt",name:"note.txt",mimeType:"text/plain",sizeBytes:3}]})],
+  // conn_thread_organize on the idle worktree thread: every action, then the refusals.
   ...[
     "pin",
     "unpin",
@@ -423,36 +423,36 @@ const steps = [
     "archive",
     "unarchive",
     "unsnooze",
-  ].map((action) => ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action })]),
+  ].map((action) => ["conn_thread_organize", (c) => ({ threadId: c.idleThreadId, action })]),
   [
-    "t3_thread_organize",
+    "conn_thread_organize",
     (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2099-01-01T00:00:00.000Z" }),
   ],
-  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "unsnooze" })],
-  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "snooze" })],
+  ["conn_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "unsnooze" })],
+  ["conn_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "snooze" })],
   [
-    "t3_thread_organize",
+    "conn_thread_organize",
     (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "2001-01-01T00:00:00.000Z" }),
   ],
   [
-    "t3_thread_organize",
+    "conn_thread_organize",
     (c) => ({ threadId: c.idleThreadId, action: "snooze", snoozedUntil: "not a date" }),
   ],
-  ["t3_thread_organize", () => ({ action: "pin" })],
-  ["t3_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
+  ["conn_thread_organize", () => ({ action: "pin" })],
+  ["conn_thread_organize", () => ({ threadId: "thread:none", action: "pin" })],
   // Context transfers: status, a fork of the idle thread, and merge-back refusals before the
   // engine (Conn cannot merge a fork back yet).
-  ["t3_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "status" }), undefined, { same: (v) => v.transfers.length }],
-  ["t3_thread_transfer", () => ({ threadId: "thread:none", action: "status" })],
-  ["t3_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "fork", title: "Parity fork" }), (c, v) => (c.forkThreadId = v.targetThreadId)],
-  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "status" }), undefined, { same: (v) => v.transfers.map((t) => t.status) }],
-  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back" })],
-  ["t3_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back", targetThreadId: "thread:none" })],
-  ["t3_thread_transfer", () => ({ threadId: "thread:none", action: "fork" })],
+  ["conn_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "status" }), undefined, { same: (v) => v.transfers.length }],
+  ["conn_thread_transfer", () => ({ threadId: "thread:none", action: "status" })],
+  ["conn_thread_transfer", (c) => ({ threadId: c.idleThreadId, action: "fork", title: "Parity fork" }), (c, v) => (c.forkThreadId = v.targetThreadId)],
+  ["conn_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "status" }), undefined, { same: (v) => v.transfers.map((t) => t.status) }],
+  ["conn_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back" })],
+  ["conn_thread_transfer", (c) => ({ threadId: c.forkThreadId, action: "merge_back", targetThreadId: "thread:none" })],
+  ["conn_thread_transfer", () => ({ threadId: "thread:none", action: "fork" })],
   // Merge-back reaches the engine: a thread that is not a fork of the target, and a thread
   // into itself, refused with T3's texts (thread ids differ per server).
   [
-    "t3_thread_launch",
+    "conn_thread_launch",
     (c) => ({
       projectId: c.projectId,
       title: "Parity merge target",
@@ -466,44 +466,44 @@ const steps = [
     { noTurn: true },
   ],
   ...[(c) => c.mergeTargetId, (c) => c.idleThreadId].map((target) => [
-    "t3_thread_transfer",
+    "conn_thread_transfer",
     (c) => ({ threadId: c.idleThreadId, action: "merge_back", targetThreadId: target(c) }),
     undefined,
     { failureText: (text, c) => text.replaceAll(c.idleThreadId, "<source>").replaceAll(c.mergeTargetId, "<target>") },
   ]),
   [
-    "t3_thread_transfer",
+    "conn_thread_transfer",
     (c) => ({ threadId: c.idleThreadId, action: "merge_back", targetThreadId: c.mergeTargetId, sourcePoint: { type: "run", runId: "run:none" } }),
     undefined,
     { failureText: (text, c) => text.replaceAll(c.idleThreadId, "<source>").replaceAll(c.mergeTargetId, "<target>") },
   ],
-  ["t3_thread_transfer", (c) => ({ threadId: c.mergeTargetId, action: "status" }), undefined, { same: (v) => v.transfers }],
-  ["t3_thread_transfer", () => ({ action: "bogus" })],
-  ["t3_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
-  // t3_queue on the idle thread: an empty queue, then each write on a run that is not queued.
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: 5, limit: 1 })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 200 })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "read", queuedRunId: "run:none" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel", queuedRunId: "run:none" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none" })],
+  ["conn_thread_transfer", (c) => ({ threadId: c.mergeTargetId, action: "status" }), undefined, { same: (v) => v.transfers }],
+  ["conn_thread_transfer", () => ({ action: "bogus" })],
+  ["conn_thread_organize", (c) => ({ threadId: c.idleThreadId, action: "bogus" })],
+  // conn_queue on the idle thread: an empty queue, then each write on a run that is not queued.
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: 5, limit: 1 })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 200 })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "read" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "read", queuedRunId: "run:none" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "cancel", queuedRunId: "run:none" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none" })],
   [
-    "t3_queue",
+    "conn_queue",
     (c) => ({ threadId: c.idleThreadId, action: "edit", queuedRunId: "run:none", text: "x" }),
   ],
   [
-    "t3_queue",
+    "conn_queue",
     (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none", beforeRunId: null }),
   ],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "reorder", queuedRunId: "run:none" })],
   [
-    "t3_queue",
+    "conn_queue",
     (c) => ({ threadId: c.idleThreadId, action: "promote_to_steer", queuedRunId: "run:none" }),
   ],
   [
-    "t3_queue",
+    "conn_queue",
     (c) => ({
       threadId: c.idleThreadId,
       action: "promote_to_steer",
@@ -511,14 +511,14 @@ const steps = [
       targetRunId: "run:none",
     }),
   ],
-  ["t3_queue", () => ({ threadId: "thread:none", action: "list" })],
-  ["t3_queue", () => ({ action: "list" })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 0 })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: -1 })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 1.5 })],
-  ["t3_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: "2" })],
-  ["t3_queue", () => ({ threadId: 5, action: "list" })],
-  ["t3_queue", () => ({ action: 5 })],
+  ["conn_queue", () => ({ threadId: "thread:none", action: "list" })],
+  ["conn_queue", () => ({ action: "list" })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 0 })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", cursor: -1 })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: 1.5 })],
+  ["conn_queue", (c) => ({ threadId: c.idleThreadId, action: "list", limit: "2" })],
+  ["conn_queue", () => ({ threadId: 5, action: "list" })],
+  ["conn_queue", () => ({ action: 5 })],
   // Pull request links on the idle thread: values compared, not only shapes.
   ...[
     (c) => ({ threadId: c.idleThreadId, url: "https://github.com/O/R/pull/4" }),
@@ -648,24 +648,24 @@ const steps = [
   ["ci_logs", () => ({ tailLines: 0 })],
   ["ci_rerun", () => ({ check: "build" })],
   ["send_to_user", () => ({ message: 5 })],
-  ["t3_thread_wait", () => ({ threadId: true })],
-  ["t3_thread_list", () => ({ allProjects: "yes" })],
-  ["t3_thread_list", () => ({ statuses: "running" })],
-  ["t3_thread_configure", () => ({ modelSelection: "x" })],
-  ["t3_thread_read", () => ({ threadId: "thread:none", view: 5 })],
-  ["t3_thread_read", () => ({ threadId: "thread:none", view: "bogus" })],
-  // t3_thread_configure: read, then set the model on the same provider instance.
-  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  ["conn_thread_wait", () => ({ threadId: true })],
+  ["conn_thread_list", () => ({ allProjects: "yes" })],
+  ["conn_thread_list", () => ({ statuses: "running" })],
+  ["conn_thread_configure", () => ({ modelSelection: "x" })],
+  ["conn_thread_read", () => ({ threadId: "thread:none", view: 5 })],
+  ["conn_thread_read", () => ({ threadId: "thread:none", view: "bogus" })],
+  // conn_thread_configure: read, then set the model on the same provider instance.
+  ["conn_thread_configure", (c) => ({ threadId: c.idleThreadId })],
   [
-    "t3_thread_configure",
+    "conn_thread_configure",
     (c) => ({
       threadId: c.idleThreadId,
       modelSelection: { instanceId: "claudeAgent", model: "claude-sonnet-5-5" },
     }),
   ],
-  ["t3_thread_configure", (c) => ({ threadId: c.idleThreadId })],
-  ["t3_thread_configure", () => ({ threadId: "thread:none" })],
-  ["t3_thread_configure", () => ({})],
+  ["conn_thread_configure", (c) => ({ threadId: c.idleThreadId })],
+  ["conn_thread_configure", () => ({ threadId: "thread:none" })],
+  ["conn_thread_configure", () => ({})],
   // Scheduled tasks, as an outside client: reads, then each refusal before a task is saved.
   ["list_scheduled_tasks", () => ({})],
   ["list_scheduled_tasks", (c) => ({ projectId: c.projectId })],
@@ -693,7 +693,7 @@ const steps = [
   ["annotations_release", () => ({ id: "a", question: true })],
   ["annotations_release", () => ({ id: "" })],
   [
-    "t3_thread_launch",
+    "conn_thread_launch",
     (c) => ({
       projectId: c.projectId,
       title: "Parity",
@@ -705,15 +705,15 @@ const steps = [
     }),
     (c, v) => (c.threadId = v.threadId),
   ],
-  ["t3_thread_wait", (c) => ({ threadId: c.threadId, timeoutMs: 1000 })],
-  ["t3_thread_interrupt", (c) => ({ threadId: c.threadId })],
-  ["t3_pending_request", (c) => ({ action: "list", threadId: c.threadId })],
+  ["conn_thread_wait", (c) => ({ threadId: c.threadId, timeoutMs: 1000 })],
+  ["conn_thread_interrupt", (c) => ({ threadId: c.threadId })],
+  ["conn_pending_request", (c) => ({ action: "list", threadId: c.threadId })],
   [
-    "t3_thread_update",
+    "conn_thread_update",
     (c) => ({ threadId: c.threadId, action: "rename", title: "Parity renamed" }),
   ],
   [
-    "t3_thread_send",
+    "conn_thread_send",
     (c) => ({
       threadId: c.threadId,
       message: "Reply with the single word OK.",
@@ -722,20 +722,20 @@ const steps = [
     }),
     (c, v) => (c.runId = v.runId),
   ],
-  ["t3_thread_wait", (c) => ({ threadId: c.threadId, runId: c.runId, timeoutMs: 120_000 })],
+  ["conn_thread_wait", (c) => ({ threadId: c.threadId, runId: c.runId, timeoutMs: 120_000 })],
   [
-    "t3_thread_read",
+    "conn_thread_read",
     (c) => ({ threadId: c.threadId, view: "activity", afterPosition: -1, limit: 100 }),
   ],
-  ["t3_thread_read", (c) => ({ threadId: c.threadId })],
-  ["t3_thread_search", () => ({ query: "Parity renamed" })],
+  ["conn_thread_read", (c) => ({ threadId: c.threadId })],
+  ["conn_thread_search", () => ({ query: "Parity renamed" })],
   ...[{ query: "Parity worktree" }, { query: "parity", limit: 1 }, { query: "nothing matches this" }].map(
-    (input) => ["t3_thread_search", () => input, undefined, { same: searchOrder }],
+    (input) => ["conn_thread_search", () => input, undefined, { same: searchOrder }],
   ),
-  ["t3_thread_search", () => ({ query: " a " })],
-  ["t3_thread_search", () => ({ query: "q".repeat(201) })],
-  ["t3_thread_read", () => ({ threadId: "thread:none" })],
-  ["t3_thread_list", () => ({ bogus: 1 })],
+  ["conn_thread_search", () => ({ query: " a " })],
+  ["conn_thread_search", () => ({ query: "q".repeat(201) })],
+  ["conn_thread_read", () => ({ threadId: "thread:none" })],
+  ["conn_thread_list", () => ({ bogus: 1 })],
   ["delegate_task", () => ({ task: "x" })],
   ["task_status", () => ({ taskId: "task:none" })],
   ["task_cancel", () => ({ taskId: "task:none" })],
@@ -760,44 +760,44 @@ const steps = [
   ["fill_credential", () => ({itemId:"login:none",field:"password"})],
   ["fill_credential", () => ({itemId:"x",field:"pin"})],
   // Themes: each refusal, then a publish, a read of it, and a switch, in temp state on both.
-  ["t3_theme_read", () => ({})],
-  ["t3_theme_read", () => ({ themeId: "parity" })],
-  ["t3_theme_read", () => ({ themeId: "Bad" })],
-  ["t3_theme_set", () => ({})],
-  ["t3_theme_set", () => ({ theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
-  ["t3_theme_set", () => ({ themeId: "nope" })],
-  ["t3_theme_set", () => ({ themeId: "grove", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
-  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", accent: "#fff" } })],
-  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{background:url(https://x)}" } })],
-  ["t3_theme_set", () => ({ themeId: "parity", theme: { name: " Parity ", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{}", extra: 1 } }), undefined, { same: (v) => v }],
-  ["t3_theme_read", () => ({ themeId: "parity" }), undefined, { same: (v) => ({ current: v.current, builtIn: v.builtIn, published: v.published, theme: v.theme, guide: v.guide }) }],
-  ["t3_theme_set", () => ({ themeId: "grove", appearance: "light" }), undefined, { same: (v) => v }],
-  ["t3_theme_set", () => ({ themeId: "t3-code" }), undefined, { same: (v) => v }],
-  ["t3_theme_set", () => ({ appearance: "system" }), undefined, { same: (v) => v }],
-  ["t3_theme_read", () => ({}), undefined, { same: (v) => ({ current: v.current, published: v.published }) }],
+  ["conn_theme_read", () => ({})],
+  ["conn_theme_read", () => ({ themeId: "parity" })],
+  ["conn_theme_read", () => ({ themeId: "Bad" })],
+  ["conn_theme_set", () => ({})],
+  ["conn_theme_set", () => ({ theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
+  ["conn_theme_set", () => ({ themeId: "nope" })],
+  ["conn_theme_set", () => ({ themeId: "grove", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff" } })],
+  ["conn_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", accent: "#fff" } })],
+  ["conn_theme_set", () => ({ themeId: "parity", theme: { name: "P", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{background:url(https://x)}" } })],
+  ["conn_theme_set", () => ({ themeId: "parity", theme: { name: " Parity ", appearance: "dark", canvas: "#000", accent: "#fff", css: "a{}", extra: 1 } }), undefined, { same: (v) => v }],
+  ["conn_theme_read", () => ({ themeId: "parity" }), undefined, { same: (v) => ({ current: v.current, builtIn: v.builtIn, published: v.published, theme: v.theme, guide: v.guide }) }],
+  ["conn_theme_set", () => ({ themeId: "grove", appearance: "light" }), undefined, { same: (v) => v }],
+  ["conn_theme_set", () => ({ themeId: "t3-code" }), undefined, { same: (v) => v }],
+  ["conn_theme_set", () => ({ appearance: "system" }), undefined, { same: (v) => v }],
+  ["conn_theme_read", () => ({}), undefined, { same: (v) => ({ current: v.current, published: v.published }) }],
   ["database_query", () => ({sql:"select 1"})],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check" })],
   ["request_secret", () => ({ label: "Fixture key", reason: "Parity check", delivery: "file", value: "test-only" })],
   ["send_to_user", () => ({ message: "hi" })],
   ["send_to_user", () => ({ message: "" })],
   ["send_to_user", () => ({ message: "x".repeat(4001) })],
-  // t3_background_wait acts as the calling thread; its argument check runs first, and the
+  // conn_background_wait acts as the calling thread; its argument check runs first, and the
   // decode messages are compared.
-  ["t3_background_wait", () => ({ taskIds: ["bg-1"] })],
-  ["t3_background_wait", () => ({ taskIds: [" bg-1 ", "x"], waiting: false })],
-  ["t3_background_wait", () => ({ taskIds: [] })],
-  ["t3_background_wait", () => ({ taskIds: Array.from({ length: 21 }, (_, i) => `t${i}`) })],
-  ["t3_background_wait", () => ({ taskIds: ["bg-1", " "] })],
-  ["t3_background_wait", () => ({ taskIds: [""] })],
-  ["t3_background_wait", () => ({ taskIds: ["bg-1", 5] })],
-  ["t3_background_wait", () => ({ taskIds: "bg-1" })],
-  ["t3_background_wait", () => ({ taskIds: ["bg-1"], waiting: "yes" })],
-  ["t3_background_wait", () => ({ waiting: true })],
+  ["conn_background_wait", () => ({ taskIds: ["bg-1"] })],
+  ["conn_background_wait", () => ({ taskIds: [" bg-1 ", "x"], waiting: false })],
+  ["conn_background_wait", () => ({ taskIds: [] })],
+  ["conn_background_wait", () => ({ taskIds: Array.from({ length: 21 }, (_, i) => `t${i}`) })],
+  ["conn_background_wait", () => ({ taskIds: ["bg-1", " "] })],
+  ["conn_background_wait", () => ({ taskIds: [""] })],
+  ["conn_background_wait", () => ({ taskIds: ["bg-1", 5] })],
+  ["conn_background_wait", () => ({ taskIds: "bg-1" })],
+  ["conn_background_wait", () => ({ taskIds: ["bg-1"], waiting: "yes" })],
+  ["conn_background_wait", () => ({ waiting: true })],
 ];
 // The steps that launch a thread (a model turn on the T3 server) or act on it.
 const onLaunchedThread = (tool, input, options) =>
   options?.noTurn !== true &&
-  (tool === "t3_thread_launch" || input({ threadId: "<t>" }).threadId === "<t>");
+  (tool === "conn_thread_launch" || input({ threadId: "<t>" }).threadId === "<t>");
 const run = noModel
   ? steps.filter(([tool, input, , options]) => !onLaunchedThread(tool, input, options))
   : steps;
@@ -838,7 +838,7 @@ for (const [tool, input, after, options] of run) {
       : [options.failureText(ts.message ?? ts.code ?? "", context[0]), options.failureText(rust.message ?? rust.code ?? "", context[1])];
     report(
       `${label}: both fail with ${ts.code}${texts[0] === texts[1] ? "" : `\n       T3:   ${texts[0]}\n       Conn: ${texts[1]}`}`,
-      !(tool === "t3_workflow_stop" || tool.startsWith("t3_theme_") || options?.failureText !== undefined) || texts[0] === texts[1],
+      !(tool === "conn_workflow_stop" || tool.startsWith("conn_theme_") || options?.failureText !== undefined) || texts[0] === texts[1],
     );
     continue;
   }
@@ -879,7 +879,7 @@ if (noModel) {
     const branch=git(project,"symbolic-ref","--short","HEAD");
     git(remote,"update-ref","-d",`refs/heads/${branch}`);
   }
-  const launched = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_launch",{
+  const launched = await Promise.all(sessions.map((session,i) => session.callTool("conn_thread_launch",{
     projectId:context[i].projectId,title:"Handoff parent",message:"hang",
     modelSelection:{instanceId:"claudeAgent",model:"claude-haiku-5-5"},runtimeMode:"auto",
     workspaceStrategy:{type:"root"},clientRequestId:"handoff-parent",
@@ -922,7 +922,7 @@ if (noModel) {
       ["mcp_connect",{command:"node",headers:{key:"value"}}],
       ["mcp_connect",{url:"http://localhost",env:{key:"value"}}],
     ].map(([tool,args]) => [tool,() => args]),
-    ["t3_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
+    ["conn_worktree_status", () => ({}), (v) => ({...v,projectWorkspaceRoot:"<project>"})],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status,createdBy:t.createdBy,creationSource:t.creationSource,providerInstanceId:t.providerInstanceId,model:t.model})), (c,v) => {c.targetThreadId=v.threads[0].threadId;}],
     ["create_threads", () => ({threads:[{title:"Batch one"},{}],clientRequestId:"handoff-batch"}), (v) => v.threads.map((t) => ({title:t.title,status:t.status}))],
     ...[0,1].map(() => ["create_threads", () => ({threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}), (v) => ({hasRun:v.threads[0].runId !== null}), (c,v) => {
@@ -932,8 +932,8 @@ if (noModel) {
     }]),
     ["create_threads", () => ({threads:[{title:null}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
     ["create_threads", () => ({threads:[{target:{providerInstanceId:null}}]}), (v) => ({title:v.threads[0].title,model:v.threads[0].model,status:v.threads[0].status})],
-    ["t3_worktree_list", () => ({threadId:" "})],
-    ["t3_worktree_list", () => ({query:"x".repeat(257)})],
+    ["conn_worktree_list", () => ({threadId:" "})],
+    ["conn_worktree_list", () => ({query:"x".repeat(257)})],
     ["create_threads", () => ({threads:[{runtimeMode:"full-access"}]})],
     ["create_threads", () => ({threads:[]})],
     ["create_threads", () => ({threads:[{title:"   "}]})],
@@ -941,20 +941,20 @@ if (noModel) {
     ["create_threads", () => ({threads:[{target:{providerInstanceId:"missing"}}]})],
     ["create_threads", () => ({threads:[{target:{driverKind:"parity-missing"}}]})],
     ["create_threads", () => ({threads:[{target:{options:[{id:"effort",value:"bad"}]}}]})],
-    ["t3_worktree_handoff", () => ({branch:"   "})],
-    ["t3_attachment_prepare_upload", () => ({upload:{name:"shot.png",mimeType:"image/png",sizeBytes:0}})],
-    ["t3_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), () => "prepared", async (c,v,server) => {
+    ["conn_worktree_handoff", () => ({branch:"   "})],
+    ["conn_attachment_prepare_upload", () => ({upload:{name:"shot.png",mimeType:"image/png",sizeBytes:0}})],
+    ["conn_attachment_prepare_upload", () => ({upload:{type:"file",name:"note.txt",mimeType:"text/plain",sizeBytes:3}}), () => "prepared", async (c,v,server) => {
       c.attachment={type:"file",id:v.attachmentId,name:"note.txt",mimeType:"text/plain",sizeBytes:3};
       const response = await fetch(`${server.origin}${v.relativeUrl}`,{method:"POST",body:"abc"});
       if (!response.ok) throw new Error(`agent fixture upload ${response.status}`);
     }],
-    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment,c.attachment]})],
-    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[0,1].map((n) => ({type:"file",id:`pending-00000000-0000-4000-8000-${String(n).padStart(12,"0")}-png`,name:"large.png",mimeType:"image/png",sizeBytes:50*1024*1024}))})],
-    ["t3_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment],message:"hang"}), (v) => ({status:v.status})],
-    ["t3_worktree_handoff", () => ({branch:"parity/handoff",startFromOrigin:true,continuationPrompt:"hang"}), (v) => ({...v,worktreePath:"<worktree>"}), (c,v) => {c.worktreePath=v.worktreePath;}],
+    ["conn_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment,c.attachment]})],
+    ["conn_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[0,1].map((n) => ({type:"file",id:`pending-00000000-0000-4000-8000-${String(n).padStart(12,"0")}-png`,name:"large.png",mimeType:"image/png",sizeBytes:50*1024*1024}))})],
+    ["conn_thread_send_attachments", (c) => ({threadId:c.targetThreadId,attachments:[c.attachment],message:"hang"}), (v) => ({status:v.status})],
+    ["conn_worktree_handoff", () => ({branch:"parity/handoff",startFromOrigin:true,continuationPrompt:"hang"}), (v) => ({...v,worktreePath:"<worktree>"}), (c,v) => {c.worktreePath=v.worktreePath;}],
   ];
   for (const [tool,input,normalize = (v) => v,after] of agentSteps) {
-    if (tool === "t3_worktree_handoff" && input({}).branch === "parity/handoff") {
+    if (tool === "conn_worktree_handoff" && input({}).branch === "parity/handoff") {
       // Handoff replaces the provider session, so exercise its credentials before release.
       report("calling thread test login saved on both servers",state.every((c) => typeof c.loginId === "string"));
       const loginFiles = [NodePath.join(root,"ts","base","userdata","secrets","test-logins.bin"), NodePath.join(root,"rust","state","secrets","test-logins.bin")];
@@ -978,7 +978,7 @@ if (noModel) {
       const retries = await Promise.all(agents.map((agent) => agent.callTool("create_threads",{threads:[{prompt:"hang"}],clientRequestId:"prompt-retry"}).then(outcome)));
       report("calling thread create_threads: accepted retry survives policy change",retries.every((r,i) => r.kind === "ok" && r.value.threads[0].runId === state[i].promptRun));
       await Promise.all(servers.map((server,i) => projectProviderPolicy(server,context[i].projectId,true,[setupScript])));
-      const discards = await Promise.all(agents.map((agent,i) => agent.callTool("t3_attachment_discard",{attachmentId:state[i].attachment.id}).then(outcome)));
+      const discards = await Promise.all(agents.map((agent,i) => agent.callTool("conn_attachment_discard",{attachmentId:state[i].attachment.id}).then(outcome)));
       report("accepted difference: successful send reclaims Conn's pending owner slot",discards[0].kind === "ok" && discards[1].kind === "failure" && discards[1].code === "invalid_request");
     }
     const values = await Promise.all(agents.map(async (agent,i) => {
@@ -995,7 +995,7 @@ if (noModel) {
   const refusals = await Promise.all(agents.map(async (agent) => {
     const deadline = Date.now() + 15_000;
     for (;;) {
-      const reply = await agent.raw({jsonrpc:"2.0",id:agent.nextId++,method:"tools/call",params:{name:"t3_worktree_status",arguments:{}}});
+      const reply = await agent.raw({jsonrpc:"2.0",id:agent.nextId++,method:"tools/call",params:{name:"conn_worktree_status",arguments:{}}});
       if (reply.status >= 400) return {status:reply.status,contentType:reply.contentType,reply:reply.reply};
       if (Date.now() > deadline) return {status:reply.status,stillAccepted:outcome(reply.reply)};
       await new Promise((resolve) => setTimeout(resolve,50));
@@ -1006,7 +1006,7 @@ if (noModel) {
   await Promise.all(servers.map((server) => updateSettings(server,{enableAgentBrowserAccess:false})));
   for (const name of NodeFS.readdirSync(servers[0].records).filter((name) => name.endsWith(".json"))) NodeFS.unlinkSync(NodePath.join(servers[0].records,name));
   NodeFS.rmSync(servers[1].capture,{force:true});
-  const deniedLaunch = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_launch",{
+  const deniedLaunch = await Promise.all(sessions.map((session,i) => session.callTool("conn_thread_launch",{
     projectId:context[i].projectId,title:"Browser access disabled",message:"hang",
     modelSelection:{instanceId:"claudeAgent",model:"claude-haiku-5-5"},runtimeMode:"auto",
     workspaceStrategy:{type:"root"},clientRequestId:"browser-access-disabled",
@@ -1025,7 +1025,7 @@ if (noModel) {
     return lines.length === 2 && lines[0] === NodePath.join(root,i === 0 ? "ts" : "rust","parity") && lines[1] === c.worktreePath;
   }));
   report("calling thread handoff setup: project and worktree environment",setup.every(Boolean));
-  const ended = await Promise.all(sessions.map((session,i) => session.callTool("t3_thread_wait",{
+  const ended = await Promise.all(sessions.map((session,i) => session.callTool("conn_thread_wait",{
     threadId:launched[i].value.threadId,runId:launched[i].value.runId,timeoutMs:10_000,
   }).then(outcome)));
   const endedStates = ended.map((r) => r.kind === "ok" ? {status:r.value.status,timedOut:r.value.timedOut} : r);
@@ -1043,22 +1043,22 @@ if (noModel) {
     report(`tools/list ${name} with links on`, ts !== undefined && JSON.stringify(ts) === JSON.stringify(rust));
   }
   const environmentIds = await Promise.all(
-    sessions.map(async (session) => outcome(await session.callTool("t3_environment_read", {})).value?.environmentId),
+    sessions.map(async (session) => outcome(await session.callTool("conn_environment_read", {})).value?.environmentId),
   );
   const linkSteps = [
-    ["t3_environment_links", {}],
-    ["t3_environment_unlink", { environmentId: "environment:none" }],
-    ["t3_environment_link", {}],
-    ["t3_environment_link", { hint: "the other box" }],
-    ["t3_thread_list", { environmentId: "environment:none" }],
-    ["t3_environment_read", { environmentId: "environment:none" }],
-    ["t3_environment_preferences_update", { newWorktreesStartFromOrigin: false, defaultThreadEnvMode: "worktree", backgroundActivity: { profile: "battery-saver" } }],
-    ["t3_environment_read", {}],
-    ["t3_environment_preferences_update", { defaultThreadEnvMode: null, newWorktreesStartFromOrigin: true, backgroundActivity: { profile: "balanced" } }],
-    ["t3_environment_preferences_update", { environmentId: "environment:none" }],
+    ["conn_environment_links", {}],
+    ["conn_environment_unlink", { environmentId: "environment:none" }],
+    ["conn_environment_link", {}],
+    ["conn_environment_link", { hint: "the other box" }],
+    ["conn_thread_list", { environmentId: "environment:none" }],
+    ["conn_environment_read", { environmentId: "environment:none" }],
+    ["conn_environment_preferences_update", { newWorktreesStartFromOrigin: false, defaultThreadEnvMode: "worktree", backgroundActivity: { profile: "battery-saver" } }],
+    ["conn_environment_read", {}],
+    ["conn_environment_preferences_update", { defaultThreadEnvMode: null, newWorktreesStartFromOrigin: true, backgroundActivity: { profile: "balanced" } }],
+    ["conn_environment_preferences_update", { environmentId: "environment:none" }],
     // Remote delegation needs a calling thread; an outside client is refused before any link.
     ["delegate_task", { task: "x", target: { environmentId: "environment:none", projectId: "p" } }],
-    ["t3_thread_send", { environmentId: "environment:none", threadId: "thread:none", message: "x" }],
+    ["conn_thread_send", { environmentId: "environment:none", threadId: "thread:none", message: "x" }],
   ];
   for (const [tool, args] of linkSteps) {
     const results = await Promise.all(sessions.map(async (session) => outcome(await session.callTool(tool, args))));

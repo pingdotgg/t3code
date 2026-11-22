@@ -51,7 +51,7 @@ export const layer = McpToolAccess.toLayer(
     return {
       // A pending upload belongs to its caller until a send claims it, so
       // linked callers may stage the uploads their own sends need.
-      t3_attachment_prepare_upload: McpToolAccess.writes(
+      conn_attachment_prepare_upload: McpToolAccess.writes(
         (input) =>
           Effect.gen(function* () {
             const result = yield* Upload.issueAttachmentUploadUrl(input.upload).pipe(
@@ -70,7 +70,7 @@ export const layer = McpToolAccess.toLayer(
           }),
         { linkedCallers: "allowed" },
       ),
-      t3_attachment_discard: McpToolAccess.writes(
+      conn_attachment_discard: McpToolAccess.writes(
         (input) =>
           Effect.gen(function* () {
             if (uploadOwners.get(input.attachmentId)?.owner !== (yield* uploadOwner)) {
@@ -85,7 +85,7 @@ export const layer = McpToolAccess.toLayer(
           }),
         { linkedCallers: "allowed" },
       ),
-      t3_thread_send_attachments: McpToolAccess.writesThreads(
+      conn_thread_send_attachments: McpToolAccess.writesThreads(
         (input) => [input.threadId],
         (input) =>
           Effect.gen(function* () {

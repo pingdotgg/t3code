@@ -41,12 +41,15 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
   a JSON-RPC batch 400, an unknown `mcp-protocol-version` 400 (`-32022`).
 - Methods: `initialize`, `ping`, `tools/list`, `tools/call`, `logging/setLevel`; others `-32601`.
   `tools/list` is not paged. A deferred client lists four direct tools plus its search results.
+- **Old names.** The server is `conn` and its tools are `conn_*` (they were `t3-code` and
+  `t3_*`). Until the next release, `tools/call` still takes a `t3_*` name and runs its `conn_*`
+  tool (`legacy_tool_name` in `transport.rs`); `tools/list` and `tool_search` show only the new names.
 - `tools/call`: success is `{content: [text JSON], structuredContent, isError: false}`; a tool
   failure is `{content: [text OrchestratorMcpFailure JSON], isError: true}`; an unknown tool,
   an undeclared argument, a missing key, or a wrong type is JSON-RPC `-32602`
   (`Invalid parameters for tool 'X': Unknown argument "y". Accepted arguments: …`). `null` for an
   optional argument counts as omitted, unless its schema takes `null` (`src/null-arguments.txt`,
-  such as `t3_queue`'s `beforeRunId`). Type, length, range and literal failures use Effect's
+  such as `conn_queue`'s `beforeRunId`). Type, length, range and literal failures use Effect's
   words: `Expected string` (`| null` for an optional field), `Expected a value with a length of
   at most 4000`, `Expected a value between 1 and 100`, `Expected an integer`, `Expected "a" |
   "b"`; parity checks each against the T3 server. String lengths count UTF-16 units.
@@ -75,10 +78,10 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
   thread exists, is not archived, is on the credential's provider instance, and has an active
   run or a pending background subagent of that instance (`parent_not_active` otherwise). Every
   target thread other than the caller's own may not run in broader modes than the caller.
-  `t3_thread_launch` takes the live check; `send`, `interrupt`, `update`, `organize`, the
-  `respond` action of `t3_pending_request`, the write actions of `t3_queue` and a model change
-  in `t3_thread_configure` take both; `delegate_task`, `task_status`, `task_cancel`,
-  `send_to_user` and `t3_background_wait` act as the caller and take the live check. Reads take neither. The engine records no
+  `conn_thread_launch` takes the live check; `send`, `interrupt`, `update`, `organize`, the
+  `respond` action of `conn_pending_request`, the write actions of `conn_queue` and a model change
+  in `conn_thread_configure` take both; `delegate_task`, `task_status`, `task_cancel`,
+  `send_to_user` and `conn_background_wait` act as the caller and take the live check. Reads take neither. The engine records no
   background tasks yet, so the background-subagent exception never applies today.
 - 401 carries `www-authenticate: Bearer` and no `resource_metadata`, so no agent starts a
   browser sign-in that this server cannot finish.
@@ -86,7 +89,7 @@ Measured on a live T3 server at the pinned commit (`tools/mcp-client.mjs` drives
 ## Tools
 
 The T3 server registers 87 tools (`gen-tools.mjs --all`). Context filters: `tool_search` is listed
-only to clients that send `t3-tool-exposure: deferred`; `t3_environment_link(s)`/`unlink` are
+only to clients that send `t3-tool-exposure: deferred`; `conn_environment_link(s)`/`unlink` are
 hidden while linked environments are off; `watch_pull_request`/`unwatch_pull_request` are hidden
 from delegated children. Preview, device and panel tools are listed to everyone and fail without
 the capability.
@@ -102,24 +105,24 @@ Where they differ, because the engine does not do it yet:
   recognised remote", where T3 uses the project's remote. URL targets and targets with a host
   answer as T3's.
 
-- `t3_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
+- `conn_thread_send` maps its modes as `ThreadManagementService` does (`auto` steers a running
   turn, else starts; `queue`, `steer`, `restart`). `freshContext` starts a new provider session and never steers.
-- `t3_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
+- `conn_thread_launch`: `root`, `existing_worktree` and `worktree` (the engine makes the worktree
   through the server's host before the thread exists; `parity.mjs` compares the result). No
   `scratch`, no attachments on launch (the three attachment tools are served). The thread
   is recorded as `createdBy: user` (the engine's `launch` sets it). Without `modelSelection`
   a client gets the first ready provider's first model.
-- `t3_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
+- `conn_thread_wait` ends on `waiting` too, as Orbit's driver expects; no restart chains, since the
   engine ends a run on restart.
-- `t3_thread_update`: `rename` only.
-- `t3_thread_search` follows `searchThreads` (`ThreadSearch.ts`): title, branch and project hits
+- `conn_thread_update`: `rename` only.
+- `conn_thread_search` follows `searchThreads` (`ThreadSearch.ts`): title, branch and project hits
   among the project's active listed threads, then message hits from the engine's index (one per
   thread, outside the title hits), with a fifth of the slots kept for messages. Not ported:
   T3's title scoring (`scoreThreadSearch`) and message ranking (`rankMessageMatches`,
   `compareHits`). Ours orders titles by activity and takes each thread's newest message hit;
   T3 takes the best match, then the user's words. Parity compares titles and sources in order
   for three queries on one thread, so this gap is not covered there.
-- `t3_thread_organize`: the own agent's settle mid-turn waits in the background for the run
+- `conn_thread_organize`: the own agent's settle mid-turn waits in the background for the run
   (`settleAfterRun`, 24 h, at most one wait per thread). It does not check T3's "a watch
   started after the request keeps the thread active".
 - Delegation: `delegate_task` dispatches the engine's `delegated_task.request`, which makes the
@@ -160,37 +163,37 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `delegate_task` | served | actsAsCaller | | O |
 | `task_status` | served | actsAsCaller | | O |
 | `task_cancel` | served | actsAsCaller | | O |
-| `t3_thread_list` | served | reads | | |
-| `t3_thread_read` | served | reads | | O |
-| `t3_thread_update` | served | writesThreads | | |
-| `t3_thread_send` | served | afterForwarding(writesThreads) | | O |
-| `t3_thread_wait` | served | reads | | |
-| `t3_thread_interrupt` | served | writesThreads | | O |
-| `t3_thread_search` | served | reads | | |
-| `t3_thread_launch` | served | startsThreads | | O |
-| `t3_pending_request` | served | either(reads, writesThreads) | | |
-| `t3_thread_organize` | served (new) | writesThreads | | O |
-| `t3_queue` | served (new) | either(reads, writesThreads) | | |
-| `t3_thread_configure` | served (new) | either(reads, writesThreads) | | |
+| `conn_thread_list` | served | reads | | |
+| `conn_thread_read` | served | reads | | O |
+| `conn_thread_update` | served | writesThreads | | |
+| `conn_thread_send` | served | afterForwarding(writesThreads) | | O |
+| `conn_thread_wait` | served | reads | | |
+| `conn_thread_interrupt` | served | writesThreads | | O |
+| `conn_thread_search` | served | reads | | |
+| `conn_thread_launch` | served | startsThreads | | O |
+| `conn_pending_request` | served | either(reads, writesThreads) | | |
+| `conn_thread_organize` | served (new) | writesThreads | | O |
+| `conn_queue` | served (new) | either(reads, writesThreads) | | |
+| `conn_thread_configure` | served (new) | either(reads, writesThreads) | | |
 | `send_to_user` | served (new) | actsAsCaller | | C |
-| `t3_project_list` | served | reads | | |
-| `t3_project_read` | served | reads | | |
-| `t3_environment_read` | served | reads | | |
+| `conn_project_list` | served | reads | | |
+| `conn_project_read` | served | reads | | |
+| `conn_environment_read` | served | reads | | |
 | `create_threads` | served | actsAsCaller | top-level creation and parent timeline, with receipt replay | O |
-| `t3_project_create` | served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
-| `t3_project_update` | served | writesEnvironment | nothing new: `projects.mutate` | |
-| `t3_project_delete` | served | writesEnvironment | nothing new: `projects.mutate` | |
-| `t3_worktree_status` | served | readsAsCaller | thread binding and project defaults | |
-| `t3_worktree_list` | served | reads (needs the `worktree` capability) | shared git refs, with project-root fallback for removed worktrees | |
-| `t3_attachment_prepare_upload` | served | writes | shared client upload store; caller owns pending uploads | |
-| `t3_attachment_discard` | served | writes | only the preparing caller may discard a pending upload | |
-| `t3_thread_send_attachments` | served | writesThreads | canonical references and the engine attachment claims | |
-| `t3_environment_preferences_update` | served (peer links) | writesEnvironment |  |  |
+| `conn_project_create` | served | writesEnvironment | nothing new: the engine's `projects.createNew` / `projects.mutate` | |
+| `conn_project_update` | served | writesEnvironment | nothing new: `projects.mutate` | |
+| `conn_project_delete` | served | writesEnvironment | nothing new: `projects.mutate` | |
+| `conn_worktree_status` | served | readsAsCaller | thread binding and project defaults | |
+| `conn_worktree_list` | served | reads (needs the `worktree` capability) | shared git refs, with project-root fallback for removed worktrees | |
+| `conn_attachment_prepare_upload` | served | writes | shared client upload store; caller owns pending uploads | |
+| `conn_attachment_discard` | served | writes | only the preparing caller may discard a pending upload | |
+| `conn_thread_send_attachments` | served | writesThreads | canonical references and the engine attachment claims | |
+| `conn_environment_preferences_update` | served (peer links) | writesEnvironment |  |  |
 | `tool_search` | served | readsAsCaller | lists the four direct tools plus searched tools to deferred clients; at most 10 matches and 256 provider sessions | |
-| `t3_thread_transfer` | served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
-| `t3_worktree_handoff` | served | actsAsCaller | guarded binding, continuation, session detach and setup terminal | |
-| `t3_workflow_stop` | served | writesThreads | same workflow Stop as the client RPC | |
-| `t3_background_wait` | served (new) | actsAsCaller | | C |
+| `conn_thread_transfer` | served | either(reads, writesThreads) | engine: `thread.fork`, `thread.merge_back`, context transfers | |
+| `conn_worktree_handoff` | served | actsAsCaller | guarded binding, continuation, session detach and setup terminal | |
+| `conn_workflow_stop` | served | writesThreads | same workflow Stop as the client RPC | |
+| `conn_background_wait` | served (new) | actsAsCaller | | C |
 | `link_pull_request` | served (part 4) | writesWithCapability | | P |
 | `link_pull_requests` | served (part 4) | writesWithCapability | | P |
 | `unlink_pull_request` | served (part 4) | writesWithCapability | | |
@@ -208,8 +211,8 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `preview_open` | not served | actsAsCaller | desktop client: previews | O, B |
 | `preview_navigate`, `preview_resize`, `preview_set_appearance`, `preview_act`, `preview_evaluate`, `preview_dialog`, `preview_cdp_endpoint`, `preview_recording_start`, `preview_recording_stop` (9) | not served | actsAsCaller | desktop client: previews | O |
 | `preview_snapshot`, `preview_wait_for` (2) | not served | readsAsCaller | desktop client: previews | O |
-| `t3_preview_list` | not served | readsAsCaller | desktop client: previews | |
-| `t3_preview_close` | not served | actsAsCaller | desktop client: previews | |
+| `conn_preview_list` | not served | readsAsCaller | desktop client: previews | |
+| `conn_preview_close` | not served | actsAsCaller | desktop client: previews | |
 | `device_list` | served | readsAsCaller | `conn-devices` | D |
 | `device_open` | served | actsAsCaller | `conn-devices` | D |
 | `device_screenshot` | served | readsAsCaller | `conn-devices` | D |
@@ -228,12 +231,12 @@ Codex). `preview_*` in **O** names all 13 preview tools.
 | `fill_credential` | served (test logins; no subdomain matching) | actsAsCaller | server: credentials | |
 | `save_test_login` | served | actsAsCaller | server: credentials (test logins) | |
 | `request_secret` | served | actsAsCaller | server: secret requests | O |
-| `t3_environment_links` | served (peer links) | reads |  | O |
-| `t3_environment_link` | served (peer links) | writesEnvironment |  | O |
-| `t3_environment_unlink` | served (peer links) | writesEnvironment |  |  |
-| `t3_theme_read` | not served | reads | server: themes | |
-| `t3_theme_set` | not served | writesEnvironment | server: themes | |
-| `t3_project_clone` | served (without `projectClone.*` tracking) | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
+| `conn_environment_links` | served (peer links) | reads |  | O |
+| `conn_environment_link` | served (peer links) | writesEnvironment |  | O |
+| `conn_environment_unlink` | served (peer links) | writesEnvironment |  |  |
+| `conn_theme_read` | not served | reads | server: themes | |
+| `conn_theme_set` | not served | writesEnvironment | server: themes | |
+| `conn_project_clone` | served (without `projectClone.*` tracking) | writesEnvironment | server: project clone tracking (`ProjectCloneTracker`, source control repositories) | |
 
 ## Linked environments
 
@@ -252,27 +255,27 @@ port). Reference: `PeerForwarding.ts`, `McpToolAccess.routed`, the link handlers
   below full access it may change only threads with that origin, and may not change the
   environment's links, settings or scheduled tasks. Work a link started never uses this
   environment's links.
-- `t3_environment_links`, `t3_environment_link` (a card; returns `pending` at once) and
-  `t3_environment_unlink` are hidden while links are off (`src/links-hidden.txt`).
-  `t3_environment_preferences_update` patches the settings; `t3_environment_read` reports them
+- `conn_environment_links`, `conn_environment_link` (a card; returns `pending` at once) and
+  `conn_environment_unlink` are hidden while links are off (`src/links-hidden.txt`).
+  `conn_environment_preferences_update` patches the settings; `conn_environment_read` reports them
   over T3's defaults (`src/preference-defaults.json`).
 - Remote delegation (`src/remote_tasks.rs`, T3's `RemoteDelegation.ts`): `delegate_task` with
-  `target.environmentId` launches the child there with `t3_thread_launch` (`delegatedFrom`
+  `target.environmentId` launches the child there with `conn_thread_launch` (`delegatedFrom`
   names the parent) and records the task here with the engine's internal
   `delegated_task.remote.request` (no child thread). A follower per open task waits on the
-  thread there (`t3_thread_wait`, `untilDelegatedWorkSettled`, 45 s steps raced against the
-  task ending here), reads its last reply (`t3_thread_read`) and completes the task
+  thread there (`conn_thread_wait`, `untilDelegatedWorkSettled`, 45 s steps raced against the
+  task ending here), reads its last reply (`conn_thread_read`) and completes the task
   (`delegated_task.remote.complete`), which wakes the parent as a local child does.
   `task_status` and `task_cancel` read and stop remote tasks; a Stop of the parent, or a
   cancel, stops the thread there, and the follower carries an unsent stop across restarts.
-  A forwarded `t3_thread_send` that started or queued a run on a finished task's thread is a
+  A forwarded `conn_thread_send` that started or queued a run on a finished task's thread is a
   follow-up: a new task here, whose `taskId` the send returns (`RemoteDelegation.followUp`).
   At most 1,024 followers run at once. Proof: `crates/conn-server/tools/remote-delegation-diff.mjs`.
 
 `tools.implemented` is the served set. `agent_texts_name_only_known_unserved_tools` checks
 which unserved tools the agent instructions mention.
 
-**`t3_background_wait`** (`tools/background.rs`; T3: `toolkits/orchestrator/handlers.ts`,
+**`conn_background_wait`** (`tools/background.rs`; T3: `toolkits/orchestrator/handlers.ts`,
 `ThreadManagementService.awaitBackgroundTasks`): `actsAsCaller`, so a live thread caller only.
 `taskIds` holds 1 to 20 strings, each trimmed as JavaScript trims; a blank one is `-32602`
 (`Expected a non-blank string` at its index). `waiting` defaults to `true`. The engine
@@ -289,10 +292,10 @@ failure or timeout `orchestration_error` (`failed`). Clearing that matches nothi
 | Tool | Thread caller (agent) | Session with `orchestration:operate` | Read-only session |
 | --- | --- | --- | --- |
 | `send_to_user` | while live | refused: `thread_credential_required` | refused: `thread_credential_required` |
-| `t3_background_wait` | while live; only its own thread's tasks | refused: `thread_credential_required` | refused: `thread_credential_required` |
-| `t3_thread_organize` | while live; other threads only within its modes; its own settle mid-turn waits for the turn | any thread | refused: `capability_denied` |
-| `t3_queue` | `list`, `read` always; writes while live, other threads within its modes | any thread | `list`, `read` |
-| `t3_thread_configure` | read always; set while live, other threads within its modes | any thread | read |
+| `conn_background_wait` | while live; only its own thread's tasks | refused: `thread_credential_required` | refused: `thread_credential_required` |
+| `conn_thread_organize` | while live; other threads only within its modes; its own settle mid-turn waits for the turn | any thread | refused: `capability_denied` |
+| `conn_queue` | `list`, `read` always; writes while live, other threads within its modes | any thread | `list`, `read` |
+| `conn_thread_configure` | read always; set while live, other threads within its modes | any thread | read |
 
 To serve one: add its name to `tools.implemented`, run `gen-tools.mjs`, add a handler in
 `src/tools/` and its name to `HANDLED`; the tests check both lists agree. Strike it from
@@ -303,13 +306,13 @@ To serve one: add its name to `tools.implemented`, run `gen-tools.mjs`, add a ha
 From Orbit `origin/main` at `77f6bf5c22` (read by ref; the local checkout is older).
 
 - **MCP (planned Swamp `t3` driver)** — `docs/reference/development-containers.md`, "Swamp drives
-  T3": `POST <url>/mcp`, `Authorization: Bearer <Orbit Swamp session>`; `t3_project_list` (the
-  project at `/srv/workspace`); `t3_thread_launch` (`projectId, title, message, modelSelection
+  T3": `POST <url>/mcp`, `Authorization: Bearer <Orbit Swamp session>`; `conn_project_list` (the
+  project at `/srv/workspace`); `conn_thread_launch` (`projectId, title, message, modelSelection
   {instanceId, model, options:{effort}}, runtimeMode: full-access, interactionMode: default,
-  workspaceStrategy:{type: root}, clientRequestId: operation-<id>`); `t3_thread_send`
-  (`threadId, message, mode: queue, clientRequestId`); `t3_thread_wait` (`threadId, runId,
-  timeoutMs`); `t3_pending_request` (`action: read`); `t3_thread_read` (`view: activity`,
-  `afterPosition`); `t3_thread_interrupt` (`threadId, runId`). A retried launch or send with the
+  workspaceStrategy:{type: root}, clientRequestId: operation-<id>`); `conn_thread_send`
+  (`threadId, message, mode: queue, clientRequestId`); `conn_thread_wait` (`threadId, runId,
+  timeoutMs`); `conn_pending_request` (`action: read`); `conn_thread_read` (`view: activity`,
+  `afterPosition`); `conn_thread_interrupt` (`threadId, runId`). A retried launch or send with the
   same `clientRequestId` and session must return the same run. No code calls `/mcp` yet.
 - **WebSocket** — `swamp/extensions/behaviors/operations/conn-revocation/read_sessions.ts:22-76`:
   `/ws?orchestrationProtocol=2` with a bearer header, `subscribeAuthAccess`, first snapshot only.
@@ -366,11 +369,11 @@ is the cost that grows. It also always answers over SSE. Ours is about 300 lines
 `McpService::issue_thread_credential(ThreadCredentialRequest { thread_id, provider_instance_id,
 subagent })` returns an `McpServerEntry { url, authorization, .. }` for one provider session:
 
-- Claude: `entry.claude_server()` is the `mcpServers["t3-code"]` value (`type: http`, `url`,
+- Claude: `entry.claude_server()` is the `mcpServers["conn"]` value (`type: http`, `url`,
   `headers.Authorization`, `timeout` 65 min); `entry.claude_mcp_config()` is the whole
-  `--mcp-config` JSON. Pre-approve `mcp__t3-code__*` as the T3 adapter does.
-- Codex: the provider writes `mcp_servers.t3-code` (wait tool disabled) and
-  `mcp_servers.t3-code-direct` (only `t3_thread_wait`, out of code mode) into its thread
+  `--mcp-config` JSON. Pre-approve `mcp__conn__*` as the T3 adapter does.
+- Codex: the provider writes `mcp_servers.conn` (wait tool disabled) and
+  `mcp_servers.conn-direct` (only `conn_thread_wait`, out of code mode) into its thread
   config (`conn-provider-codex/src/launch.rs`).
 - Call `revoke_provider_session` when the session ends and `touch_thread` when a turn starts.
 

@@ -6,7 +6,7 @@ annotations_list
 annotations_claim
 annotations_complete
 annotations_release
-t3_background_wait
+conn_background_wait
 tool_search
 html_render
 request_secret
@@ -24,8 +24,8 @@ preview_set_appearance
 preview_evaluate
 preview_dialog
 preview_cdp_endpoint
-t3_preview_close
-t3_preview_list
+conn_preview_close
+conn_preview_list
 preview_snapshot
 preview_act
 preview_wait_for
@@ -34,8 +34,8 @@ preview_recording_stop
 mcp_call
 mcp_connect
 create_threads
-t3_worktree_handoff
-t3_worktree_status
+conn_worktree_handoff
+conn_worktree_status
 device_list
 device_open
 device_screenshot

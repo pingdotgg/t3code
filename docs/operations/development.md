@@ -92,7 +92,7 @@ and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 ### Profiling dev startup
 
 Run `vp run profile:startup` to capture the first 20 seconds of inherited Node processes under
-`.t3/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
+`.conn/startup-profiles/<timestamp>`. Workers that execute the preload get separate profiles.
 It starts the normal dev runner and accepts its flags.
 Stop it with Ctrl+C after the capture. Set `T3CODE_STARTUP_PROFILE_DIR` to choose another output
 directory. Profiling adds overhead, so compare readiness with an ordinary `vp run dev` run.
@@ -103,7 +103,7 @@ synchronous subprocess calls, and startup measures. Per-file records include imp
 source loading, preparation, recursive dependency linking, and top-level evaluation. Preparation
 uses synchronous loader boundaries; linking includes dependencies, and CommonJS evaluation can
 include nested `require` calls. Some ESM/CommonJS interop reports a combined stage. `.process.json` records the process, Node version, and capture window.
-The server's nested Effect and SQL spans remain in `.t3/userdata/logs/server.trace.ndjson`.
+The server's nested Effect and SQL spans remain in `.conn/userdata/logs/server.trace.ndjson`.
 
 The preload temporarily adds module-body timing markers and uses one automatic debugger pause
 to instrument the live Node loader. The launcher adds `--no-node-snapshot` to inherited
