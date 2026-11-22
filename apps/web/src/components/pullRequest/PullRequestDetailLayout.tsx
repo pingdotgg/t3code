@@ -4,6 +4,7 @@ import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Badge } from "../ui/badge";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestMetaLine } from "./pullRequestPresentation";
@@ -21,12 +22,23 @@ export function PullRequestPrivateMark({ className }: { className?: string }) {
   );
 }
 
+export function PullRequestPrivateBadge() {
+  const gt = useGT();
+  return (
+    <Badge size="control" variant="outline">
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <LockIcon className="size-3.5" />
+        {gt("Private")}
+      </span>
+    </Badge>
+  );
+}
+
 export function PullRequestDetailHeaderBody({
   title,
   author,
   updated,
   checkout,
-  isPrivate,
   base,
   head,
   files,
@@ -36,7 +48,6 @@ export function PullRequestDetailHeaderBody({
   author: ReactNode;
   updated: ReactNode;
   checkout?: ReactNode;
-  isPrivate?: boolean;
   base: ReactNode;
   head: ReactNode;
   files: ReactNode;
@@ -55,7 +66,6 @@ export function PullRequestDetailHeaderBody({
       </div>
       <div className="mt-4 flex min-h-5 min-w-0 items-center gap-2 text-xs text-muted-foreground">
         <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
-          {isPrivate ? <PullRequestPrivateMark className="size-3.5" /> : null}
           {base}
           <ArrowLeftIcon
             aria-label={gt("receives changes from", {

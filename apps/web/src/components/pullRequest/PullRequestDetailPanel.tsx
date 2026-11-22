@@ -90,7 +90,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   PullRequestChecksStatusLine,
   PullRequestDetailHeaderBody,
-  PullRequestPrivateMark,
+  PullRequestPrivateBadge,
   PullRequestDetailTabBar,
 } from "./PullRequestDetailLayout";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
@@ -1579,6 +1579,7 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 select-none items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
+              {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
               {context === "page" ? (
                 <PullRequestThreadLinks
                   display="count"
@@ -1727,9 +1728,6 @@ export function PullRequestDetailPanel({
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
                   <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
-                    {detail.visibility === "private" ? (
-                      <PullRequestPrivateMark className="size-3" />
-                    ) : null}
                     <PullRequestBaseBranch
                       baseBranch={detail.baseBranch}
                       freshness={freshness}
@@ -1852,7 +1850,6 @@ export function PullRequestDetailPanel({
                     />
                   ) : null
                 }
-                isPrivate={detail.visibility === "private"}
                 base={
                   <PullRequestBaseBranch
                     baseBranch={detail.baseBranch}

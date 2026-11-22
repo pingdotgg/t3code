@@ -253,7 +253,7 @@ export const headBranchName = (head: string) =>
   head.replace(/^refs\/heads\//u, "").replace(/^[^/:]+:/u, "");
 
 /** Absent when Source names no visibility, so a reader tells unknown from public. */
-export const visibilityOf = (pull: Pick<SourcePull, "visibility">) =>
+const visibilityOf = (pull: Pick<SourcePull, "visibility">) =>
   pull.visibility === "private" || pull.visibility === "public"
     ? { visibility: pull.visibility }
     : {};
@@ -294,6 +294,7 @@ export function toChangeRequest(
     baseBranch: pull.base ?? "",
     state: pull.state,
     isDraft: pull.draft,
+    ...visibilityOf(pull),
     mergeability: "unknown",
     additions: 0,
     deletions: 0,

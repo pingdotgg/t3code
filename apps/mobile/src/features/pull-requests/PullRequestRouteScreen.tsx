@@ -85,7 +85,8 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
+import { SymbolView } from "../../components/ui/AppSymbol";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -209,8 +210,6 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   };
 }
 
-const PRIVATE_SYMBOL: AppSymbolName = { ios: "lock.fill", android: "lock" };
-
 function PullRequestIdentity(props: {
   readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
@@ -267,7 +266,11 @@ function PullRequestIdentity(props: {
             accessibilityRole="image"
             accessibilityLabel={gt("Private")}
           >
-            <SymbolView name={PRIVATE_SYMBOL} size={11} tintColorClassName="accent-icon-muted" />
+            <SymbolView
+              name={PullRequestGlyph.private}
+              size={11}
+              tintColorClassName="accent-icon-muted"
+            />
           </View>
         ) : null}
         <Pressable

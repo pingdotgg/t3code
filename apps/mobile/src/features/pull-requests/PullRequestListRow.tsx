@@ -178,6 +178,17 @@ export const PullRequestListRow = memo(
                 <Text className={cn("min-w-0 flex-1 text-xs", mutedForeground)} numberOfLines={1}>
                   {item.repository} <Text className={tertiaryForeground}>#{item.number}</Text>
                 </Text>
+                {item.visibility === "private" ? (
+                  <View accessible accessibilityRole="image" accessibilityLabel={gt("Private")}>
+                    <SymbolView
+                      name={PullRequestGlyph.private}
+                      size={11}
+                      tintColorClassName={
+                        props.sidebar ? "accent-drawer-foreground-muted" : "accent-foreground-muted"
+                      }
+                    />
+                  </View>
+                ) : null}
                 {item.stack ? (
                   <View className="flex-row items-center gap-1">
                     <SymbolView

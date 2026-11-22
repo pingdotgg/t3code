@@ -109,6 +109,8 @@ export interface ProviderChangeRequest {
   readonly labels: ReadonlyArray<PullRequestLabel>;
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   readonly checksState?: PullRequestChecksState | null | undefined;
+  /** Absent where the host has no private change requests or names no visibility. */
+  readonly visibility?: PullRequestVisibility;
 }
 
 export interface ProviderChangeRequestSummary {
@@ -259,8 +261,6 @@ export interface ProviderChangeRequestStat {
 }
 
 export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
-  /** Absent where the host has no private change requests or names no visibility. */
-  readonly visibility?: PullRequestVisibility;
   readonly maintainerCanModify?: boolean;
   readonly headSha?: string | null;
   readonly body: string;
