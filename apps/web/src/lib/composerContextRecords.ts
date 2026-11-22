@@ -536,7 +536,13 @@ export function attachmentContextRecord(
     mimeType: attachment.mimeType,
     sizeBytes: attachment.sizeBytes,
   };
-  return attachment.type === "image" ? { ...base, kind: "image" } : { ...base, kind: "file" };
+  return attachment.type === "image"
+    ? {
+        ...base,
+        kind: "image",
+        ...(attachment.source !== undefined ? { source: attachment.source } : {}),
+      }
+    : { ...base, kind: "file" };
 }
 
 export function buildMessageContext(input: {

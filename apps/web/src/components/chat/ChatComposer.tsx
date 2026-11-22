@@ -462,6 +462,7 @@ export interface ChatComposerProps {
     readonly contextIds?: ReadonlyArray<ComposerContextId> | undefined;
   }> | null;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
+  onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
 
   onCompactContext: () => void;
   onSend: (
@@ -603,6 +604,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onFileOpen,
     editingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
+    onRestoreEditingQueuedAttachment,
   } = props;
   const {
     activePendingProgress: incomingPendingProgress,
@@ -1420,28 +1422,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               : null);
           if (!record) return [];
           if (attachment.file) copiedFiles.set(record.attachmentId, attachment.file);
-          return [
-            record.kind === "image" && attachment.type === "image" && attachment.source
-              ? { ...record, source: attachment.source }
-              : record,
-          ];
+          return [record];
         }),
       ...(editingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) => {
         if (!isQueuedImageAttachment(attachment) && !isQueuedFileAttachment(attachment)) return [];
         return (contextIds ?? [])
           .filter((contextId) => wanted.has(contextId))
-          .map((contextId) => {
-            const record = attachmentContextRecord({
+          .map((contextId) =>
+            attachmentContextRecord({
               attachment,
               attachmentId: attachment.id,
               contextId,
-            });
-            return record.kind === "image" &&
-              isQueuedImageAttachment(attachment) &&
-              attachment.source
-              ? { ...record, source: attachment.source }
-              : record;
-          });
+            }),
+          );
       }),
     ];
     if (records.length === 0) return null;
@@ -1806,6 +1799,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
       files: composerFiles,
+      queuedFiles: (editingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) =>
+        isQueuedFileAttachment(attachment) && contextIds && contextIds.length > 0
+          ? [{ attachment, contextIds }]
+          : [],
+      ),
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
@@ -1824,6 +1822,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     if (attachmentChanges.filesToRestore.length > 0) {
       addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
+    }
+    for (const fileId of attachmentChanges.queuedFileIdsToRemove) {
+      onRemoveEditingQueuedAttachment(fileId);
+    }
+    for (const attachment of attachmentChanges.queuedFilesToRestore) {
+      onRestoreEditingQueuedAttachment?.(attachment);
     }
     setComposerCursor(nextCursor);
     updateTrigger(trigger);

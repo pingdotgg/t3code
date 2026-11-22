@@ -1,4 +1,9 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import {
+  ChatAttachmentId,
+  ComposerContextId,
+  type ChatFileAttachment,
+  type PreviewAnnotationPayload,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { ComposerImageAttachment } from "../../composerDraftStore";
@@ -37,7 +42,7 @@ const annotation = {
 } satisfies PreviewAnnotationPayload;
 
 function retention(): RetainedAttachmentContextPayloads {
-  return { files: new Map(), previewAnnotations: new Map() };
+  return { files: new Map(), queuedFiles: new Map(), previewAnnotations: new Map() };
 }
 
 describe("reconcileAttachmentContextReferences", () => {
@@ -87,5 +92,49 @@ describe("reconcileAttachmentContextReferences", () => {
         attachmentId: "uploaded-screenshot",
       }),
     ]);
+  });
+
+  it("removes and restores chip-backed queued files on delete and undo while preserving files with no chip", () => {
+    const retained = retention();
+    const chipFile: ChatFileAttachment = {
+      type: "file",
+      id: ChatAttachmentId.make("server-file-1"),
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const plainFile: ChatFileAttachment = {
+      type: "file",
+      id: ChatAttachmentId.make("server-file-2"),
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const chipContextId = ComposerContextId.make("file_local-1");
+
+    const removed = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set(),
+      files: [],
+      queuedFiles: [
+        { attachment: chipFile, contextIds: [chipContextId] },
+        { attachment: plainFile, contextIds: [] },
+      ],
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(removed.queuedFileIdsToRemove).toEqual([chipFile.id]);
+    expect(removed.queuedFilesToRestore).toEqual([]);
+
+    const restored = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([chipContextId]),
+      files: [],
+      queuedFiles: [{ attachment: plainFile, contextIds: [] }],
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(restored.queuedFileIdsToRemove).toEqual([]);
+    expect(restored.queuedFilesToRestore).toEqual([chipFile]);
   });
 });

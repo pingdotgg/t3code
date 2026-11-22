@@ -2,7 +2,11 @@ import { ChatAttachmentId, ComposerContextId, EnvironmentId, ThreadId } from "@t
 import { describe, expect, it } from "vite-plus/test";
 
 import { composerFileNeedsReattach } from "~/composerDraftStore";
-import { buildMessageContext } from "~/lib/composerContextRecords";
+import {
+  attachmentContextRecord,
+  buildMessageContext,
+  isSameComposerContextPayload,
+} from "~/lib/composerContextRecords";
 import {
   composerContextRecordsFromDraft,
   uploadedContextRecordFromDraft,
@@ -64,18 +68,26 @@ describe("composerContextRecordsFromDraft", () => {
     const fileContextId = ComposerContextId.make("file_local-notes");
     const imageId = ChatAttachmentId.make("server-shot");
     const fileId = ChatAttachmentId.make("server-notes");
+    const source = {
+      kind: "snap-shot" as const,
+      capturedAt: "2026-11-22T14:00:00.000Z",
+      appName: "Safari",
+      windowTitle: "Example",
+    };
+    const imageAttachment = {
+      type: "image" as const,
+      id: imageId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+      source,
+    };
     const draftRecords = composerContextRecordsFromDraft({
       terminalContexts: [],
       environmentId,
       existingAttachments: [
         {
-          attachment: {
-            type: "image",
-            id: imageId,
-            name: "image.png",
-            mimeType: "image/png",
-            sizeBytes: 67,
-          },
+          attachment: imageAttachment,
           url: "http://127.0.0.1/assets/server-shot",
           contextIds: [imageContextId],
         },
@@ -100,13 +112,26 @@ describe("composerContextRecordsFromDraft", () => {
         id: imageId,
         name: "image.png",
         previewUrl: "http://127.0.0.1/assets/server-shot",
+        source,
       },
     });
-    expect(uploadedContextRecordFromDraft(imageEntry!)).toMatchObject({
+    const uploadedImageRecord = uploadedContextRecordFromDraft(imageEntry!);
+    expect(uploadedImageRecord).toMatchObject({
       kind: "image",
       contextId: imageContextId,
       attachmentId: imageId,
+      source,
     });
+    expect(
+      isSameComposerContextPayload(
+        uploadedImageRecord!,
+        attachmentContextRecord({
+          attachment: imageAttachment,
+          attachmentId: imageId,
+          contextId: imageContextId,
+        }),
+      ),
+    ).toBe(true);
 
     const fileEntry = draftRecords.get(fileContextId);
     expect(fileEntry?.kind).toBe("file");

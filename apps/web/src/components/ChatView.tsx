@@ -3943,6 +3943,9 @@ export default function ChatView(props: ChatViewProps) {
                                 onRemoveEditingQueuedAttachment={
                                   queuedRunEdit.removeEditingAttachment
                                 }
+                                onRestoreEditingQueuedAttachment={
+                                  queuedRunEdit.restoreEditingAttachment
+                                }
                               />
                             )}
                           </div>

@@ -1,4 +1,6 @@
 import type {
+  ChatFileAttachment,
+  ComposerContextId,
   EnvironmentContextRecord,
   PreviewAnnotationPayload,
   ThreadContextRecord,
@@ -15,8 +17,14 @@ interface RetainedPreviewAnnotation {
   image: ComposerImageAttachment | undefined;
 }
 
+export interface RetainedQueuedFileAttachment {
+  readonly attachment: ChatFileAttachment;
+  readonly contextIds: ReadonlyArray<ComposerContextId>;
+}
+
 export interface RetainedAttachmentContextPayloads {
   files: Map<string, ComposerFileAttachment>;
+  queuedFiles: Map<string, RetainedQueuedFileAttachment>;
   previewAnnotations: Map<string, RetainedPreviewAnnotation>;
 }
 
@@ -34,6 +42,7 @@ function createRetainedContextPayloads(): RetainedContextPayloads {
     threads: new Map(),
     environments: new Map(),
     files: new Map(),
+    queuedFiles: new Map(),
     previewAnnotations: new Map(),
   };
 }
@@ -61,12 +70,15 @@ export function useRetainedContextPayloads(draftTargetKey: string): RetainedCont
 export function reconcileAttachmentContextReferences(input: {
   referencedContextIds: ReadonlySet<string>;
   files: ReadonlyArray<ComposerFileAttachment>;
+  queuedFiles?: ReadonlyArray<RetainedQueuedFileAttachment>;
   images: ReadonlyArray<ComposerImageAttachment>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   retained: RetainedAttachmentContextPayloads;
 }): {
   filesToRemove: string[];
   filesToRestore: ComposerFileAttachment[];
+  queuedFileIdsToRemove: string[];
+  queuedFilesToRestore: ChatFileAttachment[];
   annotationIdsToRemove: string[];
   annotationsToRestore: RetainedPreviewAnnotation[];
 } {
@@ -85,6 +97,32 @@ export function reconcileAttachmentContextReferences(input: {
     const file = input.retained.files.get(contextId);
     return file ? [file] : [];
   });
+
+  const liveQueuedFiles = input.queuedFiles ?? [];
+  const liveQueuedFileIds = new Set<string>(liveQueuedFiles.map((entry) => entry.attachment.id));
+  const queuedFileIdsToRemove: string[] = [];
+  for (const entry of liveQueuedFiles) {
+    if (entry.contextIds.length === 0) continue;
+    if (entry.contextIds.some((contextId) => input.referencedContextIds.has(contextId))) continue;
+    for (const contextId of entry.contextIds) {
+      input.retained.queuedFiles.set(contextId, entry);
+    }
+    queuedFileIdsToRemove.push(entry.attachment.id);
+  }
+  const restoredQueuedFileIds = new Set<string>();
+  const queuedFilesToRestore: ChatFileAttachment[] = [];
+  for (const contextId of input.referencedContextIds) {
+    const entry = input.retained.queuedFiles.get(contextId);
+    if (!entry) continue;
+    if (
+      liveQueuedFileIds.has(entry.attachment.id) ||
+      restoredQueuedFileIds.has(entry.attachment.id)
+    ) {
+      continue;
+    }
+    restoredQueuedFileIds.add(entry.attachment.id);
+    queuedFilesToRestore.push(entry.attachment);
+  }
 
   const imagesById = new Map(input.images.map((image) => [image.id, image]));
   const liveAnnotationContextIds = new Set<string>(
@@ -106,5 +144,12 @@ export function reconcileAttachmentContextReferences(input: {
     return retained ? [retained] : [];
   });
 
-  return { filesToRemove, filesToRestore, annotationIdsToRemove, annotationsToRestore };
+  return {
+    filesToRemove,
+    filesToRestore,
+    queuedFileIdsToRemove,
+    queuedFilesToRestore,
+    annotationIdsToRemove,
+    annotationsToRestore,
+  };
 }

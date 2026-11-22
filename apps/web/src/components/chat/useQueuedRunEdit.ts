@@ -81,10 +81,9 @@ interface EditingQueuedRun {
   readonly runId: RunId;
   readonly messageId: MessageId;
   readonly originalText: string;
+  readonly originalAttachments: ReadonlyArray<ChatAttachment>;
   readonly existingAttachments: ReadonlyArray<ChatAttachment>;
   readonly context?: OrchestrationMessageContext | undefined;
-  /** Removing a server attachment changes the message even when the draft looks untouched. */
-  readonly removedExistingAttachment?: true;
 }
 
 // Keyed by the route thread, so an edit survives navigating away and back.
@@ -239,13 +238,17 @@ export function useQueuedRunEdit(input: {
   const urlByAttachmentId = new Map(
     imageResources.map((resource, index) => [resource.attachmentId, imageUrls[index] ?? null]),
   );
+  const originalReferencedContextIds =
+    editing === null ? null : new Set(collectInlineContextIds(editing.originalText));
   const editingAttachments =
     editing === null
       ? null
       : editing.existingAttachments.map((attachment) => ({
           attachment,
           url: urlByAttachmentId.get(attachment.id) ?? null,
-          contextIds: attachmentContextIdsForRecord(editing.context, attachment),
+          contextIds: attachmentContextIdsForRecord(editing.context, attachment).filter(
+            (contextId) => originalReferencedContextIds!.has(contextId),
+          ),
         }));
 
   const focusComposerSoon = () => {
@@ -292,6 +295,7 @@ export function useQueuedRunEdit(input: {
         runId: request.runId,
         messageId: request.messageId,
         originalText: text,
+        originalAttachments: request.attachments,
         existingAttachments: request.attachments,
         context,
       },
@@ -315,7 +319,8 @@ export function useQueuedRunEdit(input: {
             threadTarget: threadDraftTarget,
             originalText: edit.originalText,
             originalReplyTo: reply ?? null,
-            removedExistingAttachment: edit.removedExistingAttachment === true,
+            removedExistingAttachment:
+              edit.existingAttachments.length < edit.originalAttachments.length,
             existingAttachmentContextIds: (edit.context?.records ?? []).flatMap((record) =>
               (record.kind === "image" || record.kind === "file") && "attachmentId" in record
                 ? [record.contextId]
@@ -352,29 +357,52 @@ export function useQueuedRunEdit(input: {
     focusComposerSoon();
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
-    if (editing !== null) {
-      const removed = editing.existingAttachments.find(
-        (attachment) => attachment.id === attachmentId,
-      );
-      const contextIds = removed ? attachmentContextIdsForRecord(editing.context, removed) : [];
-      if (contextIds.length > 0) {
-        const target = queuedRunEditDraftId(routeThreadRef, editing.runId);
-        const store = useComposerDraftStore.getState();
-        const currentPrompt = store.getComposerDraft(target)?.prompt ?? "";
-        const nextPrompt = contextIds.reduce(
-          (prompt, contextId) => removeInlineContextReference(prompt, contextId).prompt,
-          currentPrompt,
-        );
-        if (nextPrompt !== currentPrompt) store.setPrompt(target, nextPrompt);
-      }
-    }
+    const contextIds =
+      editing === null
+        ? []
+        : (() => {
+            const removed = editing.existingAttachments.find(
+              (attachment) => attachment.id === attachmentId,
+            );
+            return removed ? attachmentContextIdsForRecord(editing.context, removed) : [];
+          })();
     queuedRunEdits.update(editKey, (current) => ({
       ...current,
-      removedExistingAttachment: true,
       existingAttachments: current.existingAttachments.filter(
         (attachment) => attachment.id !== attachmentId,
       ),
     }));
+    if (editing !== null && contextIds.length > 0) {
+      const target = queuedRunEditDraftId(routeThreadRef, editing.runId);
+      const store = useComposerDraftStore.getState();
+      const currentPrompt = store.getComposerDraft(target)?.prompt ?? "";
+      const nextPrompt = contextIds.reduce(
+        (prompt, contextId) => removeInlineContextReference(prompt, contextId).prompt,
+        currentPrompt,
+      );
+      if (nextPrompt !== currentPrompt) store.setPrompt(target, nextPrompt);
+    }
+  });
+  const restoreEditingAttachment = useStableCallback((attachment: ChatAttachment) => {
+    queuedRunEdits.update(editKey, (current) => {
+      if (current.existingAttachments.some((entry) => entry.id === attachment.id)) {
+        return current;
+      }
+      const restoredIds = new Set([
+        ...current.existingAttachments.map((entry) => entry.id),
+        attachment.id,
+      ]);
+      const existingAttachments = current.originalAttachments.filter((entry) =>
+        restoredIds.has(entry.id),
+      );
+      return {
+        ...current,
+        existingAttachments:
+          existingAttachments.length > current.existingAttachments.length
+            ? existingAttachments
+            : [...current.existingAttachments, attachment],
+      };
+    });
   });
 
   // The same move as the queued row's "Send now" while a turn runs.
@@ -504,6 +532,7 @@ export function useQueuedRunEdit(input: {
     beginEdit,
     cancelEdit,
     removeEditingAttachment,
+    restoreEditingAttachment,
     saveEdit,
   };
 }

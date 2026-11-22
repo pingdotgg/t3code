@@ -344,45 +344,135 @@ describe("useQueuedRunEdit", () => {
     );
   });
 
-  it("binds existing attachment context ids for inline chips and strips them on removal", async () => {
+  it("binds existing attachment context ids, restores removed files on undo, and saves without removed chips or records", async () => {
     const { hook } = setup();
+    mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const messageId = MessageId.make("message-1");
-    const attachmentId = ChatAttachmentId.make("server-image-1");
-    const contextId = ComposerContextId.make("image_local-image-1");
-    const attachment = {
+    const imageId = ChatAttachmentId.make("server-image-1");
+    const fileId = ChatAttachmentId.make("server-file-1");
+    const unreferencedFileId = ChatAttachmentId.make("server-file-2");
+    const imageContextId = ComposerContextId.make("image_local-image-1");
+    const fileContextId = ComposerContextId.make("file_local-file-1");
+    const staleContextId = ComposerContextId.make("file_stale-file-2");
+    const imageAttachment = {
       type: "image" as const,
-      id: attachmentId,
+      id: imageId,
       name: "image.png",
       mimeType: "image/png",
       sizeBytes: 67,
     };
-    const chip = formatInlineContextReference({ kind: "image", contextId, label: "image.png" });
-    const text = `Check ${chip} map`;
+    const fileAttachment = {
+      type: "file" as const,
+      id: fileId,
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const unreferencedFile = {
+      type: "file" as const,
+      id: unreferencedFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const imageChip = formatInlineContextReference({
+      kind: "image",
+      contextId: imageContextId,
+      label: "image.png",
+    });
+    const fileChip = formatInlineContextReference({
+      kind: "file",
+      contextId: fileContextId,
+      label: "notes.txt",
+    });
+    const text = `Check ${imageChip} and ${fileChip} map`;
     const imageRecord = {
       version: 1 as const,
       kind: "image" as const,
-      contextId,
+      contextId: imageContextId,
       label: "image.png",
-      attachmentId,
+      attachmentId: imageId,
       name: "image.png",
       mimeType: "image/png",
       sizeBytes: 67,
     };
-    const messages = [{ id: messageId, text, context: { version: 1, records: [imageRecord] } }];
-    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+    const fileRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: fileContextId,
+      label: "notes.txt",
+      attachmentId: fileId,
+      name: "notes.txt",
+      mimeType: "text/plain",
+      sizeBytes: 12,
+    };
+    const staleRecord = {
+      version: 1 as const,
+      kind: "file" as const,
+      contextId: staleContextId,
+      label: "legacy.pdf",
+      attachmentId: unreferencedFileId,
+      name: "legacy.pdf",
+      mimeType: "application/pdf",
+      sizeBytes: 40,
+    };
+    const messages = [
+      {
+        id: messageId,
+        text,
+        context: { version: 1, records: [imageRecord, fileRecord, staleRecord] },
+      },
+    ];
+    await using screen = await render(view(THREAD_A, "queued", hook, messages));
 
     await act(() =>
-      requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [attachment] }),
+      requireHook(hook).beginEdit({
+        runId: RUN,
+        messageId,
+        text,
+        attachments: [imageAttachment, fileAttachment, unreferencedFile],
+      }),
     );
     expect(requireHook(hook).editingAttachments).toEqual([
-      expect.objectContaining({ attachment, contextIds: [contextId] }),
+      expect.objectContaining({ attachment: imageAttachment, contextIds: [imageContextId] }),
+      expect.objectContaining({ attachment: fileAttachment, contextIds: [fileContextId] }),
+      expect.objectContaining({ attachment: unreferencedFile, contextIds: [] }),
     ]);
 
-    await act(() => requireHook(hook).removeEditingAttachment(attachmentId));
-    expect(requireHook(hook).editingAttachments).toEqual([]);
+    await act(() => requireHook(hook).removeEditingAttachment(fileId));
+    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
+      imageId,
+      unreferencedFileId,
+    ]);
+    await act(() => requireHook(hook).restoreEditingAttachment(fileAttachment));
+    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
+      imageId,
+      fileId,
+      unreferencedFileId,
+    ]);
+
+    await act(() => requireHook(hook).removeEditingAttachment(imageId));
+    await act(() => requireHook(hook).removeEditingAttachment(fileId));
+    expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
+      unreferencedFileId,
+    ]);
     expect(
       useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
-    ).toBe("Check map");
+    ).toBe("Check and map");
+
+    await screen.getByRole("button", { name: "Update queued message" }).click();
+    await vi.waitFor(() => expect(mocks.editQueuedRun).toHaveBeenCalledOnce());
+    expect(mocks.editQueuedRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({
+          text: "Check and map",
+          edit: expect.objectContaining({
+            attachments: [unreferencedFile],
+            context: { version: 1, records: [staleRecord] },
+          }),
+        }),
+      }),
+    );
   });
 
   it("opens an edit with only the thread and machine records its text still mentions", async () => {
