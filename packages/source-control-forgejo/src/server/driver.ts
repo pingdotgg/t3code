@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { definition } from "../shared/definition.ts";
 
 import * as ForgejoCli from "./ForgejoCli.ts";
+import * as ForgejoIssueTracker from "./ForgejoIssueTracker.ts";
 import * as ForgejoPullRequestProvider from "./ForgejoPullRequestProvider.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
 
@@ -17,6 +18,7 @@ const makeInstance = Effect.all({
   sourceControl: ForgejoSourceControlProvider.make,
   discovery: ForgejoSourceControlProvider.makeDiscovery,
   pullRequests: ForgejoPullRequestProvider.make,
+  issues: ForgejoIssueTracker.make,
 });
 
 const isCliError = Schema.is(ForgejoCli.ForgejoCliError);

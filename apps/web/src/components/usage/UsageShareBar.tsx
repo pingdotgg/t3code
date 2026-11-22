@@ -1,4 +1,5 @@
 import { formatPercent } from "@t3tools/shared/usageFormat";
+import { useMessages } from "gt-react";
 import type { ReactNode } from "react";
 
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -20,6 +21,7 @@ export function UsageShareBar({
   readonly format: (value: number) => string;
   readonly aside?: ReactNode;
 }) {
+  const m = useMessages();
   const visible = segments.filter((segment) => segment.value > 0);
   const total = visible.reduce((sum, segment) => sum + segment.value, 0);
   if (total <= 0) return null;
@@ -30,11 +32,8 @@ export function UsageShareBar({
         <h3 className="text-sm font-medium text-foreground">{label}</h3>
         {aside}
       </div>
-      <div
-        role="img"
-        aria-label={`${label}: ${visible.map((segment) => `${segment.label} ${format(segment.value)}`).join(", ")}`}
-        className="flex h-2 gap-0.5"
-      >
+      {/* The legend below carries every figure; the bar's tooltips are pointer-only. */}
+      <div aria-hidden className="flex h-2 gap-0.5">
         {visible.map((segment) => (
           <Tooltip key={segment.label}>
             <TooltipTrigger
@@ -46,24 +45,25 @@ export function UsageShareBar({
               }
             />
             <TooltipPopup>
-              {segment.label} · {format(segment.value)} · {formatPercent(segment.value / total)}
+              {m(segment.label)} · {format(segment.value)} · {formatPercent(segment.value / total)}
             </TooltipPopup>
           </Tooltip>
         ))}
       </div>
-      <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+      <ul aria-label={label} className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
         {visible.map((segment) => (
-          <span key={segment.label} className="flex items-center gap-1.5">
+          <li key={segment.label} className="flex items-center gap-1.5">
             <span
               aria-hidden
               className="size-2 rounded-xs"
               style={{ backgroundColor: segment.color }}
             />
-            <span className="text-muted-foreground">{segment.label}</span>
+            <span className="text-muted-foreground">{m(segment.label)}</span>{" "}
             <span className="text-foreground tabular-nums">{format(segment.value)}</span>
-          </span>
+            <span className="sr-only">, {formatPercent(segment.value / total)}</span>
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   );
 }

@@ -5,7 +5,6 @@ export const ANNOTATION_CAPTURED_CHANNEL = "preview:annotation-captured";
 export const ANNOTATION_THEME_CHANNEL = "preview:annotation-theme";
 export const ANNOTATION_SEND_ENABLED_CHANNEL = "preview:annotation-send-enabled";
 export const HUMAN_INPUT_CHANNEL = "preview:human-input";
-export const MOUSE_NAVIGATE_CHANNEL = "preview:mouse-navigate";
 // Sent to the hosting <webview> element (ipc-message). The web app mirrors this
 // literal in HostedBrowserWebview because it cannot import from the desktop app.
 export const POINTER_DOWN_HOST_CHANNEL = "preview:pointer-down";
@@ -15,6 +14,7 @@ export const RECORDING_POINTER_CHANNEL = "preview:recording-pointer";
 export const RECORDING_KEY_CHANNEL = "preview:recording-key";
 export const RECORDING_INPUT_CHANNEL = "preview:recording-input";
 export const RECORDING_CONTROLLER_CHANNEL = "preview:recording-controller";
+export const THUMB_PRESS_CHANNEL = "preview:thumb-press";
 export const PASSKEY_CREATE_CHANNEL = "preview:passkey-create";
 export const PASSKEY_GET_CHANNEL = "preview:passkey-get";
 export const PASSKEY_BRIDGE_ARGUMENT = "--t3code-preview-passkey-bridge";

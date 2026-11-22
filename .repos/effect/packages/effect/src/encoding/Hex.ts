@@ -14,6 +14,11 @@ import { EncodingError } from "./EncodingError.ts"
  *
  * Use to encode text or bytes as lowercase hexadecimal text.
  *
+ * **Details**
+ *
+ * String inputs are encoded as UTF-8 bytes, replacing each unpaired UTF-16
+ * surrogate with U+FFFD (�).
+ *
  * **Example** (Encoding hex strings and bytes)
  *
  * ```ts import.meta.vitest
@@ -182,39 +187,57 @@ const random32 = (): string => {
  * @since 4.0.0
  */
 export const decode = (str: string): Result.Result<Uint8Array, EncodingError> => {
-  const bytes = new TextEncoder().encode(str)
-  if (bytes.length % 2 !== 0) {
-    return Result.fail(
-      new EncodingError({
-        module: "Hex",
-        kind: "Decode",
-        input: str,
-        message: `Length must be a multiple of 2, but is ${bytes.length}`
-      })
-    )
+  const length = str.length
+  // Native `fromHex` accepts exactly the inputs the JS decoder does. On V8 it
+  // costs about 1 µs, while the JS path stays well below that until the output
+  // outgrows V8's 64-byte on-heap typed arrays.
+  const NativeUint8Array = Uint8Array as { readonly fromHex?: (string: string) => Uint8Array }
+  if (length > 128 && typeof NativeUint8Array.fromHex === "function") {
+    try {
+      return Result.succeed(NativeUint8Array.fromHex(str))
+    } catch {
+      return decodeFailure(str)
+    }
   }
-
-  try {
-    const length = bytes.length / 2
-    const result = new Uint8Array(length)
-    for (let i = 0; i < length; i++) {
-      const a = fromHexChar(bytes[i * 2])
-      const b = fromHexChar(bytes[i * 2 + 1])
+  if (length % 2 !== 0) return decodeFailure(str)
+  const result = new Uint8Array(length / 2)
+  // Invalid characters map to 255.
+  if (length <= 1024) {
+    for (let i = 0, j = 0; j < length; i++, j += 2) {
+      const a = hexCode(str.charCodeAt(j))
+      const b = hexCode(str.charCodeAt(j + 1))
+      if ((a | b) > 15) return decodeFailure(str)
       result[i] = (a << 4) | b
     }
-
     return Result.succeed(result)
-  } catch (e) {
-    return Result.fail(
-      new EncodingError({
-        module: "Hex",
-        kind: "Decode",
-        input: str,
-        message: e instanceof Error ? e.message : "Invalid input"
-      })
-    )
   }
+  // For longer inputs, encoding to UTF-8 once and reading bytes beats
+  // `charCodeAt` on V8. Non-ASCII characters encode to bytes above 127, which
+  // also map to 255, and the first one sits at the same index as in `str`.
+  const bytes = encoder.encode(str)
+  for (let i = 0, j = 0; j < length; i++, j += 2) {
+    const a = hexCodes[bytes[j]]
+    const b = hexCodes[bytes[j + 1]]
+    if ((a | b) > 15) return decodeFailure(str, bytes.length)
+    result[i] = (a << 4) | b
+  }
+  return Result.succeed(result)
 }
+
+// The odd-length message reports the UTF-8 byte length, so non-ASCII input
+// whose UTF-8 encoding has an even length reports "Invalid input" instead.
+const decodeFailure = (
+  str: string,
+  byteLength: number = encoder.encode(str).length
+): Result.Result<never, EncodingError> =>
+  Result.fail(
+    new EncodingError({
+      module: "Hex",
+      kind: "Decode",
+      input: str,
+      message: byteLength % 2 !== 0 ? `Length must be a multiple of 2, but is ${byteLength}` : "Invalid input"
+    })
+  )
 
 /**
  * Decodes a hexadecimal string into a UTF-8 string safely.
@@ -245,11 +268,15 @@ export const decode = (str: string): Result.Result<Uint8Array, EncodingError> =>
 export const decodeString = (str: string) => Result.map(decode(str), (_) => decoder.decode(_))
 
 const encoder = new TextEncoder()
-const decoder = new TextDecoder()
+const decoder = new TextDecoder("utf-8", { ignoreBOM: true })
 
 const byteToHex: Array<string> = Array.from({ length: 256 }, (_, i) => i.toString(16).padStart(2, "0"))
 
 const hexEncodeUint8Array = (bytes: Uint8Array): string => {
+  // Looked up on the prototype at call time, so own or subclass overrides are ignored.
+  const toHex = (Uint8Array.prototype as { readonly toHex?: (this: Uint8Array) => string }).toHex
+  // The size guard also keeps detached buffers (length 0) away from native `toHex`, which throws on them.
+  if (bytes.length >= 6 && typeof toHex === "function") return toHex.call(bytes)
   let result = ""
   for (let i = 0; i < bytes.length; i++) {
     result += byteToHex[bytes[i]]
@@ -257,18 +284,10 @@ const hexEncodeUint8Array = (bytes: Uint8Array): string => {
   return result
 }
 
-const fromHexChar = (byte: number) => {
-  if (48 <= byte && byte <= 57) {
-    return byte - 48
-  }
-
-  if (97 <= byte && byte <= 102) {
-    return byte - 97 + 10
-  }
-
-  if (65 <= byte && byte <= 70) {
-    return byte - 65 + 10
-  }
-
-  throw new TypeError("Invalid input")
+const hexCodes = new Uint8Array(256).fill(255)
+for (let i = 0; i < 16; i++) {
+  hexCodes["0123456789abcdef".charCodeAt(i)] = i
+  hexCodes["0123456789ABCDEF".charCodeAt(i)] = i
 }
+
+const hexCode = (charCode: number): number => charCode < 256 ? hexCodes[charCode] : 255
