@@ -39,6 +39,23 @@ const threadId = ThreadId.make("thread-1");
 const sourceThreadId = ThreadId.make("thread-source");
 const runId = RunId.make("run-1");
 
+it.each(["info", "warning", "error", undefined] as const)(
+  "renders %s system notice severity",
+  (level) => {
+    const item = {
+      ...base("notice", "2026-08-29T00:00:00.000Z", 1),
+      type: "system_notice" as const,
+      message: "Extension notice",
+      ...(level === undefined ? {} : { level }),
+    };
+    const activity = buildThreadFeed([projected(item, 0)]).flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0];
+    expect(activity?.icon).toBe(level === "info" ? "zap" : "warning");
+    expect(activity?.summary).toBe(item.message);
+  },
+);
+
 it("shows a captured MCP app for a failed deferred write", () => {
   const mcpApp = {
     attachmentId: "deferred-app-html",
@@ -604,6 +621,25 @@ describe("buildThreadFeed", () => {
       });
       expect(before[1]).not.toHaveProperty("message.checkpointSummary");
       expect(getReviewSectionIdForCheckpoint(summary)).toBe("turn:2");
+      // A plain folder's own checkpoint is missing every turn; its repositories still changed.
+      const inRepository = {
+        ...summary,
+        status: "missing" as const,
+        files: [],
+        repositories: [
+          {
+            scopeId: CheckpointScopeId.make("scope-api"),
+            name: "api",
+            repositoryPath: "/work/api",
+            cwd: "/work/api",
+            files: summary.files,
+            baselineMissing: false,
+          },
+        ],
+      };
+      expect(buildThreadFeed(rows, { checkpointSummaries: [inRepository] })[1]).toMatchObject({
+        message: { checkpointSummary: inRepository },
+      });
       const fallback = deriveThreadFeedPresentation(
         [after.at(-1)!],
         null,
@@ -721,6 +757,37 @@ describe("buildThreadFeed", () => {
     )[0]!;
     expect(workEntryRowLabel(activity.workEntry)).toBe("src/a.ts +2 more");
     expect(summarizeToolGroup([activity.workEntry]).summary).toBe("Changed 3 files");
+  });
+
+  it("labels a running command without command text by its status", () => {
+    const item: OrchestrationV2TurnItem = {
+      ...base("commandless", "2026-06-20T00:00:02.000Z", 1),
+      type: "command_execution",
+      title: "Ran command",
+      status: "running",
+      completedAt: null,
+      runId: null,
+      input: "",
+    };
+    const feed = buildThreadFeed([
+      projected({ ...userMessage(), runId: null }, 0),
+      projected(item, 1),
+    ]);
+    const activity = feed.flatMap((entry) =>
+      entry.type === "activity-group" ? entry.activities : [],
+    )[0]!;
+    expect(workEntryRowLabel(activity.workEntry)).toBe("Running command");
+    const presented = deriveThreadFeedPresentation(
+      feed,
+      null,
+      new Set(),
+      new Set(),
+      "2026-06-20T00:00:01.000Z",
+      true,
+    );
+    expect(presented.find((entry) => entry.type === "activity-group")).toMatchObject({
+      activities: [{ live: true, groupStandIn: { label: "Running command" } }],
+    });
   });
 
   it("anchors feedback before later committed turns", () => {
@@ -1311,24 +1378,24 @@ describe("buildThreadFeed", () => {
       "assistant:resume-answer",
     ]);
 
-    expect(
-      shape(
-        deriveThreadFeedPresentation(
-          feed(true),
-          null,
-          new Set(),
-          new Set(),
-          "2026-06-20T00:01:12.000Z",
-          true,
-        ),
-      ),
-    ).toEqual([
+    const working = deriveThreadFeedPresentation(
+      feed(true),
+      null,
+      new Set(),
+      new Set(),
+      "2026-06-20T00:01:12.000Z",
+      true,
+    );
+    expect(shape(working)).toEqual([
       "user:launch",
       "fold:Worked for 8s",
       "assistant:launch-answer",
       "user:resume",
+      "fold:Working",
       "activity-group",
     ]);
+    // The live timer row becomes the settled fold in place.
+    expect(working[4]?.id).toBe(settled[4]?.id);
   });
 
   it("keeps imported V1 turns folded once the thread's first V2 run starts", () => {
@@ -1426,8 +1493,8 @@ describe("buildThreadFeed", () => {
         new Set(),
         new Set(),
         startedAt,
-      ),
-    ).toEqual([]);
+      ).map((row) => row.type),
+    ).toEqual(["run-fold"]);
   });
   it("hides tool calls or everything but the final answer", () => {
     const at = (second: number) => `2026-06-20T00:00:${String(second).padStart(2, "0")}.000Z`;
@@ -1777,8 +1844,9 @@ describe("subagent continued by a later turn", () => {
   ];
 
   it("keeps each turn's fold between its own prompt and answer", () => {
+    const feed = buildThreadFeed(items.map((entry, index) => projected(entry, index)));
     const presented = deriveThreadFeedPresentation(
-      buildThreadFeed(items.map((entry, index) => projected(entry, index))),
+      feed,
       { runId: run2, status: "completed", startedAt: at(30), completedAt: at(41) },
       new Set(),
     );
@@ -1790,6 +1858,53 @@ describe("subagent continued by a later turn", () => {
       `run-fold:${run2}`,
       "closing-2",
     ]);
+
+    // While the run works, its fold row already holds that slot with a live timer.
+    const live = deriveThreadFeedPresentation(
+      feed,
+      { runId: run2, status: "running", startedAt: at(30), completedAt: null },
+      new Set(),
+      new Set(),
+      at(30),
+    );
+    expect(live.slice(3, 6).map((entry) => entry.id)).toEqual([
+      "prompt-2",
+      `run-fold:${run2}`,
+      expect.not.stringMatching(/^run-fold:/),
+    ]);
+    expect(live[4]).toMatchObject({ workingSince: at(30) });
+    expect(live.filter((entry) => entry.type === "run-fold")).toHaveLength(2);
+  });
+
+  it("puts the live fold after a plan the settled fold leaves in view", () => {
+    const planned = buildThreadFeed(
+      [
+        user("prompt", run2, 1, 0),
+        {
+          ...item("plan", run2, 2, 1),
+          type: "proposed_plan",
+          planId: "plan",
+          markdown: "The plan",
+          streaming: false,
+        } as OrchestrationV2TurnItem,
+        reasoning("reasoning", run2, 3, 2),
+        assistant("closing", run2, 4, 9),
+      ].map((entry, index) => projected(entry, index)),
+    );
+    const ids = (running: boolean) =>
+      deriveThreadFeedPresentation(
+        planned,
+        running
+          ? { runId: run2, status: "running", startedAt: at(0), completedAt: null }
+          : { runId: run2, status: "completed", startedAt: at(0), completedAt: at(9) },
+        new Set(),
+        new Set(),
+        running ? at(0) : null,
+      ).map((entry) => entry.id);
+    const settledIds = ids(false);
+    const foldIndex = settledIds.indexOf(`run-fold:${run2}`);
+    expect(foldIndex).toBeGreaterThan(1);
+    expect(ids(true).indexOf(`run-fold:${run2}`)).toBe(foldIndex);
   });
 });
 
@@ -2004,6 +2119,13 @@ describe("streamed feed updates", () => {
     completedAt: null,
   };
   const settled = { ...running, status: "completed" as const, completedAt: at(50) };
+  // A follow-up the server accepted waits under the running turn until a run picks it up.
+  const queuedBehindRun: OrchestrationV2TurnItem[] = [
+    ...history,
+    reply("a3", 22, runs[2], "Working", true),
+    shell("s4", 23, runs[2]),
+    { ...user("queued", 30, runs[2]), runId: null },
+  ];
   // Each step is what one streamed event leaves behind, including the edits
   // that reach back into earlier runs.
   const steps: ReadonlyArray<{
@@ -2090,6 +2212,8 @@ describe("streamed feed updates", () => {
       ],
       latestRun: running,
     },
+    { items: queuedBehindRun, latestRun: running },
+    { items: queuedBehindRun, latestRun: running },
   ];
   // Like the projection reducer, an unchanged item at an unchanged position keeps its row.
   const rowsByItem = new Map<
