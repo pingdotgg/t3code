@@ -105,9 +105,13 @@ const decodeThreadChipTargets = Schema.decodeUnknownSync(
   ),
 );
 
-const threadProjectChipIconAtom = Atom.family((key: string) => {
+export type ThreadChipPresentation =
+  | { readonly kind: "archived"; readonly title: string }
+  | { readonly kind: "project"; readonly uri: string };
+
+const threadChipPresentationAtom = Atom.family((key: string) => {
   const ref = scopeThreadRef(...decodeThreadKey(JSON.parse(key)));
-  return Atom.make((get): string | null => {
+  return Atom.make((get): ThreadChipPresentation | null => {
     const shell = get(environmentThreadShells.threadShellAtom(ref));
     const metadata =
       shell ??
@@ -120,6 +124,12 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
         ),
         () => null,
       )?.[ref.threadId];
+    if (
+      metadata &&
+      ("archivedAt" in metadata ? metadata.archivedAt !== null : metadata.archived === true)
+    ) {
+      return { kind: "archived", title: metadata.title };
+    }
     const project = metadata?.projectId
       ? get(
           environmentProjects.projectAtom({
@@ -143,30 +153,32 @@ const threadProjectChipIconAtom = Atom.family((key: string) => {
           : null,
     );
     if (!icon) return null;
-    if (icon.kind === "favicon") return icon.uri;
-    return AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
-  }).pipe(Atom.withLabel(`mobile-thread-project-chip-icon:${key}`));
+    const uri =
+      icon.kind === "favicon"
+        ? icon.uri
+        : AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
+    return uri ? { kind: "project", uri } : null;
+  }).pipe(Atom.withLabel(`mobile-thread-chip-presentation:${key}`));
 });
 
-const EMPTY_THREAD_CHIP_ICONS: ReadonlyMap<string, string> = new Map();
-const EMPTY_THREAD_CHIP_ICONS_ATOM = Atom.make(EMPTY_THREAD_CHIP_ICONS).pipe(
-  Atom.withLabel("mobile-thread-chip-icons:empty"),
-);
+const EMPTY_THREAD_CHIP_PRESENTATIONS = Atom.make<ReadonlyMap<string, ThreadChipPresentation>>(
+  new Map(),
+).pipe(Atom.withLabel("mobile-thread-chip-presentations:empty"));
 
-const threadChipIconsAtom = Atom.family((key: string) => {
+const threadChipPresentationsAtom = Atom.family((key: string) => {
   const targets = decodeThreadChipTargets(JSON.parse(key));
   return Atom.make((get) => {
-    const icons = new Map<string, string>();
+    const presentations = new Map<string, ThreadChipPresentation>();
     for (const target of targets) {
       const link = target.link ? parseThreadLinkHref(target.href) : null;
       const ref =
         (link ? resolveThreadLink(get, link, target.environmentId) : null) ??
         scopeThreadRef(target.environmentId, target.threadId);
-      const icon = get(threadProjectChipIconAtom(threadKey(ref)));
-      if (icon) icons.set(target.href, icon);
+      const presentation = get(threadChipPresentationAtom(threadKey(ref)));
+      if (presentation) presentations.set(target.href, presentation);
     }
-    return icons;
-  }).pipe(Atom.withLabel(`mobile-thread-chip-icons:${key}`));
+    return presentations;
+  }).pipe(Atom.withLabel(`mobile-thread-chip-presentations:${key}`));
 });
 
 export function waitForProject(
@@ -294,16 +306,16 @@ export function resolveThreadLink(
     : scopeThreadRef(link.environmentId, link.threadId);
 }
 
-export function useThreadChipIcons(
+export function useThreadChipPresentations(
   environmentId: EnvironmentId,
   markdown: string,
   records?: ReadonlyArray<ComposerContextRecord>,
-): ReadonlyMap<string, string> {
+): ReadonlyMap<string, ThreadChipPresentation> {
   const targets = threadChipTargets(environmentId, markdown, records);
   return useAtomValue(
     targets.length === 0
-      ? EMPTY_THREAD_CHIP_ICONS_ATOM
-      : threadChipIconsAtom(JSON.stringify(targets)),
+      ? EMPTY_THREAD_CHIP_PRESENTATIONS
+      : threadChipPresentationsAtom(JSON.stringify(targets)),
   );
 }
 

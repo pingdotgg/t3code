@@ -7,6 +7,7 @@ import {
 import { Image } from "react-native";
 import type { LinkPillContent, MarkdownStyle } from "react-native-enriched-markdown";
 import type { ComposerContextRecord } from "@t3tools/contracts";
+import type { ThreadChipPresentation } from "../state/entities";
 import { contextChipAccent, contextChipPresentation } from "../lib/composerChipPresentation";
 import { CONTEXT_CHIP_ICON_SOURCES } from "../lib/contextChipIcons.generated";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -50,17 +51,25 @@ export function enrichedThreadLinkCustomization(href: string) {
   return chipCustomization(enrichedThreadLinkPresentation(href));
 }
 
-export function withChipIcon(
+export function withThreadChipPresentation(
   customization: MarkdownLinkCustomization | undefined,
-  iconUri: string | undefined,
+  presentation: ThreadChipPresentation | undefined,
+  archivedLabel: string,
 ): MarkdownLinkCustomization | undefined {
-  return iconUri && customization?.chip
-    ? {
-        ...customization,
-        icon: { uri: iconUri },
-        chip: { ...customization.chip, tintsIcon: false },
-      }
-    : customization;
+  if (!presentation || !customization?.chip) return customization;
+  if (presentation.kind === "archived") {
+    return {
+      ...customization,
+      label: `${customization.label ?? presentation.title} · ${archivedLabel}`,
+      icon: CONTEXT_CHIP_ICON_SOURCES.archive,
+      chip: { ...customization.chip, tintsIcon: true },
+    };
+  }
+  return {
+    ...customization,
+    icon: { uri: presentation.uri },
+    chip: { ...customization.chip, tintsIcon: false },
+  };
 }
 
 function presentation(

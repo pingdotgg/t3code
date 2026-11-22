@@ -184,7 +184,7 @@ vi.mock("../state/atom-registry", () => ({ appAtomRegistry: {} }));
 vi.mock("../state/threads", () => ({ environmentThreadShells: {}, threadEnvironment: {} }));
 vi.mock("../state/entities", () => ({
   useLiveThreadLinkLabels: (text: string) => text,
-  useThreadChipIcons: () => new Map(),
+  useThreadChipPresentations: () => new Map(),
   useEnvironmentPreviewTunnelOff: () => false,
 }));
 vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => new Map() }));
@@ -284,7 +284,7 @@ vi.mock("../native/useMarkdownImageSource", () => ({ useMarkdownImageSource: () 
 vi.mock("../native/useEnrichedLinkVariants", () => ({
   enrichedThreadLinkCustomization: () => undefined,
   enrichedContextLinkCustomization: () => undefined,
-  withChipIcon: (value: unknown) => value,
+  withThreadChipPresentation: (value: unknown) => value,
 }));
 vi.mock("../native/NativeScrollViewMarker", () => ({
   NativeScrollViewMarker: ({ children }: { children?: ReactNode }) => children,
