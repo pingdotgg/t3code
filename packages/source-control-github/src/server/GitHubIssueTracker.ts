@@ -337,6 +337,16 @@ export const make = Effect.gen(function* () {
       };
     }),
 
+    getIssueLink: Effect.fn("GitHubIssueTracker.getIssueLink")(function* (input) {
+      const { owner, name, number } = yield* issue(input, "getIssue");
+      const result = yield* client
+        .IssueLinkMetadata({ owner, name, number })
+        .pipe(graphql(input.host, "getIssue"));
+      const found = result.repository?.issue;
+      if (found == null) return yield* notFound("getIssue");
+      return { displayKey: `#${found.number}`, title: found.title, url: found.url };
+    }),
+
     getComments: (input) =>
       issue(input, "getComments").pipe(
         Effect.flatMap(({ owner, name, number }) =>

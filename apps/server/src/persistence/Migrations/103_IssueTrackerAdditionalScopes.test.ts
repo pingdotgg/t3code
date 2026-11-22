@@ -21,13 +21,19 @@ it.layer(NodeSqliteClient.layer({ filename: ":memory:" }))(
         );
         const projectId = ProjectId.make("web");
         const binding = { tracker: IssueTrackerKind.make("linear"), scope: "ENG" };
-        const read = () => bindings.list.pipe(Effect.map((all) => all.get(projectId)));
+        const read = () => bindings.list(projectId).pipe(Effect.map((rows) => rows.get(projectId)));
         assert.deepStrictEqual(yield* read(), binding);
         const multi = { ...binding, additionalScopes: ["OPS", "DOCS"] };
         yield* bindings.set({ projectId, binding: multi, updatedAt: "2026-11-21" });
         assert.deepStrictEqual(yield* read(), multi);
         yield* bindings.set({ projectId, binding, updatedAt: "2026-11-21" });
         assert.deepStrictEqual(yield* read(), binding);
+        yield* sql`
+          INSERT INTO issue_tracker_bindings (project_id, tracker, scope, updated_at, additional_scopes)
+          VALUES ('other', 'linear', 'OPS', '2026-11-21', 'invalid')
+        `;
+        assert.deepStrictEqual(yield* read(), binding);
+        assert.strictEqual((yield* Effect.result(bindings.list()))._tag, "Failure");
       }),
     );
   },

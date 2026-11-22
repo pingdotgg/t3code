@@ -3298,6 +3298,7 @@ const make = Effect.gen(function* () {
                   threadId,
                   projectId: parent.thread.projectId,
                   title,
+                  ...(request.title?.trim() ? { titleRenamed: true } : {}),
                   modelSelection: target.modelSelection,
                   runtimeMode,
                   interactionMode,
@@ -3733,7 +3734,10 @@ const make = Effect.gen(function* () {
             .pipe(Effect.mapError(threadManagementFailure))).runtimeRequests
         : [];
       const wakesCaller =
-        ownedTask && !childRequests.some((request) => request.status === "pending");
+        ownedTask &&
+        !childRequests.some(
+          (request) => request.status === "pending" && request.responseCapability.type === "live",
+        );
       return {
         threadId: input.threadId,
         runId: result.run?.id ?? null,
