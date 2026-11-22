@@ -1,0 +1,37 @@
+{
+  "case": "H2: a message that mentions the bot (message and app_mention), then the message_changed Slack sent for it after its first thread reply",
+  "provenance": {
+    "source": "Slack Events API deliveries to the janitor2 app (A0CCHBHDK7X), logged by janitor production's EFF-3709 fixture capture (Effect-TS/janitor a751115)",
+    "channel": "chat-testing-123 (C0CH1LGJ4F3), a private channel",
+    "author": "Tim Smart (U080YLYB277), typing in the Slack client",
+    "recordedAt": "2026-11-12T23:25:50Z to 2026-11-12T23:36:10Z, a session run with Jarvis on EFF-3694",
+    "body": "The delivered JSON string, verbatim apart from the envelope token member, which the capture removes, and the members listed in a delivery's scrubbed, whose URLs are replaced",
+    "headers": "The capture's allowlist. The signature is never logged"
+  },
+  "deliveries": [
+    {
+      "loggedAt": "2026-11-12T23:26:14.684Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794525974",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"user\":\"U080YLYB277\",\"ts\":\"1794525974.374799\",\"client_msg_id\":\"01614a30-5733-45d7-8932-c69a80d4b5f7\",\"text\":\"H2 <@U0CCLMD4S1L> mention\",\"team\":\"T05479Z6JBW\",\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"NcHtr\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H2 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" mention\"}]}]}],\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794525974.374799\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH55QC66P\",\"event_time\":1794525974,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:26:14.751Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794525974",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"app_mention\",\"user\":\"U080YLYB277\",\"ts\":\"1794525974.374799\",\"client_msg_id\":\"01614a30-5733-45d7-8932-c69a80d4b5f7\",\"text\":\"H2 <@U0CCLMD4S1L> mention\",\"team\":\"T05479Z6JBW\",\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"NcHtr\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H2 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" mention\"}]}]}],\"channel\":\"C0CH1LGJ4F3\",\"event_ts\":\"1794525974.374799\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CH55QEKB5\",\"event_time\":1794525974,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6ImFwcF9tZW50aW9uIiwidGlkIjoiVDA1NDc5WjZKQlciLCJhaWQiOiJBMENDSEJIREs3WCIsImNpZCI6IkMwQ0gxTEdKNEYzIn0\"}"
+    },
+    {
+      "loggedAt": "2026-11-12T23:26:38.409Z",
+      "headers": {
+        "x-slack-request-timestamp": "1794525997",
+        "content-type": "application/json"
+      },
+      "body": "{\"team_id\":\"T05479Z6JBW\",\"context_team_id\":\"T05479Z6JBW\",\"context_enterprise_id\":null,\"api_app_id\":\"A0CCHBHDK7X\",\"event\":{\"type\":\"message\",\"subtype\":\"message_changed\",\"message\":{\"user\":\"U080YLYB277\",\"type\":\"message\",\"client_msg_id\":\"01614a30-5733-45d7-8932-c69a80d4b5f7\",\"text\":\"H2 <@U0CCLMD4S1L> mention\",\"team\":\"T05479Z6JBW\",\"thread_ts\":\"1794525974.374799\",\"reply_count\":1,\"reply_users_count\":1,\"latest_reply\":\"1794525996.616959\",\"reply_users\":[\"U0CCLMD4S1L\"],\"is_locked\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"NcHtr\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H2 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" mention\"}]}]}],\"ts\":\"1794525974.374799\"},\"previous_message\":{\"user\":\"U080YLYB277\",\"type\":\"message\",\"ts\":\"1794525974.374799\",\"client_msg_id\":\"01614a30-5733-45d7-8932-c69a80d4b5f7\",\"text\":\"H2 <@U0CCLMD4S1L> mention\",\"team\":\"T05479Z6JBW\",\"thread_ts\":\"1794525974.374799\",\"reply_count\":1,\"reply_users_count\":1,\"latest_reply\":\"1794525996.616959\",\"reply_users\":[\"U0CCLMD4S1L\"],\"is_locked\":false,\"subscribed\":false,\"blocks\":[{\"type\":\"rich_text\",\"block_id\":\"NcHtr\",\"elements\":[{\"type\":\"rich_text_section\",\"elements\":[{\"type\":\"text\",\"text\":\"H2 \"},{\"type\":\"user\",\"user_id\":\"U0CCLMD4S1L\"},{\"type\":\"text\",\"text\":\" mention\"}]}]}]},\"channel\":\"C0CH1LGJ4F3\",\"hidden\":true,\"ts\":\"1794525997.001000\",\"event_ts\":\"1794525997.001000\",\"channel_type\":\"group\"},\"type\":\"event_callback\",\"event_id\":\"Ev0CHB72ALMQ\",\"event_time\":1794525997,\"authorizations\":[{\"enterprise_id\":null,\"team_id\":\"T05479Z6JBW\",\"user_id\":\"U0CCLMD4S1L\",\"is_bot\":true,\"is_enterprise_install\":false}],\"is_ext_shared_channel\":false,\"event_context\":\"4-eyJldCI6Im1lc3NhZ2UiLCJ0aWQiOiJUMDU0NzlaNkpCVyIsImFpZCI6IkEwQ0NIQkhESzdYIiwiY2lkIjoiQzBDSDFMR0o0RjMifQ\"}"
+    }
+  ]
+}

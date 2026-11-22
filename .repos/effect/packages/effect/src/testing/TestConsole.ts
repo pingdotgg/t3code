@@ -4,8 +4,9 @@
  * When the test layer is provided, calls made through the Effect console APIs
  * are captured in memory instead of being written to the host console. Tests can
  * then assert on logged values deterministically. This module includes the
- * console layer, helpers for reading captured `Console.log` and `Console.error`
- * arguments, and access to the provided test console service.
+ * console layer, readers for captured `Console.log`, `Console.error`, `Console.warn`,
+ * `Console.info`, `Console.debug`, and `Console.trace` arguments, and access to
+ * the provided test console service.
  *
  * @stability unstable
  * @since 4.0.0
@@ -53,6 +54,10 @@ import * as Layer from "../Layer.ts"
  * @see {@link layer} for providing `TestConsole` to an effect
  * @see {@link logLines} for reading captured `Console.log` calls
  * @see {@link errorLines} for reading captured `Console.error` calls
+ * @see {@link warnLines} for reading captured `Console.warn` calls
+ * @see {@link infoLines} for reading captured `Console.info` calls
+ * @see {@link debugLines} for reading captured `Console.debug` calls
+ * @see {@link traceLines} for reading captured `Console.trace` calls
  *
  * @stability unstable
  * @category models
@@ -79,6 +84,30 @@ export interface TestConsole extends Console.Console {
    * instance.
    */
   readonly errorLines: Effect.Effect<ReadonlyArray<unknown>>
+  /**
+   * Returns all parameters captured from `Console.warn` calls in call order.
+   *
+   * @since 4.1.5
+   */
+  readonly warnLines: Effect.Effect<ReadonlyArray<unknown>>
+  /**
+   * Returns all parameters captured from `Console.info` calls in call order.
+   *
+   * @since 4.1.5
+   */
+  readonly infoLines: Effect.Effect<ReadonlyArray<unknown>>
+  /**
+   * Returns all parameters captured from `Console.debug` calls in call order.
+   *
+   * @since 4.1.5
+   */
+  readonly debugLines: Effect.Effect<ReadonlyArray<unknown>>
+  /**
+   * Returns all parameters captured from `Console.trace` calls in call order.
+   *
+   * @since 4.1.5
+   */
+  readonly traceLines: Effect.Effect<ReadonlyArray<unknown>>
 }
 
 /**
@@ -189,11 +218,8 @@ export const make = Effect.gen(function*() {
     }
   }
 
-  const logLines = Effect.sync(() => Array.flatMap(entries, (entry) => entry.method === "log" ? entry.parameters : []))
-
-  const errorLines = Effect.sync(() =>
-    Array.flatMap(entries, (entry) => entry.method === "error" ? entry.parameters : [])
-  )
+  const lines = (method: TestConsole.Method) =>
+    Effect.sync(() => Array.flatMap(entries, (entry) => entry.method === method ? entry.parameters : []))
 
   return {
     assert: createEntryUnsafe("assert"),
@@ -215,8 +241,12 @@ export const make = Effect.gen(function*() {
     timeLog: createEntryUnsafe("timeLog"),
     trace: createEntryUnsafe("trace"),
     warn: createEntryUnsafe("warn"),
-    logLines,
-    errorLines
+    logLines: lines("log"),
+    errorLines: lines("error"),
+    warnLines: lines("warn"),
+    infoLines: lines("info"),
+    debugLines: lines("debug"),
+    traceLines: lines("trace")
   } as TestConsole
 })
 
@@ -375,4 +405,84 @@ export const logLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = tes
  */
 export const errorLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = testConsoleWith(
   (console) => console.errorLines
+)
+
+/**
+ * Returns all parameters captured from `Console.warn` calls thus far, in call
+ * order, without formatting them or including calls to other console methods.
+ *
+ * **When to use**
+ *
+ * Use to assert on captured `Console.warn` output from a program provided with
+ * `TestConsole.layer`.
+ *
+ * @see {@link TestConsole} for the readers of other console methods
+ * @see {@link layer} for capturing console calls during a test
+ *
+ * @stability unstable
+ * @category testing
+ * @since 4.1.5
+ */
+export const warnLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = testConsoleWith(
+  (console) => console.warnLines
+)
+
+/**
+ * Returns all parameters captured from `Console.info` calls thus far, in call
+ * order, without formatting them or including calls to other console methods.
+ *
+ * **When to use**
+ *
+ * Use to assert on captured `Console.info` output from a program provided with
+ * `TestConsole.layer`.
+ *
+ * @see {@link TestConsole} for the readers of other console methods
+ * @see {@link layer} for capturing console calls during a test
+ *
+ * @stability unstable
+ * @category testing
+ * @since 4.1.5
+ */
+export const infoLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = testConsoleWith(
+  (console) => console.infoLines
+)
+
+/**
+ * Returns all parameters captured from `Console.debug` calls thus far, in call
+ * order, without formatting them or including calls to other console methods.
+ *
+ * **When to use**
+ *
+ * Use to assert on captured `Console.debug` output from a program provided with
+ * `TestConsole.layer`.
+ *
+ * @see {@link TestConsole} for the readers of other console methods
+ * @see {@link layer} for capturing console calls during a test
+ *
+ * @stability unstable
+ * @category testing
+ * @since 4.1.5
+ */
+export const debugLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = testConsoleWith(
+  (console) => console.debugLines
+)
+
+/**
+ * Returns all parameters captured from `Console.trace` calls thus far, in call
+ * order, without formatting them or including calls to other console methods.
+ *
+ * **When to use**
+ *
+ * Use to assert on captured `Console.trace` output from a program provided with
+ * `TestConsole.layer`.
+ *
+ * @see {@link TestConsole} for the readers of other console methods
+ * @see {@link layer} for capturing console calls during a test
+ *
+ * @stability unstable
+ * @category testing
+ * @since 4.1.5
+ */
+export const traceLines: Effect.Effect<ReadonlyArray<unknown>, never, never> = testConsoleWith(
+  (console) => console.traceLines
 )

@@ -1,11 +1,10 @@
 import type { ProjectId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
-import type { EnvironmentThreadShell } from "./models.ts";
 import { toSortableTimestamp } from "@t3tools/shared/threadOrder";
+import type { EnvironmentThreadShell } from "./models.ts";
 
+export { generateSpreadPinOrderKeys, pinOrderKeyBetween } from "@t3tools/shared/pinOrderKey";
 export {
-  generateSpreadPinOrderKeys,
-  pinOrderKeyBetween,
   planPinnedReorder,
   sortActiveThreadsByOrderKey,
   toSortableTimestamp,
@@ -15,6 +14,7 @@ export interface ThreadSortInput {
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly latestUserMessageAt?: string | null;
+  readonly latestUserAuthoredMessageAt?: string | null;
   readonly messages?: ReadonlyArray<{
     readonly createdAt: string;
     readonly role: string;
@@ -83,6 +83,18 @@ function getFirstSortableTimestamp(...values: Array<string | null | undefined>):
 }
 
 function getLatestUserMessageTimestamp(thread: ThreadSortInput): number {
+  // Agents also post in the user role; only what the user wrote counts. A thread
+  // the user never wrote in counts from its creation; older servers omit the field.
+  if (thread.latestUserAuthoredMessageAt !== undefined) {
+    return (
+      getFirstSortableTimestamp(
+        thread.latestUserAuthoredMessageAt,
+        thread.createdAt,
+        thread.updatedAt,
+      ) ?? Number.NEGATIVE_INFINITY
+    );
+  }
+
   if (thread.latestUserMessageAt) {
     const latestUserMessageTimestamp = toSortableTimestamp(thread.latestUserMessageAt);
     if (latestUserMessageTimestamp !== null) {

@@ -1,6 +1,6 @@
 import { PgClient, PgPool } from "@effect/sql-pg"
 import { assert, describe, it } from "@effect/vitest"
-import { Cause, Effect, Fiber, Latch, Option, Queue, References, Tracer } from "effect"
+import { Cause, Effect, Fiber, Latch, Option, Queue, Redacted, References, Tracer } from "effect"
 import type * as Duration from "effect/Duration"
 import * as Reactivity from "effect/reactivity/Reactivity"
 import type * as Scope from "effect/Scope"
@@ -227,8 +227,79 @@ describe("PgPool connection spans", () => {
         return span
       }
     })
-    return { tracer, named: (name: string) => spans.filter((span) => span.name === name) }
+    return { tracer, spans, named: (name: string) => spans.filter((span) => span.name === name) }
   }
+
+  it.effect.each([
+    {
+      name: "pooled URL-only",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres://postgres:postgres@127.0.0.1:55415/app") },
+      expected: ["app", "app", "127.0.0.1", 55415]
+    },
+    {
+      name: "single-connection URL-only",
+      make: PgClient.makeClient,
+      config: { url: Redacted.make("postgres://postgres:postgres@127.0.0.1:55415/app") },
+      expected: ["app", "app", "127.0.0.1", 55415]
+    },
+    {
+      name: "URL query parameters override authority and path",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres://test@original:5433/original?host=query&port=55416&dbname=query_db") },
+      expected: ["query_db", "query_db", "query", 55416]
+    },
+    {
+      name: "explicit options override URL query parameters",
+      make: PgClient.make,
+      config: {
+        url: Redacted.make("postgres://test@original:5433/original?host=query&port=55416&dbname=query_db"),
+        host: "explicit",
+        port: 55417,
+        database: "explicit_db"
+      },
+      expected: ["explicit_db", "explicit_db", "explicit", 55417]
+    },
+    {
+      name: "omitted database defaults to URL username",
+      make: PgClient.make,
+      config: { url: Redacted.make("postgres:///?user=app_user") },
+      expected: ["app_user", "app_user", "localhost", 5432]
+    }
+  ])("query span metadata: $name", ({ config, expected, make }) => {
+    const { spans, tracer } = recording()
+    return Effect.gen(function*() {
+      const sql = yield* make({
+        ...config,
+        prepare: false,
+        stream: () => {
+          let startup = true
+          const socket = new Duplex({
+            read() {},
+            write(chunk: Buffer, _encoding, callback) {
+              if (startup) {
+                startup = false
+                queueMicrotask(() => socket.push(ready))
+              } else if (chunk[0] === 0x50) {
+                queueMicrotask(() => socket.push(emptyQueryResult))
+              }
+              callback()
+            }
+          })
+          return socket
+        }
+      })
+      yield* sql`SELECT 1`
+      const span = spans.find((span) => span.attributes.has("db.system.name"))!
+      assert.ok(span)
+      assert.deepStrictEqual([
+        span.name,
+        span.attributes.get("db.namespace"),
+        span.attributes.get("server.address"),
+        span.attributes.get("server.port")
+      ], expected)
+    }).pipe(Effect.withTracer(tracer), Effect.provide(Reactivity.layer))
+  })
 
   const traced = <A, E, R>(effect: Effect.Effect<A, E, R>, tracer: Tracer.Tracer, propagate: boolean) =>
     effect.pipe(Effect.withTracer(tracer), Effect.provideService(Statement.SpanPropagationEnabled, propagate))
