@@ -3675,6 +3675,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           readonly matchName: string;
           readonly done: Deferred.Deferred<void>;
         } | null = null;
+        let onConfigHandled: {
+          readonly matchModelId: string;
+          readonly done: Deferred.Deferred<void>;
+        } | null = null;
         let onEnrichmentEnd: (() => void) | null = null;
         let onReconcileEnd: ((exit: Exit.Exit<unknown, unknown>) => void) | null = null;
         const enrichmentTracer: Tracer.Tracer = {
@@ -3732,6 +3736,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                     ) {
                       const handled = onCommandHandled;
                       onCommandHandled = null;
+                      return Deferred.succeed(handled.done, undefined).pipe(Effect.asVoid);
+                    }
+                    return Effect.void;
+                  }),
+                ),
+              ),
+            watchLiveConfiguration: (instanceId, onUpdate) =>
+              baseCoordinator.watchLiveConfiguration(instanceId, (configuration, meta) =>
+                onUpdate(configuration, meta).pipe(
+                  Effect.tap(() => {
+                    if (
+                      onConfigHandled !== null &&
+                      configuration.models.some(
+                        (model) => model.id === onConfigHandled!.matchModelId,
+                      )
+                    ) {
+                      const handled = onConfigHandled;
+                      onConfigHandled = null;
                       return Deferred.succeed(handled.done, undefined).pipe(Effect.asVoid);
                     }
                     return Effect.void;
@@ -5307,6 +5329,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         yield* (yield* seedLocalAuth()).set(true);
         let localFailAuth = true;
         let localUseVersionless = false;
+        let localProbeCount = 0;
+        let localResolveGate: {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
         const localWithLiveStarted = yield* Deferred.make<void>();
         const localWithLiveRelease = yield* Deferred.make<void>();
         const localWithLiveInterrupted = yield* Deferred.make<void>();
@@ -5319,15 +5346,24 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             distribution: "local",
           }),
           resolve: (_settings, _cwd, environment) =>
-            Effect.sync(() => {
-              if (environment?.MISE_OFFLINE === "1" && !localGateArmed) {
-                localGateArmed = true;
-                getAvailableCommandsGate = {
-                  instanceId: localUnauthId,
-                  started: localWithLiveStarted,
-                  release: localWithLiveRelease,
-                  interrupted: localWithLiveInterrupted,
-                };
+            Effect.gen(function* () {
+              if (environment?.MISE_OFFLINE === "1") {
+                localProbeCount += 1;
+                if (!localGateArmed) {
+                  localGateArmed = true;
+                  getAvailableCommandsGate = {
+                    instanceId: localUnauthId,
+                    started: localWithLiveStarted,
+                    release: localWithLiveRelease,
+                    interrupted: localWithLiveInterrupted,
+                  };
+                }
+                if (localResolveGate !== null) {
+                  const gate = localResolveGate;
+                  localResolveGate = null;
+                  yield* Deferred.succeed(gate.started, undefined);
+                  yield* Deferred.await(gate.release);
+                }
               }
               return {
                 distribution: "local" as const,
@@ -5444,6 +5480,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
+        const localVersionlessConfigHandled = yield* Deferred.make<void>();
+        onConfigHandled = {
+          matchModelId: "local-unauth-live",
+          done: localVersionlessConfigHandled,
+        };
         yield* coordinator.publishLiveConfiguration(
           localVersionlessId,
           normalizeAcpRegistryLiveConfiguration([], undefined, {
@@ -5457,16 +5498,95 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(Option.getOrThrow(yield* Fiber.join(localVersionlessLive)).auth.status).toBe(
           "unauthenticated",
         );
+        // Wait until the watcher callback finishes (including cache update) before refreshing.
+        yield* Deferred.await(localVersionlessConfigHandled);
+        const probesBeforeRecheck = localProbeCount;
         const localVersionlessRecheckDone = yield* Deferred.make<void>();
         onEnrichmentEnd = () => Deferred.doneUnsafe(localVersionlessRecheckDone, Exit.void);
         yield* localVersionlessInstance.snapshot.refresh.pipe(
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
         yield* Deferred.await(localVersionlessRecheckDone);
+        expect(localProbeCount).toBe(probesBeforeRecheck + 1);
         const localVersionlessAfter = yield* localVersionlessInstance.snapshot.getSnapshot;
         expect(localVersionlessAfter.status).toBe("warning");
         expect(localVersionlessAfter.auth.status).toBe("unauthenticated");
         expect(localVersionlessAfter.message).toContain("API key");
+
+        // (g) A refresh checkProvider that read confirmedAuthentication=true before an in-flight
+        //     enrichment probe accepted an auth rejection must NOT commit auth.status="authenticated".
+        const raceAuthId = ProviderInstanceId.make("acpRegistry_check_vs_reject_race");
+        const seedRaceAuth = () =>
+          AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
+            cacheDir: host.paths.providerStatusCacheDir,
+            instanceId: raceAuthId,
+            settings: localUnauthSettings,
+            environment: localUnauthEnv,
+            processEnvironment: process.env,
+          });
+        yield* (yield* seedRaceAuth()).set(true);
+        localFailAuth = true;
+        const raceProbeStarted = yield* Deferred.make<void>();
+        const raceProbeRelease = yield* Deferred.make<void>();
+        localResolveGate = { started: raceProbeStarted, release: raceProbeRelease };
+        const raceAuthInstance = yield* AcpRegistryDriver.create({
+          instanceId: raceAuthId,
+          displayName: "Check vs Reject Race",
+          enabled: true,
+          environment: localUnauthEnv,
+          config: localUnauthSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, localCatalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(raceProbeStarted);
+        const raceCheckStarted = yield* Deferred.make<void>();
+        const raceCheckRelease = yield* Deferred.make<void>();
+        const raceCheckInterrupted = yield* Deferred.make<void>();
+        getAvailableCommandsGate = {
+          instanceId: raceAuthId,
+          started: raceCheckStarted,
+          release: raceCheckRelease,
+          interrupted: raceCheckInterrupted,
+        };
+        const raceRefreshFiber = yield* raceAuthInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        // Refresh gen 2 already observed confirmedAuthentication=true and paused in checkProvider.
+        yield* Deferred.await(raceCheckStarted);
+        const raceGen1RejectDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(raceGen1RejectDone, Exit.void);
+        yield* Deferred.succeed(raceProbeRelease, undefined);
+        yield* Deferred.await(raceGen1RejectDone);
+        expect((yield* raceAuthInstance.snapshot.getSnapshot).auth.status).toBe("unauthenticated");
+        expect(yield* (yield* seedRaceAuth()).get).toBe(false);
+        const raceSnapsAfterReject: Array<ServerProvider> = [];
+        const raceCollector = yield* raceAuthInstance.snapshot.streamChanges.pipe(
+          Stream.runForEach((snapshot) =>
+            Effect.sync(() => {
+              raceSnapsAfterReject.push(snapshot);
+            }),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        const raceGen2Done = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(raceGen2Done, Exit.void);
+        yield* Deferred.succeed(raceCheckRelease, undefined);
+        yield* Fiber.join(raceRefreshFiber);
+        yield* Deferred.await(raceGen2Done);
+        yield* Fiber.interrupt(raceCollector);
+        expect(raceSnapsAfterReject.length).toBeGreaterThan(0);
+        for (const emitted of raceSnapsAfterReject) {
+          expect(emitted.auth.status).not.toBe("authenticated");
+        }
+        const raceFinal = yield* raceAuthInstance.snapshot.getSnapshot;
+        expect(raceFinal.status).toBe("warning");
+        expect(raceFinal.auth.status).toBe("unauthenticated");
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });

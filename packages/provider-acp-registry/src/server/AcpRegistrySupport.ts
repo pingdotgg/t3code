@@ -952,7 +952,6 @@ function encodeBinaryArtifactReceipt(
   target: typeof AcpRegistryBinaryTarget.Type,
   options?: {
     readonly launchOptionsRevision?: number;
-    readonly launchOptionsRecoveryId?: string;
     readonly installId?: string;
   },
 ): string {
@@ -965,9 +964,6 @@ function encodeBinaryArtifactReceipt(
     ...(target.env && Object.keys(target.env).length > 0 ? { env: target.env } : {}),
     ...(options?.launchOptionsRevision !== undefined
       ? { launchOptionsRevision: options.launchOptionsRevision }
-      : {}),
-    ...(options?.launchOptionsRecoveryId !== undefined
-      ? { launchOptionsRecoveryId: options.launchOptionsRecoveryId }
       : {}),
     ...(options?.installId !== undefined ? { installId: options.installId } : {}),
   });
@@ -2751,8 +2747,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const pendingEntry = pendingLaunchOptionsBySlotRoot.get(slot.root);
       const hasMatchingPending =
         pendingEntry !== undefined && receiptMatchesInstall(pendingEntry.receipt, initialReceipt);
-      const initialPriorReceiptBase = hasMatchingPending ? pendingEntry.baseReceiptRevision : 0;
-      const initialPriorPendingBase = hasMatchingPending ? pendingEntry.baseDurableRevision : 0;
       const receiptRev = initialReceipt.launchOptionsRevision ?? 0;
       let fastPathSidecarReadOk = false;
       let observedDiskRev = 0;
@@ -2788,6 +2782,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
 
       const receiptPath = path.join(slot.root, BINARY_ARTIFACT_RECEIPT_FILENAME);
+      type PendingBase = {
+        readonly baseReceiptRevision: number;
+        readonly baseDurableRevision: number;
+        readonly baseRecoveryId: string | null;
+      };
       const buildLaunchOptionsReceipt = (
         baseReceipt: AcpRegistryBinaryArtifactReceipt,
         revision?: number,
@@ -2803,41 +2802,44 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         ...(recoveryId ? { launchOptionsRecoveryId: recoveryId } : {}),
         ...(baseReceipt.installId !== undefined ? { installId: baseReceipt.installId } : {}),
       });
-      const recordPending = (
-        baseReceipt: AcpRegistryBinaryArtifactReceipt,
-        baseReceiptRevision: number,
-        baseDurableRevision: number,
-        baseRecoveryId: string | null,
-      ) => {
+      const recordPending = (baseReceipt: AcpRegistryBinaryArtifactReceipt, base: PendingBase) => {
         pendingLaunchOptionsBySlotRoot.set(slot.root, {
-          baseReceiptRevision,
-          baseDurableRevision,
-          baseRecoveryId,
+          ...base,
           receipt: buildLaunchOptionsReceipt(baseReceipt),
         });
       };
-      const resolvePendingRecoveryId = (
-        baseReceipt: AcpRegistryBinaryArtifactReceipt,
+      // Keep baseDurableRevision and baseRecoveryId paired from the same observation/chain so a
+      // pre-repair sidecar revision never gates a newer receipt or post-repair sidecar chain.
+      const resolvePendingBaseOnUnreadableSidecar = (
         baseReceiptRev: number,
-        priorPending:
-          | {
-              readonly baseReceiptRevision: number;
-              readonly baseDurableRevision: number;
-              readonly baseRecoveryId: string | null;
-            }
-          | undefined,
-      ): string | null => {
+        priorPending: PendingBase | undefined,
+      ): PendingBase => {
         if (fastPathSidecarReadOk && observedDiskRev > baseReceiptRev) {
-          return observedDiskRecoveryId;
+          const sameChain =
+            priorPending !== undefined &&
+            baseReceiptRev <= priorPending.baseReceiptRevision &&
+            priorPending.baseRecoveryId === observedDiskRecoveryId;
+          return {
+            baseReceiptRevision: Math.max(
+              baseReceiptRev,
+              sameChain ? priorPending.baseReceiptRevision : 0,
+            ),
+            baseDurableRevision: Math.max(
+              baseReceiptRev,
+              observedDiskRev,
+              sameChain ? priorPending.baseDurableRevision : 0,
+            ),
+            baseRecoveryId: observedDiskRecoveryId,
+          };
         }
-        if (
-          priorPending !== undefined &&
-          baseReceiptRev <= priorPending.baseReceiptRevision &&
-          priorPending.baseDurableRevision > baseReceiptRev
-        ) {
-          return priorPending.baseRecoveryId;
+        if (priorPending !== undefined && baseReceiptRev <= priorPending.baseReceiptRevision) {
+          return priorPending;
         }
-        return baseReceipt.launchOptionsRecoveryId ?? null;
+        return {
+          baseReceiptRevision: baseReceiptRev,
+          baseDurableRevision: baseReceiptRev,
+          baseRecoveryId: null,
+        };
       };
       const recordPendingForInitialReceipt = () => {
         const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
@@ -2848,15 +2850,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             : undefined;
         recordPending(
           initialReceipt,
-          Math.max(receiptRev, initialPriorReceiptBase, matchingPending?.baseReceiptRevision ?? 0),
-          Math.max(
-            receiptRev,
-            observedDiskRev,
-            initialPriorPendingBase,
-            matchingPending?.baseDurableRevision ?? 0,
-          ),
-          resolvePendingRecoveryId(
-            initialReceipt,
+          resolvePendingBaseOnUnreadableSidecar(
             receiptRev,
             matchingPending ?? (hasMatchingPending ? pendingEntry : undefined),
           ),
@@ -2889,15 +2883,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             receiptMatchesInstall(currentPending.receipt, freshReceipt)
               ? currentPending
               : undefined;
-          const effectiveReceiptBase = Math.max(
-            freshReceiptRev,
-            matchingPending?.baseReceiptRevision ?? 0,
-          );
-          const effectiveObservedBase = Math.max(
-            freshReceiptRev,
-            observedDiskRev,
-            matchingPending?.baseDurableRevision ?? 0,
-          );
           const diskResult = yield* readBinaryLaunchOptionsFile(
             fileSystem,
             binaryLaunchOptionsPath,
@@ -2907,9 +2892,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             // pending until the sidecar can be read and reconciled under the lock.
             recordPending(
               freshReceipt,
-              effectiveReceiptBase,
-              effectiveObservedBase,
-              resolvePendingRecoveryId(freshReceipt, freshReceiptRev, matchingPending),
+              resolvePendingBaseOnUnreadableSidecar(freshReceiptRev, matchingPending),
             );
             return;
           }
@@ -2918,10 +2901,11 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           const diskStored = diskEntries[slot.root];
           const diskMatches = receiptMatchesInstall(diskStored, freshReceipt);
           const freshDiskRev = diskMatches ? (diskStored.launchOptionsRevision ?? 0) : 0;
-          const currentDurableRecoveryId =
-            !isCorrupt && diskMatches && freshDiskRev > freshReceiptRev
-              ? (diskStored.launchOptionsRecoveryId ?? null)
-              : (freshReceipt.launchOptionsRecoveryId ?? null);
+          const sidecarIsAuthoritative =
+            !isCorrupt && diskMatches && freshDiskRev > freshReceiptRev;
+          const currentSidecarRecoveryId = sidecarIsAuthoritative
+            ? (diskStored.launchOptionsRecoveryId ?? null)
+            : null;
           if (!isCorrupt && receiptMatchesLaunchOptions(freshReceipt, target)) {
             if (diskStored === undefined) {
               pendingLaunchOptionsBySlotRoot.delete(slot.root);
@@ -2943,27 +2927,43 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             pendingLaunchOptionsBySlotRoot.delete(slot.root);
             return;
           }
-          const committedBaseRev = Math.max(effectiveObservedBase, freshDiskRev);
-          const nextRevision = committedBaseRev + 1;
+          const allocationBaseRev = Math.max(
+            freshReceiptRev,
+            observedDiskRev,
+            freshDiskRev,
+            matchingPending?.baseDurableRevision ?? 0,
+          );
+          const nextRevision = allocationBaseRev + 1;
+          const lockedPendingBase = (): PendingBase => {
+            if (sidecarIsAuthoritative) {
+              const sameChain =
+                matchingPending !== undefined &&
+                freshReceiptRev <= matchingPending.baseReceiptRevision &&
+                matchingPending.baseRecoveryId === currentSidecarRecoveryId;
+              return {
+                baseReceiptRevision: freshReceiptRev,
+                baseDurableRevision: Math.max(
+                  freshReceiptRev,
+                  freshDiskRev,
+                  sameChain ? matchingPending.baseDurableRevision : 0,
+                ),
+                baseRecoveryId: currentSidecarRecoveryId,
+              };
+            }
+            return {
+              baseReceiptRevision: freshReceiptRev,
+              baseDurableRevision: freshReceiptRev,
+              baseRecoveryId: null,
+            };
+          };
           if (!(yield* isLockOwned)) {
             if (isCorrupt && receiptMatchesLaunchOptions(freshReceipt, target)) {
               pendingLaunchOptionsBySlotRoot.delete(slot.root);
             } else {
-              recordPending(
-                freshReceipt,
-                effectiveReceiptBase,
-                committedBaseRev,
-                currentDurableRecoveryId,
-              );
+              recordPending(freshReceipt, lockedPendingBase());
             }
             return;
           }
-          const nextRecoveryId = isCorrupt ? yield* random.uuidV4() : currentDurableRecoveryId;
-          const updatedReceipt = buildLaunchOptionsReceipt(
-            freshReceipt,
-            nextRevision,
-            nextRecoveryId,
-          );
           const receiptWrite = yield* Effect.result(
             random.uuidV4().pipe(
               Effect.flatMap((id) => {
@@ -2973,9 +2973,6 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                     temporaryPath,
                     encodeBinaryArtifactReceipt(agent, target, {
                       launchOptionsRevision: nextRevision,
-                      ...(nextRecoveryId !== null
-                        ? { launchOptionsRecoveryId: nextRecoveryId }
-                        : {}),
                       ...(freshReceipt.installId !== undefined
                         ? { installId: freshReceipt.installId }
                         : {}),
@@ -3011,12 +3008,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             if (isCorrupt && receiptMatchesLaunchOptions(freshReceipt, target)) {
               pendingLaunchOptionsBySlotRoot.delete(slot.root);
             } else {
-              recordPending(
-                freshReceipt,
-                effectiveReceiptBase,
-                committedBaseRev,
-                currentDurableRecoveryId,
-              );
+              recordPending(freshReceipt, lockedPendingBase());
             }
             return;
           }
@@ -3025,10 +3017,21 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               .copyFile(binaryLaunchOptionsPath, `${binaryLaunchOptionsPath}.corrupt`)
               .pipe(Effect.ignore);
           }
+          // Stamp a fresh recovery ID whenever starting a new sidecar chain (including after
+          // corrupt repair by this or any other slot) so older higher-base pending options yield.
+          const nextSidecarRecoveryId =
+            sidecarIsAuthoritative && currentSidecarRecoveryId !== null
+              ? currentSidecarRecoveryId
+              : yield* random.uuidV4();
+          const updatedSidecarReceipt = buildLaunchOptionsReceipt(
+            freshReceipt,
+            nextRevision,
+            nextSidecarRecoveryId,
+          );
           const sidecarWrite = yield* Effect.result(
             writeJsonFileAtomically(binaryLaunchOptionsPath, {
               ...diskEntries,
-              [slot.root]: updatedReceipt,
+              [slot.root]: updatedSidecarReceipt,
             }),
           );
           if (Result.isSuccess(sidecarWrite)) {
@@ -3036,12 +3039,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           } else if (isCorrupt && receiptMatchesLaunchOptions(freshReceipt, target)) {
             pendingLaunchOptionsBySlotRoot.delete(slot.root);
           } else {
-            recordPending(
-              freshReceipt,
-              effectiveReceiptBase,
-              committedBaseRev,
-              currentDurableRecoveryId,
-            );
+            recordPending(freshReceipt, lockedPendingBase());
           }
         }),
       ).pipe(
@@ -3758,11 +3756,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               if (Option.isNone(validated)) continue;
               const diskOverride =
                 diskOverrideResult.status === "ok" ? diskOverrideResult.entries[dir] : undefined;
-              const durableReceipt =
+              const durableFromSidecar =
                 receiptMatchesInstall(diskOverride, receipt) &&
-                (diskOverride.launchOptionsRevision ?? 0) > (receipt.launchOptionsRevision ?? 0)
-                  ? diskOverride
-                  : receipt;
+                (diskOverride.launchOptionsRevision ?? 0) > (receipt.launchOptionsRevision ?? 0);
+              const durableReceipt = durableFromSidecar ? diskOverride : receipt;
               const pendingOverride = pendingLaunchOptionsBySlotRoot.get(dir);
               const effectiveReceipt =
                 pendingOverride !== undefined &&
@@ -3770,7 +3767,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 (receipt.launchOptionsRevision ?? 0) <= pendingOverride.baseReceiptRevision &&
                 (durableReceipt.launchOptionsRevision ?? 0) <=
                   pendingOverride.baseDurableRevision &&
-                (durableReceipt.launchOptionsRecoveryId ?? null) === pendingOverride.baseRecoveryId
+                (!durableFromSidecar ||
+                  (durableReceipt.launchOptionsRecoveryId ?? null) ===
+                    pendingOverride.baseRecoveryId)
                   ? pendingOverride.receipt
                   : durableReceipt;
               const fallbackVersion = effectiveReceipt.version ?? safeDecodeVersionDir(versionDir);

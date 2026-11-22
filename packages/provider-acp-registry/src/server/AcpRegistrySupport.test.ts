@@ -5103,6 +5103,7 @@ describe("AcpRegistrySupport", () => {
         version,
       });
       let upstream = makeBinary("1.0.0", { archive: archiveAUrl, cmd: ".t3-artifact.json" });
+      let extraUpstream: ReturnType<typeof makeBinary> | null = null;
 
       return Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -6508,9 +6509,8 @@ describe("AcpRegistrySupport", () => {
         );
         const afterReceiptRepair = JSON.parse(
           yield* fileSystem.readFileString(edgeReceiptPath),
-        ) as { readonly launchOptionsRevision?: number; readonly launchOptionsRecoveryId?: string };
+        ) as { readonly launchOptionsRevision?: number };
         expect(afterReceiptRepair.launchOptionsRevision).toBe(5);
-        expect(afterReceiptRepair.launchOptionsRecoveryId).toBeDefined();
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
           cmd: "./bin/example-agent",
@@ -6531,13 +6531,8 @@ describe("AcpRegistrySupport", () => {
         yield* freshRepairCat.resolve(settings(), "/workspace");
         const afterMatchRepair = JSON.parse(yield* fileSystem.readFileString(edgeReceiptPath)) as {
           readonly launchOptionsRevision?: number;
-          readonly launchOptionsRecoveryId?: string;
         };
         expect(afterMatchRepair.launchOptionsRevision).toBe(6);
-        expect(afterMatchRepair.launchOptionsRecoveryId).toBeDefined();
-        expect(afterMatchRepair.launchOptionsRecoveryId).not.toBe(
-          afterReceiptRepair.launchOptionsRecoveryId,
-        );
         // Corrupt sidecar while lockTimeoutCat holds pending base rev 7 must allocate rev 8 (> 7).
         yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar");
         upstream = makeBinary("1.0.0", {
@@ -6611,6 +6606,392 @@ describe("AcpRegistrySupport", () => {
           readonly launchOptionsRevision?: number;
         };
         expect(afterObservedRev.launchOptionsRevision).toBe(11);
+
+        // (e) Recovery-ID edge cases: unreadable/corrupt sidecar fallback keeps pending options
+        //     after a sidecar repair, unreadable-sidecar retries preserve the recovery ID, another
+        //     slot's or uninstall's corrupt repair invalidates stale pending options, and receipt
+        //     advances never pair stale pre-repair revisions with post-repair observations.
+        const recoveryEdgeDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-recovery-edge-",
+        });
+        const recoveryEdgeToolsDir = path.join(recoveryEdgeDir, "tools");
+        const recoveryEdgeSidecarPath = path.join(
+          recoveryEdgeDir,
+          "acp-registry",
+          "binary-launch-options.json",
+        );
+        const recoveryEdgeLockPath = `${recoveryEdgeSidecarPath}.lock`;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--init"],
+        });
+        const recCatA = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: recoveryEdgeDir,
+          toolsDir: recoveryEdgeToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* recCatA.resolve(settings(), "/workspace");
+        // 1) Corrupt sidecar repaired via sidecar gets a recovery ID; pending options recorded over
+        //    it must survive unreadable or corrupt sidecar fallbacks instead of reverting to --init.
+        failReceiptTempWrite = true;
+        yield* fileSystem.writeFileString(recoveryEdgeSidecarPath, "{corrupt-rec");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--repaired"],
+        });
+        yield* recCatA.invalidateIndex();
+        yield* recCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* recCatA.resolve(settings(), "/workspace");
+        const savedRepairedSidecar = yield* fileSystem.readFileString(recoveryEdgeSidecarPath);
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--pending"],
+        });
+        yield* recCatA.invalidateIndex();
+        yield* recCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* recCatA.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* recCatA.invalidateIndex();
+        yield* recCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* recCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--pending",
+        ]);
+        failSidecarRead = true;
+        expect((yield* recCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--pending",
+        ]);
+        failSidecarRead = false;
+        yield* fileSystem.writeFileString(recoveryEdgeSidecarPath, "{corrupt-after-pending");
+        expect((yield* recCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--pending",
+        ]);
+        // 2) Fast-path observation of a repaired sidecar's recovery ID survives locked io_error,
+        //    subsequent both-unreadable io_error retries, and locked receipt reread errors; a
+        //    corrupt+matching-receipt sync when both writes fail clears stale pending options.
+        yield* fileSystem.writeFileString(recoveryEdgeSidecarPath, savedRepairedSidecar);
+        const ioChainCat = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: recoveryEdgeDir,
+          toolsDir: recoveryEdgeToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fast-path-io"],
+        });
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        failSidecarReadWhileLockedPath = recoveryEdgeLockPath;
+        yield* ioChainCat.resolve(settings(), "/workspace");
+        failSidecarReadWhileLockedPath = null;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* ioChainCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--fast-path-io",
+        ]);
+        failSidecarRead = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--both-io-retry"],
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* ioChainCat.resolve(settings(), "/workspace");
+        injectedReceiptReadFailures = 0;
+        failReceiptReadWhileLockedPath = recoveryEdgeLockPath;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--reread-io-retry"],
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* ioChainCat.resolve(settings(), "/workspace");
+        failReceiptReadWhileLockedPath = null;
+        failSidecarRead = false;
+        expect(injectedReceiptReadFailures).toBe(1);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* ioChainCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--reread-io-retry",
+        ]);
+        yield* fileSystem.writeFileString(recoveryEdgeSidecarPath, "{corrupt-match-both-fail");
+        failReceiptTempWrite = true;
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--init"],
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* ioChainCat.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* ioChainCat.invalidateIndex();
+        yield* ioChainCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* ioChainCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--init",
+        ]);
+
+        // 3) Corrupt sidecar repaired by a DIFFERENT agent (or uninstall) wipes example-agent's
+        //    entry; catalog B's rev-1 write gets a fresh recovery ID and beats catalog A's pending.
+        const otherSlotDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-other-slot-repair-",
+        });
+        const otherSlotToolsDir = path.join(otherSlotDir, "tools");
+        const otherSlotSidecarPath = path.join(
+          otherSlotDir,
+          "acp-registry",
+          "binary-launch-options.json",
+        );
+        const otherSettings = () => settings({ agentId: "other-agent" });
+        const makeOtherBinary = (version: string, args?: ReadonlyArray<string>) => ({
+          ...makeBinary(version, {
+            archive: archiveBUrl,
+            cmd: "./bin/other-agent",
+            ...(args ? { args } : {}),
+          }),
+          id: "other-agent",
+          name: "Other Agent",
+        });
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--init"],
+        });
+        extraUpstream = makeOtherBinary("1.0.0", ["--other-init"]);
+        const otherCatA = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: otherSlotDir,
+          toolsDir: otherSlotToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        const otherCatB = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: otherSlotDir,
+          toolsDir: otherSlotToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* otherCatA.resolve(settings(), "/workspace");
+        yield* otherCatA.resolve(otherSettings(), "/workspace");
+        failReceiptTempWrite = true;
+        for (const arg of ["--a1", "--a2", "--a3"]) {
+          upstream = makeBinary("1.0.0", {
+            archive: archiveAUrl,
+            cmd: "./bin/example-agent",
+            args: [arg],
+          });
+          yield* otherCatA.invalidateIndex();
+          yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          yield* otherCatA.resolve(settings(), "/workspace");
+        }
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--a-pending"],
+        });
+        yield* otherCatA.invalidateIndex();
+        yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* otherCatA.resolve(settings(), "/workspace");
+        failSidecarWrite = false;
+        // Sidecar corrupts; catalog B repairs it while syncing other-agent, wiping example-agent.
+        yield* fileSystem.writeFileString(otherSlotSidecarPath, "{corrupt-other-slot");
+        extraUpstream = makeOtherBinary("1.0.0", ["--other-repair"]);
+        yield* otherCatB.invalidateIndex();
+        yield* otherCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* otherCatB.resolve(otherSettings(), "/workspace");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--b-newer"],
+        });
+        yield* otherCatB.invalidateIndex();
+        yield* otherCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* otherCatB.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* otherCatA.invalidateIndex();
+        yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* otherCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--b-newer",
+        ]);
+        // Same check when uninstall of other-agent repairs the corrupt sidecar.
+        for (const arg of ["--a4", "--a5"]) {
+          upstream = makeBinary("1.0.0", {
+            archive: archiveAUrl,
+            cmd: "./bin/example-agent",
+            args: [arg],
+          });
+          yield* otherCatA.invalidateIndex();
+          yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          yield* otherCatA.resolve(settings(), "/workspace");
+        }
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--a-pending2"],
+        });
+        yield* otherCatA.invalidateIndex();
+        yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* otherCatA.resolve(settings(), "/workspace");
+        failSidecarWrite = false;
+        yield* fileSystem.writeFileString(otherSlotSidecarPath, "{corrupt-uninstall-repair");
+        yield* otherCatB.uninstallManagedBinary({ agentId: "other-agent" });
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--b-after-uninstall"],
+        });
+        yield* otherCatB.invalidateIndex();
+        yield* otherCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* otherCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* otherCatA.invalidateIndex();
+        yield* otherCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* otherCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--b-after-uninstall",
+        ]);
+        extraUpstream = null;
+
+        // 4) When another catalog advances the receipt after a corrupt sidecar and writes a newer
+        //    sidecar, an unreadable-sidecar retry in catalog A must NOT carry its stale higher
+        //    pre-repair baseDurableRevision onto the newer receipt observation.
+        const obsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-obs-pair-",
+        });
+        const obsToolsDir = path.join(obsDir, "tools");
+        const obsSidecarPath = path.join(obsDir, "acp-registry", "binary-launch-options.json");
+        const obsLockPath = `${obsSidecarPath}.lock`;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--init"],
+        });
+        const obsCatA = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: obsDir,
+          toolsDir: obsToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        const obsCatB = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: obsDir,
+          toolsDir: obsToolsDir,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        yield* obsCatA.resolve(settings(), "/workspace");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--r1"],
+        });
+        yield* obsCatA.invalidateIndex();
+        yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatA.resolve(settings(), "/workspace");
+        failReceiptTempWrite = true;
+        for (const arg of ["--s2", "--s3", "--s4"]) {
+          upstream = makeBinary("1.0.0", {
+            archive: archiveAUrl,
+            cmd: "./bin/example-agent",
+            args: [arg],
+          });
+          yield* obsCatA.invalidateIndex();
+          yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          yield* obsCatA.resolve(settings(), "/workspace");
+        }
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--a-old"],
+        });
+        yield* obsCatA.invalidateIndex();
+        yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatA.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = false;
+        // Corrupt sidecar; B repairs receipt to rev 2 and writes sidecar rev 3.
+        yield* fileSystem.writeFileString(obsSidecarPath, "{corrupt-obs");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--b-r2"],
+        });
+        yield* obsCatB.invalidateIndex();
+        yield* obsCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--b-s3"],
+        });
+        yield* obsCatB.invalidateIndex();
+        yield* obsCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        // With sidecar unreadable, A retries on top of receipt rev 2; once readable, B's rev 3 wins.
+        failSidecarRead = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--a-io-after-r2"],
+        });
+        yield* obsCatA.invalidateIndex();
+        yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatA.resolve(settings(), "/workspace");
+        injectedReceiptReadFailures = 0;
+        failReceiptReadWhileLockedPath = obsLockPath;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--a-reread-after-r2"],
+        });
+        yield* obsCatA.invalidateIndex();
+        yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* obsCatA.resolve(settings(), "/workspace");
+        failReceiptReadWhileLockedPath = null;
+        failSidecarRead = false;
+        expect(injectedReceiptReadFailures).toBe(1);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* obsCatA.invalidateIndex();
+        yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* obsCatA.resolve(settings(), "/workspace")).spawn.args).toEqual(["--b-s3"]);
+        // Restore upstream to --commit-8 before step 5 below.
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--commit-8"],
+        });
         // 5) Fast-path hasMatchingPending gating: reverting to matching receipt --commit-8 clears
         //    earlier pending options instead of short-circuiting and leaving them active.
         failReceiptTempWrite = true;
@@ -6987,7 +7368,14 @@ describe("AcpRegistrySupport", () => {
           layerResolver((request) => {
             if (request.url === registryUrl) {
               return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(makeRegistry(upstream))),
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(
+                    extraUpstream === null
+                      ? makeRegistry(upstream)
+                      : JSON.stringify({ version: "1.0.0", agents: [upstream, extraUpstream] }),
+                  ),
+                ),
               );
             }
             if (request.url === archiveFailUrl) {

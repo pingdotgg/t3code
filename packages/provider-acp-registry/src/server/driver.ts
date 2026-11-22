@@ -1367,12 +1367,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ? { ...cache, entry: null }
           : cache;
       });
+    let latestAuthConfirmed = yield* confirmedAuthentication.get;
+    const setConfirmedAuth = (authenticated: boolean) =>
+      Effect.uninterruptible(
+        Effect.sync(() => {
+          latestAuthConfirmed = authenticated;
+        }).pipe(Effect.andThen(confirmedAuthentication.set(authenticated))),
+      );
+    const markAuthConfirmationCleared = () => {
+      latestAuthConfirmed = false;
+    };
     const recordAcceptedAuthRejection = (identity: string | null, auth: ServerProvider["auth"]) =>
       clearCachedProbeForRuntime(identity).pipe(
         Effect.andThen(
           identity === null ? Effect.void : Ref.set(latestAcceptedAuth, { identity, auth }),
         ),
-        Effect.andThen(confirmedAuthentication.set(false)),
+        Effect.andThen(setConfirmedAuth(false)),
       );
     const isProbeStillCurrent = (
       current: AcpRegistryEnrichmentCache,
@@ -1529,6 +1539,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       // Inspection may fetch the registry when its disk cache is missing; creation must not wait on that.
       initialSnapshot: () => buildInitialAcpRegistrySnapshot(readinessInput),
       checkProvider,
+      reconcileCheckedSnapshot: ({ probed }) =>
+        !latestAuthConfirmed && probed.auth.status === "authenticated"
+          ? { ...probed, auth: stripConfirmedAuth(probed.auth) }
+          : probed,
       enrichSnapshot: Effect.fn("enrichSnapshot")(function* ({
         snapshot,
         getSnapshot,
@@ -1808,7 +1822,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               }
                             : nextSnapshotRaw;
                           const published = yield* Effect.uninterruptible(
-                            tryPublishSnapshot(nextSnapshot).pipe(
+                            tryPublishSnapshot(
+                              nextSnapshot,
+                              activeRuntimeUnauthenticated
+                                ? markAuthConfirmationCleared
+                                : undefined,
+                            ).pipe(
                               Effect.tap((didPublish) =>
                                 didPublish
                                   ? Effect.gen(function* () {
@@ -1857,7 +1876,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           probedLaunchIdentity ?? failedTargetLaunchIdentity,
                         );
                         const published = yield* Effect.uninterruptible(
-                          tryPublishSnapshot(provider).pipe(
+                          tryPublishSnapshot(
+                            provider,
+                            provider.auth.status === "unauthenticated"
+                              ? markAuthConfirmationCleared
+                              : undefined,
+                          ).pipe(
                             Effect.tap((didPublish) =>
                               didPublish
                                 ? Effect.gen(function* () {
@@ -1937,7 +1961,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           ? { ...nextSnapshotRaw, message: effectiveMessage }
                           : nextSnapshotRaw;
                       const published = yield* Effect.uninterruptible(
-                        tryPublishSnapshot(nextSnapshot).pipe(
+                        tryPublishSnapshot(
+                          nextSnapshot,
+                          providerToPublish.installed &&
+                            nextSnapshot.auth.status === "unauthenticated"
+                            ? markAuthConfirmationCleared
+                            : undefined,
+                        ).pipe(
                           Effect.tap((didPublish) =>
                             didPublish
                               ? Effect.gen(function* () {
@@ -2536,14 +2566,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       onChanged: (authenticated) =>
         liveSnapshotSemaphore
           .withPermit(
-            confirmedAuthentication
-              .set(authenticated)
-              .pipe(
-                Effect.andThen(
-                  authenticated ? Ref.set(latestAcceptedAuth, null) : clearLiveState(),
-                ),
-                Effect.andThen(invalidateEnrichmentCache),
-              ),
+            setConfirmedAuth(authenticated).pipe(
+              Effect.andThen(authenticated ? Ref.set(latestAcceptedAuth, null) : clearLiveState()),
+              Effect.andThen(invalidateEnrichmentCache),
+            ),
           )
           .pipe(Effect.andThen(snapshot.refresh), Effect.asVoid),
     }).pipe(
@@ -2556,9 +2582,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       invalidate: (controller.invalidate ?? Effect.void).pipe(
         Effect.andThen(
           liveSnapshotSemaphore.withPermit(
-            confirmedAuthentication
-              .set(false)
-              .pipe(Effect.andThen(clearLiveState()), Effect.andThen(invalidateEnrichmentCache)),
+            setConfirmedAuth(false).pipe(
+              Effect.andThen(clearLiveState()),
+              Effect.andThen(invalidateEnrichmentCache),
+            ),
           ),
         ),
         Effect.andThen(snapshot.refresh),
@@ -2653,23 +2680,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.provideService(SecureRandom.SecureRandom, random),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
-                confirmedAuthentication
-                  .set(false)
-                  .pipe(
-                    Effect.andThen(Ref.set(latestAcceptedAuth, null)),
-                    Effect.andThen(invalidateEnrichmentCache),
-                    Effect.andThen(
-                      Option.isSome(runtimeCoordinator)
-                        ? Effect.all(
-                            [
-                              runtimeCoordinator.value.clearAvailableCommands(instanceId),
-                              runtimeCoordinator.value.clearLiveConfiguration(instanceId),
-                            ],
-                            { concurrency: "unbounded", discard: true },
-                          )
-                        : Effect.void,
-                    ),
+                setConfirmedAuth(false).pipe(
+                  Effect.andThen(Ref.set(latestAcceptedAuth, null)),
+                  Effect.andThen(invalidateEnrichmentCache),
+                  Effect.andThen(
+                    Option.isSome(runtimeCoordinator)
+                      ? Effect.all(
+                          [
+                            runtimeCoordinator.value.clearAvailableCommands(instanceId),
+                            runtimeCoordinator.value.clearLiveConfiguration(instanceId),
+                          ],
+                          { concurrency: "unbounded", discard: true },
+                        )
+                      : Effect.void,
                   ),
+                ),
               ),
             ),
           );
