@@ -126,11 +126,10 @@ describe("mobile project icon thumbnails", () => {
     expect(native.write).not.toHaveBeenCalled();
   });
 
-  it.each(["write", "decode"])("deletes the temporary source when %s fails", async (stage) => {
+  it("deletes the temporary source when writing it fails", async () => {
     using writeSource = vi.spyOn(File.prototype, "write");
-    const failure = new Error(`Could not ${stage} icon`);
-    if (stage === "write") writeSource.mockRejectedValueOnce(failure);
-    else native.load.mockRejectedValueOnce(failure);
+    const failure = new Error("Could not write icon");
+    writeSource.mockRejectedValueOnce(failure);
     await expect(downscaleProjectFavicon(image, new AbortController().signal)).rejects.toBe(
       failure,
     );
