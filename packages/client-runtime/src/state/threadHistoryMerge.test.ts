@@ -345,8 +345,11 @@ describe("threadHistoryMerge", () => {
         visibleTurnItems: [{ ...recent, position: 0 }],
       };
 
+      // A row of the run that was never in the window, such as one paged in after a rollback.
+      const ran = { ...row(1), item: { ...row(1).item, runId } };
       const merged = mergeOlderHistoryIntoProjection(coldOpen, [
         { ...row(0), position: 0 },
+        ran,
         {
           position: 1,
           visibility: "local",
@@ -357,7 +360,9 @@ describe("threadHistoryMerge", () => {
       ]);
 
       expect(merged.visibleTurnItems.map((entry) => String(entry.sourceItemId))).toEqual(
-        status === "rolled_back" ? ["item-0", "item-5"] : ["item-0", "item-question", "item-5"],
+        status === "rolled_back"
+          ? ["item-0", "item-5"]
+          : ["item-0", "item-1", "item-question", "item-5"],
       );
       expect(merged.turnItems).toContain(card);
       const pending = derivePendingThreadRequests(merged).userInputs;

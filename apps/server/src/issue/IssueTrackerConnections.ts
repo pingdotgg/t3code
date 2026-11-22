@@ -113,7 +113,7 @@ const make = Effect.gen(function* () {
 
   const list: IssueTrackerConnections["Service"]["list"] = Effect.all({
     trackers: Effect.forEach(registry.standalone, current, { concurrency: 4 }),
-    bindings: bindings.list.pipe(
+    bindings: bindings.list().pipe(
       Effect.map((bound) => Object.fromEntries(bound)),
       // No single tracker is at fault; the first registered one carries the report.
       Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),

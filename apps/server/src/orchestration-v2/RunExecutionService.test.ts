@@ -8,6 +8,7 @@ import {
   NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2PendingBackgroundTask,
@@ -3702,6 +3703,49 @@ it.effect.each([
     }),
 );
 
+it.effect("restores dropped inline handoffs when ingestion fails before the terminal", () =>
+  Effect.gen(function* () {
+    const key = "dropped-turn-ingest-error";
+    const ids = backgroundScenarioIds(key);
+    const handoff = { id: `handoff:${key}` } as unknown as OrchestrationV2ContextHandoff;
+    const { finalEvents } = yield* captureRootRunTermination({
+      key,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      loadDroppedInlineHandoffs: () => Effect.succeed([handoff]),
+      events: () =>
+        Stream.make({
+          type: "provider_turn.updated" as const,
+          driver,
+          threadId: ids.threadId,
+          providerTurn: {
+            id: ids.rootProviderTurnId,
+            providerThreadId: ids.providerThreadId,
+            runAttemptId: ids.attemptId,
+            ordinal: 1,
+            status: "failed",
+            promptDropped: true,
+          } as OrchestrationV2ProviderTurn,
+        }),
+      ingestNormalized: ({ event }) =>
+        event.type === "provider_turn.updated"
+          ? Effect.fail(
+              new ProviderEventIngestor.ProviderEventPublishError({
+                providerSessionId: ProviderSessionId.make(`session:${key}`),
+                eventCount: 1,
+                cause: new Error("SQLITE_FULL: database or disk is full"),
+              }),
+            )
+          : Effect.succeed([]),
+    });
+    assert.deepEqual(
+      finalEvents.flatMap((event) =>
+        event.type === "context-handoff.updated" ? [event.payload.id] : [],
+      ),
+      [handoff.id],
+    );
+  }),
+);
+
 it.effect("does not interrupt a provider when ingestion fails before the root turn is known", () =>
   Effect.gen(function* () {
     const interrupts = yield* Ref.make(0);
@@ -3989,6 +4033,7 @@ function captureRootRunTermination(input: {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
+  readonly loadDroppedInlineHandoffs?: RunExecutionService.RunExecutionServiceV2StartRootRunInput["loadDroppedInlineHandoffs"];
   readonly hasPendingBackgroundWorkForThread?: ProviderAdapter.ProviderAdapterV2SessionRuntime["hasPendingBackgroundWorkForThread"];
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
@@ -4235,6 +4280,9 @@ function captureRootRunTermination(input: {
         ...(input.hasWorkspaceMoved === undefined
           ? {}
           : { hasWorkspaceMoved: input.hasWorkspaceMoved }),
+        ...(input.loadDroppedInlineHandoffs === undefined
+          ? {}
+          : { loadDroppedInlineHandoffs: input.loadDroppedInlineHandoffs }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
           text: input.messageText ?? "interrupt projection",
