@@ -64,12 +64,18 @@ describe("native Antigravity subagent tools", () => {
         data: { rawOutput: "  Finished review.  " },
       }),
     ).toBe("Finished review.");
-    const result = antigravitySubagentOutput({
-      toolCallId: "trajectory:4",
-      data: { rawOutput: `${"x".repeat(16_000)}The result.` },
+    const tail = `${"x".repeat(7_988)}The result.`;
+    const { toolCall } = parseToolUpdate({
+      sessionId: "session-1",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "trajectory:4",
+        status: "completed",
+        rawOutput: `Review notes\n🚀${tail}`,
+      },
     });
-    expect(result?.length).toBeLessThan(8_100);
-    expect(result?.endsWith("The result.")).toBe(true);
+    const result = antigravitySubagentOutput(normalizeAntigravityToolCall(toolCall));
+    expect(result).toBe(`[Earlier output truncated]\n\n${tail}`);
     expect(
       antigravitySubagentOutput({ toolCallId: "trajectory:4", data: { rawOutput: {} } }),
     ).toBeUndefined();
