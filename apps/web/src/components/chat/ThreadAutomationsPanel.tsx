@@ -19,6 +19,7 @@ import {
 
 import { Switch } from "../ui/switch";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
+import { useClientSettings } from "../../hooks/useSettings";
 import { ScheduledRelativeLabel } from "../settings/ScheduledTasksSettings";
 import { scheduleLabel } from "../settings/scheduledTasksSettings.logic";
 import { useEnvironmentQuery } from "../../state/query";
@@ -64,6 +65,7 @@ export function ThreadAutomationsPanel(props: {
   const runTaskNow = useAtomCommand(serverEnvironment.runScheduledTaskNow, {
     label: "thread automation run now",
   });
+  const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const navigate = useNavigate();
   const gt = useGT();
   const m = useMessages();
@@ -176,6 +178,7 @@ export function ThreadAutomationsPanel(props: {
                         ? gt("Running", { $context: "automation state" })
                         : scheduleLabel(
                             task.schedule,
+                            timestampFormat,
                             tasksQuery.data?.timeZone,
                             task.nextRunAt,
                             m,

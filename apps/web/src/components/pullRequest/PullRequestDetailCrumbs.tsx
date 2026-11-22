@@ -1,11 +1,12 @@
+import type { ScopedThreadRef } from "@t3tools/contracts";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { useGT, useMessages } from "gt-react";
 import { ArrowLeftIcon, ExternalLinkIcon } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 
 import { resolvePullRequestState } from "./pullRequestPresentation";
+import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
-import { readLocalApi } from "~/localApi";
 import { Badge } from "../ui/badge";
 import { Button, InlineButton } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -76,13 +77,16 @@ function BackButton({
 
 function KeyLink({
   subject,
+  threadRef = null,
   toneClassName,
   openOnHostText,
 }: {
   subject: WorkItemCrumbsSubject;
+  threadRef?: ScopedThreadRef | null;
   toneClassName: string;
   openOnHostText: string;
 }) {
+  const openLink = useOpenLink(threadRef);
   return (
     <span className={cn("inline-flex shrink-0", toneClassName)}>
       <Tooltip>
@@ -90,9 +94,9 @@ function KeyLink({
           render={
             <InlineButton
               tone={null}
-              onClick={() => void readLocalApi()?.shell.openExternal(subject.url)}
+              onClick={(event) => void openLink(subject.url, { event }).catch(console.error)}
               onAuxClick={(event) => {
-                if (event.button === 1) void readLocalApi()?.shell.openExternal(subject.url);
+                if (event.button === 1) void openLink(subject.url, { event }).catch(console.error);
               }}
               onContextMenu={(event) => openKeyContextMenu(event, subject)}
               aria-label={subject.keyAriaLabel}
@@ -114,6 +118,7 @@ function KeyLink({
  */
 export function WorkItemDetailCrumbs({
   subject,
+  threadRef = null,
   toneClassName,
   openOnHostText,
   badge,
@@ -121,6 +126,7 @@ export function WorkItemDetailCrumbs({
   children,
 }: {
   subject: WorkItemCrumbsSubject | null;
+  threadRef?: ScopedThreadRef | null;
   toneClassName: string | null;
   openOnHostText: string;
   badge?: ReactNode;
@@ -128,6 +134,7 @@ export function WorkItemDetailCrumbs({
   children?: ReactNode;
 }) {
   const gt = useGT();
+  const openLink = useOpenLink(threadRef);
   return (
     <div className="mt-2 flex min-h-6 min-w-0 items-center gap-1.5 pl-4 text-label text-muted-foreground">
       {subject && toneClassName ? (
@@ -140,9 +147,14 @@ export function WorkItemDetailCrumbs({
                   <InlineButton
                     tone="muted"
                     className="min-w-16 shrink @max-sm/pr-header:hidden"
-                    onClick={() =>
-                      subject.scopeUrl && void readLocalApi()?.shell.openExternal(subject.scopeUrl)
-                    }
+                    onClick={(event) => {
+                      if (subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
+                    onAuxClick={(event) => {
+                      if (event.button === 1 && subject.scopeUrl)
+                        void openLink(subject.scopeUrl, { event }).catch(console.error);
+                    }}
                   >
                     <span className="truncate">{subject.scope}</span>
                   </InlineButton>
@@ -161,6 +173,7 @@ export function WorkItemDetailCrumbs({
           </Tooltip>
           <KeyLink
             subject={subject}
+            threadRef={threadRef}
             toneClassName={toneClassName}
             openOnHostText={openOnHostText}
           />
@@ -174,6 +187,7 @@ export function WorkItemDetailCrumbs({
 
 export function PullRequestDetailCrumbs({
   detail,
+  threadRef = null,
   toneClassName,
   repositoryUrl,
   openOnHostText,
@@ -181,6 +195,7 @@ export function PullRequestDetailCrumbs({
   children,
 }: {
   detail: CrumbsPullRequest | null;
+  threadRef?: ScopedThreadRef | null;
   toneClassName: string | null;
   repositoryUrl: string | null;
   openOnHostText: string;
@@ -195,6 +210,7 @@ export function PullRequestDetailCrumbs({
     : null;
   return (
     <WorkItemDetailCrumbs
+      threadRef={threadRef}
       subject={
         detail && term
           ? {

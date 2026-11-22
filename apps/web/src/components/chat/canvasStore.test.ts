@@ -1,6 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import {
+  chatCanvasDrawnKey,
   createChatCanvasStore,
   resolveChatCanvasModel,
   type ChatCanvasMeasurements,
@@ -83,5 +84,23 @@ describe("chat canvas model", () => {
     store.getState().setMeasurements({ ...measurements(1400), narrowestWidth: 900 });
     expect(store.getState().measurements.narrowestWidth).toBe(900);
     expect(store.getState()).not.toBe(measured);
+  });
+
+  it("redraws on a width change only when it moves the lane, the card or the player", () => {
+    const key = (width: number, inline: boolean, shown: ChatCanvasPreview | null = null) =>
+      chatCanvasDrawnKey(
+        resolveChatCanvasModel({
+          measurements: measurements(width),
+          detailsCardMeasurement: { threadRef, width: 272, fullContentHeight: 400 },
+          threadRef,
+          preview: shown,
+          detailsCardInlineOpen: inline,
+        }),
+      );
+    expect(key(700, false)).toBe(key(701, false));
+    expect(key(1400, true)).toBe(key(1401, true));
+    expect(key(1300, true)).not.toBe(key(1301, true));
+    expect(key(900, true)).not.toBe(key(1400, true));
+    expect(key(1000, false, preview)).not.toBe(key(1001, false, preview));
   });
 });

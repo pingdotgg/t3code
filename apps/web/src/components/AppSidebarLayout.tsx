@@ -63,7 +63,11 @@ import { isModalDialogOpen } from "../lib/modalDialog";
 import { SidebarChromeBrand, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import type { SidebarRouteReveal } from "./sidebar/routeReveal";
 import { WorkspacePlane } from "../layout/WorkspacePlane";
-import { overviewZoomTransition, useOverviewPhase } from "../layout/Overview";
+import {
+  onOverviewBackgroundPointerDown,
+  overviewZoomTransition,
+  useOverviewPhase,
+} from "../layout/Overview";
 import { ChromeChannelArt, useSidebarStageBackdropVariant } from "./SidebarStageBackdrop";
 import {
   clampThreadSidebarWidth,
@@ -625,7 +629,9 @@ export function AppSidebarLayout({
   const overviewPhase = useOverviewPhase();
   const overviewStaged = overviewPhase !== "closed" && !isMobileLayout;
   const overviewShown = overviewPhase === "opening" || overviewPhase === "open";
-  const overviewTransition = overviewStaged ? overviewZoomTransition() : {};
+  // Set on the app's root whether staged or not: an inherited variable that
+  // changes there restyles every element in the app.
+  const overviewTransition = overviewZoomTransition();
   const hideWindowControlsWhenSidebarCollapsed = useHideWindowControlsWhenSidebarCollapsed();
   const isWindowFullscreen = useSyncExternalStore(
     subscribeToWindowFullscreen,
@@ -711,7 +717,9 @@ export function AppSidebarLayout({
                 }}
                 className={cn(overviewStaged && "z-35")}
                 data-overview-zoom={overviewStaged ? overviewPhase : undefined}
-                inert={overviewStaged && overviewShown}
+                // Not inert: flipping inert restyles the whole thread list. The
+                // overview owns the keyboard, and the cover below takes presses.
+                aria-hidden={(overviewStaged && overviewShown) || undefined}
                 style={
                   overviewStaged
                     ? {
@@ -732,6 +740,14 @@ export function AppSidebarLayout({
                   <ThreadSidebar routeReveal={sidebarRouteReveal} />
                 )}
                 <SidebarRail onDoubleClick={resetSidebarWidth} />
+                {overviewStaged && overviewShown ? (
+                  // A press on the faded sidebar is a press on the overview's backdrop.
+                  <div
+                    aria-hidden
+                    className="absolute inset-0 z-50"
+                    onPointerDown={onOverviewBackgroundPointerDown}
+                  />
+                ) : null}
               </Sidebar>
             </>
           ) : null}

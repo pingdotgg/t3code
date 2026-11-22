@@ -62,6 +62,7 @@ import {
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { ProjectRepositoriesSettings } from "./ProjectRepositoriesSettings";
 import {
   defaultProjectIcon,
   hasDefaultProjectIcon,
@@ -718,6 +719,7 @@ function ProjectDetail({
         </SettingsSection>
         {checkoutChoices}
         <ProjectActionsSettings />
+        <ProjectRepositoriesSettings members={group.memberProjects} />
         <ProjectDefaultsSettings category="project" />
         {canOrganize ? (
           <SettingsSection title={gt("Organization")}>

@@ -1,5 +1,6 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
+import { T, Var } from "gt-react";
 import type { ComponentProps } from "react";
 
 import { cn } from "~/lib/utils";
@@ -11,7 +12,7 @@ import {
   THREAD_DETAILS_PANEL_META_ACTION_CLASS,
   THREAD_DETAILS_PANEL_CHEVRON_CLASS,
 } from "./threadDetailsPanelStyles";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon } from "lucide-react";
 
 const parts = {
   row: THREAD_DETAILS_PANEL_ROW_CLASS,
@@ -95,4 +96,35 @@ export function ThreadDetailsControl({
     );
   }
   return control;
+}
+
+export function ThreadDetailsMoreButton({
+  expanded,
+  remaining,
+  onToggle,
+}: {
+  expanded: boolean;
+  remaining: number;
+  onToggle: () => void;
+}) {
+  const Icon = expanded ? ChevronUpIcon : ChevronDownIcon;
+  return (
+    <ThreadDetailsControl
+      variant="ghost"
+      size="sm"
+      aria-expanded={expanded}
+      onClick={onToggle}
+      tone="muted"
+      className="w-full active:scale-100"
+    >
+      <Icon aria-hidden className="size-4 shrink-0" />
+      {expanded ? (
+        <T>Show less</T>
+      ) : (
+        <T>
+          Show <Var>{remaining}</Var> more
+        </T>
+      )}
+    </ThreadDetailsControl>
+  );
 }

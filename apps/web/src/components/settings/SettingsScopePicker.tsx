@@ -1,5 +1,5 @@
 import { resolveEnvironmentMachineKind } from "@t3tools/contracts";
-import { fileBasename } from "@t3tools/shared/path";
+import { fileDisplayName } from "@t3tools/shared/path";
 import { T, useGT } from "gt-react";
 import { CheckIcon, FolderIcon, LayersIcon, RotateCcwIcon, SearchIcon } from "lucide-react";
 import { useRef, useState, type ReactNode } from "react";
@@ -331,7 +331,7 @@ function ScopePopover({
                       <ScopeRow
                         key={member.physicalProjectKey}
                         icon={<FolderIcon aria-hidden className="size-3.5" />}
-                        label={fileBasename(member.workspaceRoot)}
+                        label={fileDisplayName(member.workspaceRoot)}
                         secondary={member.workspaceRoot}
                         selected={value.checkout === member.physicalProjectKey}
                         onSelect={() => choose(selectCheckoutAxis(value, member))}

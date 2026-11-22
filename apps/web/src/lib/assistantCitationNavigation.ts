@@ -134,7 +134,7 @@ export function revealSideChatCitation(
   }
   useRightPanelStore
     .getState()
-    .openSideChat(scopeThreadRef(citation.environmentId, parentThreadId), citation.threadId);
+    .openThread(scopeThreadRef(citation.environmentId, parentThreadId), citation.threadId);
   if (routeThreadRef.threadId === parentThreadId) return;
   return router.navigate({
     to: "/$environmentId/$threadId",

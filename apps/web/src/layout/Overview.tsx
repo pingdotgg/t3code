@@ -187,6 +187,26 @@ export function LayoutOverview() {
   useOverviewKeys();
   const phaseNow = useOverviewPhase();
   const open = phaseNow === "open" || phaseNow === "opening";
+  const staged = phaseNow !== "closed";
+  // The panes and the sidebar under the overview are aria-hidden, not inert
+  // (flipping inert restyles all they hold): focus that reaches them goes nowhere.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- document focus listener held only while the overview covers the panes
+  useEffect(() => {
+    if (!staged) return;
+    const onFocusIn = (event: FocusEvent) => {
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          '[data-layout-stage] > [aria-hidden="true"], [data-app-sidebar][aria-hidden="true"]',
+        )
+      ) {
+        target.blur();
+      }
+    };
+    document.addEventListener("focusin", onFocusIn, true);
+    return () => document.removeEventListener("focusin", onFocusIn, true);
+  }, [staged]);
   return (
     <>
       <LayoutHotCorner />
@@ -1223,7 +1243,8 @@ export function OverviewStageOverlay({
       data-layout-overview=""
       role="dialog"
       aria-label={gt("Workspaces overview")}
-      className={cn("absolute inset-0", !open && "pointer-events-none")}
+      // Zooming back in it still takes every press, so none reaches the panes under it.
+      className="absolute inset-0"
     >
       {rows.map((row) => {
         const focusedRow = row.workspace.id === focusedRowId;
@@ -1261,6 +1282,7 @@ export function OverviewStageOverlay({
                   data-overview-pane-focused={focused ? "true" : undefined}
                   className={cn(
                     "absolute cursor-pointer rounded-pane",
+                    !open && "pointer-events-none",
                     dragging && "bg-background/60",
                   )}
                   style={paneBox(slot)}

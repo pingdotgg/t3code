@@ -19,6 +19,7 @@ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { m } from "../i18n/messages";
 import {
+  PULL_REQUESTS_PANEL_REF,
   pullRequestSurface,
   useRightPanelStore,
   type PullRequestSurface,
@@ -160,7 +161,8 @@ export function useOpenChangeRequestLink(
           ...panelPullRequestTarget(resolvedPanelRef, target, targetUrl),
           ...(revealUrl === undefined ? {} : { revealUrl }),
         });
-        if (!resolvedThreadRef) {
+        // The pull request list keeps its selection in the URL; the Issues page's panel does not.
+        if (resolvedPanelRef === PULL_REQUESTS_PANEL_REF) {
           void navigate({
             to: "/pull-requests",
             search: (previous) => ({

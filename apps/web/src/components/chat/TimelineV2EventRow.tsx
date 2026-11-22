@@ -10,7 +10,7 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
   const { item, visibility } = row.projectedItem;
   if (item.type === "subagent") {
     return (
-      <WorkLogBlock continues={row.continuesWorkLog}>
+      <WorkLogBlock continues={row.continuesWorkLog} precedesPrompt={row.precedesPrompt}>
         <V2SubagentGroup key={row.id} row={row} />
       </WorkLogBlock>
     );
