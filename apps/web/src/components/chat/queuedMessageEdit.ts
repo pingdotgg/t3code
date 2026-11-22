@@ -1,5 +1,6 @@
 import { resolveQueuedEditExit } from "@t3tools/client-runtime/queued-run-edit";
-import type { ChatAttachment } from "@t3tools/contracts";
+import type { ChatAttachment, ResponseContextRecord } from "@t3tools/contracts";
+import * as Equal from "effect/Equal";
 import {
   composerDraftHasUserContent,
   useComposerDraftStore,
@@ -28,6 +29,7 @@ export function recoverQueuedMessageEdit(input: {
   readonly editTarget: ComposerThreadTarget;
   readonly threadTarget: ComposerThreadTarget;
   readonly originalText: string;
+  readonly originalReplyTo: ResponseContextRecord | null;
   readonly removedExistingAttachment?: boolean;
 }): "kept" | "discarded" | "clean" {
   const store = useComposerDraftStore.getState();
@@ -35,6 +37,7 @@ export function recoverQueuedMessageEdit(input: {
   const recovery = resolveQueuedEditExit({
     editChanged:
       input.removedExistingAttachment === true ||
+      !Equal.equals(draft?.replyTo ?? null, input.originalReplyTo) ||
       (draft !== null &&
         (draft.prompt !== input.originalText || draft.images.length > 0 || draft.files.length > 0)),
     // A cleared edit has nothing to put back, so it can only be discarded.
