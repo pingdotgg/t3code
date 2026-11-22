@@ -147,6 +147,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
     const textGeneration = yield* makePiTextGeneration(
       effectiveConfig,
       processEnv,
+      host.compatibility,
       host.paths.providerStatusCacheDir,
     );
 
@@ -159,6 +160,7 @@ export const PiDriver: ProviderDriver<PiSettings, PiDriverEnv, Path.Path> = {
             effectiveConfig,
             processEnv,
             probeCwd,
+            host.compatibility,
             host.paths.providerStatusCacheDir,
           ),
         ),

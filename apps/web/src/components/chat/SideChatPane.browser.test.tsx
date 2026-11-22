@@ -20,6 +20,7 @@ import "~/components/ChatView";
 import { __setClientSettingsForTests } from "~/hooks/useSettings";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { getRouter } from "~/router";
+import { buildThreadRouteParams } from "~/threadRoutes";
 import {
   ENVIRONMENT_ID,
   installFakeEnvironment,
@@ -109,60 +110,73 @@ function seatAsking(
   };
 }
 
-it("a seated seat's pane shows the composer only while the seat waits on an answer", async () => {
-  const parent = threadWithHistory("thread-parent", 1);
-  const idle = threadWithHistory("thread-idle", 1);
-  const asking = threadWithHistory("thread-asking", 1);
-  const approving = threadWithHistory("thread-approving", 1);
-  const seats = [idle, asking, approving];
-  using _environment = installFakeEnvironment([
-    {
-      ...parent,
-      group: {
-        status: "active",
-        primary: { model: "gpt-5", label: "Fable", handle: "fable" },
-        seats: seats.map((seat) => ({
-          threadId: seat.id,
-          handle: seat.id,
-          label: seat.id,
-          status: "seated",
-          joinedAfterRun: 0,
-        })),
-        discussion: { mode: "direct", turnsLeft: 1, delivering: [] },
-        closedBecause: null,
-        closedAt: null,
+it.each(["panel", "main"] as const)(
+  "a seated seat in the %s view shows the composer only while it waits on an answer",
+  async (surface) => {
+    const parent = threadWithHistory("thread-parent", 1);
+    const idle = threadWithHistory("thread-idle", 1);
+    const asking = threadWithHistory("thread-asking", 1);
+    const approving = threadWithHistory("thread-approving", 1);
+    const seats = [idle, asking, approving];
+    using _environment = installFakeEnvironment([
+      {
+        ...parent,
+        group: {
+          status: "active",
+          primary: { model: "gpt-5", label: "Fable", handle: "fable" },
+          seats: seats.map((seat) => ({
+            threadId: seat.id,
+            handle: seat.id,
+            label: seat.id,
+            status: "seated",
+            joinedAfterRun: 0,
+          })),
+          discussion: { mode: "direct", turnsLeft: 1, delivering: [] },
+          closedBecause: null,
+          closedAt: null,
+        },
       },
-    },
-    { ...idle, sideChatOf: parent.id },
-    seatAsking(asking, parent.id, "user_input"),
-    seatAsking(approving, parent.id, "command"),
-  ]);
-  await page.viewport(1400, 900);
-  __setClientSettingsForTests({
-    ...DEFAULT_CLIENT_SETTINGS,
-    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
-  });
-  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  const router = getRouter(
-    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
-  );
-  await router.load();
-  await using _app = await render(<AppRoot router={router} />, {
-    // AppRoot brings its own router.
-    router: false,
-  });
-  const composers = page.getByTestId("composer-editor");
+      { ...idle, sideChatOf: parent.id },
+      seatAsking(asking, parent.id, "user_input"),
+      seatAsking(approving, parent.id, "command"),
+    ]);
+    await page.viewport(1400, 900);
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+    const router = getRouter(
+      createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+    );
+    await router.load();
+    await using _app = await render(<AppRoot router={router} />, {
+      // AppRoot brings its own router.
+      router: false,
+    });
+    const composers = page.getByTestId("composer-editor");
+    const openSeat = async (threadId: ThreadId) => {
+      if (surface === "panel") {
+        useRightPanelStore.getState().openThread(parentRef, threadId);
+        return;
+      }
+      await router.navigate({
+        to: "/$environmentId/$threadId",
+        params: buildThreadRouteParams(scopeThreadRef(ENVIRONMENT_ID, threadId)),
+      });
+    };
 
-  useRightPanelStore.getState().openSideChat(parentRef, idle.id);
-  await expect.element(page.getByText("Answer 0 for thread-idle.")).toBeVisible();
-  expect(composers.all()).toHaveLength(1);
+    await openSeat(idle.id);
+    await expect.element(page.getByText("Answer 0 for thread-idle.")).toBeVisible();
+    expect(composers.all()).toHaveLength(surface === "panel" ? 1 : 0);
 
-  useRightPanelStore.getState().openSideChat(parentRef, asking.id);
-  await expect.element(page.getByText("Which database should I use?").first()).toBeVisible();
-  await expect.element(page.getByText("Postgres").first()).toBeVisible();
-  expect(composers.all()).toHaveLength(2);
+    await openSeat(asking.id);
+    await expect.element(page.getByText("Which database should I use?").first()).toBeVisible();
+    await expect.element(page.getByText("Postgres").first()).toBeVisible();
+    expect(composers.all()).toHaveLength(surface === "panel" ? 2 : 1);
 
-  useRightPanelStore.getState().openSideChat(parentRef, approving.id);
-  await expect.element(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Decline" })).toBeVisible();
-});
+    await openSeat(approving.id);
+    await expect.element(page.getByRole("button", { name: "Approve", exact: true })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Decline" })).toBeVisible();
+  },
+);

@@ -18,6 +18,7 @@ import * as Stream from "effect/Stream";
 import * as ProviderAuthFlow from "@t3tools/provider-core/server/providerAuthFlow";
 import type { ProviderAuthController } from "../provider/ProviderAuthService.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import * as ModelManifest from "../provider/ModelManifest.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -40,6 +41,8 @@ const makeAdapter = (
 const makeInstance = (
   instanceId: ProviderInstanceId,
   orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"],
+  version: string | null = null,
+  refreshedVersion = version,
 ): ProviderInstance => ({
   instanceId,
   driverKind: driver,
@@ -49,7 +52,10 @@ const makeInstance = (
   },
   displayName: String(instanceId),
   enabled: true,
-  snapshot: {} as ProviderInstance["snapshot"],
+  snapshot: {
+    getSnapshot: Effect.succeed({ version }),
+    refresh: Effect.succeed({ version: refreshedVersion }),
+  } as unknown as ProviderInstance["snapshot"],
   orchestrationAdapter,
   textGeneration: {} as ProviderInstance["textGeneration"],
 });
@@ -68,26 +74,62 @@ const layerInstanceRegistry = Layer.succeed(ProviderInstanceRegistry.ProviderIns
   streamChanges: Stream.empty,
   subscribeChanges: Effect.never,
 });
-const layerTest = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
-  Layer.provide(layerInstanceRegistry),
+const layerRegistry = ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+  Layer.provide(ModelManifest.layerTest),
 );
+const layerTest = layerRegistry.pipe(Layer.provide(layerInstanceRegistry));
 
 it.effect("routes two configured instances of the same driver independently", () =>
   Effect.gen(function* () {
     const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
 
-    assert.deepEqual(yield* registry.get(personalId), {
-      ...personalAdapter,
-      continuationKey: `codex:test:${personalId}`,
-      requiresBoundContinuationIdentity: false,
-    });
-    assert.deepEqual(yield* registry.get(workId), {
-      ...workAdapter,
-      continuationKey: `codex:test:${workId}`,
-      requiresBoundContinuationIdentity: false,
-    });
+    const personal = yield* registry.get(personalId);
+    const work = yield* registry.get(workId);
+    assert.strictEqual(personal.instanceId, personalId);
+    assert.strictEqual(work.instanceId, workId);
+    assert.strictEqual(personal.continuationKey, `codex:test:${personalId}`);
+    assert.strictEqual(work.continuationKey, `codex:test:${workId}`);
+    assert.isFalse(personal.requiresBoundContinuationIdentity);
+    assert.isFalse(work.requiresBoundContinuationIdentity);
     assert.deepEqual(yield* registry.list(), [personalId, workId]);
   }).pipe(Effect.provide(layerTest)),
+);
+
+const openOn = Effect.fn("openOn")(function* (instance: ProviderInstance) {
+  const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
+    Effect.provide(
+      layerRegistry.pipe(
+        Layer.provide(
+          Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
+            getInstance: () => Effect.succeed(instance),
+          }),
+        ),
+      ),
+    ),
+  );
+  return yield* (yield* registry.get(instance.instanceId))
+    .openSession({
+      threadId: ThreadId.make("gated-thread"),
+      providerSessionId: ProviderSessionId.make("gated-session"),
+      modelSelection: { instanceId: instance.instanceId, model: "test-model" },
+      runtimePolicy: { runtimeMode: "full-access", interactionMode: "default", cwd: "/workspace" },
+    })
+    .pipe(Effect.exit);
+});
+
+it.effect("refuses a session only when a fresh probe still rates the version broken", () =>
+  Effect.gen(function* () {
+    const opened = { ...personalAdapter, openSession: () => Effect.succeed({} as never) };
+    const refused = yield* openOn(makeInstance(personalId, opened, "0.100.0"));
+    assert.include(JSON.stringify(refused), "0.100.0 does not work with this T3 Code release");
+    // Updated since the last probe.
+    assert.isTrue(
+      Exit.isSuccess(yield* openOn(makeInstance(personalId, opened, "0.100.0", "0.200.0"))),
+    );
+    // An adapter that rates the handshake version is not judged on the probe.
+    const handshake = { ...opened, checksVersionAtHandshake: true };
+    assert.isTrue(Exit.isSuccess(yield* openOn(makeInstance(personalId, handshake, "0.100.0"))));
+  }),
 );
 
 it.effect(
@@ -112,7 +154,7 @@ it.effect(
         ProviderAdapterRegistry.ProviderAdapterRegistryV2,
       ).pipe(
         Effect.provide(
-          ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+          layerRegistry.pipe(
             Layer.provide(
               Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
                 getInstance: (id) =>
@@ -174,7 +216,7 @@ it.effect("interrupts admitted session startup when a shared peer signs out", ()
     ];
     const registry = yield* Effect.service(ProviderAdapterRegistry.ProviderAdapterRegistryV2).pipe(
       Effect.provide(
-        ProviderAdapterRegistry.layerFromProviderInstanceRegistry.pipe(
+        layerRegistry.pipe(
           Layer.provide(
             Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
               getInstance: (id) =>

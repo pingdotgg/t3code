@@ -510,7 +510,12 @@ it.effect(
                   : Effect.succeed(connectionOverride ?? linkedUrl),
               resolve: () =>
                 linked
-                  ? Effect.succeed({ link, url: linkedUrl, token: "must-not-forward-peer-token" })
+                  ? Effect.succeed({
+                      link,
+                      url: linkedUrl,
+                      token: "must-not-forward-peer-token",
+                      capabilities: { repositoryIdentity: true },
+                    })
                   : Effect.fail(new PeerLinkError({ reason: "unknown_link", message: "unlinked" })),
             }),
           ),

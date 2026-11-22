@@ -54,6 +54,7 @@ const workspaceFiles = [
   "packages/source-control-gitcafe/package.json",
   "packages/source-control-github/package.json",
   "packages/source-control-gitlab/package.json",
+  "packages/source-control-tanstack-source/package.json",
   "packages/source-control-testing/package.json",
   "packages/effect-acp/package.json",
   "packages/effect-codex-app-server/package.json",

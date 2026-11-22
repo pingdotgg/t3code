@@ -8,6 +8,7 @@ import { expect, it } from "@effect/vitest";
 import type * as SshTunnel from "@t3tools/ssh/tunnel";
 import { SshReadinessError } from "@t3tools/ssh/errors";
 import * as Context from "effect/Context";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -768,7 +769,19 @@ it.effect("reads one stored link without asking the peer", () =>
       const stored = yield* a.links.get(box.environmentId);
       expect(Option.map(stored, (link) => link.label)).toEqual(Option.some("Box"));
       expect(Option.isNone(yield* a.links.get(laptop.environmentId))).toBe(true);
+      expect(yield* a.links.names).toEqual([{ environmentId: box.environmentId, label: "Box" }]);
       expect(yield* Ref.get(b.probes)).toBe(0);
+
+      // An older answer that lands after a newer one never moves the expiry back.
+      const expiresAt = Option.getOrThrow(stored).expiresAt;
+      const later = DateTime.add(expiresAt, { days: 20 });
+      yield* a.links.recordExpiry(box.environmentId, later);
+      yield* a.links.recordExpiry(box.environmentId, DateTime.add(expiresAt, { days: 10 }));
+      expect(
+        Option.map(yield* a.links.get(box.environmentId), (link) =>
+          DateTime.formatIso(link.expiresAt),
+        ),
+      ).toEqual(Option.some(DateTime.formatIso(later)));
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -873,6 +886,7 @@ it.effect("tells the agent to link again once the peer revokes the link or it ex
 
       yield* TestClock.adjust(Duration.days(31));
       expect((yield* a.links.list).map((link) => link.status)).toEqual(["expired"]);
+      expect(yield* a.links.names).toEqual([]);
       yield* Ref.set(b.bearers, []);
       const expired = yield* probe(a).pipe(Effect.flip);
       expect(expired.code).toBe("capability_denied");
@@ -999,6 +1013,7 @@ it.effect("linking a picked machine that answers nowhere names it and links noth
         })
         .pipe(Effect.flip);
       expect(failed.reason).toBe("unreachable");
+      expect(failed.answeredAs).toBe("Impostor");
       expect(failed.message).toBe(
         `This environment could not reach Box: ${new URL(impostor.url).origin} answered as another environment, Impostor. http://192.168.1.20:3773 is plain http, which would send the link's credentials unencrypted. Use its https or Tailscale address, or ssh://user@host for an encrypted LAN connection.`,
       );

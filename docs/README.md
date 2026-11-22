@@ -11,6 +11,7 @@
 - [Source control](./user/source-control.md)
 - [Code navigation](./user/code-navigation.md)
 - [Project settings](./user/project-settings.md)
+- [Projects with several repositories](./user/multi-repo-projects.md)
 - [Appearance and themes](./user/appearance.md)
 - [Keyboard shortcuts](./user/keybindings.md)
 - [Voice input](./user/voice-input.md)

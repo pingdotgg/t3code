@@ -1032,6 +1032,8 @@ const PREFLIGHT_PRIMARY_STATES = [
   "signed out, fallback failed",
   "cannot generate text",
   "model cannot generate text",
+  "disabled",
+  "disabled, fallback disabled for project",
 ] as const;
 
 it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (primaryState) =>
@@ -1092,6 +1094,9 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               ],
             }
           : {}),
+        ...(primaryState.startsWith("disabled") && instanceId === primary
+          ? { enabled: false, status: "disabled" }
+          : {}),
         ...(primaryState === "exhausted" && instanceId === primary
           ? {
               usageLimits: {
@@ -1135,7 +1140,7 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               },
             },
             defaultModelSelection: threadDefault,
-            ...(primaryState === "not installed, fallback disabled for project"
+            ...(primaryState.endsWith("fallback disabled for project")
               ? {
                   projectSettingsOverrides: {
                     [projectId]: { providerInstances: { [fallback]: { enabled: false } } },
@@ -1151,15 +1156,21 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         ),
       ),
     );
-    expect(
-      yield* service.generateThreadTitle({
+    const generated = yield* service
+      .generateThreadTitle({
         cwd: "/tmp",
         message: "hello",
         linkedContext: "",
         modelSelection: selection,
         projectId,
-      }),
-    ).toEqual({ title: "Generated title" });
+      })
+      .pipe(Effect.exit);
+    if (primaryState === "disabled, fallback disabled for project") {
+      expect(Exit.isFailure(generated)).toBe(true);
+      expect(calls).toEqual([]);
+      return;
+    }
+    expect(generated).toEqual(Exit.succeed({ title: "Generated title" }));
     expect(calls).toEqual([
       primaryState === "ready" ||
       primaryState === "pending" ||

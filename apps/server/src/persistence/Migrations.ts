@@ -139,6 +139,9 @@ import Migration0122 from "./Migrations/122_BackgroundRecoveryIndexes.ts";
 import Migration0123 from "./Migrations/123_TurnStartReadIndexes.ts";
 import Migration0124 from "./Migrations/124_DelegatedTaskReadIndexes.ts";
 import Migration0125 from "./Migrations/125_ThreadItemCounts.ts";
+import Migration0126 from "./Migrations/126_IssueTrackerAdditionalScopes.ts";
+import Migration0127 from "./Migrations/127_ProjectionProjectsTrackedFolders.ts";
+import Migration0128 from "./Migrations/128_TaskFolders.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -267,6 +270,9 @@ const migrationEntries = [
   [123, "TurnStartReadIndexes", Migration0123],
   [124, "DelegatedTaskReadIndexes", Migration0124],
   [125, "ThreadItemCounts", Migration0125],
+  [126, "IssueTrackerAdditionalScopes", Migration0126],
+  [127, "ProjectionProjectsTrackedFolders", Migration0127],
+  [128, "TaskFolders", Migration0128],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -320,6 +326,9 @@ const upstreamMigrationTargets: ReadonlyArray<number | string> = [
   123,
   124,
   125,
+  126,
+  127,
+  128,
 ];
 
 function upstreamMigrationReceipts<Receipt extends { readonly id: number; readonly name: string }>(

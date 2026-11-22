@@ -44,6 +44,7 @@ import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import { isBareGitConfig, parseOriginUrlFromGitConfig } from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
@@ -304,6 +305,9 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+// Claude Code uses this model name for its own local error responses.
+const CLAUDE_SYNTHETIC_MODEL = "<synthetic>";
+
 // Codex records setup context as user text ahead of the real request. Skip
 // these leading blocks when deriving a title; imported messages keep them.
 const CODEX_TITLE_PREAMBLE =
@@ -344,7 +348,8 @@ function deriveTitle(source: AgentSessionSource, text: string): string | undefin
     WAKE_ENVELOPE,
     "$1",
   );
-  return request.trim().split("\n")[0]?.slice(0, 100).trim() || undefined;
+  const line = request.trim().split("\n")[0] ?? "";
+  return line.slice(0, splitsSurrogatePair(line, 100) ? 99 : 100).trim() || undefined;
 }
 
 export function parseAgentSessionTranscript(
@@ -388,6 +393,8 @@ function parseAgentSessionRecords(
   // Names a session whose only request was a bare command, such as `/review`.
   let bareCommandTitle: string | undefined;
   let hasAssistantMessage = false;
+  let hasClaudeSyntheticReply = false;
+  let hasClaudeModelReply = false;
   let hasCodexSessionId = false;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
@@ -499,6 +506,11 @@ function parseAgentSessionRecords(
       if (record.type !== "user" && record.type !== "assistant") continue;
       const { text, titleText } = claudeVisibleText(record);
       if (text.length === 0) continue;
+      if (record.type === "assistant") {
+        if (record.message?.model?.trim() === CLAUDE_SYNTHETIC_MODEL)
+          hasClaudeSyntheticReply = true;
+        else hasClaudeModelReply = true;
+      }
       retainMessage(
         {
           role: record.type,
@@ -577,7 +589,12 @@ function parseAgentSessionRecords(
     providerSessionId.trim().length === 0 ||
     firstUserMessage === undefined ||
     // A Claude session of bare commands such as `/clear` that no reply followed did nothing.
-    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage)
+    (input.source === "claudeAgent" && derivedTitle === undefined && !hasAssistantMessage) ||
+    // Nor did one whose only replies are Claude Code's own errors.
+    (input.source === "claudeAgent" &&
+      droppedMessageCount === 0 &&
+      hasClaudeSyntheticReply &&
+      !hasClaudeModelReply)
   ) {
     return null;
   }

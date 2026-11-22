@@ -5,11 +5,55 @@ import * as Exit from "effect/Exit";
 import * as Migrator from "effect/sql/Migrator";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { migrationManifest, runMigrations } from "./Migrations.ts";
+import { migrationManifest, runMigrations, skippedV2Migrations } from "./Migrations.ts";
 import PullRequestFilesViewed from "./Migrations/053_PullRequestFilesViewed.ts";
 import RemoveRedundantProjectionIndexes from "./Migrations/056_RemoveRedundantProjectionIndexes.ts";
 import OrchestrationV2 from "./Migrations/055_OrchestrationV2.ts";
 import ShellStopRequestIndex from "./Migrations/078_ShellStopRequestIndex.ts";
+
+const upstreamHistory = [
+  ...migrationManifest.filter(([id]) => id < 68).map(([id, name]) => ({ id, name })),
+  ...[
+    "ShellStopRequestIndex",
+    "ThreadMessageSearch",
+    "PeerLinks",
+    "PeerLinkFence",
+    "WaitingLinkRequestIndex",
+    "ActiveTurnItemIndexes",
+    "ExcludeAttachmentPlaceholdersFromSearch",
+    "SubagentDeliveryState",
+    "ProjectionProjectsPinArchive",
+    "RepairBooleanSettledOverride",
+    "DropOrchestrationEventCorrelationIndex",
+    "DelegatedRecoveryIndexes",
+    "ScheduledTaskThreadMode",
+    "ProjectionMessageSearchText",
+    "TurnItemConversationIndex",
+    "CommandReadIndexes",
+    "LastExecutedRunIndex",
+    "TurnItemCounts",
+    "QueuedTurnInputIndex",
+    "ProjectionProjectsCustomTitle",
+    "TurnItemTypeStatusIndex",
+    "ShellThreadReadIndexes",
+    "AuthConnectDevices",
+    "AuthConnectDeniedRequests",
+    "QueuedTurnInputIndexJsonValid",
+    "ProviderTurnAttemptIndex",
+    "TurnItemMessageOrdinalIndex",
+    "TurnItemInlineWorkOutput",
+    "RepairStaleTitleRegeneration",
+    "IssueTrackerBindings",
+    "ActiveShellIndexIndexes",
+    "BackgroundRecoveryIndexes",
+    "TurnStartReadIndexes",
+    "DelegatedTaskReadIndexes",
+    "ThreadItemCounts",
+    "IssueTrackerAdditionalScopes",
+    "ProjectionProjectsTrackedFolders",
+    "TaskFolders",
+  ].map((name, index) => ({ id: 68 + index, name })),
+];
 
 const seedPreview = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -106,6 +150,9 @@ describe("V2 preview upgrade", () => {
         [123, "TurnStartReadIndexes"],
         [124, "DelegatedTaskReadIndexes"],
         [125, "ThreadItemCounts"],
+        [126, "IssueTrackerAdditionalScopes"],
+        [127, "ProjectionProjectsTrackedFolders"],
+        [128, "TaskFolders"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -254,6 +301,9 @@ describe("V2 preview upgrade", () => {
         [123, "TurnStartReadIndexes"],
         [124, "DelegatedTaskReadIndexes"],
         [125, "ThreadItemCounts"],
+        [126, "IssueTrackerAdditionalScopes"],
+        [127, "ProjectionProjectsTrackedFolders"],
+        [128, "TaskFolders"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
@@ -263,6 +313,10 @@ describe("V2 preview upgrade", () => {
     (gap) =>
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
+        for (const through of [102, 103, 104, 105]) {
+          const history = upstreamHistory.filter(({ id }) => id <= through && (!gap || id !== 70));
+          assert.strictEqual(skippedV2Migrations(history).length > 0, gap);
+        }
         yield* runMigrations({ toMigrationInclusive: 67 });
         yield* Migrator.make({})({
           loader: Migrator.fromRecord({ "68_ShellStopRequestIndex": ShellStopRequestIndex }),
@@ -300,6 +354,9 @@ describe("V2 preview upgrade", () => {
         [123, "TurnStartReadIndexes"],
         [124, "DelegatedTaskReadIndexes"],
         [125, "ThreadItemCounts"],
+        [126, "IssueTrackerAdditionalScopes"],
+        [127, "ProjectionProjectsTrackedFolders"],
+        [128, "TaskFolders"],
       ]);
       assert.deepStrictEqual(
         yield* sql`SELECT * FROM effect_sql_migrations WHERE migration_id <= 121 ORDER BY migration_id`,

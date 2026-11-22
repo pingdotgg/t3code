@@ -1,5 +1,6 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { type SideThreadOpenIntent, sideThreadKindOf } from "@t3tools/client-runtime/side-thread";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import { useNavigate, useRouter } from "@tanstack/react-router";
 import { useRef } from "react";
 import { msg } from "gt-react";
@@ -10,7 +11,7 @@ import { environmentShell } from "../../state/shell";
 import { serverEnvironment } from "../../state/server";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { toastManager } from "../ui/toast";
-import { resolveThreadOpenRoute } from "../../lib/sideChatPane";
+import { openSideThread, resolveThreadOpenRoute } from "../../lib/sideChatPane";
 
 const RELATED_THREAD_SHELL_WAIT_MS = 1_000;
 
@@ -18,12 +19,19 @@ export function useOpenRelatedThread(input: {
   readonly environmentId: EnvironmentId;
   readonly routeThreadKey: string;
   readonly currentRouteThreadKeyRef: { readonly current: string | null };
+  readonly panelRef?: ScopedThreadRef | null;
+  readonly parentThreadId?: ThreadId | null;
 }) {
-  const { environmentId, routeThreadKey, currentRouteThreadKeyRef } = input;
+  const { environmentId, routeThreadKey, currentRouteThreadKeyRef, panelRef, parentThreadId } =
+    input;
   const navigate = useNavigate();
   const router = useRouter();
   const openRelatedThreadGenerationRef = useRef(0);
-  const onOpenRelatedThread = async (threadId: ThreadId, targetEnvironmentId = environmentId) => {
+  const onOpenRelatedThread = async (
+    threadId: ThreadId,
+    targetEnvironmentId = environmentId,
+    intent?: SideThreadOpenIntent,
+  ) => {
     const generation = ++openRelatedThreadGenerationRef.current;
     const threadRef = scopeThreadRef(targetEnvironmentId, threadId);
     const isEnvironmentLive = () =>
@@ -48,6 +56,17 @@ export function useOpenRelatedThread(input: {
     const shell = readThreadShell(threadRef);
     if (shell === null ? !shellOmitsChildren && isEnvironmentLive() : shell.deletedAt != null) {
       toastManager.add({ type: "info", title: m(msg("This thread is no longer available")) });
+      return;
+    }
+    // A parent opens on the main screen; side chats and subagents honor the requested surface.
+    if ((intent !== undefined || sideThreadKindOf(shell) !== null) && parentThreadId !== threadId) {
+      openSideThread({
+        threadRef,
+        panelRef: panelRef ?? null,
+        intent: intent ?? "primary",
+        navigate: (ref) =>
+          void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(ref) }),
+      });
       return;
     }
     const routeRef = resolveThreadOpenRoute(threadRef, shell);

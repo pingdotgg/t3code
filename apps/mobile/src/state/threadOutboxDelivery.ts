@@ -550,6 +550,9 @@ export const restoreRejectedQueuedMessage = Effect.fn("ThreadOutbox.restoreRejec
                 ...(queuedMessage.creation.startFromOrigin !== undefined
                   ? { startFromOrigin: queuedMessage.creation.startFromOrigin }
                   : {}),
+                ...(queuedMessage.creation.repositories !== undefined
+                  ? { repositories: queuedMessage.creation.repositories }
+                  : {}),
               },
             }
           : {}),
@@ -1207,6 +1210,9 @@ export function createThreadOutboxDelivery(): {
         branch: workspace.branch,
         worktreePath: workspace.worktreePath,
         startFromOrigin: workspace.startFromOrigin ?? false,
+        ...(workspace.repositories === undefined
+          ? {}
+          : { worktreeRepositories: workspace.repositories }),
         worktreeBranchName: buildTemporaryWorktreeBranchName(randomHex),
       }),
     });
