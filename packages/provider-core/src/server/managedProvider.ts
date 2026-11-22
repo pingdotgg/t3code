@@ -74,10 +74,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       onAccepted?: () => void,
     ) => Effect.Effect<boolean>;
   }) => Effect.Effect<void>;
-  readonly reconcileCheckedSnapshot?: (input: {
-    readonly probed: ServerProvider;
-    readonly current: ServerProvider;
-  }) => ServerProvider;
+  readonly reconcileCheckedSnapshot?: (probed: ServerProvider) => ServerProvider;
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean | ((snapshot: ServerProvider) => boolean);
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
@@ -227,7 +224,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
         const checkedSnapshot = input.reconcileCheckedSnapshot
-          ? input.reconcileCheckedSnapshot({ probed: probedSnapshot, current: state.snapshot })
+          ? input.reconcileCheckedSnapshot(probedSnapshot)
           : probedSnapshot;
         // Failed reads retain limits only for the same account and original workspace.
         const previous = state.snapshot.auth;

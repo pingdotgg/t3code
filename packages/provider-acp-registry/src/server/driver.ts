@@ -1539,7 +1539,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       // Inspection may fetch the registry when its disk cache is missing; creation must not wait on that.
       initialSnapshot: () => buildInitialAcpRegistrySnapshot(readinessInput),
       checkProvider,
-      reconcileCheckedSnapshot: ({ probed }) =>
+      reconcileCheckedSnapshot: (probed) =>
         !latestAuthConfirmed && probed.auth.status === "authenticated"
           ? { ...probed, auth: stripConfirmedAuth(probed.auth) }
           : probed,

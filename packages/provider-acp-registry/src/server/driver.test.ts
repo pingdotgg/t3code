@@ -5243,6 +5243,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           "model-a",
           "reauth-live-model",
         ]);
+        // Subsequent refresh checkProvider commit must keep authenticated via latestAuthConfirmed.
+        const reauthCheckedDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(reauthCheckedDone, Exit.void);
+        const reauthChecked = yield* reauthInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        expect(reauthChecked.auth.status).toBe("authenticated");
+        yield* Deferred.await(reauthCheckedDone);
         useAuthLoginAgent = false;
         failProbeSpawn = false;
 
