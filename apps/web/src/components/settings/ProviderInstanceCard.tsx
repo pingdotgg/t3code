@@ -753,12 +753,12 @@ const modelOrderKey = (order: ReadonlyArray<string>) => JSON.stringify(order);
  * Each save writes the whole list, so the next edit starts from the last list sent until the
  * config stream echoes it, which can land before or after the save's reply.
  */
-function usePendingSaves<T>(
-  stored: T,
-  keyOf: (value: T) => string,
-  save: (next: T) => Promise<boolean>,
+function usePendingSaves<Value extends object>(
+  stored: Value,
+  keyOf: (value: Value) => string,
+  save: (next: Value) => Promise<boolean>,
 ) {
-  const [saves, setSaves] = useState<ReadonlyArray<PendingSave<T>>>([]);
+  const [saves, setSaves] = useState<ReadonlyArray<PendingSave<Value>>>([]);
   const storedKey = keyOf(stored);
   const [previousStoredKey, setPreviousStoredKey] = useState(storedKey);
   if (previousStoredKey !== storedKey) {
@@ -767,8 +767,8 @@ function usePendingSaves<T>(
     setSaves((list) => pendingSaves(list, storedKey));
   }
   const current = saves.at(-1)?.value ?? stored;
-  const update = useStableCallback(async (next: T) => {
-    const sent: PendingSave<T> = { value: next, key: keyOf(next) };
+  const update = useStableCallback(async (next: Value) => {
+    const sent: PendingSave<Value> = { value: next, key: keyOf(next) };
     setSaves((list) => [...list, sent]);
     const saved = await save(next);
     setSaves((list) => settleSave(list, sent, saved));

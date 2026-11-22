@@ -290,7 +290,7 @@ export function ProviderModelsSection({
       setEditingSlug(null);
     }
     void onChange(customModels.filter((entry) => entry.slug !== slug));
-    onModelOrderChange(modelOrder.filter((model) => model !== slug));
+    if (modelOrder.includes(slug)) onModelOrderChange(modelOrder.filter((model) => model !== slug));
     onFavoriteModelsChange(favoriteModels.filter((model) => model !== slug));
     setError(null);
   };
@@ -463,13 +463,15 @@ export function ProviderModelsSection({
                     canManageCustomModels && model.isCustom && editingSlug === model.slug
                       ? customModels.find((entry) => entry.slug === model.slug)
                       : undefined;
-                  // An open editor stretches the row's sortable rect, so it does not reorder.
-                  const showHandle = !isHidden && !isFiltering && editingEntry === undefined;
+                  const showHandle = !isHidden && !isFiltering;
+                  // An open editor stretches its row's drop target, so reordering waits for it to
+                  // close. The grip stays so the row's buttons do not shift under the cursor.
+                  const canDrag = canWritePreferences && showHandle && editingSlug === null;
                   const item = (
                     <SortableModelItem
                       key={`${instanceId}:model:${model.slug}`}
                       slug={model.slug}
-                      canDrag={canWritePreferences && showHandle}
+                      canDrag={canDrag}
                       acceptsDrop={dragGroup === null || dragGroup === group}
                       renderRow={(handleRef, handleAttributes, handleListeners) => (
                         <ProviderModelRow
@@ -477,6 +479,7 @@ export function ProviderModelsSection({
                           isHidden={isHidden}
                           isFavorite={group === "favorite"}
                           showHandle={showHandle}
+                          canDrag={canDrag}
                           handleRef={handleRef}
                           handleAttributes={handleAttributes}
                           handleListeners={handleListeners}
@@ -612,6 +615,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
   isHidden,
   isFavorite,
   showHandle,
+  canDrag,
   handleRef,
   handleAttributes,
   handleListeners,
@@ -627,6 +631,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
   readonly isHidden: boolean;
   readonly isFavorite: boolean;
   readonly showHandle: boolean;
+  readonly canDrag: boolean;
   readonly handleRef: (element: HTMLElement | null) => void;
   readonly handleAttributes: DraggableAttributes;
   readonly handleListeners: DraggableSyntheticListeners;
@@ -755,7 +760,7 @@ const ProviderModelRow = memo(function ProviderModelRow({
           <ModelDragHandle
             slug={model.slug}
             name={model.name}
-            disabled={!canWritePreferences}
+            disabled={!canDrag}
             handleRef={handleRef}
             handleAttributes={handleAttributes}
             handleListeners={handleListeners}
