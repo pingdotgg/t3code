@@ -946,7 +946,9 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
   const netPinsMap = new Map<string, ElectronicsNetPinRef[]>();
   const netCodeMap = new Map<string, number>();
 
-  for (const netNode of findChildren(root, "net")) {
+  const topLevelNetNodes = findChildren(root, "net");
+  const hasLegacyNetTable = topLevelNetNodes.length > 0;
+  for (const netNode of topLevelNetNodes) {
     const code = atomNumber(netNode[1]);
     const name = atomString(netNode[2]) ?? "";
     if (code !== undefined && name.length > 0) {
@@ -955,6 +957,37 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       if (!netPinsMap.has(name)) netPinsMap.set(name, []);
     }
   }
+
+  const resolvePcbNet = (node: SExprList | undefined): string | undefined => {
+    if (!node) return undefined;
+    // Legacy 2-argument form: (net <code> "<name>")
+    if (node.length >= 3) {
+      const inlineName = atomString(node[2]);
+      if (inlineName && inlineName.length > 0) {
+        if (!netPinsMap.has(inlineName)) netPinsMap.set(inlineName, []);
+        return inlineName;
+      }
+      const code = atomNumber(node[1]);
+      if (code !== undefined) {
+        const mapped = netIdToName.get(code);
+        return mapped && mapped.length > 0 ? mapped : undefined;
+      }
+      return undefined;
+    }
+    // 1-argument form: legacy `(net <code>)` when board defines a top-level net table,
+    // or KiCad 10 name-based `(net "<name>")` (including numeric names like `(net "12")`).
+    const raw = atomString(node[1]);
+    if (!raw || raw.length === 0) return undefined;
+    if (hasLegacyNetTable) {
+      const code = atomNumber(node[1]);
+      if (code !== undefined) {
+        const mapped = netIdToName.get(code);
+        return mapped && mapped.length > 0 ? mapped : undefined;
+      }
+    }
+    if (!netPinsMap.has(raw)) netPinsMap.set(raw, []);
+    return raw;
+  };
 
   const components: ElectronicsComponent[] = [];
   for (const fp of findChildren(root, "footprint")) {
@@ -987,25 +1020,6 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const cos = Math.cos(rad);
     const sin = Math.sin(rad);
 
-    const readPcbNet = (node: SExprList | undefined): string | undefined => {
-      if (!node) return undefined;
-      const code = atomNumber(node[1]);
-      if (code !== undefined) {
-        const inlineName = atomString(node[2]);
-        const resolved = inlineName && inlineName.length > 0 ? inlineName : netIdToName.get(code);
-        return resolved && resolved.length > 0 ? resolved : undefined;
-      }
-      // KiCad 10 writes name-based nets directly: (net "GND")
-      const directName = atomString(node[1]);
-      if (directName && directName.length > 0) {
-        if (!netPinsMap.has(directName)) {
-          netPinsMap.set(directName, []);
-        }
-        return directName;
-      }
-      return undefined;
-    };
-
     const readLayersList = (node: SExprList | undefined): string[] | undefined => {
       if (!node) return undefined;
       const out: string[] = [];
@@ -1022,10 +1036,14 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       const padAt = findChild(pad, "at");
       const pxLocal = atomNumber(padAt?.[1]) ?? 0;
       const pyLocal = atomNumber(padAt?.[2]) ?? 0;
+      const padRot = atomNumber(padAt?.[3]) ?? rot;
+      const padSize = findChild(pad, "size");
+      const padW = atomNumber(padSize?.[1]);
+      const padH = atomNumber(padSize?.[2]);
       const wx = Number((fx + pxLocal * cos - pyLocal * sin).toFixed(3));
       const wy = Number((fy + pxLocal * sin + pyLocal * cos).toFixed(3));
 
-      const cleanNet = readPcbNet(findChild(pad, "net"));
+      const cleanNet = resolvePcbNet(findChild(pad, "net"));
       const rawLayers = readLayersList(findChild(pad, "layers"));
       const copperLayers = rawLayers?.filter((l) => l.endsWith(".Cu") || l === "*");
       pins.push({
@@ -1033,6 +1051,9 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
         electricalType: "passive",
         ...(cleanNet !== undefined ? { net: cleanNet } : {}),
         ...(copperLayers && copperLayers.length > 0 ? { layers: copperLayers } : {}),
+        ...(padW !== undefined && Number.isFinite(padW) && padW > 0 ? { padWidth: padW } : {}),
+        ...(padH !== undefined && Number.isFinite(padH) && padH > 0 ? { padHeight: padH } : {}),
+        ...(Number.isFinite(padRot) && padRot !== 0 ? { padRotation: padRot } : {}),
         x: wx,
         y: wy,
       });
@@ -1064,24 +1085,6 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     });
   }
 
-  const readCopperNet = (node: SExprList | undefined): string | undefined => {
-    if (!node) return undefined;
-    const code = atomNumber(node[1]);
-    if (code !== undefined) {
-      const inlineName = atomString(node[2]);
-      const resolved = inlineName && inlineName.length > 0 ? inlineName : netIdToName.get(code);
-      return resolved && resolved.length > 0 ? resolved : undefined;
-    }
-    const directName = atomString(node[1]);
-    if (directName && directName.length > 0) {
-      if (!netPinsMap.has(directName)) {
-        netPinsMap.set(directName, []);
-      }
-      return directName;
-    }
-    return undefined;
-  };
-
   const wires: ElectronicsWireSegment[] = [];
   for (const seg of findChildren(root, "segment")) {
     const start = findChild(seg, "start");
@@ -1092,7 +1095,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const y2 = atomNumber(end?.[2]);
     const width = atomNumber(findChild(seg, "width")?.[1]) ?? 0.25;
     const layer = atomString(findChild(seg, "layer")?.[1]) ?? "F.Cu";
-    const net = readCopperNet(findChild(seg, "net"));
+    const net = resolvePcbNet(findChild(seg, "net"));
     if (x1 !== undefined && y1 !== undefined && x2 !== undefined && y2 !== undefined) {
       wires.push({
         x1,
@@ -1113,7 +1116,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const y = atomNumber(at?.[2]);
     const size = atomNumber(findChild(via, "size")?.[1]) ?? 0.6;
     const drill = atomNumber(findChild(via, "drill")?.[1]);
-    const net = readCopperNet(findChild(via, "net"));
+    const net = resolvePcbNet(findChild(via, "net"));
     const layersNode = findChild(via, "layers");
     const viaLayers: string[] = [];
     if (layersNode) {
@@ -1545,21 +1548,40 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
       typeof el.display_name === "string" && el.display_name.trim().length > 0
         ? el.display_name.trim()
         : undefined;
-    const explicitSourceNetName = connectedNets
+    const explicitSourceNetNames = connectedNets
       .map((nid) => sourceNets.get(nid))
-      .find((n): n is string => Boolean(n));
-    const label = explicitSourceNetName ?? explicitDisplayName;
-    if (label && memberIds.length > 0) {
-      pendingLabels.push({ memberId: memberIds[0]!, name: label });
+      .filter((n): n is string => Boolean(n));
+    if (memberIds.length > 0) {
+      if (explicitSourceNetNames.length > 0) {
+        for (const name of explicitSourceNetNames) {
+          pendingLabels.push({ memberId: memberIds[0]!, name });
+        }
+      } else if (explicitDisplayName) {
+        pendingLabels.push({ memberId: memberIds[0]!, name: explicitDisplayName });
+      }
     }
   }
 
-  // Resolve explicit net names AFTER all unions finish so trace ordering never drops labels.
-  const rootNetLabel = new Map<number, string>();
+  // Resolve explicit net names AFTER all unions finish so trace ordering never drops labels,
+  // and preserve distinct joined power/ground rail names ("VCC / GND") so ERC flags rail shorts.
+  const rootLabelSet = new Map<number, Set<string>>();
   for (const { memberId, name } of pendingLabels) {
     const root = uf.find(memberId);
-    if (!rootNetLabel.has(root)) {
-      rootNetLabel.set(root, name);
+    let set = rootLabelSet.get(root);
+    if (!set) {
+      set = new Set<string>();
+      rootLabelSet.set(root, set);
+    }
+    set.add(name);
+  }
+  const rootNetLabel = new Map<number, string>();
+  for (const [root, names] of rootLabelSet.entries()) {
+    const distinct = Array.from(names);
+    const railNames = distinct.filter((n) => isPowerNetName(n) || isGroundNetName(n));
+    if (railNames.length > 1) {
+      rootNetLabel.set(root, railNames.join(" / "));
+    } else if (distinct[0] !== undefined) {
+      rootNetLabel.set(root, distinct[0]);
     }
   }
 

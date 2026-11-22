@@ -23,7 +23,6 @@ const MAX_INCLUDE_FILE_BYTES = 256 * 1024;
 const MAX_SIMULATION_POINTS = 2_000;
 
 const ALLOWED_SPICE_DIRECTIVES: ReadonlySet<string> = new Set([
-  ".title",
   ".param",
   ".model",
   ".subckt",
@@ -40,6 +39,7 @@ const ALLOWED_SPICE_DIRECTIVES: ReadonlySet<string> = new Set([
 ]);
 
 const STRIPPED_ANALYSIS_DIRECTIVES: ReadonlySet<string> = new Set([
+  ".title",
   ".end",
   ".op",
   ".ac",
@@ -552,8 +552,36 @@ export const expandSpiceWorkspaceDeck = Effect.fn("ElectronicsToolchain.expandSp
           expanded.push(line);
           continue;
         }
+        if (UNSAFE_ELEMENT_PATTERN.test(line)) {
+          return {
+            ok: false as const,
+            reason: "Disallowed external file/command token in SPICE include directive.",
+          };
+        }
+        // Strip trailing inline SPICE comments (`;` or whitespace + `$`) outside quoted paths
+        let strippedIncludeLine = "";
+        let quoteChar: string | null = null;
+        for (let ci = 0; ci < line.length; ci += 1) {
+          const ch = line[ci]!;
+          if (quoteChar !== null) {
+            if (ch === quoteChar) quoteChar = null;
+            strippedIncludeLine += ch;
+            continue;
+          }
+          if (ch === '"' || ch === "'") {
+            quoteChar = ch;
+            strippedIncludeLine += ch;
+            continue;
+          }
+          if (ch === ";" || (ch === "$" && (ci === 0 || /\s/u.test(line[ci - 1]!)))) {
+            break;
+          }
+          strippedIncludeLine += ch;
+        }
         const incMatch =
-          /^\s*\.(include|inc|lib)\s+("([^"]+)"|'([^']+)'|(\S+))(?:\s+(\S+))?\s*$/iu.exec(line);
+          /^\s*\.(include|inc|lib)\s+("([^"]+)"|'([^']+)'|(\S+))(?:\s+(\S+))?\s*$/iu.exec(
+            strippedIncludeLine.trim(),
+          );
         if (!incMatch) {
           return {
             ok: false as const,

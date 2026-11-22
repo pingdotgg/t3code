@@ -39,22 +39,31 @@ export function ElectronicsSettings() {
   }
   const [probing, setProbing] = useState(false);
 
-  const committedToolchainKey = `${settings.electronicsAllowExternalTools}:${settings.electronicsKicadCliPath}:${settings.electronicsNgspicePath}`;
+  // Observe authoritative server-acknowledged settings (not optimistic pending writes) so
+  // auto-reprobe runs only after the server has persisted the new paths / external-tools toggle.
+  const committedServerSettings = environment?.serverConfig?.settings ?? null;
+  const committedToolchainKey = committedServerSettings
+    ? `${committedServerSettings.electronicsAllowExternalTools}:${committedServerSettings.electronicsKicadCliPath}:${committedServerSettings.electronicsNgspicePath}`
+    : null;
   const lastEnvIdRef = useRef(environmentId);
   const lastCommittedToolchainKeyRef = useRef(committedToolchainKey);
 
-  // Re-probe only after the server commits updated toolchain settings for the current environment
-  // (avoids save-then-probe races and also re-probes when toggling `electronicsAllowExternalTools`).
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- triggers RPC probe when persisted toolchain settings change
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- triggers RPC probe when acknowledged server toolchain settings change
   useEffect(() => {
     if (lastEnvIdRef.current !== environmentId) {
       lastEnvIdRef.current = environmentId;
       lastCommittedToolchainKeyRef.current = committedToolchainKey;
       return;
     }
-    if (lastCommittedToolchainKeyRef.current === committedToolchainKey) return;
+    if (
+      committedToolchainKey === null ||
+      lastCommittedToolchainKeyRef.current === committedToolchainKey
+    ) {
+      return;
+    }
+    const hadPrevious = lastCommittedToolchainKeyRef.current !== null;
     lastCommittedToolchainKeyRef.current = committedToolchainKey;
-    if (!environmentId || !canWrite) return;
+    if (!hadPrevious || !environmentId || !canWrite) return;
     void probeToolchain({ environmentId, input: { refresh: true } });
   }, [canWrite, committedToolchainKey, environmentId, probeToolchain]);
 

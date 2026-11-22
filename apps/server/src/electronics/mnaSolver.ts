@@ -525,19 +525,34 @@ export function runBuiltinMnaSimulation(
   };
 
   const dc = solveDc();
-  const resolveRequestedOutputNode = (raw?: string): string | undefined => {
-    if (!raw) return undefined;
+  const requestedOutputRaw = options.outputNode?.trim();
+  const resolveRequestedOutputNode = (raw: string): string | undefined => {
     if (nodeIndex.has(raw)) return raw;
     if (model.format === "spice") {
-      const lower = raw.trim().toLowerCase();
+      const lower = raw.toLowerCase();
       if (nodeIndex.has(lower)) return lower;
     }
-    const ciMatches = nonGroundNodes.filter((n) => n.toLowerCase() === raw.trim().toLowerCase());
+    const ciMatches = nonGroundNodes.filter((n) => n.toLowerCase() === raw.toLowerCase());
     return ciMatches.length === 1 ? ciMatches[0] : undefined;
   };
-  const targetNode =
-    resolveRequestedOutputNode(options.outputNode) ??
-    chooseDefaultOutputNode(nonGroundNodes, voltageSources, isRefNode);
+  let targetNode: string | undefined;
+  let targetIsExplicitGround = false;
+  if (requestedOutputRaw !== undefined && requestedOutputRaw.length > 0) {
+    if (isRefNode(requestedOutputRaw)) {
+      targetIsExplicitGround = true;
+      targetNode = model.format === "spice" ? "GND" : requestedOutputRaw;
+    } else {
+      const resolved = resolveRequestedOutputNode(requestedOutputRaw);
+      if (resolved === undefined) {
+        throw new Error(
+          `Requested output node "${options.outputNode}" was not found in this circuit.`,
+        );
+      }
+      targetNode = resolved;
+    }
+  } else {
+    targetNode = chooseDefaultOutputNode(nonGroundNodes, voltageSources, isRefNode);
+  }
 
   if (kind === "dc_op") {
     const totalPowerW = dc.componentReadings
@@ -547,7 +562,7 @@ export function runBuiltinMnaSimulation(
       { name: "Total dissipation", value: Number(totalPowerW.toPrecision(4)), unit: "W" },
     ];
     if (targetNode) {
-      const tv = dc.voltageByNode.get(targetNode) ?? 0;
+      const tv = targetIsExplicitGround ? 0 : (dc.voltageByNode.get(targetNode) ?? 0);
       metrics.unshift({ name: `V(${targetNode})`, value: Number(tv.toPrecision(5)), unit: "V" });
     }
     return {
@@ -564,6 +579,12 @@ export function runBuiltinMnaSimulation(
       notes,
       simulatedAt: DateTime.formatIso(DateTime.nowUnsafe()),
     };
+  }
+
+  if (targetIsExplicitGround) {
+    throw new Error(
+      `Cannot plot reference ground node "${options.outputNode}"; choose a non-ground circuit node.`,
+    );
   }
 
   if (kind === "ac_sweep") {

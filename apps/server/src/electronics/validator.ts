@@ -8,10 +8,6 @@ import type {
 
 import { isGroundNetName, isPowerNetName } from "./parsers.ts";
 
-function nearPoint(ax: number, ay: number, bx: number, by: number, tol = 0.25): boolean {
-  return Math.hypot(ax - bx, ay - by) <= tol;
-}
-
 function copperLayerOrder(layer: string): number | null {
   if (layer === "F.Cu") return 0;
   if (layer === "B.Cu") return 31;
@@ -110,6 +106,86 @@ function segmentsWithinTolerance(
   );
 }
 
+function pointToOrientedBoxDistance(
+  px: number,
+  py: number,
+  boxCx: number,
+  boxCy: number,
+  halfW: number,
+  halfH: number,
+  rotDeg: number,
+): number {
+  const dx = px - boxCx;
+  const dy = py - boxCy;
+  const rad = (rotDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const lx = dx * cos - dy * sin;
+  const ly = dx * sin + dy * cos;
+  const ex = Math.max(0, Math.abs(lx) - halfW);
+  const ey = Math.max(0, Math.abs(ly) - halfH);
+  return Math.hypot(ex, ey);
+}
+
+function segmentToOrientedBoxDistance(
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  boxCx: number,
+  boxCy: number,
+  halfW: number,
+  halfH: number,
+  rotDeg: number,
+): number {
+  const rad = (rotDeg * Math.PI) / 180;
+  const cos = Math.cos(rad);
+  const sin = Math.sin(rad);
+  const toLocal = (wx: number, wy: number) => {
+    const dx = wx - boxCx;
+    const dy = wy - boxCy;
+    return [dx * cos - dy * sin, dx * sin + dy * cos] as const;
+  };
+  const [lx1, ly1] = toLocal(x1, y1);
+  const [lx2, ly2] = toLocal(x2, y2);
+
+  // If either endpoint lies inside the pad rectangle, distance is 0
+  if (
+    (Math.abs(lx1) <= halfW && Math.abs(ly1) <= halfH) ||
+    (Math.abs(lx2) <= halfW && Math.abs(ly2) <= halfH)
+  ) {
+    return 0;
+  }
+
+  // If the segment crosses any of the 4 pad edges, distance is 0
+  const edges = [
+    [-halfW, -halfH, halfW, -halfH],
+    [halfW, -halfH, halfW, halfH],
+    [halfW, halfH, -halfW, halfH],
+    [-halfW, halfH, -halfW, -halfH],
+  ] as const;
+  for (const [ex1, ey1, ex2, ey2] of edges) {
+    if (segmentsIntersect(lx1, ly1, lx2, ly2, ex1, ey1, ex2, ey2)) {
+      return 0;
+    }
+  }
+
+  // Otherwise minimum distance is either an endpoint to the box or a box corner to the segment
+  const d1 = Math.hypot(Math.max(0, Math.abs(lx1) - halfW), Math.max(0, Math.abs(ly1) - halfH));
+  const d2 = Math.hypot(Math.max(0, Math.abs(lx2) - halfW), Math.max(0, Math.abs(ly2) - halfH));
+  let best = Math.min(d1, d2);
+  const corners = [
+    [-halfW, -halfH],
+    [halfW, -halfH],
+    [halfW, halfH],
+    [-halfW, halfH],
+  ] as const;
+  for (const [cx, cy] of corners) {
+    best = Math.min(best, pointToSegmentDistance(cx, cy, lx1, ly1, lx2, ly2));
+  }
+  return best;
+}
+
 export interface PcbCopperIslandResult {
   readonly padPoints: ReadonlyArray<{
     readonly x: number;
@@ -117,6 +193,9 @@ export interface PcbCopperIslandResult {
     readonly ref: string;
     readonly pin: string;
     readonly layers?: ReadonlyArray<string>;
+    readonly padWidth?: number;
+    readonly padHeight?: number;
+    readonly padRotation?: number;
   }>;
   readonly islandCount: number;
   readonly trackCount: number;
@@ -133,6 +212,9 @@ export function computePcbCopperIslands(
     ref: string;
     pin: string;
     layers?: ReadonlyArray<string>;
+    padWidth?: number;
+    padHeight?: number;
+    padRotation?: number;
   }> = [];
   for (const comp of model.components) {
     for (const pin of comp.pins) {
@@ -151,6 +233,9 @@ export function computePcbCopperIslands(
           ref: comp.ref,
           pin: pin.number,
           ...(pin.layers !== undefined ? { layers: pin.layers } : {}),
+          ...(pin.padWidth !== undefined ? { padWidth: pin.padWidth } : {}),
+          ...(pin.padHeight !== undefined ? { padHeight: pin.padHeight } : {}),
+          ...(pin.padRotation !== undefined ? { padRotation: pin.padRotation } : {}),
         });
       }
     }
@@ -213,36 +298,77 @@ export function computePcbCopperIslands(
   };
 
   const padGrid = new Map<string, number[]>();
+  const largePads: number[] = [];
   for (let p = 0; p < padPoints.length; p += 1) {
-    addPointToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
+    const pad = padPoints[p]!;
+    const padExtent = Math.max(pad.padWidth ?? 0.2, pad.padHeight ?? 0.2) / 2;
+    const minCx = Math.floor((pad.x - padExtent) / PCB_CELL);
+    const maxCx = Math.floor((pad.x + padExtent) / PCB_CELL);
+    const minCy = Math.floor((pad.y - padExtent) / PCB_CELL);
+    const maxCy = Math.floor((pad.y + padExtent) / PCB_CELL);
+    if ((maxCx - minCx + 1) * (maxCy - minCy + 1) > 64) {
+      largePads.push(p);
+    } else {
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        for (let cy = minCy; cy <= maxCy; cy += 1) {
+          const key = `${cx},${cy}`;
+          let bucket = padGrid.get(key);
+          if (!bucket) {
+            bucket = [];
+            padGrid.set(key, bucket);
+          }
+          bucket.push(p);
+        }
+      }
+    }
   }
   const viaGrid = new Map<string, number[]>();
   for (let v = 0; v < netVias.length; v += 1) {
     addPointToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
   }
 
-  // Direct via-in-pad contact (on matching copper layer)
+  // Direct via-in-pad contact using real pad geometry and via diameter (including *.Cu through-hole pads)
   for (let v = 0; v < netVias.length; v += 1) {
     const via = netVias[v]!;
+    const viaRadius = Math.max(0.01, via.size / 2);
     const [cx, cy] = cellOf(via.x, via.y);
+    const checkedPads = new Set<number>();
+    const testPadVia = (p: number) => {
+      if (checkedPads.has(p)) return;
+      checkedPads.add(p);
+      const pad = padPoints[p]!;
+      const halfW = (pad.padWidth ?? 0.2) / 2;
+      const halfH = (pad.padHeight ?? 0.2) / 2;
+      const layerMatches =
+        pad.layers === undefined ||
+        pad.layers.length === 0 ||
+        pad.layers.some(
+          (layer) => layer === "*.Cu" || layer === "*" || viaMatchesTrackLayer(via.layers, layer),
+        );
+      if (
+        layerMatches &&
+        pointToOrientedBoxDistance(
+          via.x,
+          via.y,
+          pad.x,
+          pad.y,
+          halfW,
+          halfH,
+          pad.padRotation ?? 0,
+        ) <=
+          viaRadius + 0.01
+      ) {
+        union(p, viaOffset + v);
+      }
+    };
     for (let dx = -1; dx <= 1; dx += 1) {
       for (let dy = -1; dy <= 1; dy += 1) {
         const bucket = padGrid.get(`${cx + dx},${cy + dy}`);
         if (!bucket) continue;
-        for (const p of bucket) {
-          const pad = padPoints[p]!;
-          const padViaTol = Math.max(0.5, via.size / 2);
-          if (
-            nearPoint(pad.x, pad.y, via.x, via.y, padViaTol) &&
-            (pad.layers === undefined ||
-              pad.layers.length === 0 ||
-              pad.layers.some((layer) => viaMatchesTrackLayer(via.layers, layer)))
-          ) {
-            union(p, viaOffset + v);
-          }
-        }
+        for (const p of bucket) testPadVia(p);
       }
     }
+    for (const p of largePads) testPadVia(p);
   }
 
   interface IndexedTrack {
@@ -295,10 +421,23 @@ export function computePcbCopperIslands(
 
     const testPad = (p: number) => {
       const pad = padPoints[p]!;
-      const padTol = Math.max(0.5, segWidth / 2);
+      const halfW = (pad.padWidth ?? 0.2) / 2;
+      const halfH = (pad.padHeight ?? 0.2) / 2;
+      const trackHalfWidth = Math.max(0.01, segWidth / 2);
       if (
         padMatchesTrackLayer(pad.layers, seg.layer) &&
-        pointToSegmentDistance(pad.x, pad.y, seg.x1, seg.y1, seg.x2, seg.y2) <= padTol
+        segmentToOrientedBoxDistance(
+          seg.x1,
+          seg.y1,
+          seg.x2,
+          seg.y2,
+          pad.x,
+          pad.y,
+          halfW,
+          halfH,
+          pad.padRotation ?? 0,
+        ) <=
+          trackHalfWidth + 0.01
       ) {
         union(p, trackOffset + t);
       }
@@ -355,6 +494,7 @@ export function computePcbCopperIslands(
         }
       }
       for (const other of layerLarge) testTrack(other);
+      for (const p of largePads) testPad(p);
       for (let cx = minCx; cx <= maxCx; cx += 1) {
         for (let cy = minCy; cy <= maxCy; cy += 1) {
           const cellKey = `${cx},${cy}`;

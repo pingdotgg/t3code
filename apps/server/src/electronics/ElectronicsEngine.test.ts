@@ -661,5 +661,102 @@ ${libEntries.join("\n")}
     expect(() =>
       runBuiltinMnaSimulation(rcModel, { kind: "ac_sweep", startFreqHz: 200, stopFreqHz: 100 }),
     ).toThrow(/stopFreqHz > startFreqHz/i);
+
+    // Explicit unknown outputNode or ground node on AC must fail loudly instead of silently plotting `out`
+    expect(() =>
+      runBuiltinMnaSimulation(rcModel, { kind: "ac_sweep", outputNode: "typo" }),
+    ).toThrow(/not found/i);
+    expect(() => runBuiltinMnaSimulation(rcModel, { kind: "ac_sweep", outputNode: "GND" })).toThrow(
+      /ground/i,
+    );
+    const gndDc = runBuiltinMnaSimulation(rcModel, { kind: "dc_op", outputNode: "GND" });
+    expect(gndDc.metrics[0]).toEqual({ name: "V(GND)", value: 0, unit: "V" });
+  });
+
+  it("enforces pad-geometry copper clearance, multi-net connector routing, KiCad 10 numeric nets, SPICE 1M trace resistance, and Circuit JSON rail shorts", () => {
+    // 0.20mm square pad centered 0.40mm from a 0.10mm trace has a 0.25mm copper gap -> MUST NOT connect
+    const padGapPcb = `(kicad_pcb
+  (footprint "Tiny" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "Tiny" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.2 0.2) (layers "F.Cu") (net "SIG"))
+  )
+  (segment (start 0.4 0) (end 9.6 0) (width 0.1) (layer "F.Cu") (net "SIG"))
+)`;
+    const padGapModel = parseElectronicsFile("pcb/pad_gap.kicad_pcb", padGapPcb);
+    expect(traceCircuitPath(padGapModel, { from: "R1.1", to: "R2.1" }).connected).toBe(false);
+    expect(
+      runBuiltinCircuitValidation(padGapModel).issues.some((i) => i.code === "unrouted_pcb_net"),
+    ).toBe(true);
+
+    // Multi-pin connectors sharing one unrouted net AND one routed net: component trace must find the routed net
+    const dualConnPcb = `(kicad_pcb
+  (footprint "Conn2" (layer "F.Cu") (at 0 0)
+    (property "Reference" "J1") (property "Value" "CON")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "UNROUTED"))
+    (pad "2" smd rect (at 0 5) (size 0.6 0.6) (layers "F.Cu") (net "ROUTED"))
+  )
+  (footprint "Conn2" (layer "F.Cu") (at 10 0)
+    (property "Reference" "J2") (property "Value" "CON")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "UNROUTED"))
+    (pad "2" smd rect (at 0 5) (size 0.6 0.6) (layers "F.Cu") (net "ROUTED"))
+  )
+  (segment (start 0 5) (end 10 5) (width 0.25) (layer "F.Cu") (net "ROUTED"))
+)`;
+    const dualConnModel = parseElectronicsFile("pcb/dual_conn.kicad_pcb", dualConnPcb);
+    const connTrace = traceCircuitPath(dualConnModel, { from: "J1", to: "J2" });
+    expect(connTrace.connected).toBe(true);
+    expect(connTrace.directNet).toBe("ROUTED");
+
+    // KiCad 10 name-based numeric net `(net "12")` without a legacy net table must NOT be dropped
+    const k10NumericPcb = `(kicad_pcb
+  (footprint "R_0603" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "12"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "12"))
+  )
+  (segment (start 0 0) (end 10 0) (width 0.25) (layer "F.Cu") (net "12"))
+)`;
+    const k10NumModel = parseElectronicsFile("pcb/k10_num.kicad_pcb", k10NumericPcb);
+    expect(k10NumModel.nets.map((n) => n.name)).toContain("12");
+    expect(traceCircuitPath(k10NumModel, { from: "R1.1", to: "R2.1" }).connected).toBe(true);
+
+    // SPICE path trace through `R1 in out 1M` must report 0.001 Ω (SPICE milli), NOT 1,000,000 Ω
+    const spiceMilliModel = parseElectronicsFile(
+      "sim/milli.cir",
+      "* Shunt\nV1 in 0 5\nR1 in out 1M\nR2 out 0 10\n.end\n",
+    );
+    const spiceMilliTrace = traceCircuitPath(spiceMilliModel, { from: "in", to: "out" });
+    expect(spiceMilliTrace.connected).toBe(true);
+    expect(spiceMilliTrace.estimatedResistanceOhms).toBeCloseTo(0.001, 6);
+    expect(spiceMilliTrace.warnings.some((w) => /High series resistance/i.test(w))).toBe(false);
+
+    // Circuit JSON joining VCC and GND must preserve both rail names and trigger power_rail_short
+    const cjShort = JSON.stringify([
+      {
+        type: "source_component",
+        source_component_id: "c1",
+        name: "J1",
+        ftype: "simple_pin_header",
+      },
+      { type: "source_port", source_port_id: "p1", source_component_id: "c1", pin_number: 1 },
+      { type: "source_port", source_port_id: "p2", source_component_id: "c1", pin_number: 2 },
+      { type: "source_net", source_net_id: "n_gnd", name: "GND" },
+      { type: "source_net", source_net_id: "n_vcc", name: "VCC" },
+      {
+        type: "source_trace",
+        connected_source_port_ids: ["p1", "p2"],
+        connected_source_net_ids: ["n_gnd", "n_vcc"],
+      },
+    ]);
+    const cjShortModel = parseElectronicsFile("short.circuit.json", cjShort);
+    const cjShortVal = runBuiltinCircuitValidation(cjShortModel);
+    expect(cjShortVal.issues.some((i) => i.code === "power_rail_short")).toBe(true);
   });
 });

@@ -262,50 +262,80 @@ export function traceCircuitPath(
   const toNodes = resolveEndpointNodes(toResolved);
   const toNodeKeySet = new Set(toNodes.map((n) => n.key));
 
-  // 1. Check direct same-net connectivity (and verify physical copper continuity on PCBs)
+  // 1. Check direct same-net connectivity (and verify physical copper continuity on PCBs).
+  // When endpoints share multiple nets (e.g. multi-pin connectors), keep checking all shared nets
+  // before falling back to an unrouted-net warning so a routed shared net is not masked by an unrouted one.
+  let firstUnroutedDirectNet: string | undefined;
+  const unroutedDirectWarnings: string[] = [];
   for (const netName of fromNets) {
-    if (toResolved.nets.has(netName)) {
-      const highlightedComponents = new Set<string>();
-      if (fromResolved.componentRef) highlightedComponents.add(fromResolved.componentRef);
-      if (toResolved.componentRef) highlightedComponents.add(toResolved.componentRef);
+    if (!toResolved.nets.has(netName)) continue;
+    const highlightedComponents = new Set<string>();
+    if (fromResolved.componentRef) highlightedComponents.add(fromResolved.componentRef);
+    if (toResolved.componentRef) highlightedComponents.add(toResolved.componentRef);
 
-      let physicallyConnected = true;
-      if (isPcb) {
-        const copper = getPcbCopper(netName);
-        if (fromResolved.matchedPins.length > 0 && toResolved.matchedPins.length > 0) {
-          const sameIsland = fromNodes.some((fn) => fn.net === netName && toNodeKeySet.has(fn.key));
-          if (!sameIsland) {
-            physicallyConnected = false;
-            warnings.push(
+    let physicallyConnected = true;
+    if (isPcb) {
+      const copper = getPcbCopper(netName);
+      if (fromResolved.matchedPins.length > 0 && toResolved.matchedPins.length > 0) {
+        const sameIsland = fromNodes.some((fn) => fn.net === netName && toNodeKeySet.has(fn.key));
+        if (!sameIsland) {
+          physicallyConnected = false;
+          if (firstUnroutedDirectNet === undefined) {
+            firstUnroutedDirectNet = netName;
+            unroutedDirectWarnings.push(
               `Endpoints share logical PCB net "${netName}", but their pads sit on disconnected copper islands (unrouted copper).`,
             );
           }
-        } else if (copper.islandCount > 1) {
-          physicallyConnected = false;
-          warnings.push(
+        }
+      } else if (copper.islandCount > 1) {
+        physicallyConnected = false;
+        if (firstUnroutedDirectNet === undefined) {
+          firstUnroutedDirectNet = netName;
+          unroutedDirectWarnings.push(
             `Logical PCB net "${netName}" is split across ${copper.islandCount} disconnected copper islands; physical continuity is broken.`,
           );
         }
       }
+    }
 
+    if (physicallyConnected) {
       return {
         filePath: model.filePath,
         from: options.from,
         to: options.to,
-        connected: physicallyConnected,
+        connected: true,
         directNet: netName,
         fromNets,
         toNets,
         hops: [{ kind: "net", name: netName }],
         highlightedNets: [netName],
         highlightedComponents: Array.from(highlightedComponents),
-        ...(physicallyConnected ? { estimatedResistanceOhms: 0 } : {}),
+        estimatedResistanceOhms: 0,
         warnings,
       };
     }
   }
 
   if (!traversePassives) {
+    if (firstUnroutedDirectNet !== undefined) {
+      warnings.push(...unroutedDirectWarnings);
+      return {
+        filePath: model.filePath,
+        from: options.from,
+        to: options.to,
+        connected: false,
+        directNet: firstUnroutedDirectNet,
+        fromNets,
+        toNets,
+        hops: [{ kind: "net", name: firstUnroutedDirectNet }],
+        highlightedNets: [firstUnroutedDirectNet],
+        highlightedComponents: [
+          ...(fromResolved.componentRef ? [fromResolved.componentRef] : []),
+          ...(toResolved.componentRef ? [toResolved.componentRef] : []),
+        ],
+        warnings,
+      };
+    }
     warnings.push(
       `No direct single-net connection between "${options.from}" and "${options.to}" (passive traversal disabled).`,
     );
@@ -421,6 +451,25 @@ export function traceCircuitPath(
   }
 
   if (!winningHops) {
+    if (firstUnroutedDirectNet !== undefined) {
+      warnings.push(...unroutedDirectWarnings);
+      return {
+        filePath: model.filePath,
+        from: options.from,
+        to: options.to,
+        connected: false,
+        directNet: firstUnroutedDirectNet,
+        fromNets,
+        toNets,
+        hops: [{ kind: "net", name: firstUnroutedDirectNet }],
+        highlightedNets: [firstUnroutedDirectNet],
+        highlightedComponents: [
+          ...(fromResolved.componentRef ? [fromResolved.componentRef] : []),
+          ...(toResolved.componentRef ? [toResolved.componentRef] : []),
+        ],
+        warnings,
+      };
+    }
     if (isPcb) {
       // Check if a logical-only passive path exists so we can emit a clear unrouted-copper warning
       const logicalAdj = new Map<string, string[]>();
@@ -494,7 +543,9 @@ export function traceCircuitPath(
     } else {
       highlightedComponents.add(hop.name);
       if (hop.componentKind === "resistor") {
-        const val = hop.value ? parseEngineeringNumber(hop.value) : null;
+        const val = hop.value
+          ? parseEngineeringNumber(hop.value, { spice: model.format === "spice" })
+          : null;
         if (val !== null) totalResistanceOhms += val;
         else hasResistiveEstimate = false;
       } else if (hop.componentKind === "diode") {

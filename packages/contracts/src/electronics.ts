@@ -56,6 +56,9 @@ export const ElectronicsPin = Schema.Struct({
   x: Schema.optional(Schema.Number),
   y: Schema.optional(Schema.Number),
   layers: Schema.optional(Schema.Array(Schema.String)),
+  padWidth: Schema.optional(Schema.Number),
+  padHeight: Schema.optional(Schema.Number),
+  padRotation: Schema.optional(Schema.Number),
 });
 export type ElectronicsPin = typeof ElectronicsPin.Type;
 

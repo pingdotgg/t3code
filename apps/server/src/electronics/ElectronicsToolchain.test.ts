@@ -69,10 +69,14 @@ describe("ElectronicsToolchain", () => {
       expect(res.blockedReasons.length).toBeGreaterThan(0);
     }
 
-    // Comment lines including ngspice '*#' control directives are stripped completely
-    const commentDeck = sanitizeSpiceDeckLines("* Title\n*#shell id\nV1 in 0 5\nR1 in 0 1k\n.end");
+    // Comment lines including ngspice '*#' control directives and `.title` directives are stripped completely
+    const commentDeck = sanitizeSpiceDeckLines(
+      "* Title\n.title *#shell id\n*#shell id\nV1 in 0 5\nR1 in 0 1k\n.end",
+    );
     expect(commentDeck.blockedReasons).toEqual([]);
-    expect(commentDeck.lines.some((l) => l.startsWith("*"))).toBe(false);
+    expect(
+      commentDeck.lines.some((l) => l.startsWith("*") || l.toLowerCase().startsWith(".title")),
+    ).toBe(false);
     expect(commentDeck.lines).toEqual(["V1 in 0 5", "R1 in 0 1k"]);
 
     // Included files (allowTitleLine: false) must NEVER exempt line 0
@@ -151,7 +155,7 @@ describe("ElectronicsToolchain", () => {
           `.include "${path.join(outside, "secret.cir")}"\n`,
         );
 
-        const goodDeck = `* Divider\nV1 in 0 5\nR1 in out 10k\n.include "good.lib"\n.end\n`;
+        const goodDeck = `* Divider\nV1 in 0 5\nR1 in out 10k\n.include "good.lib" ; output load resistor\n.end\n`;
         const model = parseElectronicsFile("div.cir", goodDeck);
         const capturedCalls: Array<{ args: ReadonlyArray<string>; deckText: string }> = [];
 
