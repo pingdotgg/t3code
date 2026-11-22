@@ -117,6 +117,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../ui/menu";
+import { Meter } from "../ui/meter";
 import {
   Select,
   SelectGroup,
@@ -311,19 +312,12 @@ function ModelCard(props: ModelCardProps) {
           />
           {downloading ? (
             <div className="mt-2">
-              <div
+              <Meter
                 role="progressbar"
                 aria-label={gt("{name} download progress", { name: model.name })}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-valuenow={Math.round(progress)}
-                className="h-1 overflow-hidden rounded-full bg-muted"
-              >
-                <div
-                  className="h-full bg-primary transition-[width] duration-200"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
+                value={Math.round(progress)}
+                max={100}
+              />
               <p className="mt-1 text-caption text-muted-foreground">
                 {model.state === "verifying"
                   ? gt("Verifying download…")

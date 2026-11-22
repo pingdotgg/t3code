@@ -78,6 +78,7 @@ import { Button, ContentButton } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import { Meter } from "../ui/meter";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -1967,12 +1968,14 @@ const FleetScene = memo(function FleetScene({
                         "on a card for a group of linked machines: how many of them answer right now",
                     })}
                   </span>
-                  <span className="h-1 min-w-0 flex-1 overflow-clip rounded-full bg-warning/25 forced-colors:hidden">
-                    <span
-                      className="block h-full rounded-full bg-warning"
-                      style={{ width: `${(stack.reachable / count) * 100}%` }}
-                    />
-                  </span>
+                  <Meter
+                    aria-hidden
+                    tone="warning"
+                    size="xs"
+                    value={stack.reachable}
+                    max={count}
+                    className="flex-1 forced-colors:hidden"
+                  />
                 </span>
               )}
             </ContentButton>

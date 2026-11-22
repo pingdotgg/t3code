@@ -121,6 +121,7 @@ import {
   MenuShortcut,
   MenuTrigger,
 } from "../ui/menu";
+import { Meter } from "../ui/meter";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -1023,6 +1024,30 @@ function StatusSection() {
         <Cell caption="md label">
           <StatusDot size="md" tone="success" label="Connected" />
         </Cell>
+      </Specimen>
+      <Specimen label="Meter" source="<Meter value max tone size>" stack>
+        <div className="flex w-72 flex-col gap-3">
+          {(
+            [
+              ["neutral", 64],
+              ["success", 88],
+              ["warning", 45],
+              ["destructive", 92],
+            ] as const
+          ).map(([tone, value]) => (
+            <div key={tone} className="flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <Caption>{tone}</Caption>
+                <Caption>{value}%</Caption>
+              </div>
+              <Meter value={value} max={100} tone={tone} aria-label={`${tone} meter`} />
+            </div>
+          ))}
+          <div className="flex flex-col gap-1">
+            <Caption>size sm</Caption>
+            <Meter value={72} max={100} size="sm" aria-label="Small meter" />
+          </div>
+        </div>
       </Specimen>
       <Specimen label="Skeleton" source="<Skeleton shape>" stack>
         <div className="flex w-72 items-center gap-3">
