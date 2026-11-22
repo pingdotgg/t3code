@@ -12,6 +12,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
+import * as Tracer from "effect/Tracer";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
@@ -1302,6 +1303,26 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         expect(
           yield* locateXcodeGitWithXcrun(env, { xcrun: "/nonexistent/t3-xcrun" }),
         ).toBeUndefined();
+      }),
+    );
+
+    it.effect("the xcrun lookup records its own trace span", () =>
+      Effect.gen(function* () {
+        const spans: Array<Tracer.Span> = [];
+        const tracer = Tracer.make({
+          span: (options) => {
+            const span = new Tracer.NativeSpan(options);
+            spans.push(span);
+            return span;
+          },
+        });
+        yield* locateXcodeGitWithXcrun(
+          { PATH: "/usr/bin:/bin" },
+          { xcrun: "/nonexistent/t3-xcrun" },
+        ).pipe(Effect.provideService(Tracer.Tracer, tracer));
+        const lookups = spans.filter((span) => span.name === "shell.locateXcodeGitWithXcrun");
+        expect(lookups).toHaveLength(1);
+        expect(lookups[0]!.status._tag).toBe("Ended");
       }),
     );
 
