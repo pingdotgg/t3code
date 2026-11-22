@@ -70,7 +70,7 @@ import { recordPromptSent } from "../GitHubStarPrompt";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { newMessageId, newThreadId } from "~/lib/utils";
-import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
+import { readPendingWorkspaceDefault, useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import {
   beginBackgroundDraftSubmissionByRef,
@@ -1876,8 +1876,7 @@ export function useComposerSend(input: ComposerSendInput) {
   }
 
   const onSendLatest = useStableCallback(onSend);
-  const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
-    args[0]?.preventDefault();
+  const sendWithEnvironmentRefresh = async (...args: Parameters<typeof onSend>) => {
     const refresh =
       args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
         ? null
@@ -1889,6 +1888,18 @@ export function useComposerSend(input: ComposerSendInput) {
     });
     if (ready) return onSendLatest(...args);
   };
+  const sendWithEnvironmentRefreshLatest = useStableCallback(sendWithEnvironmentRefresh);
+  const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
+    args[0]?.preventDefault();
+    const workspaceDefault =
+      draftId && !sendInFlightRef.current ? readPendingWorkspaceDefault(draftId) : null;
+    if (workspaceDefault === null) return sendWithEnvironmentRefresh(...args);
+    sendInFlightRef.current = true;
+    await workspaceDefault.finally(() => {
+      sendInFlightRef.current = false;
+    });
+    return sendWithEnvironmentRefreshLatest(...args);
+  };
 
   const withdrawQueuedSend = (messageId: MessageId) => {
     const message = undispatchedQueuedSendsRef.current.get(messageId);
@@ -1898,7 +1909,6 @@ export function useComposerSend(input: ComposerSendInput) {
     setOptimisticUserMessages((existing) => existing.filter((entry) => entry.id !== messageId));
     optimisticBlobPreviews.release(message);
   };
-
   // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
   // only time a detached send runs, so the draft keeps the environment it was dictated for.
   const captureDetachedSend = useStableCallback(() => onSend);

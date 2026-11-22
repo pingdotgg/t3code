@@ -14,6 +14,7 @@ import { Button } from "./ui/button";
 import { AlarmClockIcon, CalendarIcon, Settings2Icon } from "lucide-react";
 import { Calendar } from "./ui/calendar";
 import { weekStartsOn } from "../timestampFormat";
+import { useFormattingLocale } from "../i18n/I18nProvider";
 import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
 import { SubmitKbd } from "./SubmitKbd";
@@ -92,14 +93,19 @@ function durationMinutes(parts: DurationParts): number {
 }
 
 /** "Returns today at 6:12 PM", "… tomorrow at 9:00 AM", or "… on Mon, Sep 29 at 9:00 AM". */
-function formatReturnTime(wake: Date, now: Date, resolve: MessageResolver): string {
-  const time = wake.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+function formatReturnTime(
+  wake: Date,
+  now: Date,
+  resolve: MessageResolver,
+  locale: string | undefined,
+): string {
+  const time = wake.toLocaleTimeString(locale, { hour: "numeric", minute: "2-digit" });
   const dayOffset = Math.round(
     (new Date(wake).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000,
   );
   if (dayOffset === 0) return resolve(msg("Returns today at {time}", { time }));
   if (dayOffset === 1) return resolve(msg("Returns tomorrow at {time}", { time }));
-  const day = wake.toLocaleDateString(undefined, {
+  const day = wake.toLocaleDateString(locale, {
     weekday: "short",
     month: "short",
     day: "numeric",
@@ -117,6 +123,7 @@ function useMinuteClock(): Date {
 function CustomSnoozeDialog() {
   const gt = useGT();
   const messages = useMessages();
+  const locale = useFormattingLocale();
   const id = useId();
   const navigate = useNavigate();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
@@ -205,7 +212,7 @@ function CustomSnoozeDialog() {
                             />
                           }
                         >
-                          {date.toLocaleDateString(undefined, {
+                          {date.toLocaleDateString(locale, {
                             month: "short",
                             day: "numeric",
                             year: "numeric",
@@ -289,7 +296,7 @@ function CustomSnoozeDialog() {
                         className="size-3.5 shrink-0 text-muted-foreground"
                       />
                       {wakeAt
-                        ? formatReturnTime(new Date(wakeAt), now, messages)
+                        ? formatReturnTime(new Date(wakeAt), now, messages, locale)
                         : gt("Set a duration longer than zero.")}
                     </p>
                   </div>
