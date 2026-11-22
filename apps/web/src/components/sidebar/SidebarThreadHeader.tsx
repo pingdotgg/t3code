@@ -119,7 +119,7 @@ export function SidebarThreadHeader({
           disabled={newThreadDisabled}
           onClick={onNewThread}
         >
-          <SquarePenIcon className="size-[15px]" />
+          <SquarePenIcon />
         </SidebarHeaderIconButton>
       </div>
     </div>
