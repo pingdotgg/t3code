@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@t3tools/shared/model";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import { topOfPinnedRunOrderKey } from "@t3tools/shared/pinOrderKey";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -20,6 +21,7 @@ import {
   readThread,
   unavailable,
 } from "../../threadAccess.ts";
+import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageIntake.ts";
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
@@ -40,6 +42,7 @@ function queueEntry(
     queuedRunId: run.id,
     text: characters.slice(0, limit).join(""),
     truncated: characters.length > limit,
+    ...(run.queueHeld === true ? { held: true as const } : {}),
   };
 }
 const dispatch = Effect.fn("mcp.dispatchThreadCommand")(function* (
@@ -347,6 +350,26 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
     ),
     writesThread((input) =>
       Effect.gen(function* () {
+        if (input.action === "retry_setup") {
+          const { projection } = yield* readThread(input.threadId, ["runs"]);
+          // The setup run is the latest one that ran; the orchestrator refuses any other.
+          const setupRun = latestExecutedRun(projection.runs);
+          if (setupRun === null) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "The thread has no worktree setup to retry.",
+            });
+          }
+          const launches = yield* ThreadLaunch.ThreadLaunchService;
+          const result = yield* launches
+            .retryPreparation({
+              commandId: yield* newCommandId(),
+              threadId: projection.thread.id,
+              runId: setupRun.id,
+            })
+            .pipe(Effect.mapError(dispatchFailure));
+          return { sequence: result.sequence };
+        }
         const runId = yield* required(input.queuedRunId, "queuedRunId");
         switch (input.action) {
           case "edit": {

@@ -55,6 +55,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
 import * as DateTime from "effect/DateTime";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { workspacePreparationRetryRunIds } from "@t3tools/client-runtime/state/turn-item-presentation";
 import { environmentThreadDetails, threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { toolActivityFaviconUrl } from "@t3tools/shared/favicon";
@@ -781,7 +782,13 @@ function WorkspacePreparationRetryButton(props: {
     environmentThreadDetails.threadAtom(scopeThreadRef(props.environmentId, props.threadId)),
     (thread) => {
       const run = thread?.projection.runs.find((candidate) => candidate.id === props.runId);
-      return run?.status === "failed" && run.workspacePreparation !== undefined;
+      return (
+        run !== undefined &&
+        workspacePreparationRetryRunIds(
+          [run],
+          thread?.projection.turnItems.filter((item) => item.runId === run.id) ?? [],
+        ).has(run.id)
+      );
     },
   );
   const gt = useGT();
@@ -1234,6 +1241,13 @@ const ThreadWorkLogRow = function ThreadWorkLogRow(
           </View>
         </View>
       </WorkLogPressable>
+      {notice.type === "run_interrupt_result" && notice.runId !== null ? (
+        <WorkspacePreparationRetryButton
+          environmentId={props.environmentId}
+          threadId={notice.threadId}
+          runId={notice.runId}
+        />
+      ) : null}
       {mcpSignInOpen && mcpSignInTarget !== null ? (
         <McpSignInSheet
           environmentId={props.environmentId}

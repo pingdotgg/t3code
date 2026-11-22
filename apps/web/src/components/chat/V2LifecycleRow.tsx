@@ -50,6 +50,7 @@ import {
   EraserIcon,
   GitForkIcon,
   MessageSquareIcon,
+  RotateCcwIcon,
 } from "lucide-react";
 
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
@@ -82,17 +83,33 @@ export function V2LifecycleRow(props: {
     environmentId?: EnvironmentId,
     intent?: SideThreadOpenIntent,
   ) => void;
+  readonly onRetryWorkspacePreparation?: (() => void) | undefined;
 }) {
   const { item } = props;
   const gt = useGT();
   if (item.type === "run_interrupt_result") {
-    return (
+    const divider = (
       <TimelineSystemDivider
         label={gt("Run interrupted")}
         detail={item.message}
         icon={CircleStopIcon}
         wrapDetail
       />
+    );
+    if (!props.onRetryWorkspacePreparation) return divider;
+    return (
+      <div className="flex flex-col items-center pb-1">
+        <div className="w-full">{divider}</div>
+        <Button
+          type="button"
+          size="xs"
+          variant="outline"
+          onClick={props.onRetryWorkspacePreparation}
+        >
+          <RotateCcwIcon aria-hidden />
+          <T>Retry</T>
+        </Button>
+      </div>
     );
   }
   if (item.type === "handoff") {

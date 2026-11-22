@@ -51,6 +51,13 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       />
     );
   }
+  const retryRunId =
+    item.type === "run_interrupt_result" &&
+    item.runId !== null &&
+    ctx.retryableWorkspacePreparationRunIds.has(item.runId)
+      ? item.runId
+      : null;
+  const onRetry = ctx.onRetryWorkspacePreparation;
   return (
     <V2LifecycleRow
       environmentId={ctx.activeThreadEnvironmentId}
@@ -58,6 +65,9 @@ export function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       resourceSummary={row.resourceSummary}
       runs={ctx.runs}
       onOpenThread={ctx.onOpenThread}
+      onRetryWorkspacePreparation={
+        retryRunId !== null && onRetry ? () => onRetry(retryRunId) : undefined
+      }
     />
   );
 }

@@ -3721,6 +3721,12 @@ const make = Effect.gen(function* () {
         ...(result.run.delegatedTaskId === undefined ? {} : { taskId: result.run.delegatedTaskId }),
         status: result.run.status,
         delivery: result.delivery,
+        ...(result.run.status === "queued" && result.run.queueHeld === true
+          ? {
+              held: true as const,
+              next: "Held: it will not start on its own. If the thread's worktree setup stopped or failed, t3_queue action retry_setup retries it and releases the message.",
+            }
+          : {}),
       } satisfies OrchestratorMcpThreadSendResult;
     }),
     waitForThread: Effect.fn("OrchestratorMcpService.waitForThread")(function* (scope, input) {

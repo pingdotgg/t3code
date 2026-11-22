@@ -12561,8 +12561,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         candidate.type === "command_execution" &&
         candidate.input === WORKSPACE_PREPARATION_INPUT,
     );
+    // A setup the user stopped is retryable like a failed one: its held messages wait on it.
+    const retryable =
+      run?.status === "failed" ||
+      (run?.status === "interrupted" && preparationItem?.status === "interrupted");
     if (
-      run?.status !== (command.type === "prepared-run.retry" ? "failed" : "preparing") ||
+      (command.type === "prepared-run.retry" ? !retryable : run?.status !== "preparing") ||
+      run === undefined ||
       attempt === undefined ||
       rootNode === undefined ||
       providerThread === undefined ||
@@ -12805,7 +12810,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* loadProjectionForCommand(
       command,
       ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
-      { turnItemTypes: ["command_execution", "error"], turnItemRunId: command.runId },
+      {
+        turnItemTypes: [
+          "command_execution",
+          "error",
+          "run_interrupt_request",
+          "run_interrupt_result",
+        ],
+        turnItemRunId: command.runId,
+      },
     );
     const state = preparedRunState(command, projection);
     const failureItem = projection.turnItems.find(
@@ -12817,14 +12830,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       state === null ||
       state.run.workspacePreparation === undefined ||
-      failureItem === undefined ||
+      (state.run.status === "failed" && failureItem === undefined) ||
       projection.thread.archivedAt !== null ||
       projection.thread.deletedAt !== null
     ) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: `Run ${command.runId} has no failed workspace preparation to retry.`,
+        cause: `Run ${command.runId} has no failed or stopped workspace preparation to retry.`,
       });
     }
     if (projection.runs.some((run) => run.id !== state.run.id && isActiveRun(run))) {
@@ -12843,11 +12856,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       providerInstanceId: state.run.providerInstanceId,
       occurredAt: now,
     };
-    yield* emitEvent({
-      ...scope,
-      type: "turn-item.updated",
-      payload: { ...failureItem, status: "cancelled", updatedAt: now },
-    });
+    if (failureItem !== undefined) {
+      yield* emitEvent({
+        ...scope,
+        type: "turn-item.updated",
+        payload: { ...failureItem, status: "cancelled", updatedAt: now },
+      });
+    }
+    // The Stop that ended the setup, and its result, must not count for the retried run.
+    for (const item of projection.turnItems) {
+      if (
+        (item.type !== "run_interrupt_request" && item.type !== "run_interrupt_result") ||
+        item.status === "cancelled"
+      )
+        continue;
+      yield* emitEvent({
+        ...scope,
+        type: "turn-item.updated",
+        payload: { ...item, status: "cancelled", updatedAt: now },
+      });
+    }
     yield* emitEvent({
       ...scope,
       type: "turn-item.updated",
@@ -13539,7 +13567,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(command));
       // A provider that stopped late already wrote the result; it needs no Force stop.
-      if (turnItems.some((item) => item.type === "run_interrupt_result")) return;
+      if (
+        turnItems.some(
+          (item) => item.type === "run_interrupt_result" && item.status !== "cancelled",
+        )
+      )
+        return;
       const request = turnItems.find((item) => item.type === "run_interrupt_request");
       if (request?.type !== "run_interrupt_request" || request.unresponsiveAt !== undefined) return;
       const now = yield* DateTime.now;
