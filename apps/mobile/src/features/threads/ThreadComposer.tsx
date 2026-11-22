@@ -459,9 +459,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
   });
   // Hiding the focused editor doesn't reliably close the Android IME. Let it finish closing first:
   // the dictation bar's entering animation can drop while KeyboardStickyView tracks the IME.
-  const startDictation = () => {
-    void KeyboardController.dismiss().then(voiceInput.start);
-  };
+  const startDictation = () => voiceInput.startAfter(KeyboardController.dismiss());
   const isSubmissionLocked =
     props.interactionLocked === true || queuedEdit?.saving === true || voiceInput.blocksSubmission;
   const voicePresentation = resolveVoiceComposerPresentation(
