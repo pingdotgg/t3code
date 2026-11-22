@@ -85,11 +85,13 @@ describe("V2 preview upgrade", () => {
         [103, "IssueTrackerAdditionalScopes"],
         [104, "ProjectionProjectsTrackedFolders"],
         [105, "TaskFolders"],
-        [106, "BotProfiles"],
-        [107, "BotActivationGrants"],
-        [108, "BotWork"],
-        [109, "BotWorkflowTriggers"],
-        [110, "BotAccess"],
+        [106, "WorktreePathKeyIndex"],
+        [107, "DeferredSlashCommandIndex"],
+        [108, "BotProfiles"],
+        [109, "BotActivationGrants"],
+        [110, "BotWork"],
+        [111, "BotWorkflowTriggers"],
+        [112, "BotAccess"],
       ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
       assert.deepStrictEqual(yield* sql`SELECT * FROM orchestration_v2_legacy_imports`, imports);
@@ -218,11 +220,13 @@ describe("V2 preview upgrade", () => {
         [103, "IssueTrackerAdditionalScopes"],
         [104, "ProjectionProjectsTrackedFolders"],
         [105, "TaskFolders"],
-        [106, "BotProfiles"],
-        [107, "BotActivationGrants"],
-        [108, "BotWork"],
-        [109, "BotWorkflowTriggers"],
-        [110, "BotAccess"],
+        [106, "WorktreePathKeyIndex"],
+        [107, "DeferredSlashCommandIndex"],
+        [108, "BotProfiles"],
+        [109, "BotActivationGrants"],
+        [110, "BotWork"],
+        [111, "BotWorkflowTriggers"],
+        [112, "BotAccess"],
       ]);
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );

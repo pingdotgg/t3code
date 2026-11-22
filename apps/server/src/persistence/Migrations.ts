@@ -113,11 +113,13 @@ import Migration0102 from "./Migrations/102_ThreadItemCounts.ts";
 import Migration0103 from "./Migrations/103_IssueTrackerAdditionalScopes.ts";
 import Migration0104 from "./Migrations/104_ProjectionProjectsTrackedFolders.ts";
 import Migration0105 from "./Migrations/105_TaskFolders.ts";
-import Migration0106 from "./Migrations/106_BotProfiles.ts";
-import Migration0107 from "./Migrations/107_BotActivationGrants.ts";
-import Migration0108 from "./Migrations/108_BotWork.ts";
-import Migration0109 from "./Migrations/109_BotWorkflowTriggers.ts";
-import Migration0110 from "./Migrations/110_BotAccess.ts";
+import Migration0106 from "./Migrations/106_WorktreePathKeyIndex.ts";
+import Migration0107 from "./Migrations/107_DeferredSlashCommandIndex.ts";
+import Migration0108 from "./Migrations/108_BotProfiles.ts";
+import Migration0109 from "./Migrations/109_BotActivationGrants.ts";
+import Migration0110 from "./Migrations/110_BotWork.ts";
+import Migration0111 from "./Migrations/111_BotWorkflowTriggers.ts";
+import Migration0112 from "./Migrations/112_BotAccess.ts";
 
 const migrationEntries = [
   [1, "OrchestrationEvents", Migration0001],
@@ -226,11 +228,13 @@ const migrationEntries = [
   [103, "IssueTrackerAdditionalScopes", Migration0103],
   [104, "ProjectionProjectsTrackedFolders", Migration0104],
   [105, "TaskFolders", Migration0105],
-  [106, "BotProfiles", Migration0106],
-  [107, "BotActivationGrants", Migration0107],
-  [108, "BotWork", Migration0108],
-  [109, "BotWorkflowTriggers", Migration0109],
-  [110, "BotAccess", Migration0110],
+  [106, "WorktreePathKeyIndex", Migration0106],
+  [107, "DeferredSlashCommandIndex", Migration0107],
+  [108, "BotProfiles", Migration0108],
+  [109, "BotActivationGrants", Migration0109],
+  [110, "BotWork", Migration0110],
+  [111, "BotWorkflowTriggers", Migration0111],
+  [112, "BotAccess", Migration0112],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);
@@ -308,6 +312,50 @@ export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* 
   return (row?.latestId ?? 0) < latestMigrationId || (row?.previewRows ?? 0) > 0;
 });
 
+const reconcileBotMigrations = Effect.fn("reconcileBotMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const ledger = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (ledger.length === 0) return [];
+  const oldBotLedger = sql`
+    SELECT 1 FROM effect_sql_migrations WHERE migration_id = 106 AND name = 'BotProfiles'
+  `;
+  if ((yield* oldBotLedger).length === 0) return [];
+  return yield* sql.withTransaction(
+    Effect.gen(function* () {
+      if ((yield* oldBotLedger).length === 0) return [];
+      const recorded = yield* sql<{ readonly id: number; readonly name: string }>`
+        SELECT migration_id AS id, name FROM effect_sql_migrations ORDER BY migration_id
+      `;
+      const oldBotRows = recorded.filter(({ id }) => id >= 106);
+      const expected = migrationManifest.filter(([id]) => id >= 108 && id <= 112);
+      if (
+        skippedV2Migrations(recorded, 105).length > 0 ||
+        oldBotRows.some(
+          ({ id, name }, index) => expected[index]?.[0] !== id + 2 || expected[index]?.[1] !== name,
+        )
+      )
+        return [];
+
+      // The fork published these bot migrations before upstream claimed 106 and 107.
+      yield* Migration0106;
+      yield* Migration0107;
+      for (const { id } of [...oldBotRows].reverse()) {
+        yield* sql`UPDATE effect_sql_migrations SET migration_id = ${id + 2} WHERE migration_id = ${id}`;
+      }
+      yield* sql`
+        INSERT INTO effect_sql_migrations (migration_id, name)
+        VALUES (106, 'WorktreePathKeyIndex'), (107, 'DeferredSlashCommandIndex')
+      `;
+      return [
+        [106, "WorktreePathKeyIndex"],
+        [107, "DeferredSlashCommandIndex"],
+      ] as const;
+    }),
+  );
+});
+
 const run = Migrator.make({});
 
 export interface RunMigrationsOptions {
@@ -324,6 +372,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
     toMigrationInclusive === undefined || toMigrationInclusive >= FIRST_V2_MIGRATION_ID;
   // The reconcile takes the write lock; CLI startup must not contend with the server for a no-op.
   const previewMigrations = includesV2 && hasPending ? yield* reconcileV2PreviewMigration() : [];
+  const botMigrations =
+    hasPending && (toMigrationInclusive === undefined || toMigrationInclusive >= 112)
+      ? yield* reconcileBotMigrations()
+      : [];
   if (includesV2) {
     yield* assertV2MigrationsCanRun(toMigrationInclusive);
   }
@@ -344,7 +396,10 @@ export const runMigrations = Effect.fn("runMigrations")(function* ({
   );
   // One transaction per migration: an index build on a large database can take minutes, and a
   // restart then resumes after the last finished migration instead of rolling all of them back.
-  const executedMigrations: Array<readonly [id: number, name: string]> = [...previewMigrations];
+  const executedMigrations: Array<readonly [id: number, name: string]> = [
+    ...previewMigrations,
+    ...botMigrations,
+  ];
   for (const [index, [id, name]] of pending.entries()) {
     if (latestRecordedId > 0) {
       yield* Effect.log(DATABASE_MIGRATION_PROGRESS_MESSAGE).pipe(

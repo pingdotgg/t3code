@@ -1224,7 +1224,12 @@ export const layerWithOptions = (
       // Like restart recovery: an unexpected exit records the work it cancelled on the run that
       // started it and wakes that run, so the agent restarts awaited work instead of waiting on it.
       const writeReleasedWorkNote = Effect.fn("ProviderSessionManager.writeReleasedWorkNote")(
-        function* (released: ReleasedProviderThread) {
+        function* (
+          released: Pick<
+            ReleasedProviderThread,
+            "threadId" | "providerSessionId" | "providerThreadId" | "lostTasks" | "lostItems"
+          >,
+        ) {
           const { threadId, providerSessionId, lostTasks, lostItems } = released;
           if (lostTasks.length === 0 && lostItems.length === 0) return;
           const { runs, turnItems } = yield* projectionStore.getThreadRecords(
@@ -2932,6 +2937,26 @@ export const layerWithOptions = (
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
             if (nativeEvent.type === "command_output.delta") {
               return commandOutput.append(nativeEvent);
+            }
+            // A query process can exit under a live session, after the run's last event.
+            if (nativeEvent.type === "background_work.lost") {
+              return writeReleasedWorkNote({
+                threadId: nativeEvent.threadId,
+                providerSessionId: entry.runtime.providerSessionId,
+                providerThreadId: nativeEvent.providerThreadId,
+                lostTasks: nativeEvent.tasks,
+                lostItems: [],
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEventStreamError({
+                      driver: entry.runtime.driver,
+                      providerSessionId: entry.runtime.providerSessionId,
+                      raisedByT3: true,
+                      cause,
+                    }),
+                ),
+              );
             }
             if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {
