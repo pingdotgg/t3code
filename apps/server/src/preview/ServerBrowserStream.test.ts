@@ -12,6 +12,7 @@ import {
   type AuthEnvironmentScope,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -21,6 +22,7 @@ import * as Schema from "effect/Schema";
 import { HttpRouter, HttpServer } from "effect/http";
 
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
 import { routeLayer } from "./ServerBrowserStream.ts";
@@ -30,6 +32,7 @@ const platformLayer = NodeHttpPlatform.layer.pipe(Layer.provideMerge(NodeService
 const makeAuth = (
   scopes: ReadonlyArray<AuthEnvironmentScope>,
   error?: EnvironmentAuth.ServerAuthCredentialError,
+  awaitInvalidation: SessionStore.SessionStore["Service"]["awaitInvalidation"] = () => Effect.never,
 ) => {
   const requests: string[] = [];
   const layer = Layer.mock(EnvironmentAuth.EnvironmentAuth, {
@@ -45,7 +48,17 @@ const makeAuth = (
           });
     },
   });
-  return { layer, requests };
+  return {
+    layer: Layer.merge(
+      layer,
+      Layer.mock(SessionStore.SessionStore, {
+        cookieName: "test",
+        legacyCookieName: undefined,
+        awaitInvalidation,
+      }),
+    ),
+    requests,
+  };
 };
 
 const mutations = [
@@ -57,6 +70,7 @@ const mutations = [
   { type: "navigate", url: "https://example.com" },
   { type: "history", delta: -1 },
   { type: "reload" },
+  { type: "stopLoading" },
   { type: "probe", x: 10, y: 10 },
   { type: "takeControl" },
   { type: "releaseControl" },
@@ -149,13 +163,14 @@ it.effect.each([
       },
     ]);
     expect(auth.requests).toEqual([resource]);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("sends replies ahead of stale frames and only the newest frame after an ack", () =>
   Effect.gen(function* () {
     const output = yield* Queue.make<ServerBrowser.ServerBrowserViewerOutput>();
     const released: number[] = [];
+    const invalidated = yield* Deferred.make<void>();
     const frame = (id: number): ServerBrowser.ServerBrowserViewerOutput => ({
       _tag: "frame",
       data: new Uint8Array([id]),
@@ -177,7 +192,10 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
         { disableListenLog: true },
       ).pipe(
         Layer.provideMerge(NodeHttpServer.layerTest),
-        Layer.provide(makeAuth([AuthOrchestrationReadScope]).layer),
+        Layer.provide(
+          makeAuth([AuthOrchestrationReadScope], undefined, () => Deferred.await(invalidated))
+            .layer,
+        ),
       ),
     );
     const server = Context.get(services, HttpServer.HttpServer);
@@ -221,7 +239,13 @@ it.effect("sends replies ahead of stale frames and only the newest frame after a
     yield* Effect.promise(() => next.promise);
     expect(received).toEqual([1, "probe", 4]);
     expect(released).toEqual([2, 3, 1]);
-  }).pipe(Effect.scoped),
+
+    const closed = new Promise<void>((resolve) =>
+      socket.addEventListener("close", () => resolve(), { once: true }),
+    );
+    yield* Deferred.succeed(invalidated, undefined);
+    yield* Effect.promise(() => closed);
+  }),
 );
 
 it.effect.each([
@@ -264,7 +288,7 @@ it.effect.each([
     );
     expect(response.status).toBe(testCase.status);
     expect(attachments).toBe(0);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 it.effect("serves a tab's download only to an authorized session", () =>
@@ -369,7 +393,7 @@ it.effect("passes uploaded files to the page's open picker and needs operate sco
       { chooserId: "chooser-1", files: [{ name: "notes.txt", text: "hello" }] },
     ]);
     expect((yield* upload([AuthPreviewOperateScope], "stale")).status).toBe(409);
-  }).pipe(Effect.scoped),
+  }),
 );
 
 const decodeHostSetup = Schema.decodeUnknownEffect(Schema.fromJsonString(PreviewStreamHostSetup));
@@ -430,5 +454,5 @@ it.effect.each([
       need,
       command: "sudo t3 browser setup",
     });
-  }).pipe(Effect.scoped),
+  }),
 );

@@ -2,6 +2,7 @@ import {
   MessageId,
   RuntimeRequestId,
   CheckpointId,
+  CheckpointRef,
   CheckpointScopeId,
   NodeId,
   PlanId,
@@ -29,6 +30,7 @@ import {
   deriveTimelineEntriesFromVisibleTurnItemsWithState,
   deriveRevertTurnCountByUserMessageId,
   derivePhase,
+  findRevertCheckpoint,
   isLatestRunSettled,
   selectHandoffImageResources,
   selectMessageImageResources,
@@ -288,7 +290,10 @@ describe("V2 session presentation", () => {
           },
         };
       });
-    const checkpoint = (ordinal: number, status: "ready" | "missing" | "stale" = "ready") => ({
+    const checkpoint = (
+      ordinal: number,
+      status: "ready" | "missing" | "stale" | "error" = "ready",
+    ) => ({
       runId: runId(ordinal),
       checkpointTurnCount: ordinal,
       checkpointRef: `checkpoint-${ordinal}` as never,
@@ -321,6 +326,11 @@ describe("V2 session presentation", () => {
       expect(targets([2], [checkpoint(1, "stale")])).toEqual({ "user-2": 0 });
       // Without file snapshots, missing checkpoints still pin the conversation.
       expect(targets([1, 2], [checkpoint(1, "missing"), checkpoint(2, "missing")])).toEqual({
+        "user-1": 0,
+        "user-2": 1,
+      });
+      // A failed snapshot capture still pins the conversation; only file restore needs one.
+      expect(targets([1, 2], [checkpoint(1, "error")])).toEqual({
         "user-1": 0,
         "user-2": 1,
       });
@@ -416,6 +426,50 @@ describe("V2 session presentation", () => {
           }),
         ),
       ).toEqual({ "user-1": 0, "user-2": 1 });
+    });
+
+    it("never rewinds to a tracked repository's checkpoint", () => {
+      const now = DateTime.makeUnsafe("2026-11-10T00:00:00.000Z");
+      const entry = (id: string, scope: string, ordinal: number, appRunOrdinal: number | null) => ({
+        id: CheckpointId.make(id),
+        threadId: ThreadId.make("thread"),
+        scopeId: CheckpointScopeId.make(scope),
+        runId: null,
+        nodeId: NodeId.make("node"),
+        parentCheckpointId: null,
+        ordinalWithinScope: ordinal,
+        appRunOrdinal,
+        ref: CheckpointRef.make(`refs/t3/${id}`),
+        status: "ready" as const,
+        files: [],
+        capturedAt: now,
+      });
+      const projection = {
+        checkpoints: [
+          entry("root-start", "root", 0, null),
+          entry("api-start", "api", 0, null),
+          entry("root-1", "root", 1, 1),
+        ],
+        checkpointScopes: [
+          {
+            id: CheckpointScopeId.make("api"),
+            threadId: ThreadId.make("thread"),
+            runId: null,
+            nodeId: NodeId.make("node"),
+            parentScopeId: CheckpointScopeId.make("root"),
+            providerThreadId: null,
+            kind: "manual" as const,
+            ordinalWithinParent: 1,
+            advancesAppRunCount: false,
+            cwd: "/work/api",
+            repositoryPath: "/work/api",
+            createdAt: now,
+          },
+        ],
+      };
+      expect(findRevertCheckpoint(projection, 0)?.id).toBe("root-start");
+      expect(findRevertCheckpoint(projection, 1)?.id).toBe("root-1");
+      expect(findRevertCheckpoint(null, 0)).toBeUndefined();
     });
 
     it("leaves inherited history uneditable and restores the first local run to thread start", () => {
@@ -1391,7 +1445,30 @@ describe("HTML renders in the timeline", () => {
     ]);
   });
 
-  it("hosts a captured MCP app in place, from any provider's tool", () => {
+  it("shows a sent message in place through the turn fold, and only once sent", () => {
+    const sentMessage = "Draft reply:\n\n> Thanks, Thursday works.";
+    const send = (
+      status: OrchestrationV2TurnItem["status"],
+      output?: unknown,
+    ): OrchestrationV2TurnItem => ({
+      ...base("render", 2),
+      status,
+      type: "dynamic_tool",
+      toolName: "mcp__t3-code__send_to_user",
+      input: { message: sentMessage },
+      ...(output === undefined ? {} : { output }),
+    });
+    const entries = turn(send("completed", { structuredContent: { sentMessage }, content: [] }));
+    expect(entries.find((entry) => entry.kind === "sent-message")).toMatchObject({
+      id: "render",
+      runId,
+      text: sentMessage,
+    });
+    expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "sent-message", "message"]);
+    expect(turn(send("running")).some((entry) => entry.kind === "sent-message")).toBe(false);
+  });
+
+  it("hosts a captured MCP app after its tool row, from any provider's tool", () => {
     const mcpApp = {
       attachmentId: "render-thread-app-html",
       server: "weather",
@@ -1403,11 +1480,56 @@ describe("HTML renders in the timeline", () => {
       call.type === "dynamic_tool" ? { ...call, toolName: "weather.get_weather" } : call,
     );
     expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({
-      id: "render",
+      id: "mcp-app:render",
       itemId: "render",
       mcpApp,
     });
     expect(rowsFor(entries, false)).toEqual(["message", "turn-fold", "mcp-app", "message"]);
+  });
+
+  it("keeps an MCP app call's tool row and output beside its app card", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const result = { content: [{ type: "text", text: "Notice\nview\tcount\n/home\t42" }] };
+    const call = renderCall("completed", { t3McpApp: mcpApp, result });
+    const entries = turn(
+      call.type === "dynamic_tool" ? { ...call, toolName: "repro.aggregate_rum_events" } : call,
+    );
+    expect(entries.find((entry) => entry.kind === "mcp-app")).toMatchObject({ mcpApp });
+    const toolRows = entries.flatMap((entry) =>
+      entry.kind === "work" && entry.entry.toolTitle === "repro.aggregate_rum_events"
+        ? [entry.entry]
+        : [],
+    );
+    expect(toolRows).toMatchObject([{ toolData: { output: { result } } }]);
+  });
+
+  it("drops an MCP app card when an update removes the call's app", () => {
+    const mcpApp = {
+      attachmentId: "render-thread-app-html",
+      server: "repro",
+      tool: "aggregate_rum_events",
+      resourceUri: "ui://repro/dataviz",
+    };
+    const call = (output: unknown) => ({
+      ...renderCall("completed", output),
+      toolName: "repro.aggregate_rum_events",
+    });
+    const result = { content: [{ type: "text", text: "rows" }] };
+    const input = (output: unknown) => ({
+      visibleTurnItems: [visible(command("before", 1)), visible(call(output))],
+      optimisticMessages: [],
+    });
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(
+      input({ t3McpApp: mcpApp, result }),
+    );
+    const nextInput = input({ result });
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
   });
 
   it("hosts an MCP app whose call failed, as a form-deferring write does", () => {
