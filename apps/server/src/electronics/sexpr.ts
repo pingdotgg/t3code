@@ -6,7 +6,7 @@
 export type SExprNode = string | SExprList;
 export interface SExprList extends ReadonlyArray<SExprNode> {}
 
-const MAX_SEXPR_BYTES = 20 * 1024 * 1024;
+const MAX_SEXPR_BYTES = 48 * 1024 * 1024;
 const MAX_SEXPR_DEPTH = 128;
 
 export function parseSExpr(input: string): SExprList {

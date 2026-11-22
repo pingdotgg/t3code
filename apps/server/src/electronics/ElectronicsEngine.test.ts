@@ -1014,4 +1014,85 @@ ${libEntries.join("\n")}
     expect(dampedPts[0]?.y).toBeCloseTo(1, 3);
     expect(dampedPts[dampedPts.length - 1]?.y).toBeCloseTo(Math.exp(-1), 2);
   });
+
+  it("handles real-world KiCad filled copper zones, 0-pad graphic footprints, instances refs, no_connect, and hierarchical labels", () => {
+    // PCB with a B.Cu filled GND zone connecting two pads with 0 track segments,
+    // a 0-pad graphic logo footprint (must be skipped), an np_thru_hole pad,
+    // an unconnected-(...) net, and a rounded Edge.Cuts gr_arc corner.
+    const realWorldPcb = `(kicad_pcb
+  (net 0 "")
+  (net 1 "GND")
+  (net 2 "unconnected-(U1-NC-Pad3)")
+  (footprint "Logo:kibuzzard-abc" (layer "F.Cu") (at 5 5)
+    (property "Reference" "G***") (property "Value" "LOGO")
+  )
+  (footprint "R_0603" (layer "B.Cu") (at 10 10)
+    (property "Reference" "R1") (property "Value" "10k")
+    (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "B.Cu") (net 1 "GND"))
+    (pad "" np_thru_hole circle (at 2 0) (size 1 1) (layers "*.Cu"))
+  )
+  (footprint "R_0603" (layer "B.Cu") (at 30 10)
+    (property "Reference" "R2") (property "Value" "10k")
+    (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "B.Cu") (net 1 "GND"))
+    (pad "2" smd rect (at 2 0) (size 0.8 0.8) (layers "B.Cu") (net 2 "unconnected-(U1-NC-Pad3)"))
+  )
+  (gr_arc (start 0 5) (mid 1.5 1.5) (end 5 0) (layer "Edge.Cuts"))
+  (zone (net 1) (net_name "GND") (layer "B.Cu")
+    (fill yes (thermal_gap 0.25))
+    (filled_polygon (layer "B.Cu")
+      (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20))
+    )
+  )
+)`;
+    const pcbModel = parseElectronicsFile("pcb/real_zone.kicad_pcb", realWorldPcb);
+    expect(pcbModel.components.some((c) => c.ref === "G***")).toBe(false);
+    expect(pcbModel.zones).toHaveLength(1);
+    expect(pcbModel.boardOutline.length).toBeGreaterThanOrEqual(12);
+    expect(traceCircuitPath(pcbModel, { from: "R1.1", to: "R2.1" }).connected).toBe(true);
+    const pcbVal = runBuiltinCircuitValidation(pcbModel);
+    expect(pcbVal.issues.some((i) => i.code === "unrouted_pcb_net")).toBe(false);
+    expect(pcbVal.issues.some((i) => i.code === "floating_pin")).toBe(false);
+    expect(pcbVal.issues.some((i) => i.code === "single_pin_net")).toBe(false);
+
+    // Schematic with KiCad 7+ (instances ...) annotated refs, explicit no_connect, and hierarchical_label
+    const realWorldSch = `(kicad_sch
+  (lib_symbols
+    (symbol "Device:R"
+      (symbol "R_1_1"
+        (pin input line (at -3 0 0) (length 1) (name "1") (number "1"))
+        (pin passive line (at 3 0 180) (length 1) (name "2") (number "2"))
+      )
+    )
+    (symbol "power:GND"
+      (symbol "GND_1_1"
+        (pin power_in line (at 0 0 90) (length 0) (name "GND") (number "1"))
+      )
+    )
+  )
+  (symbol (lib_id "Device:R") (at 10 10 0) (unit 1)
+    (property "Reference" "R?") (property "Value" "10k")
+    (instances (project "demo" (path "/sheet1" (reference "R1") (unit 1))))
+  )
+  (symbol (lib_id "Device:R") (at 30 10 0) (unit 1)
+    (property "Reference" "R?") (property "Value" "10k")
+    (instances (project "demo" (path "/sheet1" (reference "R2") (unit 1))))
+  )
+  (symbol (lib_id "power:GND") (at 13 10 0) (unit 1)
+    (property "Reference" "#PWR?") (property "Value" "GND")
+    (instances (project "demo" (path "/sheet1" (reference "#PWR01") (unit 1))))
+  )
+  (hierarchical_label "CROSS_SHEET_SIG" (at 7 10 0))
+  (no_connect (at 27 10))
+  (no_connect (at 33 10))
+)`;
+    const schModel = parseElectronicsFile("sch/real_inst.kicad_sch", realWorldSch);
+    expect(schModel.components.map((c) => c.ref)).toContain("R1");
+    expect(schModel.components.map((c) => c.ref)).toContain("R2");
+    expect(schModel.components.map((c) => c.ref)).not.toContain("R?");
+    const schVal = runBuiltinCircuitValidation(schModel);
+    expect(schVal.issues.some((i) => i.code === "duplicate_reference")).toBe(false);
+    expect(schVal.issues.some((i) => i.code === "floating_pin")).toBe(false);
+    expect(schVal.issues.some((i) => i.code === "single_pin_net")).toBe(false);
+    expect(schVal.issues.some((i) => i.code === "undriven_input")).toBe(false);
+  });
 });

@@ -4,6 +4,7 @@ import type {
   ElectronicsCircuitModel,
   ElectronicsComponent,
   ElectronicsComponentKind,
+  ElectronicsCopperZone,
   ElectronicsDesignFormat,
   ElectronicsLabelMarker,
   ElectronicsNet,
@@ -610,6 +611,26 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
       else if (propName === "Footprint" && propVal.length > 0) footprint = propVal;
     }
 
+    // KiCad 7+ hierarchical sheets often store template refs ("R?", "LED?", "#PWR?") in
+    // `(property "Reference" ...)` and the actual annotated reference inside `(instances ...)`.
+    if (!ref || ref.endsWith("?")) {
+      const instancesNode = findChild(sym, "instances");
+      if (instancesNode) {
+        let resolvedRef: string | undefined;
+        for (const proj of findChildren(instancesNode, "project")) {
+          for (const pathNode of findChildren(proj, "path")) {
+            const instRef = atomString(findChild(pathNode, "reference")?.[1]);
+            if (instRef && instRef.length > 0 && !instRef.endsWith("?")) {
+              resolvedRef = instRef;
+              break;
+            }
+          }
+          if (resolvedRef) break;
+        }
+        if (resolvedRef) ref = resolvedRef;
+      }
+    }
+
     if (!ref) ref = libId ?? `SYM_${components.length + 1}`;
     if (!value) value = libId?.split(":").pop() ?? ref;
 
@@ -618,18 +639,26 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
       /^#FLG/iu.test(ref) ||
       (libId !== undefined && /:PWR_FLAG$/iu.test(libId));
 
-    const kind = inferComponentKind(ref, libId, value);
     const allLibPins = libId ? (libMap.get(libId) ?? []) : [];
     const libPins = allLibPins.filter(
       (lp) =>
         (lp.unit === 0 || lp.unit === targetUnit) && (lp.style === 0 || lp.style === symStyle),
     );
+    const kind: ElectronicsComponentKind =
+      isPowerFlag || (ref.startsWith("#") && libPins.length <= 1)
+        ? "power_symbol"
+        : inferComponentKind(ref, libId, value);
     const pins = libPins.map((lp) => {
       const pos = transformKiCadSchPin(x, y, rotation, mirror, lp.x, lp.y);
+      const hasNoConnect = noConnects.some((nc) => Math.hypot(nc.x - pos.x, nc.y - pos.y) <= 0.15);
       return {
         number: lp.number,
         ...(lp.name && lp.name !== "~" ? { name: lp.name } : {}),
-        electricalType: isPowerFlag ? ("power_out" as const) : lp.electricalType,
+        electricalType: isPowerFlag
+          ? ("power_out" as const)
+          : hasNoConnect
+            ? ("unconnected" as const)
+            : lp.electricalType,
         x: pos.x,
         y: pos.y,
       };
@@ -1035,6 +1064,8 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     const pins: ElectronicsPin[] = [];
     for (const pad of findChildren(fp, "pad")) {
       const padNum = atomString(pad[1]) ?? "";
+      const padType = atomString(pad[2])?.toLowerCase();
+      const isNonPlatedHole = padType === "np_thru_hole";
       const rawShape = atomString(pad[3])?.toLowerCase();
       const padShape =
         rawShape === "circle" ||
@@ -1061,12 +1092,12 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       const wx = Number((fx + pxLocal * cos - pyLocal * sin).toFixed(3));
       const wy = Number((fy + pxLocal * sin + pyLocal * cos).toFixed(3));
 
-      const cleanNet = resolvePcbNet(findChild(pad, "net"));
+      const cleanNet = isNonPlatedHole ? undefined : resolvePcbNet(findChild(pad, "net"));
       const rawLayers = readLayersList(findChild(pad, "layers"));
       const copperLayers = rawLayers?.filter((l) => l.endsWith(".Cu") || l === "*");
       pins.push({
         number: padNum || String(pins.length + 1),
-        electricalType: "passive",
+        electricalType: isNonPlatedHole ? "unconnected" : "passive",
         ...(cleanNet !== undefined ? { net: cleanNet } : {}),
         ...(copperLayers && copperLayers.length > 0 ? { layers: copperLayers } : {}),
         ...(padW !== undefined && Number.isFinite(padW) && padW > 0 ? { padWidth: padW } : {}),
@@ -1091,6 +1122,9 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
         });
       }
     }
+
+    // Skip 0-pad graphic/silkscreen footprints (logos, KiBuzzard text, G*** graphics)
+    if (pins.length === 0) continue;
 
     components.push({
       ref,
@@ -1275,6 +1309,167 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
       );
     }
   }
+  for (const arc of findChildren(root, "gr_arc")) {
+    const layer = atomString(findChild(arc, "layer")?.[1]);
+    if (layer !== "Edge.Cuts") continue;
+    const start = findChild(arc, "start");
+    const mid = findChild(arc, "mid");
+    const end = findChild(arc, "end");
+    const x1 = atomNumber(start?.[1]);
+    const y1 = atomNumber(start?.[2]);
+    const xm = atomNumber(mid?.[1]);
+    const ym = atomNumber(mid?.[2]);
+    const x2 = atomNumber(end?.[1]);
+    const y2 = atomNumber(end?.[2]);
+    if (
+      x1 === undefined ||
+      y1 === undefined ||
+      xm === undefined ||
+      ym === undefined ||
+      x2 === undefined ||
+      y2 === undefined
+    ) {
+      continue;
+    }
+    const d = 2 * (x1 * (ym - y2) + xm * (y2 - y1) + x2 * (y1 - ym));
+    if (Math.abs(d) < 1e-9) {
+      boardOutline.push(
+        { x1, y1, x2: xm, y2: ym, layer: "Edge.Cuts", width: 0.15 },
+        { x1: xm, y1: ym, x2, y2, layer: "Edge.Cuts", width: 0.15 },
+      );
+      continue;
+    }
+    const s1 = x1 * x1 + y1 * y1;
+    const sm = xm * xm + ym * ym;
+    const s2 = x2 * x2 + y2 * y2;
+    const cx = (s1 * (ym - y2) + sm * (y2 - y1) + s2 * (y1 - ym)) / d;
+    const cy = (s1 * (x2 - xm) + sm * (x1 - x2) + s2 * (xm - x1)) / d;
+    const radius = Math.hypot(x1 - cx, y1 - cy);
+    if (!Number.isFinite(radius) || radius > 1e5) {
+      boardOutline.push({ x1, y1, x2, y2, layer: "Edge.Cuts", width: 0.15 });
+      continue;
+    }
+    const a1 = Math.atan2(y1 - cy, x1 - cx);
+    const am = Math.atan2(ym - cy, xm - cx);
+    const a2 = Math.atan2(y2 - cy, x2 - cx);
+    const normPos = (ang: number) => ((ang % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+    const ccwMid = normPos(am - a1);
+    const ccwEnd = normPos(a2 - a1);
+    const sweep = ccwMid <= ccwEnd ? ccwEnd : ccwEnd - 2 * Math.PI;
+    const steps = 12;
+    let prevX = x1;
+    let prevY = y1;
+    for (let s = 1; s <= steps; s += 1) {
+      const nextX =
+        s === steps ? x2 : Number((cx + radius * Math.cos(a1 + (sweep * s) / steps)).toFixed(3));
+      const nextY =
+        s === steps ? y2 : Number((cy + radius * Math.sin(a1 + (sweep * s) / steps)).toFixed(3));
+      boardOutline.push({
+        x1: prevX,
+        y1: prevY,
+        x2: nextX,
+        y2: nextY,
+        layer: "Edge.Cuts",
+        width: 0.15,
+      });
+      prevX = nextX;
+      prevY = nextY;
+    }
+  }
+
+  // Parse filled copper zones (excluding keepout zones) for both copper connectivity & canvas rendering
+  // Iterative Ramer-Douglas-Peucker preserves concave cutouts cleanly without diagonal shortcuts.
+  const simplifyZonePoints = (pts: ReadonlyArray<ElectronicsPoint>): ElectronicsPoint[] => {
+    if (pts.length <= 240) return [...pts];
+    const rdp = (input: ReadonlyArray<ElectronicsPoint>, eps: number): ElectronicsPoint[] => {
+      if (input.length <= 3) return [...input];
+      const keep = new Uint8Array(input.length);
+      keep[0] = 1;
+      keep[input.length - 1] = 1;
+      const stack: Array<[number, number]> = [[0, input.length - 1]];
+      while (stack.length > 0) {
+        const [start, end] = stack.pop()!;
+        if (end - start <= 1) continue;
+        const a = input[start]!;
+        const b = input[end]!;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const lenSq = dx * dx + dy * dy;
+        let maxDist = -1;
+        let maxIdx = -1;
+        for (let i = start + 1; i < end; i += 1) {
+          const p = input[i]!;
+          let dist: number;
+          if (lenSq < 1e-12) {
+            dist = Math.hypot(p.x - a.x, p.y - a.y);
+          } else {
+            const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq));
+            dist = Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+          }
+          if (dist > maxDist) {
+            maxDist = dist;
+            maxIdx = i;
+          }
+        }
+        if (maxDist > eps && maxIdx > start) {
+          keep[maxIdx] = 1;
+          stack.push([start, maxIdx], [maxIdx, end]);
+        }
+      }
+      const out: ElectronicsPoint[] = [];
+      for (let i = 0; i < input.length; i += 1) {
+        if (keep[i] === 1) out.push(input[i]!);
+      }
+      return out;
+    };
+    let simplified = rdp(pts, 0.15);
+    if (simplified.length > 600) simplified = rdp(simplified, 0.35);
+    if (simplified.length > 900) simplified = rdp(simplified, 0.75);
+    return simplified;
+  };
+
+  const zones: ElectronicsCopperZone[] = [];
+  for (const zone of findChildren(root, "zone")) {
+    if (findChild(zone, "keepout")) continue;
+    const netNameExplicit = atomString(findChild(zone, "net_name")?.[1]);
+    const net =
+      netNameExplicit && netNameExplicit.length > 0
+        ? netNameExplicit
+        : resolvePcbNet(findChild(zone, "net"));
+    const zoneLayer = atomString(findChild(zone, "layer")?.[1]);
+    const connectPads = findChild(zone, "connect_pads");
+    const fillNode = findChild(zone, "fill");
+    const clearance =
+      atomNumber(findChild(fillNode ?? [], "thermal_gap")?.[1]) ??
+      atomNumber(findChild(connectPads ?? [], "clearance")?.[1]) ??
+      0.35;
+
+    for (const fp of findChildren(zone, "filled_polygon")) {
+      const polyLayer = atomString(findChild(fp, "layer")?.[1]) ?? zoneLayer;
+      if (!polyLayer || !polyLayer.endsWith(".Cu")) continue;
+      const ptsNode = findChild(fp, "pts");
+      if (!ptsNode) continue;
+      const rawPts: ElectronicsPoint[] = [];
+      for (const xy of findChildren(ptsNode, "xy")) {
+        const px = atomNumber(xy[1]);
+        const py = atomNumber(xy[2]);
+        if (px !== undefined && py !== undefined && Number.isFinite(px) && Number.isFinite(py)) {
+          rawPts.push({ x: Number(px.toFixed(3)), y: Number(py.toFixed(3)) });
+        }
+      }
+      if (rawPts.length >= 3) {
+        const points = simplifyZonePoints(rawPts);
+        if (points.length >= 3) {
+          zones.push({
+            layer: polyLayer,
+            ...(net !== undefined ? { net } : {}),
+            points,
+            ...(Number.isFinite(clearance) && clearance > 0 ? { clearance } : {}),
+          });
+        }
+      }
+    }
+  }
 
   const nets: ElectronicsNet[] = Array.from(netPinsMap.entries())
     .map(([name, pins]) => {
@@ -1305,6 +1500,7 @@ function parseKiCadPcb(filePath: string, content: string): ElectronicsCircuitMod
     nets,
     wires,
     vias,
+    ...(zones.length > 0 ? { zones } : {}),
     junctions: [],
     noConnects: [],
     labels: [],

@@ -119,6 +119,14 @@ export const ElectronicsVia = Schema.Struct({
 });
 export type ElectronicsVia = typeof ElectronicsVia.Type;
 
+export const ElectronicsCopperZone = Schema.Struct({
+  layer: Schema.String,
+  net: Schema.optional(Schema.String),
+  points: Schema.Array(ElectronicsPoint),
+  clearance: Schema.optional(Schema.Number),
+});
+export type ElectronicsCopperZone = typeof ElectronicsCopperZone.Type;
+
 export const ElectronicsLabelMarker = Schema.Struct({
   text: Schema.String,
   kind: Schema.Literals(["local", "global", "hierarchical", "power"]),
@@ -155,6 +163,7 @@ export const ElectronicsCircuitModel = Schema.Struct({
   nets: Schema.Array(ElectronicsNet),
   wires: Schema.Array(ElectronicsWireSegment),
   vias: Schema.Array(ElectronicsVia),
+  zones: Schema.optional(Schema.Array(ElectronicsCopperZone)),
   junctions: Schema.Array(ElectronicsPoint),
   noConnects: Schema.Array(ElectronicsPoint),
   labels: Schema.Array(ElectronicsLabelMarker),

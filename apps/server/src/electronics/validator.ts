@@ -304,6 +304,38 @@ function segmentToPadDistance(
   );
 }
 
+function pointInPolygon(
+  px: number,
+  py: number,
+  pts: ReadonlyArray<{ readonly x: number; readonly y: number }>,
+): boolean {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const xi = pts[i]!.x;
+    const yi = pts[i]!.y;
+    const xj = pts[j]!.x;
+    const yj = pts[j]!.y;
+    const intersects = yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+function pointToPolygonEdgeDistance(
+  px: number,
+  py: number,
+  pts: ReadonlyArray<{ readonly x: number; readonly y: number }>,
+): number {
+  let best = Number.POSITIVE_INFINITY;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const a = pts[j]!;
+    const b = pts[i]!;
+    const d = pointToSegmentDistance(px, py, a.x, a.y, b.x, b.y);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
 export interface PcbCopperIslandResult {
   readonly padPoints: ReadonlyArray<{
     readonly x: number;
@@ -386,8 +418,31 @@ export function computePcbCopperIslands(
       Math.abs(v.x) <= 1e6 &&
       Math.abs(v.y) <= 1e6,
   );
+  const netZones = (model.zones ?? [])
+    .filter((z) => z.net === netName && z.points.length >= 3)
+    .map((z) => {
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const pt of z.points) {
+        if (pt.x < minX) minX = pt.x;
+        if (pt.x > maxX) maxX = pt.x;
+        if (pt.y < minY) minY = pt.y;
+        if (pt.y > maxY) maxY = pt.y;
+      }
+      return {
+        layer: z.layer,
+        points: z.points,
+        thermalTol: Math.max(0.4, z.clearance ?? 0.35),
+        minX,
+        maxX,
+        minY,
+        maxY,
+      };
+    });
 
-  const totalNodes = padPoints.length + netTracks.length + netVias.length;
+  const totalNodes = padPoints.length + netTracks.length + netVias.length + netZones.length;
   const parent = Array.from({ length: totalNodes }, (_, idx) => idx);
   const find = (a: number): number => {
     let cur = a;
@@ -408,6 +463,7 @@ export function computePcbCopperIslands(
 
   const trackOffset = padPoints.length;
   const viaOffset = padPoints.length + netTracks.length;
+  const zoneOffset = padPoints.length + netTracks.length + netVias.length;
 
   const PCB_CELL = 5.0;
   const cellOf = (x: number, y: number) =>
@@ -621,6 +677,74 @@ export function computePcbCopperIslands(
     }
   }
 
+  // Filled copper pour zones: connect pads, vias, and tracks touching or thermally tied to each pour
+  for (let z = 0; z < netZones.length; z += 1) {
+    const zone = netZones[z]!;
+    const zNode = zoneOffset + z;
+
+    for (let p = 0; p < padPoints.length; p += 1) {
+      const pad = padPoints[p]!;
+      if (!padMatchesTrackLayer(pad.layers, zone.layer)) continue;
+      const padRadius = Math.hypot(pad.padWidth ?? 0.2, pad.padHeight ?? 0.2) / 2;
+      const margin = padRadius + zone.thermalTol;
+      if (
+        pad.x < zone.minX - margin ||
+        pad.x > zone.maxX + margin ||
+        pad.y < zone.minY - margin ||
+        pad.y > zone.maxY + margin
+      ) {
+        continue;
+      }
+      if (
+        pointInPolygon(pad.x, pad.y, zone.points) ||
+        pointToPolygonEdgeDistance(pad.x, pad.y, zone.points) <= margin
+      ) {
+        union(p, zNode);
+      }
+    }
+
+    for (let v = 0; v < netVias.length; v += 1) {
+      const via = netVias[v]!;
+      if (!viaMatchesTrackLayer(via.layers, zone.layer)) continue;
+      const margin = Math.max(0.05, via.size / 2) + zone.thermalTol;
+      if (
+        via.x < zone.minX - margin ||
+        via.x > zone.maxX + margin ||
+        via.y < zone.minY - margin ||
+        via.y > zone.maxY + margin
+      ) {
+        continue;
+      }
+      if (
+        pointInPolygon(via.x, via.y, zone.points) ||
+        pointToPolygonEdgeDistance(via.x, via.y, zone.points) <= margin
+      ) {
+        union(viaOffset + v, zNode);
+      }
+    }
+
+    for (let t = 0; t < netTracks.length; t += 1) {
+      const seg = netTracks[t]!;
+      if (seg.layer && seg.layer !== zone.layer) continue;
+      const margin = Math.max(0.1, (seg.width ?? 0.2) / 2) + zone.thermalTol;
+      const inBbox = (x: number, y: number) =>
+        x >= zone.minX - margin &&
+        x <= zone.maxX + margin &&
+        y >= zone.minY - margin &&
+        y <= zone.maxY + margin;
+      if (
+        (inBbox(seg.x1, seg.y1) &&
+          (pointInPolygon(seg.x1, seg.y1, zone.points) ||
+            pointToPolygonEdgeDistance(seg.x1, seg.y1, zone.points) <= margin)) ||
+        (inBbox(seg.x2, seg.y2) &&
+          (pointInPolygon(seg.x2, seg.y2, zone.points) ||
+            pointToPolygonEdgeDistance(seg.x2, seg.y2, zone.points) <= margin))
+      ) {
+        union(trackOffset + t, zNode);
+      }
+    }
+  }
+
   const padRoots = new Set<number>();
   const padIslandByRefPin = new Map<string, number>();
   for (let p = 0; p < padPoints.length; p += 1) {
@@ -732,6 +856,9 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
   }
 
   // 3. Output-to-output conflicts and undriven inputs (primarily schematic ERC)
+  const externalLabelNets = new Set(
+    model.labels.filter((l) => l.kind === "global" || l.kind === "hierarchical").map((l) => l.text),
+  );
   for (const net of model.nets) {
     const drivers = net.pins.filter(
       (p) => p.electricalType === "output" || p.electricalType === "power_out",
@@ -762,7 +889,13 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
         p.electricalType === "open_collector" ||
         p.electricalType === "open_emitter",
     );
-    if (inputs.length > 0 && !hasDriverOrPassive && !net.isPower && !net.isGround) {
+    if (
+      inputs.length > 0 &&
+      !hasDriverOrPassive &&
+      !net.isPower &&
+      !net.isGround &&
+      !externalLabelNets.has(net.name)
+    ) {
       const firstComp = model.components.find((c) => c.ref === inputs[0]!.ref);
       issues.push({
         id: nextId("undriven"),
@@ -777,8 +910,16 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
       });
     }
 
-    // 4. Single-pin named nets (catches typos in net labels like SDA vs SDA_1)
-    if (net.pins.length === 1 && !net.isPower && !net.isGround && !net.name.startsWith("Net-(")) {
+    // 4. Single-pin named nets (catches typos in net labels like SDA vs SDA_1;
+    // ignore KiCad auto-generated `unconnected-(...)` nets and cross-sheet global/hierarchical labels)
+    if (
+      net.pins.length === 1 &&
+      !net.isPower &&
+      !net.isGround &&
+      !net.name.startsWith("Net-(") &&
+      !/^unconnected-\(/iu.test(net.name) &&
+      !externalLabelNets.has(net.name)
+    ) {
       const sole = net.pins[0]!;
       const comp = model.components.find((c) => c.ref === sole.ref);
       const pin = comp?.pins.find((p) => p.number === sole.pin);
@@ -796,22 +937,25 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
     }
   }
 
-  // 5. Floating / unconnected component pins (excluding explicit no_connects and power symbols)
-  for (const comp of model.components) {
-    if (comp.kind === "power_symbol" || comp.ref.startsWith("#")) continue;
-    for (const pin of comp.pins) {
-      if (pin.electricalType === "unconnected") continue;
-      if (!pin.net) {
-        issues.push({
-          id: nextId("floating"),
-          code: "floating_pin",
-          severity: pin.electricalType === "power_in" ? "error" : "warning",
-          source: "builtin",
-          message: `Pin ${comp.ref}.${pin.number}${pin.name ? ` (${pin.name})` : ""} is unconnected${pin.electricalType === "power_in" ? " (power input)" : ""}.`,
-          refs: [comp.ref],
-          ...(pin.x !== undefined ? { x: pin.x } : comp.x !== undefined ? { x: comp.x } : {}),
-          ...(pin.y !== undefined ? { y: pin.y } : comp.y !== undefined ? { y: comp.y } : {}),
-        });
+  // 5. Floating / unconnected component pins (schematic & Circuit JSON ERC; skip KiCad PCBs
+  // where unnetted pads are mechanical/unused by exported netlist design)
+  if (model.format !== "kicad_pcb") {
+    for (const comp of model.components) {
+      if (comp.kind === "power_symbol" || comp.ref.startsWith("#")) continue;
+      for (const pin of comp.pins) {
+        if (pin.electricalType === "unconnected") continue;
+        if (!pin.net) {
+          issues.push({
+            id: nextId("floating"),
+            code: "floating_pin",
+            severity: pin.electricalType === "power_in" ? "error" : "warning",
+            source: "builtin",
+            message: `Pin ${comp.ref}.${pin.number}${pin.name ? ` (${pin.name})` : ""} is unconnected${pin.electricalType === "power_in" ? " (power input)" : ""}.`,
+            refs: [comp.ref],
+            ...(pin.x !== undefined ? { x: pin.x } : comp.x !== undefined ? { x: comp.x } : {}),
+            ...(pin.y !== undefined ? { y: pin.y } : comp.y !== undefined ? { y: comp.y } : {}),
+          });
+        }
       }
     }
   }

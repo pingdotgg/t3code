@@ -5,7 +5,14 @@ import type {
   ElectronicsValidationIssue,
 } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
-import { CrosshairIcon, LayersIcon, Maximize2Icon, ZoomInIcon, ZoomOutIcon } from "lucide-react";
+import {
+  CrosshairIcon,
+  LayersIcon,
+  Maximize2Icon,
+  TagIcon,
+  ZoomInIcon,
+  ZoomOutIcon,
+} from "lucide-react";
 import { type MouseEvent, type WheelEvent, useRef, useState } from "react";
 
 import { Button } from "../ui/button";
@@ -25,38 +32,92 @@ function layerColor(layer: string | undefined, isPcb: boolean): string {
   if (!isPcb) return "var(--chart-2, #10b981)";
   if (layer === "F.Cu") return "var(--destructive, #ef4444)";
   if (layer === "B.Cu") return "var(--info, #3b82f6)";
+  if (layer === "In1.Cu") return "var(--chart-2, #10b981)";
+  if (layer === "In2.Cu") return "var(--chart-3, #a855f7)";
+  if (layer === "In3.Cu") return "var(--chart-4, #06b6d4)";
+  if (layer === "In4.Cu") return "var(--chart-5, #f97316)";
   if (layer === "Edge.Cuts") return "var(--warning, #eab308)";
+  if (layer === "Zones") return "var(--chart-2, #10b981)";
   return "var(--chart-3, #a855f7)";
 }
 
-function componentBodySize(comp: ElectronicsComponent, isPcb: boolean): { w: number; h: number } {
+function isPowerFlagComponent(comp: ElectronicsComponent): boolean {
+  return (
+    /^PWR_FLAG$/iu.test(comp.value) ||
+    /^#FLG/iu.test(comp.ref) ||
+    (comp.libId !== undefined && /:PWR_FLAG$/iu.test(comp.libId))
+  );
+}
+
+function componentBodyRect(
+  comp: ElectronicsComponent,
+  isPcb: boolean,
+): { cx: number; cy: number; w: number; h: number } {
+  const originX = comp.x ?? 0;
+  const originY = comp.y ?? 0;
+  const positionedPins = comp.pins.filter((p) => p.x !== undefined && p.y !== undefined);
+
   if (isPcb) {
-    if (comp.pins.length >= 2) {
-      let minX = comp.x ?? 0;
-      let maxX = comp.x ?? 0;
-      let minY = comp.y ?? 0;
-      let maxY = comp.y ?? 0;
-      for (const p of comp.pins) {
-        if (p.x !== undefined) {
-          minX = Math.min(minX, p.x);
-          maxX = Math.max(maxX, p.x);
-        }
-        if (p.y !== undefined) {
-          minY = Math.min(minY, p.y);
-          maxY = Math.max(maxY, p.y);
-        }
+    if (positionedPins.length >= 1) {
+      let minX = Number.POSITIVE_INFINITY;
+      let maxX = Number.NEGATIVE_INFINITY;
+      let minY = Number.POSITIVE_INFINITY;
+      let maxY = Number.NEGATIVE_INFINITY;
+      for (const p of positionedPins) {
+        const halfW = (p.padWidth ?? 0.6) / 2;
+        const halfH = (p.padHeight ?? 0.6) / 2;
+        const padExtent = Math.max(halfW, halfH);
+        minX = Math.min(minX, p.x! - padExtent);
+        maxX = Math.max(maxX, p.x! + padExtent);
+        minY = Math.min(minY, p.y! - padExtent);
+        maxY = Math.max(maxY, p.y! + padExtent);
       }
       return {
-        w: Math.max(2.4, maxX - minX + 1.4),
-        h: Math.max(1.6, maxY - minY + 1.2),
+        cx: (minX + maxX) / 2,
+        cy: (minY + maxY) / 2,
+        w: Math.max(1.4, maxX - minX + 0.6),
+        h: Math.max(1.2, maxY - minY + 0.6),
       };
     }
-    return { w: 3.2, h: 2.0 };
+    return { cx: originX, cy: originY, w: 2.4, h: 1.6 };
   }
-  if (comp.kind === "ic") return { w: 12, h: Math.max(10, comp.pins.length * 2.5) };
-  if (comp.kind === "power_symbol") return { w: 3.6, h: 3.6 };
-  if (comp.kind === "power_source") return { w: 9, h: 9 };
-  return { w: 9, h: 6 };
+
+  if (comp.kind === "power_symbol") {
+    return { cx: originX, cy: originY, w: 3.0, h: 3.0 };
+  }
+  if (positionedPins.length >= 2) {
+    let minX = originX;
+    let maxX = originX;
+    let minY = originY;
+    let maxY = originY;
+    for (const p of positionedPins) {
+      minX = Math.min(minX, p.x!);
+      maxX = Math.max(maxX, p.x!);
+      minY = Math.min(minY, p.y!);
+      maxY = Math.max(maxY, p.y!);
+    }
+    const spanX = maxX - minX;
+    const spanY = maxY - minY;
+    if (comp.kind === "ic" || comp.kind === "connector") {
+      return {
+        cx: (minX + maxX) / 2,
+        cy: (minY + maxY) / 2,
+        w: Math.max(6.5, Math.min(26, spanX * 0.72)),
+        h: Math.max(6.0, Math.min(34, spanY * 0.82)),
+      };
+    }
+    return {
+      cx: (minX + maxX) / 2,
+      cy: (minY + maxY) / 2,
+      w: Math.max(3.6, Math.min(9.0, spanX > 0.5 ? spanX * 0.6 : 4.4)),
+      h: Math.max(2.6, Math.min(7.5, spanY > 0.5 ? spanY * 0.6 : 3.2)),
+    };
+  }
+  if (comp.kind === "ic") {
+    return { cx: originX, cy: originY, w: 10, h: Math.max(8, comp.pins.length * 2.2) };
+  }
+  if (comp.kind === "power_source") return { cx: originX, cy: originY, w: 8, h: 8 };
+  return { cx: originX, cy: originY, w: 6.8, h: 4.6 };
 }
 
 export function CircuitCanvas(props: CircuitCanvasProps) {
@@ -84,6 +145,7 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
   } | null>(null);
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(() => new Set());
   const [showLayerMenu, setShowLayerMenu] = useState(false);
+  const [showLabels, setShowLabels] = useState(true);
   const [lastFilePath, setLastFilePath] = useState(model.filePath);
   if (model.filePath !== lastFilePath) {
     setLastFilePath(model.filePath);
@@ -91,6 +153,7 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
     setPan({ x: 0, y: 0 });
     setHiddenLayers(new Set());
     setShowLayerMenu(false);
+    setShowLabels(true);
   }
 
   const bounds = model.bounds;
@@ -104,10 +167,20 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
   const traceNets = new Set(activeTrace?.highlightedNets ?? []);
   const traceComps = new Set(activeTrace?.highlightedComponents ?? []);
 
+  const hasZones = (model.zones?.length ?? 0) > 0;
   const layerSet = new Set<string>();
-  for (const l of model.layers) layerSet.add(l);
   for (const w of model.wires) {
     if (w.layer) layerSet.add(w.layer);
+  }
+  for (const z of model.zones ?? []) {
+    if (z.layer) layerSet.add(z.layer);
+  }
+  if (model.boardOutline.length > 0) layerSet.add("Edge.Cuts");
+  if (hasZones) layerSet.add("Zones");
+  if (layerSet.size === 0) {
+    for (const l of model.layers) {
+      if (!isPcb || l.endsWith(".Cu") || l === "Edge.Cuts") layerSet.add(l);
+    }
   }
   const availableLayers = Array.from(layerSet);
 
@@ -178,8 +251,13 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
     : null;
 
   const unitScale = Math.max(baseWidth, baseHeight) / 100;
-  const strokeUnit = Math.max(0.18, unitScale * 0.45);
-  const fontUnit = Math.max(1.1, unitScale * 2.3);
+  const strokeUnit = Math.max(0.14, unitScale * 0.36);
+  const isDenseBoard = model.components.length > 40;
+  const fontUnit = Math.min(
+    isPcb ? 3.2 : 3.4,
+    Math.max(0.95, unitScale * (isDenseBoard ? 1.35 : 1.85)),
+  );
+  const zoomFontScale = 1 / Math.pow(Math.max(1, zoom), 0.35);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -195,6 +273,14 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
               <LayersIcon className="size-3.5" />
             </Button>
           )}
+          <Button
+            size="xs"
+            variant={showLabels ? "secondary" : "ghost"}
+            onClick={() => setShowLabels((v) => !v)}
+            aria-label={gt("Toggle component labels")}
+          >
+            <TagIcon className="size-3.5" />
+          </Button>
           <Button
             size="xs"
             variant="ghost"
@@ -305,6 +391,37 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
               onSelectRef(null);
             }}
           />
+
+          {!hiddenLayers.has("Zones") &&
+            (model.zones ?? []).map((zone) => {
+              if (hiddenLayers.has(zone.layer)) return null;
+              const isSelected = Boolean(zone.net && zone.net === selectedNet);
+              const isTraced = Boolean(zone.net && traceNets.has(zone.net));
+              const fill = isTraced
+                ? "var(--warning, #f59e0b)"
+                : isSelected
+                  ? "var(--primary, #38bdf8)"
+                  : layerColor(zone.layer, true);
+              const ptsAttr = zone.points.map((pt) => `${pt.x},${pt.y}`).join(" ");
+              const p0 = zone.points[0];
+              const pMid = zone.points[Math.floor(zone.points.length / 2)];
+              return (
+                <polygon
+                  key={`zone:${zone.layer}:${zone.net ?? ""}:${zone.points.length}:${p0?.x ?? 0}:${p0?.y ?? 0}:${pMid?.x ?? 0}:${pMid?.y ?? 0}`}
+                  points={ptsAttr}
+                  fill={fill}
+                  fillOpacity={isTraced || isSelected ? 0.24 : 0.12}
+                  stroke={fill}
+                  strokeOpacity={isTraced || isSelected ? 0.65 : 0.24}
+                  strokeWidth={strokeUnit * 0.35}
+                  className="cursor-pointer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (zone.net) onSelectNet(zone.net);
+                  }}
+                />
+              );
+            })}
 
           {!hiddenLayers.has("Edge.Cuts") &&
             model.boardOutline.map((seg) => (
@@ -428,7 +545,8 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
 
           {model.components.map((comp) => {
             if (comp.x === undefined || comp.y === undefined) return null;
-            const { w, h } = componentBodySize(comp, isPcb);
+            const isFlag = isPowerFlagComponent(comp);
+            const { cx, cy, w, h } = componentBodyRect(comp, isPcb);
             const isSelected = comp.ref === selectedRef;
             const isTraced = traceComps.has(comp.ref);
             const touchesSelectedNet =
@@ -441,37 +559,67 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
                   ? "var(--chart-2, #10b981)"
                   : comp.kind === "power_symbol"
                     ? "var(--destructive, #ef4444)"
-                    : "var(--foreground)";
+                    : isPcb && isDenseBoard
+                      ? "var(--muted-foreground)"
+                      : "var(--foreground)";
+
+            const compStrokeWidth =
+              isSelected || isTraced
+                ? strokeUnit * 1.5
+                : isPcb && isDenseBoard
+                  ? strokeUnit * 0.5
+                  : strokeUnit * 0.85;
+
+            const refText = comp.kind === "power_symbol" ? comp.value : comp.ref;
+            const refFont = isPcb
+              ? Math.min(
+                  fontUnit * zoomFontScale * (isDenseBoard ? 0.56 : 0.78),
+                  Math.max(0.55, Math.min(w, h) * 0.42),
+                )
+              : Math.min(fontUnit * zoomFontScale * 0.85, Math.max(1.45, Math.max(w, h) * 0.34));
+            const showRefLabel =
+              !isFlag && (showLabels || isSelected || isTraced || touchesSelectedNet);
 
             return (
               <g
-                key={`comp:${comp.ref}:${comp.x}:${comp.y}`}
+                key={`comp:${comp.ref}:${comp.unit ?? 0}:${comp.x}:${comp.y}`}
                 className="cursor-pointer"
                 onClick={(e) => {
                   e.stopPropagation();
                   onSelectRef(comp.ref);
                 }}
               >
-                {comp.kind === "power_symbol" ? (
+                {isFlag ? (
+                  <circle
+                    cx={comp.x}
+                    cy={comp.y}
+                    r={strokeUnit * 1.2}
+                    fill="var(--muted)"
+                    stroke={borderColor}
+                    strokeWidth={strokeUnit * 0.6}
+                    opacity={isSelected ? 1 : 0.55}
+                  />
+                ) : comp.kind === "power_symbol" ? (
                   <polygon
-                    points={`${comp.x},${comp.y - h * 0.6} ${comp.x - w * 0.5},${comp.y + h * 0.4} ${comp.x + w * 0.5},${comp.y + h * 0.4}`}
+                    points={`${cx},${cy - h * 0.55} ${cx - w * 0.45},${cy + h * 0.38} ${cx + w * 0.45},${cy + h * 0.38}`}
                     fill="var(--card)"
                     stroke={borderColor}
-                    strokeWidth={strokeUnit * 0.9}
+                    strokeWidth={strokeUnit * 0.85}
                   />
                 ) : (
                   <rect
-                    x={comp.x - w / 2}
-                    y={comp.y - h / 2}
+                    x={cx - w / 2}
+                    y={cy - h / 2}
                     width={w}
                     height={h}
-                    rx={strokeUnit * 1.1}
+                    rx={Math.min(strokeUnit * 1.0, Math.min(w, h) * 0.2)}
                     fill={
                       isTraced ? "var(--warning-surface, rgba(245, 158, 11, 0.14))" : "var(--card)"
                     }
-                    fillOpacity={isPcb ? 0.65 : 0.92}
+                    fillOpacity={isPcb ? (isDenseBoard ? 0.28 : 0.5) : 0.9}
                     stroke={borderColor}
-                    strokeWidth={isSelected || isTraced ? strokeUnit * 1.5 : strokeUnit * 0.9}
+                    strokeOpacity={isPcb && isDenseBoard && !isSelected && !isTraced ? 0.6 : 1}
+                    strokeWidth={compStrokeWidth}
                   />
                 )}
 
@@ -479,68 +627,124 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
                   if (pin.x === undefined || pin.y === undefined) return null;
                   const pinHighlighted =
                     (pin.net && pin.net === selectedNet) || (pin.net && traceNets.has(pin.net));
+                  const pinFill = pinHighlighted
+                    ? "var(--warning, #f59e0b)"
+                    : !pin.net
+                      ? isPcb || pin.electricalType === "unconnected"
+                        ? "var(--muted-foreground)"
+                        : "var(--destructive, #ef4444)"
+                      : "var(--chart-1, #6366f1)";
+
+                  if (isPcb) {
+                    const pw = Math.max(0.24, pin.padWidth ?? Math.max(strokeUnit * 1.4, 0.5));
+                    const ph = Math.max(0.24, pin.padHeight ?? Math.max(strokeUnit * 1.4, 0.5));
+                    const padRot = pin.padRotation ?? 0;
+                    const isCircle = pin.padShape === "circle" || (pw === ph && !pin.padShape);
+                    const rx =
+                      pin.padShape === "oval"
+                        ? Math.min(pw, ph) / 2
+                        : pin.padShape === "roundrect"
+                          ? Math.min(pw, ph) * (pin.padRoundRectRatio ?? 0.25)
+                          : Math.min(pw, ph) * 0.12;
+                    return (
+                      <g
+                        key={`pin:${comp.ref}:${pin.number}:${pin.x}:${pin.y}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectRef(comp.ref);
+                          if (pin.net) onSelectNet(pin.net);
+                        }}
+                      >
+                        {isCircle ? (
+                          <circle
+                            cx={pin.x}
+                            cy={pin.y}
+                            r={Math.min(pw, ph) / 2}
+                            fill={pinFill}
+                            fillOpacity={!pin.net ? 0.4 : 0.9}
+                            stroke="var(--background)"
+                            strokeWidth={Math.min(strokeUnit * 0.25, Math.min(pw, ph) * 0.12)}
+                          />
+                        ) : (
+                          <rect
+                            x={pin.x - pw / 2}
+                            y={pin.y - ph / 2}
+                            width={pw}
+                            height={ph}
+                            rx={rx}
+                            transform={
+                              padRot !== 0 ? `rotate(${-padRot} ${pin.x} ${pin.y})` : undefined
+                            }
+                            fill={pinFill}
+                            fillOpacity={!pin.net ? 0.4 : 0.9}
+                            stroke="var(--background)"
+                            strokeWidth={Math.min(strokeUnit * 0.25, Math.min(pw, ph) * 0.12)}
+                          />
+                        )}
+                      </g>
+                    );
+                  }
+
                   return (
                     <g
-                      key={`pin:${comp.ref}:${pin.number}`}
+                      key={`pin:${comp.ref}:${pin.number}:${pin.x}:${pin.y}`}
                       onClick={(e) => {
                         e.stopPropagation();
                         onSelectRef(comp.ref);
                         if (pin.net) onSelectNet(pin.net);
                       }}
                     >
-                      {!isPcb && (
-                        <line
-                          x1={comp.x!}
-                          y1={comp.y!}
-                          x2={pin.x}
-                          y2={pin.y}
-                          stroke={
-                            pinHighlighted ? "var(--warning, #f59e0b)" : "var(--muted-foreground)"
-                          }
-                          strokeWidth={strokeUnit * 0.55}
-                          opacity={0.45}
-                        />
-                      )}
+                      <line
+                        x1={cx}
+                        y1={cy}
+                        x2={pin.x}
+                        y2={pin.y}
+                        stroke={
+                          pinHighlighted ? "var(--warning, #f59e0b)" : "var(--muted-foreground)"
+                        }
+                        strokeWidth={strokeUnit * 0.5}
+                        opacity={0.42}
+                      />
                       <circle
                         cx={pin.x}
                         cy={pin.y}
-                        r={isPcb ? Math.max(strokeUnit * 1.1, 0.42) : strokeUnit * 1.15}
-                        fill={
-                          pinHighlighted
-                            ? "var(--warning, #f59e0b)"
-                            : !pin.net
-                              ? "var(--destructive, #ef4444)"
-                              : "var(--chart-1, #6366f1)"
-                        }
+                        r={strokeUnit * 1.05}
+                        fill={pinFill}
                         stroke="var(--background)"
-                        strokeWidth={strokeUnit * 0.3}
+                        strokeWidth={strokeUnit * 0.25}
                       />
                     </g>
                   );
                 })}
 
-                <text
-                  x={comp.x}
-                  y={comp.y - h / 2 - fontUnit * 0.35}
-                  textAnchor="middle"
-                  fontSize={fontUnit}
-                  fontWeight={600}
-                  fill="var(--foreground)"
-                  fontFamily="var(--font-mono, monospace)"
-                >
-                  {comp.kind === "power_symbol" ? comp.value : comp.ref}
-                </text>
-                {comp.kind !== "power_symbol" &&
+                {showRefLabel && (
+                  <text
+                    x={cx}
+                    y={isPcb && isDenseBoard ? cy + refFont * 0.35 : cy - h / 2 - refFont * 0.28}
+                    textAnchor="middle"
+                    fontSize={refFont}
+                    fontWeight={600}
+                    fill="var(--foreground)"
+                    fillOpacity={isPcb && isDenseBoard && !isSelected && !isTraced ? 0.8 : 1}
+                    fontFamily="var(--font-mono, monospace)"
+                  >
+                    {refText}
+                  </text>
+                )}
+                {showRefLabel &&
+                  comp.kind !== "power_symbol" &&
+                  (!isPcb || !isDenseBoard || zoom >= 2.2 || isSelected) &&
                   (() => {
                     const displayVal = comp.value.slice(0, 14);
                     const fittedFont = Math.min(
-                      fontUnit * 0.76,
-                      (w * 0.86) / Math.max(3.5, displayVal.length * 0.62),
+                      refFont * 0.78,
+                      (w * 0.84) / Math.max(3.5, displayVal.length * 0.62),
                     );
+                    if (fittedFont < 0.45) return null;
                     return (
                       <text
-                        x={comp.x}
-                        y={comp.y + fittedFont * 0.35}
+                        x={cx}
+                        y={cy + fittedFont * 0.35}
                         textAnchor="middle"
                         fontSize={fittedFont}
                         fill="var(--muted-foreground)"
@@ -571,12 +775,14 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
             )
             .map((lbl) => {
               const isHighlighted = lbl.text === selectedNet || traceNets.has(lbl.text);
+              if (!showLabels && !isHighlighted) return null;
+              const lblFont = fontUnit * zoomFontScale * 0.72;
               return (
                 <text
                   key={`lbl:${lbl.kind}:${lbl.text}:${lbl.x}:${lbl.y}`}
                   x={lbl.x}
-                  y={lbl.y - fontUnit * 0.3}
-                  fontSize={fontUnit * 0.85}
+                  y={lbl.y - lblFont * 0.3}
+                  fontSize={lblFont}
                   fontWeight={isHighlighted ? 700 : 500}
                   fill={
                     isHighlighted
