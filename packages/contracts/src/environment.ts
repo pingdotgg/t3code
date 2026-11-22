@@ -222,6 +222,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   linkedThreadRefreshes: Schema.optionalKey(Schema.Boolean),
   /** Answers `issues.linkedThreads`, the threads an issue is linked to. */
   issueLinkedThreads: Schema.optionalKey(Schema.Boolean),
+  /** Server orchestrates cloud sandboxes (CodeSandbox, Upstash Box, Vercel Sandbox). */
+  sandboxes: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

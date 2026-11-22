@@ -103,6 +103,13 @@ import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
 import * as DeviceHubProxy from "./device/DeviceHubProxy.ts";
+import * as WebhookNotificationService from "./notifications/WebhookNotificationService.ts";
+import * as SandboxConfig from "./sandboxes/SandboxConfig.ts";
+import * as SandboxNotificationHook from "./sandboxes/SandboxNotificationHook.ts";
+import * as SandboxOrchestratorService from "./sandboxes/SandboxOrchestratorService.ts";
+import * as SandboxRepository from "./sandboxes/SandboxRepository.ts";
+import * as SandboxWatchdogService from "./sandboxes/SandboxWatchdogService.ts";
+import * as SandboxesHttp from "./sandboxes/http.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as PreviewTunnel from "./preview/PreviewTunnel.ts";
@@ -840,7 +847,38 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   ),
 );
 
-const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
+const layerWebhookNotifications = WebhookNotificationService.subscriberLayer;
+
+const layerSandboxNotifier = Layer.effect(
+  SandboxNotificationHook.SandboxNotifier,
+  Effect.map(WebhookNotificationService.WebhookNotificationService, (notifications) =>
+    SandboxNotificationHook.SandboxNotifier.of({
+      notify: notifications.notifyCustom,
+    }),
+  ),
+);
+
+const layerSandboxInfrastructure = Layer.mergeAll(
+  SandboxRepository.layer,
+  SandboxConfig.layerProviderRegistry,
+).pipe(Layer.provideMerge(SandboxConfig.layer));
+
+const layerSandboxOrchestrator = SandboxOrchestratorService.layer.pipe(
+  Layer.provideMerge(layerSandboxInfrastructure),
+);
+
+const layerSandboxWatchdog = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const watchdog = yield* SandboxWatchdogService.SandboxWatchdogService;
+    yield* watchdog.start();
+  }),
+).pipe(
+  Layer.provide(SandboxWatchdogService.layer),
+  Layer.provide(SandboxWatchdogService.layerActivityProbe),
+  Layer.provide(layerSandboxNotifier),
+);
+
+const layerRuntimeDependenciesBase = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(layerUsage),
   Layer.provideMerge(layerBackground),
   // The same layer the event sink uses; memoized, subscriptions and batch ranking share it.
@@ -859,6 +897,15 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   Layer.provideMerge(VcsAutomaticFetchInterval.layer.pipe(Layer.provide(layerServerSettings))),
   Layer.provide(NetService.layer),
 );
+
+const layerRuntimeDependencies = Layer.mergeAll(
+  layerSandboxWatchdog.pipe(
+    Layer.provide(layerSandboxOrchestrator),
+    Layer.provide(layerWebhookNotifications),
+  ),
+  layerSandboxOrchestrator,
+  layerWebhookNotifications,
+).pipe(Layer.provideMerge(layerRuntimeDependenciesBase));
 
 const layerCommandReadiness = HttpRouter.middleware(
   (httpEffect) =>
@@ -889,6 +936,7 @@ const layerMakeRoutes = Layer.mergeAll(
     GuestHttp.layer,
     LinkThreadHttp.layer,
     DeviceHubProxy.layer,
+    SandboxesHttp.layer,
     ServerBrowserStream.routeLayer,
     PreviewTunnel.routeLayer,
     ServerHttp.layerStaticAndDevRoute,

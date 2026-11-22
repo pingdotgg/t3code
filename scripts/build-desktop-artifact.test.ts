@@ -566,7 +566,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
-      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.t3tools.T3Code");
+      assert.nestedPropertyVal(linux, "linux.desktop.entry.StartupWMClass", "com.kbcode.KBCode");
     }),
   );
 
@@ -1564,7 +1564,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     });
 
     assert.deepStrictEqual(configuration, {
-      appId: "com.t3tools.t3code",
+      appId: "com.kbcode.app",
       teamId: "ABC1234567",
       rpDomains: ["example.clerk.accounts.dev"],
       provisioningProfilePath: "/tmp/t3code.provisionprofile",
@@ -1587,7 +1587,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       "clerk.example.com",
       "example.clerk.accounts.dev",
     ]);
-    assert.include(entitlements, "<string>ABC1234567.com.t3tools.t3code</string>");
+    assert.include(entitlements, "<string>ABC1234567.com.kbcode.app</string>");
     assert.include(entitlements, "<string>webcredentials:clerk.example.com</string>");
     assert.include(entitlements, "<string>webcredentials:example.clerk.accounts.dev</string>");
     assert.include(entitlements, "<key>com.apple.security.cs.allow-jit</key>");
@@ -1598,7 +1598,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
   });
 
   it("grants in-app browser passkey entitlements only when the provisioning profile does", () => {
-    const configuration = { appId: "com.t3tools.t3code", teamId: "ABC1234567" };
+    const configuration = { appId: "com.kbcode.app", teamId: "ABC1234567" };
     const profile = (entitlements: string, outside = "") =>
       `0\x82\x1f\x9a\x06\t*\x86H<?xml version="1.0"?><plist version="1.0"><dict>${outside}<key>Entitlements</key><dict>${entitlements}</dict></dict></plist>\x00\x01`;
     const teamWildcardGroups = `<key>keychain-access-groups</key>
@@ -1640,7 +1640,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         configuration,
       ),
       {
-        touchIdKeychainAccessGroup: "ABC1234567.com.t3tools.t3code.webauthn",
+        touchIdKeychainAccessGroup: "ABC1234567.com.kbcode.app.webauthn",
         browserPasskeys: true,
       },
     );
@@ -1656,7 +1656,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     );
     assert.match(
       entitlements,
-      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.t3tools\.t3code\.webauthn<\/string>\s*<\/array>/u,
+      /<key>keychain-access-groups<\/key>\s*<array>\s*<string>ABC1234567\.com\.kbcode\.app\.webauthn<\/string>\s*<\/array>/u,
     );
     assert.match(
       entitlements,

@@ -63,6 +63,7 @@ vi.mock(import("../../state/shell"), async (original) => {
 vi.mock(import("../../state/entities"), async (original) => ({
   ...(await original()),
   readProjects: () => state.projects,
+  readThreadShells: () => [],
   readThreadShell: (ref: { threadId: string }) =>
     ref.threadId === "thread" ? ({ projectId: "effect", worktreePath: null } as never) : null,
   readProject: () => state.projects[0] ?? null,

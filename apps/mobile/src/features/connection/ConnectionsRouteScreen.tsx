@@ -9,6 +9,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppBar } from "../../components/ui/AppBar";
 import { useRemoteConnections } from "../../state/use-remote-environment-registry";
+import { CloudSandboxesSection } from "./CloudSandboxesSection";
 import { LocalEnvironmentList } from "./LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "./PullRequestRoutingSettings";
 import { LinkedEnvironmentsSection } from "./LinkedEnvironmentsSection";
@@ -29,6 +30,12 @@ export function ConnectionsRouteScreen() {
   const handleToggle = (environmentId: EnvironmentId) => {
     setExpandedId((prev) => (prev === environmentId ? null : environmentId));
   };
+  const activeEnvironments = connectedEnvironments.filter(
+    (environment) => environment.connectionState === "connected",
+  );
+  const connectedEnvironmentIds = new Set(
+    activeEnvironments.map((environment) => environment.environmentId),
+  );
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
@@ -63,20 +70,23 @@ export function ConnectionsRouteScreen() {
           onSetEnabled={onSetEnvironmentEnabled}
           onUpdate={onUpdateEnvironment}
         />
-        {connectedEnvironments
-          .filter((environment) => environment.connectionState === "connected")
-          .map((environment) => (
-            <Fragment key={environment.environmentId}>
-              <LinkedEnvironmentsSection
-                environmentId={environment.environmentId}
-                environmentLabel={environment.environmentLabel}
-              />
-              <LinkSeveralEnvironmentsAction
-                environmentId={environment.environmentId}
-                environmentLabel={environment.environmentLabel}
-              />
-            </Fragment>
-          ))}
+        {activeEnvironments.map((environment) => (
+          <Fragment key={environment.environmentId}>
+            <CloudSandboxesSection
+              environmentId={environment.environmentId}
+              environmentLabel={activeEnvironments.length > 1 ? environment.environmentLabel : null}
+              connectedEnvironmentIds={connectedEnvironmentIds}
+            />
+            <LinkedEnvironmentsSection
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
+            <LinkSeveralEnvironmentsAction
+              environmentId={environment.environmentId}
+              environmentLabel={environment.environmentLabel}
+            />
+          </Fragment>
+        ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </View>

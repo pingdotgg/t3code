@@ -653,7 +653,10 @@ const RootStackConfig = createWorkspaceStackNavigator({
     }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
-      linking: { path: "threads/:environmentId?/:threadId?", alias: ["new/draft"] },
+      linking: {
+        path: "threads/:environmentId?/:threadId?",
+        alias: ["thread/:threadId", "new/draft"],
+      },
       options: pageRoute({ duoMinimize: "onScrollUp" }),
     }),
     NewTaskProject: createNativeStackScreen({

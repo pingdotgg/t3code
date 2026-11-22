@@ -203,6 +203,7 @@ import { makePrepareTerminalLaunch } from "./workspace/restoreMissingWorktree.ts
 import { terminalOutputStream, withOutputWindow } from "./terminal/OutputProtocol.ts";
 import * as ServerBrowser from "./preview/ServerBrowser.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import * as SandboxOrchestratorService from "./sandboxes/SandboxOrchestratorService.ts";
 import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
@@ -1501,6 +1502,7 @@ export const layerWsRpc = (
       const reviewGuides = yield* PullRequestReviewGuideService.PullRequestReviewGuideService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const deviceService = yield* DeviceService.DeviceService;
+      const sandboxOrchestrator = yield* SandboxOrchestratorService.SandboxOrchestratorService;
       const deviceHostContext =
         yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const orchestrationEngine = yield* Orchestrator.OrchestratorV2;
@@ -3408,6 +3410,13 @@ export const layerWsRpc = (
         [WS_METHODS.deviceDetail]: (input) => deviceService.detail(input),
         [WS_METHODS.deviceAction]: (input) => deviceService.action(input),
         [WS_METHODS.subscribeDeviceState]: (_input) => DeviceService.stateStream(deviceService),
+        [WS_METHODS.sandboxesList]: () => sandboxOrchestrator.listSandboxes(),
+        [WS_METHODS.sandboxesSubscribe]: () => sandboxOrchestrator.subscribeSandboxes,
+        [WS_METHODS.sandboxesSpawn]: (input) => sandboxOrchestrator.spawnSandbox(input),
+        [WS_METHODS.sandboxesResume]: (input) => sandboxOrchestrator.resumeSandbox(input),
+        [WS_METHODS.sandboxesSnapshot]: (input) => sandboxOrchestrator.snapshotSandbox(input),
+        [WS_METHODS.sandboxesStop]: (input) => sandboxOrchestrator.stopSandbox(input),
+        [WS_METHODS.sandboxesDestroy]: (input) => sandboxOrchestrator.destroySandbox(input),
         [WS_METHODS.previewStopLocalServer]: (input) => portDiscovery.stopServer(input),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           Stream.callback<DiscoveredLocalServerList>((queue) =>

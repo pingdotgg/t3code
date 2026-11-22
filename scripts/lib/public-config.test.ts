@@ -49,6 +49,29 @@ describe("loadRepoEnv", () => {
       EXPO_PUBLIC_CLERK_JWT_TEMPLATE: "template_ci",
       T3CODE_RELAY_URL: "https://ci.example.test",
       VITE_T3CODE_RELAY_URL: "https://ci.example.test",
+      RELAY_PUBLIC_URL: "https://ci.example.test",
+    });
+  });
+
+  it("maps RELAY_PUBLIC_URL and CLERK_PUBLISHABLE_KEY aliases for white-label deployments", () => {
+    const repoRoot = makeTemporaryDirectory();
+    const resolved = loadRepoEnv({
+      baseEnv: {
+        RELAY_PUBLIC_URL: "https://relay.kbcode.example",
+        CLERK_PUBLISHABLE_KEY: "pk_test_kbcode",
+        HOSTED_APP_URL: "https://app.kbcode.example",
+      },
+      repoRoot,
+    });
+    expect(resolved).toMatchObject({
+      T3CODE_RELAY_URL: "https://relay.kbcode.example",
+      VITE_T3CODE_RELAY_URL: "https://relay.kbcode.example",
+      RELAY_PUBLIC_URL: "https://relay.kbcode.example",
+      T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_kbcode",
+      VITE_CLERK_PUBLISHABLE_KEY: "pk_test_kbcode",
+      EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY: "pk_test_kbcode",
+      T3CODE_HOSTED_APP_URL: "https://app.kbcode.example",
+      VITE_HOSTED_APP_URL: "https://app.kbcode.example",
     });
   });
 });

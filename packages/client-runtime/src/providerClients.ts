@@ -15,6 +15,7 @@ import { kiroClient } from "@t3tools/provider-kiro/client";
 import { museClient } from "@t3tools/provider-muse/client";
 import { openCodeClient } from "@t3tools/provider-opencode/client";
 import { piClient } from "@t3tools/provider-pi/client";
+import { primeAgentClient } from "@t3tools/provider-prime-agent/client";
 
 // OpenRouter's Ink and Cloud glyphs from https://openrouter.ai/brand.
 export const openRouterIcon: ProviderIcon = {
@@ -56,8 +57,19 @@ export const providerClients = makeProviderClientRegistry([
   kiroClient,
   museClient,
   piClient,
+  primeAgentClient,
   acpRegistryClient,
 ]);
+
+/** Cloud sandboxes and VMs report platform.machine === "cloud" (e.g. T3CODE_ENVIRONMENT_MACHINE_KIND=cloud). */
+export function isCloudSandboxEnvironment(
+  environment:
+    | { readonly platform?: { readonly machine?: string | null | undefined } | null | undefined }
+    | null
+    | undefined,
+): boolean {
+  return environment?.platform?.machine === "cloud";
+}
 
 export function getProviderClient(driver: string | null | undefined) {
   return isProviderDriverKind(driver) ? providerClients.get(driver) : undefined;

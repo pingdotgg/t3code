@@ -12,7 +12,8 @@ import {
   runtimeModeDenial,
 } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
-import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentMachines, usePrimaryEnvironmentId } from "../../state/environments";
+import { buildPrimeAgentHostWarningBanner } from "./PrimeAgentComposerControls";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { importPastedComposerText, readPastedComposerContext } from "../composerInlineTokenPaste";
 import {
@@ -2614,6 +2615,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     : composerControlsCollapsed
       ? 0
       : expandedControlsIconOnlyBlockCount;
+  const environmentMachines = useEnvironmentMachines();
+  const isCloudSandboxEnvironment = environmentMachines.get(environmentId) === "cloud";
+  const [primeAgentHostWarningDismissed, setPrimeAgentHostWarningDismissed] = useState(false);
   const composerControls = (
     <ComposerControlsBar
       environmentId={environmentId}
@@ -2661,6 +2665,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onModelPickerOpenChange={setIsComposerModelPickerOpen}
       modelPickerIconClassName={composerProviderState.modelPickerIconClassName}
       getModelDisabledReason={getModelDisabledReason}
+      isCloudSandbox={isCloudSandboxEnvironment}
     />
   );
   // An open question owns the space above the composer. Only a machine problem,
@@ -2712,12 +2717,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         },
       ]
     : [];
+  const primeAgentHostWarningBanner = buildPrimeAgentHostWarningBanner({
+    provider: selectedProvider,
+    isCloudSandbox: isCloudSandboxEnvironment,
+    dismissed: primeAgentHostWarningDismissed,
+    onDismiss: () => setPrimeAgentHostWarningDismissed(true),
+    resolve: m,
+  });
+  const baseBannerItems: readonly ComposerBannerStackItem[] = primeAgentHostWarningBanner
+    ? [...props.bannerItems, primeAgentHostWarningBanner, ...replyBannerItems]
+    : [...props.bannerItems, ...replyBannerItems];
   const bannerItems: readonly ComposerBannerStackItem[] =
     runtimeModeCeilingDenial === undefined || activePendingProgress
-      ? [...props.bannerItems, ...replyBannerItems]
+      ? baseBannerItems
       : [
-          ...props.bannerItems,
-          ...replyBannerItems,
+          ...baseBannerItems,
           {
             id: "managed-runtime-mode",
             variant: "warning",

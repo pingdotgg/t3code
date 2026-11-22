@@ -1,0 +1,28 @@
+{
+  "name": "@t3tools/sandbox-providers",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "effect-tsgo tsrs --noEmit",
+    "test": "vp test run --config ../../vite.config.ts --dir ."
+  },
+  "dependencies": {
+    "@codesandbox/sdk": "2.4.2",
+    "@t3tools/contracts": "workspace:*",
+    "@upstash/box": "0.8.1",
+    "@vercel/sandbox": "4.1.0",
+    "effect": "catalog:",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@effect/vitest": "catalog:",
+    "@types/node": "catalog:",
+    "vite-plus": "catalog:"
+  }
+}

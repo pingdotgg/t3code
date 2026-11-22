@@ -31,6 +31,7 @@ import {
 } from "./ComposerModelEffort";
 import type { useComposerProviderModel } from "./useComposerProviderModel";
 import { resolveComposerControlsOwnership } from "./composerControlsOwnership";
+import { PrimeAgentComposerControls } from "./PrimeAgentComposerControls";
 
 /**
  * The composer footer controls: the model picker (which also holds effort, speed and
@@ -87,6 +88,7 @@ export function ComposerControlsBar(props: {
   onModelPickerOpenChange: (open: boolean) => void;
   modelPickerIconClassName: string | undefined;
   getModelDisabledReason: ChatComposerProps["getModelDisabledReason"];
+  isCloudSandbox?: boolean;
 }) {
   const {
     environmentId,
@@ -266,6 +268,13 @@ export function ComposerControlsBar(props: {
   ) : (
     <>
       {composerModelPicker}
+      {selectedProvider === "primeAgent" ? (
+        <PrimeAgentComposerControls
+          size={controlSize}
+          isCloudSandbox={props.isCloudSandbox === true}
+          onPromptEdit={onPromptEdit}
+        />
+      ) : null}
 
       <>
         {restingBlockDefs.map((def, index) => {

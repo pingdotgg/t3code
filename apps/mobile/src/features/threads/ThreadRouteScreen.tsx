@@ -56,7 +56,7 @@ import { scopedThreadKey } from "../../lib/scopedEntities";
 import { useDelayedStatus } from "../../lib/useDelayedStatus";
 import { connectionRetryLabel } from "./floating-working-status";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { useThreadShell } from "../../state/entities";
+import { useResolvedThreadEnvironmentId, useThreadShell } from "../../state/entities";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
 import { connectionTone } from "../connection/connectionTone";
 import { runtimeConnectionErrorText } from "../connection/environmentStatusText";
@@ -261,7 +261,7 @@ function LiveThreadRouteController(props: ThreadRouteScreenProps) {
   const params = props.route.params ?? {};
   const environmentIdRaw = firstRouteParam(params.environmentId);
   const threadIdRaw = firstRouteParam(params.threadId);
-  const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
+  const environmentId = useResolvedThreadEnvironmentId(environmentIdRaw, threadIdRaw);
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
   const routeEnvironmentShellState = useEnvironmentShellReadiness(environmentId);
   const { onReconnectEnvironment } = useRemoteConnections();

@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SettingsScreen } from "./components/SettingsScreen";
 import { CloudEnvironmentRows } from "../connection/CloudEnvironmentRows";
+import { CloudSandboxesSection } from "../connection/CloudSandboxesSection";
 import { LocalEnvironmentList } from "../connection/LocalEnvironmentList";
 import { PullRequestRoutingSettings } from "../connection/PullRequestRoutingSettings";
 import { splitEnvironmentSections } from "../connection/environmentSections";
@@ -47,6 +48,12 @@ export function SettingsEnvironmentsRouteScreen() {
   const connectedCloudEnvironments = SHOWCASE_ENABLED
     ? SHOWCASE_CONNECTED_CLOUD_ENVIRONMENTS
     : environmentSections.connectedCloudEnvironments;
+  const activeEnvironments = connectedEnvironments.filter(
+    (environment) => environment.connectionState === "connected",
+  );
+  const connectedEnvironmentIds = new Set(
+    activeEnvironments.map((environment) => environment.environmentId),
+  );
   const headerIconColor = useUniwindTheme()["--color-icon"];
   const relaySession = useAtomValue(managedRelaySessionAtom);
   const refreshRelayEnvironments = useAtomCommand(
@@ -154,6 +161,14 @@ export function SettingsEnvironmentsRouteScreen() {
               }
             : {})}
         />
+        {activeEnvironments.map((environment) => (
+          <CloudSandboxesSection
+            key={environment.environmentId}
+            environmentId={environment.environmentId}
+            environmentLabel={activeEnvironments.length > 1 ? environment.environmentLabel : null}
+            connectedEnvironmentIds={connectedEnvironmentIds}
+          />
+        ))}
         <PullRequestRoutingSettings />
       </ScrollView>
     </SettingsScreen>

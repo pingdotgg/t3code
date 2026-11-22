@@ -30,7 +30,7 @@ import { selectActiveRightPanelSurface, useRightPanelStore } from "../../rightPa
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { resolveThreadRouteTarget } from "../../threadRoutes";
 import { assetEnvironment } from "../../state/assets";
-import { readProject, readThreadShell } from "../../state/entities";
+import { readProject, readThreadShell, readThreadShells } from "../../state/entities";
 import { useEnvironmentHttpBaseUrl, usePrimaryEnvironment } from "../../state/environments";
 import { previewEnvironment } from "../../state/preview";
 import { allReachableShellsLiveAtom } from "../../state/shell";
@@ -79,6 +79,34 @@ function threadShowingBrowser(
     threadRef,
   );
   return surface?.kind === "preview" ? threadRef : null;
+}
+
+const SINGLE_THREAD_APP_PATH = /^\/thread\/([^/?#]+)(\?.*)?$/;
+
+async function resolveSingleThreadAppPath(
+  appPath: string,
+  fallbackEnvironmentId: EnvironmentId | null,
+): Promise<string | null> {
+  const match = SINGLE_THREAD_APP_PATH.exec(appPath);
+  if (!match?.[1]) return appPath;
+  const encodedThreadId = match[1];
+  const search = match[2] ?? "";
+  let threadId: string;
+  try {
+    threadId = decodeURIComponent(encodedThreadId);
+  } catch {
+    return null;
+  }
+  const findEnvironmentId = () =>
+    readThreadShells().find((shell) => shell.id === threadId)?.environmentId ?? null;
+  let environmentId = findEnvironmentId();
+  if (environmentId === null) {
+    await projectsSettled();
+    environmentId = findEnvironmentId() ?? fallbackEnvironmentId;
+  }
+  return environmentId === null
+    ? null
+    : `/${encodeURIComponent(environmentId)}/${encodedThreadId}${search}`;
 }
 
 export function DesktopWebLinkCoordinator() {
@@ -213,7 +241,13 @@ export function DesktopWebLinkCoordinator() {
     }
     const appPath = promptLinkAppPath(url);
     if (appPath !== null) {
-      await router.navigate({ href: appPath });
+      const resolvedAppPath = await resolveSingleThreadAppPath(
+        appPath,
+        primaryEnvironment?.environmentId ?? null,
+      );
+      if (resolvedAppPath !== null) {
+        await router.navigate({ href: resolvedAppPath });
+      }
       return;
     }
     const routeParams = router.state.matches.at(-1)?.params ?? {};

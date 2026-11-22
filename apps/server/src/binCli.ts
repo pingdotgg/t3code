@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import { Argument, Command } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
+import { BRAND_APP_NAME, BRAND_CLI_NAME } from "@t3tools/shared/brand";
 import * as NetService from "@t3tools/shared/Net";
 import packageJson from "../package.json" with { type: "json" };
 import { acpMcpBridgeCommand, acpMcpCallCommand } from "./cli/acpMcpBridge.ts";
@@ -60,7 +61,7 @@ const connectUnavailableCommand = Command.make("connect", {
   Command.withHandler(() =>
     Effect.fail(
       new CliError.ShowHelp({
-        commandPath: ["t3", "connect"],
+        commandPath: [BRAND_CLI_NAME, "connect"],
         errors: [new ConnectPublicConfigMissingError({ cause: connectPublicConfigMissingMessage })],
       }),
     ),
@@ -68,16 +69,16 @@ const connectUnavailableCommand = Command.make("connect", {
 );
 
 export const makeCli = ({ cloudEnabled = hasCloudPublicConfig } = {}) =>
-  Command.make("t3", { ...sharedServerCommandFlags }).pipe(
+  Command.make(BRAND_CLI_NAME, { ...sharedServerCommandFlags }).pipe(
     Command.withDescription(
-      "Run T3 Code in this terminal and open it in your browser. To use it from your other devices, run `t3 up`.",
+      `Run ${BRAND_APP_NAME} in this terminal and open it in your browser. To use it from your other devices, run \`${BRAND_CLI_NAME} up\`.`,
     ),
     Command.withHandler(runDefaultServerCommand),
     Command.withSubcommands([
       Command.make("help").pipe(
         Command.withDescription("Show command help."),
         Command.withHandler(() =>
-          Effect.fail(new CliError.ShowHelp({ commandPath: ["t3"], errors: [] })),
+          Effect.fail(new CliError.ShowHelp({ commandPath: [BRAND_CLI_NAME], errors: [] })),
         ),
       ),
       acpMcpBridgeCommand,

@@ -3,7 +3,7 @@ import { m as resolveMessage } from "~/i18n/messages";
 import { managedCapabilityDenial } from "@t3tools/client-runtime/contract-labels";
 import { SessionPermissions } from "./SessionPermissions";
 import { useSearch } from "@tanstack/react-router";
-import { ChevronRightIcon, EllipsisIcon } from "lucide-react";
+import { ChevronRightIcon, CloudIcon, EllipsisIcon } from "lucide-react";
 import { useAtom, useAtomValue } from "@effect/atom-react";
 import { type ReactNode, useState } from "react";
 import { T, useGT, useMessages, Var } from "gt-react";
@@ -151,6 +151,8 @@ import {
   SavedBackendListRow,
 } from "./SavedEnvironmentRows";
 import { AddEnvironmentDialog } from "./AddEnvironmentDialog";
+import { CloudSandboxesSection } from "./CloudSandboxesSection";
+import { sandboxEnvironment } from "~/state/sandboxes";
 import {
   type ConnectDeviceRevokeRequest,
   RevokeConnectDeviceDialog,
@@ -336,6 +338,27 @@ function ConnectionsSettingsContent({
     ...(primaryEnvironment ? [primaryEnvironment] : []),
     ...savedEnvironments.filter((environment) => environment.entry.enabled),
   ].filter((environment) => environment.connection.phase !== "unsupported");
+  const sandboxCapableEnvironments = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig?.environment.capabilities.sandboxes === true,
+  );
+  const primarySandboxHost =
+    sandboxCapableEnvironments.find(
+      (environment) => environment.environmentId === primaryEnvironmentId,
+    ) ??
+    sandboxCapableEnvironments[0] ??
+    null;
+  const canSpawnPrimarySandbox = useAtomValue(
+    sandboxEnvironment.spawn.permissionAtom(primarySandboxHost?.environmentId ?? null),
+  );
+  const [quickSandboxLaunchEnvironmentId, setQuickSandboxLaunchEnvironmentId] =
+    useState<EnvironmentId | null>(null);
+  const connectedEnvironmentIds = new Set(
+    environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+  );
   const [desktopServerExposureMutationError, setDesktopServerExposureMutationError] = useState<
     string | null
   >(null);
@@ -1858,6 +1881,17 @@ function ConnectionsSettingsContent({
             {savedServerUpdateTargets.length > 0 ? (
               <ServerUpdatesAction targets={savedServerUpdateTargets} variant="ghost-muted" />
             ) : null}
+            {primarySandboxHost && canSpawnPrimarySandbox ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => setQuickSandboxLaunchEnvironmentId(primarySandboxHost.environmentId)}
+              >
+                <CloudIcon className="size-3.5" />
+                <T>New Cloud Sandbox</T>
+              </Button>
+            ) : null}
             {/* Actions on several machines at once, such as linking several, go here. */}
             <AddEnvironmentDialog
               key={`${addPrefill?.environmentId ?? "any"}:${addBackendHost}`}
@@ -1919,6 +1953,22 @@ function ConnectionsSettingsContent({
           </>
         )}
       </SettingsSection>
+      {sandboxCapableEnvironments.map((environment) => (
+        <CloudSandboxesSection
+          key={environment.environmentId}
+          environmentId={environment.environmentId}
+          environmentLabel={sandboxCapableEnvironments.length > 1 ? environment.label : null}
+          connectedEnvironmentIds={connectedEnvironmentIds}
+          externalLaunchOpen={
+            quickSandboxLaunchEnvironmentId === environment.environmentId ? true : undefined
+          }
+          onExternalLaunchOpenChange={(open) => {
+            if (!open && quickSandboxLaunchEnvironmentId === environment.environmentId) {
+              setQuickSandboxLaunchEnvironmentId(null);
+            }
+          }}
+        />
+      ))}
       {hasCloudPublicConfig() ? (
         <RemoveT3ConnectEnvironmentDialog
           environmentLabel={pendingT3ConnectRemoval?.label ?? null}

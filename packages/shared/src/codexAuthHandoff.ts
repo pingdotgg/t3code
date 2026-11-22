@@ -1,5 +1,6 @@
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
+import { BRAND_URL_SCHEME, BRAND_URL_SCHEME_DEV } from "./brand.ts";
 import { oauthCallbackUrl } from "./oauthCallback.ts";
 import { providerAuthReturnUrl } from "./providerAuthReturnUrl.ts";
 
@@ -65,7 +66,7 @@ export function codexCallbackUrl(value: string, redirectUri: string, state: stri
 }
 
 export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false) {
-  const url = new URL(`${development ? "t3code-dev" : "t3code"}://auth/codex`);
+  const url = new URL(`${development ? BRAND_URL_SCHEME_DEV : BRAND_URL_SCHEME}://auth/codex`);
   url.searchParams.set("request", encodeHandoff(input));
   return url.toString();
 }
@@ -73,9 +74,12 @@ export function codexAuthHandoffUrl(input: CodexAuthHandoff, development = false
 export function readCodexAuthHandoff(value: string, development: boolean) {
   try {
     const url = new URL(value);
+    const allowedProtocols = development
+      ? [`${BRAND_URL_SCHEME_DEV}:`, "t3code-dev:"]
+      : [`${BRAND_URL_SCHEME}:`, "t3code:"];
     if (
       value.length > 32_768 ||
-      url.protocol !== (development ? "t3code-dev:" : "t3code:") ||
+      !allowedProtocols.includes(url.protocol) ||
       url.host !== "auth" ||
       url.pathname !== "/codex" ||
       url.username ||
