@@ -9,7 +9,7 @@ import {
 import { useAtomValue } from "@effect/atom-react";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, IssueState, ThreadIssueLink } from "@t3tools/contracts";
-import { Atom } from "effect/reactivity";
+import { AsyncResult, Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
@@ -51,23 +51,24 @@ export function useSidebarLinkedIssueState(
   const aggregate =
     links?.length && configs.get(environmentId)?.environment.capabilities.issues === true
       ? Atom.make((get): IssueState | null => {
-          const states = links.map(
-            (link) =>
-              selectEnvironmentQueryData(
-                get(
-                  issueEnvironment.detail(
-                    { environmentId, input: linkedIssueRef(link) },
-                    "sidebar",
-                  ),
-                ),
-              )?.state,
-          );
-          const open = states.find((state) => state?.category === "open");
-          if (open !== undefined) return open;
-          if (states.includes(undefined)) return null;
+          // One detail read at a time, in link order: the first open issue decides the badge, so a
+          // row with many links does not fetch every issue at once.
+          const closed: Array<IssueState> = [];
+          let unknown = false;
+          for (const link of links) {
+            const result = get(
+              issueEnvironment.detail({ environmentId, input: linkedIssueRef(link) }, "sidebar"),
+            );
+            const state = selectEnvironmentQueryData(result)?.state;
+            if (state?.category === "open") return state;
+            if (state !== undefined) closed.push(state);
+            else if (AsyncResult.isFailure(result)) unknown = true;
+            else return null;
+          }
+          if (unknown) return null;
           return (
-            states.find((state) => state?.closeReason && state.closeReason !== "completed") ??
-            states[0] ??
+            closed.find((state) => state.closeReason && state.closeReason !== "completed") ??
+            closed[0] ??
             null
           );
         })
