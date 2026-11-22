@@ -2594,8 +2594,6 @@
   "3260b22f72f7effb": "{tooltipLead}: {title}",
   "feac8e54b30c5a03": "ターミナルのプロセスが実行中",
   "fc2c9a91f498ad6b": "{count, plural, other {{count} 個のターミナルプロセスが実行中。ターミナルを開く}}",
-  "643c4b50feadc874": "ワークツリー: {path} ({branch})",
-  "fb7c44da0f0825ea": "ワークツリー: {path}",
   "56f37ff8ca568059": "スタック",
   "6831e9a46cbd8939": "チェーン",
   "9aa9e74a3b7eee91": "チャットに追加",
