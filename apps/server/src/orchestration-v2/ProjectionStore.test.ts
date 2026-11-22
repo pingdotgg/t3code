@@ -7614,6 +7614,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [
             "message:turn-start-commands:compact",
             "message:turn-start-commands:goal",
+            "message:turn-start-commands:later",
             "message:turn-start-commands:rolled-back",
           ],
         );
