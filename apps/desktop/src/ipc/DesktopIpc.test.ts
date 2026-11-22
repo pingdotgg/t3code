@@ -63,5 +63,5 @@ it.effect("answers only the main window's top frame", () =>
       appSubframe: ["rejected", undefined],
       previewGuest: ["rejected", undefined],
     });
-  }).pipe(Effect.scoped),
+  }),
 );

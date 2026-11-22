@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import {
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -9,6 +11,7 @@ import {
   SOCKET_FRAME_PARTS_QUERY_PARAM,
 } from "@t3tools/shared/socketFrameParts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
@@ -46,6 +49,7 @@ import {
   withoutEnvironmentThemes,
 } from "../state/serverConfigProjection.ts";
 import { environmentMismatchError } from "../connection/errors.ts";
+import { recordServerClock } from "../clock.ts";
 
 const SOCKET_OPEN_TIMEOUT = "15 seconds";
 
@@ -67,6 +71,8 @@ export interface RpcSessionOptions {
   readonly usageLimitSources?: boolean;
   readonly usageLimitsCommand?: boolean;
   readonly providerCatalogsOnDemand?: boolean;
+  readonly providerCatalogDigests?: boolean;
+  readonly providerStatusDeltas?: boolean;
 }
 
 export class RpcSessionFactory extends Context.Service<
@@ -177,6 +183,8 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     ...(options.usageLimitSources === true ? { usageLimitSources: true } : {}),
     ...(options.usageLimitsCommand === true ? { usageLimitsCommand: true } : {}),
     ...(options.providerCatalogsOnDemand === true ? { providerCatalogsOnDemand: true } : {}),
+    ...(options.providerCatalogDigests === true ? { providerCatalogDigests: true } : {}),
+    ...(options.providerStatusDeltas === true ? { providerStatusDeltas: true } : {}),
   };
   // Config state merges the snapshots it fetches back in, so no subscriber needs them broadcast.
   const onDemandSnapshots = (input: ServerConfigSubscriptionInput) => ({
@@ -207,11 +215,22 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
               // The network hint only fits a socket that never opened. Once it
               // opened, the path worked, and a host that goes quiet is more
               // often overloaded or asleep than blocked.
-              detail: !wasConnected
-                ? `${connection.label} could not establish a WebSocket connection.${networkHint}`
+              ...(!wasConnected
+                ? translatableDetail(
+                    msg("{host} could not establish a WebSocket connection.", {
+                      host: connection.label,
+                    }),
+                    ...(via === "relay" ? [NETWORK_BLOCKING_HINT] : []),
+                  )
                 : timedOut
-                  ? `${connection.label} stopped responding for ${PING_TIMEOUT_SECONDS}s. ${UNRESPONSIVE_HOST_HINT}`
-                  : `${connection.label} disconnected.`,
+                  ? translatableDetail(
+                      msg("{host} stopped responding for {seconds}s.", {
+                        host: connection.label,
+                        seconds: String(PING_TIMEOUT_SECONDS),
+                      }),
+                      UNRESPONSIVE_HOST_HINT,
+                    )
+                  : translatableDetail(msg("{host} disconnected.", { host: connection.label }))),
               ...socketFailureLocation(via),
             }),
           ),
@@ -291,6 +310,7 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
       reason: "remote-unavailable",
       detail: `${connection.label} config subscription ended.`,
     });
+    const configRequestedAtMs = yield* Clock.currentTimeMillis;
     const serverConfigSource = protocolClient[WS_METHODS.subscribeServerConfig](
       onDemandSnapshots(serverConfigInput),
     ).pipe(
@@ -328,6 +348,16 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
             yield* PubSub.publish(serverConfigUpdates, buffered.value);
           }
           if (event.type === "snapshot") {
+            // Later snapshots may repeat the first one's serverTime. Record
+            // before readiness so the first timers already use its clock.
+            if (!(yield* Deferred.isDone(initialConfigDeferred))) {
+              const { serverTime } = event.config;
+              recordServerClock(connection.environmentId, {
+                serverTimeMs: serverTime === undefined ? undefined : Date.parse(serverTime),
+                requestedAtMs: configRequestedAtMs,
+                receivedAtMs: yield* Clock.currentTimeMillis,
+              });
+            }
             yield* Deferred.succeed(initialConfigDeferred, event.config);
           }
         }),
