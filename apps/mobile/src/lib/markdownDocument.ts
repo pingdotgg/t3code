@@ -3,8 +3,13 @@ import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
-import { absoluteFilePathMatches, parseMarkdownFileLink } from "@t3tools/shared/markdownLinks";
+import {
+  absoluteFilePathMatches,
+  inlineCodeFilePathCandidate,
+  parseMarkdownFileLink,
+} from "@t3tools/shared/markdownLinks";
 import { isWindowsAbsolutePath } from "@t3tools/shared/path";
+import { hasRightToLeftLetter, textDirection } from "@t3tools/shared/textDirection";
 
 const parser = unified().use(remarkParse).use(remarkGfm).use(remarkKeepWindowsProsePaths);
 export type MarkdownNode = Root | RootContent;
@@ -322,6 +327,11 @@ export function withReferenceDefinitions(
 // Start only at the beginning of a backtick run to avoid retrying every suffix.
 const INLINE_CODE_SPAN = /(?<!`)`+([^`\r\n]+)`+/g;
 
+// The native regex stops at whitespace; the shared classifier decides paths with spaces.
+function isInlineCodeFileLink(code: string, fileLink: RegExp): boolean {
+  return fileLink.test(code) || (/\s/.test(code) && inlineCodeFilePathCandidate(code) !== null);
+}
+
 export function markdownWithInlineFileLinks(markdown: string, fileLink: RegExp): string {
   return transformNativeMarkdown(markdown, fileLink, false);
 }
@@ -335,7 +345,7 @@ function transformNativeMarkdown(
   let linkFiles = false;
   if (fileLink) {
     for (const [, code] of markdown.matchAll(INLINE_CODE_SPAN)) {
-      if (fileLink.test(code!.trim())) {
+      if (isInlineCodeFileLink(code!.trim(), fileLink)) {
         linkFiles = true;
         break;
       }
@@ -354,7 +364,8 @@ function transformNativeMarkdown(
       if (
         start !== undefined &&
         end !== undefined &&
-        fileLink?.test(node.value) &&
+        fileLink !== undefined &&
+        isInlineCodeFileLink(node.value, fileLink) &&
         parseMarkdownFileLink(node.value) !== null &&
         !/[<>]/.test(node.value)
       ) {
@@ -551,4 +562,65 @@ export function markdownWithFileEmbeds(
   }
   parts.push(markdown.slice(offset));
   return { markdown: parts.join(""), fileHrefs };
+}
+
+const DIRECTION_MARK = { ltr: "‎", rtl: "‏" } as const;
+
+function proseText(node: MarkdownNode): string {
+  if (node.type === "text") return node.value;
+  if (node.type === "inlineCode" || node.type === "code") return " ";
+  if (!("children" in node)) return "";
+  const text = node.children.map(proseText).join("");
+  return node.type === "paragraph" || node.type === "heading" || node.type === "tableCell"
+    ? ` ${text} `
+    : text;
+}
+
+// The native renderer scans inline code too when it picks a paragraph's direction.
+function renderedText(node: MarkdownNode): string {
+  if (node.type === "text" || node.type === "inlineCode") return node.value;
+  if (!("children" in node)) return "";
+  return node.children.map(renderedText).join("");
+}
+
+// A mark inside `[label]` or `<url>` would break the reference or autolink.
+function firstLeafOffset(node: MarkdownNode): number | undefined {
+  if (
+    !("children" in node) ||
+    node.children.length === 0 ||
+    node.type === "link" ||
+    node.type === "linkReference"
+  ) {
+    return node.position?.start.offset;
+  }
+  return firstLeafOffset(node.children[0]!);
+}
+
+/**
+ * The native renderer gives each paragraph the direction of its first letter, so an Arabic
+ * line that opens with an English name renders left to right. Like the web's
+ * `rehypeTextDirection`, each top-level block follows the majority of its words, and a
+ * paragraph whose first letter disagrees gets a direction mark that the renderer reads first.
+ */
+export function markdownWithTextDirection(markdown: string): string {
+  if (!hasRightToLeftLetter(markdown)) return markdown;
+  const edits: MarkdownEdit[] = [];
+  for (const block of parser.parse(markdown).children) {
+    if (block.type === "code" || block.type === "html") continue;
+    const direction = textDirection(proseText(block));
+    if (!direction) continue;
+    const mark = (node: MarkdownNode) => {
+      if (node.type === "paragraph" || node.type === "heading" || node.type === "tableCell") {
+        const offset = firstLeafOffset(node);
+        const first = renderedText(node).match(/\p{L}/u)?.[0];
+        if (offset !== undefined && first && textDirection(first) !== direction) {
+          edits.push({ start: offset, end: offset, content: DIRECTION_MARK[direction] });
+        }
+        return;
+      }
+      if ("children" in node) node.children.forEach(mark);
+    };
+    mark(block);
+  }
+  return applyMarkdownEdits(markdown, edits);
 }
