@@ -62,6 +62,38 @@ const makeClientMiddlewareProtocol = (
   )
 
 describe("AtomRpc", () => {
+  it.effect("reuses fresh hydration and revalidates stale hydration once", () =>
+    Effect.gen(function*() {
+      let requests = 0
+      const group = RpcGroup.make(Rpc.make("get", { success: Schema.Number }))
+      const Client = AtomRpc.Service()("FreshClient", {
+        group,
+        protocol: group.toLayer({ get: () => Effect.sync(() => ++requests) }),
+        makeEffect: RpcTest.makeClient(group, { flatten: true })
+      })
+      const query = (staleTime: number) => Client.query("get", undefined, { serializationKey: "value", staleTime })
+      const atom = query(Infinity)
+      const server = AtomRegistry.make()
+      yield* Effect.addFinalizer(() => Effect.sync(() => server.dispose()))
+      yield* AtomRegistry.mount(server, atom)
+      assert.strictEqual(yield* AtomRegistry.getResult(server, atom), 1)
+      const state = Hydration.dehydrate(server)
+
+      for (const [reader, expected] of [[atom, 1], [query(0), 2]] as const) {
+        const client = AtomRegistry.make()
+        yield* Effect.addFinalizer(() => Effect.sync(() => client.dispose()))
+        Hydration.hydrate(client, state)
+        yield* AtomRegistry.mount(client, reader)
+        const seed = client.get(reader)
+        assert(AsyncResult.isSuccess(seed))
+        assert.strictEqual(seed.value, 1)
+        yield* Effect.yieldNow
+        const result = yield* AtomRegistry.getResult(client, reader, { suspendOnWaiting: true })
+        assert.strictEqual(result, expected)
+        assert.strictEqual(requests, expected)
+      }
+    }))
+
   it.effect.each([
     { idA: "RpcA", tagA: "create", idB: "RpcB", tagB: "create" },
     { idA: "Tenant:User", tagA: "create", idB: "Tenant", tagB: "User:create" }

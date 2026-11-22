@@ -1,3 +1,5 @@
+import { msg } from "gt-i18n";
+import { translatableDetail } from "../errors/translatable.ts";
 import {
   type ServerConfig,
   type ServerConfigStreamEvent,
@@ -197,7 +199,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
 
   const connect = Effect.fnUntraced(function* (connection: PreparedConnection) {
     const via = connection.target._tag === "RelayConnectionTarget" ? "relay" : "direct";
-    const networkHint = via === "relay" ? ` ${NETWORK_BLOCKING_HINT}` : "";
     yield* Effect.annotateCurrentSpan({
       "connection.environment.id": connection.environmentId,
     });
@@ -211,11 +212,22 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         // The network hint only fits a socket that never opened. Once it
         // opened, the path worked, and a host that goes quiet is more
         // often overloaded or asleep than blocked.
-        detail: !Deferred.isDoneUnsafe(connected)
-          ? `${connection.label} could not establish a WebSocket connection.${networkHint}`
+        ...(!Deferred.isDoneUnsafe(connected)
+          ? translatableDetail(
+              msg("{host} could not establish a WebSocket connection.", {
+                host: connection.label,
+              }),
+              ...(via === "relay" ? [NETWORK_BLOCKING_HINT] : []),
+            )
           : pingTimedOut
-            ? `${connection.label} stopped responding for ${PING_TIMEOUT_SECONDS}s. ${UNRESPONSIVE_HOST_HINT}`
-            : `${connection.label} disconnected.`,
+            ? translatableDetail(
+                msg("{host} stopped responding for {seconds}s.", {
+                  host: connection.label,
+                  seconds: String(PING_TIMEOUT_SECONDS),
+                }),
+                UNRESPONSIVE_HOST_HINT,
+              )
+            : translatableDetail(msg("{host} disconnected.", { host: connection.label }))),
         ...socketFailureLocation(via),
       });
     const mapRpcError = (error: Parameters<typeof mapSessionRpcError>[0]) =>
@@ -371,13 +383,23 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
                   Deferred.isDoneUnsafe(initialConfigDeferred)
                     ? new ConnectionTransientErrorClass({
                         reason: "remote-unavailable",
-                        detail: `${connection.label} sent a server configuration update this client could not read.`,
+                        ...translatableDetail(
+                          msg(
+                            "{host} sent a server configuration update this client could not read.",
+                            { host: connection.label },
+                          ),
+                        ),
                         hop: "server",
                         via,
                       })
                     : new ConnectionBlockedError({
                         reason: "unsupported",
-                        detail: `${connection.label} sent an incompatible server configuration. Update the client and server to compatible versions.`,
+                        ...translatableDetail(
+                          msg("{host} sent an incompatible server configuration.", {
+                            host: connection.label,
+                          }),
+                          msg("Update the client and server to compatible versions."),
+                        ),
                         hop: "server",
                         via,
                       }),

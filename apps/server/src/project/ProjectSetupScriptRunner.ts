@@ -1,4 +1,5 @@
 import { linkOriginIsFenced, ProjectId, type ProjectScript, ThreadId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import {
   projectScriptRuntimeEnv,
   projectScriptTerminalInput,
@@ -145,12 +146,10 @@ function completionSentinelPattern(token: string): RegExp {
   return new RegExp(`${COMPLETION_SENTINEL_PREFIX}_${token}:(-?\\d+)`);
 }
 
+// ECMA-48: CSI, OSC, then any other escape as intermediates (0x20-0x2F) and one final byte.
 function stripTerminalControl(text: string): string {
   return text
-    .replace(
-      /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
-      "",
-    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
@@ -312,7 +311,14 @@ export const make = Effect.gen(function* () {
           ) {
             return Effect.void;
           }
-          return input.onOutputLine(cleaned.slice(0, OUTPUT_LINE_MAX_LENGTH));
+          return input.onOutputLine(
+            cleaned.slice(
+              0,
+              splitsSurrogatePair(cleaned, OUTPUT_LINE_MAX_LENGTH)
+                ? OUTPUT_LINE_MAX_LENGTH - 1
+                : OUTPUT_LINE_MAX_LENGTH,
+            ),
+          );
         });
 
       const unsubscribe = yield* terminalManager.subscribe((event) => {
@@ -326,7 +332,10 @@ export const make = Effect.gen(function* () {
           lineBuffer = lines.pop() ?? "";
           // Bound newline-free output; the sentinel has its own line, so retaining the tail is safe.
           if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
-            lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
+            const start = lineBuffer.length - PARTIAL_LINE_MAX_LENGTH;
+            lineBuffer = lineBuffer.slice(
+              splitsSurrogatePair(lineBuffer, start) ? start + 1 : start,
+            );
           }
           return Effect.forEach(lines, handleLine, { discard: true }).pipe(
             Effect.andThen(
@@ -505,6 +514,8 @@ export const make = Effect.gen(function* () {
       }),
       // Before client attachment, truecolor probes wait for terminal replies nobody can send.
       COLORTERM: "",
+      // Project scripts keep the default shell; the preference is for interactive terminals only.
+      T3CODE_TERMINAL_SHELL: "",
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;

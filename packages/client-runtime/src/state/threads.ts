@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import {
   isOrchestrationV2WorkActive,
   ORCHESTRATION_V2_WS_METHODS,
@@ -50,6 +52,7 @@ import {
   EMPTY_THREAD_HISTORY_META,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
+  mergeOlderSubagentsIntoProjection,
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -68,18 +71,36 @@ function statusWithoutLiveData(
   return Option.isSome(data) ? "cached" : "empty";
 }
 
+const THREAD_SYNC_ERROR = msg("Could not synchronize the thread.");
+const HISTORY_LOAD_ERROR = msg("Could not load earlier activity.");
+const WORK_HISTORY_CHANGED_ERROR = msg("Work history changed. Retry loading it.");
+const THREAD_ERRORS: ReadonlySet<string> = new Set([
+  THREAD_SYNC_ERROR,
+  HISTORY_LOAD_ERROR,
+  WORK_HISTORY_CHANGED_ERROR,
+]);
+
+/**
+ * A thread or history error in the active language. Errors this module wrote translate;
+ * messages from the server or another error stay as they are.
+ * @public
+ */
+export function threadErrorText(error: string, resolve: MFunctionType = mFallback): string {
+  return THREAD_ERRORS.has(error) ? resolve(error) : error;
+}
+
 function formatThreadError(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);
   return error instanceof Error && error.message.trim().length > 0
     ? error.message
-    : "Could not synchronize the thread.";
+    : THREAD_SYNC_ERROR;
 }
 
 function formatHistoryError(error: unknown): string {
   if (error instanceof Error && error.message.trim().length > 0) {
     return error.message;
   }
-  return "Could not load earlier activity.";
+  return HISTORY_LOAD_ERROR;
 }
 
 // Steers join a running turn; every other user message opens one. The timeline shows every
@@ -653,6 +674,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
 
     if (item.kind === "snapshot") {
+      yield* Ref.set(forceSnapshot, false);
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
       const hasProgressiveHistory =
         item.historyCursor !== undefined ||
@@ -732,7 +754,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       latest: EnvironmentThreadState,
     ): ThreadHistoryController.ThreadHistoryLoadEarlierResult =>
       workAnchorId !== undefined && workCursor(latest) !== null
-        ? { _tag: "error", message: "Work history changed. Retry loading it." }
+        ? { _tag: "error", message: WORK_HISTORY_CHANGED_ERROR }
         : { _tag: "noop" };
     if (workAnchorId === undefined)
       yield* patchHistoryMeta((history) =>
@@ -820,12 +842,15 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                   {
                     ...latest,
                     data: Option.some(
-                      mergeOlderHistoryIntoProjection(
-                        latest.data.value,
-                        page.items,
-                        workAnchorId === undefined
-                          ? undefined
-                          : { anchorId: workAnchorId, nextCursor: page.nextCursor },
+                      mergeOlderSubagentsIntoProjection(
+                        mergeOlderHistoryIntoProjection(
+                          latest.data.value,
+                          page.items,
+                          workAnchorId === undefined
+                            ? undefined
+                            : { anchorId: workAnchorId, nextCursor: page.nextCursor },
+                        ),
+                        page.subagents,
                       ),
                     ),
                     status:
@@ -976,6 +1001,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
   // A stream defect parks the subscription until something resubscribes it.
   const resubscribes = yield* Queue.unbounded<void>();
+  // A resumed replay that dies (an event this client cannot decode) dies the same
+  // way from the same cursor, so later attempts reload the full snapshot until one applies.
+  const resuming = yield* Ref.make(false);
+  const forceSnapshot = yield* Ref.make(false);
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -992,9 +1021,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   const backOffAfterDefect = Effect.suspend(() => {
     const retryDelay = subscriptionRetryDelay(THREAD_SUBSCRIPTION_RETRY_DELAY, defectRetries);
     defectRetries += 1;
-    return setStreamError("Could not synchronize the thread.").pipe(
-      Effect.andThen(Effect.sleep(retryDelay)),
-    );
+    return setStreamError(THREAD_SYNC_ERROR).pipe(Effect.andThen(Effect.sleep(retryDelay)));
   });
   const followThread = (): Effect.Effect<
     void,
@@ -1088,7 +1115,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume = Option.isSome(current.data) && !(yield* Ref.get(forceSnapshot));
+        yield* Ref.set(resuming, canResume);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
         return {
@@ -1115,7 +1143,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             return yield* Queue.offer(resubscribes, undefined);
           }
           if (!Cause.hasDies(cause)) {
-            return yield* setStreamError("Could not synchronize the thread.");
+            return yield* setStreamError(THREAD_SYNC_ERROR);
+          }
+          yield* Ref.set(forceSnapshot, true);
+          if (yield* Ref.getAndSet(resuming, false)) {
+            return yield* Queue.offer(resubscribes, undefined);
           }
           yield* backOffAfterDefect;
           yield* Queue.offer(resubscribes, undefined);
@@ -1146,6 +1178,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               environmentId,
               threadId,
             }).pipe(
+              Effect.andThen(Ref.set(forceSnapshot, true)),
               Effect.andThen(backOffAfterDefect),
               Effect.andThen(Effect.suspend(followThread)),
             ),

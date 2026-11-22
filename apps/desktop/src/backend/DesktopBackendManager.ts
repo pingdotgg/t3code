@@ -84,6 +84,7 @@ export interface DesktopBackendStartConfig extends BackendProcessContext {
   readonly preflightFailure: Option.Option<PreflightFailure>;
   readonly runningDistro?: string;
   readonly wslRuntimeId?: string;
+  readonly wslT3Home?: string | null;
 }
 
 export interface PreflightFailure {
@@ -344,7 +345,25 @@ const closeRun = (
   );
 };
 
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
+// Windows takes about a second to fail a refused connection to a non-loopback address such as a
+// WSL distro IP, so one sequential poller notices readiness up to a second late.
+const STAGGERED_READINESS_POLLERS = 4;
+const READINESS_POLLER_STAGGER = Duration.millis(250);
+
 const waitForHttpReady = (
+  options: BackendProcessContext & { readonly timeout: Duration.Duration },
+): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
+  const poll = pollHttpReady(options);
+  if (LOOPBACK_HOSTNAMES.has(options.httpBaseUrl.hostname)) return poll;
+  return Effect.raceAll(
+    Array.from({ length: STAGGERED_READINESS_POLLERS }, (_, index) =>
+      Effect.sleep(Duration.times(READINESS_POLLER_STAGGER, index)).pipe(Effect.andThen(poll)),
+    ),
+  );
+};
+
+const pollHttpReady = (
   options: BackendProcessContext & { readonly timeout: Duration.Duration },
 ): Effect.Effect<void, BackendReadinessTimeoutError, HttpClient.HttpClient> => {
   const readinessUrl = new URL(BACKEND_READINESS_PATH, options.httpBaseUrl);
@@ -974,6 +993,7 @@ export const makeBackendInstance = Effect.fn("makeBackendInstance")(function* (
               yield* wslEnvironment.pruneRuntimes(
                 config.value.runningDistro,
                 config.value.wslRuntimeId,
+                config.value.wslT3Home ?? null,
               );
             }
           }),
