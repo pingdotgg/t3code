@@ -6408,171 +6408,177 @@ describe("orchestration v2 provider switching", () => {
       }),
   );
 
-  it.effect.each(["same-provider-retry", "switch-away-and-return", "persisted-failure"] as const)(
-    "handles an inline context handoff after a failed returning turn (%s)",
-    (variant) =>
-      Effect.gen(function* () {
-        const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
-        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
-        const dropped = variant !== "persisted-failure";
-        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
-          makeTestAdapter({
-            instanceId: CODEX_MODEL_SELECTION.instanceId,
-            driver: CODEX_DRIVER,
-            capabilities: CodexProviderCapabilitiesV2,
-            modelSelection: CODEX_MODEL_SELECTION,
-            responseByRunOrdinal: {
-              1: "Morning Codex summary.",
-              3: "",
-              4: "Recovered Codex answer.",
-              5: "Recovered Codex after round-trip.",
-            },
-            capturedTurns,
-            failedRunOrdinals: new Set([3]),
-            ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
-          }),
-          makeTestAdapter({
-            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
-            driver: CLAUDE_DRIVER,
-            capabilities: ClaudeProviderCapabilitiesV2,
-            modelSelection: CLAUDE_MODEL_SELECTION,
-            responseByRunOrdinal: {
-              2: "Afternoon Claude shipped b63 live draft.",
-              4: "Extra Claude turn after dropped handoff.",
-            },
-            capturedTurns,
-          }),
-        ]);
+  it.effect.each([
+    "same-provider-retry",
+    "cancelled-dropped",
+    "switch-away-and-return",
+    "persisted-failure",
+  ] as const)("handles an inline context handoff after a failed returning turn (%s)", (variant) =>
+    Effect.gen(function* () {
+      const cwd = yield* checkpointWorkspace(`dropped-handoff-${variant}`);
+      const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+      const dropped = variant !== "persisted-failure";
+      const cancelled = variant === "cancelled-dropped";
+      const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+        makeTestAdapter({
+          instanceId: CODEX_MODEL_SELECTION.instanceId,
+          driver: CODEX_DRIVER,
+          capabilities: CodexProviderCapabilitiesV2,
+          modelSelection: CODEX_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            1: "Morning Codex summary.",
+            3: "",
+            4: "Recovered Codex answer.",
+            5: "Recovered Codex after round-trip.",
+          },
+          capturedTurns,
+          ...(cancelled
+            ? { cancelledRunOrdinals: new Set([3]) }
+            : { failedRunOrdinals: new Set([3]) }),
+          ...(dropped ? { promptDroppedRunOrdinals: new Set([3]) } : {}),
+        }),
+        makeTestAdapter({
+          instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+          driver: CLAUDE_DRIVER,
+          capabilities: ClaudeProviderCapabilitiesV2,
+          modelSelection: CLAUDE_MODEL_SELECTION,
+          responseByRunOrdinal: {
+            2: "Afternoon Claude shipped b63 live draft.",
+            4: "Extra Claude turn after dropped handoff.",
+          },
+          capturedTurns,
+        }),
+      ]);
 
-        yield* Effect.gen(function* () {
-          const orchestrator = yield* Orchestrator.OrchestratorV2;
-          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-          const testThreadId = ThreadId.make(`thread:dropped-handoff:${variant}`);
-          yield* orchestrator.dispatch({
-            type: "thread.create",
-            createdBy: "user",
-            creationSource: "web",
-            commandId: CommandId.make(`command:dropped-handoff:${variant}:create`),
-            threadId: testThreadId,
-            projectId,
-            title: `Dropped handoff ${variant}`,
-            modelSelection: CODEX_MODEL_SELECTION,
-            runtimeMode: "full-access",
-            interactionMode: "default",
-            branch: null,
-            worktreePath: cwd,
-          });
-          let step = 0;
-          const send = (text: string, modelSelection: ModelSelection) =>
-            Effect.gen(function* () {
-              step += 1;
-              yield* orchestrator.dispatch({
-                type: "message.dispatch",
-                createdBy: "user",
-                creationSource: "web",
-                commandId: CommandId.make(`command:dropped-handoff:${variant}:msg-${step}`),
-                threadId: testThreadId,
-                messageId: MessageId.make(`message:dropped-handoff:${variant}:${step}`),
-                text,
-                attachments: [],
-                modelSelection,
-                dispatchMode: { type: "start_immediately" },
-              });
-              yield* worker.drain();
-              yield* waitForIdle(testThreadId);
-              yield* worker.drain();
-              return yield* orchestrator.getThreadProjection(testThreadId);
+      yield* Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+        const testThreadId = ThreadId.make(`thread:dropped-handoff:${variant}`);
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`command:dropped-handoff:${variant}:create`),
+          threadId: testThreadId,
+          projectId,
+          title: `Dropped handoff ${variant}`,
+          modelSelection: CODEX_MODEL_SELECTION,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: cwd,
+        });
+        let step = 0;
+        const send = (text: string, modelSelection: ModelSelection) =>
+          Effect.gen(function* () {
+            step += 1;
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`command:dropped-handoff:${variant}:msg-${step}`),
+              threadId: testThreadId,
+              messageId: MessageId.make(`message:dropped-handoff:${variant}:${step}`),
+              text,
+              attachments: [],
+              modelSelection,
+              dispatchMode: { type: "start_immediately" },
             });
-
-          // Run 1: establish native session on Codex.
-          yield* send("Morning task", CODEX_MODEL_SELECTION);
-          // Run 2: switch to Claude and do real work.
-          yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
-          // Run 3: switch back to Codex (delta handoff covering run 2); fails.
-          const afterRun3 = yield* send("Resume on bad model", {
-            ...CODEX_MODEL_SELECTION,
-            model: "gemini-4-neon",
+            yield* worker.drain();
+            yield* waitForIdle(testThreadId);
+            yield* worker.drain();
+            return yield* orchestrator.getThreadProjection(testThreadId);
           });
-          const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
-          assert.equal(run3.status, "failed");
-          const run3Handoff = afterRun3.contextHandoffs.find(
-            (handoff) => handoff.targetRunId === run3.id,
+
+        // Run 1: establish native session on Codex.
+        yield* send("Morning task", CODEX_MODEL_SELECTION);
+        // Run 2: switch to Claude and do real work.
+        yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
+        // Run 3: switch back to Codex (delta handoff covering run 2); fails.
+        const afterRun3 = yield* send("Resume on bad model", {
+          ...CODEX_MODEL_SELECTION,
+          model: "gemini-4-neon",
+        });
+        const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
+        assert.equal(run3.status, cancelled ? "cancelled" : "failed");
+        const run3Handoff = afterRun3.contextHandoffs.find(
+          (handoff) => handoff.targetRunId === run3.id,
+        );
+        assert.isDefined(run3Handoff);
+        assert.deepEqual(run3Handoff?.coveredRunOrdinals, { from: 2, to: 2 });
+
+        if (dropped) {
+          assert.isUndefined(
+            run3Handoff?.delivery,
+            "dropping the failed prompt must clear inline handoff delivery",
           );
-          assert.isDefined(run3Handoff);
-          assert.deepEqual(run3Handoff?.coveredRunOrdinals, { from: 2, to: 2 });
+          const run3Turn = afterRun3.providerTurns.find(
+            (turn) => turn.runAttemptId === run3.activeAttemptId,
+          );
+          assert.equal(run3Turn?.promptDropped, true);
+        } else {
+          assert.equal(run3Handoff?.delivery?.status, "inline");
+        }
 
-          if (dropped) {
-            assert.isUndefined(
-              run3Handoff?.delivery,
-              "dropping the failed prompt must clear inline handoff delivery",
-            );
-            const run3Turn = afterRun3.providerTurns.find(
-              (turn) => turn.runAttemptId === run3.activeAttemptId,
-            );
-            assert.equal(run3Turn?.promptDropped, true);
-          } else {
-            assert.equal(run3Handoff?.delivery?.status, "inline");
-          }
-
-          if (variant === "same-provider-retry") {
-            // Run 4: stay on Codex with a working model; must re-deliver run 2's handoff.
-            const afterRun4 = yield* send("Resume", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
-            const turns = yield* Ref.get(capturedTurns);
-            const run4Turn = turns.at(-1)!;
-            assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
-            assert.include(run4Turn.text, "Resume on bad model");
-            assert.include(run4Turn.text, "User message:\nResume");
-            const updatedHandoff = afterRun4.contextHandoffs.find(
-              (handoff) => handoff.id === run3Handoff!.id,
-            );
-            assert.equal(updatedHandoff?.delivery?.status, "inline");
-          } else if (variant === "switch-away-and-return") {
-            // Run 4: bounce back to Claude, then Run 5: return to Codex.
-            yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
-            const afterRun5 = yield* send("Back to Codex", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
-            const run5 = afterRun5.runs.find((run) => run.ordinal === 5)!;
-            const run5Handoff = afterRun5.contextHandoffs.find(
-              (handoff) => handoff.targetRunId === run5.id,
-            );
-            assert.isDefined(run5Handoff);
-            assert.deepEqual(run5Handoff?.coveredRunOrdinals, { from: 2, to: 4 });
-            const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
-            assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
-            assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
-          } else {
-            // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
-            yield* send("Resume", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
-            const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
-            assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
-          }
-        }).pipe(
-          Effect.provide(
-            ProviderReplayHarness.layerWithRegistry(
-              {
-                name: `dropped-handoff-${variant}`,
-                runtimePolicyOverride: {
-                  cwd,
-                  approvalPolicy: "never",
-                  sandboxPolicy: {
-                    type: "readOnly",
-                    access: { type: "fullAccess" },
-                    networkAccess: false,
-                  },
+        if (variant === "same-provider-retry" || variant === "cancelled-dropped") {
+          // Run 4: stay on Codex with a working model; must re-deliver run 2's handoff.
+          const afterRun4 = yield* send("Resume", {
+            ...CODEX_MODEL_SELECTION,
+            model: "claude-opus-5-5",
+          });
+          const turns = yield* Ref.get(capturedTurns);
+          const run4Turn = turns.at(-1)!;
+          assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run4Turn.text, "Resume on bad model");
+          assert.include(run4Turn.text, "User message:\nResume");
+          const updatedHandoff = afterRun4.contextHandoffs.find(
+            (handoff) => handoff.id === run3Handoff!.id,
+          );
+          assert.equal(updatedHandoff?.delivery?.status, "inline");
+        } else if (variant === "switch-away-and-return") {
+          // Run 4: bounce back to Claude, then Run 5: return to Codex.
+          yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
+          const afterRun5 = yield* send("Back to Codex", {
+            ...CODEX_MODEL_SELECTION,
+            model: "claude-opus-5-5",
+          });
+          const run5 = afterRun5.runs.find((run) => run.ordinal === 5)!;
+          const run5Handoff = afterRun5.contextHandoffs.find(
+            (handoff) => handoff.targetRunId === run5.id,
+          );
+          assert.isDefined(run5Handoff);
+          assert.deepEqual(run5Handoff?.coveredRunOrdinals, { from: 2, to: 4 });
+          const run5Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.include(run5Turn.text, "Afternoon Claude shipped b63 live draft.");
+          assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
+        } else {
+          // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
+          yield* send("Resume", {
+            ...CODEX_MODEL_SELECTION,
+            model: "claude-opus-5-5",
+          });
+          const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
+          assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
+        }
+      }).pipe(
+        Effect.provide(
+          ProviderReplayHarness.layerWithRegistry(
+            {
+              name: `dropped-handoff-${variant}`,
+              runtimePolicyOverride: {
+                cwd,
+                approvalPolicy: "never",
+                sandboxPolicy: {
+                  type: "readOnly",
+                  access: { type: "fullAccess" },
+                  networkAccess: false,
                 },
               },
-              layerRegistry,
-            ),
+            },
+            layerRegistry,
           ),
-        );
-      }),
+        ),
+      );
+    }),
   );
 });
