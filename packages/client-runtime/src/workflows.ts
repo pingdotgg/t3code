@@ -15,6 +15,7 @@ import {
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 export interface WorkflowQuestionView {
   readonly title: string;
@@ -732,4 +733,30 @@ export function workflowStepReferences(
   step: string,
 ): ReadonlyArray<WorkflowRunReference> {
   return references.filter((reference) => reference.steps.includes(step));
+}
+
+/** A step's time in one shape down a column: 0.3s, 9.7s, 12s, then minutes. */
+export function workflowStepTime(ms: number): string {
+  if (ms < 10_000 && ms % 1000 !== 0) return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+  if (ms < 60_000) return `${Math.round(ms / 1000)}s`;
+  return formatDuration(ms);
+}
+
+/**
+ * The first sentence of a reply, as one line of plain text: a heading, list mark, inline code,
+ * emphasis or link reads as its words.
+ */
+export function workflowOneLine(text: string): string {
+  const line =
+    text
+      .split("\n")
+      .map((candidate) => candidate.trim())
+      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
+      ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
+  const plain = line
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/`([^`]*)`/g, "$1")
+    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
+  const end = plain.search(/[.!?](\s|$)/);
+  return end === -1 ? plain : plain.slice(0, end + 1);
 }

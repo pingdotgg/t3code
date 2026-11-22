@@ -58,6 +58,8 @@ import {
   workflowRunState,
   workflowSaidStart,
   workflowStepReferences,
+  workflowStepTime,
+  workflowOneLine,
   type WorkflowBeat,
   type WorkflowFeedRow,
   type WorkflowQuickSteps,
@@ -584,32 +586,7 @@ export function WorkflowRunFeed({
   );
 }
 
-// The first line of prose, so a reply that opens with a heading or a list still reads as a sentence.
-const firstSentence = (text: string) => {
-  const line =
-    text
-      .split("\n")
-      .map((candidate) => candidate.trim())
-      .find((candidate) => candidate !== "" && !/^(#|```|\|)/.test(candidate))
-      ?.replace(/^([-*>]|\d+\.)\s+/, "") ?? "";
-  // One line of plain text: inline code, emphasis and links read as their words.
-  const plain = line
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/`([^`]*)`/g, "$1")
-    .replace(/(\*\*|__|\*|_)(\S(?:.*?\S)?)\1/g, "$2");
-  const end = plain.search(/[.!?](\s|$)/);
-  return end === -1 ? plain : plain.slice(0, end + 1);
-};
-
 type StepTone = "working" | "input" | "quiet" | "done" | "failed" | "ended";
-
-/** A step's time in one shape down the column: 0.3s, 9.7s, 12s, then minutes. */
-const stepTime = (ms: number) =>
-  ms < 10_000 && ms % 1000 !== 0
-    ? `${(Math.max(ms, 100) / 1000).toFixed(1)}s`
-    : ms < 60_000
-      ? `${Math.round(ms / 1000)}s`
-      : formatDuration(ms);
 
 // Colour says what is live: blue for work under way, amber for a person's turn. Done is quiet.
 const RING: Record<StepTone, string> = {
@@ -988,7 +965,7 @@ function WorkflowTimeline({
                     count: names.length - 2,
                   })
             }
-            duration={stepTime(Math.max(0, row.endMs - row.startMs))}
+            duration={workflowStepTime(Math.max(0, row.endMs - row.startMs))}
             selected={focus === key}
             current={current === key}
             onPick={() => onPick(key)}
@@ -1045,7 +1022,7 @@ function WorkflowTimeline({
                 </span>
               ) : null}
               <span className="min-w-12 shrink-0 text-right text-xs text-muted-foreground tabular-nums">
-                {stepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
+                {workflowStepTime(running > 0 ? wholeSeconds(endMs - startMs) : endMs - startMs)}
               </span>
               <span aria-hidden className="hidden w-3 shrink-0 @2xl/feed:block" />
             </div>
@@ -1255,11 +1232,11 @@ function WorkflowBeatRow({
     }
   })();
   const aside = (() => {
-    if (failed) return firstSentence(beat.detail ?? gt("failed"));
+    if (failed) return workflowOneLine(beat.detail ?? gt("failed"));
     if (under) return null;
     switch (beat.kind) {
       case "agent":
-        return said === null ? null : firstSentence(said);
+        return said === null ? null : workflowOneLine(said);
       case "ask":
         return answer === null
           ? gt("nobody answered")
@@ -1315,7 +1292,7 @@ function WorkflowBeatRow({
       }
       aside={aside}
       {...(failed ? { asideTone: "failed" as const } : {})}
-      duration={stepTime(elapsedOf(beat))}
+      duration={workflowStepTime(elapsedOf(beat))}
       selected={selected}
       current={current}
       onPick={onPick}

@@ -46,9 +46,9 @@ const NOTHING: Record<WorkflowListTab, string> = {
 };
 
 export const WORKFLOW_TONE_CLASS: Record<WorkflowRunTone, string> = {
-  input: "text-primary",
+  input: "text-warning-foreground",
   failed: "text-danger-foreground",
-  working: "text-foreground-secondary",
+  working: "text-primary",
   quiet: "text-foreground-muted",
   done: "text-foreground-muted",
 };

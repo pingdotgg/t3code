@@ -36,7 +36,7 @@ export function Card(props: { readonly tone?: "input" | "failed"; readonly child
       className={cn(
         "gap-2 rounded-2xl border p-4",
         props.tone === "input"
-          ? "border-primary bg-primary/5"
+          ? "border-warning-border bg-warning"
           : props.tone === "failed"
             ? "border-danger-border bg-danger/5"
             : "border-border bg-card",

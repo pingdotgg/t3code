@@ -30,6 +30,8 @@ import {
   workflowRunState,
   workflowSaidStart,
   workflowStepReferences,
+  workflowStepTime,
+  workflowOneLine,
   workflowTriggerLine,
 } from "./workflows.ts";
 
@@ -485,5 +487,26 @@ describe("workflow references", () => {
     const all = [issue("412"), pullRequest, machine];
     expect(workflowStepReferences(all, "checks")).toEqual([pullRequest]);
     expect(workflowStepReferences(all, "merge")).toEqual([]);
+  });
+});
+
+describe("workflowStepTime", () => {
+  it("keeps one shape down the column", () => {
+    expect(workflowStepTime(9)).toBe("0.1s");
+    expect(workflowStepTime(342)).toBe("0.3s");
+    expect(workflowStepTime(9_700)).toBe("9.7s");
+    expect(workflowStepTime(4_000)).toBe("4s");
+    expect(workflowStepTime(12_400)).toBe("12s");
+  });
+});
+
+describe("workflowOneLine", () => {
+  it("reads a reply's first sentence as plain words", () => {
+    expect(workflowOneLine("## Done\n\nI added `clamp` next to **sum**. Tests pass.")).toBe(
+      "I added clamp next to sum.",
+    );
+    expect(workflowOneLine("- See [the issue](https://x.test/2) first")).toBe(
+      "See the issue first",
+    );
   });
 });
