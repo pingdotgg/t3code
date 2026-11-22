@@ -1,6 +1,6 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react";
-import { useState, type KeyboardEventHandler } from "react";
+import type { KeyboardEventHandler } from "react";
 
 import { Spinner } from "~/components/ui/spinner";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
@@ -10,36 +10,7 @@ import {
   withMarkdownDefinitions,
 } from "@t3tools/shared/markdownChunks";
 
-// Browsers cap an element's height near 33.5M px, so the list holds only this many source lines
-// (about 7M px at the size estimate); reaching either end moves the window like paging.
-const WINDOW_MAX_LINES = 300_000;
 const ESTIMATED_LINE_PX = 24;
-
-function windowEnd(chunks: readonly MarkdownChunk[], base: number): number {
-  let lines = 0;
-  let index = base;
-  while (
-    index < chunks.length &&
-    (index === base || lines + chunks[index]!.lines <= WINDOW_MAX_LINES)
-  ) {
-    lines += chunks[index]!.lines;
-    index += 1;
-  }
-  return index;
-}
-
-/** Walks `direction` from `from` until half a window of lines has passed. */
-function halfWindowFrom(chunks: readonly MarkdownChunk[], from: number, direction: 1 | -1): number {
-  let lines = 0;
-  let index = from;
-  while (lines < WINDOW_MAX_LINES / 2) {
-    const next = index + direction;
-    if (next < 0 || next >= chunks.length) break;
-    index = next;
-    lines += chunks[index]!.lines;
-  }
-  return index;
-}
 
 interface ChunkItem {
   readonly index: number;
@@ -63,25 +34,15 @@ export function ChunkedMarkdown(props: {
     | ((input: { readonly markerOffset: number; readonly checked: boolean }) => void)
     | undefined;
 }) {
-  const [base, setBase] = useState(0);
   const { chunks, onTaskListChange } = props;
-  const end = windowEnd(chunks, base);
   const items: ChunkItem[] = [];
   let start = 0;
   let lines = 0;
-  for (let index = 0; index < end; index += 1) {
-    const chunk = chunks[index]!;
-    if (index >= base) {
-      items.push({ index, start, chunk });
-      lines += chunk.lines;
-    }
+  for (const [index, chunk] of chunks.entries()) {
+    items.push({ index, start, chunk });
+    lines += chunk.lines;
     start += chunk.text.length + 1;
   }
-  const edge = (
-    <div className="flex justify-center py-4">
-      <Spinner size="md" tone="muted" />
-    </div>
-  );
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -101,18 +62,15 @@ export function ChunkedMarkdown(props: {
         estimatedItemSize={(lines / Math.max(items.length, 1)) * ESTIMATED_LINE_PX}
         drawDistance={800}
         recycleItems={false}
-        // Moving the window drops or adds pieces above the reader; keep what they see in place.
-        maintainVisibleContentPosition
-        onStartReached={() => {
-          if (base > 0) setBase(halfWindowFrom(chunks, base, -1));
-        }}
-        onEndReached={() => {
-          if (end < chunks.length) setBase(halfWindowFrom(chunks, base, 1));
-        }}
         className="h-full scrollbar-gutter-both"
         contentContainerClassName="py-5"
-        ListHeaderComponent={base > 0 ? edge : null}
-        ListFooterComponent={end < chunks.length || props.loading ? edge : null}
+        ListFooterComponent={
+          props.loading ? (
+            <div className="flex justify-center py-4">
+              <Spinner size="md" tone="muted" />
+            </div>
+          ) : null
+        }
         renderItem={({ item }) => (
           <div className="pb-5">
             {item.chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS ? (

@@ -58,6 +58,7 @@ import {
   useEffectEvent,
   useRef,
   useState,
+  type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
   type RefObject,
 } from "react";
@@ -129,6 +130,8 @@ import {
   FileSurfaceLoading,
 } from "./fileSurfaceChrome";
 import SourceFilePreview from "./ReadOnlySourcePreview";
+import LargeSourcePreview from "./LargeSourcePreview";
+import { HIGHLIGHTED_SOURCE_MAX_BYTES } from "./largeTextProtocol";
 import { resolveCenteredFileLineScrollTop } from "./fileLineReveal";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { projectFileCacheKey } from "./fileContentRevision";
@@ -1841,6 +1844,9 @@ export default function FilePreviewPanel({
               delimiter={renderTable ? tableDelimiter : null}
               markdownCwd={renderMarkdown ? cwd : null}
               copyContents={copyLargeText}
+              preview={file.data?.contents ?? ""}
+              sizeBytes={file.data?.byteLength ?? 0}
+              onPostRender={onFilePostRender}
               workspaceMutationId={workspaceMutationId}
               revealLine={revealLine}
               revealRequestId={revealRequestId}
@@ -2092,6 +2098,10 @@ export function WorkspaceLargeTextPreview(props: {
   /** Renders the file as Markdown resolving links against this workspace; null shows source. */
   markdownCwd: string | null;
   copyContents: RefObject<(() => Promise<string>) | null>;
+  /** The first megabyte already read, shown until the whole file arrives. */
+  preview: string;
+  sizeBytes: number;
+  onPostRender?: ComponentProps<typeof LargeSourcePreview>["onPostRender"];
   workspaceMutationId: string | null;
   revealLine: number | null;
   revealRequestId: number;
@@ -2100,6 +2110,7 @@ export function WorkspaceLargeTextPreview(props: {
   const resource = largeFileResource(props.threadRef, props.absolutePath, props.draftCwd);
   const gt = useGT();
   const [revision, setRevision] = useState(0);
+  const [tooTallSrc, setTooTallSrc] = useState<string | null>(null);
   const showError = (cause: unknown) => {
     toastManager.add({
       type: "error",
@@ -2143,7 +2154,7 @@ export function WorkspaceLargeTextPreview(props: {
   };
   return (
     <Suspense fallback={<FileSurfaceLoading />}>
-      {props.markdownCwd !== null ? (
+      {props.markdownCwd !== null && tooTallSrc !== src ? (
         <LargeMarkdownViewer
           key={`${src}:${revision}`}
           src={src}
@@ -2153,6 +2164,23 @@ export function WorkspaceLargeTextPreview(props: {
           workspaceMutationId={props.workspaceMutationId}
           copyContents={props.copyContents}
           onRetry={retry}
+          onTooTall={() => setTooTallSrc(src)}
+        />
+      ) : props.delimiter === null &&
+        props.sizeBytes <= HIGHLIGHTED_SOURCE_MAX_BYTES &&
+        // Markdown already found too tall to render is too tall to highlight too.
+        tooTallSrc !== src ? (
+        <LargeSourcePreview
+          key={`${src}:${revision}`}
+          src={src}
+          name={props.name}
+          preview={props.preview}
+          copyContents={props.copyContents}
+          onRetry={retry}
+          onPostRender={props.onPostRender}
+          revealLine={props.revealLine}
+          revealRequestId={props.revealRequestId}
+          wordWrap={props.wordWrap}
         />
       ) : (
         <LargeTextViewer

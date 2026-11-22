@@ -1,8 +1,9 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { useGT } from "gt-react";
-import { useEffect, useImperativeHandle, useState, type RefObject } from "react";
+import { useEffect, useEffectEvent, useImperativeHandle, useState, type RefObject } from "react";
 
 import { ChunkedMarkdown } from "./ChunkedMarkdown";
+import { RENDERED_MAX_LINES } from "./largeTextProtocol";
 import { FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
 import {
   createMarkdownSplitter,
@@ -38,18 +39,22 @@ export default function LargeMarkdownViewer(props: {
   readonly workspaceMutationId: string | null;
   readonly copyContents: RefObject<(() => Promise<string>) | null>;
   readonly onRetry: () => void;
+  /** Called instead of rendering once the file is too tall for the browser to lay out. */
+  readonly onTooTall: () => void;
 }) {
   const gt = useGT();
   const [file, setFile] = useState<StreamedMarkdown | "failed" | null>(() => {
     const cached = recentFiles.get(props.src);
     return cached ? { ...cached, done: true } : null;
   });
+  const reportTooTall = useEffectEvent(() => props.onTooTall());
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the streamed download and cancels it when the source changes or the preview closes.
   useEffect(() => {
     if (recentFiles.has(props.src)) return;
     const controller = new AbortController();
     const splitter = createMarkdownSplitter();
     const chunks: MarkdownChunk[] = [];
+    let lines = 0;
     let published = 0;
     const publish = (done: boolean) => {
       if (!done && chunks.length === published) return;
@@ -64,7 +69,14 @@ export default function LargeMarkdownViewer(props: {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(...splitter.push(value));
+        const added = splitter.push(value);
+        chunks.push(...added);
+        for (const chunk of added) lines += chunk.lines;
+        if (lines > RENDERED_MAX_LINES) {
+          controller.abort();
+          reportTooTall();
+          return;
+        }
         if (published === 0 || performance.now() - lastPublish > PUBLISH_INTERVAL_MS) {
           publish(false);
           lastPublish = performance.now();

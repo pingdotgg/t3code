@@ -3,6 +3,11 @@ export const LARGE_TEXT_MAX_BYTES = 256 * 1024 * 1024;
 export const LARGE_TEXT_MAX_ROWS = 5_000_000;
 export const LARGE_TEXT_MAX_COLUMNS = 1024;
 export const PREVIEW_PAGE_ROWS = 32;
+// Browsers stop laying out an element near 33.5M px. Rendered Markdown measured about 22 px per
+// source line, so files taller than this stay in the scaled plain viewer.
+export const RENDERED_MAX_LINES = 1_200_000;
+// Highlighted source holds the whole file on the main thread; larger files use the worker viewer.
+export const HIGHLIGHTED_SOURCE_MAX_BYTES = 64 * 1024 * 1024;
 export type TextPreviewRequest =
   | { type: "open"; src?: string; text?: string; sizeBytes?: number; delimiter: "," | "\t" | null }
   | { type: "page"; index: number }

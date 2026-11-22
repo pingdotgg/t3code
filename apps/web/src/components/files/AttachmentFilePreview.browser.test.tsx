@@ -587,6 +587,9 @@ describe("large text preview recovery", () => {
           delimiter={null}
           markdownCwd={null}
           copyContents={{ current: null }}
+          preview=""
+          // Past the highlighted-source cap, so the worker-backed viewer under test renders.
+          sizeBytes={128 * 1024 * 1024}
           workspaceMutationId={mutation}
           revealLine={null}
           revealRequestId={0}
