@@ -1644,7 +1644,11 @@ export const make = Effect.gen(function* () {
   const revokeMcpClientToken: EnvironmentAuth["Service"]["revokeMcpClientToken"] = Effect.fn(
     "EnvironmentAuth.revokeMcpClientToken",
   )(function* (token) {
-    const session = yield* sessions.verify(token).pipe(Effect.option);
+    const session = yield* sessions.verify(token).pipe(
+      Effect.asSome,
+      Effect.catchIf(SessionStore.isSessionCredentialInvalidError, () => Effect.succeedNone),
+      Effect.mapError((cause) => new ServerAuthSessionCredentialValidationError({ cause })),
+    );
     if (
       Option.isNone(session) ||
       session.value.subject !== MCP_CLIENT_SUBJECT ||

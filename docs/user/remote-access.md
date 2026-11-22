@@ -469,8 +469,9 @@ an address you trust: the code is sent there.
   scripts.
 - The link shows up in that machine's **Settings → Sharing & access** like any
   outside agent, and can be revoked there. **Forget** on this machine also ends
-  it there when that machine answers; a machine that is offline or on an older
-  T3 Code keeps listing it until it expires or you revoke it there.
+  it there when that machine confirms it. If it can't, such as when it is
+  offline or on an older T3 Code, Forget says so; revoke it in that machine's
+  Sharing & access.
 - A link stays valid while agents use it. One unused for 30 days expires, as
   does one to a machine on an older T3 Code after 30 days; link again with a
   new pairing code.

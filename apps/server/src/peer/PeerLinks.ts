@@ -669,17 +669,21 @@ const make = Effect.gen(function* () {
 
   /** Best effort: a peer that is gone or too old to revoke lets its session expire instead. */
   const revokeAtPeer = Effect.fn("PeerLinks.revokeAtPeer")(
-    function* (urlsJson: string, token: string) {
+    function* (environmentId: EnvironmentId, urlsJson: string, token: string) {
       const urls = yield* decodeUrls(urlsJson);
       // A race over no addresses never settles.
       if (urls.length === 0) return false;
       yield* Effect.raceAll(
         urls.map((url) =>
-          clientFor(url).pipe(
+          // An address can change hands after linking; only the linked peer may see the token.
+          answersAs(url, environmentId).pipe(
+            Effect.flatMap(Effect.fromOption),
+            Effect.andThen(clientFor(url)),
             Effect.flatMap((client) =>
-              client.mcpOAuth.revoke({ payload: { token: Redacted.make(token) } }),
+              client.mcpOAuth
+                .revoke({ payload: { token: Redacted.make(token) } })
+                .pipe(Effect.timeout(probeTimeout(url))),
             ),
-            Effect.timeout(probeTimeout(url)),
           ),
         ),
       );
@@ -700,10 +704,23 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.catch(failStorage));
       let endedThere = false;
       for (const row of deleted) {
-        const token = yield* secrets.get(row.secret_name).pipe(Effect.catch(failStorage));
+        // Unreadable only skips the revocation; the secret is still removed below.
+        const token = yield* secrets
+          .get(row.secret_name)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Could not read the unlinked peer's token", { cause }).pipe(
+                Effect.as(Option.none()),
+              ),
+            ),
+          );
         yield* secrets.remove(row.secret_name).pipe(Effect.catch(failStorage));
         if (Option.isSome(token)) {
-          endedThere = yield* revokeAtPeer(row.urls_json, new TextDecoder().decode(token.value));
+          endedThere = yield* revokeAtPeer(
+            environmentId,
+            row.urls_json,
+            new TextDecoder().decode(token.value),
+          );
         }
       }
       return { removed: deleted.length > 0, endedThere };
