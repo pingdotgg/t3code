@@ -1,5 +1,5 @@
 import { Link, useSearch } from "@tanstack/react-router";
-import { msg, useMessages } from "gt-react";
+import { msg, useGT, useMessages } from "gt-react";
 
 import {
   WorkspaceBreadcrumb,
@@ -28,6 +28,7 @@ function settingsBreadcrumbLabel(pathname: string): string | null {
  * `SettingsScopeSentence`.
  */
 export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
+  const gt = useGT();
   const m = useMessages();
   const sectionLabel = settingsBreadcrumbLabel(pathname);
   const skill = useSearch({ strict: false, select: (search) => search.skill });
@@ -36,7 +37,7 @@ export function SettingsBreadcrumb({ pathname }: { pathname: string }) {
   const page = onTools ? (skill ?? server) : undefined;
 
   return (
-    <WorkspaceBreadcrumb ariaLabel="Settings breadcrumb">
+    <WorkspaceBreadcrumb ariaLabel={gt("Settings breadcrumb")}>
       {sectionLabel ? (
         <>
           <WorkspaceBreadcrumbItem>{m(SETTINGS_LABEL)}</WorkspaceBreadcrumbItem>

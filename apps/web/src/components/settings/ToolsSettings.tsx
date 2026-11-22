@@ -68,7 +68,7 @@ import { SkillListSection, type SkillListRow, stopRowClick } from "./SkillList";
 import { SkillTrashNotice, SkillTrashSection, useSkillTrash } from "./SkillTrash";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import {
   collectSkillRows,
   type FleetSkillRow,
@@ -244,6 +244,7 @@ function SkillsPanel({
   openName: string | null;
   onOpen: (name: string | null) => void;
 }) {
+  const searchableSetting = useSearchableSetting();
   const { scope, target, connectedEnvironments } = useSettingsScope();
   const environmentId = target?.environmentId ?? null;
   const targets = useToolsTargets();

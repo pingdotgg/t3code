@@ -10,6 +10,7 @@ const ExternalUrlTarget = Schema.Literals([
   "mcp-app",
   "docs-cloud",
   "secret-request",
+  "external-link",
 ]);
 
 export type ExternalUrlTarget = typeof ExternalUrlTarget.Type;
@@ -42,7 +43,10 @@ function externalUrlMetadata(url: string): { readonly scheme: string; readonly h
   }
 }
 
-export async function tryOpenExternalUrl(url: string, target: ExternalUrlTarget): Promise<boolean> {
+export async function tryOpenExternalUrl(
+  url: string,
+  target: ExternalUrlTarget = "external-link",
+): Promise<boolean> {
   try {
     await Linking.openURL(url);
     return true;

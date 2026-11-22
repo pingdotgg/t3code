@@ -107,6 +107,18 @@ describe("filesystem browse model", () => {
       isComplete: false,
     });
     expect(getFilesystemBrowseTabCompletion([], "x")).toBeNull();
+    // The list also shows substring and fuzzy matches; Tab completes only the typed name.
+    expect(getFilesystemBrowseTabCompletion([entry("t3code"), entry("my-t3code")], "t3")).toEqual({
+      name: "t3code",
+      isComplete: true,
+    });
+    expect(
+      getFilesystemBrowseTabCompletion(
+        [entry("OpenSourced"), entry("OpenAI"), entry("reopen"), entry("photos")],
+        "op",
+      ),
+    ).toEqual({ name: "Open", isComplete: false });
+    expect(getFilesystemBrowseTabCompletion([entry("t3code")], "tcd")).toBeNull();
   });
 
   it("matches folder names stored decomposed, as macOS Finder names them", () => {

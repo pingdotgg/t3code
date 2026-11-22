@@ -10,7 +10,7 @@ import {
   TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as DocCommentsService from "../../../docs/DocCommentsService.ts";
 import * as DocsCloudImport from "../../../docs/DocsCloudImport.ts";
@@ -59,7 +59,8 @@ const DocsListTool = Tool.make("docs_list", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsReadTool = Tool.make("docs_read", {
   ...shared,
@@ -78,7 +79,8 @@ const DocsReadTool = Tool.make("docs_read", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsOpenTool = Tool.make("docs_open", {
   ...shared,
@@ -91,7 +93,8 @@ const DocsOpenTool = Tool.make("docs_open", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsListCommentsTool = Tool.make("docs_list_comments", {
   ...shared,
@@ -113,7 +116,8 @@ const DocsListCommentsTool = Tool.make("docs_list_comments", {
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsCommentCreateTool = Tool.make("docs_comment_create", {
   ...shared,
@@ -134,7 +138,8 @@ const DocsCommentCreateTool = Tool.make("docs_comment_create", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsCommentReplyTool = Tool.make("docs_comment_reply", {
   ...shared,
@@ -147,7 +152,8 @@ const DocsCommentReplyTool = Tool.make("docs_comment_reply", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsCommentResolveTool = Tool.make("docs_comment_resolve", {
   ...shared,
@@ -165,7 +171,8 @@ const DocsCommentResolveTool = Tool.make("docs_comment_resolve", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false);
+  .annotate(Tool.OpenWorld, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const cloudShared = {
   ...shared,
@@ -183,7 +190,8 @@ const DocsCloudProjectTool = Tool.make("docs_cloud_project", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 const DocsCloudImportTool = Tool.make("docs_cloud_import", {
   ...cloudShared,
@@ -203,7 +211,8 @@ const DocsCloudImportTool = Tool.make("docs_cloud_import", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, false)
-  .annotate(Tool.OpenWorld, true);
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const DocsToolkit = Toolkit.make(
   DocsListTool,

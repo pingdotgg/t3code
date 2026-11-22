@@ -108,6 +108,7 @@ export const CLIENT_REQUEST_METHODS = {
   gitDiffToRemote: "gitDiffToRemote",
   getAuthStatus: "getAuthStatus",
   fuzzyFileSearch: "fuzzyFileSearch",
+  "thread/settings/update": "thread/settings/update",
 } as const;
 
 export const CLIENT_NOTIFICATION_METHODS = {
@@ -328,6 +329,7 @@ export interface ClientRequestParamsByMethod {
   readonly gitDiffToRemote: CodexSchema.GitDiffToRemoteParams;
   readonly getAuthStatus: CodexSchema.GetAuthStatusParams;
   readonly fuzzyFileSearch: CodexSchema.FuzzyFileSearchParams;
+  readonly "thread/settings/update": CodexSchema.ThreadSettingsUpdateParams;
 }
 
 export interface ClientRequestResponsesByMethod {
@@ -438,6 +440,7 @@ export interface ClientRequestResponsesByMethod {
   readonly gitDiffToRemote: CodexSchema.GitDiffToRemoteResponse;
   readonly getAuthStatus: CodexSchema.GetAuthStatusResponse;
   readonly fuzzyFileSearch: CodexSchema.FuzzyFileSearchResponse;
+  readonly "thread/settings/update": CodexSchema.ThreadSettingsUpdateResponse;
 }
 
 export interface ClientNotificationParamsByMethod {
@@ -667,6 +670,7 @@ export const CLIENT_REQUEST_PARAMS = {
   gitDiffToRemote: CodexSchema.GitDiffToRemoteParams,
   getAuthStatus: CodexSchema.GetAuthStatusParams,
   fuzzyFileSearch: CodexSchema.FuzzyFileSearchParams,
+  "thread/settings/update": CodexSchema.ThreadSettingsUpdateParams,
 } as const;
 
 export const CLIENT_REQUEST_RESPONSES = {
@@ -779,6 +783,7 @@ export const CLIENT_REQUEST_RESPONSES = {
   gitDiffToRemote: CodexSchema.GitDiffToRemoteResponse,
   getAuthStatus: CodexSchema.GetAuthStatusResponse,
   fuzzyFileSearch: CodexSchema.FuzzyFileSearchResponse,
+  "thread/settings/update": CodexSchema.ThreadSettingsUpdateResponse,
 } as const;
 
 export const CLIENT_NOTIFICATION_PARAMS = {

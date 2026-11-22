@@ -65,6 +65,7 @@ const layerTest = (input: {
   readonly onSpawn?: (command: ChildProcess.StandardCommand) => void;
   readonly onUnref?: () => void;
   readonly spawnResult?: (command: ChildProcess.StandardCommand) => MockSpawnResult | undefined;
+  readonly existingPaths?: ReadonlyArray<string>;
 }) => {
   const layerSpawner = Layer.succeed(
     ChildProcessSpawner.ChildProcessSpawner,
@@ -92,6 +93,17 @@ const layerTest = (input: {
           NodeServices.layer,
           layerSpawner,
           input.path ? Layer.succeed(Path.Path, input.path) : Layer.empty,
+          // Reveal fixtures name paths that do not exist on the test host.
+          Layer.effect(
+            FileSystem.FileSystem,
+            Effect.map(FileSystem.FileSystem, (fileSystem) => ({
+              ...fileSystem,
+              exists: (path: string) =>
+                input.existingPaths?.includes(path)
+                  ? Effect.succeed(true)
+                  : fileSystem.exists(path),
+            })),
+          ).pipe(Layer.provide(NodeServices.layer)),
         ),
       ),
     ),
@@ -117,8 +129,8 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
     const spawned: ChildProcess.StandardCommand[] = [];
     yield* Effect.gen(function* () {
       const launcher = yield* ExternalLauncher.ExternalLauncher;
-      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app"]) {
-        yield* launcher.launchEditor({ editor: "file-manager", cwd });
+      for (const cwd of ["~/Applications/My App.app", "/Applications/My App.app", "/tmp/a:12"]) {
+        yield* launcher.launchEditor({ editor: "file-manager", cwd, position: { line: 5 } });
       }
       yield* launcher.launchEditor({ editor: "vscode", cwd: "~/notes/todo.md:3" });
       yield* launcher.launchEditor({
@@ -141,6 +153,7 @@ it.effect.skipIf(windowsHost)("opens home-relative targets using the server home
       [
         ["/Users/server/Applications/My App.app"],
         ["/Applications/My App.app"],
+        ["/tmp/a:12"],
         ["--goto", "/Users/server/notes/todo.md:3"],
         ["/Users/server/notes", "--line", "3", "/Users/server/notes/todo.md"],
       ],
@@ -203,12 +216,20 @@ it.effect.skipIf(windowsHost)(
       const path = yield* Path.Path;
       const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
       const project = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-project-" });
-      const codePath = path.join(binDir, "code");
-      yield* fileSystem.writeFileString(codePath, "#!/bin/sh\n");
-      yield* fileSystem.chmod(codePath, 0o755);
+      for (const name of ["code", "zeditor", "idea"]) {
+        const executable = path.join(binDir, name);
+        yield* fileSystem.writeFileString(executable, "#!/bin/sh\n");
+        yield* fileSystem.chmod(executable, 0o755);
+      }
       const colonProject = path.join(project, "build:2026");
       yield* fileSystem.makeDirectory(colonProject);
       const file = `${path.join(project, "file.ts")}:3:7`;
+      const exactFile = path.join(project, "a:12");
+      yield* fileSystem.writeFileString(exactFile, "exact");
+      yield* fileSystem.makeDirectory(`${exactFile}:1:1`);
+      const positionedFile = path.join(project, "position.txt");
+      yield* fileSystem.writeFileString(positionedFile, "position");
+      yield* fileSystem.writeFileString(`${positionedFile}:7`, "collision");
 
       const spawned: ChildProcess.StandardCommand[] = [];
       yield* Effect.gen(function* () {
@@ -216,6 +237,27 @@ it.effect.skipIf(windowsHost)(
         yield* launcher.launchEditor({ editor: "vscode", cwd: project });
         yield* launcher.launchEditor({ editor: "vscode", cwd: file });
         yield* launcher.launchEditor({ editor: "vscode", cwd: colonProject });
+        for (const position of [{}, { line: 5 }]) {
+          yield* launcher.launchEditor({ editor: "vscode", cwd: exactFile, position });
+        }
+
+        yield* launcher.launchEditor({ editor: "zed", cwd: exactFile, position: {} });
+        yield* launcher.launchEditor({
+          editor: "zed",
+          cwd: positionedFile,
+          position: { line: 5, column: 3 },
+        });
+        yield* launcher.launchEditor({ editor: "zed", cwd: positionedFile, position: { line: 7 } });
+        yield* launcher.launchEditor({
+          editor: "vscode",
+          cwd: `${project}/exponent:1e3`,
+          position: { line: 5 },
+        });
+        yield* launcher.launchEditor({
+          editor: "idea",
+          cwd: exactFile,
+          position: { line: 5, column: 3 },
+        });
       }).pipe(
         Effect.provide(
           layerTest({
@@ -233,6 +275,13 @@ it.effect.skipIf(windowsHost)(
           ["--new-window", project],
           ["--goto", file],
           ["--new-window", colonProject],
+          [exactFile],
+          [exactFile],
+          [exactFile],
+          [`${positionedFile}:5:3`],
+          [positionedFile],
+          [`${project}/exponent:1e3`],
+          ["--line", "5", "--column", "2", exactFile],
         ],
       );
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -534,6 +583,7 @@ for (const [replacement, verb, handler, target, expected] of [
             layerTest({
               platform: "win32",
               env: { PATH: "C:\\Windows", PATHEXT: ".EXE" },
+              existingPaths: [target],
               onSpawn: (command) => {
                 spawned = command;
               },
@@ -568,16 +618,13 @@ it.effect.skipIf(windowsHost)(
         yield* fileSystem.chmod(filePath, 0o755);
       }
 
+      const target = "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4";
       let spawned: ChildProcess.StandardCommand | undefined;
       const result = yield* Effect.gen(function* () {
         const launcher = yield* ExternalLauncher.ExternalLauncher;
         const kind = yield* launcher.resolveFileManagerRevealKind();
         const editors = yield* launcher.resolveAvailableEditors();
-        yield* launcher.launchEditor({
-          editor: "file-manager",
-          cwd: "/home/t3/workspace [draft]/author's ‘$media/clip|draft.mp4",
-          reveal: true,
-        });
+        yield* launcher.launchEditor({ editor: "file-manager", cwd: target, reveal: true });
         return { kind, editors };
       }).pipe(
         Effect.provide(
@@ -588,6 +635,7 @@ it.effect.skipIf(windowsHost)(
               WSL_DISTRO_NAME: "Ubuntu-24.04",
               WSL_INTEROP: "/run/WSL/1_interop",
             },
+            existingPaths: [target],
             onSpawn: (command) => {
               spawned = command;
             },
@@ -650,6 +698,7 @@ it.effect.each([
         layerTest({
           platform: "win32",
           env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          existingPaths: ["C:/Users/t3/my project/a,b.ts"],
           onSpawn: (command) => spawned.push(command),
           spawnResult: (command) => (command.command.endsWith("reg.exe") ? registry : undefined),
         }),
@@ -678,6 +727,38 @@ it.effect.each([
         );
       }
     }
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// Explorer answers /select of a missing path by opening its default folder, not the parent.
+it.effect("does not ask Explorer to select a file that does not exist", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "explorer.EXE"), "");
+    const missing = path.join(binDir, "CLAUDE.md");
+    const verbatim: Array<readonly [string, ReadonlyArray<string>]> = [];
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher
+        .launchEditor({ editor: "file-manager", cwd: missing, reveal: true })
+        .pipe(Effect.exit);
+    }).pipe(
+      Effect.provideService(WindowsVerbatimSpawn, (command, args) =>
+        Effect.sync(() => verbatim.push([command, args])),
+      ),
+      Effect.provide(
+        layerTest({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD", SYSTEMROOT: "C:\\Windows" },
+          spawnResult: (command) =>
+            command.command.endsWith("reg.exe") ? { stdout: STOCK_FOLDER_VERB } : undefined,
+        }),
+      ),
+    );
+
+    assert.deepEqual(verbatim, []);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -710,6 +791,7 @@ for (const wsl of [false, true]) {
                   ? { WSL_DISTRO_NAME: "Ubuntu-24.04", WSL_INTEROP: "/run/WSL/1_interop" }
                   : {}),
               },
+              existingPaths: [target],
               onSpawn: (command) => spawnedCommands.push(command),
               spawnResult: (command) =>
                 command.command === "xdg-mime"

@@ -5,7 +5,7 @@ import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 
 export interface FailoverInstanceOption {
@@ -26,6 +26,7 @@ export function UsageLimitFailoverSettings({
   readonly instances: ReadonlyArray<FailoverInstanceOption>;
   readonly readOnly: boolean;
 }) {
+  const searchableSetting = useSearchableSetting();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const labelFor = (instanceId: ProviderInstanceId) =>
     instances.find((instance) => instance.instanceId === instanceId)?.label ?? instanceId;

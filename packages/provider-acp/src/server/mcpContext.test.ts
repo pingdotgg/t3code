@@ -25,7 +25,7 @@ const runtimePolicy = {
 
 describe("acpMcpContext", () => {
   it("bridges each configured server over stdio to its upstream route", () => {
-    const context = acpMcpContext(session, self, runtimePolicy, undefined, undefined);
+    const context = acpMcpContext(session, self, runtimePolicy, undefined, undefined, undefined);
     const notion = {
       name: "notion",
       command: "/usr/local/bin/t3",
@@ -47,7 +47,7 @@ describe("acpMcpContext", () => {
   });
 
   it("keeps configured servers in the list an HTTP flavor receives", () => {
-    const context = acpMcpContext(session, self, runtimePolicy, true, undefined);
+    const context = acpMcpContext(session, self, runtimePolicy, true, undefined, undefined);
 
     expect(context.httpServers.map((server) => server.name)).toEqual(["t3-code", "notion"]);
   });
@@ -60,6 +60,7 @@ describe("acpMcpContext", () => {
         ...runtimePolicy,
         sandboxPolicy: { type: "readOnly" },
       },
+      undefined,
       undefined,
       undefined,
     );

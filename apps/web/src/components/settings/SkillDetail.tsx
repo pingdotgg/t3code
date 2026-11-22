@@ -3,7 +3,7 @@ import { CheckIcon, CopyIcon } from "lucide-react";
 import { AlertTriangleIcon } from "lucide-react";
 import { lazy, Suspense, useState } from "react";
 
-import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { namedClipboardTarget, useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -67,7 +67,10 @@ export function SkillDetail({
     details.copies.find((copy) => copy.folder === folderPath) ?? details.folder ?? null;
   const scripts = folder?.files.filter((file) => file.script).map((file) => file.path) ?? [];
 
-  const { copyToClipboard, isCopied } = useCopyToClipboard({ timeout: 1500, target: "skill path" });
+  const { copyToClipboard, isCopied } = useCopyToClipboard({
+    timeout: 1500,
+    target: namedClipboardTarget("skill path"),
+  });
 
   return (
     <section aria-label={`${row.name} details`} className="min-w-0 space-y-4 px-3 sm:px-4">
