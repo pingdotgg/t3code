@@ -270,7 +270,9 @@ export function withMentionReference(
   const [, mergeRequestPath, issuePath, digits] = match;
   const isMergeRequest = mergeRequestPath !== undefined;
   const path = mergeRequestPath ?? issuePath ?? "";
-  const repository = path === "" ? scope : path;
+  // A project in the same namespace is named by its path alone.
+  const repository =
+    path === "" ? scope : path.includes("/") ? path : `${scope.replace(/[^/]*$/, "")}${path}`;
   const base = projectUrl.slice(0, projectUrl.length - scope.length);
   return {
     ...event,

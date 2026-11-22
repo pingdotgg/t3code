@@ -61,7 +61,7 @@ function answer(path: string): string {
       },
       {
         id: 10,
-        body: "mentioned in merge request acme/api!51",
+        body: "mentioned in merge request api!51",
         author: { username: "theo" },
         created_at: "2026-07-04T00:00:00Z",
         system: true,
@@ -213,7 +213,7 @@ describe("GitLabIssueTracker", () => {
       expect(issue.events.map((event) => [event.kind, event.detail])).toEqual([
         ["labeled", "bug"],
         ["closed", null],
-        ["referenced", "merge request acme/api!51"],
+        ["referenced", "merge request api!51"],
       ]);
       expect(issue.events.at(-1)?.reference).toEqual({
         repository: "acme/api",
