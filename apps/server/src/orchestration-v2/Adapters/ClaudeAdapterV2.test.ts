@@ -7100,6 +7100,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       case: "Claude's own check and rules for other tools",
       rules: [
         { behavior: "ask", rule: "mcp__atlassian__createJiraIssue" },
+        { behavior: "ask", rule: "mcp__probe_server__delete_*" },
         { behavior: "deny", rule: "mcp__buildkite__create_build" },
         { behavior: "deny", rule: "mcp__probe_server__delete_*" },
       ],
@@ -7126,6 +7127,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     {
       case: "Claude's own check and an ask rule for a server alias T3 can't list",
       rules: [{ behavior: "ask", rule: "mcp__probe_alias" }],
+      checks: "full-access",
+      claudeAsks: true,
+      called: true,
+      readOnly: false,
+    },
+    {
+      case: "Claude's own check and an ask T3 did not prompt for",
+      rules: [{ behavior: "ask", rule: "mcp__atlassian" }],
       checks: "full-access",
       claudeAsks: true,
       called: false,
@@ -7162,6 +7171,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               name: server,
               tools: [{ ...PROBE_SERVER_STATUS.tools[1], name: tool }],
             },
+            { name: "atlassian", status: "connected", tools: [] },
           ]),
           listPermissionRules:
             testCase.rules === "unreadable"

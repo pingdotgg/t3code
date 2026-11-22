@@ -1094,20 +1094,35 @@ function claudeChecksMcpAppCalls(
 }
 
 /**
- * Whether an ask rule names this tool as T3 spells it: the tool, its server, or a wildcard over the
- * whole name. Claude also matches spellings T3 can't list; it refuses those asks, as nobody was asked.
+ * Whether an ask rule may cover this tool. Claude also matches rules against per-server keys T3 can't
+ * list, so only two kinds of rule are ruled out: one under this server's name that spells another
+ * tool, and one under the name of another server Claude reports. A false match only asks first.
  */
-function claudeAskRuleNamesMcpTool(
-  rules: ReadonlyArray<ClaudePermissionRule>,
-  server: string,
-  toolName: string,
-): boolean {
-  const serverName = claudeMcpToolPrefix(server).slice(0, -"__".length);
-  return rules.some((entry) => {
+function claudeAskRuleMayCoverMcpTool(input: {
+  readonly rules: ReadonlyArray<ClaudePermissionRule>;
+  readonly statuses: ReadonlyArray<ClaudeMcpServerStatus>;
+  readonly server: string;
+  readonly toolName: string;
+}): boolean {
+  // Claude reads a rule's server as the text up to the first `__`.
+  const serverPart = (name: string) => name.slice("mcp__".length).split("__", 1)[0] ?? "";
+  const own = serverPart(claudeMcpToolPrefix(input.server));
+  const others = new Set(
+    input.statuses.map((status) => serverPart(claudeMcpToolPrefix(status.name))),
+  );
+  return input.rules.some((entry) => {
     if (entry.behavior !== "ask" || entry.notInEffect === true) return false;
     const name = entry.rule.split("(", 1)[0] ?? entry.rule;
-    if (name === toolName || name === serverName) return true;
-    return name.includes("*") && claudeWildcardMatches(name, toolName);
+    if (!name.startsWith("mcp__")) return name.includes("*");
+    const part = serverPart(name);
+    if (part === own) {
+      return (
+        input.toolName === name ||
+        input.toolName.startsWith(`${name}__`) ||
+        claudeWildcardMatches(name, input.toolName)
+      );
+    }
+    return part.includes("*") || !others.has(part);
   });
 }
 
@@ -1128,23 +1143,25 @@ function claudeWildcardMatches(pattern: string, value: string): boolean {
 
 /**
  * Whether a card runs this read-only tool without T3's prompt. A checked call is refused or asked
- * about by Claude, so only an ask rule naming the tool needs the prompt, which then answers the ask.
- * An unchecked call skips Claude's check, so it needs readable rules (null when not) with no ask or
- * deny rule that may cover the tool.
+ * about by Claude, so only an ask rule that may cover the tool needs the prompt, which then answers
+ * the ask. An unchecked call skips Claude's check, so it needs readable rules (null when not) with no
+ * ask or deny rule that may cover any MCP tool.
  */
 function claudeReadOnlyMcpToolSkipsPrompt(input: {
   readonly checked: boolean;
   readonly rules: ReadonlyArray<ClaudePermissionRule> | null;
+  readonly statuses: ReadonlyArray<ClaudeMcpServerStatus>;
   readonly server: string;
   readonly tool: string;
 }): boolean {
   if (input.rules === null) return input.checked;
   return input.checked
-    ? !claudeAskRuleNamesMcpTool(
-        input.rules,
-        input.server,
-        claudeMcpToolName(input.server, input.tool),
-      )
+    ? !claudeAskRuleMayCoverMcpTool({
+        rules: input.rules,
+        statuses: input.statuses,
+        server: input.server,
+        toolName: claudeMcpToolName(input.server, input.tool),
+      })
     : !claudeRulesMayCoverMcpTools(input.rules, ["ask", "deny"]);
 }
 
@@ -14647,6 +14664,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeReadOnlyMcpToolSkipsPrompt({
                     checked,
                     rules,
+                    statuses,
                     server,
                     tool: tool.name,
                   }),
@@ -14698,6 +14716,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeReadOnlyMcpToolSkipsPrompt({
                     checked,
                     rules,
+                    statuses,
                     server: call.server,
                     tool: call.tool,
                   })
