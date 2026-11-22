@@ -881,5 +881,10 @@ export class ProviderAdapterV2 extends Context.Service<
     readonly openSession: (
       input: ProviderAdapterV2OpenSessionInput,
     ) => Effect.Effect<ProviderAdapterV2SessionRuntime, ProviderAdapterV2Error, Scope.Scope>;
+    /**
+     * Lets go of a folder that is about to be removed, in processes the provider keeps outside
+     * its sessions. Returns once they no longer hold it.
+     */
+    readonly releaseWorkspace?: (workspacePath: string) => Effect.Effect<void>;
   }
 >()("@t3tools/provider-core/server/ProviderAdapter/ProviderAdapterV2") {}

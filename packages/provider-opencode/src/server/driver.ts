@@ -167,6 +167,7 @@ function selectOpenCodeRuntimeAdapter(input: {
   readonly resolve: Effect.Effect<ProbedOpenCode, OpenCodeRuntime.OpenCodeRuntimeError>;
   readonly v1: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly v2: ProviderAdapter.ProviderAdapterV2["Service"];
+  readonly releaseWorkspace: (workspacePath: string) => Effect.Effect<void>;
 }): ProviderAdapter.ProviderAdapterV2["Service"] {
   const pick = <PE>(probed: Effect.Effect<ProbedOpenCode | undefined, PE>) =>
     byOpenCodeRuntime(probed, { v1: Effect.succeed(input.v1), v2: Effect.succeed(input.v2) });
@@ -192,6 +193,7 @@ function selectOpenCodeRuntimeAdapter(input: {
       Effect.flatMap(hot, (adapter) => adapter.planSelectionTransition(transition)),
     openSession: (session) =>
       Effect.flatMap(pick(input.resolve), (adapter) => adapter.openSession(session)),
+    releaseWorkspace: input.releaseWorkspace,
   };
 }
 
@@ -392,6 +394,24 @@ export const OpenCodeDriver: ProviderDriver<
     const orchestrationAdapter = selectOpenCodeRuntimeAdapter({
       probe: runtimeProbe,
       resolve: resolveRuntime,
+      // The helper server loads a folder, and with it the folder's MCP servers, whenever the
+      // folder's skills and commands are listed, and keeps it for as long as it runs.
+      releaseWorkspace: (workspacePath) =>
+        serverOwner
+          .ifRunning((server) =>
+            OpenCodeRuntime.runOpenCodeSdk("instance.dispose", (signal) =>
+              openCodeRuntime
+                .createOpenCodeSdkClient({
+                  baseUrl: server.url,
+                  directory: workspacePath,
+                  ...(server.serverPassword !== undefined
+                    ? { serverPassword: server.serverPassword }
+                    : {}),
+                })
+                .instance.dispose({ directory: workspacePath }, { signal }),
+            ),
+          )
+          .pipe(Effect.timeout("5 seconds"), Effect.ignore({ log: true })),
       v1: openCodeV1Adapter,
       v2: yield* OpenCode2AdapterV2.make(instanceId).pipe(
         Effect.provideService(OpenCode2Server.OpenCode2Server, openCode2Server),

@@ -3464,6 +3464,19 @@ export const layerWithOptions = (
               (pending) => Deferred.await(pending.done),
               { concurrency: "unbounded", discard: true },
             );
+            // Last, so a closing session cannot load the folder back into a longer-lived process.
+            yield* Effect.forEach(
+              yield* registry.list(),
+              (instanceId) =>
+                registry.get(instanceId).pipe(
+                  Effect.flatMap(
+                    (adapter) => adapter.releaseWorkspace?.(workspacePath) ?? Effect.void,
+                  ),
+                  Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                  Effect.ignoreCause({ log: true }),
+                ),
+              { concurrency: "unbounded", discard: true },
+            );
           },
         ),
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {

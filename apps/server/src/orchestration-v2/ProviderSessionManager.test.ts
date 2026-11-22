@@ -492,6 +492,7 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly beforeUnload?: Effect.Effect<void>;
     readonly beforeClose?: Effect.Effect<void>;
     readonly unloadThreadsIn?: (inWorkspace: (cwd: string) => boolean) => Effect.Effect<void>;
+    readonly releaseWorkspace?: (workspacePath: string) => Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
@@ -525,6 +526,9 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     driver: CODEX_DRIVER,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+    ...(options.releaseWorkspace === undefined
+      ? {}
+      : { releaseWorkspace: options.releaseWorkspace }),
     openSession: (input) =>
       Effect.gen(function* () {
         if (options.spawnBeforeOpen === true) {
@@ -690,6 +694,7 @@ function layerTest(input: {
   readonly beforeUnload?: Effect.Effect<void>;
   readonly beforeClose?: Effect.Effect<void>;
   readonly unloadThreadsIn?: (inWorkspace: (cwd: string) => boolean) => Effect.Effect<void>;
+  readonly releaseWorkspace?: (workspacePath: string) => Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
@@ -744,6 +749,7 @@ function layerTest(input: {
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
       ...(input.beforeClose === undefined ? {} : { beforeClose: input.beforeClose }),
       ...(input.unloadThreadsIn === undefined ? {} : { unloadThreadsIn: input.unloadThreadsIn }),
+      ...(input.releaseWorkspace === undefined ? {} : { releaseWorkspace: input.releaseWorkspace }),
       ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
       ...(input.archive === undefined ? {} : { archive: input.archive }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
@@ -6002,18 +6008,25 @@ it.effect(
       for (const shared of [false, true]) {
         const state = yield* Ref.make(emptyState);
         const unloaded: Array<ReadonlyArray<boolean>> = [];
+        const released: Array<string> = [];
         yield* Effect.gen(function* () {
           const { manager, providerSessionId } = yield* openSession;
           yield* manager.closeInWorkspace(workspace);
           assert.equal(yield* manager.isLive(providerSessionId), shared);
           assert.equal((yield* Ref.get(state)).closeCount, shared ? 0 : 1);
           assert.deepEqual(unloaded, shared ? [[true, true, false]] : []);
+          // Processes a provider keeps outside its sessions are told about the folder too.
+          assert.deepEqual(released, [workspace]);
         }).pipe(
           Effect.provide(
             layerTest({
               state,
               idleTimeoutMs: 60_000,
               ...(shared ? {} : { capabilities: ExclusiveCapabilities }),
+              releaseWorkspace: (workspacePath) =>
+                Effect.sync(() => {
+                  released.push(workspacePath);
+                }),
               unloadThreadsIn: (inWorkspace) =>
                 Effect.sync(() => {
                   unloaded.push(
