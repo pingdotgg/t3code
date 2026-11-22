@@ -36,6 +36,7 @@ import {
 import { composerDraftContentChanged } from "./composerSend.logic";
 import {
   buildPendingUserInputAnswers,
+  selectPendingUserInputOther,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   type PendingUserInputDraftAnswer,
@@ -252,22 +253,28 @@ function makePendingCustomAnswerSetter(input: {
       return;
     }
     const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
-    if (!question || question.allowCustomAnswer === false) {
+    if (!question) {
       return;
     }
     input.writePrompt(value);
     input.withdrawRestoredAnswer(questionId, value);
-    input.setPendingUserInputAnswersByRequestId((existing) => ({
-      ...existing,
-      [activePendingRequestKey]: {
-        ...existing[activePendingRequestKey],
-        [questionId]: setPendingUserInputCustomAnswer(
-          question,
-          existing[activePendingRequestKey]?.[questionId],
-          value,
-        ),
-      },
-    }));
+    input.setPendingUserInputAnswersByRequestId((existing) => {
+      const prevDraft = existing[activePendingRequestKey]?.[questionId];
+      const draftWithOther: PendingUserInputDraftAnswer = {
+        ...prevDraft,
+        otherSelected: true,
+      };
+      return {
+        ...existing,
+        [activePendingRequestKey]: {
+          ...existing[activePendingRequestKey],
+          [questionId]: {
+            ...setPendingUserInputCustomAnswer(question, draftWithOther, value),
+            otherSelected: true,
+          },
+        },
+      };
+    });
     // Resetting selection before rendering can re-enter Lexical with stale skill-token offsets.
   };
 }
@@ -595,6 +602,47 @@ export function usePendingThreadRequests(input: {
     onSelectActivePendingUserInputOption,
   );
 
+  const onSelectActivePendingUserInputOther = (questionId: string) => {
+    if (!activePendingUserInput) {
+      return;
+    }
+    const displacedAnswer =
+      readPendingUserInputDraft(draftScope).activePendingDraftAnswers[questionId]?.customAnswer;
+    const currentPrompt =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.prompt ?? "";
+    const nextPrompt = carryDisplacedCustomAnswerIntoPrompt(currentPrompt, displacedAnswer);
+    if (nextPrompt !== currentPrompt) {
+      setComposerDraftPrompt(composerDraftTarget, nextPrompt);
+      displacedAnswers.current.push({
+        draft: displacedDraftKey,
+        key: `${activePendingRequestKey}:${questionId}`,
+        text: displacedAnswer ?? "",
+      });
+    }
+    setPendingUserInputAnswersByRequestId((existing) => {
+      const question = activePendingUserInput.questions.find((entry) => entry.id === questionId);
+      if (!question) {
+        return existing;
+      }
+      return {
+        ...existing,
+        [activePendingRequestKey]: {
+          ...existing[activePendingRequestKey],
+          [questionId]: selectPendingUserInputOther(
+            question,
+            existing[activePendingRequestKey]?.[questionId],
+          ),
+        },
+      };
+    });
+    promptRef.current = "";
+    composerRef.current?.resetCursorState({ cursor: 0 });
+    composerRef.current?.focusAtEnd();
+  };
+  const onSelectActivePendingUserInputOtherStable = useStableCallback(
+    onSelectActivePendingUserInputOther,
+  );
+
   const writePrompt = useStableCallback((prompt: string) => {
     promptRef.current = prompt;
   });
@@ -671,6 +719,7 @@ export function usePendingThreadRequests(input: {
     onRespondToApproval: onRespondToApprovalStable,
     onDismissUserInput: onDismissUserInputStable,
     onSelectActivePendingUserInputOption: onSelectActivePendingUserInputOptionStable,
+    onSelectActivePendingUserInputOther: onSelectActivePendingUserInputOtherStable,
     onChangeActivePendingUserInputCustomAnswer,
     onAdvanceActivePendingUserInput,
     onAdvanceActivePendingUserInputStable,

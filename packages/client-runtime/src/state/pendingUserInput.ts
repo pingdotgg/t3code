@@ -13,6 +13,7 @@ export interface PendingUserInputDraftAnswer {
   readonly customAnswer?: string;
   readonly attachmentCount?: number;
   readonly attachmentsBlocked?: boolean;
+  readonly otherSelected?: boolean;
 }
 
 export type PendingUserInputAnswer = string | ReadonlyArray<string>;
@@ -64,7 +65,7 @@ export function resolvePendingUserInputAnswer(
 ): PendingUserInputAnswer | null {
   if (draft?.attachmentsBlocked) return null;
   const customAnswer =
-    question.allowCustomAnswer === false
+    question.allowCustomAnswer === false && draft?.otherSelected !== true
       ? null
       : question.initialAnswer !== undefined
         ? (draft?.customAnswer ?? null)
@@ -95,7 +96,7 @@ export function setPendingUserInputCustomAnswer(
   draft: PendingUserInputDraftAnswer | undefined,
   customAnswer: string,
 ): PendingUserInputDraftAnswer {
-  if (question.allowCustomAnswer === false) {
+  if (question.allowCustomAnswer === false && draft?.otherSelected !== true) {
     return draft ?? {};
   }
 
@@ -105,6 +106,7 @@ export function setPendingUserInputCustomAnswer(
       : normalizeSelectedOptionValues(question, draft?.selectedOptionValues);
   return {
     customAnswer,
+    ...(draft?.otherSelected ? { otherSelected: true } : {}),
     ...(selectedOptionValues && selectedOptionValues.length > 0 ? { selectedOptionValues } : {}),
   };
 }
@@ -114,7 +116,10 @@ export function isPendingUserInputOptionSelected(
   draft: PendingUserInputDraftAnswer | undefined,
   optionValue: string,
 ): boolean {
-  if (question.allowCustomAnswer !== false && normalizeDraftAnswer(draft?.customAnswer)) {
+  if (
+    (question.allowCustomAnswer !== false || draft?.otherSelected === true) &&
+    (normalizeDraftAnswer(draft?.customAnswer) || (!question.multiSelect && draft?.otherSelected))
+  ) {
     return false;
   }
 
@@ -158,6 +163,20 @@ export function togglePendingUserInputOptionSelection(
   return {
     customAnswer: "",
     selectedOptionValues: [resolvedOptionValue],
+  };
+}
+
+/** Marks "Other" selected so the composer accepts and resolves a custom typed answer. */
+export function selectPendingUserInputOther(
+  question: PendingUserInputQuestion,
+  draft: PendingUserInputDraftAnswer | undefined,
+): PendingUserInputDraftAnswer {
+  const { selectedOptionValues, ...rest } = draft ?? {};
+  return {
+    ...rest,
+    otherSelected: true,
+    ...(question.multiSelect && selectedOptionValues ? { selectedOptionValues } : {}),
+    customAnswer: draft?.customAnswer ?? "",
   };
 }
 

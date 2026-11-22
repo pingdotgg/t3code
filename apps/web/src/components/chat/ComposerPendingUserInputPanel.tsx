@@ -24,6 +24,7 @@ interface PendingUserInputPanelProps {
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
+  onSelectOther?: (questionId: string) => void;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
   onFocusComposer?: () => void;
@@ -38,6 +39,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   answers,
   questionIndex,
   onToggleOption,
+  onSelectOther,
   onAdvance,
   onDismiss,
   onFocusComposer,
@@ -57,6 +59,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       answers={answers}
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
+      onSelectOther={onSelectOther}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
       onFocusComposer={onFocusComposer}
@@ -73,6 +76,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers,
   questionIndex,
   onToggleOption,
+  onSelectOther,
   onAdvance,
   onDismiss,
   onFocusComposer,
@@ -85,9 +89,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
+  onSelectOther?: ((questionId: string) => void) | undefined;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
-  onFocusComposer?: () => void;
+  onFocusComposer?: (() => void) | undefined;
 }) {
   const gt = useGT();
   // Message-mode requests remain answerable after their provider turn ends.
@@ -106,7 +111,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   // Keep question identity stable for its shortcut listener.
   const progress = derivePendingUserInputProgress(prompt.questions, answers, questionIndex);
   const activeQuestion = progress.activeQuestion;
-  const customAnswerActive = progress.customAnswer.trim().length > 0;
+  const customAnswerActive =
+    (progress.activeDraft?.otherSelected === true &&
+      (progress.selectedOptionValues.length === 0 || activeQuestion?.multiSelect)) ||
+    progress.customAnswer.trim().length > 0;
   // Read before later hooks to preserve the question's compiler cache.
   const draftSelectedOptions = activeQuestion?.options.map(
     (option) =>
@@ -160,10 +168,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       window.clearTimeout(autoAdvanceTimerRef.current);
       autoAdvanceTimerRef.current = null;
     }
-    for (const val of progress.selectedOptionValues) {
-      onToggleOption(activeQuestion.id, val);
-    }
     setOptimisticSingleSelect(null);
+    if (onSelectOther) {
+      onSelectOther(activeQuestion.id);
+    } else {
+      for (const val of progress.selectedOptionValues) {
+        onToggleOption(activeQuestion.id, val);
+      }
+    }
     focusComposerStable();
   };
 

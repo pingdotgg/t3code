@@ -4,6 +4,7 @@ import {
   buildPendingUserInputAnswers,
   isPendingUserInputOptionSelected,
   resolvePendingUserInputAnswer,
+  selectPendingUserInputOther,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
 } from "./pendingUserInput.ts";
@@ -166,6 +167,32 @@ describe("setPendingUserInputCustomAnswer", () => {
         result: { selectedOptionValues: ["second"], customAnswer: "stale draft" },
       }),
     ).toEqual({ result: "second" });
+  });
+
+  it("accepts and resolves custom answer when otherSelected is true", () => {
+    const draft = setPendingUserInputCustomAnswer(
+      nativeChoiceQuestion,
+      { otherSelected: true },
+      "My custom alternative",
+    );
+    expect(draft).toEqual({
+      otherSelected: true,
+      customAnswer: "My custom alternative",
+    });
+    expect(resolvePendingUserInputAnswer(nativeChoiceQuestion, draft)).toBe(
+      "My custom alternative",
+    );
+    expect(isPendingUserInputOptionSelected(nativeChoiceQuestion, draft, "second")).toBe(false);
+  });
+
+  it("selectPendingUserInputOther sets otherSelected and clears single-select options", () => {
+    const initialDraft = { selectedOptionValues: ["second"] };
+    const draft = selectPendingUserInputOther(nativeChoiceQuestion, initialDraft);
+    expect(draft).toEqual({
+      otherSelected: true,
+      customAnswer: "",
+    });
+    expect(isPendingUserInputOptionSelected(nativeChoiceQuestion, draft, "second")).toBe(false);
   });
 });
 
