@@ -146,7 +146,8 @@ const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
-const CODEX_CLI_VERSION_PATTERN = /(?:^|\s)v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?=\s|$)/u;
+// Only those whole-line shapes count, so another program's `--version` is not read as Codex's.
+const CODEX_CLI_VERSION_PATTERN = /^(?:codex-cli )?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)[ \t\r]*$/mu;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -1095,7 +1096,10 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
         status: "error",
         auth: { status: "unknown" },
         message: installed
-          ? `Codex app-server provider probe failed: ${error.message}.`
+          ? `Codex app-server provider probe failed: ${error.message.replace(/\.$/u, "")}.` +
+            (version === null
+              ? ` \`${codexSettings.binaryPath}\` did not answer as Codex. Check Settings → Providers → Codex → Binary path on the server.`
+              : "")
           : `Could not start Codex CLI (\`${codexSettings.binaryPath}\`). Check Settings → Providers → Codex → Binary path on the server.` +
             (codexSettings.binaryPath === "codex"
               ? " Installing ChatGPT or Codex desktop may not add codex to PATH."
