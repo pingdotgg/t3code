@@ -2262,7 +2262,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           flavor.extractSubagentSessionEvent !== undefined && !followsAgentWorkState
             ? undefined
             : flavor.extractSubagentUpdate?.(tool);
-        let turnAttached = yield* Deferred.make<boolean>();
+        let turnAttached = yield* Deferred.make<"attached" | "unattached" | "cancelled">();
+        const resolveTurnAttached = Effect.fnUntraced(function* (
+          outcome: "attached" | "unattached" | "cancelled",
+        ) {
+          const waiting = turnAttached;
+          turnAttached = yield* Deferred.make<"attached" | "unattached" | "cancelled">();
+          yield* Deferred.succeed(waiting, outcome);
+        });
         const activeSessionId = yield* Ref.make<string | null>(null);
         // session/load replays history before activeSessionId names the loaded session.
         const loadingSessionId = yield* Ref.make<string | null>(null);
@@ -5220,28 +5227,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
           });
+          const clearIfOwner = Effect.gen(function* () {
+            if ((yield* Ref.get(continuationGeneration)) === generation) {
+              yield* Ref.set(continuationRequested, false);
+              yield* resolveTurnAttached(
+                (yield* Ref.get(stoppedRunQuarantine)) ? "cancelled" : "unattached",
+              );
+            }
+          });
+          const clearIfCurrent = () => continuationPermit.withPermit(clearIfOwner);
           yield* continuationRequests.offer({
             threadId: route.threadId,
             providerThreadId: route.providerThreadId,
             driver,
             detail: null,
             ...(notification === null ? {} : { notification }),
-            clearIfCurrent: () =>
-              continuationPermit.withPermit(
-                Effect.gen(function* () {
-                  if ((yield* Ref.get(continuationGeneration)) === generation) {
-                    yield* Ref.set(continuationRequested, false);
-                  }
-                }),
-              ),
+            clearIfCurrent,
+            onRunEndedWithoutStarting: clearIfCurrent,
             dispatchIfCurrent: (effect) =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
-                  const clearIfOwner = Effect.gen(function* () {
-                    if ((yield* Ref.get(continuationGeneration)) === generation) {
-                      yield* Ref.set(continuationRequested, false);
-                    }
-                  });
                   if (yield* Ref.get(stoppedRunQuarantine)) {
                     yield* clearIfOwner;
                     return Option.none();
@@ -5598,22 +5603,37 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !followsAgentWorkState &&
             !(postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
           )
-            return true;
+            return "attached" as const;
           while (true) {
             const waiting = yield* runRuntimeCallbackAtGeneration(
               generation,
               Effect.gen(function* () {
-                if (yield* Ref.get(stoppedRunQuarantine)) return false;
-                if ((yield* Ref.get(activeTurn)) !== null) return null;
+                if (
+                  (yield* Ref.get(stoppedRunQuarantine)) ||
+                  (yield* Ref.get(continuationClosed))
+                ) {
+                  return "cancelled" as const;
+                }
+                if ((yield* Ref.get(activeTurn)) !== null) return "attached" as const;
+                const pendingAttach = turnAttached;
                 const sessionId = yield* Ref.get(activeSessionId);
                 if (sessionId !== null) yield* offerContinuationRun(sessionId);
-                return turnAttached;
+                if ((yield* Ref.get(activeTurn)) !== null) return "attached" as const;
+                if (
+                  !followsAgentWorkState &&
+                  (continuationRequests === undefined ||
+                    sessionId === null ||
+                    (yield* Ref.get(lastTurnRoute)) === null)
+                ) {
+                  return "unattached" as const;
+                }
+                return pendingAttach;
               }),
             );
             if (Option.isNone(waiting)) return yield* Effect.never;
-            if (waiting.value === false) return false;
-            if (waiting.value === null) return true;
-            if (!(yield* Deferred.await(waiting.value))) return false;
+            if (typeof waiting.value === "string") return waiting.value;
+            const result = yield* Deferred.await(waiting.value);
+            if (result !== "attached") return result;
           }
         });
 
@@ -6569,7 +6589,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             request: Effect.Effect<AcpAdapterV2UserInputRequest>,
             transportRequestId: string,
           ) {
-            if (!(yield* awaitRequestTurn(generation))) {
+            if ((yield* awaitRequestTurn(generation)) !== "attached") {
               return { answers: null, acknowledgeNativeResponse: Effect.void };
             }
             return yield* runRuntimeCallbackAtGeneration(
@@ -6623,11 +6643,14 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         );
 
         const cancelPendingRuntimeRequests = Effect.fnUntraced(function* (
-          options: { readonly stopMcpCalls: boolean } = { stopMcpCalls: true },
+          options: {
+            readonly stopMcpCalls: boolean;
+            readonly cancelDetachedRequests?: boolean;
+          } = { stopMcpCalls: true, cancelDetachedRequests: true },
         ) {
-          const waiting = turnAttached;
-          turnAttached = yield* Deferred.make<boolean>();
-          yield* Deferred.succeed(waiting, false);
+          if (options.cancelDetachedRequests !== false) {
+            yield* resolveTurnAttached("cancelled");
+          }
           // session/cancel does not end the agent's MCP calls; T3 runs them, so it stops them.
           if (options.stopMcpCalls && runtimeMcpBridge !== undefined) {
             yield* runtimeMcpBridge.stopCalls;
@@ -7349,19 +7372,25 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy,
                 request: EffectAcpSchema.RequestPermissionRequest = params,
               ) => (flavor.permissionDisposition ?? acpPermissionDisposition)(policy, request);
+              let turnState: "attached" | "unattached" | "cancelled" = "attached";
               if (
                 (followsAgentWorkState && dispositionFor(latestRuntimePolicy) === "ask") ||
                 (postSettleContinuationEnabled && flavor.wakeOnDetachedRequest)
               ) {
-                if (!(yield* awaitRequestTurn(handlerGeneration)))
+                turnState = yield* awaitRequestTurn(handlerGeneration);
+                if (turnState === "cancelled")
                   return { outcome: { outcome: "cancelled" } } as const;
               }
               const admitted = yield* runRuntimeCallbackAtGeneration(
                 handlerGeneration,
                 Effect.gen(function* () {
-                  const context = followsAgentWorkState
-                    ? yield* Ref.get(activeTurn)
-                    : yield* activeContext;
+                  if (yield* Ref.get(stoppedRunQuarantine)) {
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
+                    };
+                  }
+                  const context = yield* Ref.get(activeTurn);
                   // Kiro sends the tool's kind on its `tool_call` and leaves it
                   // off the permission request for that call; take it from the
                   // tool already seen under the same id so policy can tell a
@@ -7393,10 +7422,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                           : ({ outcome: { outcome: "selected", optionId } } as const),
                     };
                   }
+                  if (context === null && turnState === "unattached") {
+                    return {
+                      _tag: "Immediate" as const,
+                      response: { outcome: { outcome: "cancelled" } } as const,
+                    };
+                  }
                   return {
                     _tag: "Pending" as const,
                     pending: yield* beginApprovalRequest(
-                      yield* activeContext,
+                      context ?? (yield* activeContext),
                       params,
                       handlerGeneration,
                       transportRequestId,
@@ -9540,9 +9575,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             });
             if (followsAgentWorkState)
               yield* runtimeCallbackPermit.withPermit(syncNativeChildren(context));
-            const attached = turnAttached;
-            turnAttached = yield* Deferred.make<boolean>();
-            yield* Deferred.succeed(attached, true);
+            yield* resolveTurnAttached("attached");
             // Every attach ends the deferred-terminal contract, but only the
             // queued provider continuation owns wake traffic. A user turn may
             // start before that continuation and must leave its buffer intact.
@@ -10382,7 +10415,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                         yield* quarantineStoppedRun();
                       }
                       // A settled soft interrupt keeps background subagents, and with them their MCP calls.
-                      yield* cancelPendingRuntimeRequests({ stopMcpCalls: !settledSoftInterrupt });
+                      yield* cancelPendingRuntimeRequests({
+                        stopMcpCalls: !settledSoftInterrupt,
+                        cancelDetachedRequests: !settledSoftInterrupt,
+                      });
                       // Finalize before killing so projection catches up and concurrent interrupts see activeTurn cleared.
                       if (
                         (hardRestart || context.promptSettled || settledSoftInterrupt) &&

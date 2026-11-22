@@ -1004,6 +1004,8 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   options?: {
     readonly profileDirectory?: string;
     readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+    readonly runtimeMode?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"];
+    readonly disableContinuationRequests?: boolean;
   },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -1043,7 +1045,13 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   const adapterOptions: AntigravityAdapterV2Options = {
     instanceId,
     selfInvocation,
-    continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
+    ...(options?.disableContinuationRequests
+      ? {}
+      : {
+          continuationRequests: {
+            offer: (request) => Effect.sync(() => void offers.push(request)),
+          },
+        }),
     makeRuntime: (input) => {
       terminate = input.onTermination;
       return makeAntigravityAcpRuntime({
@@ -1137,8 +1145,9 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
             onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
           },
         });
+  const runtimeMode = options?.runtimeMode ?? "full-access";
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
-    runtimeMode: "full-access",
+    runtimeMode,
     interactionMode: "default",
     cwd: process.cwd(),
   });
@@ -1179,7 +1188,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
         title: "Antigravity wake",
         providerInstanceId: instanceId,
         modelSelection,
-        runtimeMode: "full-access",
+        runtimeMode,
         interactionMode: "default",
         branch: null,
         worktreePath: process.cwd(),
@@ -2008,6 +2017,187 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         const terminal = (yield* opened.throughTerminal).at(-1);
         assert.equal(terminal?.type === "turn.terminal" && terminal.status, status);
         assert.equal(opened.cancels(), cancels);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "auto-approves a detached full-access permission request when its continuation cannot attach",
+    () =>
+      Effect.gen(function* () {
+        const { offers, startTurn, throughTerminal, requestPermission } =
+          yield* openSessionWithRunningCommand({ IsDaemon: true, WaitMsBeforeAsync: 500 });
+        yield* startTurn(1, false);
+        yield* throughTerminal;
+
+        const followUp = { toolCallId: "call_git_push", kind: "execute", title: "git push" };
+        const permission = yield* requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: { ...followUp, status: "pending" },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-unattached", method: "session/request_permission" },
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        assert.lengthOf(offers, 1);
+        assert.isDefined(offers[0]!.onRunEndedWithoutStarting);
+        yield* offers[0]!.onRunEndedWithoutStarting!();
+        assert.deepEqual(yield* Fiber.join(permission), {
+          outcome: { outcome: "selected", optionId: "allow" },
+        });
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "auto-approves a detached full-access permission request when continuation is unavailable",
+    () =>
+      Effect.gen(function* () {
+        const { startTurn, throughTerminal, requestPermission } =
+          yield* openSessionWithRunningCommand(
+            { IsDaemon: true, WaitMsBeforeAsync: 500 },
+            undefined,
+            undefined,
+            { disableContinuationRequests: true },
+          );
+        yield* startTurn(1, false);
+        yield* throughTerminal;
+
+        const response = yield* requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId: "call_no_cont",
+              kind: "execute",
+              title: "curl https://example.com",
+              status: "pending",
+            },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-no-cont", method: "session/request_permission" },
+        );
+        assert.deepEqual(response, { outcome: { outcome: "selected", optionId: "allow" } });
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "auto-approves a detached full-access permission request across a settled soft interrupt",
+    () =>
+      Effect.gen(function* () {
+        const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+        yield* opened.startTurn(1, false);
+        const started = yield* opened.throughPromptSettled;
+        const turn = started.find((event) => event.type === "provider_turn.updated");
+        if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+
+        // Soft interrupt (new message, not Stop): leaves background work alive and does not quarantine.
+        yield* opened.session.interruptTurn({
+          providerThread: opened.providerThread,
+          providerTurnId: turn.providerTurn.id,
+        });
+        yield* opened.throughTerminal;
+
+        const permission = yield* opened
+          .requestPermission(
+            {
+              sessionId: "mock-session-1",
+              toolCall: {
+                toolCallId: "call_after_soft_interrupt",
+                kind: "execute",
+                title: "git commit",
+                status: "pending",
+              },
+              options: [
+                { optionId: "allow", name: "Allow", kind: "allow_once" },
+                { optionId: "deny", name: "Deny", kind: "reject_once" },
+              ],
+            },
+            { requestId: "permission-soft", method: "session/request_permission" },
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* opened.startTurn(2, false);
+        assert.deepEqual(yield* Fiber.join(permission), {
+          outcome: { outcome: "selected", optionId: "allow" },
+        });
+        yield* opened.releaseSteer;
+        yield* opened.throughTerminal;
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect("cancels a detached permission request after Stop even in full-access mode", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* opened.startTurn(1, false);
+      const started = yield* opened.throughPromptSettled;
+      const turn = started.find((event) => event.type === "provider_turn.updated");
+      if (turn?.type !== "provider_turn.updated") return assert.fail("the turn must start");
+
+      yield* opened.session.interruptTurn({
+        providerThread: opened.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* opened.throughTerminal;
+
+      const response = yield* opened.requestPermission(
+        {
+          sessionId: "mock-session-1",
+          toolCall: {
+            toolCallId: "call_after_stop",
+            kind: "execute",
+            title: "rm -rf /tmp/unused",
+            status: "pending",
+          },
+          options: [
+            { optionId: "allow", name: "Allow", kind: "allow_once" },
+            { optionId: "deny", name: "Deny", kind: "reject_once" },
+          ],
+        },
+        { requestId: "permission-stop", method: "session/request_permission" },
+      );
+      assert.deepEqual(response, { outcome: { outcome: "cancelled" } });
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  it.effect(
+    "cancels a detached approval-required permission request when its continuation cannot attach",
+    () =>
+      Effect.gen(function* () {
+        const { offers, startTurn, throughTerminal, requestPermission } =
+          yield* openSessionWithRunningCommand(
+            { IsDaemon: true, WaitMsBeforeAsync: 500 },
+            undefined,
+            undefined,
+            { runtimeMode: "approval-required" },
+          );
+        yield* startTurn(1, false);
+        yield* throughTerminal;
+
+        const permission = yield* requestPermission(
+          {
+            sessionId: "mock-session-1",
+            toolCall: {
+              toolCallId: "call_ask_unattached",
+              kind: "execute",
+              title: "git push",
+              status: "pending",
+            },
+            options: [
+              { optionId: "allow", name: "Allow", kind: "allow_once" },
+              { optionId: "deny", name: "Deny", kind: "reject_once" },
+            ],
+          },
+          { requestId: "permission-ask-unattached", method: "session/request_permission" },
+        ).pipe(Effect.forkScoped({ startImmediately: true }));
+        assert.lengthOf(offers, 1);
+        yield* offers[0]!.clearIfCurrent!();
+        assert.deepEqual(yield* Fiber.join(permission), {
+          outcome: { outcome: "cancelled" },
+        });
       }).pipe(Effect.provide(layerSession)),
   );
 });
