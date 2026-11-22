@@ -104,7 +104,8 @@ function liveConfigurationReplacesAcceptedCatalog(
   return (
     configuration.models.length > 1 ||
     (configuration.models.length === 1 &&
-      (configuration.modelsFromModelSelect === true || accepted.builtInModelCount <= 1))
+      (configuration.modelsFromModelSelect === true ||
+        (accepted.builtInModelCount <= 1 && !accepted.modelsFromModelSelect)))
   );
 }
 
@@ -140,8 +141,9 @@ export function updateAcpRegistryEnrichmentCache(input: {
   readonly configuration: AcpRegistryLiveConfiguration;
   readonly customModels: ReadonlyArray<CustomModelSetting>;
   readonly now: number;
+  readonly preserveSingleModelCatalog?: boolean;
 }): AcpRegistryEnrichmentCache {
-  const { cache, configuration, customModels, now } = input;
+  const { cache, configuration, customModels, now, preserveSingleModelCatalog } = input;
   if (cache.entry === null) {
     // No probe has landed yet, but the live session published its
     // configuration to the snapshot. Advance the cache epoch so a probe that
@@ -152,6 +154,8 @@ export function updateAcpRegistryEnrichmentCache(input: {
     cache.entry.provider,
     configuration,
     customModels,
+    cache.entry.provider.models,
+    preserveSingleModelCatalog === undefined ? undefined : { preserveSingleModelCatalog },
   );
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   return {
@@ -435,19 +439,19 @@ export function applyAcpRegistryLiveConfiguration(
   configuration: AcpRegistryLiveConfiguration,
   customModels: ReadonlyArray<CustomModelSetting>,
   previousModels: ReadonlyArray<ServerProviderModel> = provider.models,
+  options?: { readonly preserveSingleModelCatalog?: boolean },
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   // session/load may omit models (Kimi returns `{}`); keep the probed list
   // and apply any live option descriptors to it.
   const probedModels = provider.models.filter((model) => !model.isCustom);
   // A cold-start session can report one placeholder model before its catalog
-  // settles, while the probe may already have observed the full catalog. A
-  // single model enumerated by an explicit select is not that fallback but
-  // the agent's deliberate statement, so it wins over the probe catalog.
+  // settles, whereas an explicit single-model select is deliberate and wins.
   const liveCatalogIsProvisional =
     configuration.models.length === 1 &&
     !configuration.modelsFromModelSelect &&
-    probedModels.length > 1;
+    (probedModels.length > 1 ||
+      (options?.preserveSingleModelCatalog === true && probedModels.length === 1));
   const useLiveCatalog =
     configuration.models.length > 1 ||
     (configuration.models.length === 1 && !liveCatalogIsProvisional);
@@ -816,31 +820,45 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // Refreshes rebuild the snapshot from the probe, so per-model options
     // learned from earlier sessions are kept here.
     const learnedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const applyLiveConfiguration = (
-      provider: ServerProvider,
-      configuration: AcpRegistryLiveConfiguration,
-    ) =>
-      Ref.modify(learnedModels, (learned) => {
-        const next = applyAcpRegistryLiveConfiguration(
-          provider,
-          configuration,
-          effectiveConfig.customModels,
-          learned.length > 0 ? learned : provider.models,
-        );
-        return [next, next.models === provider.models ? learned : next.models];
-      });
     const clearLearnedModels = Ref.set(learnedModels, []);
     // Readiness checks do not read enrichmentCache, and post-TTL probes may see no live entry
     // once an earlier probe cleared it; keep the last accepted catalog separately so skipped
     // enrichment or provisional probes do not regress the snapshot.
     const acceptedCatalog = yield* Ref.make<AcceptedAcpRegistryCatalog>(EMPTY_ACCEPTED_CATALOG);
     const clearAcceptedCatalog = Ref.set(acceptedCatalog, EMPTY_ACCEPTED_CATALOG);
+    const applyLiveConfiguration = (
+      provider: ServerProvider,
+      configuration: AcpRegistryLiveConfiguration,
+      options?: { readonly preserveSingleModelCatalog?: boolean },
+    ) =>
+      (options?.preserveSingleModelCatalog !== undefined
+        ? Effect.succeed(options.preserveSingleModelCatalog)
+        : Ref.get(acceptedCatalog).pipe(
+            Effect.map(
+              (accepted) => accepted.builtInModelCount === 1 && accepted.modelsFromModelSelect,
+            ),
+          )
+      ).pipe(
+        Effect.flatMap((preserveSingleModelCatalog) =>
+          Ref.modify(learnedModels, (learned) => {
+            const next = applyAcpRegistryLiveConfiguration(
+              provider,
+              configuration,
+              effectiveConfig.customModels,
+              learned.length > 0 ? learned : provider.models,
+              { preserveSingleModelCatalog },
+            );
+            return [next, next.models === provider.models ? learned : next.models];
+          }),
+        ),
+      );
     const lastObservedLiveRevision = yield* Ref.make(0);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
       options?: {
         readonly recordLiveRevision?: boolean;
         readonly fallbackToAcceptedModels?: boolean;
+        readonly preserveSingleModelCatalog?: boolean;
       },
     ) {
       if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
@@ -880,7 +898,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   Option.match(liveConfiguration.configuration, {
                     onNone: () => Effect.succeed(withBaseModels),
                     onSome: (configuration) =>
-                      applyLiveConfiguration(withBaseModels, configuration),
+                      applyLiveConfiguration(
+                        withBaseModels,
+                        configuration,
+                        options?.preserveSingleModelCatalog === undefined
+                          ? undefined
+                          : { preserveSingleModelCatalog: options.preserveSingleModelCatalog },
+                      ),
                   }),
                 ),
                 Effect.map((withConfiguration) =>
@@ -1073,7 +1097,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         });
                         resolved = models === provider.models ? provider : { ...provider, models };
                       }
-                      const published = yield* withLiveRuntimeState(resolved);
+                      const published = yield* withLiveRuntimeState(
+                        resolved,
+                        probeSupersedesLiveCatalog &&
+                          probedModelCount === 1 &&
+                          probedModelsFromModelSelect
+                          ? { preserveSingleModelCatalog: true }
+                          : undefined,
+                      );
                       if (
                         cleared ||
                         (!probeSupersedesLiveCatalog &&
@@ -1084,7 +1115,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           ...current,
                           entry: {
                             provider: resolved,
-                            expiresAt: completedAt + acpRegistryProbeTtlMs(published),
+                            expiresAt: completedAt + acpRegistryProbeTtlMs(provider),
                           },
                         });
                       }
@@ -1098,7 +1129,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       yield* publishSnapshot(published);
                       return;
                     }
-                    yield* withLiveRuntimeState(resolved).pipe(Effect.flatMap(publishSnapshot));
+                    yield* withLiveRuntimeState(resolved, {
+                      fallbackToAcceptedModels:
+                        fresh &&
+                        resolved.status !== "ready" &&
+                        resolved.auth.status !== "unauthenticated",
+                    }).pipe(Effect.flatMap(publishSnapshot));
                   }),
                 ),
             }),
@@ -1137,7 +1173,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       return;
                     }
                     const current = yield* getSnapshot;
-                    const next = yield* applyLiveConfiguration(current, configuration);
+                    const acceptedBefore = yield* Ref.get(acceptedCatalog);
+                    const preserveSingleModelCatalog =
+                      acceptedBefore.builtInModelCount === 1 &&
+                      acceptedBefore.modelsFromModelSelect;
+                    const next = yield* applyLiveConfiguration(current, configuration, {
+                      preserveSingleModelCatalog,
+                    });
                     if (next.status === "ready") {
                       yield* Ref.update(acceptedCatalog, (previous) =>
                         liveConfigurationReplacesAcceptedCatalog(configuration, previous)
@@ -1146,10 +1188,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               builtInModelCount: configuration.models.length,
                               modelsFromModelSelect: configuration.modelsFromModelSelect === true,
                             }
-                          : {
-                              ...previous,
-                              models: next.models,
-                            },
+                          : previous.models.length > 0
+                            ? {
+                                ...previous,
+                                models: next.models,
+                              }
+                            : previous,
                       );
                     }
                     const now = yield* Clock.currentTimeMillis;
@@ -1159,6 +1203,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         configuration,
                         customModels: effectiveConfig.customModels,
                         now,
+                        preserveSingleModelCatalog,
                       }),
                     );
                     yield* publishSnapshot(next);
