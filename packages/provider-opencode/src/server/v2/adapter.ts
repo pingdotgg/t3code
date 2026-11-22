@@ -2477,9 +2477,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           if (caller !== undefined) yield* releaseQuiet(caller);
         } else if (
           terminal.status === "completed" &&
-          turn.startedSteps === 0 &&
           turn.answer === undefined &&
-          !turn.missedEvents
+          // A turn that missed events may have written unseen; when unsure, release.
+          (turn.startedSteps === 0 || turn.missedEvents)
         ) {
           yield* releaseQuiet(state);
         }
@@ -3630,6 +3630,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       const turn = state.active;
       if (turn === undefined) {
         if (started && state.subagent === undefined) return yield* onWake(state);
+        // A subagent busy period that began while the stream was down ends without a turn here.
+        if (
+          state.subagent !== undefined &&
+          (event.type === "session.execution.succeeded" ||
+            event.type === "session.execution.failed")
+        ) {
+          return yield* releaseQuiet(state);
+        }
         return;
       }
       if (turn.awaitingStart) {

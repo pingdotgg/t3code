@@ -2254,6 +2254,41 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       }),
   );
 
+  const reconnectedWithChildActive = [
+    { type: "runtime_exit", status: "success" } as const,
+    out("event.subscribe"),
+    out("session.active"),
+    replyData("session.active", { [CHILD]: { type: "running" } }),
+    out("permission.list", { sessionID: CHILD }),
+    replyData("permission.list", []),
+    out("session.form.list", { sessionID: CHILD }),
+    replyData("session.form.list", []),
+  ];
+  it.effect.each([
+    {
+      name: "spans a reconnect",
+      replay: [
+        event("session.execution.started", { sessionID: CHILD }),
+        ...reconnectedWithChildActive,
+      ],
+    },
+    { name: "starts while the stream is down", replay: reconnectedWithChildActive },
+  ])("settles a kept subagent whose quiet busy period $name", ({ replay }) =>
+    Effect.gen(function* () {
+      const { runtime, thread } = yield* resumed([
+        ...reportedRunning,
+        ...replay,
+        event("session.execution.succeeded", { sessionID: CHILD }),
+      ]);
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(
+        () => settled(watch.calls.get("Sleep")?.status) && watch.state.roster?.length === 0,
+      );
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "TESTS_STARTED" });
+    }),
+  );
+
   it.effect("waits for a cancelled report after a kept subagent's turn is interrupted", () =>
     Effect.gen(function* () {
       const gate = makeProviderReplayGate(["cancelled"]);
@@ -2619,7 +2654,10 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
                 replyData("permission.list", []),
                 out("session.form.list", { sessionID: CHILD }),
                 replyData("session.form.list", []),
-                ...finished().slice(1),
+                // Its end without a turn here would release the call on its own.
+                childStep(2),
+                childSaid("TESTS_PASSED", 2),
+                childReport("msg_report_2", "TESTS_PASSED"),
               ]
             : []),
         ]);
