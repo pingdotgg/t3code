@@ -4,8 +4,8 @@ import {
 } from "@t3tools/client-runtime/state/thread-repositories";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { FolderGitIcon } from "lucide-react";
-import { T, useGT, useMessages } from "gt-react";
-import { memo, useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { cloneElement, memo, useState } from "react";
 
 import { type ComposerThreadTarget, useComposerDraftStore } from "../composerDraftStore";
 import { useWorktreeRepositoryChoices } from "../hooks/useWorktreeRepositoryChoices";
@@ -32,6 +32,7 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "./ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 /** A checklist this long gets a filter. */
 const FILTER_ABOVE_CHOICES = 8;
@@ -81,22 +82,44 @@ export const WorktreeRepositoriesControl = memo(function WorktreeRepositoriesCon
       ? choices
       : choices.filter((choice) => matchesFilter(choice, normalizedFilter));
 
+  const trigger = (
+    <MenuTrigger
+      render={<ComposerControl size="xs" />}
+      className={cn(
+        "min-w-0 flex-initial justify-start",
+        selection.needsChoice && "text-warning-foreground dark:text-warning-foreground",
+      )}
+      aria-label={gt("Repositories in the new worktree: {selection}", {
+        selection: selection.label,
+      })}
+      data-composer-context-control
+    />
+  );
+  const triggerContent = (
+    <>
+      <FolderGitIcon className="size-3 shrink-0" aria-hidden />
+      <ComposerContextLabel>{selection.label}</ComposerContextLabel>
+    </>
+  );
+
   return (
     <Menu onOpenChange={(open) => (open ? undefined : setFilter(""))}>
-      <MenuTrigger
-        render={<ComposerControl size="xs" />}
-        className={cn(
-          "min-w-0 flex-initial justify-start",
-          selection.needsChoice && "text-warning-foreground dark:text-warning-foreground",
-        )}
-        aria-label={gt("Repositories in the new worktree: {selection}", {
-          selection: selection.label,
-        })}
-        data-composer-context-control
-      >
-        <FolderGitIcon className="size-3 shrink-0" aria-hidden />
-        <ComposerContextLabel>{selection.label}</ComposerContextLabel>
-      </MenuTrigger>
+      {props.offersBaseBranch ? (
+        <Tooltip>
+          <TooltipTrigger render={trigger}>{triggerContent}</TooltipTrigger>
+          <TooltipPopup>
+            {baseBranch === ""
+              ? messages(msg("Each repository starts from its own default branch"))
+              : messages(
+                  msg("Repositories start from {branch} where they have it", {
+                    branch: baseBranch,
+                  }),
+                )}
+          </TooltipPopup>
+        </Tooltip>
+      ) : (
+        cloneElement(trigger, undefined, triggerContent)
+      )}
       <MenuPopup align="start" side="top" {...composerFloatingLayerProps}>
         {choices.length > FILTER_ABOVE_CHOICES ? (
           <MenuSearchInput

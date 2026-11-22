@@ -66,7 +66,6 @@ import { useEnvironmentQuery } from "../state/query";
 import { vcsEnvironment } from "../state/vcs";
 import { PreviousWorktreeItemContent } from "./PreviousWorktreeItemContent";
 import { WorktreeRepositoriesControl } from "./WorktreeRepositoriesControl";
-import { useWorktreeBaseBranch } from "../worktreeRepositoryChoiceStore";
 import { ThreadDetailsControl } from "./chat/ThreadDetailsControl";
 import {
   THREAD_DETAILS_PANEL_ICON_CLASS,
@@ -1305,7 +1304,6 @@ export const BranchToolbar = memo(function BranchToolbar({
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
   const [attachStrip, stripCompaction] = useStripCompaction();
-  const plainProjectBaseBranch = useWorktreeBaseBranch(activeProject ?? null);
 
   if (!activeProject) return null;
 
@@ -1430,22 +1428,7 @@ export const BranchToolbar = memo(function BranchToolbar({
           offersBaseBranch={!showBranchControls}
         />
       ) : null}
-      {!showGitControls || onOpenWorkspaceDetails ? null : !showBranchControls ? (
-        startsNewWorktree ? (
-          <span
-            className="min-w-0 flex-initial truncate px-1.75 @xl/composer-surface:ml-auto"
-            data-composer-context-control
-          >
-            {plainProjectBaseBranch === ""
-              ? m(msg("Each repository starts from its own default branch"))
-              : m(
-                  msg("Repositories start from {branch} where they have it", {
-                    branch: plainProjectBaseBranch,
-                  }),
-                )}
-          </span>
-        ) : null
-      ) : (
+      {!showGitControls || !showBranchControls || onOpenWorkspaceDetails ? null : (
         <BranchToolbarBranchSelector
           forceNewWorktree={forceNewWorktree}
           ref={branchSelectorRef}
