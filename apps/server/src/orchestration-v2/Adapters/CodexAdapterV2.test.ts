@@ -1571,6 +1571,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
+      const serverResponses: Array<{ readonly method: string; readonly response: unknown }> = [];
       const driver = yield* CodexReplay.makeReplayDriver(
         withConfigReads(transcript),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
@@ -1598,6 +1599,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                       request: (method, params) =>
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
+                        ),
+                      handleServerRequest: (method, handler) =>
+                        client.handleServerRequest(method, (payload) =>
+                          handler(payload).pipe(
+                            Effect.tap((response) =>
+                              Effect.sync(() => {
+                                serverResponses.push({ method, response });
+                              }).pipe(Effect.andThen(changes.notify)),
+                            ),
+                          ),
                         ),
                       handleServerNotification: (method, handler) =>
                         client.handleServerNotification(method, (payload) =>
@@ -1695,6 +1706,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         providerThread,
         threadId,
         serverConfig,
+        serverResponses,
         events,
         continuationRequests,
         commandStopWatchers,
@@ -1834,6 +1846,102 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ),
         ),
       ),
+  );
+
+  it.effect("accepts an MCP elicitation from a resumed native subagent in full access", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "mcp-subagent-root-thread";
+      const nativeTurnId = "mcp-subagent-root-turn";
+      const childThreadId = "mcp-subagent-child-thread";
+      const childTurnId = "mcp-subagent-child-turn";
+      const prompt = "Ask the existing agent to send the email.";
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "mcp-approval-resumed-subagent",
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "item/started",
+                params: {
+                  item: {
+                    type: "subAgentActivity",
+                    id: "call-interact-existing-agent",
+                    kind: "interacted",
+                    agentThreadId: childThreadId,
+                    agentPath: "/root/mailer",
+                  },
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                method: "turn/started",
+                params: {
+                  threadId: childThreadId,
+                  turn: {
+                    ...makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
+                    rootTurnId: nativeTurnId,
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              frame: {
+                id: 0,
+                method: "mcpServer/elicitation/request",
+                params: {
+                  threadId: childThreadId,
+                  turnId: childTurnId,
+                  serverName: "gmail",
+                  mode: "form",
+                  message: "Allow ChatGPT to send an email?",
+                  requestedSchema: { type: "object", properties: {} },
+                },
+              },
+            },
+            {
+              type: "expect_outbound",
+              frame: { id: 0, result: { action: "accept", content: {} } },
+            },
+          ],
+        }),
+      );
+      const turnInput = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("mcp-approval-resumed-subagent-attempt"),
+        text: prompt,
+      });
+      yield* harness.runtime.startTurn({
+        ...turnInput,
+        runtimePolicy: { ...turnInput.runtimePolicy, runtimeMode: "full-access" },
+      });
+      yield* harness.until(() =>
+        harness.serverResponses.some((entry) => entry.method === "mcpServer/elicitation/request"),
+      );
+      assert.deepEqual(
+        harness.serverResponses.find((entry) => entry.method === "mcpServer/elicitation/request")
+          ?.response,
+        { action: "accept", content: {} },
+      );
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
   );
 
   it.effect.each(["native", "ordinary"] as const)(
