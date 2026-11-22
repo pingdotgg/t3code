@@ -22,6 +22,7 @@ import {
 import { prefersHttpMcpTransport } from "./mcpTransport.ts";
 import { defaultInstanceIdForDriver, ProviderDriverKind } from "@t3tools/contracts";
 import { readCustomModelEntries } from "@t3tools/shared/model";
+import { satisfiesSemverRange } from "@t3tools/shared/semver";
 import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@t3tools/shared/nodeRuntime";
@@ -186,6 +187,15 @@ const isHermes = (
   initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
 ) => initializeResult.agentInfo?.name === "hermes-agent";
 
+// agy 1.5.10 keeps its conversation update stream open after session/prompt returns; earlier
+// 1.5 releases close the stream on end_turn and never send post-prompt completions.
+const isAntigravityPostPromptStreamRelease = (
+  initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
+) => {
+  const version = initializeResult.agentInfo?.version?.trim() ?? "";
+  return version.length > 0 && satisfiesSemverRange(version, ">=1.5.10");
+};
+
 export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(function* (
   options: AcpRegistryAdapterV2Options,
 ) {
@@ -313,9 +323,11 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
     // Hermes is not in the public registry and may run through a wrapper, so only its
     // initialize reply identifies it. agy does the same and is known by its command.
     enablePostSettleContinuation: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      (isAntigravityCli && isAntigravityPostPromptStreamRelease(initializeResult)) ||
+      isHermes(initializeResult),
     deferFinalizeForBackgroundWork: (initializeResult) =>
-      isAntigravityCli || isHermes(initializeResult),
+      (isAntigravityCli && isAntigravityPostPromptStreamRelease(initializeResult)) ||
+      isHermes(initializeResult),
     ...(isDevin
       ? {
           clientCapabilitiesMeta: {
