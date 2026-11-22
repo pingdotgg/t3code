@@ -7,6 +7,37 @@ const ATX_HEADING = /^#{1,6}(?:[ \t]|\r?$)/;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
+// CommonMark HTML blocks of types 1-5 and display math run past blank lines until their closer.
+const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
+  [/^ {0,3}<(?:script|pre|style|textarea)(?=[\s>]|$)/i, /<\/(?:script|pre|style|textarea)>/i],
+  [/^ {0,3}<!--/, /-->/],
+  [/^ {0,3}<\?/, /\?>/],
+  [/^ {0,3}<!\[CDATA\[/, /\]\]>/],
+  [/^ {0,3}<![A-Za-z]/, />/],
+  [/^ {0,3}\$\$/, /\$\$/],
+];
+
+/** Returns how to recognize the end of a block that `line` opens, or null for none. */
+function blockCloser(line: string): ((line: string) => boolean) | null {
+  const fence = FENCE_OPEN.exec(line)?.[1];
+  if (fence) {
+    return (next) => {
+      const closer = FENCE_OPEN.exec(next)?.[1];
+      return (
+        closer !== undefined &&
+        closer[0] === fence[0] &&
+        closer.length >= fence.length &&
+        !next.trim().slice(closer.length)
+      );
+    };
+  }
+  for (const [open, close] of SPANNING_BLOCKS) {
+    const opener = open.exec(line)?.[0];
+    if (opener === undefined) continue;
+    return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
+  }
+  return null;
+}
 
 export interface MarkdownChunk {
   readonly text: string;
@@ -26,19 +57,12 @@ export function splitLargeMarkdown(
   const chunks: MarkdownChunk[] = [];
   let start = 0;
   let chars = 0;
-  let fence: string | null = null;
+  let closes: ((line: string) => boolean) | null = null;
   let afterBlankLine = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index]!;
-    if (fence !== null) {
-      const closer = FENCE_OPEN.exec(line)?.[1];
-      if (
-        closer &&
-        closer[0] === fence[0] &&
-        closer.length >= fence.length &&
-        !line.trim().slice(closer.length)
-      )
-        fence = null;
+    if (closes !== null) {
+      if (closes(line)) closes = null;
     } else {
       const cut =
         chars >= targetChars &&
@@ -49,7 +73,7 @@ export function splitLargeMarkdown(
         start = index;
         chars = 0;
       }
-      fence = FENCE_OPEN.exec(line)?.[1] ?? null;
+      closes = blockCloser(line);
     }
     chars += line.length + 1;
     afterBlankLine = line.trim() === "";

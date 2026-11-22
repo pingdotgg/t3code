@@ -50,6 +50,30 @@ describe("splitLargeMarkdown", () => {
     expect(starts(text)).toEqual(["````", "after"]);
   });
 
+  it("keeps HTML blocks and display math open across blank lines", () => {
+    const text = [
+      "<!--",
+      "",
+      "# hidden",
+      "-->",
+      "",
+      "$$",
+      "",
+      "Inside math",
+      "$$",
+      "",
+      "<pre>",
+      "",
+      "Preformatted",
+      "</pre>",
+      "",
+      "<!-- one line -->",
+      "",
+      "after",
+    ].join("\n");
+    expect(starts(text)).toEqual(["<!--", "after"]);
+  });
+
   it("waits for the target size before cutting", () => {
     const text = ["# a", "", "b", "", "# c", "", "d"].join("\n");
     expect(splitLargeMarkdown(text, 6).map((chunk) => chunk.text)).toEqual([

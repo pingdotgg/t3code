@@ -726,12 +726,23 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       : null,
   );
   const fileData = fileQuery.data as ProjectReadFileResult | null;
-  const fetchesFullText =
-    fileData?.truncated === true && fileData.byteLength <= MOBILE_FULL_FILE_MAX_BYTES;
+  const [fileRefreshCount, setFileRefreshCount] = useState(0);
+  const fullText = useFullFileText({
+    environmentId,
+    threadId,
+    absolutePath:
+      fileData?.truncated === true && fileData.byteLength <= MOBILE_FULL_FILE_MAX_BYTES
+        ? targetPath
+        : null,
+    revision: `${fileData?.byteLength ?? 0}:${fileRefreshCount}`,
+  });
+  // Until the full text arrives, the 1 MB preview shows with its partial-file notice.
+  const fileContents = fullText ?? fileData?.contents ?? null;
+  const fileTruncated = fileData?.truncated === true && fullText === null;
   const assetPreviewPath =
     !metadataPending &&
     directoryPath === null &&
-    (isBrowserFile || isImageFile || isVideoFile || isAudioFile || fetchesFullText)
+    (isBrowserFile || isImageFile || isVideoFile || isAudioFile)
       ? relativePath
       : null;
   const assetPreview = useWorkspaceFileAssetUrlState({
@@ -742,15 +753,6 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     draftCwd: threadId === null ? cwd : null,
   });
   const assetPreviewUri = assetPreview._tag === "Success" ? assetPreview.url : null;
-  const fullText = useFullFileText(fetchesFullText ? assetPreviewUri : null);
-  // A failed full download falls back to the 1 MB preview with its partial-file notice.
-  const fileContents =
-    fileData === null
-      ? null
-      : !fetchesFullText || fullText.failed || assetPreview._tag === "Failure"
-        ? fileData.contents
-        : fullText.text;
-  const fileTruncated = fileData?.truncated === true && fullText.text === null;
   const mediaSource: MediaActionsSource | undefined =
     environmentId !== null &&
     relativePath !== null &&
@@ -794,7 +796,11 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   };
   // iOS only: Android lays out a whole-file selectable TextView on the UI thread, which stalls.
   const canSelectText =
-    Platform.OS === "ios" && resolvedActiveMode === "source" && fileContents !== null;
+    Platform.OS === "ios" &&
+    resolvedActiveMode === "source" &&
+    fileContents !== null &&
+    // One selectable view lays out the whole text; past the 1 MB preview that stalls.
+    fileContents.length <= 1024 * 1024;
   const selectingText = canSelectText && textSelectionPath === relativePath;
 
   const handleSelectFile = (path: string) => {
@@ -1106,7 +1112,10 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           truncated={fileTruncated}
           chunkMarkdown={fileData?.truncated ?? false}
           selectable={selectingText}
-          onRefresh={() => fileQuery.refresh()}
+          onRefresh={() => {
+            setFileRefreshCount((count) => count + 1);
+            return fileQuery.refresh();
+          }}
         />
       </ScreenContent>
       <FilePreviewModal
