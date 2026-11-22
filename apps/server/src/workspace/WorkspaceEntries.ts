@@ -252,16 +252,35 @@ export const make = Effect.gen(function* () {
       const showHidden = endsWithSeparator || prefix.startsWith(".");
       const lowerPrefix = prefix.toLowerCase();
       const entries: Array<{ readonly name: string; readonly fullPath: string }> = [];
+      const symlinkCandidates: Array<{ readonly name: string; readonly fullPath: string }> = [];
       for (const dirent of dirents) {
         if (
-          dirent.isDirectory() &&
-          dirent.name.toLowerCase().startsWith(lowerPrefix) &&
-          (showHidden || !dirent.name.startsWith("."))
+          !dirent.name.toLowerCase().startsWith(lowerPrefix) ||
+          (!showHidden && dirent.name.startsWith("."))
         ) {
-          entries.push({
-            name: dirent.name,
-            fullPath: path.join(parentPath, dirent.name),
-          });
+          continue;
+        }
+        const fullPath = path.join(parentPath, dirent.name);
+        if (dirent.isDirectory()) {
+          entries.push({ name: dirent.name, fullPath });
+        } else if (dirent.isSymbolicLink()) {
+          symlinkCandidates.push({ name: dirent.name, fullPath });
+        }
+      }
+      if (symlinkCandidates.length > 0) {
+        const resolvedSymlinks = yield* Effect.forEach(
+          symlinkCandidates,
+          (candidate) =>
+            Effect.promise(() =>
+              NodeFSP.stat(candidate.fullPath).then(
+                (stats) => (stats.isDirectory() ? candidate : null),
+                () => null,
+              ),
+            ),
+          { concurrency: 16 },
+        );
+        for (const candidate of resolvedSymlinks) {
+          if (candidate !== null) entries.push(candidate);
         }
       }
 

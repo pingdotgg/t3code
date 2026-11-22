@@ -1165,5 +1165,52 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
         });
       }),
     );
+
+    it.effect("includes symlinks pointing to directories and skips file or broken symlinks", () =>
+      Effect.gen(function* () {
+        const platform = yield* HostProcess.Platform;
+        if (platform === "win32") return;
+        const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-browse-symlink-" });
+        const externalTarget = yield* makeTempDir({
+          prefix: "t3code-workspace-browse-symlink-target-",
+        });
+        yield* writeTextFile(cwd, "real-dir/readme.md", "hi");
+        yield* writeTextFile(cwd, "plain.txt", "hi");
+        yield* writeTextFile(externalTarget, "project/index.ts", "export {};");
+
+        yield* fileSystem.symlink(externalTarget, path.join(cwd, "personal"));
+        yield* fileSystem.symlink(path.join(cwd, "plain.txt"), path.join(cwd, "file-link"));
+        yield* fileSystem.symlink(path.join(cwd, "does-not-exist"), path.join(cwd, "broken-link"));
+        yield* fileSystem.symlink(externalTarget, path.join(cwd, ".hidden-link"));
+
+        const cwdWithSeparator = yield* appendSeparator(cwd);
+        const directoryResult = yield* workspaceEntries.browse({
+          partialPath: cwdWithSeparator,
+        });
+        const prefixResult = yield* workspaceEntries.browse({
+          partialPath: `${cwdWithSeparator}per`,
+        });
+        const symlinkChildren = yield* workspaceEntries.browse({
+          partialPath: yield* appendSeparator(path.join(cwd, "personal")),
+        });
+
+        expect(directoryResult.entries).toEqual([
+          { name: ".hidden-link", fullPath: path.join(cwd, ".hidden-link") },
+          { name: "personal", fullPath: path.join(cwd, "personal") },
+          { name: "real-dir", fullPath: path.join(cwd, "real-dir") },
+        ]);
+        expect(prefixResult).toEqual({
+          parentPath: cwd,
+          entries: [{ name: "personal", fullPath: path.join(cwd, "personal") }],
+        });
+        expect(symlinkChildren).toEqual({
+          parentPath: path.join(cwd, "personal"),
+          entries: [{ name: "project", fullPath: path.join(cwd, "personal", "project") }],
+        });
+      }),
+    );
   });
 });
