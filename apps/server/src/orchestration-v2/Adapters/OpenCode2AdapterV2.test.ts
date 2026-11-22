@@ -2503,6 +2503,73 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ]),
   );
 
+  const grandMessage = {
+    type: "synthetic",
+    text: `<subagent sessionID="${GRAND}" state="completed" description="Grand">\nGRAND_OK\n</subagent>`,
+    description: "Grand",
+    metadata: { source: "subagent", childID: GRAND, agent: "General", state: "completed" },
+  };
+  // A report no call here waits for; it only opens the child's next busy period.
+  const grandReport = event("session.inbox.enqueued", {
+    inboxID: "msg_grand_report",
+    sessionID: CHILD,
+    item: {
+      type: "synthetic",
+      payload: {
+        text: grandMessage.text,
+        description: grandMessage.description,
+        metadata: grandMessage.metadata,
+      },
+      delivery: "steer",
+    },
+  });
+  it.effect(
+    "releases a subagent a reconnect kept for a grandchild whose own call had settled",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
+          ...keptChain,
+          event("session.inbox.enqueued", {
+            inboxID: "msg_grand_final",
+            sessionID: CHILD,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${GRAND}" state="completed" description="Grand">\nGRAND_DONE\n</subagent>`,
+                description: "Grand",
+                metadata: {
+                  source: "subagent",
+                  childID: GRAND,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: GRAND }),
+          { type: "runtime_exit", status: "success" } as const,
+          out("event.subscribe"),
+          out("session.active"),
+          replyData("session.active", { [GRAND]: { type: "running" } }),
+          out("permission.list", { sessionID: GRAND }),
+          replyData("permission.list", []),
+          out("session.form.list", { sessionID: GRAND }),
+          replyData("session.form.list", []),
+          event("session.execution.succeeded", { sessionID: GRAND }),
+        ]);
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(
+          () => settled(watch.calls.get("Sleep")?.status) && watch.state.roster?.length === 0,
+        );
+        assert.deepEqual(Object.fromEntries(watch.calls), {
+          Sleep: { status: "completed", result: "CHILD_WAITING" },
+          Grand: { status: "completed", result: "GRAND_DONE" },
+        });
+      }),
+  );
+
   const jobsBelow = (...jobs: ReadonlyArray<{ kind: string; status: string }>) => ({
     data: jobs.map((job, index) => ({ ...job, id: `job_${index}`, sessionID: CHILD })),
   });
@@ -2511,6 +2578,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       name: "a Code Mode script still runs below it",
       listed: jobsBelow({ kind: "codemode", status: "running" }),
       result: "TESTS_PASSED",
+    },
+    {
+      name: "its quiet busy period ended unseen while a Code Mode script still runs",
+      listed: jobsBelow({ kind: "codemode", status: "running" }),
+      result: "TESTS_PASSED",
+      cut: true,
     },
     {
       name: "OpenCode lists only a stored subagent job below it",
@@ -2524,11 +2597,12 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     },
   ])(
     "after a reconnect, judges a kept subagent by OpenCode's jobs when $name",
-    ({ listed, result }) =>
+    ({ listed, result, cut = false }) =>
       Effect.gen(function* () {
         const { runtime, thread } = yield* resumed(
           [
             ...reportedRunning,
+            ...(cut ? [grandReport, event("session.execution.started", { sessionID: CHILD })] : []),
             { type: "runtime_exit", status: "success" } as const,
             out("event.subscribe"),
             out("rpc.call", "<any>"),
@@ -2541,6 +2615,23 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             reply("job.list", { data: [] }),
             out("session.active"),
             replyData("session.active", {}),
+            ...(cut
+              ? [
+                  out("message.list", { sessionID: CHILD, order: "desc", limit: "50" }),
+                  reply("message.list", {
+                    data: [
+                      {
+                        id: "msg_idle_2",
+                        time: { created: 4 },
+                        type: "idle",
+                        outcome: "succeeded",
+                      },
+                      { ...grandMessage, id: "msg_grand_report", time: { created: 3 } },
+                    ],
+                    cursor: {},
+                  }),
+                ]
+              : []),
             out("job.list", { sessionID: CHILD, descendants: "true" }),
             reply("job.list", listed),
             // The reconnect has finished before this arrives; only a call it kept takes it.

@@ -2250,7 +2250,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
 
     // OpenCode reports a busy period only when it wrote a new answer. A child whose work ended in a
     // quiet one never reports again, nor do the idle subagents above it that were waiting on it.
+    // During a reconnect, reconcile settles kept calls itself once it has read OpenCode's jobs.
+    let reconciling = false;
     const releaseQuiet = Effect.fnUntraced(function* (state: ThreadState) {
+      if (reconciling) return;
       for (
         let current: ThreadState = state;
         current.subagent !== undefined;
@@ -2258,9 +2261,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       ) {
         if (current.active !== undefined || busy.has(current.sessionId) || hasBackground(current))
           return;
-        const kept = callsAttachedTo(current).filter((call) => call.reported !== undefined);
-        if (kept.length === 0) return;
-        for (const call of kept) yield* settleCall(call, "completed", call.reported);
+        for (const call of callsAttachedTo(current)) {
+          if (call.reported !== undefined) yield* settleCall(call, "completed", call.reported);
+        }
       }
     });
 
@@ -3876,24 +3879,29 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // OpenCode's running jobs below a kept call other than subagents (shells, Code Mode scripts,
       // images): it also lists stored subagent jobs it never closed, and subagents count by their
-      // sessions. A failed read counts as none.
+      // sessions. A read that fails or misses the shared deadline counts as none.
       const jobsBelow = new Map<string, number>();
       if (
         compareSemverVersions(connection.version, "2.2.6") >= 0 &&
         connection.runningJobs !== undefined
       ) {
-        for (const state of background) {
-          for (const call of runningCalls(state)) {
-            const child = call.child?.sessionId;
-            if (call.reported === undefined || child === undefined || jobsBelow.has(child))
-              continue;
-            const jobs = yield* connection.runningJobs(child).pipe(
-              Effect.timeout(INVENTORY_TIMEOUT),
-              Effect.orElseSucceed(() => 0),
-            );
-            jobsBelow.set(child, jobs);
-          }
-        }
+        const runningJobs = connection.runningJobs;
+        const children = new Set(
+          background.flatMap((state) =>
+            runningCalls(state).flatMap((call) =>
+              call.reported === undefined || call.child === undefined ? [] : [call.child.sessionId],
+            ),
+          ),
+        );
+        yield* Effect.forEach(
+          children,
+          (child) =>
+            runningJobs(child).pipe(
+              Effect.tap((jobs) => Effect.sync(() => jobsBelow.set(child, jobs))),
+              Effect.ignore,
+            ),
+          { concurrency: 4, discard: true },
+        ).pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.ignore);
       }
       yield* lock.withPermit(
         Effect.gen(function* () {
@@ -4006,9 +4014,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
       }
       // An owned process's exit, rather than a read deadline, bounds recovery; the bounded retry
       // below then borrows a restarted server. HTTP waits stay outside the event lock so Stop can still settle.
+      reconciling = true;
+      const recovery = reconcile().pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            reconciling = false;
+          }),
+        ),
+      );
       yield* next.processExit === undefined
-        ? reconcile().pipe(Effect.timeout(RECONCILE_TIMEOUT))
-        : whileAlive(next.processExit, reconcile());
+        ? recovery.pipe(Effect.timeout(RECONCILE_TIMEOUT))
+        : whileAlive(next.processExit, recovery);
       return stream;
     }).pipe(
       // Borrows and process exits stay bounded; only a live owned process is waited on above.
