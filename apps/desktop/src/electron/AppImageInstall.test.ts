@@ -13,6 +13,7 @@ vi.mock("node:fs", async (importOriginal) => {
   return {
     ...actual,
     copyFileSync: vi.fn(actual.copyFileSync),
+    fsyncSync: vi.fn(actual.fsyncSync),
     renameSync: vi.fn(actual.renameSync),
     realpathSync: vi.fn(actual.realpathSync),
     rmSync: vi.fn(actual.rmSync),
@@ -52,6 +53,7 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
 
   afterEach(() => {
     vi.mocked(NodeFS.copyFileSync).mockReset();
+    vi.mocked(NodeFS.fsyncSync).mockReset();
     vi.mocked(NodeFS.renameSync).mockReset();
     vi.mocked(NodeFS.realpathSync).mockReset();
     vi.mocked(NodeFS.rmSync).mockReset();
@@ -170,5 +172,21 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("installAppImag
 
     assert.equal(NodeFS.readFileSync(destination, "utf8"), newAppImage);
     assert.deepEqual(NodeFS.readdirSync(input.applications), [NodePath.basename(destination)]);
+  });
+
+  it("keeps the old AppImage and cached download when the directory sync fails", () => {
+    const input = fixture("T3-Code-1.2.2-x86_64.AppImage");
+    const fsync = vi.mocked(NodeFS.fsyncSync).getMockImplementation()!;
+    vi.mocked(NodeFS.fsyncSync)
+      .mockImplementationOnce(fsync)
+      .mockImplementationOnce(() => {
+        throw new Error("EIO");
+      });
+
+    const destination = installAppImageUpdate({ ...input, sha512: sha512(newAppImage) });
+
+    assert.equal(NodeFS.readFileSync(destination, "utf8"), newAppImage);
+    assert.equal(NodeFS.readFileSync(input.appImageFile, "utf8"), oldAppImage);
+    assert.equal(NodeFS.readFileSync(input.installerPath, "utf8"), newAppImage);
   });
 });

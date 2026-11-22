@@ -53,15 +53,17 @@ export function installAppImageUpdate(input: {
     throw new Error("The downloaded AppImage update has an invalid size.");
   }
 
-  const bestEffort = (operation: () => void) => {
+  const bestEffort = (operation: () => void): boolean => {
     try {
       operation();
+      return true;
     } catch (error) {
       try {
         input.logger?.warn(`AppImage update cleanup or directory sync failed: ${String(error)}`);
       } catch {
         // Logging must not turn a committed replacement into an installation failure.
       }
+      return false;
     }
   };
   const removeObsolete = (path: string) =>
@@ -92,7 +94,8 @@ export function installAppImageUpdate(input: {
     bestEffort(() => NodeFS.rmSync(stageDirectory, { recursive: true, force: true }));
   }
 
-  bestEffort(() => syncPath(NodePath.dirname(destination)));
+  // Until the rename is durable, the old AppImage and cached download are the only recovery copies.
+  if (!bestEffort(() => syncPath(NodePath.dirname(destination)))) return destination;
   if (destination !== input.appImageFile) removeObsolete(input.appImageFile);
   removeObsolete(input.installerPath);
   return destination;
