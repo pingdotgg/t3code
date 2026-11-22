@@ -80,6 +80,11 @@ import {
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
+import {
+  deriveContextUsageTone,
+  type ContextWindowSnapshot,
+  type ThreadCacheMetrics,
+} from "@t3tools/client-runtime/state/context-window";
 import { formatTokens } from "@t3tools/shared/usageFormat";
 import { ComposerModelControl } from "../../components/ComposerModelControl";
 import {
@@ -145,6 +150,9 @@ export interface ThreadComposerProps {
   readonly selectedThread: EnvironmentThreadShell;
   readonly reportedModelSelection?: ModelSelection | null;
   readonly hasCompactableConversation: boolean;
+  readonly contextWindow?: ContextWindowSnapshot | null;
+  readonly cacheMetrics?: ThreadCacheMetrics | null;
+  readonly onCompactContext?: (() => void) | undefined;
   /** Set while the next send compacts the thread first. */
   readonly compactBeforeSend?: {
     readonly tokens: number;
@@ -724,6 +732,102 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
       />
     ) : null;
 
+  const contextMeterControl = (() => {
+    if (
+      props.isDraft ||
+      compactControl !== null ||
+      queuedEdit !== null ||
+      showResumeAction ||
+      props.contextWindow == null ||
+      props.contextWindow.usedTokens <= 0
+    ) {
+      return null;
+    }
+    const { contextWindow } = props;
+    const cacheMetrics = props.cacheMetrics ?? null;
+    const maxTokens =
+      contextWindow.maxTokens != null && contextWindow.maxTokens > 0
+        ? contextWindow.maxTokens
+        : null;
+    const usedPercent =
+      maxTokens !== null && contextWindow.usedPercentage !== null
+        ? Math.round(Math.max(0, Math.min(100, contextWindow.usedPercentage)))
+        : null;
+    const tone = deriveContextUsageTone({
+      usedTokens: contextWindow.usedTokens,
+      usedPercentage: usedPercent,
+    });
+    const usedLabel = formatTokens(contextWindow.usedTokens);
+    const maxLabel = maxTokens !== null ? formatTokens(maxTokens) : null;
+    const threadCachePercent =
+      cacheMetrics !== null
+        ? Math.round(Math.max(0, Math.min(1, cacheMetrics.threadHitRate)) * 100)
+        : null;
+    const lastTurnCachePercent =
+      cacheMetrics !== null
+        ? Math.round(Math.max(0, Math.min(1, cacheMetrics.lastTurnHitRate)) * 100)
+        : null;
+    const label = threadCachePercent !== null ? `${usedLabel} · ${threadCachePercent}%` : usedLabel;
+    const contextSummary =
+      maxLabel !== null && usedPercent !== null
+        ? `${usedLabel} / ${maxLabel} (${usedPercent}%)`
+        : usedLabel;
+    const cacheSummary =
+      threadCachePercent !== null && lastTurnCachePercent !== null
+        ? gt("Cache: {thread}% thread · {last}% last turn", {
+            thread: threadCachePercent,
+            last: lastTurnCachePercent,
+          })
+        : undefined;
+    const canCompactNow =
+      props.hasCompactableConversation &&
+      !props.activeThreadBusy &&
+      props.canOperateThread &&
+      props.onCompactContext !== undefined;
+    const actions: Array<{ id: string; title: string; subtitle?: string }> = [];
+    if (canCompactNow) {
+      actions.push({
+        id: "compact",
+        title: gt("Compact context"),
+        ...(cacheSummary ? { subtitle: cacheSummary } : {}),
+      });
+    }
+    if (props.onFreshSession !== undefined && props.canOperateThread) {
+      actions.push({
+        id: "fresh",
+        title: gt("Start fresh session"),
+      });
+    }
+    const control = (
+      <ComposerInlineControl
+        size={usesLargeControls ? "large" : "regular"}
+        label={label}
+        showChevron={false}
+        static={actions.length === 0}
+        tone={tone === "warning" || tone === "error" ? "warning" : undefined}
+        accessibilityLabel={
+          cacheSummary
+            ? `${gt("Context", { $context: "context window row label" })}: ${contextSummary}. ${cacheSummary}`
+            : `${gt("Context", { $context: "context window row label" })}: ${contextSummary}`
+        }
+      />
+    );
+    if (actions.length === 0) return control;
+    return (
+      <Menu
+        title={cacheSummary ? `${contextSummary} · ${cacheSummary}` : contextSummary}
+        accessibilityLabel={gt("Context options")}
+        actions={actions}
+        onPressAction={({ nativeEvent }) => {
+          if (nativeEvent.event === "compact") props.onCompactContext?.();
+          else if (nativeEvent.event === "fresh") props.onFreshSession?.();
+        }}
+      >
+        {control}
+      </Menu>
+    );
+  })();
+
   return (
     <Animated.View
       onLayout={(event) => props.onHeightChange?.(event.nativeEvent.layout.height)}
@@ -1031,6 +1135,7 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                   entering={compactEditor.toolbarControlsEntering}
                 >
                   {compactControl}
+                  {contextMeterControl}
                   {modelControl}
                 </Animated.View>
                 <ComposerDictationStartAction

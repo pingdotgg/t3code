@@ -5468,5 +5468,10 @@
   "ad208e3e32c85029": "Dölj alla",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Verktygsanrop i chatten",
-  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid."
+  "8d545d54c0a9e950": "Dölj kommandon, redigeringar och sökningar som agenter kör. Dölj lyckade behåller misslyckanden. Zen visar bara slutliga svar. Godkännanden, frågor och fel visas alltid.",
+  "f61d648cbf40b47b": "Cache: {thread}% tråd · {last}% senaste tur",
+  "47233ef369410b52": "Komprimera kontext",
+  "097cda0b4666ca41": "Starta ny session",
+  "83bbceecef0f6872": "Kontext",
+  "849ed4e169fbb4ac": "Kontextalternativ"
 }

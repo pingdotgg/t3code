@@ -294,6 +294,11 @@ import {
   useSubmitAfterPreparingImages,
 } from "./preparingComposerImages";
 import { HELD_COMPOSER_SEND_BANNER_ID } from "./ComposerHeldSendBanner";
+import {
+  type ContextWindowSnapshot,
+  type ThreadCacheMetrics,
+} from "@t3tools/client-runtime/state/context-window";
+import { ComposerContextMeter } from "./ComposerContextMeter";
 import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
@@ -397,6 +402,9 @@ export interface ChatComposerProps {
   canSteer: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
   resumeCompactionTokens: number | null;
+  contextWindow?: ContextWindowSnapshot | null;
+  cacheMetrics?: ThreadCacheMetrics | null;
+  onStartFreshThread?: (() => void) | undefined;
   keepFullHistory: boolean;
   onToggleKeepFullHistory: () => void;
   onUsageLimitsCommand?: (() => void) | undefined;
@@ -3971,6 +3979,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               >
                 {composerAttachButton && !dictationTakesFooter ? (
                   <div className="me-2">{composerAttachButton}</div>
+                ) : null}
+                {!dictationTakesFooter &&
+                routeKind === "server" &&
+                props.contextWindow != null &&
+                props.contextWindow.usedTokens > 0 ? (
+                  <div className="me-1 flex min-w-0 shrink items-center">
+                    <ComposerContextMeter
+                      contextWindow={props.contextWindow}
+                      cacheMetrics={props.cacheMetrics ?? null}
+                      size={composerControlsCollapsed ? "xs" : "sm"}
+                      compactDisabled={compactDisabled}
+                      onCompactContext={onCompactContext}
+                      onStartFreshThread={props.onStartFreshThread}
+                    />
+                  </div>
                 ) : null}
                 <div
                   data-chat-composer-actions="right"

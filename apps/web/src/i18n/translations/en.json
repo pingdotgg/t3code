@@ -12469,5 +12469,13 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "7e3bb8a5abb7f3b6": "{used} / {max} · {percent}% cache",
+  "fd0f2c94ab0cb3a6": "{used} · {percent}% cache",
+  "e505a17e2b9ccd3b": "Context {used}% used, {percent}% cache hit",
+  "9e4a83cb1418529e": "Context: {used} / {max} ({percent}%)",
+  "f61d648cbf40b47b": "Cache: {thread}% thread · {last}% last turn",
+  "73968668585f0be9": "Cached: {cached} · Uncached: {uncached}",
+  "47233ef369410b52": "Compact context",
+  "57bc953176882108": "Start fresh thread"
 }

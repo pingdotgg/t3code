@@ -1075,6 +1075,8 @@ function ThreadRouteContent(
               : composer.activeWorkStartedAt
           }
           isCompacting={composer.isCompacting}
+          contextWindow={composer.contextWindow}
+          cacheMetrics={composer.cacheMetrics}
           compactBeforeSend={composer.compactBeforeSend}
           runlessWorkActive={composer.runlessWorkActive}
           extensionStatuses={composer.extensionStatuses}

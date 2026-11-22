@@ -12467,5 +12467,13 @@
   "27d76249d09eb69f": "Granskningsguiden är klar",
   "faa3bb26abb39c93": "Granskningsguiden misslyckades",
   "b7df38b7d8792d78": "Öppna guiden",
-  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide"
+  "9e91e9a77b664e4e": "Kunde inte starta en granskningsguide",
+  "7e3bb8a5abb7f3b6": "{used} / {max} · {percent}% cache",
+  "fd0f2c94ab0cb3a6": "{used} · {percent}% cache",
+  "e505a17e2b9ccd3b": "Kontext {used}% använd, {percent}% cacheträff",
+  "9e4a83cb1418529e": "Kontext: {used} / {max} ({percent}%)",
+  "f61d648cbf40b47b": "Cache: {thread}% tråd · {last}% senaste tur",
+  "73968668585f0be9": "Cachat: {cached} · Ocachat: {uncached}",
+  "47233ef369410b52": "Komprimera kontext",
+  "57bc953176882108": "Starta ny tråd"
 }

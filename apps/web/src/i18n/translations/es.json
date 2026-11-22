@@ -12455,5 +12455,13 @@
   "27d76249d09eb69f": "Guía de revisión lista",
   "faa3bb26abb39c93": "Falló la guía de revisión",
   "b7df38b7d8792d78": "Abrir guía",
-  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión"
+  "9e91e9a77b664e4e": "No se pudo iniciar una guía de revisión",
+  "7e3bb8a5abb7f3b6": "{used} / {max} · {percent}% caché",
+  "fd0f2c94ab0cb3a6": "{used} · {percent}% caché",
+  "e505a17e2b9ccd3b": "Contexto {used}% usado, {percent}% de aciertos de caché",
+  "9e4a83cb1418529e": "Contexto: {used} / {max} ({percent}%)",
+  "f61d648cbf40b47b": "Caché: {thread}% hilo · {last}% último turno",
+  "73968668585f0be9": "En caché: {cached} · Sin caché: {uncached}",
+  "47233ef369410b52": "Compactar contexto",
+  "57bc953176882108": "Iniciar nuevo hilo"
 }

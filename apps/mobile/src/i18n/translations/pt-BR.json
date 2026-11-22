@@ -5462,5 +5462,10 @@
   "ad208e3e32c85029": "Ocultar todas",
   "3328503592789bed": "Zen",
   "856812e7e1fc445e": "Chamadas de ferramentas no chat",
-  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem."
+  "8d545d54c0a9e950": "Oculta os comandos, edições e pesquisas que os agentes executam. \"Ocultar bem-sucedidas\" mantém as falhas. Zen mostra só as respostas finais. Aprovações, perguntas e erros sempre aparecem.",
+  "f61d648cbf40b47b": "Cache: {thread}% thread · {last}% último turno",
+  "47233ef369410b52": "Compactar contexto",
+  "097cda0b4666ca41": "Iniciar nova sessão",
+  "83bbceecef0f6872": "Contexto",
+  "849ed4e169fbb4ac": "Opções de contexto"
 }

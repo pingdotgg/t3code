@@ -358,6 +358,7 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import { hasAvailableCompactionProvider } from "./chat/compaction.logic";
 import {
   deriveLatestContextWindowSnapshot,
+  deriveThreadCacheMetrics,
   hasDismissedResumeCompaction,
   latestProviderTurnTokenUsage,
   shouldOfferResumeCompaction,
@@ -1559,6 +1560,11 @@ export default function ChatView(props: ChatViewProps) {
     serverVisibleTurnItems ?? [],
     activeThreadLiveTokenUsage,
     activeProviderThread,
+  );
+  const activeThreadCacheMetrics = deriveThreadCacheMetrics(
+    serverProjection?.providerTurns ?? [],
+    activeProviderThread,
+    activeThreadLiveTokenUsage,
   );
   const pendingBackgroundTasks = deriveThreadPendingBackgroundTasks(serverProjection);
   const activeWorkStartedAt =
@@ -3852,6 +3858,9 @@ export default function ChatView(props: ChatViewProps) {
                                     : composerBannerItems
                                 }
                                 resumeCompactionTokens={resumeCompactionTokens}
+                                contextWindow={activeContextWindow}
+                                cacheMetrics={activeThreadCacheMetrics}
+                                onStartFreshThread={handleNewThreadInActiveProjectStable}
                                 keepFullHistory={keepFullHistory}
                                 onToggleKeepFullHistory={toggleKeepFullHistoryStable}
                                 sideChatAvailable={sideChat.available}
@@ -4124,6 +4133,7 @@ export default function ChatView(props: ChatViewProps) {
                     providers: providerStatuses,
                     sources: serverConfig?.usageLimitSources ?? EMPTY_USAGE_LIMIT_SOURCES,
                     contextWindow: activeContextWindow,
+                    cacheMetrics: activeThreadCacheMetrics,
                   }}
                 />
 

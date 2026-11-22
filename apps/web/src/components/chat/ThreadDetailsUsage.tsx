@@ -19,7 +19,11 @@ import type { ReactNode } from "react";
 
 import { usePrimarySettings } from "../../hooks/useSettings";
 import { useNowMinute } from "../../hooks/useNowMinute";
-import type { ContextWindowSnapshot } from "@t3tools/client-runtime/state/context-window";
+import {
+  deriveContextUsageTone,
+  type ContextWindowSnapshot,
+  type ThreadCacheMetrics,
+} from "@t3tools/client-runtime/state/context-window";
 import { formatContextWindowTokens } from "../../lib/contextWindow";
 import { cn } from "../../lib/utils";
 import { formatUpcomingTimestamp } from "../../timestampFormat";
@@ -40,6 +44,7 @@ export interface ThreadDetailsUsageInput {
   readonly providers: readonly ServerProvider[];
   readonly sources: UsageLimitSourceSnapshots;
   readonly contextWindow: ContextWindowSnapshot | null;
+  readonly cacheMetrics?: ThreadCacheMetrics | null;
 }
 
 type UsageTone = "error" | "warning" | null;
@@ -106,12 +111,19 @@ function InstanceRows({
 }
 
 /** The thread's context window. The bar fills as context is used; the tick marks auto-compaction. */
-export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowSnapshot }) {
+export function ThreadDetailsContext({
+  usage,
+  cacheMetrics = null,
+}: {
+  readonly usage: ContextWindowSnapshot;
+  readonly cacheMetrics?: ThreadCacheMetrics | null;
+}) {
   const maxTokens = usage.maxTokens != null && usage.maxTokens > 0 ? usage.maxTokens : null;
   const used =
     maxTokens !== null && usage.usedPercentage !== null
       ? Math.round(Math.max(0, Math.min(100, usage.usedPercentage)))
       : null;
+  const tone = deriveContextUsageTone({ usedTokens: usage.usedTokens, usedPercentage: used });
   const threshold = usage.autoCompactThreshold ?? null;
   const tick =
     maxTokens !== null && threshold !== null && threshold > 0 && threshold < maxTokens
@@ -121,6 +133,14 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
   const m = useMessages();
   const locale = useLocale();
   const usedTokens = formatContextWindowTokens(usage.usedTokens);
+  const threadCachePercent =
+    cacheMetrics !== null
+      ? Math.round(Math.max(0, Math.min(1, cacheMetrics.threadHitRate)) * 100)
+      : null;
+  const lastTurnCachePercent =
+    cacheMetrics !== null
+      ? Math.round(Math.max(0, Math.min(1, cacheMetrics.lastTurnHitRate)) * 100)
+      : null;
   return (
     <ThreadDetailsSection
       headingId="thread-details-context-heading"
@@ -131,7 +151,7 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
         <UsageRow
           label={gt("Context", { $context: "context window row label" })}
           fill={used}
-          tone={used === null ? null : used >= 90 ? "error" : used >= 80 ? "warning" : null}
+          tone={tone}
           tick={tick}
           muted
           value={
@@ -156,6 +176,14 @@ export function ThreadDetailsContext({ usage }: { readonly usage: ContextWindowS
                   {gt("{used} of {max} tokens", {
                     used: usage.usedTokens.toLocaleString(locale),
                     max: maxTokens.toLocaleString(locale),
+                  })}
+                </span>
+              ) : null}
+              {threadCachePercent !== null && lastTurnCachePercent !== null ? (
+                <span className="text-muted-foreground">
+                  {gt("Cache: {thread}% thread · {last}% last turn", {
+                    thread: threadCachePercent,
+                    last: lastTurnCachePercent,
                   })}
                 </span>
               ) : null}

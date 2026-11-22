@@ -12460,5 +12460,13 @@
   "27d76249d09eb69f": "Guia de revisão pronto",
   "faa3bb26abb39c93": "O guia de revisão falhou",
   "b7df38b7d8792d78": "Abrir guia",
-  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão"
+  "9e91e9a77b664e4e": "Não foi possível iniciar um guia de revisão",
+  "7e3bb8a5abb7f3b6": "{used} / {max} · {percent}% cache",
+  "fd0f2c94ab0cb3a6": "{used} · {percent}% cache",
+  "e505a17e2b9ccd3b": "Contexto {used}% usado, {percent}% de acerto de cache",
+  "9e4a83cb1418529e": "Contexto: {used} / {max} ({percent}%)",
+  "f61d648cbf40b47b": "Cache: {thread}% thread · {last}% último turno",
+  "73968668585f0be9": "Em cache: {cached} · Sem cache: {uncached}",
+  "47233ef369410b52": "Compactar contexto",
+  "57bc953176882108": "Iniciar nova thread"
 }

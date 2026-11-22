@@ -14,7 +14,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 
-import { compactBeforeSendTokens } from "./contextWindow.ts";
+import {
+  CONTEXT_USAGE_WARNING_TOKENS,
+  compactBeforeSendTokens,
+  deriveContextUsageTone,
+  deriveThreadCacheMetrics,
+} from "./contextWindow.ts";
 import type { ThreadStructure } from "./models.ts";
 import { v2Projection } from "./orchestrationV2TestFixtures.ts";
 
@@ -260,5 +265,161 @@ describe("compactBeforeSendTokens", () => {
     expect(compactBeforeSendTokens(sendInput(overrides as Parameters<typeof sendInput>[0]))).toBe(
       expected ? 293_611 : null,
     );
+  });
+});
+
+describe("deriveContextUsageTone", () => {
+  it.each([
+    { name: "below 80% and below 150K", usedTokens: 120_000, usedPercentage: 12, expected: null },
+    {
+      name: "at 150K absolute tokens on a 1M window",
+      usedTokens: CONTEXT_USAGE_WARNING_TOKENS,
+      usedPercentage: 15,
+      expected: "warning",
+    },
+    {
+      name: "above 150K without a reported max window",
+      usedTokens: 180_000,
+      usedPercentage: null,
+      expected: "warning",
+    },
+    {
+      name: "at 80% on a 100K window",
+      usedTokens: 80_000,
+      usedPercentage: 80,
+      expected: "warning",
+    },
+    {
+      name: "at 90% on a 1M window",
+      usedTokens: 900_000,
+      usedPercentage: 90,
+      expected: "error",
+    },
+    {
+      name: "at 90% on a 100K window",
+      usedTokens: 90_000,
+      usedPercentage: 90,
+      expected: "error",
+    },
+  ] as const)("$name", ({ usedTokens, usedPercentage, expected }) => {
+    expect(deriveContextUsageTone({ usedTokens, usedPercentage })).toBe(expected);
+  });
+});
+
+describe("deriveThreadCacheMetrics", () => {
+  const activeThreadId = ProviderThreadId.make("provider-thread-active");
+  const earlierThreadId = ProviderThreadId.make("provider-thread-earlier");
+
+  it("aggregates active-thread turns and tracks the latest turn hit rate", () => {
+    const metrics = deriveThreadCacheMetrics(
+      [
+        {
+          providerThreadId: earlierThreadId,
+          ordinal: 1,
+          turnTokenUsage: {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 500_000,
+            outputTokens: 1_000,
+            cachedInputTokens: 0,
+          },
+        },
+        {
+          providerThreadId: activeThreadId,
+          ordinal: 2,
+          turnTokenUsage: {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 100_000,
+            outputTokens: 2_000,
+            cachedInputTokens: 95_000,
+          },
+        },
+        {
+          providerThreadId: activeThreadId,
+          ordinal: 1,
+          turnTokenUsage: {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 50_000,
+            outputTokens: 1_000,
+            cachedInputTokens: 0,
+          },
+        },
+        {
+          providerThreadId: activeThreadId,
+          ordinal: 3,
+          turnTokenUsage: {
+            usageScope: "main_agent",
+            usageStatus: "complete",
+            hasSubagents: false,
+            inputTokens: 10_000,
+            outputTokens: 100,
+            cachedInputTokens: 0,
+            localCommand: true,
+          },
+        },
+      ],
+      { id: activeThreadId, contextUsage: null },
+    );
+
+    expect(metrics).toEqual({
+      threadHitRate: 95_000 / 150_000,
+      lastTurnHitRate: 95_000 / 100_000,
+      totalInputTokens: 150_000,
+      cachedInputTokens: 95_000,
+      uncachedInputTokens: 55_000,
+      lastTurnInputTokens: 100_000,
+      lastTurnCachedInputTokens: 95_000,
+      turnCount: 2,
+    });
+  });
+
+  it("returns null when no turn or snapshot reports cache counters", () => {
+    expect(
+      deriveThreadCacheMetrics(
+        [
+          {
+            providerThreadId: activeThreadId,
+            ordinal: 1,
+            turnTokenUsage: {
+              usageScope: "main_agent",
+              usageStatus: "complete",
+              hasSubagents: false,
+              inputTokens: 40_000,
+              outputTokens: 500,
+            },
+          },
+        ],
+        { id: activeThreadId, contextUsage: null },
+      ),
+    ).toBeNull();
+  });
+
+  it("falls back to thread contextUsage cache counters when turnTokenUsage omits them", () => {
+    expect(
+      deriveThreadCacheMetrics([], {
+        id: activeThreadId,
+        contextUsage: {
+          usedTokens: 120_000,
+          inputTokens: 200_000,
+          cachedInputTokens: 160_000,
+          lastInputTokens: 100_000,
+          lastCachedInputTokens: 90_000,
+        },
+      }),
+    ).toEqual({
+      threadHitRate: 0.8,
+      lastTurnHitRate: 0.9,
+      totalInputTokens: 200_000,
+      cachedInputTokens: 160_000,
+      uncachedInputTokens: 40_000,
+      lastTurnInputTokens: 100_000,
+      lastTurnCachedInputTokens: 90_000,
+      turnCount: 1,
+    });
   });
 });

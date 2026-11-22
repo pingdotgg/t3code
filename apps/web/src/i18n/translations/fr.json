@@ -12460,5 +12460,13 @@
   "27d76249d09eb69f": "Guide de revue prêt",
   "faa3bb26abb39c93": "Échec du guide de revue",
   "b7df38b7d8792d78": "Ouvrir le guide",
-  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue"
+  "9e91e9a77b664e4e": "Impossible de démarrer un guide de revue",
+  "7e3bb8a5abb7f3b6": "{used} / {max} · {percent}% cache",
+  "fd0f2c94ab0cb3a6": "{used} · {percent}% cache",
+  "e505a17e2b9ccd3b": "Contexte utilisé à {used}%, {percent}% de succès du cache",
+  "9e4a83cb1418529e": "Contexte : {used} / {max} ({percent}%)",
+  "f61d648cbf40b47b": "Cache : {thread}% fil · {last}% dernier tour",
+  "73968668585f0be9": "En cache : {cached} · Hors cache : {uncached}",
+  "47233ef369410b52": "Compacter le contexte",
+  "57bc953176882108": "Démarrer un nouveau fil"
 }
