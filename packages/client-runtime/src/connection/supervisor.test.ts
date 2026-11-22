@@ -641,6 +641,66 @@ describe("EnvironmentSupervisor", () => {
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
+  it.effect(
+    "retries a host credential refusal soon while a restart is expected, and blocks after",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          prepare: (attempt) =>
+            attempt <= 2 ? Effect.fail(hostRefusal()) : Effect.succeed(PREPARED_CONNECTION),
+        });
+        // An Orbit clone reloads its server for 10 s after its pairing is promoted.
+        const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+          restartExpectedUntil: Stream.succeed(10_000),
+        }).pipe(Effect.provide(harness.dependencies));
+
+        const backoff = yield* awaitState(supervisor.state, (state) => state.phase === "backoff");
+        expect(backoff.retryAt).toBe(500);
+        yield* TestClock.adjust("500 millis");
+        yield* awaitState(
+          supervisor.state,
+          (state) => state.attempt === 2 && state.phase === "backoff",
+        );
+        yield* TestClock.adjust("500 millis");
+        yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+        expect(yield* Ref.get(harness.prepareCount)).toBe(3);
+
+        const outside = yield* makeHarness({
+          prepare: (attempt) =>
+            attempt === 1 ? Effect.fail(hostRefusal()) : Effect.succeed(PREPARED_CONNECTION),
+        });
+        const refused = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+          initiallyDesired: true,
+          restartExpectedUntil: Stream.succeed(0),
+        }).pipe(Effect.provide(outside.dependencies));
+        yield* awaitState(refused.state, (state) => state.phase === "blocked");
+        yield* TestClock.adjust("1 hour");
+        expect(yield* Ref.get(outside.prepareCount)).toBe(1);
+      }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("retries a refusal sampled before the restart window opened, once it opens", () =>
+    Effect.gen(function* () {
+      // The reloading clone refuses before Conn stores the window: the supervisor samples no
+      // window and blocks. The window that opens next must still retry it.
+      const window = yield* SubscriptionRef.make(0);
+      const harness = yield* makeHarness({
+        prepare: (attempt) =>
+          attempt === 1 ? Effect.fail(hostRefusal()) : Effect.succeed(PREPARED_CONNECTION),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+        restartExpectedUntil: SubscriptionRef.changes(window),
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "blocked");
+      yield* SubscriptionRef.set(window, 10_000);
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      expect(yield* Ref.get(harness.prepareCount)).toBe(2);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
   it.effect("retries a blocked connection when platform credentials change", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({

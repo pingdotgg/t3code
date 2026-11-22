@@ -352,7 +352,7 @@ describe("ConnectionCatalogDocument", () => {
     expect(registry.get(visible).entries.get(ENVIRONMENT_ID)?.target).toEqual(BEARER_TARGET);
   });
 
-  it("promotes both durable records and cannot resurrect a discarded credential with a late refresh", () => {
+  it("promotes both durable records, keeps a late refresh of a promoted one, and cannot resurrect a discarded credential", () => {
     const refreshed = putConnectionCredentialInCatalog(
       pendingCatalog(),
       provisionalRegistration.target.connectionId,
@@ -370,14 +370,18 @@ describe("ConnectionCatalogDocument", () => {
       },
     ]);
     expect(settleProvisionalPairingInCatalog(promoted, reservationId, false)).toBe(promoted);
+    // The session kept through the promotion still renews as provisional: its token is saved
+    // as committed, never marked provisional again.
     expect(
       putConnectionCredentialInCatalog(
         promoted,
         provisionalRegistration.target.connectionId,
         BEARER_CREDENTIAL,
         reservationId,
-      ),
-    ).toBe(promoted);
+      ).credentials,
+    ).toEqual([
+      { connectionId: provisionalRegistration.target.connectionId, credential: BEARER_CREDENTIAL },
+    ]);
 
     const discarded = settleProvisionalPairingInCatalog(refreshed, reservationId, false);
     expect(

@@ -35,6 +35,7 @@ import * as RpcSession from "../rpc/session.ts";
 import { withTargetLabel } from "./serverLabel.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { NETWORK_BLOCKING_HINT } from "../errors/network.ts";
+import { isHostCredentialRefusal } from "./errors.ts";
 import * as ConnectionWakeups from "./wakeups.ts";
 import {
   connectionRouteId,
@@ -49,6 +50,8 @@ import {
 const RETRY_BASE_DELAY_MS = 1_000;
 const RETRY_MAX_DELAY_MS = 300_000;
 const SESSION_LOSS_RETRY_DELAY_MS = 250;
+// Conn: an expected restart (an Orbit clone reloading at finalize) is over in seconds.
+const EXPECTED_RESTART_RETRY_DELAY_MS = 500;
 // Someone is approving this device on the host; check back soon rather than climbing the ladder.
 const APPROVAL_PENDING_RETRY_DELAY_MS = 4_000;
 // A request lives 10 minutes; past that nobody is approving, so a forgotten device backs off.
@@ -180,6 +183,13 @@ export interface EnvironmentSupervisorOptions {
    * value that change returned, so two changes that finish out of order cannot restore an older one.
    */
   readonly latestEntry?: Effect.Effect<Option.Option<ConnectionCatalogEntry>>;
+  /**
+   * Conn: until when (epoch ms) the server is expected to restart, as an Orbit clone does when its
+   * reservation is finalized: the current value first, then each change. Failures then retry soon,
+   * a host credential refusal counts as one of them, and a window that opens while the connection
+   * is blocked or waiting retries it at once.
+   */
+  readonly restartExpectedUntil?: Stream.Stream<number>;
 }
 
 function retryDelayMs(failureCount: number, random: number): number {
@@ -395,6 +405,11 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
   }));
 
   const attemptEntry = Effect.gen(function* () {
+    // Conn: a promoted Orbit pairing keeps this supervisor; its next attempt uses the saved route.
+    if (options?.latestEntry !== undefined) {
+      const registered = yield* options.latestEntry;
+      if (Option.isSome(registered)) yield* Ref.set(currentEntry, registered.value);
+    }
     const latest = yield* Ref.get(currentEntry);
     const routes = connectionRoutes(latest);
     const preferred = yield* Ref.getAndSet(preferredRouteId, Option.none());
@@ -1220,6 +1235,23 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
     );
   });
 
+  const restartWindow = options?.restartExpectedUntil;
+  const currentRestartUntil =
+    restartWindow === undefined
+      ? Effect.succeed(0)
+      : restartWindow.pipe(Stream.runHead, Effect.map(Option.getOrElse(() => 0)));
+  /** Resolves `true` (start over) once a restart window later than `sampled` is open. */
+  const restartOpensAfter = (sampled: number): Effect.Effect<boolean> =>
+    restartWindow === undefined
+      ? Effect.never
+      : restartWindow.pipe(
+          Stream.filter((until) => until > sampled),
+          Stream.runHead,
+          Effect.flatMap(
+            Option.match({ onNone: () => Effect.never, onSome: () => Effect.succeed(true) }),
+          ),
+        );
+
   const waitForSignal = Queue.take(signals).pipe(
     Effect.repeat({ while: (next) => next._tag === "BetterRouteAvailable" }),
     Effect.map(
@@ -1305,7 +1337,14 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (!outcome.established) {
         latestFailure = error;
       }
-      if (error._tag === "ConnectionBlockedError") {
+      const restartUntil = yield* currentRestartUntil;
+      const restarting = (yield* Clock.currentTimeMillis) < restartUntil;
+      // A window that opens after this sample ends the wait below, whatever the order.
+      const restartOpens = restartOpensAfter(restartUntil);
+      if (
+        error._tag === "ConnectionBlockedError" &&
+        !(restarting && isHostCredentialRefusal(error))
+      ) {
         const blockedIntent = yield* Ref.get(intent);
         yield* setState({
           desired: blockedIntent.desired,
@@ -1318,7 +1357,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           retryAt: null,
           refusedRouteIds: NO_REFUSED_ROUTES,
         });
-        const applicationActivated = yield* waitForSignal;
+        const applicationActivated = yield* Effect.raceFirst(waitForSignal, restartOpens);
         if (applicationActivated) {
           resetRetryLadder();
         }
@@ -1338,17 +1377,20 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       if (error.reason === "approval-pending") approvalWaits += 1;
       const awaitingApproval =
         error.reason === "approval-pending" && approvalWaits <= APPROVAL_PENDING_FAST_RETRIES;
-      if (!awaitingApproval) backoffFailures += 1;
+      // A failure of an expected restart does not climb the ladder.
+      if (!awaitingApproval && !restarting) backoffFailures += 1;
       const delayMs = awaitingApproval
         ? APPROVAL_PENDING_RETRY_DELAY_MS
         : firstLoss
           ? Math.round(SESSION_LOSS_RETRY_DELAY_MS * (0.5 + (yield* Random.next) / 2))
-          : error.reason === "approval-pending"
-            ? Math.max(
-                APPROVAL_PENDING_RETRY_DELAY_MS,
-                retryDelayMs(backoffFailures - 1, yield* Random.next),
-              )
-            : retryDelayMs(backoffFailures - 1, yield* Random.next);
+          : restarting
+            ? EXPECTED_RESTART_RETRY_DELAY_MS
+            : error.reason === "approval-pending"
+              ? Math.max(
+                  APPROVAL_PENDING_RETRY_DELAY_MS,
+                  retryDelayMs(backoffFailures - 1, yield* Random.next),
+                )
+              : retryDelayMs(backoffFailures - 1, yield* Random.next);
       pendingRetry = Option.map(attemptSpan, (previousAttempt) => ({
         previousAttempt,
         failureCount,
@@ -1367,7 +1409,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         retryAt: (yield* Clock.currentTimeMillis) + delayMs,
         refusedRouteIds: NO_REFUSED_ROUTES,
       });
-      const applicationActivated = yield* waitForRetrySignal(delayMs);
+      const applicationActivated = yield* Effect.raceFirst(
+        waitForRetrySignal(delayMs),
+        restartOpens,
+      );
       if (applicationActivated) {
         resetRetryLadder();
       }

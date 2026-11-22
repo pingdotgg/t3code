@@ -279,8 +279,15 @@ export function putConnectionCredentialInCatalog(
   // A refresh can complete after the reservation route and its credential were discarded.
   if (target === undefined && connectionId.startsWith("bearer:orbit-reservation:")) return document;
   const owner = target === undefined ? undefined : provisionalPairingId(target);
-  if (owner !== expectedProvisionalPairingId) return document;
   const previous = document.credentials.find((entry) => entry.connectionId === connectionId);
+  // A session that outlived its pairing's promotion still renews as provisional.
+  const promoted =
+    target !== undefined &&
+    owner === undefined &&
+    expectedProvisionalPairingId !== undefined &&
+    previous !== undefined &&
+    previous.provisionalPairingId === undefined;
+  if (owner !== expectedProvisionalPairingId && !promoted) return document;
   if (owner !== undefined && previous !== undefined && previous.provisionalPairingId !== owner) {
     return document;
   }

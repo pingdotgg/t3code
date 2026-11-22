@@ -21,6 +21,7 @@ import * as Scheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
 import { withTargetLabel } from "./serverLabel.ts";
@@ -120,6 +121,29 @@ const BEARER_PROFILE = new BearerConnectionProfile({
 });
 const BEARER_CREDENTIAL = new BearerConnectionCredential({
   token: "bearer-token",
+});
+
+const PROVISIONAL_TARGET = new BearerConnectionTarget({
+  environmentId: EnvironmentId.make("environment-clone"),
+  label: "Clone",
+  connectionId: "bearer:orbit-reservation:install-1",
+  provisionalPairingId: "install-1",
+});
+const PROMOTED_TARGET = new BearerConnectionTarget({
+  environmentId: PROVISIONAL_TARGET.environmentId,
+  label: PROVISIONAL_TARGET.label,
+  connectionId: PROVISIONAL_TARGET.connectionId,
+});
+const PROVISIONAL_REGISTRATION = new BearerConnectionRegistration({
+  target: PROVISIONAL_TARGET,
+  profile: new BearerConnectionProfile({
+    connectionId: PROVISIONAL_TARGET.connectionId,
+    environmentId: PROVISIONAL_TARGET.environmentId,
+    label: PROVISIONAL_TARGET.label,
+    httpBaseUrl: "http://clone.test:3800",
+    wsBaseUrl: "ws://clone.test:3800",
+  }),
+  credential: new BearerConnectionCredential({ token: "clone-token" }),
 });
 
 const SSH_TARGET: DesktopSshEnvironmentTarget = {
@@ -240,7 +264,24 @@ const makeHarness = Effect.fn("TestEnvironmentRegistry.makeHarness")(function* (
             return true;
         }
       }),
-    settleProvisionalPairing: () => Effect.die("Unexpected provisional pairing"),
+    settleProvisionalPairing: (environmentId, installId, keep) =>
+      Ref.modify(storedTargets, (current) => {
+        const owned = (target: ConnectionTarget) =>
+          target.environmentId === environmentId &&
+          target._tag === "BearerConnectionTarget" &&
+          target.provisionalPairingId === installId;
+        const next = keep
+          ? current.map((target) => {
+              if (!owned(target) || target._tag !== "BearerConnectionTarget") return target;
+              const { provisionalPairingId: _owner, ...committed } = target;
+              return new BearerConnectionTarget(committed);
+            })
+          : current.filter((target) => !owned(target));
+        const routes = next.filter(
+          (target) => target.environmentId === environmentId,
+        ) as ReadonlyArray<PersistedConnectionTarget>;
+        return [{ routes, promoted: keep && current.some(owned) }, next];
+      }),
     learnLabel: (environmentId, expected, label) =>
       Ref.modify(storedTargets, (current) => {
         const updated: Array<PersistedConnectionTarget> = [];
@@ -1756,6 +1797,97 @@ describe("EnvironmentRegistry", () => {
         expect(yield* Ref.get(attempts)).toBeGreaterThanOrEqual(2);
       }).pipe(Effect.provide(harness.layer), Effect.scoped);
     }),
+  );
+
+  it.effect("Conn: promoting a provisional pairing keeps its live session", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness([]);
+      yield* Effect.gen(function* () {
+        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+        yield* registry.register(PROVISIONAL_REGISTRATION);
+        yield* awaitConnectionState(
+          registry,
+          PROVISIONAL_TARGET.environmentId,
+          (state) => state.phase === "connected",
+        );
+
+        expect(
+          yield* registry.settleProvisionalPairing(
+            PROVISIONAL_TARGET.environmentId,
+            "install-1",
+            true,
+          ),
+        ).toBe(true);
+
+        const entry = (yield* SubscriptionRef.get(registry.entries)).get(
+          PROVISIONAL_TARGET.environmentId,
+        );
+        expect(entry?.target).toEqual(PROMOTED_TARGET);
+        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
+        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
+        expect(yield* registry.state(PROVISIONAL_TARGET.environmentId)).toMatchObject({
+          phase: "connected",
+          generation: 1,
+        });
+      }).pipe(Effect.provide(harness.layer), Effect.scoped);
+    }),
+  );
+
+  it.effect(
+    "Conn: a clone server that reloads as its pairing is promoted is connected again, not blocked",
+    () =>
+      Effect.gen(function* () {
+        // The finalize reloads the server while Conn promotes its pairing: the session drops, and
+        // the reloading server refuses the credential twice before it reads it again.
+        let refusals = 0;
+        const harness = yield* makeHarness([], [], [], {
+          beforePrepareRoute: () =>
+            Effect.sync(() =>
+              refusals > 0 && refusals-- > 0
+                ? new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "The environment credential is invalid.",
+                    hop: "server",
+                  })
+                : undefined,
+            ),
+        });
+        yield* Effect.gen(function* () {
+          const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
+          yield* registry.register(PROVISIONAL_REGISTRATION);
+          yield* awaitConnectionState(
+            registry,
+            PROVISIONAL_TARGET.environmentId,
+            (state) => state.phase === "connected",
+          );
+          const [live] = yield* Ref.get(harness.sessions);
+
+          refusals = 2;
+          yield* Deferred.fail(
+            live!.closed,
+            new ConnectionTransientError({ reason: "transport", detail: "Server reloading." }),
+          );
+          yield* registry.settleProvisionalPairing(
+            PROVISIONAL_TARGET.environmentId,
+            "install-1",
+            true,
+          );
+
+          const reconnected = yield* Effect.forkChild(
+            awaitConnectionState(
+              registry,
+              PROVISIONAL_TARGET.environmentId,
+              (state) => state.phase === "connected" && state.generation === 2,
+            ),
+          );
+          for (let step = 0; step < 20; step += 1) {
+            yield* TestClock.adjust("250 millis");
+          }
+          yield* Fiber.join(reconnected);
+          expect(refusals).toBe(0);
+          expect(yield* Ref.get(harness.sessions)).toHaveLength(2);
+        }).pipe(Effect.provide(harness.layer), Effect.scoped);
+      }),
   );
 
   it.effect("starts platform environments without persisting or removing them", () =>
