@@ -26,6 +26,8 @@ import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { AppText as Text } from "../../components/ui/AppText";
 import { Button } from "../../components/ui/Button";
 import { ScreenContent } from "../../components/ui/ScreenContent";
+import { resolveMarkdownLinkPresentation } from "../../lib/markdownLinks";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { SelectableMarkdownText } from "../../native/SelectableMarkdownText";
 import { useEnvironments } from "../../state/environments";
 import {
@@ -43,6 +45,11 @@ import type { LinkedThreadRouteParams } from "./linkedThreadRoute";
 import { ReadOnlyComposerBar } from "./ReadOnlyComposerBar";
 import { ThreadInspectorHeader, type ThreadInspectorPresentation } from "./thread-inspector-header";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
+
+function openWebLink(href: string) {
+  const link = resolveMarkdownLinkPresentation(href);
+  if (link.kind === "external") void tryOpenExternalUrl(link.href, "markdown-link");
+}
 
 function ActivityRow(props: {
   readonly activity: ThreadFeedActivity;
@@ -163,7 +170,13 @@ function LinkedThreadEntry(props: {
   }
   // A message the agent sent with a tool reads as its own words, as on the thread screen.
   if (entry.type === "sent-message") {
-    return <SelectableMarkdownText markdown={entry.text} textStyle={styles.nativeTextStyle} />;
+    return (
+      <SelectableMarkdownText
+        markdown={entry.text}
+        textStyle={styles.nativeTextStyle}
+        onLinkPress={openWebLink}
+      />
+    );
   }
   if (entry.type !== "message" || entry.message.text.trim() === "") return null;
   return entry.message.role === "user" ? (
@@ -173,7 +186,11 @@ function LinkedThreadEntry(props: {
       </Text>
     </View>
   ) : (
-    <SelectableMarkdownText markdown={entry.message.text} textStyle={styles.nativeTextStyle} />
+    <SelectableMarkdownText
+      markdown={entry.message.text}
+      textStyle={styles.nativeTextStyle}
+      onLinkPress={openWebLink}
+    />
   );
 }
 
