@@ -124,9 +124,7 @@ function settlementPullRequestLinks(
   links: ReadonlyArray<SettlementPullRequestLink>,
 ): ReadonlyArray<SettlementPullRequestLink> {
   return visibleThreadPullRequests(links).filter((link) => {
-    // A link the server cannot read has no outcome to wait for.
-    if (link.snapshot === null) return link.unavailableReason === undefined;
-    if (link.snapshot.state === "open") return true;
+    if (link.snapshot === null || link.snapshot.state === "open") return true;
     const linkedAtMs = Date.parse(link.linkedAt);
     return Number.isNaN(linkedAtMs) || linkTerminalAtMs(link) >= linkedAtMs;
   });
@@ -243,7 +241,10 @@ export function resolveAutoSettlementAt(input: {
   const { thread } = input;
   let pullRequest = input.pullRequest;
   const links = settlementPullRequestLinks(thread.pullRequests ?? []);
-  if (links.some((link) => link.snapshot === null)) return null;
+  // A link the server cannot read has no host state to wait for.
+  if (links.some((link) => link.snapshot === null && link.unavailableReason === undefined)) {
+    return null;
+  }
   // An open link means the pull request has not finished, so only inactivity
   // can settle the thread, never a merged or closed lookup.
   const hasOpenLink = links.some((link) => link.snapshot?.state === "open");
@@ -269,6 +270,7 @@ export function resolveAutoSettlementAt(input: {
   }
   const hasPullRequest =
     hasOpenLink ||
+    links.some((link) => link.snapshot === null) ||
     pullRequest !== null ||
     thread.linkedPullRequest != null ||
     thread.branchPullRequest != null;

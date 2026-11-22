@@ -288,20 +288,26 @@ describe("resolveAutoSettlementAt", () => {
       nowMs: NOW_MS,
       autoSettleAfterDays: 3,
       autoSettleOnMerge: true,
-      autoSettleKeepPullRequests: true,
+      autoSettleKeepPullRequests: false,
     };
     expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
+    const unreadable = {
+      ...input,
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        pullRequests: [
+          { ...persistedLink(null, at(-5 * DAY_MS)), unavailableReason: "Not a project" },
+        ],
+      }),
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(unreadable)).toEqual(at(-4 * DAY_MS));
+    // An unreadable link is still a linked pull request for the keep setting.
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
-        ...input,
-        thread: shell({
-          latestUserMessageAt: at(-4 * DAY_MS),
-          pullRequests: [
-            { ...persistedLink(null, at(-5 * DAY_MS)), unavailableReason: "Not a project" },
-          ],
-        }),
+        ...unreadable,
+        autoSettleKeepPullRequests: true,
       }),
-    ).toEqual(at(-4 * DAY_MS));
+    ).toBeNull();
   });
 
   it("uses the latest activity time when the inactivity window elapses", () => {
