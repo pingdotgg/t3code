@@ -10,10 +10,28 @@
 //! - `14px` (`size-3.5`) for compact inline provider and status indicators.
 //! - `12px` (`size-3`) for disclosure carets.
 
+use std::sync::{Arc, LazyLock};
+
 use conn_state::RightPanelTab;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::Icon;
-use gpui_kit::{Hsla, Styled as _, Svg, px, svg};
+use gpui_kit::{
+    AnyElement, Hsla, ImageSource, IntoElement as _, ObjectFit, RenderImage, Styled as _,
+    StyledImage as _, Svg, img, px, svg,
+};
+
+/// Pre-decoded Antigravity brand mark (`assets/icons/brand/antigravity.png`) as a GPUI
+/// [`RenderImage`] so it paints synchronously on the first frame across thread cards, the
+/// composer, and the model picker.
+static ANTIGRAVITY_BRAND_IMAGE: LazyLock<Option<Arc<RenderImage>>> = LazyLock::new(|| {
+    let bytes = include_bytes!("../assets/icons/brand/antigravity.png");
+    let mut rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+    // GPUI `RenderImage` expects BGRA channel order inside `RgbaImage`.
+    for pixel in rgba.as_chunks_mut::<4>().0 {
+        pixel.swap(0, 2);
+    }
+    Some(Arc::new(RenderImage::new(vec![image::Frame::new(rgba)])))
+});
 
 /// Standard chrome icon size (`size-4` = 16px).
 pub(crate) const CHROME_ICON_PX: f32 = 16.0;
@@ -113,10 +131,20 @@ pub(crate) fn right_panel_tab_icon(tab: RightPanelTab) -> IconName {
 }
 
 /// The brand mark Conn shows for a provider (driver or instance id such as `claudeAgent`,
-/// `codex`): the Claude starburst in Claude orange, the OpenAI knot in `fallback` color, else
-/// a generic superheroicons agent glyph.
-pub(crate) fn provider_mark(provider: &str, size_px: f32, fallback: Hsla) -> Svg {
+/// `codex`, `antigravity`): the Claude starburst in Claude orange, the Antigravity mark, the
+/// OpenAI knot in `fallback` color, else a generic superheroicons agent glyph.
+#[must_use]
+pub(crate) fn provider_mark(provider: &str, size_px: f32, fallback: Hsla) -> AnyElement {
     let lower = provider.to_ascii_lowercase();
+    if (lower.contains("antigravity") || lower.contains("gemini"))
+        && let Some(logo) = ANTIGRAVITY_BRAND_IMAGE.as_ref()
+    {
+        return img(ImageSource::Render(Arc::clone(logo)))
+            .size(px(size_px))
+            .object_fit(ObjectFit::Contain)
+            .flex_none()
+            .into_any_element();
+    }
     let (path, color): (&'static str, Hsla) = if lower.contains("claude")
         || lower.contains("anthropic")
         || lower.contains("haiku")
@@ -137,4 +165,5 @@ pub(crate) fn provider_mark(provider: &str, size_px: f32, fallback: Hsla) -> Svg
         .size(px(size_px))
         .text_color(color)
         .flex_none()
+        .into_any_element()
 }

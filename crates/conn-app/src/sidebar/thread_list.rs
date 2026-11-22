@@ -619,8 +619,17 @@ fn render_thread_card(
     let project_name = project.map(|p| p.title.as_str());
     let provider_hint = thread.provider_instance_id.as_str();
     // Conn: `opacity-60` on the provider mark in the meta line.
-    let provider_mark =
-        icons::provider_mark(provider_hint, 14.0, hsla_alpha(tokens.foreground, 0.60)).opacity(0.6);
+    let provider_mark = div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_shrink_0()
+        .opacity(0.6)
+        .child(icons::provider_mark(
+            provider_hint,
+            14.0,
+            hsla_alpha(tokens.foreground, 0.60),
+        ));
 
     // Line 1 (`h-5`, `gap-1.5`): 16px project favicon (with corner StatusDotBadge) + 14px medium title.
     let favicon = project.map_or_else(

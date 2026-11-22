@@ -241,34 +241,57 @@ impl ThreadState {
 
         self.approval_requests.clear();
         self.entry_timings.clear();
-        let mut entries = Vec::new();
+
+        // Index canonical message & subagent bodies so snapshots compacted with
+        // `acceptDedupedBodies: true` (`textOmitted` / `promptOmitted` / `resultOmitted`)
+        // restore their full text cleanly.
+        let message_texts: HashMap<&str, &str> = projection
+            .messages
+            .iter()
+            .map(|m| (m.id.as_str(), m.text.as_str()))
+            .collect();
+        let subagent_bodies: HashMap<&str, (&str, Option<&str>)> = projection
+            .subagents
+            .iter()
+            .map(|s| (s.id.as_str(), (s.prompt.as_str(), s.result.as_deref())))
+            .collect();
+
+        let capacity = if !projection.visible_turn_items.is_empty() {
+            projection.visible_turn_items.len()
+        } else {
+            projection.turn_items.len()
+        };
+        let mut entries = Vec::with_capacity(capacity);
+        let mut entry_index: HashMap<String, usize> = HashMap::with_capacity(capacity);
+        let mut ingest = |mut item: ProjectionTurnItem| {
+            hydrate_deduped_projection_item(&mut item, &message_texts, &subagent_bodies);
+            if let ProjectionTurnItem::ApprovalRequest(i) = &item {
+                self.approval_requests
+                    .insert(i.id.clone(), i.request_id.clone());
+            }
+            if let Some((id, timing)) = extract_projection_timing(&item) {
+                self.entry_timings.insert(id, timing);
+            }
+            if let Some(entry) = map_projection_turn_item(item) {
+                if let Some(&idx) = entry_index.get(entry.id()) {
+                    entries[idx] = entry;
+                } else {
+                    let idx = entries.len();
+                    entry_index.insert(entry.id().to_owned(), idx);
+                    entries.push(entry);
+                }
+            }
+        };
+
         if !projection.visible_turn_items.is_empty() {
             let mut rows = projection.visible_turn_items;
             rows.sort_by_key(|row| row.position);
             for row in rows {
-                if let ProjectionTurnItem::ApprovalRequest(i) = &row.item {
-                    self.approval_requests
-                        .insert(i.id.clone(), i.request_id.clone());
-                }
-                if let Some((id, timing)) = extract_projection_timing(&row.item) {
-                    self.entry_timings.insert(id, timing);
-                }
-                if let Some(entry) = map_projection_turn_item(row.item) {
-                    upsert_entry(&mut entries, entry);
-                }
+                ingest(row.item);
             }
         } else {
             for turn_item in projection.turn_items {
-                if let ProjectionTurnItem::ApprovalRequest(i) = &turn_item {
-                    self.approval_requests
-                        .insert(i.id.clone(), i.request_id.clone());
-                }
-                if let Some((id, timing)) = extract_projection_timing(&turn_item) {
-                    self.entry_timings.insert(id, timing);
-                }
-                if let Some(entry) = map_projection_turn_item(turn_item) {
-                    upsert_entry(&mut entries, entry);
-                }
+                ingest(turn_item);
             }
         }
         self.entries = entries;
@@ -495,6 +518,44 @@ impl ThreadState {
         }
 
         false
+    }
+}
+
+fn hydrate_deduped_projection_item(
+    item: &mut ProjectionTurnItem,
+    message_texts: &HashMap<&str, &str>,
+    subagent_bodies: &HashMap<&str, (&str, Option<&str>)>,
+) {
+    match item {
+        ProjectionTurnItem::UserMessage(msg) => {
+            if msg.text_omitted.is_some()
+                && let Some(text) = message_texts.get(msg.message_id.as_str())
+            {
+                msg.text = (*text).to_owned();
+                msg.text_omitted = None;
+            }
+        }
+        ProjectionTurnItem::AssistantMessage(msg) => {
+            if msg.text_omitted.is_some()
+                && let Some(text) = message_texts.get(msg.message_id.as_str())
+            {
+                msg.text = (*text).to_owned();
+                msg.text_omitted = None;
+            }
+        }
+        ProjectionTurnItem::Subagent(sub) => {
+            if let Some((prompt, result)) = subagent_bodies.get(sub.subagent_id.as_str()) {
+                if sub.prompt_omitted.is_some() {
+                    sub.prompt = (*prompt).to_owned();
+                    sub.prompt_omitted = None;
+                }
+                if sub.result_omitted.is_some() {
+                    sub.result = result.map(str::to_owned);
+                    sub.result_omitted = None;
+                }
+            }
+        }
+        _ => {}
     }
 }
 

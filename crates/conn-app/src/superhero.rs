@@ -24,11 +24,12 @@ use rust_embed::RustEmbed;
 #[include = "*.svg"]
 struct Drawings;
 
-/// Provider brand marks Conn shows next to provider names, served as `brand/<name>.svg`.
+/// Provider brand marks Conn shows next to provider names, served as `brand/<name>.{svg,png}`.
 #[derive(RustEmbed)]
 #[folder = "assets/icons/brand"]
 #[prefix = "brand/"]
 #[include = "*.svg"]
+#[include = "*.png"]
 struct Brands;
 
 /// File-type icons Conn shows in the Files tree, file tabs, and chips, served as `files/<name>.svg`.

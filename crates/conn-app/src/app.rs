@@ -110,6 +110,8 @@ pub(crate) struct ConnApp {
     _control_server: Option<conn_desktop::control::ControlServerHandle>,
     /// Background task draining `conn://` URLs and Unix control socket requests.
     _activation_task: Option<gpui_kit::Task<()>>,
+    /// Thread id currently subscribed via `orchestration.subscribeThread` on `self.connection`.
+    subscribed_thread_id: Option<String>,
     /// Project id currently subscribed to `annotations.subscribe` on `self.connection`.
     subscribed_annotation_project: Option<String>,
     /// Live annotations queue for `subscribed_annotation_project`.
@@ -325,6 +327,7 @@ impl ConnApp {
             pending_open_thread: None,
             _control_server: None,
             _activation_task: None,
+            subscribed_thread_id: None,
             subscribed_annotation_project: None,
             annotations: Vec::new(),
             annotation_watching_threads: HashSet::new(),
@@ -911,11 +914,16 @@ impl ConnApp {
     fn open_thread(&mut self, thread_id: String) {
         self.draft = None;
         if let Some(connection) = &self.connection
-            && !self.threads.contains_key(&thread_id)
+            && self.subscribed_thread_id.as_deref() != Some(thread_id.as_str())
         {
+            if let Some(prev) = self.subscribed_thread_id.take() {
+                connection.unsubscribe_thread(&prev);
+            }
             self.threads
-                .insert(thread_id.clone(), ThreadState::new(thread_id.clone()));
+                .entry(thread_id.clone())
+                .or_insert_with(|| ThreadState::new(thread_id.clone()));
             connection.subscribe_thread(&thread_id);
+            self.subscribed_thread_id = Some(thread_id.clone());
         }
         self.layout.selected_thread_id = Some(thread_id);
     }
@@ -1039,6 +1047,11 @@ impl ConnApp {
             .and_then(|v| v.as_str().map(str::to_owned))
             .unwrap_or_else(|| "default".to_owned());
 
+        if let Some(connection) = &self.connection
+            && let Some(prev) = self.subscribed_thread_id.take()
+        {
+            connection.unsubscribe_thread(&prev);
+        }
         self.layout.selected_project_id = Some(project_id.clone());
         self.layout.selected_thread_id = None;
         self.draft = Some(DraftThreadState {
@@ -2982,6 +2995,7 @@ impl ConnApp {
         self.shell = ShellState::default();
         self.threads.clear();
         self.ended_threads.clear();
+        self.subscribed_thread_id = None;
         self.subscribed_annotation_project = None;
         self.annotations.clear();
         self.annotation_last_sent.clear();

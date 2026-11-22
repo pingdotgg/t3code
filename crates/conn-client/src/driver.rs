@@ -15,6 +15,7 @@ use tokio::time::{Instant, MissedTickBehavior};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::HeaderValue;
+use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tracing::{debug, warn};
 
 use crate::auth::{TokenExchangeError, exchange_pairing_code};
@@ -280,7 +281,12 @@ pub(crate) async fn run(
             }
         };
 
-        match tokio_tungstenite::connect_async(ws_request).await {
+        let ws_config = WebSocketConfig::default()
+            .max_message_size(Some(MAX_JOINED_MESSAGE_BYTES))
+            .max_frame_size(Some(MAX_JOINED_MESSAGE_BYTES));
+
+        match tokio_tungstenite::connect_async_with_config(ws_request, Some(ws_config), false).await
+        {
             Ok((ws_stream, _response)) => {
                 state.backoff.reset();
                 if events_tx
@@ -448,6 +454,9 @@ async fn run_session(
                             Ok(Some(whole)) => whole,
                             Ok(None) => continue,
                             Err(frame_parts::TooLarge) => {
+                                eprintln!(
+                                    "conn-client: reassembled frame exceeded max size ({MAX_JOINED_MESSAGE_BYTES} bytes)"
+                                );
                                 return SessionOutcome::Disconnected(
                                     "reassembled frame exceeded max size".to_owned(),
                                 );
@@ -456,6 +465,7 @@ async fn run_session(
                         let frames = match decode_server_message(&whole) {
                             Ok(frames) => frames,
                             Err(err) => {
+                                eprintln!("conn-client failed to decode server frame: {err}");
                                 warn!("conn-client failed to decode server frame: {err}");
                                 continue;
                             }
@@ -700,8 +710,8 @@ where
         request_completion_marker: None,
         accept_bounded_snapshot: None,
         accept_deferred_work: None,
-        accept_compact_turn_items: None,
-        accept_deduped_bodies: None,
+        accept_compact_turn_items: Some(true),
+        accept_deduped_bodies: Some(true),
         accept_compact_ids: None,
     };
     let payload = serde_json::to_value(&input)
@@ -912,6 +922,7 @@ where
                         }
                     }
                     Err(err) => {
+                        eprintln!("conn-client failed to decode shell stream item: {err}");
                         warn!("conn-client failed to decode shell stream item: {err}");
                     }
                 }
@@ -939,6 +950,9 @@ where
                         }
                     }
                     Err(err) => {
+                        eprintln!(
+                            "conn-client failed to decode thread stream item ({thread_id}): {err}"
+                        );
                         warn!("conn-client failed to decode thread stream item: {err}");
                     }
                 }

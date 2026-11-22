@@ -2118,6 +2118,8 @@ fn infer_driver_from_model_label(label: &str) -> Option<&'static str> {
         || lower.contains("opus")
     {
         Some("claudeAgent")
+    } else if lower.contains("antigravity") || lower.contains("gemini") {
+        Some("antigravity")
     } else if lower.contains("gpt") || lower.contains("codex") || lower.contains("o3") {
         Some("codex")
     } else {

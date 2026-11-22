@@ -1099,7 +1099,7 @@ fn render_agent_icon(tokens: &Tokens, agent: &TaskAgent, tone: StatusTone) -> An
     let muted = to_hsla(tokens.muted_foreground);
     let glyph = match orbit_agent_driver_kind(agent.provider.as_deref()) {
         Some(driver) => provider_mark(&driver, 14.0, muted),
-        None => superhero_icon("superhero/agent.svg", 14.0, muted),
+        None => superhero_icon("superhero/agent.svg", 14.0, muted).into_any_element(),
     };
     let dot_color = tone_dot_color(tokens, tone);
     div()

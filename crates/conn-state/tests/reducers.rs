@@ -980,3 +980,137 @@ fn shell_partitions_settled_and_subagent_threads_and_finds_archived() {
         "find_thread must resolve settled threads"
     );
 }
+
+#[test]
+fn thread_hydrates_deduped_message_bodies() {
+    let mut state = ThreadState::new("thread-dedupe");
+    let snap = decode_thread(json!({
+        "kind": "snapshot",
+        "snapshotSequence": 5,
+        "turnItemsOmitLocalVisible": true,
+        "projection": {
+            "thread": thread_json("thread-dedupe", "proj-1", "Deduped", "completed", "2026-11-13T09:05:00.000Z", None),
+            "runs": [],
+            "attempts": [],
+            "nodes": [],
+            "subagents": [],
+            "providerSessions": [],
+            "providerThreads": [],
+            "providerTurns": [],
+            "runtimeRequests": [],
+            "messages": [
+                {
+                    "id": "msg-u1",
+                    "threadId": "thread-dedupe",
+                    "runId": null,
+                    "nodeId": null,
+                    "role": "user",
+                    "text": "Hydrated user prompt",
+                    "attachments": [],
+                    "streaming": false,
+                    "createdBy": "user",
+                    "creationSource": "web",
+                    "createdAt": "2026-11-13T09:04:00.000Z",
+                    "updatedAt": "2026-11-13T09:04:00.000Z"
+                },
+                {
+                    "id": "msg-a1",
+                    "threadId": "thread-dedupe",
+                    "runId": null,
+                    "nodeId": null,
+                    "role": "assistant",
+                    "text": "Hydrated assistant reply",
+                    "attachments": [],
+                    "streaming": false,
+                    "createdBy": "agent",
+                    "creationSource": "provider",
+                    "createdAt": "2026-11-13T09:04:01.000Z",
+                    "updatedAt": "2026-11-13T09:04:01.000Z"
+                }
+            ],
+            "plans": [],
+            "turnItems": [],
+            "checkpointScopes": [],
+            "checkpoints": [],
+            "contextHandoffs": [],
+            "contextTransfers": [],
+            "visibleTurnItems": [
+                {
+                    "position": 0,
+                    "visibility": "local",
+                    "sourceThreadId": "thread-dedupe",
+                    "sourceItemId": "item-u1",
+                    "item": {
+                        "type": "user_message",
+                        "id": "item-u1",
+                        "threadId": "thread-dedupe",
+                        "runId": null,
+                        "nodeId": "node-1",
+                        "parentItemId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "ordinal": 1,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:04:00.000Z",
+                        "completedAt": "2026-11-13T09:04:00.000Z",
+                        "updatedAt": "2026-11-13T09:04:00.000Z",
+                        "messageId": "msg-u1",
+                        "text": "",
+                        "textOmitted": true,
+                        "attachments": [],
+                        "createdBy": "user",
+                        "creationSource": "web",
+                        "inputIntent": "turn_start"
+                    }
+                },
+                {
+                    "position": 1,
+                    "visibility": "local",
+                    "sourceThreadId": "thread-dedupe",
+                    "sourceItemId": "item-a1",
+                    "item": {
+                        "type": "assistant_message",
+                        "id": "item-a1",
+                        "threadId": "thread-dedupe",
+                        "runId": null,
+                        "nodeId": "node-1",
+                        "parentItemId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "ordinal": 2,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-13T09:04:01.000Z",
+                        "completedAt": "2026-11-13T09:04:01.000Z",
+                        "updatedAt": "2026-11-13T09:04:01.000Z",
+                        "messageId": "msg-a1",
+                        "text": "",
+                        "textOmitted": true,
+                        "streaming": false
+                    }
+                }
+            ],
+            "updatedAt": "2026-11-13T09:05:00.000Z"
+        }
+    }));
+
+    assert!(state.apply(snap), "compact deduped snapshot should apply");
+    assert_eq!(
+        state.entries.len(),
+        2,
+        "expected user and assistant entries"
+    );
+    assert!(
+        matches!(&state.entries[0], TimelineEntry::User { text, .. } if text == "Hydrated user prompt"),
+        "expected hydrated user prompt, got {:?}",
+        state.entries[0]
+    );
+    assert!(
+        matches!(&state.entries[1], TimelineEntry::Assistant { markdown, .. } if markdown == "Hydrated assistant reply"),
+        "expected hydrated assistant reply, got {:?}",
+        state.entries[1]
+    );
+}

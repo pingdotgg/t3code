@@ -10,8 +10,9 @@ use url::Url;
 
 use crate::ClientError;
 
-/// Maximum reassembled WebSocket message size (32 MiB).
-pub(crate) const MAX_JOINED_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
+/// Maximum reassembled WebSocket message size (512 MiB) so long threads with thousands of
+/// items and embedded screenshots reassemble without disconnecting the session.
+pub(crate) const MAX_JOINED_MESSAGE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Initial reconnect backoff delay.
 pub(crate) const INITIAL_BACKOFF: Duration = Duration::from_millis(250);
