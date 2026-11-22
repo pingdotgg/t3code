@@ -6737,26 +6737,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         ),
         -- CROSS JOIN keeps family outermost, so each thread's items come from its index.
         file_changes AS MATERIALIZED (
-          SELECT item.thread_id, item.updated_at, item.ordinal, item.payload_json
+          SELECT item.thread_id, item.turn_item_id, item.updated_at, item.ordinal, item.payload_json
           FROM family
           CROSS JOIN orchestration_v2_projection_turn_items AS item
             ON item.thread_id = family.thread_id
           WHERE item.type = 'file_change' AND item.status = 'completed'
         ),
-        changed(path, thread_id, changed_at, ordinal, position, deleted) AS (
-          SELECT json_extract(payload_json, '$.fileName'), thread_id, updated_at, ordinal, 0, 0
+        changed(path, thread_id, turn_item_id, changed_at, ordinal, position, deleted) AS (
+          SELECT json_extract(payload_json, '$.fileName'), thread_id, turn_item_id, updated_at,
+            ordinal, 0, 0
           FROM file_changes
           WHERE coalesce(json_array_length(payload_json, '$.changes'), 0) = 0
           UNION ALL
-          SELECT json_extract(change.value, '$.path'), thread_id, updated_at, ordinal, change.key,
-            json_extract(change.value, '$.operation') = 'delete'
+          SELECT json_extract(change.value, '$.path'), thread_id, turn_item_id, updated_at,
+            ordinal, change.key, json_extract(change.value, '$.operation') = 'delete'
           FROM file_changes, json_each(file_changes.payload_json, '$.changes') AS change
           WHERE json_array_length(file_changes.payload_json, '$.changes') > 0
+          UNION ALL
+          -- A move leaves its source behind: the source path is gone from that point on.
+          SELECT json_extract(change.value, '$.oldPath'), thread_id, turn_item_id, updated_at,
+            ordinal, change.key, 1
+          FROM file_changes, json_each(file_changes.payload_json, '$.changes') AS change
+          WHERE json_array_length(file_changes.payload_json, '$.changes') > 0
+            AND json_extract(change.value, '$.oldPath') IS NOT NULL
         ),
         latest AS (
           SELECT path, thread_id, changed_at, deleted,
             ROW_NUMBER() OVER (
-              PARTITION BY path ORDER BY changed_at DESC, ordinal DESC, position DESC
+              PARTITION BY path
+              ORDER BY changed_at DESC, ordinal DESC, position DESC, turn_item_id DESC
             ) AS newest
           FROM changed
           WHERE path IS NOT NULL AND trim(path) <> ''

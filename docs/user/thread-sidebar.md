@@ -295,8 +295,9 @@ access to the environment and is not available on Windows.
 On web and desktop, **Documents** in the thread details card lists the files the
 thread's agents created or changed, newest first, including files outside the
 project and those changed by tasks the thread delegated. A delegated task's files
-appear when it finishes. Files an agent only read, and files whose last change
-deleted them, are not listed. A file removed by a shell command stays listed. Hover a file to see its
+appear as the task completes each change. Files an agent only read, and files whose last change
+deleted them, are not listed. Files an agent creates or changes only through a shell command
+are not listed, and a file removed by a shell command stays listed. Hover a file to see its
 full path. Click it to open it with the default app of the machine the thread runs
 on, or use the row's buttons to show it in its folder or copy its path. When that
 machine has no default app to open files with, clicking copies the path instead.

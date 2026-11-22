@@ -215,7 +215,7 @@ function ThreadDocumentRow(props: {
             ) : null}
           </span>
         </TooltipTrigger>
-        <TooltipPopup side="left" className="max-w-96 break-all">
+        <TooltipPopup side="left" className="max-w-96">
           {displayPath}
         </TooltipPopup>
       </Tooltip>

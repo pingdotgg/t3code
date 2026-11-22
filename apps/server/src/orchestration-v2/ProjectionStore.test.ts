@@ -3802,6 +3802,22 @@ it.effect("lists a thread's changed files with its delegated tasks', newest firs
       );
     }
 
+    // A move removes its source: the earlier listing of the old path is dropped, the new path stays.
+    yield* fileChange("item:10", "thread:files", "2026-01-05T00:00:00.500Z", {
+      fileName: "/docs/old.md",
+    });
+    yield* fileChange("item:11", "thread:files", "2026-01-05T00:00:01.500Z", {
+      fileName: "/docs/new.md",
+      changes: [{ operation: "update", path: "/docs/new.md", oldPath: "/docs/old.md" }],
+    });
+    // Two threads changing one path at the same instant and ordinal: the larger item ID decides.
+    yield* fileChange("item:12", "thread:files", "2026-01-05T00:00:01.200Z", {
+      fileName: "/docs/tied.md",
+    });
+    yield* fileChange("item:13", "thread:files:child", "2026-01-05T00:00:01.200Z", {
+      fileName: "/docs/tied.md",
+    });
+
     const result = yield* store.getThreadChangedFiles({
       threadId: ThreadId.make("thread:files"),
       limit: 10,
@@ -3827,6 +3843,16 @@ it.effect("lists a thread's changed files with its delegated tasks', newest firs
           path: "/docs/empty-changes.md",
           threadId: ThreadId.make("thread:files"),
           changedAt: "2026-01-05T00:00:02.000Z",
+        },
+        {
+          path: "/docs/new.md",
+          threadId: ThreadId.make("thread:files"),
+          changedAt: "2026-01-05T00:00:01.500Z",
+        },
+        {
+          path: "/docs/tied.md",
+          threadId: ThreadId.make("thread:files:child"),
+          changedAt: "2026-01-05T00:00:01.200Z",
         },
       ],
       truncated: false,
