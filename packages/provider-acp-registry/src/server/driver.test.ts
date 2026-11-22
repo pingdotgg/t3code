@@ -955,6 +955,55 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
+type RegistryTarget = "linux-x86_64" | "darwin-aarch64";
+
+const registryUrl = "https://registry.test/registry.json";
+
+const makeBinaryRegistry = (version: string, target: RegistryTarget = "linux-x86_64") =>
+  JSON.stringify({
+    version: "1.0.0",
+    agents: [
+      {
+        id: "test-agent",
+        name: "Test Agent",
+        version,
+        description: "Test binary agent",
+        distribution: {
+          binary: {
+            [target]: {
+              archive: `https://registry.test/test-agent-${version}.bin`,
+              cmd: "./bin/test-agent",
+            },
+          },
+        },
+      },
+    ],
+  });
+
+// A disk-cached 1.0.0 index with its binary installed, as left behind by an earlier session.
+const seedInstalledBinaryAgent = Effect.fn("seedInstalledBinaryAgent")(function* (prefix: string) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix });
+  const agentPath = path.join(directory, "agent.mjs");
+  const modelsPath = path.join(directory, "models.json");
+  yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+  yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
+  yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
+  yield* fileSystem.writeFileString(
+    path.join(directory, "acp-registry", "registry.json"),
+    makeBinaryRegistry("1.0.0"),
+  );
+  const installedV1 = installedBinaryPath(path, directory, "1.0.0");
+  yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
+  yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
+  yield* fileSystem.chmod(installedV1, 0o755);
+  return { directory, agentPath, modelsPath };
+});
+
+const installedBinaryPath = (path: Path.Path, directory: string, version: string) =>
+  path.join(directory, "tools", "test-agent", version, "linux-x86_64", "bin", "test-agent");
+
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
   Layer.provideMerge(IdAllocator.layer),
@@ -1199,49 +1248,8 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-update-" });
-      const agentPath = path.join(directory, "agent.mjs");
-      const modelsPath = path.join(directory, "models.json");
-      const registryUrl = "https://registry.test/registry.json";
-      const makeRegistry = (version: string) =>
-        JSON.stringify({
-          version: "1.0.0",
-          agents: [
-            {
-              id: "test-agent",
-              name: "Test Agent",
-              version,
-              description: "Test binary agent",
-              distribution: {
-                binary: {
-                  "linux-x86_64": {
-                    archive: `https://registry.test/test-agent-${version}.bin`,
-                    cmd: "./bin/test-agent",
-                  },
-                },
-              },
-            },
-          ],
-        });
-      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
-      yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
-      yield* fileSystem.writeFileString(
-        path.join(directory, "acp-registry", "registry.json"),
-        makeRegistry("1.0.0"),
-      );
-      const installedV1 = path.join(
-        directory,
-        "tools",
-        "test-agent",
-        "1.0.0",
-        "linux-x86_64",
-        "bin",
-        "test-agent",
-      );
-      yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
-      yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
-      yield* fileSystem.chmod(installedV1, 0o755);
+      const { directory, agentPath, modelsPath } =
+        yield* seedInstalledBinaryAgent("acp-driver-update-");
 
       let latestVersion = "2.0.0";
       let registryRequests = 0;
@@ -1258,7 +1266,10 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
             if (request.url === registryUrl) {
               registryRequests += 1;
               return Effect.succeed(
-                HttpClientResponse.fromWeb(request, new Response(makeRegistry(latestVersion))),
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(makeBinaryRegistry(latestVersion)),
+                ),
               );
             }
             return Effect.succeed(
@@ -1302,11 +1313,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       const first = Option.getOrThrow(yield* Fiber.join(upgradedToV2));
       expect(first.version).toBe("2.0.0");
-      expect(
-        yield* fileSystem.exists(
-          path.join(directory, "tools", "test-agent", "2.0.0", "linux-x86_64", "bin", "test-agent"),
-        ),
-      ).toBe(true);
+      expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "2.0.0"))).toBe(true);
 
       // Explicit cache invalidation refreshes past the in-memory reuse window and installs 3.0.0.
       latestVersion = "3.0.0";
@@ -1317,11 +1324,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       yield* instance.snapshot.refresh;
       const second = Option.getOrThrow(yield* Fiber.join(upgradedToV3));
       expect(second.version).toBe("3.0.0");
-      expect(
-        yield* fileSystem.exists(
-          path.join(directory, "tools", "test-agent", "3.0.0", "linux-x86_64", "bin", "test-agent"),
-        ),
-      ).toBe(true);
+      expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
 
       // Disabled instances must not fetch the registry on cache invalidation.
       const disabledRequestsBefore = registryRequests;
@@ -1345,54 +1348,11 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const directory = yield* fileSystem.makeTempDirectoryScoped({
-          prefix: "acp-driver-recover-",
-        });
-        const agentPath = path.join(directory, "agent.mjs");
-        const modelsPath = path.join(directory, "models.json");
-        const registryUrl = "https://registry.test/registry.json";
-        const makeRegistry = (version: string, target: "linux-x86_64" | "darwin-aarch64") =>
-          JSON.stringify({
-            version: "1.0.0",
-            agents: [
-              {
-                id: "test-agent",
-                name: "Test Agent",
-                version,
-                description: "Test binary agent",
-                distribution: {
-                  binary: {
-                    [target]: {
-                      archive: `https://registry.test/test-agent-${version}.bin`,
-                      cmd: "./bin/test-agent",
-                    },
-                  },
-                },
-              },
-            ],
-          });
-        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
-        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
-        yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
-        yield* fileSystem.writeFileString(
-          path.join(directory, "acp-registry", "registry.json"),
-          makeRegistry("1.0.0", "linux-x86_64"),
-        );
-        const installedV1 = path.join(
-          directory,
-          "tools",
-          "test-agent",
-          "1.0.0",
-          "linux-x86_64",
-          "bin",
-          "test-agent",
-        );
-        yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
-        yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
-        yield* fileSystem.chmod(installedV1, 0o755);
+        const { directory, agentPath, modelsPath } =
+          yield* seedInstalledBinaryAgent("acp-driver-recover-");
 
         let remoteVersion = "2.0.0";
-        let remoteTarget: "linux-x86_64" | "darwin-aarch64" = "darwin-aarch64";
+        let remoteTarget: RegistryTarget = "darwin-aarch64";
         let resolvedProbes = 0;
         const restoredRefreshDone = yield* Deferred.make<void>();
         const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
@@ -1410,7 +1370,7 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
                   request,
                   new Response(
                     request.url === registryUrl
-                      ? makeRegistry(remoteVersion, remoteTarget)
+                      ? makeBinaryRegistry(remoteVersion, remoteTarget)
                       : `#!/bin/sh\necho ${remoteVersion}\n`,
                   ),
                 ),
@@ -1486,19 +1446,7 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         const ready = Option.getOrThrow(yield* Fiber.join(recovered));
         expect(ready.status).toBe("ready");
         expect(resolvedProbes).toBeGreaterThan(resolvedBeforeRecovery);
-        expect(
-          yield* fileSystem.exists(
-            path.join(
-              directory,
-              "tools",
-              "test-agent",
-              "3.0.0",
-              "linux-x86_64",
-              "bin",
-              "test-agent",
-            ),
-          ),
-        ).toBe(true);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
       }),
   );
 });
