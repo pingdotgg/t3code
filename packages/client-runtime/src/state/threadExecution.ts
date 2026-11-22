@@ -1,6 +1,7 @@
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  latestRootProviderFailureItem,
   latestUnheldRun,
   threadErrorSummary,
   usageLimitRunPresentedAsLatest,
@@ -15,6 +16,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
@@ -29,12 +31,14 @@ import {
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
+  DEFAULT_VARIANT_CHOICE_ID,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionStatedValue,
   resolveSelectableModel,
   withLegacyUltracodeEffort,
 } from "@t3tools/shared/model";
+import { unsentManualContinuationSource } from "@t3tools/shared/orchestrationV2ManualContinuation";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
@@ -48,6 +52,9 @@ import {
 } from "./models.ts";
 import { commandDisplayText } from "../work-log/commandLabel.ts";
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+import { mFallback, msg } from "gt-i18n";
+import { markedTextEnglish } from "../errors/translatable.ts";
+import type { MFunctionType } from "gt-i18n/types";
 
 const ACTIVITY_RUN_STATUSES = new Set(["preparing", "starting", "running", "waiting"]);
 const INTERRUPTIBLE_RUN_STATUSES = new Set(["preparing", "starting", "running"]);
@@ -106,15 +113,19 @@ function latestMatchingRun(
   );
 }
 
-function providerStartingLabel(
+function providerStarting(
   projection: ThreadStructure,
   run: OrchestrationV2ThreadProjection["runs"][number],
-): string {
+): Pick<ThreadRunSummary, "providerStartingLabel" | "providerStartingLabelMsg"> {
   const driver = projection.providerSessions.findLast(
     (session) => session.providerInstanceId === run.providerInstanceId,
   )?.driver;
   const name = driver === undefined ? undefined : PROVIDER_DISPLAY_NAMES[driver];
-  return name === undefined ? "Starting" : `Starting ${name}`;
+  const label =
+    name === undefined
+      ? msg("Starting", { $context: "a provider is launching" })
+      : msg("Starting {provider}", { provider: name });
+  return { providerStartingLabel: markedTextEnglish([label]), providerStartingLabelMsg: label };
 }
 
 function summarizeThreadRun(
@@ -138,7 +149,7 @@ function summarizeThreadRun(
     // the provider can still be launching for minutes.
     ...(turnStatus === undefined
       ? PROVIDER_STARTING_RUN_STATUSES.has(run.status)
-        ? { providerStartingLabel: providerStartingLabel(projection, run) }
+        ? providerStarting(projection, run)
         : {}
       : turnStatus === "pending" || turnStatus === "running"
         ? {}
@@ -224,6 +235,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thought_level",
 ];
 
 export function formatModelSelectionEffort(
@@ -235,11 +247,21 @@ export function formatModelSelectionEffort(
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
   const current = options ? { ...selection, options } : selection;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
-    if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, current, reportedSelection);
-    if (value === undefined && id !== "variant") continue;
+  const selectDescriptors = (caps.optionDescriptors ?? []).filter(
+    (candidate) => candidate.type === "select",
+  );
+  const reasoningDescriptors = [
+    ...selectDescriptors.filter((candidate) => candidate.role === "reasoning"),
+    ...REASONING_EFFORT_OPTION_IDS.flatMap((id) => {
+      const descriptor = selectDescriptors.find(
+        (candidate) => candidate.id === id && candidate.role !== "reasoning",
+      );
+      return descriptor ? [descriptor] : [];
+    }),
+  ];
+  for (const descriptor of reasoningDescriptors) {
+    const value = getProviderOptionStatedValue(descriptor.id, current, reportedSelection);
+    if (value === undefined && descriptor.id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
@@ -267,31 +289,46 @@ export function formatSubagentEffort(input: {
   if (provider.models.some((model) => model.slug === modelSlug)) {
     return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
   }
+  return readSelectedEffortValue(selection);
+}
+
+/** The raw saved effort, preferring the option the model marks as its reasoning control. */
+export function readSelectedEffortValue(
+  selection: ModelSelection | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> = [],
+): string | null {
+  const ids = [
+    ...descriptors.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.role === "reasoning" ? [descriptor.id] : [],
+    ),
+    ...REASONING_EFFORT_OPTION_IDS,
+  ];
   return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
-    ) ?? null
+    ids
+      .map((id) => getModelSelectionStringOptionValue(selection, id))
+      .find((value) => value && value !== DEFAULT_VARIANT_CHOICE_ID) ?? null
   );
 }
 
 const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
-  idle: "Idle",
-  pending: "Working",
-  running: "Working",
-  waiting: "Waiting",
-  completed: "Completed",
-  interrupted: "Interrupted",
-  failed: "Failed",
-  cancelled: "Cancelled",
-  rolled_back: "Cancelled",
+  idle: msg("Idle"),
+  pending: msg("Working"),
+  running: msg("Working"),
+  waiting: msg("Waiting"),
+  completed: msg("Completed"),
+  interrupted: msg("Interrupted"),
+  failed: msg("Failed"),
+  cancelled: msg("Cancelled"),
+  rolled_back: msg("Cancelled"),
 };
 
 export function formatProviderSubagentStatus(
   status: ProviderSubagentStatus | null,
   nowMs: number,
+  resolve: MFunctionType = mFallback,
 ): string {
-  if (status === null) return "Starting";
-  const label = SUBAGENT_STATUS_LABELS[status.status];
+  if (status === null) return resolve(msg("Starting"));
+  const label = resolve(SUBAGENT_STATUS_LABELS[status.status]);
   const live = isOrchestrationV2WorkActive(status.status);
   if (!live && status.status !== "completed") return label;
   const start = status.startedAt === null ? Number.NaN : Date.parse(status.startedAt);
@@ -302,21 +339,48 @@ export function formatProviderSubagentStatus(
       : Date.parse(status.completedAt);
   if (!Number.isFinite(start) || !Number.isFinite(end)) return label;
   const elapsed = formatDuration(Math.max(1_000, Math.floor((end - start) / 1_000) * 1_000));
-  return live ? `${label} ${elapsed}` : `${label} in ${elapsed}`;
+  return live
+    ? resolve(msg("{label} {elapsed}", { label, elapsed }))
+    : resolve(msg("{label} in {elapsed}", { label, elapsed }));
 }
 
 /** The run a manual continuation resumes; the server holds the queue until it does. */
 export function deriveResumableRunId(
-  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+  projection: Pick<
+    ThreadStructure,
+    "runs" | "turnItems" | "attempts" | "providerTurns" | "providerThreads" | "providerSessions"
+  >,
   runtime: Pick<ThreadStructureRuntime, "lastErrorClass"> | null,
 ): RunId | null {
   const run = latestExecutedRun(projection.runs);
-  if (run?.status === "interrupted") return run.id;
-  return run?.status === "failed" &&
-    runtime?.lastErrorClass === "usage_limit" &&
-    latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit"
-    ? run.id
-    : null;
+  const resumable =
+    run?.status === "interrupted" ||
+    (run?.status === "failed" &&
+      runtime?.lastErrorClass === "usage_limit" &&
+      latestRootProviderFailure(run, projection.turnItems)?.class === "usage_limit");
+  if (!resumable) return null;
+  // Without native resume the server can only resend a message the provider never received.
+  if (
+    runProviderSession(projection, run)?.capabilities.turns.supportsNativeResume === false &&
+    unsentManualContinuationSource({ manualContinuationOfRunId: run.id }, projection) === undefined
+  ) {
+    return null;
+  }
+  return run.id;
+}
+
+function runProviderSession(
+  projection: Pick<ThreadStructure, "providerThreads" | "providerSessions">,
+  run: ThreadStructure["runs"][number],
+) {
+  const sessionId = projection.providerThreads.find(
+    (thread) => thread.id === run.providerThreadId,
+  )?.providerSessionId;
+  return sessionId == null
+    ? projection.providerSessions.findLast(
+        (session) => session.providerInstanceId === run.providerInstanceId,
+      )
+    : projection.providerSessions.find((session) => session.id === sessionId);
 }
 
 /**
@@ -366,15 +430,11 @@ export function deriveThreadStructureRuntime(
     }),
   );
   // A pull request watch can hold a thread that never ran.
-  if (
-    latestRun === null &&
-    projection.thread.activeProviderThreadId === null &&
-    !backgroundWorkHoldsRun
-  ) {
-    return null;
-  }
+  if (latestRun === null && !backgroundWorkHoldsRun) return null;
   const activeRunId =
     latestMatchingRun(projection, (run) => INTERRUPTIBLE_RUN_STATUSES.has(run.status))?.id ?? null;
+  const failureItem = latestRootProviderFailureItem(latestRunProjection, projection.turnItems);
+  const sessionError = providerSession?.lastError ?? null;
   return {
     status: usageLimitedRun
       ? "failed"
@@ -388,11 +448,44 @@ export function deriveThreadStructureRuntime(
         : DateTime.formatIso(orchestrationV2RunWorkStartedAt(liveActivityRun)),
     providerInstanceId: projection.thread.providerInstanceId,
     providerName: providerSession?.driver ?? null,
-    ...threadErrorSummary(
-      latestRootProviderFailure(latestRunProjection, projection.turnItems),
-      providerSession?.lastError ?? null,
-    ),
+    ...threadErrorSummary(failureItem?.failure ?? null, sessionError),
+    lastErrorSource: threadErrorSource(failureItem, sessionError, projection),
   };
+}
+
+const isoOrEmpty = (at: DateTime.Utc | null) => (at === null ? "" : DateTime.formatIso(at));
+
+/**
+ * A session error belongs to the latest ended run, as that run's failure when the text matches.
+ * Session timestamps are not used: providers rewrite them on unrelated updates.
+ */
+function threadErrorSource(
+  failureItem: ReturnType<typeof latestRootProviderFailureItem>,
+  sessionError: string | null,
+  projection: Pick<ThreadStructure, "runs" | "turnItems">,
+): string | null {
+  const itemSource = (item: NonNullable<typeof failureItem>) =>
+    `${item.id}@${isoOrEmpty(item.completedAt)}`;
+  if (
+    failureItem !== null &&
+    (sessionError === null || sessionError === failureItem.failure.message)
+  ) {
+    return itemSource(failureItem);
+  }
+  if (sessionError === null) return null;
+  let ended: ThreadStructure["runs"][number] | null = null;
+  for (const run of projection.runs) {
+    if (run.status !== "failed" && run.status !== "completed") continue;
+    if (ended === null || run.ordinal > ended.ordinal) ended = run;
+  }
+  if (ended === null) return null;
+  const endedFailure =
+    failureItem?.runId === ended.id
+      ? failureItem
+      : latestRootProviderFailureItem(ended, projection.turnItems);
+  return endedFailure?.failure.message === sessionError
+    ? itemSource(endedFailure)
+    : `${ended.id}@${isoOrEmpty(ended.completedAt)}`;
 }
 
 export interface UsageLimitNoticeRows {
@@ -503,12 +596,28 @@ type BackgroundWorkKind = OrchestrationV2PendingBackgroundTask["kind"];
 
 const BACKGROUND_WORK_KINDS: Record<
   BackgroundWorkKind,
-  { readonly order: number; readonly singular: string; readonly plural: string }
+  { readonly order: number; readonly singular: string; readonly count: string }
 > = {
-  subagent: { order: 0, singular: "subagent", plural: "subagents" },
-  command: { order: 1, singular: "command", plural: "commands" },
-  monitor: { order: 2, singular: "monitor", plural: "monitors" },
-  background_task: { order: 3, singular: "background task", plural: "background tasks" },
+  subagent: {
+    order: 0,
+    singular: msg("subagent"),
+    count: msg("{count, plural, one {{count} subagent} other {{count} subagents}}"),
+  },
+  command: {
+    order: 1,
+    singular: msg("command"),
+    count: msg("{count, plural, one {{count} command} other {{count} commands}}"),
+  },
+  monitor: {
+    order: 2,
+    singular: msg("monitor"),
+    count: msg("{count, plural, one {{count} monitor} other {{count} monitors}}"),
+  },
+  background_task: {
+    order: 3,
+    singular: msg("background task"),
+    count: msg("{count, plural, one {{count} background task} other {{count} background tasks}}"),
+  },
 };
 
 export interface RunStopPresentation {
@@ -573,9 +682,11 @@ export interface PendingBackgroundWorkPresentation {
   readonly waiting: boolean;
 }
 
-function joinWithAnd(parts: ReadonlyArray<string>): string {
+function joinWithAnd(parts: ReadonlyArray<string>, resolve: MFunctionType): string {
   if (parts.length <= 1) return parts.join("");
-  return `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}`;
+  return resolve(
+    msg("{items} and {last}", { items: parts.slice(0, -1).join(", "), last: parts.at(-1)! }),
+  );
 }
 
 // The Claude adapter forces a stuck query closed after 10 seconds.
@@ -600,6 +711,7 @@ export function isBackgroundWorkStopPending(
 
 export function presentPendingBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
+  resolve: MFunctionType = mFallback,
 ): PendingBackgroundWorkPresentation | null {
   if (tasks.length === 0) return null;
   const waiting = backgroundWorkHoldsCompletion(tasks);
@@ -619,7 +731,7 @@ export function presentPendingBackgroundWork(
         kind: task.kind,
         label:
           label === undefined || label.length === 0
-            ? BACKGROUND_WORK_KINDS[task.kind].singular
+            ? resolve(BACKGROUND_WORK_KINDS[task.kind].singular)
             : label,
         childThreadId: task.kind === "subagent" ? task.childThreadId : undefined,
       };
@@ -631,22 +743,47 @@ export function presentPendingBackgroundWork(
     );
   const [only] = items;
   if (items.length === 1 && only !== undefined) {
-    const noun = BACKGROUND_WORK_KINDS[only.kind].singular;
+    const noun = resolve(BACKGROUND_WORK_KINDS[only.kind].singular);
     const named = only.label !== noun;
     const title = named
-      ? `${waiting ? "Waiting" : "Running"} · ${only.label}`
-      : waiting
-        ? `Waiting on a ${noun}`
-        : `Running a ${noun}`;
+      ? waiting
+        ? resolve(msg("Waiting · {label}", { label: only.label }))
+        : resolve(msg("Running · {label}", { label: only.label }))
+      : backgroundWorkSingleTitle(only.kind, waiting, resolve);
     return { title, items, waiting };
   }
   const counts = new Map<BackgroundWorkKind, number>();
   for (const item of items) counts.set(item.kind, (counts.get(item.kind) ?? 0) + 1);
-  const groups = Array.from(counts, ([kind, count]) => {
-    const { singular, plural } = BACKGROUND_WORK_KINDS[kind];
-    return `${count} ${count === 1 ? singular : plural}`;
-  });
-  return { title: `${waiting ? "Waiting on" : "Running"} ${joinWithAnd(groups)}`, items, waiting };
+  const groups = joinWithAnd(
+    Array.from(counts, ([kind, count]) => resolve(BACKGROUND_WORK_KINDS[kind].count, { count })),
+    resolve,
+  );
+  return {
+    title: waiting
+      ? resolve(msg("Waiting on {groups}", { groups }))
+      : resolve(msg("Running {groups}", { groups })),
+    items,
+    waiting,
+  };
+}
+
+function backgroundWorkSingleTitle(
+  kind: BackgroundWorkKind,
+  waiting: boolean,
+  resolve: MFunctionType,
+): string {
+  switch (kind) {
+    case "subagent":
+      return waiting ? resolve(msg("Waiting on a subagent")) : resolve(msg("Running a subagent"));
+    case "command":
+      return waiting ? resolve(msg("Waiting on a command")) : resolve(msg("Running a command"));
+    case "monitor":
+      return waiting ? resolve(msg("Waiting on a monitor")) : resolve(msg("Running a monitor"));
+    case "background_task":
+      return waiting
+        ? resolve(msg("Waiting on a background task"))
+        : resolve(msg("Running a background task"));
+  }
 }
 
 export interface ProviderGoalPresentation {
@@ -657,12 +794,12 @@ export interface ProviderGoalPresentation {
 }
 
 const PROVIDER_GOAL_TITLES: Record<OrchestrationV2ProviderGoal["status"], string> = {
-  active: "Pursuing goal",
-  paused: "Goal paused",
-  blocked: "Goal blocked",
-  usage_limited: "Goal hit a usage limit",
-  budget_limited: "Goal reached its token budget",
-  complete: "Goal complete",
+  active: msg("Pursuing goal"),
+  paused: msg("Goal paused"),
+  blocked: msg("Goal blocked"),
+  usage_limited: msg("Goal hit a usage limit"),
+  budget_limited: msg("Goal reached its token budget"),
+  complete: msg("Goal complete"),
 };
 
 function formatGoalTokens(tokens: number): string {
@@ -675,23 +812,36 @@ function formatGoalTokens(tokens: number): string {
 export function presentProviderGoal(
   goal: OrchestrationV2ProviderGoal,
   working: boolean,
+  resolve: MFunctionType = mFallback,
 ): ProviderGoalPresentation {
   const usage: Array<string> = [];
   if (goal.tokensUsed !== undefined && goal.tokensUsed > 0) {
     usage.push(
       goal.tokenBudget == null
-        ? `${formatGoalTokens(goal.tokensUsed)} tokens`
-        : `${formatGoalTokens(goal.tokensUsed)} / ${formatGoalTokens(goal.tokenBudget)} tokens`,
+        ? resolve(msg("{used} tokens", { used: formatGoalTokens(goal.tokensUsed) }))
+        : resolve(
+            msg("{used} / {budget} tokens", {
+              used: formatGoalTokens(goal.tokensUsed),
+              budget: formatGoalTokens(goal.tokenBudget),
+            }),
+          ),
     );
   }
   if (goal.timeUsedSeconds !== undefined && goal.timeUsedSeconds >= 60) {
     usage.push(formatDuration(goal.timeUsedSeconds * 1_000));
   }
   if (goal.checks !== undefined && goal.checks > 0) {
-    usage.push(`${goal.checks} ${goal.checks === 1 ? "check" : "checks"}`);
+    usage.push(
+      resolve(
+        msg("{count, plural, one {{count} check} other {{count} checks}}", { count: goal.checks }),
+      ),
+    );
   }
   return {
-    title: goal.status === "active" && !working ? "Goal set" : PROVIDER_GOAL_TITLES[goal.status],
+    title:
+      goal.status === "active" && !working
+        ? resolve(msg("Goal set"))
+        : resolve(PROVIDER_GOAL_TITLES[goal.status]),
     objective: goal.objective,
     usage: usage.length === 0 ? null : usage.join(" · "),
     canResume: goal.status !== "active" && goal.status !== "complete",

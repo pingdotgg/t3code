@@ -18,7 +18,7 @@ import {
 } from "../../lib/mobileTheme";
 import { rootNavigationRef } from "../../lib/rootNavigation";
 import { appAtomRegistry } from "../../state/atom-registry";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
 import { environmentProjects } from "../../state/projects";
 import { enqueueThreadOutboxMessage } from "../../state/thread-outbox";
 import { environmentThreadShells } from "../../state/threads";
@@ -288,7 +288,11 @@ export function installShowcaseCapture(
     // already sees the theme applied. A failed save rolls the patch back, and
     // the next step writes again.
     if (requestedTheme !== null && !themeApplied && storedPreferences) {
-      appAtomRegistry.set(updateMobilePreferencesAtom, createMobileThemePairPatch(requestedTheme));
+      void runAtomCommand(
+        appAtomRegistry,
+        saveMobilePreferences,
+        createMobileThemePairPatch(requestedTheme),
+      );
     }
     const themeId = themeIds[resolveThemeAppearance(storedPreferences)];
 

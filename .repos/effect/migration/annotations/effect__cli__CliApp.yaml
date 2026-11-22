@@ -4,6 +4,9 @@
 "@effect/cli/CliApp#CliApp.ConstructorArgs":
   replacement: "none"
   note: "Build the command with Command.make and withDescription, then pass version to Command.run; the old app constructor shape was removed."
+"@effect/cli/CliApp#CliApp.Environment":
+  replacement: "Command.Environment"
+  note: "Adds ChildProcessSpawner and Stdio to FileSystem, Path and Terminal; NodeServices.layer and BunServices.layer provide all five."
 "@effect/cli/CliApp#make":
   replacement: "Command.make"
   note: "Build the executable Command directly; there is no separate CliApp wrapper."

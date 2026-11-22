@@ -129,7 +129,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               return null;
             }),
         }),
-        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>
             Effect.succeed({
@@ -179,6 +181,81 @@ describe("ThreadPullRequestServiceV2 reads", () => {
     }),
   );
 
+  it.effect("refreshes linked-thread readers at most every 10s while activity reorders them", () =>
+    Effect.gen(function* () {
+      const link = {
+        host: "github.com",
+        repository: "acme/web",
+        number: 7,
+        url: "https://github.com/acme/web/pull/7",
+        source: "agent",
+      };
+      const linked = (id: string) =>
+        ({
+          type: "thread.pull-request-synced",
+          threadId: ThreadId.make(id),
+          payload: { ...threadShell(id), pullRequests: [link] },
+        }) as unknown as OrchestrationV2DomainEvent;
+      const activity = (id: string, second: number) =>
+        ({
+          type: "message.updated",
+          threadId: ThreadId.make(id),
+          occurredAt: DateTime.makeUnsafe(`2026-09-20T00:00:${String(second).padStart(2, "0")}Z`),
+        }) as unknown as OrchestrationV2DomainEvent;
+      const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+      const notified = yield* Queue.unbounded<void>();
+      const dependencies = Layer.mergeAll(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          streamDomainEvents: Stream.fromQueue(domainEvents),
+          getPullRequestSnapshot: () =>
+            Effect.succeed({
+              schemaVersion: 2,
+              snapshotSequence: 1,
+              threads: [],
+              archivedThreads: [],
+            }),
+        }),
+        Layer.mock(ProjectStore.ProjectStoreV2)({ listShells: () => Effect.succeed([]) }),
+        Layer.mock(GitManager.GitManager)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Queue.offer(notified, undefined).pipe(Effect.asVoid),
+        }),
+        Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+        Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+          shouldRunOpportunisticWork: Effect.succeed(false),
+        }),
+        Layer.succeed(ServerActivation.ServerActivation, undefined),
+        Layer.succeed(
+          SecureRandom.SecureRandom,
+          SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+        ),
+        FileSystem.layerNoop({}),
+        Path.layer,
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadPullRequestService.make;
+        yield* service.start();
+
+        yield* Queue.offerAll(domainEvents, [linked("a"), linked("b"), activity("a", 1)]);
+        yield* Queue.takeN(notified, 3);
+        // Two turns on threads linked to one pull request swap its top thread on every event.
+        yield* Queue.offerAll(
+          domainEvents,
+          Array.from({ length: 20 }, (_, index) => activity(index % 2 ? "a" : "b", index + 2)),
+        );
+        // A link change still refreshes at once, and marks the burst as processed.
+        yield* Queue.offer(domainEvents, linked("c"));
+        yield* Queue.take(notified);
+        expect(yield* Queue.size(notified)).toBe(0);
+
+        yield* TestClock.adjust("10 seconds");
+        yield* Queue.take(notified);
+        yield* TestClock.adjust("10 seconds");
+        expect(yield* Queue.size(notified)).toBe(0);
+      }).pipe(Effect.provide(dependencies));
+    }),
+  );
+
   it.effect("looks up a finished turn's branch once for all its turn-end events", () =>
     Effect.gen(function* () {
       const thread = { ...threadShell("turn-end-thread"), branch: "t3/turn-end" };
@@ -198,7 +275,7 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       // A turn end commits its checkpoints and the run's end together. The queued
       // non-refresh request ahead of them must still become a refresh when they join it.
       const turnEnd = [
-        { type: "thread.metadata-updated", threadId: thread.id },
+        { type: "thread.metadata-updated", threadId: thread.id, payload: thread },
         { type: "checkpoint.captured", threadId: thread.id },
         { type: "checkpoint.captured", threadId: thread.id },
         { type: "run.updated", threadId: thread.id, payload: { status: "completed" } },
@@ -208,8 +285,8 @@ describe("ThreadPullRequestServiceV2 reads", () => {
       // Arrives during the thread's own lookup, which may already have read the old host state.
       const duringLookup = [
         { type: "checkpoint.captured", threadId: thread.id },
-        { type: "thread.metadata-updated", threadId: thread.id },
-      ] as Array<OrchestrationV2DomainEvent>;
+        { type: "thread.metadata-updated", threadId: thread.id, payload: thread },
+      ] as unknown as Array<OrchestrationV2DomainEvent>;
       const activation = yield* Deferred.make<void>();
       const sweepStarted = yield* Deferred.make<void>();
       const turnEndQueued = yield* Deferred.make<void>();
@@ -263,7 +340,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               return null;
             }),
         }),
-        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>
             Effect.succeed({
@@ -383,7 +462,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
                 return null;
               }),
           }),
-          Layer.mock(PullRequestService.PullRequestService)({}),
+          Layer.mock(PullRequestService.PullRequestService)({
+            notifyLinkedThreadsChanged: Effect.void,
+          }),
           Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
             resolve: () =>
               Effect.succeed({
@@ -429,6 +510,168 @@ describe("ThreadPullRequestServiceV2 reads", () => {
 
         expect(lookupCwds).toEqual([cwd]);
       }),
+  );
+
+  it.effect.each([
+    // The repositories are the project's own checkouts, each on whatever branch it is on.
+    { name: "in the project folder", checkouts: "/workspace/wrapper", branch: null },
+    // The repositories are the thread's worktrees; `web` stands for a checkout off its branch.
+    { name: "in a task folder", checkouts: "/worktrees/wrapper/task", branch: "feature/api" },
+  ])(
+    "links the open pull request of each tracked repository a thread $name changed",
+    ({ checkouts, branch }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          let thread: OrchestrationV2ThreadShell = {
+            ...threadShell("repositories-thread"),
+            branch,
+            worktreePath: branch === null ? null : checkouts,
+          };
+          const project: OrchestrationProjectShell = {
+            id: thread.projectId,
+            title: "Wrapper",
+            workspaceRoot: "/workspace/wrapper",
+            trackedFolders: ["api", "web", "docs"].map((name) => ({
+              name,
+              path: `/workspace/wrapper/${name}`,
+            })),
+            defaultModelSelection: null,
+            scripts: [],
+            createdAt: "2026-08-01T00:00:00.000Z",
+            updatedAt: "2026-08-01T00:00:00.000Z",
+          };
+          const activation = yield* Deferred.make<void>();
+          const domainEvents = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
+          const lookedUp = yield* Queue.unbounded<void>();
+          const lookups: Array<{ readonly cwd: string; readonly branch: string }> = [];
+          const dispatched: Array<OrchestrationV2ServerCommand> = [];
+          const dependencies = Layer.mergeAll(
+            Layer.mock(Orchestrator.OrchestratorV2)({
+              streamDomainEvents: Stream.fromQueue(domainEvents),
+              getPullRequestSnapshot: () =>
+                Effect.sync(() => ({
+                  schemaVersion: 2,
+                  snapshotSequence: 1,
+                  threads: [thread],
+                  archivedThreads: [],
+                })),
+              // The thread changed api and web, and a folder the project no longer tracks.
+              getCheckpointContext: () =>
+                Effect.succeed({
+                  runs: [],
+                  checkpoints: [],
+                  checkpointScopes: ["api", "web", "removed"].map((name) => ({
+                    id: `scope-${name}`,
+                    runId: null,
+                    kind: "manual",
+                    cwd: `${checkouts}/${name}`,
+                    repositoryPath: `/workspace/wrapper/${name}`,
+                  })),
+                } as never),
+              dispatch: (command) =>
+                Effect.sync(() => {
+                  dispatched.push(command as OrchestrationV2ServerCommand);
+                  return {} as never;
+                }),
+            }),
+            Layer.mock(ProjectStore.ProjectStoreV2)({
+              listShells: () => Effect.succeed([project]),
+              getShell: () => Effect.succeedSome(project),
+            }),
+            Layer.mock(GitManager.GitManager)({
+              localStatus: ({ cwd }) =>
+                Effect.succeed({
+                  isRepo: true,
+                  refName: cwd.endsWith("/api")
+                    ? "feature/api"
+                    : branch === null
+                      ? "main"
+                      : "other",
+                  isDefaultRef: !cwd.endsWith("/api") && branch === null,
+                } as never),
+              branchPullRequest: (input) =>
+                Queue.offer(lookedUp, undefined).pipe(
+                  Effect.map(() => {
+                    lookups.push(input);
+                    return {
+                      number: 7,
+                      title: "API change",
+                      url: "https://github.com/Acme/API/pull/7",
+                      baseRef: "main",
+                      headRef: input.branch,
+                      state: "open" as const,
+                      repositoryKey: "github.com/acme/api",
+                      updatedAt: null,
+                    };
+                  }),
+                ),
+            }),
+            Layer.mock(PullRequestService.PullRequestService)({}),
+            Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({}),
+            Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+              shouldRunScopeWork: () => Effect.succeed(false),
+              shouldRunOpportunisticWork: Effect.succeed(false),
+            }),
+            Layer.succeed(ServerActivation.ServerActivation, Deferred.await(activation)),
+            Layer.succeed(
+              SecureRandom.SecureRandom,
+              SecureRandom.make((size) => new Uint8Array(size).fill(1)),
+            ),
+            FileSystem.layerNoop({}),
+            Path.layer,
+          );
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadPullRequestService.make;
+            yield* service.start();
+            yield* Deferred.succeed(activation, undefined);
+            // The startup sweep asks no repository.
+            yield* service.drain;
+            expect(lookups).toEqual([]);
+
+            const turnEnd = {
+              type: "checkpoint.captured",
+              threadId: thread.id,
+            } as OrchestrationV2DomainEvent;
+            yield* Queue.offer(domainEvents, turnEnd);
+            yield* Queue.take(lookedUp);
+            yield* service.drain;
+
+            // Only the repository on a branch of its own is asked, and nothing touches the
+            // thread's own branch.
+            expect(lookups).toEqual([{ cwd: `${checkouts}/api`, branch: "feature/api" }]);
+            expect(dispatched).toMatchObject([
+              {
+                type: "thread.pull-request.link",
+                threadId: thread.id,
+                host: "github.com",
+                repository: "acme/api",
+                number: 7,
+                source: "created",
+              },
+            ]);
+
+            thread = {
+              ...thread,
+              pullRequests: [
+                {
+                  host: "github.com",
+                  repository: "acme/api",
+                  number: 7,
+                  url: "https://github.com/acme/api/pull/7",
+                  source: "created",
+                  linkedAt: "2026-09-20T00:00:00.000Z",
+                  snapshot: null,
+                  stack: null,
+                },
+              ],
+            };
+            yield* Queue.offer(domainEvents, turnEnd);
+            yield* Queue.take(lookedUp);
+            yield* service.drain;
+            expect(dispatched).toHaveLength(1);
+          }).pipe(Effect.provide(dependencies));
+        }),
+      ),
   );
 
   it.effect("leaves delegated child threads to their own refresh instead of the sweep", () =>
@@ -492,7 +735,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               return null;
             }),
         }),
-        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>
             Effect.succeed({
@@ -524,9 +769,16 @@ describe("ThreadPullRequestServiceV2 reads", () => {
         yield* service.start();
         yield* Deferred.succeed(activation, undefined);
 
-        // Startup backfill sweep, then one periodic sweep.
+        // Startup backfill sweep, then periodic sweeps: a branch without a pull request
+        // is reread after half an hour, not on every sweep.
         yield* Queue.take(sweeps);
         yield* service.drain;
+        for (let minute = 1; minute <= 29; minute += 1) {
+          yield* TestClock.adjust("1 minute");
+          yield* Queue.take(sweeps);
+          yield* service.drain;
+        }
+        expect(lookups.map((lookup) => lookup.branch)).toEqual([parent.branch]);
         yield* TestClock.adjust("1 minute");
         yield* Queue.take(sweeps);
         yield* service.drain;
@@ -888,7 +1140,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
               };
             }),
         }),
-        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>
             Effect.succeed({
@@ -1010,7 +1264,9 @@ describe("ThreadPullRequestServiceV2 reads", () => {
           branchPullRequest: (_input, options) =>
             Effect.succeed(options?.freshGitState === true ? fresh : mergedPullRequest43),
         }),
-        Layer.mock(PullRequestService.PullRequestService)({}),
+        Layer.mock(PullRequestService.PullRequestService)({
+          notifyLinkedThreadsChanged: Effect.void,
+        }),
         Layer.mock(RepositoryIdentityResolver.RepositoryIdentityResolver)({
           resolve: () =>
             Effect.succeed({
