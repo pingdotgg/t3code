@@ -1819,6 +1819,7 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       const settledEvents = yield* run.throughTerminal;
       const terminal = settledEvents.at(-1);
       assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+      assert.equal(run.cancels(), 0, "releasing a running command must not cancel it");
       const itemAtSettle = [...beforeRelease, ...settledEvents].findLast(
         (event) =>
           event.type === "turn_item.updated" &&

@@ -5432,8 +5432,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return false;
           }
           if (active?.finalized === false && active.tools.has(update.toolCallId)) return false;
+          if (yield* Ref.get(stoppedRunQuarantine)) return false;
           if (notification.sessionId !== (yield* Ref.get(activeSessionId))) return false;
-          const owner = (yield* Ref.get(detachedUnawaitedTools)).get(update.toolCallId);
+          const owner =
+            (active?.finalized === true &&
+            active.finalizedStatus === "completed" &&
+            active.unawaitedToolCallIds.has(update.toolCallId) &&
+            active.tools.has(update.toolCallId)
+              ? active
+              : undefined) ?? (yield* Ref.get(detachedUnawaitedTools)).get(update.toolCallId);
           if (owner === undefined) return false;
           for (const event of parseSessionUpdateEvent(notification).events) {
             if (event._tag === "ToolCallUpdated") yield* emitTool(owner, event.toolCall);
@@ -5826,11 +5833,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             return;
           if (yield* projectAgentTerminalUpdate(notification, context)) return;
           if (yield* projectDetachedBackgroundCommand(notification, context)) return;
-          if (
-            context !== null &&
-            !context.finalized &&
-            (yield* projectDetachedUnawaitedTool(notification, context))
-          )
+          if (context !== null && (yield* projectDetachedUnawaitedTool(notification, context)))
             return;
           if (flavor.replyEndsWithUsageUpdate === true) {
             if (context === null) {
