@@ -1349,6 +1349,40 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // A command whose terminal update never arrives would hold the run in Working forever with
+  // an empty pending list and a finished reply above Stop.
+  it.effect("settles a silent background command after the post-settle hold timeout", () =>
+    Effect.gen(function* () {
+      const { command, offers, startTurn, until, throughPromptSettled } =
+        yield* openSessionWithRunningCommand({ WaitMsBeforeAsync: 10000 });
+      yield* startTurn(1, false);
+      const prompt = yield* throughPromptSettled;
+
+      // A running tool keeps the inactivity watchdog re-armed, so 20 silent minutes do not
+      // settle this run on their own.
+      yield* TestClock.adjust("20 minutes");
+      yield* TestClock.adjust("11 minutes");
+      const run = yield* until((event) => event.type === "turn.terminal");
+      const terminal = run.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "completed",
+        "the bounded hold finalizes the turn instead of leaving it running forever",
+      );
+      assert.equal(terminal?.type === "turn.terminal" && terminal.failure, null);
+      assert.lengthOf(offers, 0, "a silent command produces no wake on its own");
+      const commandItem = [...prompt, ...run].findLast(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === command.toolCallId,
+      );
+      assert.isTrue(
+        commandItem?.type === "turn_item.updated" && commandItem.turnItem.status === "completed",
+        "the silent command is no longer left as live activity on a settled run",
+      );
+    }).pipe(Effect.provide(layerSession)),
+  );
+
   // Command 2 finishes during reply 1; agy dequeues command 2 after reply 1's usage_update and
   // needs >3 s before streaming reply 2. Wait for reply 2 (bounded by the 2-minute quiet limit),
   // but still finalize at 3 s when both commands were batched into reply 1.

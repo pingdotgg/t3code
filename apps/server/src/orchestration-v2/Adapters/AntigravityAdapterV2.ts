@@ -244,6 +244,10 @@ export function makeAntigravityAcpAdapterFlavor(
     wakeOnDetachedRequest: true,
     replyEndsWithUsageUpdate: true,
     toolOutlivesPrompt: antigravityToolOutlivesPrompt,
+    // agy sometimes loses the terminal update or wake for a background command. Do not hold
+    // the turn in Working forever on a silent command; a 30-minute bound still leaves long
+    // runs room, and the command remains visible as pending background work after settlement.
+    postSettleBackgroundHoldTimeout: "30 minutes",
     // session/cancel ends the agent's running commands, so only Stop sends it once the prompt
     // has ended. A message sent while a command runs leaves the command alone.
     preserveRuntimeOnSettledInterrupt: true,

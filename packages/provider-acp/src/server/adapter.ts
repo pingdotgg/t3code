@@ -637,6 +637,11 @@ export interface AcpAdapterV2Flavor {
    * tool ends. With `deferFinalizeForBackgroundWork`, the turn stays open until then.
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
+  /**
+   * Bound a settled turn held open only by an outliving tool; finalize after this quiet period
+   * so a command that never reports back cannot leave the thread in Working forever.
+   */
+  readonly postSettleBackgroundHoldTimeout?: Duration.Input;
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
@@ -8835,6 +8840,33 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
 
+        /**
+         * Bound a settled turn held only by an outliving tool that never reports back, so the
+         * run cannot stay in Working forever with no visible background work.
+         */
+        const schedulePostSettleHoldExpiry = Effect.fn("AcpAdapterV2.schedulePostSettleHoldExpiry")(
+          function* (context: ActiveAcpTurn) {
+            const timeout = flavor.postSettleBackgroundHoldTimeout;
+            if (timeout === undefined) return;
+            if (!context.promptSettled || context.finalized) return;
+            if (!hasDeferredBackgroundWork(context)) return;
+            yield* Effect.gen(function* () {
+              yield* Effect.sleep(timeout);
+              if (context.finalized || !context.promptSettled) return;
+              if (!hasDeferredBackgroundWork(context)) return;
+              // Only an outliving tool gets bounded here. Queued wakes, hydration and detached
+              // subagents still have their own settlement paths.
+              const heldCommand = [...context.tools.values()].some(
+                (tool) =>
+                  toolStatus(tool.status) === "running" &&
+                  flavor.toolOutlivesPrompt?.(tool) === true,
+              );
+              if (!heldCommand) return;
+              yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          },
+        );
+
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
         ) {
@@ -9265,6 +9297,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (context.finalized) return;
                   if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
+                    if (deferredBackgroundWork) yield* schedulePostSettleHoldExpiry(context);
                     if (pendingReply) {
                       context.replyOpen = true;
                       yield* scheduleDeferredFinalize(context);
@@ -9665,6 +9698,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return;
               }
               if (!context.finalized) {
+                yield* schedulePostSettleHoldExpiry(context);
                 if (hasDeferredBackgroundWork(context)) {
                   yield* rearmDeferredFinalize(context);
                 } else {
