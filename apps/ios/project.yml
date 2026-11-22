@@ -1,0 +1,69 @@
+# XcodeGen spec (brew install xcodegen). `xcodegen generate` writes Conn.xcodeproj; commit both.
+name: Conn
+options:
+  bundleIdPrefix: com.nckrtl
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    DEVELOPMENT_TEAM: 9SVJ4SYB9B
+    CODE_SIGN_STYLE: Automatic
+    SWIFT_VERSION: "6.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    TARGETED_DEVICE_FAMILY: "1"
+    # ConnCore.xcframework ships arm64 slices only (device + Apple silicon simulator).
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+packages:
+  DesignKit:
+    path: ../../../design-kit/DesignKit
+targets:
+  Conn:
+    type: application
+    platform: iOS
+    sources:
+      - path: Conn
+      - path: ConnCore/Generated/conn_ffi.swift
+    dependencies:
+      - package: DesignKit
+      - framework: build/ConnCore.xcframework
+        embed: false
+      - sdk: Security.framework
+      - sdk: CoreFoundation.framework
+    info:
+      path: Conn/Info.plist
+      properties:
+        CFBundleDisplayName: Conn
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
+        NSLocalNetworkUsageDescription: Conn connects to your conn-server on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.nckrtl.conn.ios
+  ConnUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: ConnUITests
+    dependencies:
+      - target: Conn
+    settings:
+      base:
+        TEST_TARGET_NAME: Conn
+        PRODUCT_BUNDLE_IDENTIFIER: com.nckrtl.conn.ios.uitests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Conn:
+    build:
+      targets:
+        Conn: all
+    test:
+      targets: [ConnUITests]
