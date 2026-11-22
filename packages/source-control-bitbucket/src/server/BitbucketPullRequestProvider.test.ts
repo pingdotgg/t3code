@@ -228,7 +228,7 @@ it.effect("rereads only the pull request when sync reads an unchanged pull reque
 );
 
 it.effect(
-  "rereads diffstat and conflicts when a commit moves, the reads expire or are forgotten, or conflicts failed",
+  "rereads diffstat and conflicts when a commit moves, the reads expire or are forgotten, or a failed conflicts read expires",
   () =>
     Effect.gen(function* () {
       const pullRequestAt = (head: string, base: string) =>
@@ -291,6 +291,8 @@ it.effect(
       conflictsFail = true;
       expect((yield* readSummary(input)).mergeability).toBe("unknown");
       conflictsFail = false;
+      expect((yield* readSummary(input)).mergeability).toBe("unknown");
+      yield* TestClock.adjust(Duration.minutes(5));
       expect((yield* readSummary(input)).mergeability).toBe("mergeable");
 
       expect(statReads).toBe(7);

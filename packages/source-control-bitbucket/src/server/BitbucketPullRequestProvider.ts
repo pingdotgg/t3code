@@ -42,6 +42,8 @@ const CAPABILITIES: PullRequestCapabilities = {
 
 const COMMIT_READ_CAPACITY = 256;
 const COMMIT_READ_TTL = Duration.minutes(15);
+/** Longer than a sync sweep, so a conflicts read that keeps failing does not reread diffstat each time. */
+const FAILED_CONFLICTS_READ_TTL = Duration.minutes(5);
 
 const UNAVAILABLE_REQUIREMENT = {
   missing:
@@ -176,7 +178,7 @@ export const make = Effect.gen(function* () {
     });
   };
 
-  // Null marks a conflicts read that failed and was recovered, so it is not held.
+  // Null marks a conflicts read that failed and was recovered, so it is held for less time.
   const readCommitStats = (target: { readonly repository: string; readonly number: number }) =>
     Effect.all([api.getDiffStat(target), recoverRead(api.getMergeability(target), null)], {
       concurrency: 2,
@@ -193,7 +195,11 @@ export const make = Effect.gen(function* () {
     {
       capacity: COMMIT_READ_CAPACITY,
       timeToLive: (exit) =>
-        Exit.isSuccess(exit) && exit.value[1] !== null ? COMMIT_READ_TTL : Duration.zero,
+        Exit.isFailure(exit)
+          ? Duration.zero
+          : exit.value[1] === null
+            ? FAILED_CONFLICTS_READ_TTL
+            : COMMIT_READ_TTL,
     },
   );
 
