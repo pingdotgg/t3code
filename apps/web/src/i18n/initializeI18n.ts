@@ -16,6 +16,8 @@ export function initializeI18n(onLocaleRequest: (locale: string) => void): void 
     locales: [...SUPPORTED_LOCALES],
     locale: DEFAULT_LOCALE,
     loadTranslations,
+    // GT's default drops a catalog from its cache after 60 s; call-time `m()` reads that cache.
+    cacheExpiryTime: null,
     _reload: (state) => onLocaleRequest(state.locale),
   });
 }

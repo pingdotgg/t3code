@@ -11,6 +11,8 @@ import {
   workspaceSearchBottomClearance,
   workspaceDockBottomClearance,
   workspaceUsesColumns,
+  type WorkspaceTab,
+  type WorkspaceTabsState,
 } from "./workspace-tabs-state";
 
 describe("compact list clearance", () => {
@@ -61,7 +63,12 @@ describe("workspace root navigation", () => {
   });
 
   it("keeps the registered defaults while customization is unavailable", () => {
-    expect(resolveWorkspaceTabOrder(undefined)).toEqual(["threads", "pullRequests", "usage"]);
+    expect(resolveWorkspaceTabOrder(undefined)).toEqual([
+      "threads",
+      "pullRequests",
+      "issues",
+      "usage",
+    ]);
     expect(resolveWorkspaceTabOrder(["home", "usage", "issues", "threads"])).toEqual(
       resolveWorkspaceTabOrder(undefined),
     );
@@ -128,6 +135,21 @@ describe("workspace root navigation", () => {
     expect(state.tabs.threads.query).toBe("diff");
   });
 
+  it("applying an empty-query view resets the position that search cancellation restores", () => {
+    let state = initialWorkspaceTabsState();
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 640 });
+    state = workspaceTabsReducer(state, { type: "search", tab: "pullRequests" });
+    state = workspaceTabsReducer(state, { type: "query", tab: "pullRequests", query: "old query" });
+    state = workspaceTabsReducer(state, { type: "scroll", tab: "pullRequests", offset: 80 });
+    state = workspaceTabsReducer(state, { type: "cancel", tab: "pullRequests", scrollToTop: true });
+    expect(state.tabs.pullRequests).toEqual({
+      query: "",
+      searchMode: "resting",
+      scrollOffset: 0,
+      searchEntryOffset: 0,
+    });
+  });
+
   it("a late native blur cannot reopen a cancelled search", () => {
     let state = workspaceTabsReducer(initialWorkspaceTabsState(), { type: "search" });
     state = workspaceTabsReducer(state, { type: "cancel" });
@@ -179,12 +201,25 @@ describe("workspace root navigation", () => {
   });
 });
 
-const mocks = vi.hoisted(() => ({ split: false, floating: false }));
+const mocks = vi.hoisted(() => ({
+  split: false,
+  floating: false,
+  state: undefined as WorkspaceTabsState | undefined,
+  openWorkspaceTab: (_tab: string) => {},
+  backListeners: new Set<() => boolean>(),
+}));
 
 vi.mock("../../settings/appearance/AppearancePreferencesProvider", () => ({
   useAndroidFloatingTabs: () => mocks.floating,
 }));
 vi.mock("react-native", () => ({
+  BackHandler: {
+    addEventListener: (_event: string, listener: () => boolean) => {
+      mocks.backListeners.add(listener);
+      return { remove: () => mocks.backListeners.delete(listener) };
+    },
+  },
+  Keyboard: { dismiss: () => undefined },
   useWindowDimensions: () => ({ width: 400, height: 800 }),
   View: ({ children }: { children: ReactNode }) => createElement("div", null, children),
 }));
@@ -198,12 +233,16 @@ vi.mock("../AdaptiveWorkspaceLayout", () => ({
     startNewTask: () => undefined,
   }),
 }));
+vi.mock("@react-navigation/native", () => ({ useIsFocused: () => true }));
+vi.mock("../adaptive-workspace-context", () => ({
+  useAdaptiveWorkspaceLayout: () => ({ openWorkspaceTab: mocks.openWorkspaceTab }),
+}));
 vi.mock("./navigation-tabs", () => ({
   useEnabledNavigationTabs: () => ["threads", "pullRequests", "usage"],
 }));
 vi.mock("./WorkspaceTabsContext", () => ({
   WorkspaceTabsContext: createContext(null),
-  useWorkspaceTabs: () => ({ state: { selectedTab: "usage" } }),
+  useWorkspaceTabs: () => ({ state: mocks.state, dispatch: () => undefined }),
 }));
 vi.mock("./WorkspaceExtraTab", () => ({
   WorkspaceExtraTab: function UsageProbe() {
@@ -226,7 +265,8 @@ vi.mock("../../pull-requests/PullRequestFilterMenuContext", () => ({
     createElement("div", null, children),
 }));
 vi.mock("../../pull-requests/PullRequestsScreen", () => ({ PullRequestsScreen: () => null }));
-vi.mock("./PullRequestToolbar.android", () => ({ PullRequestToolbar: () => null }));
+vi.mock("../../issues/IssuesScreen", () => ({ IssuesScreen: () => null }));
+vi.mock("./ListSearchToolbar.android", () => ({ ListSearchToolbar: () => null }));
 vi.mock("./AndroidWorkspaceNavigation", () => ({
   AndroidWorkspaceNavigation: () => null,
   FloatingWorkspaceTabs: () => null,
@@ -238,12 +278,36 @@ vi.mock("../../../components/ui/WorkspaceAppBar.android", () => ({
   WorkspaceAppBarScope: ({ children }: { children: ReactNode }) => children,
 }));
 
-function setup(split: boolean, floating: boolean) {
+function setup(split: boolean, floating: boolean, state = selected("usage")) {
   mocks.split = split;
   mocks.floating = floating;
+  mocks.state = state;
+  mocks.openWorkspaceTab = () => undefined;
+  mocks.backListeners.clear();
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   return { [Symbol.dispose]: () => vi.unstubAllGlobals() };
 }
+
+function selected(tab: WorkspaceTab) {
+  return workspaceTabsReducer(initialWorkspaceTabsState(), { type: "select", tab });
+}
+
+/** Android calls the newest listener first and stops at the first that handles Back. */
+function pressBack() {
+  return [...mocks.backListeners].reverse().some((listener) => listener());
+}
+
+it("Back from the Pulls tab returns to Threads instead of leaving the app", async () => {
+  using _actEnvironment = setup(false, false, selected("pullRequests"));
+  const opened: string[] = [];
+  mocks.openWorkspaceTab = (tab) => opened.push(tab);
+  const root = createRoot(document.createElement("div"));
+  using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
+  await act(async () => root.render(createElement(WorkspaceRootScreen)));
+
+  expect(pressBack()).toBe(true);
+  expect(opened).toEqual(["threads"]);
+});
 
 it.each([
   [false, false],

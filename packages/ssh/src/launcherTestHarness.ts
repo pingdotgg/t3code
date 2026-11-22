@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
 import * as NodeChildProcess from "node:child_process";
+import * as NodeSqlite from "node:sqlite";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
@@ -58,6 +59,12 @@ export const captureLauncherFor = Effect.fn("test.captureLauncher")(function* (
 
 export const captureLauncher = captureLauncherFor({ nodeScriptPath: "/fake/server.ts" });
 
+function holdLock(path: string) {
+  const db = new NodeSqlite.DatabaseSync(path);
+  db.exec("BEGIN EXCLUSIVE;");
+  return { [Symbol.dispose]: () => db.close() };
+}
+
 export function runLauncher(
   script: string,
   options: {
@@ -68,6 +75,9 @@ export function runLauncher(
     readonly clockJump?: number;
     readonly readyAt?: number;
     readonly initialPort?: number;
+    // A boot service between two servers holds the home with no runtime record yet.
+    readonly serviceServing?: boolean;
+    readonly allowFailure?: boolean;
     // The desktop publishes runtime and removes the marker right after the first runtime read.
     readonly publishAfterFirstRuntimeRead?: boolean;
   },
@@ -104,6 +114,10 @@ Date.now = () => Number(fs.readFileSync(process.env.HOME + '/clock', 'utf8'));
 case "\${2:-}" in
   */server-runtime.json)
     # A started server publishes its runtime record, which the launch waits for.
+    # The fake nohup runs in the background, so wait for it instead of racing it.
+    if [ -e "$HOME/picked-port" ]; then
+      while [ ! -e "$HOME/started-server" ]; do /bin/sleep 0.01; done
+    fi
     if [ -e "$HOME/started-server" ]; then
       printf 'record %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
       printf '%s 5999' "$(cat "$HOME/started-server")"
@@ -121,6 +135,7 @@ case "\${2:-}" in
     else exit 1; fi ;;
   */port)
     printf 'start %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"
+    touch "$HOME/picked-port"
     printf 5999 ;;
   [0-9]*)
     NOW="$(cat "$HOME/clock")"
@@ -187,6 +202,7 @@ if [ "$1" = --version ]; then printf 1.2.3; exit; fi
 [ "$1" = __ssh-helper ]
 case "$2" in
   update-remaining) printf 'marker %s\\n' "$(cat "$HOME/clock")" >> "$HOME/events"; exec "$TEST_REAL_NODE" --require "$HOME/clock.cjs" "$HOME/helper.ts" "$2" "$3" ;;
+  home-owned) exec "$TEST_REAL_NODE" "$HOME/helper.ts" "$2" "$3" ;;
   runtime-port | pick-port | wait-ready) exec "$HOME/bin/test-node" - "$3" ;;
   *) exit 1 ;;
 esac
@@ -194,6 +210,9 @@ esac
         { mode: 0o755 },
       );
     }
+    using _serving = options.serviceServing
+      ? holdLock(NodePath.join(runtime, "service-serving.lock"))
+      : undefined;
     const result = NodeChildProcess.spawnSync("/bin/sh", ["-s", "--", "test-target"], {
       input: `kill() {
   if [ "$1" = -0 ]; then command kill "$@"; else
@@ -217,12 +236,14 @@ ${script}`,
         TEST_PUBLISH_AFTER_FIRST_READ: options.publishAfterFirstRuntimeRead ? "1" : "0",
       },
     });
-    if (result.error || result.status !== 0)
+    if (result.error || (result.status !== 0 && !options.allowFailure))
       throw new Error(
         `launcher failed: ${result.error ?? result.status}\n${result.stderr}\n${result.stdout}\n${NodeFS.readFileSync(NodePath.join(home, "events"), "utf8")}`,
       );
     return {
-      output: JSON.parse(result.stdout.trim()),
+      status: result.status,
+      stderr: result.stderr,
+      output: result.status === 0 ? JSON.parse(result.stdout.trim()) : undefined,
       events: NodeFS.readFileSync(NodePath.join(home, "events"), "utf8").trim().split("\n"),
       now: Number(NodeFS.readFileSync(NodePath.join(home, "clock"), "utf8")),
       markerExists: NodeFS.existsSync(markerPath),
