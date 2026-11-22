@@ -322,7 +322,8 @@ it.effect(
             }),
           );
 
-        // Every baseline shares the turn's budget; the slow repository is left without one.
+        // Every baseline shares the turn's budget; the turn stops waiting on the slow repository,
+        // whose baseline finishes after the turn starts.
         const firstTurn = yield* checkpoints
           .captureBaseline({ scope, ordinalWithinScope: 0, thread })
           .pipe(Effect.forkChild);
@@ -331,6 +332,7 @@ it.effect(
         yield* TestClock.adjust("5 seconds");
         yield* Fiber.join(firstTurn);
         yield* Ref.set(slow, false);
+        yield* TestClock.adjust("1 minute");
 
         // A turn that changes nothing writes nothing and records nothing.
         assert.isTrue((yield* captureAll(1)).every(Option.isNone));
