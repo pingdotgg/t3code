@@ -243,8 +243,3 @@ export function canForkProjectedAssistantItem(input: {
     capabilities.identity.nativeThreadIds === "strong";
   return canForkNatively || capabilities.context.supportsFullThreadHandoff;
 }
-
-export function canDetachThreadProviderSession(projection: Projection): boolean {
-  const session = resolveThreadProviderSession(projection);
-  return session !== null && session.status !== "stopped" && session.status !== "error";
-}
