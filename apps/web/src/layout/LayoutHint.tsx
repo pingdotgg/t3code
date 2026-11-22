@@ -1,7 +1,14 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useGT } from "gt-react";
-import { useEffect, useLayoutEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+  type RefObject,
+} from "react";
 
 import { Kbd } from "../components/ui/kbd";
 import { useScrollingWorkspacesEnabled } from "../hooks/useSettings";
@@ -66,20 +73,46 @@ function useHintLifetime(id: number | null): boolean {
  * in the host: their pane can pass behind the panes it crosses.
  */
 function InFocusedPane({ children }: { children: ReactNode }) {
-  const [pane, setPane] = useState<{ element: HTMLElement | null } | null>(null);
+  const homeRef = useRef<HTMLSpanElement>(null);
+  const [pane, setPane] = useState<HTMLElement | null>(null);
   const focusedTabId = useLayoutStore((state) => selectFocusedTab(state.layout)?.id ?? null);
-  const findPane = (anchor: HTMLSpanElement | null) => {
-    if (!anchor) return;
-    const element = anchor.parentElement?.querySelector<HTMLElement>(FOCUSED_PANE) ?? null;
-    setPane((current) => (current?.element === element ? current : { element }));
-  };
+  // Moved, not portaled: a portal target keeps React's whole delegated listener set for good.
+  // The span is the hint's only React parent and leaves with it, so a new hint remounts this.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move the hint's node into the focused pane's DOM and lift it there.
+  useLayoutEffect(() => {
+    const home = homeRef.current;
+    const hint = home?.firstElementChild;
+    if (!pane || !home || !(hint instanceof HTMLDivElement)) return;
+    pane.append(hint);
+    const stopLift = liftAboveComposer(hint);
+    return () => {
+      stopLift?.();
+      home.append(hint);
+    };
+  }, [pane]);
   return (
     <>
+      <span ref={homeRef} className="contents">
+        {children}
+      </span>
       {/* Keyed by the focused tab: it remounts, and looks again, when focus moves. */}
-      <span hidden key={focusedTabId} ref={findPane} />
-      {pane === null ? null : pane.element ? createPortal(children, pane.element) : children}
+      <FocusedPaneFinder key={focusedTabId} near={homeRef} onFind={setPane} />
     </>
   );
+}
+
+function FocusedPaneFinder({
+  near,
+  onFind,
+}: {
+  near: RefObject<HTMLElement | null>;
+  onFind: (pane: HTMLElement | null) => void;
+}) {
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Find the focused pane in the DOM once focus has moved.
+  useLayoutEffect(() => {
+    onFind(near.current?.parentElement?.querySelector<HTMLElement>(FOCUSED_PANE) ?? null);
+  }, [near, onFind]);
+  return null;
 }
 
 /**
@@ -220,6 +253,7 @@ function useInPanePlacement() {
     };
   }, [anchor, focusedTabId, focusedWorkspaceId]);
   return {
+    anchor,
     anchorRef: setAnchor,
     pane: placement.pane,
     style: placement.bottom === null ? undefined : { bottom: placement.bottom },
@@ -249,23 +283,29 @@ function HostHint({ kind, className, children }: PlacedHintProps) {
 }
 
 function InPaneHint({ kind, className, children }: PlacedHintProps) {
-  const { anchorRef, pane, style } = useInPanePlacement();
-  const pill = (
-    <div
-      style={style}
-      role="status"
-      aria-live="polite"
-      data-layout-hint={kind}
-      className={className}
-    >
-      {children}
-    </div>
-  );
+  const { anchor, anchorRef, pane, style } = useInPanePlacement();
+  const pillRef = useRef<HTMLDivElement>(null);
+  // Moved into the pane, not portaled (see InFocusedPane); the anchor is its only React parent.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move the pill's node into its pane's DOM.
+  useLayoutEffect(() => {
+    const pill = pillRef.current;
+    if (!pane || !anchor || !pill) return;
+    pane.append(pill);
+    return () => anchor.append(pill);
+  }, [anchor, pane]);
   return (
-    <>
-      <span ref={anchorRef} hidden />
-      {pane ? createPortal(pill, pane) : pill}
-    </>
+    <span ref={anchorRef} className="contents">
+      <div
+        ref={pillRef}
+        style={style}
+        role="status"
+        aria-live="polite"
+        data-layout-hint={kind}
+        className={className}
+      >
+        {children}
+      </div>
+    </span>
   );
 }
 
@@ -320,8 +360,8 @@ export function LayoutStripHint() {
   if (!hint) return null;
   if (hint.kind === "terminal") {
     return (
-      <InFocusedPane>
-        <TerminalHintPill key={hint.id} hint={hint} leaving={terminalLeaving} />
+      <InFocusedPane key={hint.id}>
+        <TerminalHintPill hint={hint} leaving={terminalLeaving} />
       </InFocusedPane>
     );
   }
@@ -344,7 +384,6 @@ function TerminalHintPill({
   const shortcut = shortcutLabelForCommand(keybindings, "terminal.toggle");
   return (
     <div
-      ref={liftAboveComposer}
       role="status"
       aria-live="polite"
       data-layout-hint="terminal"

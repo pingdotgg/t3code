@@ -72,6 +72,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ComponentProps,
 } from "react";
 import { msg, T, useGT, useMessages, Var } from "gt-react";
 import { createPortal, flushSync } from "react-dom";
@@ -311,6 +312,44 @@ import { ComposerControlsBar } from "./ComposerControlsBar";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
+
+/**
+ * A div moved into `host`, which ChatView renders outside the composer's DOM. Moved, not
+ * portaled: a portal target keeps React's whole delegated listener set for good. The hidden
+ * span is the div's only React parent and leaves with it. The children mount once the div
+ * sits in the host, so their first layout effects measure it there.
+ */
+function InComposerHost({
+  host,
+  children,
+  ...layer
+}: ComponentProps<"div"> & { host: HTMLElement }) {
+  const homeRef = useRef<HTMLSpanElement>(null);
+  const nodeRef = useRef<Element | null>(null);
+  const [placedIn, setPlacedIn] = useState<HTMLElement | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Move the div into the host's DOM, then mount the children there.
+  useLayoutEffect(() => {
+    const home = homeRef.current;
+    let node = nodeRef.current;
+    if (!node) {
+      node = home?.firstElementChild ?? null;
+      nodeRef.current = node;
+    }
+    if (!home || !node) return;
+    host.append(node);
+    setPlacedIn(host);
+    // A hidden <Activity> leaves the div in the host, as it left a portal's children.
+    return () =>
+      queueMicrotask(() => {
+        if (!home.isConnected) node.remove();
+      });
+  }, [host]);
+  return (
+    <span ref={homeRef} hidden>
+      <div {...layer}>{placedIn === host ? children : null}</div>
+    </span>
+  );
+}
 
 function consumePasteAsTextShortcut(deadline: { current: number }): boolean {
   const armed = Date.now() <= deadline.current;
@@ -3771,7 +3810,11 @@ export function ChatComposer(props: ChatComposerProps) {
       data-chat-composer-form="true"
       {...threadContextDropTargetProps()}
     >
-      {requestCardHost && requestCard ? createPortal(requestCard, requestCardHost) : null}
+      {requestCardHost && requestCard ? (
+        <InComposerHost host={requestCardHost} className="contents">
+          {requestCard}
+        </InComposerHost>
+      ) : null}
       {/* Each portal host takes React's whole delegated listener set, so an empty badge mounts none. */}
       {props.stashHost && stashQueue.length > 0
         ? createPortal(
