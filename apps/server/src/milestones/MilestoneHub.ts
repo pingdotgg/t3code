@@ -120,22 +120,21 @@ const make = Effect.gen(function* () {
     return entry;
   };
 
-  // Where a read starts in `kept`, and whether that skipped milestones after the cursor.
-  const start = (options: MilestoneReadOptions, now: number) => {
-    if (options.cursor === null) return { index: kept.length, truncated: false };
-    const after = seqOf(options.cursor);
+  // The kept milestones after the cursor, and whether milestones after it were skipped.
+  const after = (options: MilestoneReadOptions, now: number) => {
+    if (options.cursor === null) return { entries: [], truncated: false };
+    const from = seqOf(options.cursor);
     const oldest = kept[0]?.seq ?? seq + 1;
-    let index = after === undefined ? 0 : kept.findIndex((entry) => entry.seq > after);
-    if (index === -1) index = kept.length;
-    let truncated = after === undefined || after < oldest - 1;
+    let entries = from === undefined ? kept : kept.filter((entry) => entry.seq > from);
+    let truncated = from === undefined || from < oldest - 1;
     if (options.maxAgeMs !== undefined) {
+      // Kept in publication order, which `occurredAt` need not follow, so each one is checked.
       const floor = now - options.maxAgeMs;
-      while (index < kept.length && Date.parse(kept[index]!.event.occurredAt) < floor) {
-        index++;
-        truncated = true;
-      }
+      const young = entries.filter((entry) => Date.parse(entry.event.occurredAt) >= floor);
+      truncated ||= young.length < entries.length;
+      entries = young;
     }
-    return { index, truncated };
+    return { entries, truncated };
   };
 
   const positioned = (entry: Kept): PositionedMilestone => ({
@@ -171,10 +170,8 @@ const make = Effect.gen(function* () {
   });
 
   const read: MilestoneHub["Service"]["read"] = Effect.fn("MilestoneHub.read")(function* (options) {
-    const from = start(options, yield* Clock.currentTimeMillis);
-    const matching = kept
-      .slice(from.index)
-      .filter((entry) => milestoneMatches(entry.event, options.filter));
+    const from = after(options, yield* Clock.currentTimeMillis);
+    const matching = from.entries.filter((entry) => milestoneMatches(entry.event, options.filter));
     const events = matching.slice(0, Math.max(1, options.limit));
     const hasMore = events.length < matching.length;
     return {
@@ -218,9 +215,13 @@ const make = Effect.gen(function* () {
         // The position before the first replayed milestone, which each one then advances.
         cursor: first === undefined ? caught.cursor : cursorAt(seqOf(first.cursor)! - 1),
         truncated: caught.truncated,
-        items: Stream.fromIterable(
-          caught.events.map((event): MilestoneFollowItem => ({ _tag: "Milestone", ...event })),
-        ).pipe(Stream.concat(items)),
+        items: Stream.fromIterable<MilestoneFollowItem>([
+          ...caught.events.map((event): MilestoneFollowItem => ({ _tag: "Milestone", ...event })),
+          // Replay checked past its last match; told after it, so no client skips a replayed one.
+          ...(first !== undefined && caught.events.at(-1)!.cursor !== caught.cursor
+            ? [{ _tag: "Position" as const, cursor: caught.cursor }]
+            : []),
+        ]).pipe(Stream.concat(items)),
       };
     }),
   });

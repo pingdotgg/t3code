@@ -2,6 +2,7 @@ import { assert, it } from "@effect/vitest";
 import { type MilestoneEvent, MilestoneId, ProjectId, RunId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as MilestoneHub from "./MilestoneHub.ts";
 
@@ -66,6 +67,43 @@ it.effect("pages forward from a kept id and says when the answer is cut short", 
       [1_000, "e5", false],
     );
   }).pipe(Effect.provide(MilestoneHub.layer)),
+);
+
+it.effect("skips expired milestones even when they arrive after newer ones", () =>
+  Effect.gen(function* () {
+    const hub = yield* MilestoneHub.MilestoneHub;
+    yield* TestClock.adjust("10 minutes");
+    const { cursor } = yield* hub.read({ cursor: null, limit: 1 });
+    yield* hub.publish({ ...settled("fresh"), occurredAt: "1970-01-01T00:10:00.000Z" });
+    yield* hub.publish({ ...settled("expired"), occurredAt: "1970-01-01T00:08:59.000Z" });
+    yield* hub.publish({ ...settled("at-cutoff"), occurredAt: "1970-01-01T00:09:00.000Z" });
+
+    const first = yield* hub.read({ cursor, maxAgeMs: 60_000, limit: 1 });
+    assert.deepStrictEqual(ids(first.events.map(({ event }) => event)), ["fresh"]);
+    assert.isTrue(first.hasMore);
+    assert.isTrue(first.truncated);
+    const rest = yield* hub.read({ cursor: first.cursor, maxAgeMs: 60_000, limit: 1 });
+    assert.deepStrictEqual(ids(rest.events.map(({ event }) => event)), ["at-cutoff"]);
+    assert.isFalse(rest.hasMore);
+  }).pipe(Effect.provide(MilestoneHub.layer)),
+);
+
+it.effect("a follower's replay ends at the position it checked, past its last match", () =>
+  Effect.gen(function* () {
+    const hub = yield* MilestoneHub.MilestoneHub;
+    const { cursor } = yield* hub.read({ cursor: null, limit: 1 });
+    yield* hub.publish(settled("a"));
+    yield* hub.publish(settled("b", { project: "project:b" }));
+
+    const { items } = yield* hub.follow({
+      cursor,
+      filter: { projectIds: [ProjectId.make("project:a")] },
+    });
+    const [milestone, position] = yield* Stream.runCollect(Stream.take(items, 2));
+    assert.strictEqual(milestone?._tag === "Milestone" ? milestone.event.id : undefined, "a");
+    assert.strictEqual(position?._tag, "Position");
+    assert.strictEqual((yield* hub.read({ cursor: null, limit: 1 })).cursor, position?.cursor);
+  }).pipe(Effect.scoped, Effect.provide(MilestoneHub.layer)),
 );
 
 it.effect("tells a follower that fell behind the subscriber backlog where its gap is", () =>

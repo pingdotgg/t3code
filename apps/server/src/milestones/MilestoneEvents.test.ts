@@ -9,6 +9,7 @@ import {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -16,6 +17,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpBody, HttpClient, HttpRouter } from "effect/http";
 
+import * as SessionStore from "../auth/SessionStore.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -70,9 +72,18 @@ type JsonRpcResponse = {
 };
 
 const serve = Effect.gen(function* () {
+  const revoked = yield* Deferred.make<void>();
   yield* HttpRouter.serve(
     McpHttpServer.layerMcpTransport(McpHttpServer.layerMilestoneEvents).pipe(
       Layer.provide(ServerSettings.layerTest()),
+      Layer.provide(
+        Layer.mock(SessionStore.SessionStore)({
+          cookieName: "t3-session",
+          legacyCookieName: undefined,
+          awaitInvalidation: (sessionId) =>
+            sessionId === "client-session" ? Deferred.await(revoked) : Effect.never,
+        }),
+      ),
       Layer.provide(
         Layer.mock(McpSessionRegistry.McpSessionRegistry)({
           resolve: (presented) =>
@@ -149,7 +160,7 @@ const serve = Effect.gen(function* () {
         ),
       ),
     );
-  return { post, call, poll, stream };
+  return { post, call, poll, stream, revoke: Deferred.succeed(revoked, undefined) };
 });
 
 const layerTest = Layer.mergeAll(MilestoneHub.layer, NodeHttpServer.layerTest);
@@ -241,7 +252,7 @@ it.effect("rejects a mismatched Mcp-Name, an unknown event and webhook delivery"
 it.effect("streams live milestones after active, replays from a cursor and sends heartbeats", () =>
   Effect.gen(function* () {
     const hub = yield* MilestoneHub.MilestoneHub;
-    const { call, stream } = yield* serve;
+    const { stream } = yield* serve;
     yield* hub.publish(settled("a"));
 
     const live = yield* stream({ cursor: null, heartbeatMs: 5_000 }, 7);
@@ -264,8 +275,7 @@ it.effect("streams live milestones after active, replays from a cursor and sends
       },
     });
 
-    // A full request round trip puts the stream's next heartbeat timer in place before the clock moves.
-    yield* call("events/list");
+    // The heartbeat is due 5 seconds after the last message, however late the loop reads the clock.
     yield* TestClock.adjust("5 seconds");
     expect(yield* Queue.take(live)).toMatchObject({
       method: "notifications/events/heartbeat",
@@ -278,5 +288,16 @@ it.effect("streams live milestones after active, replays from a cursor and sends
       { method: "notifications/events/event", params: { eventId: "a" } },
       { method: "notifications/events/event", params: { eventId: "b" } },
     ]);
+  }).pipe(Effect.scoped, Effect.provide(layerTest)),
+);
+
+it.effect("ends an open stream when the client's session is revoked", () =>
+  Effect.gen(function* () {
+    const { stream, revoke } = yield* serve;
+    const live = yield* stream({ cursor: null });
+    expect(yield* Queue.take(live)).toMatchObject({ method: "notifications/events/active" });
+
+    yield* revoke;
+    expect((yield* Effect.exit(Queue.take(live)))._tag).toBe("Failure");
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

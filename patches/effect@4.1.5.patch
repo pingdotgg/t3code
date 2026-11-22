@@ -759,15 +759,16 @@ index 0000000..cb0ff5c
 +export {};
 diff --git a/dist/ai/internal/mcpEvents.js b/dist/ai/internal/mcpEvents.js
 new file mode 100644
-index 0000000..2f768e4
+index 0000000..d875046
 --- /dev/null
 +++ b/dist/ai/internal/mcpEvents.js
-@@ -0,0 +1,257 @@
+@@ -0,0 +1,265 @@
 +/**
 + * The Events extension (SEP-3415): wire schemas on revision 2026-07-28 and
 + * the delivery loop behind a push stream.
 + */
 +import * as Cause from "../../Cause.js";
++import * as Clock from "../../Clock.js";
 +import * as Duration from "../../Duration.js";
 +import * as Effect from "../../Effect.js";
 +import * as Option from "../../Option.js";
@@ -979,13 +980,20 @@ index 0000000..2f768e4
 + * @internal
 + */
 +export const deliver = Effect.fnUntraced(function* (options) {
-+    const { heartbeatMs, name, send, subscription } = options;
++    const { heartbeatMs, name, subscription } = options;
 +    let cursor = subscription.cursor;
++    // Measured from the last message sent: a Position changes the cursor but sends nothing.
++    let sentAt = 0;
++    const send = (tag, payload) =>
++        options.send(tag, payload).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.map((at) => {
++            sentAt = at;
++        }));
 +    const active = (truncated) => send(EventsActiveNotification._tag, { cursor, truncated, heartbeatMs });
 +    yield* active(subscription.truncated);
 +    const items = yield* Stream.toQueue(subscription.items, { capacity: PENDING_ITEMS });
 +    while (true) {
-+        const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(heartbeatMs)), Effect.result);
++        const wait = Math.max(0, sentAt + heartbeatMs - (yield* Clock.currentTimeMillis));
++        const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(wait)), Effect.result);
 +        if (Result.isFailure(next)) {
 +            if (!Cause.isDone(next.failure)) {
 +                yield* send(EventsTerminatedNotification._tag, { error: wireError(next.failure) });
@@ -1935,15 +1943,16 @@ index 643982d..597701f 100644
  })
 diff --git a/src/ai/internal/mcpEvents.ts b/src/ai/internal/mcpEvents.ts
 new file mode 100644
-index 0000000..da65aec
+index 0000000..54b2ca8
 --- /dev/null
 +++ b/src/ai/internal/mcpEvents.ts
-@@ -0,0 +1,307 @@
+@@ -0,0 +1,315 @@
 +/**
 + * The Events extension (SEP-3415): wire schemas on revision 2026-07-28 and
 + * the delivery loop behind a push stream.
 + */
 +import * as Cause from "../../Cause.ts"
++import * as Clock from "../../Clock.ts"
 +import * as Duration from "../../Duration.ts"
 +import * as Effect from "../../Effect.ts"
 +import * as Option from "../../Option.ts"
@@ -2205,13 +2214,20 @@ index 0000000..da65aec
 +  readonly heartbeatMs: number
 +  readonly send: (tag: string, payload: Readonly<Record<string, unknown>>) => Effect.Effect<void>
 +}) {
-+  const { heartbeatMs, name, send, subscription } = options
++  const { heartbeatMs, name, subscription } = options
 +  let cursor = subscription.cursor
++  // Measured from the last message sent: a Position changes the cursor but sends nothing.
++  let sentAt = 0
++  const send = (tag: string, payload: Readonly<Record<string, unknown>>) =>
++    options.send(tag, payload).pipe(Effect.andThen(Clock.currentTimeMillis), Effect.map((at) => {
++      sentAt = at
++    }))
 +  const active = (truncated: boolean) => send(EventsActiveNotification._tag, { cursor, truncated, heartbeatMs })
 +  yield* active(subscription.truncated)
 +  const items = yield* Stream.toQueue(subscription.items, { capacity: PENDING_ITEMS })
 +  while (true) {
-+    const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(heartbeatMs)), Effect.result)
++    const wait = Math.max(0, sentAt + heartbeatMs - (yield* Clock.currentTimeMillis))
++    const next = yield* Queue.take(items).pipe(Effect.timeoutOption(Duration.millis(wait)), Effect.result)
 +    if (Result.isFailure(next)) {
 +      if (!Cause.isDone(next.failure)) {
 +        yield* send(EventsTerminatedNotification._tag, { error: wireError(next.failure) })
