@@ -3,10 +3,11 @@ import {
   type ThreadPullRequestLink,
   type ThreadPullRequestSnapshot,
 } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   legacyThreadPullRequestKey,
+  pullRequestListLines,
   threadPullRequestSearchTerms,
   resolveThreadCurrentPullRequest,
   resolveThreadPullRequestChains,
@@ -58,6 +59,41 @@ function link(
     ...input,
   };
 }
+
+it("shares PR derivation on the original snapshot before filtering dismissed links", () => {
+  const base = link(1, { snapshot: snapshot({ headBranch: "base" }) });
+  const top = link(2, {
+    snapshot: snapshot({ headBranch: "top", baseBranch: "base" }),
+  });
+  const links: ReadonlyArray<ThreadPullRequestLink> = [
+    top,
+    link(3, { source: "stack-dismissed" }),
+    base,
+  ];
+  using filter = vi.spyOn(links, "filter");
+
+  const current = resolveThreadCurrentPullRequest(links);
+  const badge = resolveThreadPullRequestBadge(links);
+  const chains = resolveThreadPullRequestChains(links);
+  const lines = pullRequestListLines(chains);
+
+  expect(current).toMatchObject({ kind: "stack", top, open: [top, base] });
+  expect(badge).toEqual({ kind: "stack", layers: 2, state: "open" });
+  expect(lines.map(({ link, depth }) => [link.number, depth])).toEqual([
+    [1, 0],
+    [2, 1],
+  ]);
+  expect(resolveThreadCurrentPullRequest(links)).toBe(current);
+  expect(resolveThreadPullRequestBadge(links)).toBe(badge);
+  expect(resolveThreadPullRequestChains(links)).toBe(chains);
+  expect(pullRequestListLines(resolveThreadPullRequestChains(links))).toBe(lines);
+  expect(filter).toHaveBeenCalledOnce();
+  expect(resolveThreadPullRequestBadge([base])).toEqual({
+    kind: "pull-request",
+    others: 0,
+    state: "open",
+  });
+});
 
 describe("threadPullRequestKeysEqual", () => {
   it("recovers Forgejo ports from old stored URLs and keeps separate servers distinct", () => {

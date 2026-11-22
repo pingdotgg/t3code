@@ -1595,6 +1595,37 @@ type ComposerThreadLookupState = Pick<
   "draftsByThreadKey" | "draftThreadsByThreadKey"
 >;
 
+const draftIdsByThreadKey = new WeakMap<
+  Record<string, DraftThreadState>,
+  ReadonlyMap<string, string>
+>();
+
+function draftSessionLookupKey(threadRef: ScopedThreadRef, scopedKey = scopedThreadKey(threadRef)) {
+  // A colon in the environment ID can collide with a colon in another thread ID.
+  // Encoded tuple keys contain no colon, keeping them distinct from ordinary scoped keys.
+  return threadRef.environmentId.includes(":")
+    ? encodeURIComponent(JSON.stringify([threadRef.environmentId, threadRef.threadId]))
+    : scopedKey;
+}
+
+function getDraftIdForThreadRef(
+  draftThreads: Record<string, DraftThreadState>,
+  threadRef: ScopedThreadRef,
+  scopedKey?: string,
+): string | undefined {
+  let index = draftIdsByThreadKey.get(draftThreads);
+  if (index === undefined) {
+    const nextIndex = new Map<string, string>();
+    for (const [draftId, session] of Object.entries(draftThreads)) {
+      const key = draftSessionLookupKey(scopeThreadRef(session.environmentId, session.threadId));
+      if (!nextIndex.has(key)) nextIndex.set(key, draftId);
+    }
+    draftIdsByThreadKey.set(draftThreads, nextIndex);
+    index = nextIndex;
+  }
+  return index.get(draftSessionLookupKey(threadRef, scopedKey));
+}
+
 function normalizeComposerTarget(
   state: ComposerThreadLookupState,
   target: ComposerThreadTarget,
@@ -1619,15 +1650,10 @@ export function resolveComposerDraftKey(
     if (state.draftsByThreadKey[scopedKey]) {
       return scopedKey;
     }
-    for (const [draftId, draftSession] of Object.entries(state.draftThreadsByThreadKey)) {
-      if (
-        draftSession.environmentId === normalizedTarget.environmentId &&
-        draftSession.threadId === normalizedTarget.threadId
-      ) {
-        return draftId;
-      }
-    }
-    return scopedKey;
+    return (
+      getDraftIdForThreadRef(state.draftThreadsByThreadKey, normalizedTarget, scopedKey) ??
+      scopedKey
+    );
   }
   const threadKey = composerTargetKey(normalizedTarget);
   return threadKey.length > 0 ? threadKey : null;
@@ -2894,26 +2920,13 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         },
         getDraftSession: (draftId) => get().draftThreadsByThreadKey[draftId] ?? null,
         getDraftSessionByRef: (threadRef) => {
-          for (const draftSession of Object.values(get().draftThreadsByThreadKey)) {
-            if (
-              draftSession.environmentId === threadRef.environmentId &&
-              draftSession.threadId === threadRef.threadId
-            ) {
-              return draftSession;
-            }
-          }
-          return null;
+          const { draftThreadsByThreadKey } = get();
+          const draftId = getDraftIdForThreadRef(draftThreadsByThreadKey, threadRef);
+          return draftId === undefined ? null : (draftThreadsByThreadKey[draftId] ?? null);
         },
         getDraftIdByRef: (threadRef) => {
-          for (const [draftId, draftSession] of Object.entries(get().draftThreadsByThreadKey)) {
-            if (
-              draftSession.environmentId === threadRef.environmentId &&
-              draftSession.threadId === threadRef.threadId
-            ) {
-              return DraftId.make(draftId);
-            }
-          }
-          return null;
+          const draftId = getDraftIdForThreadRef(get().draftThreadsByThreadKey, threadRef);
+          return draftId === undefined ? null : DraftId.make(draftId);
         },
         getPromotedDraftRedirect: (draftId) => get().promotedDraftRedirects[draftId] ?? null,
         getDraftThread: (threadRef) => {

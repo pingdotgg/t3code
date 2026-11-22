@@ -2,8 +2,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
-import { render } from "../../../test/render";
-import { SharedTooltipProvider, SharedTooltipTrigger } from "./shared-tooltip";
+import { act, fakeTimers, render } from "../../../test/render";
+import { SharedTooltipProvider, SharedTooltipTrigger, useSharedTooltip } from "./shared-tooltip";
 import { Tooltip, TooltipPopup, TooltipScrollDismissArea, TooltipTrigger } from "./tooltip";
 
 function TimelineAction({ shared }: { shared: boolean }) {
@@ -135,4 +135,162 @@ it("opens a shared tooltip in place the first time", async () => {
     .map((transition) => transition.transitionProperty)
     .filter((property) => ["top", "left", "right", "bottom", "transform"].includes(property));
   expect(moving).toEqual([]);
+});
+
+function DwellTrigger({
+  label,
+  renderLabel,
+  disabled = false,
+}: {
+  label: string;
+  renderLabel: () => string;
+  disabled?: boolean;
+}) {
+  const tooltip = useSharedTooltip({ render: renderLabel, contentKey: label, disabled });
+  return (
+    <button type="button" {...tooltip}>
+      {label}
+    </button>
+  );
+}
+
+it.each(["open", "recently closed"] as const)(
+  "opens only the final target when sweeping past a %s shared tooltip",
+  async (previous) => {
+    const renderSecond = vi.fn(() => "Second details");
+    const renderThird = vi.fn(() => "Third details");
+    await using screen = await render(
+      <SharedTooltipProvider openDelayMs={25} switchDelayMs={80} closeGraceMs={30}>
+        <div className="mt-16 flex gap-4">
+          <DwellTrigger label="First" renderLabel={() => "First details"} />
+          <DwellTrigger label="Second" renderLabel={renderSecond} />
+          <DwellTrigger label="Third" renderLabel={renderThird} />
+        </div>
+      </SharedTooltipProvider>,
+    );
+    using _timers = fakeTimers();
+    const first = screen.getByRole("button", { name: "First" });
+    await userEvent.hover(first);
+    await act(() => vi.advanceTimersByTime(25));
+    await expect.element(page.getByText("First details")).toBeVisible();
+    if (previous === "recently closed") {
+      await userEvent.unhover(first);
+      await act(() => vi.advanceTimersByTime(30));
+      expect(first.element().getAttribute("aria-describedby")).toBeNull();
+    }
+
+    await userEvent.hover(screen.getByRole("button", { name: "Second" }));
+    await act(() => vi.advanceTimersByTime(60));
+    await userEvent.hover(screen.getByRole("button", { name: "Third" }));
+    await act(() => vi.advanceTimersByTime(79));
+    expect(renderSecond).not.toHaveBeenCalled();
+    expect(renderThird).not.toHaveBeenCalled();
+
+    await act(() => vi.advanceTimersByTime(1));
+    await expect.element(page.getByText("Third details")).toBeVisible();
+    expect(renderSecond).not.toHaveBeenCalled();
+  },
+);
+
+it("cancels pending and open shared tooltips when their trigger becomes disabled", async () => {
+  const renderLabel = vi.fn(() => "Preview details");
+  const content = (disabled: boolean) => (
+    <SharedTooltipProvider openDelayMs={30}>
+      <DwellTrigger label="Preview" renderLabel={renderLabel} disabled={disabled} />
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(content(false));
+  using _timers = fakeTimers();
+  const trigger = screen.getByRole("button", { name: "Preview" });
+  await userEvent.hover(trigger);
+  await screen.rerender(content(true));
+  await act(() => vi.advanceTimersByTime(30));
+  expect(renderLabel).not.toHaveBeenCalled();
+
+  await userEvent.unhover(trigger);
+  await userEvent.hover(trigger);
+  await act(() => vi.advanceTimersByTime(30));
+  expect(renderLabel).not.toHaveBeenCalled();
+
+  await screen.rerender(content(false));
+  await userEvent.keyboard("{Tab}");
+  await expect.element(page.getByText("Preview details")).toBeVisible();
+  await screen.rerender(content(true));
+  expect(trigger.element().getAttribute("aria-describedby")).toBeNull();
+});
+
+it("keyboard focus bypasses switch dwell and Escape dismisses the shared tooltip", async () => {
+  await using screen = await render(
+    <SharedTooltipProvider openDelayMs={60_000} switchDelayMs={60_000}>
+      <DwellTrigger label="First" renderLabel={() => "First details"} />
+      <DwellTrigger label="Second" renderLabel={() => "Second details"} />
+    </SharedTooltipProvider>,
+  );
+  await userEvent.keyboard("{Tab}");
+  await expect.element(page.getByText("First details")).toBeVisible();
+  await userEvent.keyboard("{Tab}");
+  const second = screen.getByRole("button", { name: "Second" });
+  await expect.element(second).toHaveFocus();
+  await expect.element(page.getByText("Second details")).toBeVisible();
+  await userEvent.keyboard("{Escape}");
+  await expect.element(second).toHaveFocus();
+  await expect.element(page.getByText("Second details")).not.toBeInTheDocument();
+});
+
+it("keeps a pending target dwell alive when the previously open anchor unmounts", async () => {
+  const view = (showFirst: boolean) => (
+    <SharedTooltipProvider openDelayMs={25} switchDelayMs={80} closeGraceMs={30}>
+      <div className="mt-16 flex gap-4">
+        <DwellTrigger label="Second" renderLabel={() => "Second details"} />
+        {showFirst ? <DwellTrigger label="First" renderLabel={() => "First details"} /> : null}
+      </div>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(view(true));
+  using _timers = fakeTimers();
+  await userEvent.hover(screen.getByRole("button", { name: "First" }));
+  await act(() => vi.advanceTimersByTime(25));
+  await expect.element(page.getByText("First details")).toBeVisible();
+
+  await userEvent.hover(screen.getByRole("button", { name: "Second" }));
+  await act(() => vi.advanceTimersByTime(40));
+  await screen.rerender(view(false));
+  await act(() => vi.advanceTimersByTime(40));
+  await expect.element(page.getByText("Second details")).toBeVisible();
+});
+
+it("closes the open tooltip when leaving or unmounting a pending target during switch dwell", async () => {
+  const view = (showSecond: boolean) => (
+    <SharedTooltipProvider openDelayMs={25} switchDelayMs={80} closeGraceMs={30}>
+      <div className="mt-16 flex gap-4">
+        <DwellTrigger label="First" renderLabel={() => "First details"} />
+        {showSecond ? <DwellTrigger label="Second" renderLabel={() => "Second details"} /> : null}
+      </div>
+    </SharedTooltipProvider>
+  );
+  await using screen = await render(view(true));
+  using _timers = fakeTimers();
+
+  // Case 1: open First, cross Second, then leave Second before its switch dwell expires.
+  await userEvent.hover(screen.getByRole("button", { name: "First" }));
+  await act(() => vi.advanceTimersByTime(25));
+  await expect.element(page.getByText("First details")).toBeVisible();
+
+  const second = screen.getByRole("button", { name: "Second" });
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(40));
+  await userEvent.unhover(second);
+  await act(() => vi.advanceTimersByTime(100));
+  expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
+
+  // Case 2: open First, hover Second, then unmount Second midway through its switch dwell.
+  await userEvent.hover(screen.getByRole("button", { name: "First" }));
+  await act(() => vi.advanceTimersByTime(25));
+  await expect.element(page.getByText("First details")).toBeVisible();
+
+  await userEvent.hover(second);
+  await act(() => vi.advanceTimersByTime(40));
+  await screen.rerender(view(false));
+  await act(() => vi.advanceTimersByTime(100));
+  expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
 });

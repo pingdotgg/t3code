@@ -142,14 +142,38 @@ export function makeThreadPullRequests(
     return `${normalized.host}/${normalized.repository}#${normalized.number}`;
   }
 
+  interface PullRequestDerivation {
+    readonly visible: ReadonlyArray<ThreadPullRequestLink>;
+    chains?: ReadonlyArray<ThreadPullRequestChain>;
+    current?: ThreadCurrentPullRequest | null;
+    badge?: ThreadPullRequestBadge | null;
+  }
+
+  const derivations = new WeakMap<ReadonlyArray<ThreadPullRequestLink>, PullRequestDerivation>();
+
+  function derivationOf(links: ReadonlyArray<ThreadPullRequestLink>): PullRequestDerivation {
+    let derivation = derivations.get(links);
+    if (derivation === undefined) {
+      derivation = { visible: visibleThreadPullRequests(links) };
+      derivations.set(links, derivation);
+    }
+    return derivation;
+  }
+
   function resolveThreadCurrentPullRequest(
     links: ReadonlyArray<ThreadPullRequestLink>,
   ): ThreadCurrentPullRequest | null {
-    const visible = visibleThreadPullRequests(links);
+    const derivation = derivationOf(links);
+    if (derivation.current === undefined) derivation.current = deriveCurrent(derivation);
+    return derivation.current;
+  }
+
+  function deriveCurrent(derivation: PullRequestDerivation): ThreadCurrentPullRequest | null {
+    const { visible } = derivation;
     if (visible.length === 0) return null;
     const open = visible.filter(isOpen);
     if (open.length === 1) return { kind: "single", link: open[0]! };
-    const chains = resolveThreadPullRequestChains(visible);
+    const chains = (derivation.chains ??= deriveChains(visible));
     if (open.length > 1) {
       const openChains = chains
         .map((chain) => layersFromTop(chain).filter(isOpen))
@@ -193,7 +217,13 @@ export function makeThreadPullRequests(
   function resolveThreadPullRequestChains(
     links: ReadonlyArray<ThreadPullRequestLink>,
   ): ReadonlyArray<ThreadPullRequestChain> {
-    const visible = visibleThreadPullRequests(links);
+    const derivation = derivationOf(links);
+    return (derivation.chains ??= deriveChains(derivation.visible));
+  }
+
+  function deriveChains(
+    visible: ReadonlyArray<ThreadPullRequestLink>,
+  ): ReadonlyArray<ThreadPullRequestChain> {
     const chains: Array<ThreadPullRequestChain> = [];
     const placed = new Set<string>();
 
@@ -290,7 +320,14 @@ export function makeThreadPullRequests(
   function resolveThreadPullRequestBadge(
     pullRequests: ReadonlyArray<ThreadPullRequestLink> | undefined,
   ): ThreadPullRequestBadge | null {
-    const visible = visibleThreadPullRequests(pullRequests ?? []);
+    if (pullRequests === undefined) return null;
+    const derivation = derivationOf(pullRequests);
+    if (derivation.badge === undefined) derivation.badge = deriveBadge(derivation);
+    return derivation.badge;
+  }
+
+  function deriveBadge(derivation: PullRequestDerivation): ThreadPullRequestBadge | null {
+    const { visible } = derivation;
     if (visible.length === 0) return null;
     const states = visible.map((link) => link.snapshot?.state ?? "open");
     const state = visible.every((link) => link.snapshot?.state === "open" && link.snapshot.isDraft)
@@ -300,8 +337,7 @@ export function makeThreadPullRequests(
         : states.every((entry) => entry === "merged")
           ? "merged"
           : "closed";
-    const chains = resolveThreadPullRequestChains(visible);
-    if (visible.length > 1 && chains.length === 1) {
+    if (visible.length > 1 && (derivation.chains ??= deriveChains(visible)).length === 1) {
       return { kind: "stack", layers: visible.length, state };
     }
     return { kind: "pull-request", others: visible.length - 1, state };
@@ -366,15 +402,22 @@ function chainKeyOf(chain: ThreadPullRequestChain): string {
   return `${bottom.host}/${bottom.repository}#${bottom.number}`;
 }
 
+const listLinesByChains = new WeakMap<
+  ReadonlyArray<ThreadPullRequestChain>,
+  ReadonlyArray<PullRequestListLine>
+>();
+
 export function pullRequestListLines(
   chains: ReadonlyArray<ThreadPullRequestChain>,
 ): ReadonlyArray<PullRequestListLine> {
+  const cached = listLinesByChains.get(chains);
+  if (cached !== undefined) return cached;
   const ordered = [...chains].sort(
     (left, right) =>
       Math.max(...right.layers.map(latestUpdatedAt)) -
       Math.max(...left.layers.map(latestUpdatedAt)),
   );
-  return ordered.flatMap((chain) => {
+  const lines = ordered.flatMap((chain) => {
     const chainKey = chainKeyOf(chain);
     return chain.layers.map((link, index) => ({
       link,
@@ -386,4 +429,6 @@ export function pullRequestListLines(
           : null,
     }));
   });
+  listLinesByChains.set(chains, lines);
+  return lines;
 }

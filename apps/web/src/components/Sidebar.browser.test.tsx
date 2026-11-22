@@ -1,6 +1,22 @@
 import appCss from "../index.css?inline";
+import { DndContext, type DragEndEvent } from "@dnd-kit/core";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
+import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
+import type { ComponentProps } from "react";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import * as shelfHooks from "../state/olderSettledShelf";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -20,27 +36,48 @@ import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { showThreadUndoNotice } from "../hooks/showThreadUndoNotice";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
-import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
+import {
+  readEnvironmentServerConfigLoaded,
+  readProjects,
+  readThreadShell,
+  useProjects,
+  useServerConfigs,
+  useQuietThreadShells,
+} from "../state/entities";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
+import { settleAndAdvance } from "../settleAndAdvance";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
+import { useThreadSelectionStore } from "../threadSelectionStore";
 import { readLocalApi } from "../localApi";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
-import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
+import { sidebarMarkerId, THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
 import { SidebarProvider } from "./ui/sidebar";
+import { toastManager } from "./ui/toast";
 
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
   const actual = await original();
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
 });
 vi.mock("../state/entities", { spy: true });
+vi.mock(import("@dnd-kit/core"), async (original) => {
+  const actual = await original();
+  return {
+    ...actual,
+    DndContext: vi.fn((props: ComponentProps<typeof actual.DndContext>) => (
+      <actual.DndContext {...props} />
+    )) as unknown as typeof actual.DndContext,
+  };
+});
 vi.mock("../hooks/useHandleNewThread", { spy: true });
+vi.mock("../hooks/showThreadUndoNotice", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
 vi.mock("../hooks/useThreadRouteTarget", { spy: true });
 vi.mock("./sidebar/SidebarThreadRow", { spy: true });
@@ -102,15 +139,8 @@ describe("sidebar header new thread", () => {
     };
     const startThread = vi.fn().mockResolvedValue(null);
     vi.mocked(useProjects).mockReturnValue(projects);
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: currentProjectRef,
-      defaultProjectFallbackReady: true,
-      handleNewThread: startThread,
-      routeDraftId: null,
-      routeThreadRef: null,
-    });
+    vi.mocked(readProjects).mockReturnValue(projects);
+    vi.mocked(useNewThreadHandler).mockReturnValue(startThread);
     vi.mocked(openCommandPalette).mockClear();
     await using screen = await render(
       <SidebarProvider>
@@ -148,15 +178,7 @@ describe("sidebar numbered jumps", () => {
     vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
     const threadRef = scopeThreadRef(thread.environmentId, thread.id);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: null,
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn(),
-      routeDraftId: null,
-      routeThreadRef: threadRef,
-    });
+    vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn());
     const draftId = DraftId.make("unsent-draft");
     initial.setProjectDraftThreadId(scopeProjectRef(web.environmentId, web.id), draftId, {
       threadId: ThreadId.make("unsent-draft-thread"),
@@ -203,6 +225,215 @@ function threadShell(projectId: ProjectId, index: number): EnvironmentThreadShel
   });
 }
 
+async function renderSettlementSidebar(
+  stack: AsyncDisposableStack,
+  options: {
+    configLoaded?: boolean;
+    optimistic?: boolean;
+    routedThread?: Partial<EnvironmentThreadShell>;
+  } = {},
+) {
+  const activeProject = project("active");
+  const threads = [0, 1, 2].map((index) => threadShell(activeProject.id, index));
+  const routed = { ...threads[0]!, ...options.routedThread };
+  threads[0] = routed;
+  const ref = (thread: EnvironmentThreadShell) => scopeThreadRef(thread.environmentId, thread.id);
+  const requests = new Map<ThreadId, PromiseWithResolvers<AtomCommandResult<unknown, unknown>>>();
+  const overlays = new Map<ThreadId, EnvironmentThreadShell>();
+  const lookupShell = (target: ScopedThreadRef) =>
+    overlays.get(target.threadId) ??
+    threads.find((thread) => thread.id === target.threadId) ??
+    null;
+  const applySettlement = (thread: EnvironmentThreadShell) =>
+    overlays.set(thread.id, {
+      ...thread,
+      settledOverride: "settled",
+      settledAt: "2026-01-02T00:00:00.000Z",
+    });
+  const mutate = vi.fn(({ input }: { input: { threadId: ThreadId } }) => {
+    const request = Promise.withResolvers<AtomCommandResult<unknown, unknown>>();
+    requests.set(input.threadId, request);
+    const thread = lookupShell(scopeThreadRef(activeProject.environmentId, input.threadId));
+    if (thread && options.optimistic !== false) applySettlement(thread);
+    return request.promise;
+  });
+  const previousSettings = getClientSettings();
+  stack.defer(() => __setClientSettingsForTests(previousSettings));
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, sidebarWorkingShelfEnabled: false });
+  stack.defer(() => useThreadSelectionStore.getState().clearSelection());
+  vi.mocked(useProjects).mockReturnValue([activeProject]);
+  vi.mocked(useServerConfigs).mockReturnValue(
+    new Map([
+      [
+        activeProject.environmentId,
+        { environment: { capabilities: {} } } as EnvironmentServerConfig,
+      ],
+    ]),
+  );
+  vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: ref(routed) });
+  vi.mocked(readEnvironmentScope).mockReturnValue(true);
+  vi.mocked(useEnvironmentScope).mockReturnValue(true);
+  vi.mocked(readEnvironmentServerConfigLoaded).mockReturnValue(options.configLoaded ?? true);
+  vi.mocked(readThreadShell).mockImplementation(lookupShell);
+  vi.mocked(useOrchestrationCommand).mockReturnValue(mutate as never);
+  vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
+  vi.mocked(showThreadUndoNotice)
+    .mockClear()
+    .mockImplementation(() => {});
+  stack.defer(() => {
+    vi.mocked(readEnvironmentServerConfigLoaded).mockReset();
+    vi.mocked(readThreadShell).mockReset();
+    vi.mocked(showThreadUndoNotice).mockReset();
+  });
+  const addToast = stack.use(vi.spyOn(toastManager, "add").mockReturnValue("test-toast"));
+  const root = createRootRoute({
+    component: () => (
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>
+    ),
+  });
+  const router = createRouter({
+    routeTree: root.addChildren([
+      createRoute({ getParentRoute: () => root, path: "/" }),
+      createRoute({ getParentRoute: () => root, path: "/$environmentId/$threadId" }),
+    ]),
+    history: createMemoryHistory({ initialEntries: ["/local/thread-0"] }),
+    disableGlobalCatchBoundary: true,
+  });
+  const navigate = stack.use(vi.spyOn(router, "navigate"));
+  vi.mocked(DndContext).mockClear();
+  vi.mocked(SortableThreadRow).mockClear();
+  const screen = stack.use(await render(<RouterProvider router={router} />, { router: false }));
+  await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
+
+  return { screen, threads, ref, router, navigate, addToast, requests, overlays, applySettlement };
+}
+
+describe("sidebar settle and advance", () => {
+  it.each(["shortcut", "drag"] as const)(
+    "advances from %s before settlement completes",
+    async (entry) => {
+      await using stack = new AsyncDisposableStack();
+      const sidebar = await renderSettlementSidebar(stack);
+      const threadRef = sidebar.ref(sidebar.threads[0]!);
+      await act(() => {
+        if (entry === "shortcut") {
+          expect(settleAndAdvance(threadRef)).toBe(true);
+        } else {
+          const context = vi.mocked(DndContext).mock.lastCall?.[0];
+          expect(context?.onDragEnd).toBeDefined();
+          context!.onDragEnd!({
+            active: { id: scopedThreadKey(threadRef) },
+            over: { id: sidebarMarkerId("settled-header") },
+          } as DragEndEvent);
+        }
+      });
+      expect(sidebar.requests.has(threadRef.threadId)).toBe(true);
+      expect(sidebar.router.state.location.pathname).toBe("/local/thread-1");
+      expect(showThreadUndoNotice).not.toHaveBeenCalled();
+      await act(() =>
+        sidebar.requests.get(threadRef.threadId)!.resolve(AsyncResult.success(undefined)),
+      );
+      expect(sidebar.navigate).toHaveBeenCalledOnce();
+      expect(showThreadUndoNotice).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("stays on the thread when settle fails local preflight", async () => {
+    await using stack = new AsyncDisposableStack();
+    const sidebar = await renderSettlementSidebar(stack, { configLoaded: false });
+    await act(() => settleAndAdvance(sidebar.ref(sidebar.threads[0]!)));
+    expect(sidebar.requests.size).toBe(0);
+    expect(sidebar.navigate).not.toHaveBeenCalled();
+    expect(sidebar.addToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Failed to settle thread" }),
+    );
+    expect(showThreadUndoNotice).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { hasPendingApprovals: true },
+    { hasPendingUserInput: true },
+  ] satisfies Partial<EnvironmentThreadShell>[])(
+    "waits for the reply when a running or pending-request thread has no optimistic settlement (%j)",
+    async (routedThread) => {
+      await using stack = new AsyncDisposableStack();
+      const sidebar = await renderSettlementSidebar(stack, {
+        optimistic: false,
+        routedThread,
+      });
+      const thread = sidebar.threads[0]!;
+      await act(() => settleAndAdvance(sidebar.ref(thread)));
+      expect(sidebar.requests.has(thread.id)).toBe(true);
+      expect(sidebar.navigate).not.toHaveBeenCalled();
+      await act(() => {
+        sidebar.applySettlement(thread);
+        sidebar.requests.get(thread.id)!.resolve(AsyncResult.success(undefined));
+      });
+      expect(sidebar.router.state.location.pathname).toBe("/local/thread-1");
+      expect(sidebar.navigate).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each(["failure", "rejection"] as const)(
+    "reports a settlement %s without taking the user back",
+    async (outcome) => {
+      await using stack = new AsyncDisposableStack();
+      const sidebar = await renderSettlementSidebar(stack);
+      const thread = sidebar.threads[0]!;
+      await act(() => settleAndAdvance(sidebar.ref(thread)));
+      expect(sidebar.router.state.location.pathname).toBe("/local/thread-1");
+      await act(() =>
+        sidebar.router.navigate({
+          to: "/$environmentId/$threadId",
+          params: { environmentId: "local", threadId: "thread-2" },
+        }),
+      );
+      await act(() => {
+        sidebar.overlays.delete(thread.id);
+        const error = new Error("Settlement failed");
+        const request = sidebar.requests.get(thread.id)!;
+        if (outcome === "failure") request.resolve(AsyncResult.failure(Cause.fail(error)));
+        else request.reject(error);
+      });
+      expect(sidebar.router.state.location.pathname).toBe("/local/thread-2");
+      expect(sidebar.navigate).toHaveBeenCalledTimes(2);
+      expect(readThreadShell(sidebar.ref(thread))?.settledOverride).toBeNull();
+      expect(sidebar.addToast).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "Failed to settle thread" }),
+      );
+      expect(showThreadUndoNotice).not.toHaveBeenCalled();
+    },
+  );
+
+  it("advances once past every batch member even when replies arrive out of order", async () => {
+    await using stack = new AsyncDisposableStack();
+    const sidebar = await renderSettlementSidebar(stack);
+    const [routed, sibling] = sidebar.threads;
+    const routedKey = scopedThreadKey(sidebar.ref(routed!));
+    const siblingKey = scopedThreadKey(sidebar.ref(sibling!));
+    const show = vi.fn().mockResolvedValue("settle");
+    vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
+    stack.defer(() => {
+      vi.mocked(readLocalApi).mockReset();
+    });
+    await act(() => {
+      const { toggleThread } = useThreadSelectionStore.getState();
+      toggleThread(routedKey);
+      toggleThread(siblingKey);
+    });
+    await userEvent.click(sidebar.screen.getByText("Thread 0").first(), { button: "right" });
+    await vi.waitFor(() => expect(sidebar.requests.size).toBe(2));
+    expect(sidebar.router.state.location.pathname).toBe("/local/thread-2");
+    await act(() => sidebar.requests.get(sibling!.id)!.resolve(AsyncResult.success(undefined)));
+    await act(() => sidebar.requests.get(routed!.id)!.resolve(AsyncResult.success(undefined)));
+    expect(sidebar.navigate).toHaveBeenCalledOnce();
+    expect(showThreadUndoNotice).toHaveBeenCalledTimes(2);
+  });
+});
+
 describe("sidebar render isolation", () => {
   // regression: #33100 Cmd+J re-rendered every sidebar row, which took hundreds of ms with many threads
   it("does not re-render thread rows when a quick Mod shortcut opens and focuses the terminal", async () => {
@@ -219,18 +450,7 @@ describe("sidebar render isolation", () => {
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue(threads);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: routeThreadRef });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: {
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-      },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef,
-    });
+    vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
     const terminal = document.createElement("div");
     terminal.dataset.terminalOwner = "drawer";
     const terminalInput = document.createElement("textarea");
@@ -297,18 +517,7 @@ describe("sidebar thread rename", () => {
         kind: "server",
         threadRef: routeThreadRef,
       });
-      vi.mocked(useHandleNewThread).mockReturnValue({
-        activeDraftThread: null,
-        activeThread: null,
-        defaultProjectRef: {
-          environmentId: activeProject.environmentId,
-          projectId: activeProject.id,
-        },
-        defaultProjectFallbackReady: true,
-        handleNewThread: vi.fn().mockResolvedValue(null),
-        routeDraftId: null,
-        routeThreadRef,
-      });
+      vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
       const tree = () => (
         <SidebarProvider>
           <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
@@ -390,18 +599,7 @@ describe("sidebar thread menu", () => {
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
     vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: {
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-      },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef: threadRef,
-    });
+    vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
     await using screen = await render(
       <SidebarProvider>
         <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
@@ -455,18 +653,7 @@ describe("sidebar settled pagination", () => {
       kind: "server",
       threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
     });
-    vi.mocked(useHandleNewThread).mockReturnValue({
-      activeDraftThread: null,
-      activeThread: null,
-      defaultProjectRef: {
-        environmentId: activeProject.environmentId,
-        projectId: activeProject.id,
-      },
-      defaultProjectFallbackReady: true,
-      handleNewThread: vi.fn().mockResolvedValue(null),
-      routeDraftId: null,
-      routeThreadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
-    });
+    vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
     vi.mocked(useServerConfigs).mockReturnValue(
       new Map([
         [
@@ -511,5 +698,70 @@ describe("sidebar settled pagination", () => {
     const loadedRows = screen.container.querySelectorAll("[data-thread-item]").length;
     await act(() => moreButton.click());
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
+  });
+
+  it("dismisses pending and open row previews when the sidebar viewport scrolls", async () => {
+    const activeProject = project("scroll-dismiss");
+    const threads = Array.from({ length: 24 }, (_, index) =>
+      makeThreadFixture({
+        environmentId: activeProject.environmentId,
+        projectId: activeProject.id,
+        id: ThreadId.make(`scroll-thread-${index}`),
+        title: `Scrollable thread ${index}`,
+        branch: `feat/scroll-preview-${index}`,
+      }),
+    );
+    vi.mocked(useProjects).mockReturnValue([activeProject]);
+    vi.mocked(useQuietThreadShells).mockReturnValue(threads);
+    vi.mocked(useThreadRouteTarget).mockReturnValue({
+      kind: "server",
+      threadRef: { environmentId: activeProject.environmentId, threadId: threads[0]!.id },
+    });
+    vi.mocked(useNewThreadHandler).mockReturnValue(vi.fn().mockResolvedValue(null));
+    vi.mocked(useServerConfigs).mockReturnValue(
+      new Map([
+        [
+          activeProject.environmentId,
+          {
+            scratchWorkspaceRoot: null,
+            shellThreadFamilies: false,
+          } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+    await using screen = await render(
+      <SidebarProvider style={{ height: 320, minHeight: 320 }}>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+    const viewport = screen.container.querySelector<HTMLElement>(
+      '[data-slot="scroll-area-viewport"]',
+    )!;
+    viewport.style.height = "260px";
+    viewport.style.maxHeight = "260px";
+    const firstRow = screen.getByText("Scrollable thread 0");
+    using _timers = fakeTimers();
+
+    // Scroll during the pending initial dwell cancels the scheduled open.
+    await userEvent.hover(firstRow);
+    await act(() => {
+      viewport.scrollTop = 40;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: false }));
+    });
+    await act(() => vi.advanceTimersByTime(220));
+    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+
+    // Hover until open, then scroll to dismiss the open preview.
+    await userEvent.unhover(firstRow);
+    await userEvent.hover(firstRow);
+    await act(() => vi.advanceTimersByTime(200));
+    expect(document.querySelector('[role="tooltip"][data-open]')?.textContent).toContain(
+      "Scrollable thread 0",
+    );
+    await act(() => {
+      viewport.scrollTop = 80;
+      viewport.dispatchEvent(new Event("scroll", { bubbles: false }));
+    });
+    expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
   });
 });

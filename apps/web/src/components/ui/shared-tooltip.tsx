@@ -13,6 +13,9 @@ import {
 } from "react";
 import { flushSync } from "react-dom";
 
+import { useStableCallback } from "~/hooks/useStableCallback";
+import { cn } from "~/lib/utils";
+
 import { Tooltip, TooltipPopup, TooltipTrigger, useTooltipScrollTracker } from "./tooltip";
 
 // Base UI's tooltip timing: open after a rest, reopen at once right after another closed.
@@ -26,7 +29,11 @@ interface SharedTooltipContent {
   /** Comparable key that changes whenever `render()` output changes while open. */
   readonly contentKey?: unknown;
   readonly side?: "top" | "bottom" | "left" | "right";
+  readonly align?: "start" | "center" | "end";
+  readonly sideOffset?: number;
   readonly variant?: "default" | "glass" | "code";
+  readonly popupClassName?: string;
+  readonly disabled?: boolean;
 }
 
 interface SharedTooltipState extends SharedTooltipContent {
@@ -39,7 +46,7 @@ interface SharedTooltipApi {
   refresh(anchor: HTMLElement, content: SharedTooltipContent): void;
   hide(anchor: HTMLElement): void;
   /** A press closes it at once, as Base UI's closeOnClick does. */
-  dismiss(anchor: HTMLElement): void;
+  dismiss(anchor?: HTMLElement): void;
   holdOpen(): void;
 }
 
@@ -60,12 +67,24 @@ const SharedTooltipContext = createContext<SharedTooltipApi | null>(null);
  * One tooltip for many triggers: a long message would otherwise mount a Base UI tooltip per
  * link and file chip, and almost none of them are ever hovered.
  */
-export function SharedTooltipProvider({ children }: { children: ReactNode }) {
+export function SharedTooltipProvider({
+  children,
+  openDelayMs = OPEN_DELAY_MS,
+  switchDelayMs = 0,
+  reopenWindowMs = REOPEN_WINDOW_MS,
+  closeGraceMs = CLOSE_GRACE_MS,
+}: {
+  children: ReactNode;
+  openDelayMs?: number;
+  switchDelayMs?: number;
+  reopenWindowMs?: number;
+  closeGraceMs?: number;
+}) {
   const popupId = useId();
   const [state, setState] = useState<SharedTooltipState | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pending = useRef<SharedTooltipState | null>(null);
-  const lastClosedAt = useRef(0);
+  const lastClosedAt = useRef<number | null>(null);
   const current = useRef<SharedTooltipState | null>(null);
 
   const commit = (next: SharedTooltipState | null) => {
@@ -77,60 +96,120 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
     timer.current = null;
     pending.current = null;
   };
-  const [api] = useState<SharedTooltipApi>(() => ({
-    show(anchor, content, immediate) {
+  const openTooltip = (next: SharedTooltipState) => {
+    // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
+    if (!current.current) flushSync(() => commit({ ...next, open: false }));
+    commit(next);
+  };
+  const scheduleCloseGrace = () => {
+    if (!current.current?.open) return;
+    timer.current = setTimeout(() => {
       clearTimer();
-      // A Root that mounts open skips Base UI's mount transition, so the popup would slide in from (0,0).
-      if (!current.current) flushSync(() => commit({ ...content, anchor, open: false }));
-      const open = current.current?.open === true;
-      const reopen = performance.now() - lastClosedAt.current < REOPEN_WINDOW_MS;
-      if (immediate || open || reopen) {
-        commit({ ...content, anchor, open: true });
+      if (current.current?.open) {
+        lastClosedAt.current = performance.now();
+        commit({ ...current.current, open: false });
+      }
+    }, closeGraceMs);
+  };
+  const dismiss = (anchor?: HTMLElement) => {
+    if (anchor === undefined) {
+      clearTimer();
+      lastClosedAt.current = null;
+      if (current.current?.open) commit({ ...current.current, open: false });
+      return;
+    }
+    const matchesCurrent = current.current?.anchor === anchor;
+    const matchesPending = pending.current?.anchor === anchor;
+    if (!matchesCurrent && !matchesPending) return;
+    if (matchesPending) {
+      clearTimer();
+      // If a different anchor is still open, resume close grace so it does not stay stranded.
+      if (!matchesCurrent) scheduleCloseGrace();
+    }
+    if (matchesCurrent) {
+      // Preserve a different pending anchor's switch dwell when the previous anchor unmounts or dismisses.
+      if (pending.current === null) clearTimer();
+      lastClosedAt.current = null;
+      if (current.current?.open) commit({ ...current.current, open: false });
+    }
+  };
+  const hide = useStableCallback<Parameters<SharedTooltipApi["hide"]>, void>((anchor) => {
+    const matchesCurrent = current.current?.anchor === anchor;
+    const matchesPending = pending.current?.anchor === anchor;
+    if (!matchesCurrent && !matchesPending) return;
+    if (matchesPending) {
+      clearTimer();
+      scheduleCloseGrace();
+      return;
+    }
+    if (pending.current !== null) return;
+    clearTimer();
+    scheduleCloseGrace();
+  });
+  const show = useStableCallback<Parameters<SharedTooltipApi["show"]>, void>(
+    (anchor, content, immediate) => {
+      if (content.disabled) {
+        if (pending.current && pending.current.anchor !== anchor) hide(anchor);
+        dismiss(anchor);
         return;
       }
-      pending.current = { ...content, anchor, open: true };
+      clearTimer();
+      const active = current.current;
+      const reopen =
+        lastClosedAt.current !== null && performance.now() - lastClosedAt.current < reopenWindowMs;
+      const delay = immediate
+        ? 0
+        : active?.open || reopen
+          ? active?.anchor === anchor
+            ? 0
+            : switchDelayMs
+          : openDelayMs;
+      const next = { ...content, anchor, open: true };
+      if (delay <= 0) {
+        openTooltip(next);
+        return;
+      }
+      pending.current = next;
       timer.current = setTimeout(() => {
-        const next = pending.current;
-        pending.current = null;
-        if (next) commit(next);
-      }, OPEN_DELAY_MS);
+        const target = pending.current;
+        clearTimer();
+        if (target?.anchor.isConnected) openTooltip(target);
+      }, delay);
     },
+  );
+  const [api] = useState<SharedTooltipApi>(() => ({
+    show,
     refresh(anchor, content) {
+      if (content.disabled) {
+        dismiss(anchor);
+        return;
+      }
       if (pending.current?.anchor === anchor) {
-        pending.current = { ...pending.current, ...content };
+        pending.current = { ...content, anchor, open: true };
       }
       const active = current.current;
-      if (!active || active.anchor !== anchor) return;
+      if (!active?.open || active.anchor !== anchor) return;
       if (
         active.contentKey === content.contentKey &&
         active.side === content.side &&
-        active.variant === content.variant
+        active.align === content.align &&
+        active.sideOffset === content.sideOffset &&
+        active.variant === content.variant &&
+        active.popupClassName === content.popupClassName
       ) {
         return;
       }
-      commit({ ...active, ...content });
+      commit({ ...content, anchor, open: true });
     },
-    hide(anchor) {
-      if (current.current && current.current.anchor !== anchor) {
-        clearTimer();
-        return;
-      }
-      clearTimer();
-      timer.current = setTimeout(() => {
-        if (current.current?.open) lastClosedAt.current = performance.now();
-        if (current.current) commit({ ...current.current, open: false });
-      }, CLOSE_GRACE_MS);
-    },
-    dismiss(anchor) {
-      clearTimer();
-      if (current.current?.anchor !== anchor) return;
-      if (current.current.open) lastClosedAt.current = 0;
-      commit({ ...current.current, open: false });
-    },
+    hide,
+    dismiss,
     holdOpen() {
       clearTimer();
     },
   }));
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels delayed work when the provider unmounts
+  useEffect(() => () => api.holdOpen(), [api]);
 
   const activeAnchor = state?.open ? state.anchor : null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- links the active trigger DOM element to the shared tooltip popup via aria-describedby
@@ -146,25 +225,34 @@ export function SharedTooltipProvider({ children }: { children: ReactNode }) {
       {state ? (
         <Tooltip
           open={state.open}
-          onOpenChange={(open) => {
-            if (!open) api.hide(state.anchor);
+          onOpenChange={(open, details) => {
+            if (open) return;
+            if (details.reason === "escape-key") api.dismiss();
+            else api.hide(state.anchor);
           }}
         >
           <TooltipPopup
             id={popupId}
+            role="tooltip"
             anchor={state.anchor}
             side={state.side ?? "top"}
+            align={state.align ?? "center"}
+            sideOffset={state.sideOffset ?? 4}
             variant={state.variant ?? "default"}
-            className="pointer-events-auto"
+            className={cn("pointer-events-auto", state.popupClassName)}
             onMouseEnter={() => api.holdOpen()}
             onMouseLeave={() => api.hide(state.anchor)}
           >
-            {state.render()}
+            <SharedTooltipBody render={state.render} />
           </TooltipPopup>
         </Tooltip>
       ) : null}
     </SharedTooltipContext>
   );
+}
+
+function SharedTooltipBody({ render }: Pick<SharedTooltipContent, "render">) {
+  return render();
 }
 
 export interface SharedTooltipTriggerProps {
@@ -184,6 +272,14 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
   useEffect(() => {
     if (api && anchorRef.current) api.refresh(anchorRef.current, content);
   }, [api, content]);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the anchor and scroll tracking when the trigger unmounts
+  useEffect(
+    () => () => {
+      if (anchorRef.current) api?.dismiss(anchorRef.current);
+      scrollTracker?.release(anchorRef);
+    },
+    [api, scrollTracker],
+  );
   if (!api) return null;
   return {
     // Touch never opens it, as Base UI's mouseOnly trigger; taps also send compatibility mouse events.
@@ -193,7 +289,7 @@ export function useSharedTooltip(content: SharedTooltipContent): SharedTooltipTr
       anchorRef.current = trigger;
       api.show(trigger, content, false);
       // Scrolling the timeline closes it, as it does a TooltipTrigger's.
-      scrollTracker?.hover(trigger, api, () => api.dismiss(trigger));
+      if (!content.disabled) scrollTracker?.hover(trigger, anchorRef, () => api.dismiss());
     },
     onPointerLeave: (event) => api.hide(event.currentTarget),
     // Keyboard focus shows it at once, as Base UI does.
