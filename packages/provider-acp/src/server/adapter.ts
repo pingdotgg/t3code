@@ -3469,11 +3469,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             segment.sourceMessageId = sourceMessageId;
           }
           segment.text += text;
-          if (!segment.hasNonWhitespace && text.trim().length > 0) {
+          if (
+            (!segment.hasNonWhitespace ||
+              (kind === "assistant" && context.closingAssistant !== segment)) &&
+            text.trim().length > 0
+          ) {
             segment.hasNonWhitespace = true;
-          }
-          if (kind === "assistant" && segment.hasNonWhitespace) {
-            context.closingAssistant = segment;
+            if (kind === "assistant") {
+              context.closingAssistant = segment;
+            }
           }
           yield* publishTextSegment(context, kind);
         });

@@ -1909,6 +1909,12 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
                   content: { type: "text", text: targetText },
                 },
                 { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+                // Trailing whitespace on the same named stream must not restore pre-tool commentary.
+                {
+                  sessionUpdate: "agent_message_chunk",
+                  messageId: "msg-commentary",
+                  content: { type: "text", text: "\n" },
+                },
               ]
             : mode === "cleared-named-reply"
               ? [
@@ -2052,7 +2058,8 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
         (event) =>
           event.type === "turn_item.updated" &&
           event.turnItem.type === "assistant_message" &&
-          event.turnItem.text === targetText,
+          event.turnItem.status === "completed" &&
+          event.turnItem.text.trim() === targetText,
       );
       assert.equal(
         preWakeReply?.type === "turn_item.updated" &&
