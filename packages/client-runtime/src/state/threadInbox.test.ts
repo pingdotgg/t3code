@@ -6,6 +6,7 @@ import {
   isThreadWorking,
   sortInboxThreadsByReturn,
   sortWorkingThreadsBySend,
+  threadRuntimeHidesMarkUnread,
 } from "./threadInbox.ts";
 
 const environmentId = EnvironmentId.make("environment-1");
@@ -259,5 +260,27 @@ describe("sortWorkingThreadsBySend", () => {
     expect(
       sortWorkingThreadsBySend([launched, sentFirst, sentLast]).map((thread) => thread.id),
     ).toEqual(["sent-last", "sent-first", "launched"]);
+  });
+});
+
+describe("threadRuntimeHidesMarkUnread", () => {
+  it("hides mark unread while the thread is working", () => {
+    const hides = (status: "running" | "idle" | "completed" | null) =>
+      threadRuntimeHidesMarkUnread(
+        status === null
+          ? null
+          : {
+              status,
+              activeRunId: null,
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              providerName: null,
+              lastError: null,
+            },
+      );
+    expect(hides("running")).toBe(true);
+    // Awaited background work parks the runtime at idle and shows Waiting over unread.
+    expect(hides("idle")).toBe(true);
+    expect(hides("completed")).toBe(false);
+    expect(hides(null)).toBe(false);
   });
 });

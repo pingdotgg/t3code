@@ -21,6 +21,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
+import { threadRuntimeHidesMarkUnread } from "@t3tools/client-runtime/state/thread-inbox";
 import {
   formatWorkingDurationLabel,
   resolveThreadWorkingStartedAt,
@@ -1074,7 +1075,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         },
         m,
       ),
-      { id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" },
+      ...(threadRuntimeHidesMarkUnread(thread.runtime)
+        ? []
+        : [{ id: "mark-unread", title: gt("Mark unread"), image: "envelope.badge" }]),
       ...(canTurnIntoProject
         ? [
             {

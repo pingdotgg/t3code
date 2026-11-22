@@ -36,6 +36,7 @@ import {
   asLaunchingThread,
   createInboxReturnTracker,
   isThreadWorking,
+  threadRuntimeHidesMarkUnread,
 } from "@t3tools/client-runtime/state/thread-inbox";
 import { sortSettledThreads } from "@t3tools/client-runtime/state/thread-sort";
 import {
@@ -178,7 +179,6 @@ import {
   buildDraftActionMenuItems,
   buildThreadActionMenuItems,
   threadActionRequiresOperate,
-  threadRuntimeHidesMarkUnread,
 } from "./threadActionMenu.logic";
 import {
   applySidebarThreadDrop,

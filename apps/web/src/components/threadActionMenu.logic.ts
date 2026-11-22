@@ -1,9 +1,5 @@
 import type { ContextMenuItem } from "@t3tools/contracts";
 import type { SnoozePreset } from "@t3tools/client-runtime/state/thread-settled";
-import {
-  threadRuntimeIsActive,
-  type ThreadStructureRuntime,
-} from "@t3tools/client-runtime/state/models";
 import { msg } from "gt-react";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -144,14 +140,6 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "copy-thread",
     "copy-thread-id",
   ].includes(action);
-}
-
-// Unread surfaces only as the completion pill, which a Working thread never shows: an active
-// run has no completion yet, and held background work (idle) shows Waiting instead.
-export function threadRuntimeHidesMarkUnread(
-  runtime: ThreadStructureRuntime | null | undefined,
-): boolean {
-  return threadRuntimeIsActive(runtime) || runtime?.status === "idle";
 }
 
 export function buildThreadActionMenuItems(

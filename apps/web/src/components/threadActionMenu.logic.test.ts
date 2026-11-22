@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ProviderInstanceId } from "@t3tools/contracts";
-
-import {
-  buildThreadActionMenuItems,
-  threadRuntimeHidesMarkUnread,
-  type ThreadActionMenuState,
-} from "./threadActionMenu.logic";
+import { buildThreadActionMenuItems, type ThreadActionMenuState } from "./threadActionMenu.logic";
 
 const baseState: ThreadActionMenuState = {
   canOperate: true,
@@ -80,29 +74,6 @@ describe("buildThreadActionMenuItems", () => {
     });
     expect(items.find((item) => item.id === "archive")?.disabled).toBe(true);
     expect(items.find((item) => item.id === "turn-into-project")?.disabled).toBe(true);
-  });
-
-  it("omits mark unread while the thread is working", () => {
-    const offersMarkUnread = (status: "running" | "idle" | "completed" | null) =>
-      buildThreadActionMenuItems({
-        ...baseState,
-        hidesMarkUnread: threadRuntimeHidesMarkUnread(
-          status === null
-            ? null
-            : {
-                status,
-                activeRunId: null,
-                providerInstanceId: ProviderInstanceId.make("codex"),
-                providerName: null,
-                lastError: null,
-              },
-        ),
-      }).some((item) => item.id === "mark-unread");
-    expect(offersMarkUnread("running")).toBe(false);
-    // Awaited background work parks the runtime at idle and shows Waiting over unread.
-    expect(offersMarkUnread("idle")).toBe(false);
-    expect(offersMarkUnread("completed")).toBe(true);
-    expect(offersMarkUnread(null)).toBe(true);
   });
 
   it("disables only rename where no inline title editor exists", () => {
