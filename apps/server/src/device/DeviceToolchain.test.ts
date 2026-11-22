@@ -49,22 +49,26 @@ it.effect("an install held back by npm's release-age policy names the policy", (
     const baseDir = yield* (yield* FileSystem.FileSystem).makeTempDirectoryScoped({
       prefix: "t3-device-install-",
     });
+    const commands: Array<ReadonlyArray<string>> = [];
     const error = yield* ensureDeviceHub(baseDir).pipe(
       Effect.provideService(ProcessRunner.ProcessRunner, {
-        run: () =>
-          Effect.succeed({
-            code: ChildProcessSpawner.ExitCode(1),
-            stdout: "",
-            stderr: `npm error code ETARGET\nnpm error notarget No matching version found for expo-device-hub@${DEVICE_HUB_VERSION} with a date before 20/11/2026, 10:56:49 am.\n`,
-            timedOut: false,
-            stdoutTruncated: false,
-            stderrTruncated: false,
-            stdoutInvalidUtf8: false,
-            stderrInvalidUtf8: false,
-          }),
+        run: ({ args }) =>
+          Effect.sync(() => commands.push(args)).pipe(
+            Effect.as({
+              code: ChildProcessSpawner.ExitCode(1),
+              stdout: "",
+              stderr: `npm error code ETARGET\nnpm error notarget No matching version found for expo-device-hub@${DEVICE_HUB_VERSION} with a date before 20/11/2026, 10:56:49 am.\n`,
+              timedOut: false,
+              stdoutTruncated: false,
+              stderrTruncated: false,
+              stdoutInvalidUtf8: false,
+              stderrInvalidUtf8: false,
+            }),
+          ),
       }),
       Effect.flip,
     );
+    expect(commands[0]).toContain("--min-release-age-exclude=expo-device-hub");
     expect(error.message).toContain("min-release-age");
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

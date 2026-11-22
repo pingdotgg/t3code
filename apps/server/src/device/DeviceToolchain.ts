@@ -45,7 +45,7 @@ export class DeviceToolchainInstallError extends Schema.TaggedError<DeviceToolch
     if (this.reason === "npm_not_found")
       return "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.";
     if (this.reason === "npm_release_age")
-      return `Device support needs a release of ${this.tool} that npm's min-release-age or before setting holds back as too new. Retry once that release is older than the setting allows, or relax the setting.`;
+      return `Device support needs a release of ${this.tool} that npm's min-release-age or before setting holds back as too new. Update npm to 11.17 or later, which lets T3 Code install it, or retry once that release is older than the setting allows.`;
     const suffix = this.exitCode === undefined ? "" : ` (exit code ${this.exitCode})`;
     return `Installing ${this.tool} failed while ${this.step}${suffix}.`;
   }
@@ -137,6 +137,9 @@ const installTool = Effect.fn("DeviceToolchain.installTool")(function* (
       stagingDir,
       "--no-fund",
       "--no-audit",
+      // The pin is T3 Code's own; npm >= 11.17 exempts it from min-release-age and `before`
+      // while its dependencies stay under the user's policy. Older npm ignores the flag.
+      `--min-release-age-exclude=${spec.name}`,
       `${spec.name}@${spec.version}`,
     ];
     const result = yield* runner

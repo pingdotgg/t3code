@@ -605,7 +605,7 @@ export class DeviceOperationError extends Schema.TaggedError<DeviceOperationErro
       package_manager_missing:
         "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.",
       npm_release_age:
-        "npm's min-release-age or before setting holds back the version T3 Code needs as too new. Retry once that release is older than the setting allows, or relax the setting.",
+        "npm's min-release-age or before setting holds back the version T3 Code needs as too new. Update npm to 11.17 or later, which lets T3 Code install it, or retry once that release is older than the setting allows.",
     }[this.reason];
     return `Device ${this.operation} failed: ${explanation}`;
   }
