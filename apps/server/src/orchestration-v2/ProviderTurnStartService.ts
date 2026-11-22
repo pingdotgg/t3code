@@ -16,6 +16,7 @@ import {
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
   isCompactionCommandMessage,
+  isDeliveredProviderTurn,
   parseGoalCommand,
   RunId,
   RunAttemptId,
@@ -173,7 +174,9 @@ const nativeSessionMissesKeptTurns = (
 ): boolean => {
   const nativeId = providerThread.nativeThreadRef?.nativeId;
   if (nativeId === undefined) return false;
-  const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const acceptedAttemptIds = new Set(
+    projection.providerTurns.filter(isDeliveredProviderTurn).map((turn) => turn.runAttemptId),
+  );
   const accepted = projection.attempts.filter((attempt) => acceptedAttemptIds.has(attempt.id));
   const runsById = new Map(projection.runs.map((source) => [source.id, source]));
   const ordinalOf = (attempt: OrchestrationV2RunAttempt) =>
@@ -1087,7 +1090,7 @@ export const layer: Layer.Layer<
           ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
         ]);
         const deliveredAttemptIds = new Set(
-          projection.providerTurns.map((turn) => turn.runAttemptId),
+          projection.providerTurns.filter(isDeliveredProviderTurn).map((turn) => turn.runAttemptId),
         );
         const acceptedAttempts = projection.attempts.filter(
           (source) =>
@@ -1536,7 +1539,9 @@ export const layer: Layer.Layer<
         const rejectedHistory = yield* Effect.gen(function* () {
           if (session.driver !== "codex") return false;
           const acceptedAttemptIds = new Set(
-            projection.providerTurns.map((turn) => turn.runAttemptId),
+            projection.providerTurns
+              .filter(isDeliveredProviderTurn)
+              .map((turn) => turn.runAttemptId),
           );
           const previous = projection.runs.findLast(
             (source) =>
@@ -1605,7 +1610,9 @@ export const layer: Layer.Layer<
         // Dispatch prepares no import handoff for a session import: its history is in the native session.
         const importedNativeSession =
           projection.thread.historyOrigin === "v1_import" &&
-          !projection.providerTurns.some((turn) => turn.providerThreadId === providerThread.id) &&
+          !projection.providerTurns.some(
+            (turn) => turn.providerThreadId === providerThread.id && isDeliveredProviderTurn(turn),
+          ) &&
           !projection.contextHandoffs.some(
             (handoff) =>
               handoff.toProviderThreadId === providerThread.id &&
@@ -2025,6 +2032,9 @@ export const layer: Layer.Layer<
           ],
         });
       });
+      let inlineDeliveredHandoffs: ReadonlyArray<OrchestrationV2ContextHandoff> = [];
+      let promptDroppedOnTerminal = false;
+      const retryHandoffIds = new Set(retryHandoff.handoffs.map((handoff) => handoff.id));
       const startWithHandoffs = Effect.fn("ProviderTurnStartService.startWithHandoffs")(
         function* (turnInput: Parameters<typeof session.startTurn>[0], compact = false) {
           const delivery = yield* deliverContextHandoffs({
@@ -2051,6 +2061,15 @@ export const layer: Layer.Layer<
             sideChatHandoff === undefined || compact || goalCommand
               ? ""
               : sideChatHandoff.summaryText;
+          // Record inline handoffs before startTurn so an immediate dropped terminal can restore them.
+          inlineDeliveredHandoffs = [
+            ...delivery.inlineHandoffs.map((handoff) =>
+              retryHandoffIds.has(handoff.id)
+                ? { ...handoff, status: "superseded" as const }
+                : handoff,
+            ),
+            ...(sideChatContext === "" || sideChatHandoff === undefined ? [] : [sideChatHandoff]),
+          ];
           const context = [delivery.context, sideChatContext, restartNote]
             .filter((part) => part !== "")
             .join("\n\n");
@@ -2101,6 +2120,7 @@ export const layer: Layer.Layer<
                 : Effect.void,
             ),
           );
+          if (promptDroppedOnTerminal) return;
           // After provider acceptance, failed delivery bookkeeping must not stop live ingestion.
           const nativeThreadId = runningProviderThread.nativeThreadRef?.nativeId;
           yield* Effect.forEach(
@@ -2186,6 +2206,10 @@ export const layer: Layer.Layer<
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
         loadRunInterruptReason: runControls.loadRunInterruptReason,
         hasWorkspaceMoved: runControls.hasWorkspaceMoved,
+        loadDroppedInlineHandoffs: () => {
+          promptDroppedOnTerminal = true;
+          return inlineDeliveredHandoffs;
+        },
         loadUnsettledWork: runControls.loadUnsettledWork,
         message: {
           messageId: message.id,

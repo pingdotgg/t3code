@@ -9,6 +9,7 @@ import {
   type NodeId,
   type OrchestrationV2AppThread,
   type OrchestrationV2CheckpointScope,
+  type OrchestrationV2ContextHandoff,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderFailure,
@@ -658,6 +659,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
   readonly loadRunInterruptReason?: () => Effect.Effect<string | undefined, never>;
   readonly hasWorkspaceMoved?: () => Effect.Effect<boolean, never>;
+  /** Restores inline context handoffs if the provider drops this turn's prompt before persisting it. */
+  readonly loadDroppedInlineHandoffs?: () => ReadonlyArray<OrchestrationV2ContextHandoff>;
   /**
    * Stored rows of a thread's unsettled work. Work a dead runtime left is ended from these, since
    * Stop may have settled it after the snapshots this run holds.
@@ -736,6 +739,7 @@ export const layer: Layer.Layer<
         readonly abandonedProviderTurn?: OrchestrationV2ProviderTurn;
         // Stored root tool calls still open when the provider runtime was lost; nothing else ends them.
         readonly lostToolCalls?: ReadonlyArray<OrchestrationV2TurnItem>;
+        readonly restoredHandoffs?: ReadonlyArray<OrchestrationV2ContextHandoff>;
         readonly terminal: ProviderTerminalEvent;
         readonly completedAt?: DateTime.Utc;
         readonly failureItemPersisted: boolean;
@@ -1005,6 +1009,21 @@ export const layer: Layer.Layer<
               occurredAt: completedAt,
               payload: finalizedProviderThread,
             },
+            ...(input.terminal.promptDropped === true &&
+            input.restoredHandoffs !== undefined &&
+            input.restoredHandoffs.length > 0
+              ? yield* Effect.forEach(input.restoredHandoffs, (handoff) =>
+                  Effect.map(allocateEventId(), (id) => ({
+                    id,
+                    type: "context-handoff.updated" as const,
+                    threadId: input.run.threadId,
+                    runId: input.run.id,
+                    providerInstanceId: input.run.providerInstanceId,
+                    occurredAt: completedAt,
+                    payload: { ...handoff, updatedAt: completedAt },
+                  })),
+                )
+              : []),
           ],
         } satisfies Parameters<typeof eventSink.writeWithEffects>[0];
         if (input.writeIfRunCurrent !== undefined) {
@@ -1305,6 +1324,10 @@ export const layer: Layer.Layer<
               openRunOwnedSubagents: openSubagents,
               openRunOwnedSubagentsTerminal: terminal,
               ...(abandonedProviderTurn === undefined ? {} : { abandonedProviderTurn }),
+              ...(settledTerminal.promptDropped === true &&
+              input.loadDroppedInlineHandoffs !== undefined
+                ? { restoredHandoffs: input.loadDroppedInlineHandoffs() }
+                : {}),
               terminal: settledTerminal,
               failureItemPersisted: settledTerminal.status === "failed",
               refreshAfterTurn,
