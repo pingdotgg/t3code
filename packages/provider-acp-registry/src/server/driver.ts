@@ -383,7 +383,15 @@ function modelsFromDiscovery(
   );
   const sharedIds = new Set(shared.map((descriptor) => descriptor.id));
   const capabilitiesFor = ({ id: slug, reasoningEffort }: AcpRegistryProbeModel) => {
-    if (slug === discovery?.currentModelId) return capabilities;
+    if (slug === discovery?.currentModelId) {
+      if (reasoningEffort !== null) return capabilities;
+      const filtered = (discovery?.configOptions ?? []).filter(
+        (descriptor) => descriptor.type !== "select" || descriptor.role !== "reasoning",
+      );
+      return filtered.length === 0
+        ? EMPTY_CAPABILITIES
+        : createModelCapabilities({ optionDescriptors: filtered });
+    }
     // The levels a model advertises replace the ones an earlier session reported.
     const own = (
       previousModels.find((model) => model.slug === slug)?.capabilities?.optionDescriptors ?? []
@@ -999,12 +1007,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ),
       );
     const lastObservedLiveRevision = yield* Ref.make(0);
+    const liveSnapshotSemaphore = yield* Semaphore.make(1);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
       options?: {
         readonly recordLiveRevision?: boolean;
         readonly fallbackToAcceptedModels?: boolean;
         readonly preserveSingleModelCatalog?: boolean | undefined;
+        readonly preserveStatus?: boolean;
       },
     ) {
       if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
@@ -1046,7 +1056,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     onSome: (configuration) =>
                       applyLiveConfiguration(withBaseModels, configuration, {
                         preserveSingleModelCatalog: options?.preserveSingleModelCatalog,
-                      }),
+                      }).pipe(
+                        Effect.map((applied) =>
+                          options?.preserveStatus === true
+                            ? {
+                                ...applied,
+                                status: withBaseModels.status,
+                                ...(withBaseModels.message === undefined
+                                  ? {}
+                                  : { message: withBaseModels.message }),
+                              }
+                            : applied,
+                        ),
+                      ),
                   }),
                 ),
                 Effect.map((withConfiguration) =>
@@ -1070,10 +1092,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ),
       ),
       Effect.flatMap((provider) =>
-        withLiveRuntimeState(provider, {
-          recordLiveRevision: true,
-          fallbackToAcceptedModels: true,
-        }),
+        liveSnapshotSemaphore.withPermit(
+          withLiveRuntimeState(provider, {
+            recordLiveRevision: true,
+            fallbackToAcceptedModels: true,
+          }),
+        ),
       ),
     );
     const enrichProvider = checkAcpRegistryProviderStatusDetailed(
@@ -1093,7 +1117,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       generation: 0,
       entry: null,
     });
-    const liveSnapshotSemaphore = yield* Semaphore.make(1);
     const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
       generation: current.generation + 1,
       entry: null,
@@ -1118,6 +1141,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           generation: cacheState.generation,
           fresh: false,
           probeStartLiveRevision: 0,
+          probeStartCatalogRevision: 0,
           probedModelCount: 0,
           probedModelsFromModelSelect: false,
           probedCurrentModelId: null,
@@ -1125,9 +1149,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
         };
       }
-      const probeStartLiveRevision = Option.isSome(runtimeCoordinator)
-        ? (yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)).revision
-        : 0;
+      const probeStartLive = Option.isSome(runtimeCoordinator)
+        ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
+        : { revision: 0, catalogRevision: 0 };
       const enriched = yield* enrichProvider;
       if (effectiveConfig.source === "local" && enriched.provider.status === "ready") {
         yield* Ref.set(reportedLocalVersion, enriched.provider.version);
@@ -1136,7 +1160,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         provider: enriched.provider,
         generation: cacheState.generation,
         fresh: true,
-        probeStartLiveRevision,
+        probeStartLiveRevision: probeStartLive.revision,
+        probeStartCatalogRevision: probeStartLive.catalogRevision,
         probedModelCount: enriched.probedModelCount,
         probedModelsFromModelSelect: enriched.probedModelsFromModelSelect,
         probedCurrentModelId: enriched.probedCurrentModelId,
@@ -1161,159 +1186,165 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         publishSnapshot,
       }) {
         if (!snapshot.installed) return Effect.void;
+        const probeAndCommit = enrichProviderCached(snapshot).pipe(
+          Effect.flatMap(
+            ({
+              provider,
+              generation,
+              fresh,
+              probeStartLiveRevision,
+              probeStartCatalogRevision,
+              probedModelCount,
+              probedModelsFromModelSelect,
+              probedCurrentModelId,
+              probedModelOptionIds,
+              reasoningDisabledModelSlugs,
+            }) =>
+              liveSnapshotSemaphore.withPermit(
+                Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    const current = yield* Ref.get(enrichmentCache);
+                    if (current.generation !== generation) return;
+                    let resolved = provider;
+                    if (fresh && provider.status === "ready") {
+                      const liveSnapshot = Option.isSome(runtimeCoordinator)
+                        ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(
+                            instanceId,
+                          )
+                        : {
+                            configuration: Option.none(),
+                            revision: 0,
+                            catalogRevision: 0,
+                            clearedThroughRevision: 0,
+                          };
+                      const accepted = yield* Ref.get(acceptedCatalog);
+                      const liveCatalogUsed = Option.match(liveSnapshot.configuration, {
+                        onNone: () => false,
+                        onSome: (configuration) =>
+                          liveConfigurationReplacesAcceptedCatalog(configuration, accepted),
+                      });
+                      const incumbent =
+                        liveCatalogUsed && Option.isSome(liveSnapshot.configuration)
+                          ? {
+                              modelCount: liveSnapshot.configuration.value.models.length,
+                              modelsFromModelSelect:
+                                liveSnapshot.configuration.value.modelsFromModelSelect === true,
+                            }
+                          : {
+                              modelCount: accepted.builtInModelCount,
+                              modelsFromModelSelect: accepted.modelsFromModelSelect,
+                            };
+                      const probeSupersedesLiveCatalog = acpRegistryProbeSupersedesLiveCatalog({
+                        probedModelCount,
+                        probedModelsFromModelSelect,
+                        liveModelCount: incumbent.modelCount,
+                        liveModelsFromModelSelect: incumbent.modelsFromModelSelect,
+                      });
+                      // A fresh non-provisional probe supersedes any live session catalog observed before it started.
+                      const cleared = probeSupersedesLiveCatalog
+                        ? Option.isSome(runtimeCoordinator)
+                          ? yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
+                              instanceId,
+                              probeStartLiveRevision,
+                              { catalogRevision: probeStartCatalogRevision },
+                            )
+                          : true
+                        : false;
+                      if (
+                        !probeSupersedesLiveCatalog &&
+                        !liveCatalogUsed &&
+                        accepted.models.length > 0
+                      ) {
+                        resolved = { ...provider, models: accepted.models };
+                      } else {
+                        const models = yield* Ref.modify(learnedModels, (learned) => {
+                          const merged = mergeLearnedModelOptions(provider.models, learned, {
+                            currentModelId: probedCurrentModelId,
+                            reasoningDisabledModelSlugs,
+                          });
+                          const nextLearned = cleared
+                            ? updateLearnedModelsFromProbe(learned, provider.models, {
+                                currentModelId: probedCurrentModelId,
+                                modelOptionIds: probedModelOptionIds,
+                                reasoningDisabledModelSlugs,
+                              })
+                            : learned;
+                          return [merged, nextLearned] as const;
+                        });
+                        resolved = models === provider.models ? provider : { ...provider, models };
+                      }
+                      const published = yield* withLiveRuntimeState(resolved, {
+                        preserveSingleModelCatalog:
+                          probeSupersedesLiveCatalog &&
+                          isExplicitSingletonCatalog({
+                            builtInModelCount: probedModelCount,
+                            modelsFromModelSelect: probedModelsFromModelSelect,
+                          })
+                            ? true
+                            : undefined,
+                      });
+                      if (
+                        cleared ||
+                        (!probeSupersedesLiveCatalog &&
+                          liveSnapshot.catalogRevision === probeStartCatalogRevision)
+                      ) {
+                        const completedAt = yield* Clock.currentTimeMillis;
+                        yield* Ref.set(enrichmentCache, {
+                          ...current,
+                          entry: {
+                            // Cache the catalog that won reconciliation (not a rejected provisional probe)
+                            // while keeping the retry TTL computed from the fresh probe result.
+                            provider: !probeSupersedesLiveCatalog
+                              ? { ...resolved, models: published.models }
+                              : resolved,
+                            expiresAt: completedAt + acpRegistryProbeTtlMs(provider),
+                          },
+                        });
+                      }
+                      if (cleared) {
+                        yield* Ref.set(acceptedCatalog, {
+                          models: resolved.models,
+                          builtInModelCount: probedModelCount,
+                          modelsFromModelSelect: probedModelsFromModelSelect,
+                        });
+                      }
+                      yield* publishSnapshot(published);
+                      return;
+                    }
+                    if (fresh && resolved.auth.status === "unauthenticated") {
+                      yield* Ref.set(enrichmentCache, { ...current, entry: null });
+                      yield* clearLearnedModels;
+                      yield* clearAcceptedCatalog;
+                      if (Option.isSome(runtimeCoordinator)) {
+                        yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
+                          instanceId,
+                          probeStartLiveRevision,
+                        );
+                      }
+                    }
+                    const preserveTransientFailure =
+                      fresh &&
+                      resolved.status !== "ready" &&
+                      resolved.auth.status !== "unauthenticated";
+                    yield* withLiveRuntimeState(resolved, {
+                      fallbackToAcceptedModels: preserveTransientFailure,
+                      preserveStatus: preserveTransientFailure,
+                    }).pipe(Effect.flatMap(publishSnapshot));
+                  }),
+                ),
+              ),
+          ),
+        );
         const publishEnrichment = (
           Option.isSome(runtimeCoordinator)
             ? runtimeCoordinator.value.runBackgroundProbe(
                 effectiveConfig.source === "local"
                   ? `local:${instanceId}`
                   : effectiveConfig.agentId,
-                enrichProviderCached(snapshot),
+                probeAndCommit,
               )
-            : enrichProviderCached(snapshot).pipe(Effect.asSome)
-        ).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.void,
-              onSome: ({
-                provider,
-                generation,
-                fresh,
-                probeStartLiveRevision,
-                probedModelCount,
-                probedModelsFromModelSelect,
-                probedCurrentModelId,
-                probedModelOptionIds,
-                reasoningDisabledModelSlugs,
-              }) =>
-                liveSnapshotSemaphore.withPermit(
-                  Effect.uninterruptible(
-                    Effect.gen(function* () {
-                      const current = yield* Ref.get(enrichmentCache);
-                      if (current.generation !== generation) return;
-                      let resolved = provider;
-                      if (fresh && provider.status === "ready") {
-                        const liveSnapshot = Option.isSome(runtimeCoordinator)
-                          ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(
-                              instanceId,
-                            )
-                          : {
-                              configuration: Option.none(),
-                              revision: 0,
-                              clearedThroughRevision: 0,
-                            };
-                        const accepted = yield* Ref.get(acceptedCatalog);
-                        const liveCatalogUsed = Option.match(liveSnapshot.configuration, {
-                          onNone: () => false,
-                          onSome: (configuration) =>
-                            liveConfigurationReplacesAcceptedCatalog(configuration, accepted),
-                        });
-                        const incumbent =
-                          liveCatalogUsed && Option.isSome(liveSnapshot.configuration)
-                            ? {
-                                modelCount: liveSnapshot.configuration.value.models.length,
-                                modelsFromModelSelect:
-                                  liveSnapshot.configuration.value.modelsFromModelSelect === true,
-                              }
-                            : {
-                                modelCount: accepted.builtInModelCount,
-                                modelsFromModelSelect: accepted.modelsFromModelSelect,
-                              };
-                        const probeSupersedesLiveCatalog = acpRegistryProbeSupersedesLiveCatalog({
-                          probedModelCount,
-                          probedModelsFromModelSelect,
-                          liveModelCount: incumbent.modelCount,
-                          liveModelsFromModelSelect: incumbent.modelsFromModelSelect,
-                        });
-                        // A fresh non-provisional probe supersedes any live session catalog observed before it started.
-                        const cleared = probeSupersedesLiveCatalog
-                          ? Option.isSome(runtimeCoordinator)
-                            ? yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
-                                instanceId,
-                                probeStartLiveRevision,
-                              )
-                            : true
-                          : false;
-                        if (
-                          !probeSupersedesLiveCatalog &&
-                          !liveCatalogUsed &&
-                          accepted.models.length > 0
-                        ) {
-                          resolved = { ...provider, models: accepted.models };
-                        } else {
-                          const models = yield* Ref.modify(learnedModels, (learned) => {
-                            const merged = mergeLearnedModelOptions(provider.models, learned, {
-                              currentModelId: probedCurrentModelId,
-                              reasoningDisabledModelSlugs,
-                            });
-                            const nextLearned = cleared
-                              ? updateLearnedModelsFromProbe(learned, provider.models, {
-                                  currentModelId: probedCurrentModelId,
-                                  modelOptionIds: probedModelOptionIds,
-                                  reasoningDisabledModelSlugs,
-                                })
-                              : learned;
-                            return [merged, nextLearned] as const;
-                          });
-                          resolved =
-                            models === provider.models ? provider : { ...provider, models };
-                        }
-                        const published = yield* withLiveRuntimeState(resolved, {
-                          preserveSingleModelCatalog:
-                            probeSupersedesLiveCatalog &&
-                            isExplicitSingletonCatalog({
-                              builtInModelCount: probedModelCount,
-                              modelsFromModelSelect: probedModelsFromModelSelect,
-                            })
-                              ? true
-                              : undefined,
-                        });
-                        if (
-                          cleared ||
-                          (!probeSupersedesLiveCatalog &&
-                            liveSnapshot.revision === probeStartLiveRevision)
-                        ) {
-                          const completedAt = yield* Clock.currentTimeMillis;
-                          yield* Ref.set(enrichmentCache, {
-                            ...current,
-                            entry: {
-                              provider: resolved,
-                              expiresAt: completedAt + acpRegistryProbeTtlMs(provider),
-                            },
-                          });
-                        }
-                        if (cleared) {
-                          yield* Ref.set(acceptedCatalog, {
-                            models: resolved.models,
-                            builtInModelCount: probedModelCount,
-                            modelsFromModelSelect: probedModelsFromModelSelect,
-                          });
-                        }
-                        yield* publishSnapshot(published);
-                        return;
-                      }
-                      if (fresh && resolved.auth.status === "unauthenticated") {
-                        yield* Ref.set(enrichmentCache, { ...current, entry: null });
-                        yield* clearLearnedModels;
-                        yield* clearAcceptedCatalog;
-                        if (Option.isSome(runtimeCoordinator)) {
-                          yield* runtimeCoordinator.value.clearLiveConfigurationIfRevision(
-                            instanceId,
-                            probeStartLiveRevision,
-                          );
-                        }
-                      }
-                      yield* withLiveRuntimeState(resolved, {
-                        fallbackToAcceptedModels:
-                          fresh &&
-                          resolved.status !== "ready" &&
-                          resolved.auth.status !== "unauthenticated",
-                      }).pipe(Effect.flatMap(publishSnapshot));
-                    }),
-                  ),
-                ),
-            }),
-          ),
-        );
+            : probeAndCommit
+        ).pipe(Effect.asVoid);
         if (Option.isNone(runtimeCoordinator)) return publishEnrichment;
 
         const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(

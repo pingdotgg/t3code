@@ -417,6 +417,20 @@ describe("acpRegistrySnapshotReadiness", () => {
       ],
       [],
     ]);
+
+    // An explicit supportsReasoningEffort: false on the current model strips the session effort selector too.
+    const currentDisabled = applyAcpRegistryLiveConfiguration(
+      provider,
+      normalizeAcpRegistryLiveConfiguration([effort], undefined, {
+        currentModelId: "glm",
+        availableModels: [
+          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
+          { modelId: "opus", name: "Opus" },
+        ],
+      }),
+      [],
+    ).models.map((model) => model.capabilities?.optionDescriptors ?? []);
+    expect(currentDisabled).toEqual([[], []]);
   });
 
   it("keeps each Mistral Vibe model's own thinking levels", () => {
@@ -1753,14 +1767,27 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Option.getOrThrow(yield* Fiber.join(initial)).models.map((model) => model.slug),
         ).toEqual(["new-model", "old-model", "other-model"]);
 
-        // Once the live entry has been cleared, a later provisional post-TTL probe—even after an
-        // intervening provisional live update—must not regress the settled accepted catalog.
+        // When a settled live catalog beats a provisional probe, the enrichment cache must store
+        // the winning live catalog (not the rejected provisional probe) so a subsequent options-only
+        // update and cached refresh within the 30s retry TTL do not regress to the placeholder.
+        const liveCatalogApplied = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models.map((m) => m.slug).join() === "live-a,live-b",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
         yield* coordinator.publishLiveConfiguration(identity.instanceId, {
-          models: [{ id: "live-placeholder", name: "Live Placeholder", description: null }],
-          currentModelId: "live-placeholder",
+          models: [
+            { id: "live-a", name: "Live A", description: null },
+            { id: "live-b", name: "Live B", description: null },
+          ],
+          currentModelId: "live-a",
           configOptions: [],
-          modelsFromModelSelect: false,
+          modelsFromModelSelect: true,
         });
+        yield* Fiber.join(liveCatalogApplied);
+
         yield* fileSystem.writeFileString(
           modelsPath,
           JSON.stringify({ provisional: "placeholder" }),
@@ -1772,7 +1799,23 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         expect(
           Option.getOrThrow(yield* Fiber.join(afterProvisional)).models.map((model) => model.slug),
-        ).toEqual(["new-model", "old-model", "other-model"]);
+        ).toEqual(["live-a", "live-b"]);
+
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "live-a",
+          configOptions: [],
+          modelsFromModelSelect: false,
+        });
+        const cachedWithinRetryTtl = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        expect(
+          Option.getOrThrow(yield* Fiber.join(cachedWithinRetryTtl)).models.map(
+            (model) => model.slug,
+          ),
+        ).toEqual(["live-a", "live-b"]);
 
         // A provisional probe must still use the short retry TTL even when it retains a multi-model catalog.
         yield* fileSystem.writeFileString(
@@ -1790,8 +1833,39 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           ),
         ).toEqual(["new-model", "old-model", "other-model", "settled-model"]);
 
-        // A transient discovery failure after TTL expiry must surface warning status without
-        // dropping the accepted catalog to synthetic default, and must stay uncached for retry.
+        // A transient discovery failure after TTL expiry must preserve its warning/message even
+        // when an options-only live configuration exists, while keeping accepted models and live options.
+        const optionsBeforeFailure = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((model) => model.slug === "old-model")
+                ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort")
+                ?.currentValue === "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              currentValue: "low",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(optionsBeforeFailure);
+
         yield* fileSystem.writeFileString(
           modelsPath,
           JSON.stringify({ fail: "Temporary discovery outage" }),
@@ -1805,12 +1879,19 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         const warned = Option.getOrThrow(yield* Fiber.join(failedProbe));
         expect(warned.status).toBe("warning");
+        expect(warned.message).toBeTruthy();
         expect(warned.models.map((model) => model.slug)).toEqual([
           "new-model",
           "old-model",
           "other-model",
           "settled-model",
         ]);
+        expect(
+          warned.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort")
+            ?.currentValue,
+        ).toBe("low");
 
         yield* fileSystem.writeFileString(
           modelsPath,
@@ -1941,8 +2022,27 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
       const secondProbeEntered = yield* Deferred.make<void>();
       const releaseSecondProbe = yield* Deferred.make<void>();
-      const secondProbeClosed = yield* Deferred.make<void>();
-      let resolves = 0;
+      const secondProbeSettled = yield* Deferred.make<void>();
+      let gateNextResolve = false;
+      let secondProbeReleased = false;
+
+      const observedCoordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"] =
+        {
+          ...coordinator,
+          runBackgroundProbe: (agentId, effect) =>
+            Effect.suspend(() => {
+              const armedBefore = gateNextResolve;
+              return coordinator
+                .runBackgroundProbe(agentId, effect)
+                .pipe(
+                  Effect.tap(() =>
+                    armedBefore && secondProbeReleased
+                      ? Deferred.succeed(secondProbeSettled, undefined).pipe(Effect.asVoid)
+                      : Effect.void,
+                  ),
+                );
+            }),
+        };
 
       const instance = yield* AcpRegistryDriver.create({
         instanceId: identity.instanceId,
@@ -1951,6 +2051,10 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         environment: [],
         config: decodeSettings({ agentId: "test-agent" }),
       }).pipe(
+        Effect.provideService(
+          AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+          observedCoordinator,
+        ),
         Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
           ...catalogWithInspection({
             status: "ready",
@@ -1960,13 +2064,11 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           }),
           resolve: () =>
             Effect.gen(function* () {
-              resolves += 1;
-              if (resolves === 2) {
-                yield* Effect.addFinalizer(() =>
-                  Deferred.succeed(secondProbeClosed, undefined).pipe(Effect.asVoid),
-                );
+              if (gateNextResolve) {
+                gateNextResolve = false;
                 yield* Deferred.succeed(secondProbeEntered, undefined);
                 yield* Deferred.await(releaseSecondProbe);
+                secondProbeReleased = true;
               }
               return {
                 distribution: "npx" as const,
@@ -1989,6 +2091,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         JSON.stringify(["old-model", "other-model", "stale-probe-model"]),
       );
       yield* TestClock.adjust("16 minutes");
+      gateNextResolve = true;
       yield* instance.snapshot.refresh;
       yield* Deferred.await(secondProbeEntered);
 
@@ -2018,9 +2121,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       yield* Fiber.join(liveApplied);
 
       yield* Deferred.succeed(releaseSecondProbe, undefined);
-      yield* Deferred.await(secondProbeClosed);
-      // Follow-up refresh waits for the semaphore/probe settlement and must preserve the live catalog.
-      yield* instance.snapshot.refresh;
+      // Wait for the competing probe's commit-or-discard step to settle before asserting or refreshing.
+      yield* Deferred.await(secondProbeSettled);
       expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
         "entitled-model",
       ]);
@@ -2030,6 +2132,10 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           (config) => config.currentModelId,
         ),
       ).toEqual(Option.some("entitled-model"));
+      yield* instance.snapshot.refresh;
+      expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
+        "entitled-model",
+      ]);
 
       // A subsequent provisional single-model live update must not replace the explicit singleton
       // catalog, overwrite its model-specific options, or downgrade its provenance.
@@ -2097,6 +2203,156 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         ),
       ).toEqual(["entitled-model"]);
     }),
+  );
+
+  it.effect(
+    "commits a fresh post-TTL catalog when only an options-only live update arrives in flight",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "acp-driver-inflight-options-",
+        });
+        const agentPath = path.join(directory, "agent.mjs");
+        const modelsPath = path.join(directory, "models.json");
+        yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["old-model", "other-model"]));
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const secondProbeEntered = yield* Deferred.make<void>();
+        const releaseSecondProbe = yield* Deferred.make<void>();
+        let gateNextResolve = false;
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
+            ...catalogWithInspection({
+              status: "ready",
+              agentId: "test-agent",
+              version: "1.0.0",
+              distribution: "npx",
+            }),
+            resolve: () =>
+              Effect.gen(function* () {
+                if (gateNextResolve) {
+                  gateNextResolve = false;
+                  yield* Deferred.succeed(secondProbeEntered, undefined);
+                  yield* Deferred.await(releaseSecondProbe);
+                }
+                return {
+                  distribution: "npx" as const,
+                  spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+                };
+              }),
+          }),
+        );
+
+        const waitForEnriched = () =>
+          instance.snapshot.streamChanges.pipe(
+            Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+            Stream.runHead,
+          );
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["old-model", "other-model", "new-model"]),
+        );
+        yield* TestClock.adjust("16 minutes");
+        gateNextResolve = true;
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(secondProbeEntered);
+
+        const optionsApplied = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((model) => model.slug === "old-model")
+                ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort")
+                ?.currentValue === "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              currentValue: "low",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(optionsApplied);
+
+        const committed = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* Deferred.succeed(releaseSecondProbe, undefined);
+        const updated = Option.getOrThrow(yield* Fiber.join(committed));
+        expect(updated.models.map((model) => model.slug)).toEqual([
+          "old-model",
+          "other-model",
+          "new-model",
+        ]);
+        expect(
+          updated.models
+            .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort")
+            ?.currentValue,
+        ).toBe("low");
+
+        // Verify the fresh catalog was saved to acceptedCatalog (survives skipped readiness) and cache.
+        const startupEntered = yield* Deferred.make<void>();
+        const releaseStartup = yield* Deferred.make<void>();
+        const startup = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(startupEntered, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseStartup)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(startupEntered);
+
+        yield* instance.snapshot.refresh;
+        expect((yield* instance.snapshot.getSnapshot).models.map((model) => model.slug)).toEqual([
+          "old-model",
+          "other-model",
+          "new-model",
+        ]);
+        yield* Deferred.succeed(releaseStartup, undefined);
+        yield* Fiber.join(startup);
+
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify(["unexpected-reprobe", "other-model"]),
+        );
+        const cached = yield* waitForEnriched().pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* instance.snapshot.refresh;
+        expect(
+          Option.getOrThrow(yield* Fiber.join(cached)).models.map((model) => model.slug),
+        ).toEqual(["old-model", "other-model", "new-model"]);
+      }),
   );
 
   it.effect(

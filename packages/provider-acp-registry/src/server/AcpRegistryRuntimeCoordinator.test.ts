@@ -315,6 +315,29 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const otherInstanceId = ProviderInstanceId.make("acpRegistry_kimi");
         yield* coordinator.publishLiveConfiguration(otherInstanceId, configFor("kimi-v1"));
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual(afterClear);
+
+        // Options-only updates advance revision without advancing catalogRevision, so a
+        // catalog-scoped clear still succeeds while preserving the newer options-only entry.
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v3"));
+        const catalogSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-v3",
+          configOptions: [],
+          modelsFromModelSelect: false,
+        });
+        const optionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(optionsSnap.revision).toBe(catalogSnap.revision + 1);
+        expect(optionsSnap.catalogRevision).toBe(catalogSnap.catalogRevision);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, catalogSnap.revision, {
+            catalogRevision: catalogSnap.catalogRevision,
+          }),
+        ).toBe(true);
+        const afterOptionsPreserved =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(Option.isSome(afterOptionsPreserved.configuration)).toBe(true);
+        expect(afterOptionsPreserved.clearedThroughRevision).toBe(catalogSnap.revision);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

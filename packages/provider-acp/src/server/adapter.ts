@@ -2293,27 +2293,41 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         ): string => {
           const modelOption = findModelConfigOption(configOptions);
           if (modelOption?.type === "select") {
-            return `select:${flattenSelectChoices(modelOption.options)
-              .map((choice) => choice.value)
-              .join("\0")}`;
+            return JSON.stringify([
+              "select",
+              flattenSelectChoices(modelOption.options).map((choice) => [
+                choice.value,
+                choice.name,
+                choice.description ?? null,
+              ]),
+            ]);
           }
-          return `models:${(modelState?.availableModels ?? []).map((model) => model.modelId).join("\0")}`;
-        };
-        const publishSessionConfiguration = Effect.fnUntraced(function* (
-          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
-          modeState: AcpSessionModeState | undefined,
-          modelState: EffectAcpSchema.SessionModelState | null | undefined,
-        ) {
-          if (flavor.onSessionConfigurationUpdate === undefined) return;
-          const catalogKey = sessionCatalogKey(configOptions, modelState);
-          const includeCatalog = yield* Ref.modify(lastPublishedCatalogKey, (previous) => [
-            previous !== catalogKey,
-            catalogKey,
+          return JSON.stringify([
+            "models",
+            (modelState?.availableModels ?? []).map((model) => [
+              model.modelId,
+              model.name,
+              model.description ?? null,
+            ]),
           ]);
-          yield* flavor.onSessionConfigurationUpdate(configOptions, modeState, modelState, {
-            includeCatalog,
-          });
-        });
+        };
+        const publishSessionConfiguration = Effect.fn("AcpAdapterV2.publishSessionConfiguration")(
+          function* (
+            configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+            modeState: AcpSessionModeState | undefined,
+            modelState: EffectAcpSchema.SessionModelState | null | undefined,
+          ) {
+            if (flavor.onSessionConfigurationUpdate === undefined) return;
+            const catalogKey = sessionCatalogKey(configOptions, modelState);
+            const includeCatalog = yield* Ref.modify(lastPublishedCatalogKey, (previous) => [
+              previous !== catalogKey,
+              catalogKey,
+            ]);
+            yield* flavor.onSessionConfigurationUpdate(configOptions, modeState, modelState, {
+              includeCatalog,
+            });
+          },
+        );
         const setActiveSessionSetup = Effect.fnUntraced(function* (
           setup: AcpSessionRuntime.AcpSessionRuntimeStartResult,
         ) {

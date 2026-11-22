@@ -31,12 +31,14 @@ interface LiveConfigurationUpdate {
 export interface AcpRegistryLiveConfigurationSnapshot {
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
   readonly revision: number;
+  readonly catalogRevision: number;
   readonly clearedThroughRevision: number;
 }
 
 const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
   configuration: Option.none(),
   revision: 0,
+  catalogRevision: 0,
   clearedThroughRevision: 0,
 };
 
@@ -83,6 +85,7 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly clearLiveConfigurationIfRevision: (
       instanceId: ProviderInstanceId,
       revision: number,
+      options?: { readonly catalogRevision?: number },
     ) => Effect.Effect<boolean>;
     readonly publishLiveConfiguration: (
       instanceId: ProviderInstanceId,
@@ -244,6 +247,7 @@ const make = Effect.gen(function* () {
         next.set(instanceId, {
           configuration: Option.none(),
           revision: current.revision,
+          catalogRevision: current.catalogRevision,
           clearedThroughRevision: nextCleared,
         });
         return next;
@@ -251,10 +255,28 @@ const make = Effect.gen(function* () {
 
   const clearLiveConfigurationIfRevision: AcpRegistryRuntimeCoordinator["Service"]["clearLiveConfigurationIfRevision"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.clearLiveConfigurationIfRevision")(
-      function* (instanceId, revision) {
+      function* (instanceId, revision, options) {
         return yield* Ref.modify(liveConfigurations, (state) => {
           const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
           if (Option.isSome(current.configuration) && current.revision !== revision) {
+            // If only an options-only live update arrived after revision, keep those newer
+            // options while advancing clearedThroughRevision so the probe catalog can commit.
+            if (
+              options?.catalogRevision !== undefined &&
+              current.catalogRevision === options.catalogRevision &&
+              current.configuration.value.models.length === 0
+            ) {
+              const nextCleared = Math.max(current.clearedThroughRevision, revision);
+              if (nextCleared === current.clearedThroughRevision) {
+                return [true, state] as const;
+              }
+              const next = new Map(state);
+              next.set(instanceId, {
+                ...current,
+                clearedThroughRevision: nextCleared,
+              });
+              return [true, next] as const;
+            }
             return [false, state] as const;
           }
           const nextCleared = Math.max(current.clearedThroughRevision, revision);
@@ -268,6 +290,7 @@ const make = Effect.gen(function* () {
           next.set(instanceId, {
             configuration: Option.none(),
             revision: Math.max(current.revision, revision),
+            catalogRevision: Math.max(current.catalogRevision, options?.catalogRevision ?? 0),
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -280,10 +303,13 @@ const make = Effect.gen(function* () {
       Ref.modify(liveConfigurations, (state) => {
         const current = state.get(instanceId) ?? EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
         const revision = current.revision + 1;
+        const catalogRevision =
+          configuration.models.length > 0 ? current.catalogRevision + 1 : current.catalogRevision;
         const next = new Map(state);
         next.set(instanceId, {
           configuration: Option.some(configuration),
           revision,
+          catalogRevision,
           clearedThroughRevision: current.clearedThroughRevision,
         });
         return [revision, next] as const;
