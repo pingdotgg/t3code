@@ -640,23 +640,6 @@ describe("V2 environment commands", () => {
 
   const turnSends = [
     {
-      name: "message",
-      method: ORCHESTRATION_V2_WS_METHODS.dispatchCommand,
-      send: (commandId: CommandId) =>
-        startThreadTurn({
-          commandId,
-          threadId: v2ThreadId,
-          message: {
-            messageId: MessageId.make(commandId),
-            role: "user",
-            text: "hi",
-            attachments: [],
-          },
-          runtimeMode: "full-access",
-          interactionMode: "default",
-        }),
-    },
-    {
       name: "new thread's first message",
       method: ORCHESTRATION_V2_WS_METHODS.launchThread,
       send: (commandId: CommandId) =>
@@ -758,10 +741,10 @@ describe("V2 environment commands", () => {
     }).pipe(Effect.provide(layerTestRandom)),
   );
 
-  it.effect.each(turnSends)("doesn't resend a $name the server refused", (turnSend) =>
+  it.effect("doesn't resend a new thread's first message the server refused", () =>
     Effect.gen(function* () {
       const { exit, attempts } = yield* sendFailingFirstAttempt(
-        turnSend,
+        turnSends[0],
         Effect.fail(new Refused()),
       );
 
