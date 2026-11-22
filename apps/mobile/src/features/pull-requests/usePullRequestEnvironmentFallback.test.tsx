@@ -1,6 +1,13 @@
-import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  AVAILABLE_CONNECTION_STATE,
+  ConnectionTransientError,
+  type EnvironmentConnectionPhase,
+  type SupervisorConnectionState,
+} from "@t3tools/client-runtime/connection";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/models";
 import { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 import { act, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
@@ -24,12 +31,19 @@ vi.mock("@react-navigation/native", async () => {
   };
 });
 vi.mock("../../state/entities", () => ({ useProjects: () => mocks.projects }));
+vi.mock("../../connection/catalog", () => ({
+  environmentCatalog: { stateAtom: () => connectionAtom },
+}));
 vi.mock("../../state/workspace", () => ({
   useWorkspaceEnvironments: () => mocks.environments,
   useConnectionsReady: () => mocks.isReady,
 }));
 
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
+
+const connectionAtom = Atom.make(
+  AsyncResult.success<SupervisorConnectionState>(AVAILABLE_CONNECTION_STATE),
+);
 
 function environment(
   environmentId: string,
@@ -64,6 +78,7 @@ function setup() {
   );
   const container = document.createElement("div");
   const root = createRoot(container);
+  const registry = AtomRegistry.make();
   mocks.navigation.setParams = vi.fn();
   function Probe() {
     const [params, updateParams] = useState({
@@ -81,14 +96,26 @@ function setup() {
     return <span>{`${params.environmentId}/${params.projectId}`}</span>;
   }
   return {
-    render() {
-      act(() => root.render(<Probe />));
+    render(lastFailure?: ConnectionTransientError) {
+      act(() => {
+        if (lastFailure)
+          registry.set(
+            connectionAtom,
+            AsyncResult.success({ ...AVAILABLE_CONNECTION_STATE, phase: "backoff", lastFailure }),
+          );
+        root.render(
+          <RegistryContext.Provider value={registry}>
+            <Probe />
+          </RegistryContext.Provider>,
+        );
+      });
     },
     get target() {
       return container.textContent;
     },
     [Symbol.dispose]() {
       act(() => root.unmount());
+      registry.dispose();
     },
   };
 }
@@ -133,6 +160,26 @@ it("falls back to a connected repository copy when the requested environment can
     });
   }
 });
+
+it.each([
+  { reason: "relay-unavailable", httpStatus: 504, expectFallback: true },
+  { reason: "timeout", expectFallback: true },
+  { reason: "approval-pending", expectFallback: false },
+] as const)(
+  "handles $reason while the requested environment is reconnecting",
+  ({ expectFallback, ...failure }) => {
+    using screen = setup();
+    screen.render();
+    expect(screen.target).toBe("requested/original");
+
+    mocks.environments = [
+      environment("requested", "reconnecting"),
+      environment("copy", "connected"),
+    ];
+    screen.render(new ConnectionTransientError({ ...failure, detail: "Connection failed." }));
+    expect(screen.target).toBe(expectFallback ? "copy/copy-project" : "requested/original");
+  },
+);
 
 it("does not replace a connecting target with a connected repository copy before its project hydrates", () => {
   using screen = setup();
