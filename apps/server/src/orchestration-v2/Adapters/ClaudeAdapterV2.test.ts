@@ -4443,6 +4443,69 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
+  // With CLAUDE_CODE_RESUME_INTERRUPTED_TURN the CLI starts its own resume turn when the
+  // transcript ends on a failed request, then still runs the adapter's empty prompt as a second turn.
+  it.effect("a native resume the CLI starts itself leaves no phantom wake behind", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        freshQueueOnReopen: true,
+        close: (queue) => Queue.shutdown(queue),
+      });
+      const input = makeClaudeTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: DateTime.makeUnsafe(0),
+        attemptId: RunAttemptId.make("native-auto-resume"),
+        text: "Initial task",
+        attachments: [],
+        providerTurnOrdinal: 1,
+      });
+      const limitedResult = (uuid: string) =>
+        makeResultFrame({
+          uuid,
+          result: "API Error: Request rejected (429) · usage limit reached",
+          isError: true,
+          apiErrorStatus: 429,
+          terminalReason: "api_error",
+        });
+      yield* harness.runtime.startTurn(input);
+      yield* harness.offerAndWait(limitedResult("00000000-0000-4000-8000-000000041091"));
+      yield* Queue.take(harness.terminalReceipts);
+      const { message, ...turn } = input;
+      yield* harness.runtime.resumeTurn!({
+        ...turn,
+        providerTurnOrdinal: 2,
+        messageId: message.messageId,
+      });
+      assert.deepEqual(harness.offeredMessages.at(-1)?.message.content, []);
+      // The CLI's own resume turn, then the turn for the adapter's queued empty prompt.
+      yield* harness.offerAndWait(wakeTurnInit);
+      yield* harness.offerAndWait(limitedResult("00000000-0000-4000-8000-000000041092"));
+      yield* Queue.take(harness.terminalReceipts);
+      yield* harness.offerAndWait(
+        claudeSdkFrame({
+          type: "system",
+          subtype: "init",
+          uuid: "00000000-0000-4000-8000-000000041093",
+          session_id: WAKE_NATIVE_SESSION,
+        }),
+      );
+      yield* harness.offerAndWait(limitedResult("00000000-0000-4000-8000-000000041094"));
+      assert.equal(harness.continuationRequests.length, 0);
+      assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   it.effect("reports the session cwd on each process's first init, not on repeated inits", () =>
     Effect.gen(function* () {
       const initCwds: Array<string> = [];
