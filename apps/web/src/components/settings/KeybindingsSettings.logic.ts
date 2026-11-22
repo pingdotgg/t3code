@@ -88,7 +88,7 @@ export const DEFAULT_WHEN_VARIABLE =
   ) ?? "terminalFocus";
 const KNOWN_WHEN_VARIABLES = new Set(DEFAULT_WHEN_VARIABLES);
 
-export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+export function shortcutToKeybindingParts(shortcut: KeybindingShortcut): ReadonlyArray<string> {
   const parts: string[] = [];
   if (shortcut.modKey) parts.push("mod");
   if (shortcut.metaKey) parts.push("meta");
@@ -96,7 +96,11 @@ export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string 
   if (shortcut.altKey) parts.push("alt");
   if (shortcut.shiftKey) parts.push("shift");
   parts.push(shortcut.key === " " ? "space" : shortcut.key === "escape" ? "esc" : shortcut.key);
-  return parts.join("+");
+  return parts;
+}
+
+export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+  return shortcutToKeybindingParts(shortcut).join("+");
 }
 
 export function whenAstToExpression(node: KeybindingWhenNode | undefined): string {
