@@ -401,9 +401,14 @@ it.effect.each([
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
-  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles",
-  ({ restoreFiles }) =>
+it.effect.each([
+  { restoreFiles: true, status: "ready" },
+  { restoreFiles: false, status: "ready" },
+  // A failed capture still pins the conversation.
+  { restoreFiles: false, status: "error" },
+])(
+  "holds turn starts inside the worktree during rollback with restoreFiles $restoreFiles to a $status checkpoint",
+  ({ restoreFiles, status }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -438,7 +443,7 @@ it.effect.each([{ restoreFiles: true }, { restoreFiles: false }])(
           providerInstanceId,
         },
         providerSession: undefined,
-        checkpoint: { id: checkpointId, scopeId, status: "ready", appRunOrdinal: 0 },
+        checkpoint: { id: checkpointId, scopeId, status, appRunOrdinal: 0 },
         scope: { id: scopeId, cwd: worktreePath },
         runsToRollback: [],
         targetAttempt: undefined,
