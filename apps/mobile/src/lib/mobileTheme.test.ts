@@ -1,3 +1,5 @@
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 import {
   BUILT_IN_THEME_IDS,
@@ -321,5 +323,41 @@ describe("mobile themes", () => {
         contrastRatio(variables["--color-md-user-code-text"], codeSurface),
       ).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("declares every foreground color token referenced by mobile source files", () => {
+    const declaredTokens = new Set(
+      Object.keys(readDefaultMobileThemeVariables("dark")).map((key) =>
+        key.replace(/^--color-/, ""),
+      ),
+    );
+    const srcDir = NodePath.resolve(import.meta.dirname, "..");
+    const collectSourceFiles = (dir: string): Array<string> => {
+      const files: Array<string> = [];
+      for (const entry of NodeFS.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = NodePath.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          files.push(...collectSourceFiles(fullPath));
+        } else if (
+          (entry.name.endsWith(".ts") || entry.name.endsWith(".tsx")) &&
+          !entry.name.includes(".test.")
+        ) {
+          files.push(fullPath);
+        }
+      }
+      return files;
+    };
+    const tokenPattern = /\b(?:text|bg|border|accent)-(foreground-[a-z0-9-]+)\b/g;
+    const missing: Array<string> = [];
+    for (const file of collectSourceFiles(srcDir)) {
+      const content = NodeFS.readFileSync(file, "utf8");
+      for (const match of content.matchAll(tokenPattern)) {
+        const token = match[1]!;
+        if (!declaredTokens.has(token)) {
+          missing.push(`${NodePath.relative(srcDir, file)}: ${match[0]}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 });
