@@ -725,6 +725,8 @@ export interface ClaudeAgentSdkQueryOpenInput {
 }
 
 export interface ClaudeAgentSdkQuerySession {
+  // The CLI starts the resumed turn itself, so a resume prompt would run as a second turn.
+  readonly rerunsInterruptedTurn?: true;
   readonly messages: Stream.Stream<SDKMessage, ClaudeAgentSdkQueryRunnerError>;
   readonly offer: (
     message: SDKUserMessage,
@@ -1369,11 +1371,23 @@ const decodeClaudeHistoryMessages = Schema.decodeUnknownEffect(
       Schema.Struct({
         type: Schema.String,
         uuid: Schema.String,
-        message: Schema.Struct({ content: Schema.Unknown }),
+        message: Schema.Struct({ content: Schema.Unknown, model: Schema.optional(Schema.Unknown) }),
       }),
     ),
   ),
 );
+
+// With CLAUDE_CODE_RESUME_INTERRUPTED_TURN the CLI re-runs a turn whose saved history ends on the
+// placeholder reply it records for a failed request.
+export function claudeRerunsInterruptedTurn(
+  messages: ReadonlyArray<{
+    readonly type: string;
+    readonly message: { readonly content: unknown; readonly model?: unknown };
+  }>,
+): boolean {
+  const last = messages.at(-1);
+  return last?.type === "assistant" && last.message.model === "<synthetic>";
+}
 
 // Claude's interactive reply-on-resume removes native abort rows before querying the saved history.
 export function claudeResumeSessionAt(
@@ -1569,6 +1583,7 @@ export const layerQueryRunner: Layer.Layer<
       const { mcpServers, ...sdkOptions } = input.options;
       // Jobs the agent starts inherit the thread, so port discovery can attribute their servers.
       let resumeSessionAt = sdkOptions.resumeSessionAt;
+      let rerunsInterruptedTurn = false;
       if (input.resume && sdkOptions.resume !== undefined) {
         const messages = yield* runClaudeWorker({
           method: "getSessionMessages",
@@ -1585,7 +1600,9 @@ export const layerQueryRunner: Layer.Layer<
           resumeSessionAt === undefined
             ? messages.length
             : messages.findIndex((message) => message.uuid === resumeSessionAt) + 1;
-        resumeSessionAt = claudeResumeSessionAt(messages.slice(0, boundary)) ?? resumeSessionAt;
+        const history = messages.slice(0, boundary);
+        rerunsInterruptedTurn = claudeRerunsInterruptedTurn(history);
+        resumeSessionAt = claudeResumeSessionAt(history) ?? resumeSessionAt;
       }
       const queryOptions = {
         ...sdkOptions,
@@ -1786,6 +1803,7 @@ export const layerQueryRunner: Layer.Layer<
       );
 
       return {
+        ...(rerunsInterruptedTurn ? { rerunsInterruptedTurn: true as const } : {}),
         messages: Stream.fromAsyncIterable(
           claudeQueryMessages(queryRuntime),
           (cause) => cause,
@@ -6181,9 +6199,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const subagentToolCalls = new Map<string, ActiveClaudeToolCall>();
         const pendingSubagentLaunchesByToolUseId = new Map<string, PendingClaudeSubagentLaunch>();
         const settledTurnByNativeThread = new Map<string, ActiveClaudeTurnContext>();
-        // A resume run can settle on the turn the CLI re-runs itself (CLAUDE_CODE_RESUME_INTERRUPTED_TURN);
-        // the empty resume prompt still queued then runs as one more turn that is no background wake.
-        const queuedResumePromptNativeThreads = new Set<string>();
         const subagentStopOutcomes = new Map<
           string,
           Deferred.Deferred<ProviderAdapter.ProviderAdapterV2SubagentOutcome>
@@ -7097,7 +7112,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (nativeThreadId: string) {
             yield* clearWakeReports(nativeThreadId);
-            queuedResumePromptNativeThreads.delete(nativeThreadId);
             yield* Ref.update(wakeBuffers, (current) => {
               if (!current.has(nativeThreadId)) {
                 return current;
@@ -9994,16 +10008,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           } else {
             settledTurnByNativeThread.delete(input.context.nativeThreadId);
           }
-          const resumePromptUuid = input.context.input.resume ? input.context.promptUuid : null;
-          if (
-            resumePromptUuid !== null &&
-            input.result !== undefined &&
-            !claudeEchoedPromptUuids(input.result).includes(resumePromptUuid)
-          ) {
-            queuedResumePromptNativeThreads.add(input.context.nativeThreadId);
-          } else {
-            queuedResumePromptNativeThreads.delete(input.context.nativeThreadId);
-          }
           yield* Ref.update(interruptedTurns, (current) => {
             const next = new Set(current);
             next.delete(input.context.providerTurnId);
@@ -10202,21 +10206,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           readonly message: SDKMessage;
         }) {
           const message = wakeInput.message;
-          if (
-            queuedResumePromptNativeThreads.has(wakeInput.nativeThreadId) &&
-            (isClaudeRootTurnFrame(message) ||
-              message.type === "result" ||
-              message.type === "rate_limit_event")
-          ) {
-            if (message.type === "result") {
-              queuedResumePromptNativeThreads.delete(wakeInput.nativeThreadId);
-              yield* Effect.logInfo("orchestration-v2.claude-queued-resume-prompt-turn-dropped", {
-                nativeThreadId: wakeInput.nativeThreadId,
-                uuid: message.uuid,
-              });
-            }
-            return;
-          }
           const isNotification =
             message.type === "system" && message.subtype === "task_notification";
           const isPendingTaskNotification =
@@ -13900,15 +13889,17 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             const offerUserMessage =
               userMessage === null
                 ? Effect.void
-                : startUserTurnForWakeReports(nativeThreadId).pipe(
-                    Effect.andThen(
-                      Effect.uninterruptibleMask((restore) =>
-                        restore(querySession.query.offer(userMessage, commitOffer)).pipe(
-                          Effect.tap(() => Effect.sync(commitOffer)),
+                : querySession.query.rerunsInterruptedTurn
+                  ? startUserTurnForWakeReports(nativeThreadId)
+                  : startUserTurnForWakeReports(nativeThreadId).pipe(
+                      Effect.andThen(
+                        Effect.uninterruptibleMask((restore) =>
+                          restore(querySession.query.offer(userMessage, commitOffer)).pipe(
+                            Effect.tap(() => Effect.sync(commitOffer)),
+                          ),
                         ),
                       ),
-                    ),
-                  );
+                    );
             if (userMessage !== null && !turnInput.resume) {
               yield* attachTurn;
               yield* offerUserMessage;
