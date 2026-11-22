@@ -1,20 +1,48 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2016  # backticks in --format strings and awk are literal Markdown
 set -euo pipefail
 
 # Upstream Radar: fetch tracked reference repos into gitignored `.refs/`
 # (Conn itself is this monorepo, so it is not tracked here) and report commits since
-# each pinned SHA in `references.pin`.
+# each pinned SHA in `references.pin`. Security and data-loss fixes are listed first,
+# then other likely fixes, each apart from the commit list, so its limit hides neither.
 #
 # Usage:
 #   scripts/radar.sh                   # markdown report for all tracked repos
 #   scripts/radar.sh --repo t3code     # report for one repo
 #   scripts/radar.sh --limit 60        # max commits listed per repo (default: 40)
+#   scripts/radar.sh --fix-limit 300   # max likely fixes listed per repo (default: 200)
 #   scripts/radar.sh --no-fetch        # inspect already-fetched origin refs
 #   scripts/radar.sh --bump t3code     # advance references.pin for one repo to origin/HEAD
 #   scripts/radar.sh --bump-all        # advance all tracked radar pins to origin/HEAD
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PIN_FILE="$ROOT/references.pin"
+
+# Commit messages (subject or body) that point at a security or data-loss fix.
+SECURITY_GREP=(
+  --regexp-ignore-case --extended-regexp
+  --grep='secur|vulnerab|cve-|leak|data[ -]?loss|lost|corrupt|injection|traversal|xss|csrf|privilege|bypass|exfiltrat|secret|redact'
+)
+# Other likely fixes. git ORs several --grep options. T3 labels most commits `fix(`,
+# so this list is long; the security list above is the one to read in full.
+FIX_GREP=(
+  --regexp-ignore-case --extended-regexp
+  --grep='^(fix|revert)(\(|!|:)'
+  --grep='crash|deadlock|hang|(^|[^a-z])races?([^a-z]|$)'
+)
+
+# Lines of "<sha>|<date>|<subject>" in, Markdown list items out.
+print_commits() {
+  awk '{
+    i = index($0, "|"); sha = substr($0, 1, i - 1); rest = substr($0, i + 1)
+    j = index(rest, "|"); printf "- `%s` (%s) %s\n", sha, substr(rest, 1, j - 1), substr(rest, j + 1)
+  }'
+}
+
+count_lines() {
+  if [[ -z "$1" ]]; then echo 0; else printf '%s\n' "$1" | wc -l | tr -d ' '; fi
+}
 
 # Ordered list of radar repos: "<pin_key>|<git_url>|<mode>"
 # mode: "blobless" (no working tree, ideal for large monorepos like t3code)
@@ -27,6 +55,7 @@ RADAR_REPOS=(
 
 ONLY_REPO=""
 LIMIT=40
+FIX_LIMIT=200
 NO_FETCH=0
 BUMP_TARGET=""
 
@@ -38,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --limit)
       LIMIT="${2:?--limit requires an integer}"
+      shift 2
+      ;;
+    --fix-limit)
+      FIX_LIMIT="${2:?--fix-limit requires an integer}"
       shift 2
       ;;
     --no-fetch)
@@ -53,7 +86,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
-      sed -n '3,16p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '5,17p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -203,6 +236,20 @@ for entry in "${RADAR_REPOS[@]}"; do
   fi
 
   count="$(git -C "$dir" rev-list --no-merges --count "${pin}..${ref}")"
+  security_log="$(git -C "$dir" log --no-merges "${SECURITY_GREP[@]}" --format='%h|%ad|%s' --date=short "${pin}..${ref}")"
+  fix_log="$(git -C "$dir" log --no-merges "${FIX_GREP[@]}" --format='%h|%ad|%s' --date=short "${pin}..${ref}")"
+  other_fix_log="$(awk -F'|' 'NR == FNR { seen[$1] = 1; next } $1 != "" && !($1 in seen)' \
+    <(printf '%s\n' "$security_log") <(printf '%s\n' "$fix_log"))"
+
+  echo "**Security and data-loss fixes: $(count_lines "$security_log")** (all listed). Check each against the Conn code that copied the same logic:"
+  echo
+  if [[ -z "$security_log" ]]; then echo "_None matched._"; else printf '%s\n' "$security_log" | print_commits; fi
+  echo
+  echo "**Other likely fixes: $(count_lines "$other_fix_log")** (showing up to ${FIX_LIMIT}):"
+  echo
+  if [[ -z "$other_fix_log" ]]; then echo "_None matched._"; else printf '%s\n' "$other_fix_log" | head -n "$FIX_LIMIT" | print_commits; fi
+  echo
+
   echo "**${count} new non-merge commit(s)** (showing up to ${LIMIT}):"
   echo
   git -C "$dir" log --no-merges -n "$LIMIT" --format='- `%h` (%ad) %s' --date=short "${pin}..${ref}"
