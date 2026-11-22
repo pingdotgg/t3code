@@ -2,8 +2,11 @@ import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { createContext, use, useState, type Dispatch, type ReactNode } from "react";
 
-import { mobilePreferencesAtom } from "../../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../../state/preferences";
+import { useAtomCommand } from "../../../state/use-atom-command";
 import {
+  isSharedSlotTab,
+  sharedSlotAbsentee,
   navigationCustomizationAvailable,
   resolveHiddenNavigationTabs,
   resolveSelectedNavigationTab,
@@ -43,9 +46,12 @@ function resolveWorkspaceTabsSelection(
 ): WorkspaceTabsState {
   const saved = AsyncResult.isSuccess(preferences) ? preferences.value : undefined;
   const order = resolveWorkspaceTabOrder(saved?.navigationTabOrder);
-  const hidden = navigationCustomizationAvailable()
-    ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
-    : [];
+  const hidden = [
+    ...(navigationCustomizationAvailable()
+      ? resolveHiddenNavigationTabs(saved?.hiddenNavigationTabs)
+      : []),
+    sharedSlotAbsentee(state.selectedTab, saved?.sharedSlotTab),
+  ];
   const selected = resolveSelectedNavigationTab(order, hidden, state.selectedTab);
   return selected && selected !== state.selectedTab
     ? workspaceTabsReducer(state, { type: "select", tab: selected })
@@ -59,6 +65,7 @@ function createWorkspaceTabsModel(selectedTab?: WorkspaceTab) {
   const scrollOffsets: Record<WorkspaceSearchTab, number> = {
     threads: 0,
     pullRequests: 0,
+    issues: 0,
     usage: 0,
     settings: 0,
   };
@@ -82,8 +89,12 @@ export function WorkspaceTabsProvider(props: {
   const registry = use(RegistryContext);
   const [model] = useState(() => createWorkspaceTabsModel(props.initialTab));
   const state = useAtomValue(model.resolved);
-  const dispatch = (action: WorkspaceTabsAction) =>
+  const savePreferences = useAtomCommand(saveMobilePreferences);
+  const dispatch = (action: WorkspaceTabsAction) => {
     registry.set(model.stored, workspaceTabsReducer(registry.get(model.resolved), action));
+    if (action.type === "select" && isSharedSlotTab(action.tab))
+      void savePreferences({ sharedSlotTab: action.tab });
+  };
   const context = {
     state,
     dispatch,

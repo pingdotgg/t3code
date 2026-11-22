@@ -274,6 +274,7 @@ const OutputMessage = Schema.Struct({
   type: Schema.Literal("message"),
   role: Schema.Literal("assistant"),
   content: Schema.Array(OutputMessageContent),
+  phase: Schema.optionalKey(Schema.NullOr(Schema.Literals(["commentary", "final_answer"]))),
   status: MessageStatus
 })
 

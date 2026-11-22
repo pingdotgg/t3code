@@ -17,6 +17,10 @@ import {
 } from "./mcpApp.ts";
 import { resolveT3McpToolId } from "./t3McpToolPresentation.ts";
 
+export const SEND_TO_USER_TOOL_NAME = "send_to_user";
+// 4,000 UTF-16 units stay inside MAX_PARSED_BYTES even as 3-byte characters.
+export const SEND_TO_USER_MAX_LENGTH = 4_000;
+
 const MAX_PARSED_BYTES = 16_384;
 const MAX_METADATA_BYTES = 8_192;
 const MAX_ID_LENGTH = 256;
@@ -25,6 +29,8 @@ const MAX_CONTENT_BLOCKS = 32;
 const MAX_ENVELOPE_DEPTH = 4;
 const MAX_ENVELOPE_NODES = 128;
 const encoder = new TextEncoder();
+// Antigravity's terminal tool prefixes an `acp-mcp-call` result's stdout with timestamps and exit status.
+const TERMINAL_OUTPUT_MARKER = "\nCommand output:\n";
 
 interface ResultReadBudget {
   remainingBytes: number;
@@ -50,6 +56,7 @@ interface CompactToolOutput {
   threads?: Array<{ threadId?: string; status?: "rolled_back" }>;
   linkedCount?: number;
   unlinkedCount?: number;
+  sentMessage?: string;
 }
 
 function readResult(value: unknown, budget: ResultReadBudget, depth = 0): ResultEnvelope {
@@ -100,7 +107,12 @@ function readResult(value: unknown, budget: ResultReadBudget, depth = 0): Result
     value.is_error === true ||
     value._tag === "OrchestratorMcpFailure" ||
     value.error != null;
-  const content = value.structuredContent ?? value.content;
+  const terminal = typeof value.output === "string" ? value.output : "";
+  const marker = terminal.indexOf(TERMINAL_OUTPUT_MARKER);
+  const content =
+    value.structuredContent ??
+    value.content ??
+    (marker === -1 ? undefined : terminal.slice(marker + TERMINAL_OUTPUT_MARKER.length));
   if (content !== undefined) {
     const nested = readResult(content, budget, depth + 1);
     return { ...nested, failed: failed || nested.failed };
@@ -133,6 +145,13 @@ export function compactDynamicToolOutput(value: unknown): CompactToolOutput | un
     for (const key of ["linkedCount", "unlinkedCount"] as const) {
       const count = data[key];
       if (typeof count === "number" && Number.isSafeInteger(count)) output[key] = count;
+    }
+    if (
+      typeof data.sentMessage === "string" &&
+      data.sentMessage.trim() !== "" &&
+      data.sentMessage.length <= SEND_TO_USER_MAX_LENGTH
+    ) {
+      output.sentMessage = data.sentMessage;
     }
     const htmlRender = readHtmlRenderReference(data.htmlRender);
     if (htmlRender !== undefined) output.htmlRender = htmlRender;
@@ -204,6 +223,21 @@ export function htmlRenderFromToolItem(item: {
   return output?.isError ? undefined : output?.htmlRender;
 }
 
+/** The text `send_to_user` showed the user, which clients render as the agent's own words. */
+export function sentMessageFromToolItem(item: {
+  readonly toolName: string | null | undefined;
+  readonly output?: unknown;
+}): string | undefined {
+  if (
+    item.toolName !== OPENCODE_CODE_MODE_TOOL_NAME &&
+    resolveT3McpToolId(item.toolName) !== SEND_TO_USER_TOOL_NAME
+  ) {
+    return undefined;
+  }
+  const output = compactDynamicToolOutput(item.output);
+  return output?.isError ? undefined : output?.sentMessage;
+}
+
 /** The thread-owned file `preview_recording_stop` stored for the agent. */
 export function previewRecordingIdFromToolItem(item: {
   readonly toolName: string | null | undefined;
@@ -247,6 +281,19 @@ export function toolOutputIndicatesFailure(text: string): boolean {
       (/is not recognized/i.test(text) && /the term '/i.test(text)) ||
       /exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text) ||
       /exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text))
+  );
+}
+
+/** Whether a command failed. A reported exit code outranks text in its output. */
+export function commandIndicatesFailure(command: {
+  readonly exitCode?: number | undefined;
+  readonly outputIndicatesFailure?: boolean | undefined;
+  readonly output?: string | undefined;
+}): boolean {
+  if (command.exitCode !== undefined) return command.exitCode !== 0;
+  return (
+    command.outputIndicatesFailure === true ||
+    (command.output !== undefined && toolOutputIndicatesFailure(command.output.slice(0, 32_768)))
   );
 }
 
@@ -299,10 +346,15 @@ export function mcpToolResultOutput(result: {
   readonly content?: unknown;
   readonly structuredContent?: unknown;
 }): unknown {
-  if (result.structuredContent != null && toolOutputImages(result.content).length > 0) {
-    return { content: result.content, structuredContent: result.structuredContent };
+  const structuredContent =
+    (Array.isArray(result.structuredContent) || Predicate.isObject(result.structuredContent)) &&
+    Object.keys(result.structuredContent).length === 0
+      ? undefined
+      : result.structuredContent;
+  if (structuredContent != null && toolOutputImages(result.content).length > 0) {
+    return { content: result.content, structuredContent };
   }
-  return result.structuredContent ?? result.content;
+  return structuredContent ?? result.content;
 }
 
 export function omitToolOutputImageData(value: unknown): unknown {

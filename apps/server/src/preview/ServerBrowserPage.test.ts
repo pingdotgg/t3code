@@ -23,6 +23,166 @@ import { SessionControl } from "./SessionControl.ts";
 
 const decodeEvaluateInput = Schema.decodeUnknownSync(PreviewAutomationEvaluateInput);
 
+describe("JPEG screenshot dimensions", () => {
+  const encode = (bytes: number[]) => Buffer.from(bytes).toString("base64");
+  const frame = [0xff, 0xd8, 0xff, 0xc0, 0, 7, 8, 0, 24, 0, 32];
+
+  it("reads valid dimensions and rejects invalid or incomplete frames", () => {
+    expect(ServerBrowserPage.jpegSize(encode(frame))).toEqual({ width: 32, height: 24 });
+    for (const bytes of [
+      [],
+      [0xff, 0xd8, 0xff, 0xe1, 0, 20, 1],
+      frame.slice(0, -1),
+      [...frame.slice(0, 7), 0, 0, 0, 32],
+      [...frame.slice(0, 9), 0, 0],
+    ]) {
+      expect(() => ServerBrowserPage.jpegSize(encode(bytes))).toThrow("Invalid JPEG screenshot.");
+    }
+  });
+});
+
+describe("snapshot deadline diagnostics", () => {
+  const never = () => new Promise<never>(() => {});
+  const stalledSnapshot = async (options: {
+    readonly stalled?: "metrics";
+    readonly page?: Partial<Record<keyof Page, unknown>>;
+    readonly advanceMs: number;
+  }) => {
+    vi.useFakeTimers();
+    try {
+      const frame = {};
+      const page = {
+        viewportSize: () => ({ width: 1280, height: 800 }),
+        mainFrame: () => frame,
+        frames: () => [frame],
+        on: () => {},
+        evaluate: async () => ({
+          url: "about:blank",
+          title: "",
+          loading: false,
+          visibleText: "",
+        }),
+        ariaSnapshot: async () => "",
+        ...options.page,
+      } as unknown as Page;
+      const cdp = {
+        send: async (method: string) => {
+          if (options.stalled === "metrics") return never();
+          if (method === "Page.captureScreenshot") return { data: "" };
+          if (method === "Page.getFrameTree") return { frameTree: { frame: { id: "main" } } };
+          if (method === "Page.createIsolatedWorld") return { executionContextId: 1 };
+          if (method === "Runtime.evaluate") return { result: { value: [] } };
+          throw new Error(`Unexpected command: ${method}`);
+        },
+      } as unknown as CDPSession;
+      const captured = ServerBrowserPage.snapshot({
+        page,
+        cdp,
+        renderScale: options.stalled === "metrics" ? "display" : 1,
+        consoleEntries: [],
+        networkEntries: [],
+        actionTimeline: [],
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(options.advanceMs);
+      return await captured;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("identifies a stalled metrics read", async () => {
+    expect(await stalledSnapshot({ stalled: "metrics", advanceMs: 10_000 })).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 10_000, pendingStages: ["metrics"] },
+    });
+  });
+
+  it("keeps an accessibility tree that hit its own timeout", async () => {
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    const captured = await stalledSnapshot({
+      page: { ariaSnapshot: () => Promise.reject(timedOut) },
+      advanceMs: 0,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 10_000 },
+    });
+    expect((captured as ServerBrowserPage.ServerBrowserOperationError).detail).toMatchObject({
+      pendingStages: expect.arrayContaining(["accessibility tree"]),
+    });
+  });
+
+  it("omits a timed-out stage after it succeeds on retry", async () => {
+    let attempts = 0;
+    const timedOut = Object.assign(new Error("Timeout exceeded"), { name: "TimeoutError" });
+    expect(
+      await stalledSnapshot({
+        page: {
+          evaluate: never,
+          ariaSnapshot: async () => {
+            if (attempts++ === 0) throw timedOut;
+            return "";
+          },
+        },
+        advanceMs: 10_000,
+      }),
+    ).toMatchObject({ detail: { timeoutMs: 10_000, pendingStages: ["page state"] } });
+  });
+
+  it.each(["elementHandle", "contentFrame"] as const)(
+    "identifies stalled iframe %s lookup",
+    async (stage) => {
+      const main = {};
+      const child = { evaluate: never, parentFrame: () => main };
+      const captured = await stalledSnapshot({
+        page: {
+          mainFrame: () => main,
+          frames: () => [main, child],
+          context: () => ({
+            newCDPSession: () =>
+              Promise.reject(new Error("Only this preview tab's page can be attached")),
+          }),
+          ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+          locator: () => ({
+            elementHandle:
+              stage === "elementHandle" ? never : async () => ({ contentFrame: never }),
+          }),
+        },
+        advanceMs: 10_000,
+      });
+      expect(captured).toMatchObject({
+        detail: { timeoutMs: 10_000, pendingStages: expect.arrayContaining(["frames"]) },
+      });
+    },
+  );
+
+  it("reports a frame that didn't answer as the frame's own timeout", async () => {
+    const main = {};
+    // A desktop tab refuses frame sessions, so the frame is read in its own world.
+    const child = { evaluate: never, parentFrame: () => main };
+    const captured = await stalledSnapshot({
+      page: {
+        mainFrame: () => main,
+        frames: () => [main, child],
+        context: () => ({
+          newCDPSession: () =>
+            Promise.reject(new Error("Only this preview tab's page can be attached")),
+        }),
+        ariaSnapshot: async () => "- iframe [ref=f1]:\n  - text: inside",
+        locator: () => ({
+          elementHandle: async () => ({ contentFrame: async () => child, dispose: async () => {} }),
+        }),
+      },
+      // Both attempts wait out the frame; neither reaches the capture deadline.
+      advanceMs: 2_000,
+    });
+    expect(captured).toMatchObject({
+      tag: "PreviewAutomationTimeoutError",
+      detail: { timeoutMs: 1_000, pendingStages: ["frames"] },
+    });
+  });
+});
+
 describe("server browser capture deadlines", () => {
   it("releases control after an unanswered capture and ignores its late reply", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
@@ -114,6 +274,23 @@ describe("server browser element refs", () => {
   };
   const repeatedRows = `<ul>${Array.from({ length: 5 }, (_, i) => `<li>row ${i + 1}<button data-testid="delete-row" onclick="this.parentElement.remove()">delete</button></li>`).join("")}</ul>`;
 
+  it("does not report an empty interactiveElements list beside a tree full of controls", async () => {
+    await page.setContent(
+      `<a href="#signin">Sign in</a><button>Open menu</button><button>Dismiss local database notice</button>`,
+    );
+    const result = await takeSnapshot();
+    expect(buttonLocator(result.accessibilityTree, "Open menu")).toBeDefined();
+    expect(String(result.accessibilityTree)).toContain('link "Sign in"');
+    const elements = (
+      result as { readonly interactiveElements?: ReadonlyArray<{ readonly name: string }> }
+    ).interactiveElements;
+    if (elements !== undefined) {
+      expect(elements.map((element) => element.name)).toEqual(
+        expect.arrayContaining(["Sign in", "Open menu", "Dismiss local database notice"]),
+      );
+    }
+  });
+
   it("clicks the fifth repeated delete control without touching row one", async () => {
     await page.setContent(repeatedRows);
     const result = await takeSnapshot();
@@ -173,8 +350,20 @@ describe("server browser element refs", () => {
     const hidden = await failure("button");
     expect(hidden.tag).toBe("PreviewAutomationTimeoutError");
     expect(hidden.message).toBe(
-      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout.',
+      'The click may have happened; check the page before retrying. "button" still matches an element after the timeout. Playwright last saw: element is not visible.',
     );
+  });
+
+  it("gives a late target only the click's remaining time, not a fresh timeout", async () => {
+    await page.setContent(`<script>
+      setTimeout(() => document.body.insertAdjacentHTML("beforeend",
+        '<button id="save" disabled onclick="document.body.dataset.clicked = 1">Save</button>'), 1000);
+      setTimeout(() => document.querySelector("#save").disabled = false, 2500);
+    </script>`);
+    await expect(
+      ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 2_000 }),
+    ).rejects.toThrow();
+    expect(await page.locator("body").getAttribute("data-clicked")).toBeNull();
   });
 
   it("does not retarget a removed ref to a replacement node", async () => {
@@ -200,6 +389,25 @@ describe("server browser element refs", () => {
       "inside iframe",
     );
     expect(await page.getByRole("textbox", { name: "parent" }).inputValue()).toBe("");
+  });
+
+  it("types after a click by coordinates into a shadow-root field, and refuses a field inside an editable frame", async () => {
+    await page.setContent(
+      `<div id="host"></div><div contenteditable="true"><iframe srcdoc="<input id=inner>"></iframe></div><script>document.getElementById("host").attachShadow({mode:"open"}).innerHTML = "<input id=field>";</script>`,
+    );
+    const field = page.locator("#host #field");
+    const box = (await field.boundingBox())!;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await ServerBrowserPage.type(page, { text: "shadow" });
+    expect(await field.inputValue()).toBe("shadow");
+
+    // Refused for now: focus inside a frame cannot be checked from the top document.
+    const inner = page.frameLocator("iframe").locator("#inner");
+    await inner.click();
+    await expect(ServerBrowserPage.type(page, { text: "frame" })).rejects.toMatchObject({
+      tag: "PreviewAutomationTargetNotEditableError",
+    });
+    expect(await inner.inputValue()).toBe("");
   });
 
   it("shows dotted fields as dots wherever their value appears, keeping text values and refs", async () => {
@@ -436,7 +644,7 @@ describe("server browser snapshot screenshot", () => {
   const screenshotOf = async (html: string) => {
     const page = await context.newPage();
     await page.setContent(html);
-    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot({
+    const input = {
       page,
       cdp: await context.newCDPSession(page),
       renderScale: 2,
@@ -444,7 +652,8 @@ describe("server browser snapshot screenshot", () => {
       consoleEntries: [],
       networkEntries: [],
       actionTimeline: [],
-    });
+    };
+    const { screenshot, fullScreenshot } = await ServerBrowserPage.snapshot(input);
     // The server has no DOM types, so the decoder runs as page source.
     const points = [
       [0.15, 0.75],
@@ -463,7 +672,7 @@ describe("server browser snapshot screenshot", () => {
         Array.from(context.getImageData(x * bitmap.width, y * bitmap.height, 1, 1).data),
       );
     })()`)) as Array<[number, number, number, number]>;
-    return { screenshot, fullScreenshot, pixels };
+    return { screenshot, fullScreenshot, pixels, input };
   };
   const colorOf = ([red, green, blue]: readonly [number, number, number, number]) =>
     blue - red > 100 ? "blue" : red - blue > 100 ? "red" : `rgb(${red}, ${green}, ${blue})`;
@@ -478,13 +687,20 @@ describe("server browser snapshot screenshot", () => {
   });
 
   it("captures a plain page at the shrunk size with its content in place", async () => {
-    const { screenshot, fullScreenshot, pixels } = await screenshotOf(halves(""));
+    const { screenshot, fullScreenshot, pixels, input } = await screenshotOf(halves(""));
+    const metadata = await ServerBrowserPage.snapshotMetadata(input);
 
     expect({
       size: [screenshot.width, screenshot.height],
       fullSize: [fullScreenshot?.width, fullScreenshot?.height],
+      metadataSize: metadata.screenshot,
       colors: pixels.map(colorOf),
-    }).toEqual({ size: [1280, 800], fullSize: [2560, 1600], colors: ["blue", "red", "red"] });
+    }).toEqual({
+      size: [1280, 800],
+      fullSize: [2560, 1600],
+      metadataSize: { width: 1280, height: 800 },
+      colors: ["blue", "red", "red"],
+    });
   });
 
   it("records the destination of a finite entrance animation without waiting on infinite ones", async () => {
@@ -577,6 +793,144 @@ describe("server browser drag", () => {
       process.off("unhandledRejection", onUnhandled);
     }
   });
+
+  it("moves the mouse after dragstart, so pages that track a drag with mousemove see it", async () => {
+    const browser = await chromium.launch({ headless: true });
+    try {
+      const page = await browser.newPage();
+      await page.setContent(`
+        <div style="display:flex;gap:40px">
+          <div id="source" draggable="true" style="width:200px;height:120px">source</div>
+          <div id="target" style="width:200px;height:120px">target</div>
+        </div>
+        <script>
+          window.events = [];
+          let dragging = false;
+          source.addEventListener("dragstart", (event) => {
+            event.preventDefault();
+            dragging = true;
+            events.push("dragstart");
+          });
+          addEventListener("mousemove", () => dragging && events.push("mousemove"));
+          addEventListener("mouseup", () => events.push("mouseup"));
+        </script>`);
+
+      await ServerBrowserPage.drag(page, { source: "#source", target: "#target" });
+
+      const events = (await page.evaluate("window.events")) as Array<string>;
+      expect(events.slice(0, 2)).toEqual(["dragstart", "mousemove"]);
+      expect(events.at(-1)).toBe("mouseup");
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+describe("server browser action timeout", () => {
+  type StepOptions = { readonly timeout?: number };
+  it.each([
+    {
+      action: "hover",
+      act: (page: Page) => ServerBrowserPage.hover(page, { selector: "#a", timeoutMs: 9_000 }),
+      last: ["#a.hover 1"],
+    },
+    {
+      action: "drag",
+      act: (page: Page) =>
+        ServerBrowserPage.drag(page, { source: "#a", target: "#b", timeoutMs: 9_000 }),
+      last: ["#a.dragTo 1", "#b.boundingBox 1"],
+    },
+  ])("gives the $action's steps one shared timeout", async ({ act, last }) => {
+    let now = 0;
+    using _now = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const steps: Array<string> = [];
+    const box = { x: 0, y: 0, width: 20, height: 20 };
+    const page = {
+      locator: (selector: string) => {
+        const record = (step: string, options: StepOptions) =>
+          steps.push(`${selector}.${step} ${options.timeout}`);
+        return {
+          // Each step that finds the target takes 5 of the 9 seconds.
+          scrollIntoViewIfNeeded: async (options: StepOptions) => {
+            record("scrollIntoViewIfNeeded", options);
+            now += 5_000;
+          },
+          boundingBox: async (options: StepOptions) => {
+            record("boundingBox", options);
+            now += 5_000;
+            return box;
+          },
+          hover: async (options: StepOptions) => record("hover", options),
+          dragTo: async (_target: unknown, options: StepOptions) => record("dragTo", options),
+        };
+      },
+    } as unknown as Page;
+
+    await act(page);
+
+    expect(steps).toEqual(["#a.scrollIntoViewIfNeeded 9000", "#a.boundingBox 4000", ...last]);
+  });
+});
+
+describe("server browser click", () => {
+  it("clicks a target the page replaced while it was being scrolled into view", async () => {
+    let scrolls = 0;
+    const clicks: Array<unknown> = [];
+    const page = {
+      locator: () => ({
+        // Playwright resolves the node once; a page re-rendering it detaches that node.
+        scrollIntoViewIfNeeded: async () => {
+          if (scrolls++ === 0) {
+            throw new Error("locator.scrollIntoViewIfNeeded: Element is not attached to the DOM");
+          }
+        },
+        boundingBox: async () => ({ x: 0, y: 0, width: 20, height: 20 }),
+        click: async (options: unknown) => {
+          clicks.push(options);
+        },
+        count: async () => 1,
+      }),
+      once: () => {},
+      off: () => {},
+    } as unknown as Page;
+
+    await expect(ServerBrowserPage.click(page, { selector: "#save" })).resolves.toEqual({
+      x: 10,
+      y: 10,
+    });
+    expect(clicks).toHaveLength(1);
+  });
+
+  it("retries a replaced target only within the action's timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const timeouts: Array<number | undefined> = [];
+      const clicks: Array<unknown> = [];
+      const detached = new Error(
+        "locator.scrollIntoViewIfNeeded: Element is not attached to the DOM",
+      );
+      const page = {
+        locator: () => ({
+          scrollIntoViewIfNeeded: async (options?: { timeout?: number }) => {
+            timeouts.push(options?.timeout);
+            vi.advanceTimersByTime(60);
+            throw detached;
+          },
+          click: async (options: unknown) => {
+            clicks.push(options);
+          },
+        }),
+      } as unknown as Page;
+
+      await expect(
+        ServerBrowserPage.click(page, { selector: "#save", timeoutMs: 100 }),
+      ).rejects.toBe(detached);
+      expect(timeouts).toEqual([100, 40]);
+      expect(clicks).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("server browser evaluate", () => {
@@ -610,6 +964,63 @@ describe("server browser evaluate", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("server browser type", () => {
+  // As on a desktop tab whose Playwright utility world never answers.
+  const stalledPage = (focusAnswer: () => Promise<unknown>, typed: string[]) =>
+    ({
+      locator: () => ({ last: () => ({ count: () => new Promise<number>(() => {}) }) }),
+      evaluate: focusAnswer,
+      keyboard: { insertText: async (text: string) => void typed.push(text) },
+    }) as unknown as Page;
+
+  it("types into the focused field when Playwright's utility world never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(async () => true, typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toBe("typed");
+      expect(typed).toEqual(["hello"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops at its timeout without typing when the page never answers", async () => {
+    vi.useFakeTimers();
+    try {
+      const typed: string[] = [];
+      let outcome: unknown = "pending";
+      const page = stalledPage(() => new Promise(() => {}), typed);
+      void ServerBrowserPage.type(page, { text: "hello", timeoutMs: 300 }).then(
+        () => (outcome = "typed"),
+        (error: unknown) => (outcome = error),
+      );
+      await vi.advanceTimersByTimeAsync(300);
+      expect(outcome).toMatchObject({
+        tag: "PreviewAutomationTimeoutError",
+        detail: { timeoutMs: 300 },
+      });
+      expect(typed).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("server browser unresponsive script", () => {
+  it("leaves a page that answers alone", async () => {
+    const send = vi.fn(async (_method: string) => ({}));
+    await ServerBrowserPage.stopUnresponsiveScript({ send } as unknown as CDPSession);
+    expect(send.mock.calls.map(([method]) => method)).toEqual(["Runtime.evaluate"]);
   });
 });
 
