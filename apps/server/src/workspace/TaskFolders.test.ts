@@ -405,6 +405,41 @@ it.live("leaves a hook's link to an empty folder alone", () =>
   ),
 );
 
+it.live(
+  "restores the thread when a package manager replaced a nested worktree with its own clone",
+  () =>
+    withState((state) =>
+      Effect.gen(function* () {
+        const { fileSystem, path, run, repository } = yield* fixture;
+        const taskFolders = yield* TaskFolders.TaskFolders;
+        const project = yield* repository("p");
+        yield* fileSystem.writeFileString(path.join(project, ".gitignore"), "deps/\n");
+        yield* run(project, "add", ".");
+        yield* run(project, "commit", "-m", "ignore deps");
+        const lib = yield* repository("p/deps/lib");
+        state.workspaceRoot = project;
+        state.trackedFolders = tracked(lib);
+        const { taskFolder } = yield* create("feature");
+        const worktree = path.join(taskFolder.root, "deps", "lib");
+
+        // `mix deps.get` deletes the worktree and clones the dependency again in its place.
+        yield* fileSystem.remove(worktree, { recursive: true });
+        yield* run(project, "clone", "-q", lib, worktree);
+
+        const restored = yield* taskFolders
+          .restore({
+            taskFolder,
+            branch: "feature",
+            recreate: () => Effect.die("an existing checkout is never recreated"),
+          })
+          .pipe(Effect.exit);
+
+        assert.isTrue(Exit.isSuccess(restored), String(Exit.isFailure(restored) && restored.cause));
+        assert.deepEqual((yield* taskFolders.find(taskFolder.root))?.repositories, []);
+      }),
+    ),
+);
+
 it.live("treats a project folder inside a larger repository as plain", () =>
   withState((state) =>
     Effect.gen(function* () {
