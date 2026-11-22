@@ -56,6 +56,7 @@ import {
   VolumeOffIcon,
 } from "lucide-react";
 import {
+  type ComponentType,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactElement,
@@ -71,6 +72,12 @@ import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import { linkedThreadTitle } from "~/linkedThreadSurface";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
+import {
+  rightPanelDynamicTabSurfaces,
+  rightPanelSectionOf,
+  rightPanelSectionTarget,
+  type RightPanelSection,
+} from "./RightPanelTabs.logic";
 import { issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
@@ -169,6 +176,8 @@ export interface RightPanelTabsProps {
   /** Overrides the default reason while side chats are available but cannot start. */
   sideChatDisabledReason?: string | null;
   pullRequestStatusSeeds?: Readonly<Record<string, PullRequestTabStatusSeed>>;
+  /** Files the latest turn changed, shown on the Changes tab. */
+  changesCount?: number | null;
   children: ReactNode;
 }
 
@@ -897,17 +906,57 @@ function PullRequestSurfaceIcon({
   return <presentation.Icon className={cn("size-3 shrink-0", presentation.toneClassName)} />;
 }
 
+function RightPanelSectionTab(props: {
+  label: string;
+  icon: ComponentType<{ className?: string }>;
+  count: number | null;
+  active: boolean;
+  available: boolean;
+  disabledReason: string;
+  ownsDesktopTitleBar: boolean;
+  onSelect: () => void;
+}) {
+  const Icon = props.icon;
+  const button = (
+    <button
+      type="button"
+      aria-pressed={props.active}
+      aria-disabled={!props.available || undefined}
+      onClick={props.available ? props.onSelect : undefined}
+      className={cn(
+        "flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-xs font-medium",
+        props.ownsDesktopTitleBar && "[-webkit-app-region:no-drag]",
+        !props.available
+          ? "cursor-not-allowed text-muted-foreground/60"
+          : props.active
+            ? "cursor-pointer bg-accent text-foreground"
+            : "cursor-pointer text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+      )}
+    >
+      <Icon className="size-3.5" />
+      {props.label}
+      {props.count !== null && props.count > 0 ? (
+        <span className="text-muted-foreground tabular-nums">{props.count}</span>
+      ) : null}
+    </button>
+  );
+  if (props.available) return button;
+  return <DisabledReasonTooltip reason={props.disabledReason} trigger={button} />;
+}
+
 function SortableTabList(props: {
   surfaces: readonly RightPanelSurface[];
+  /** The full surface list, since drops move by index into it, not into the shown tabs. */
+  indexSurfaces: readonly RightPanelSurface[];
   onMove: ((surfaceId: string, toIndex: number) => void) | undefined;
   children: ReactNode;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const surfaceIds = props.surfaces.map((surface) => surface.id);
-  const { onMove, surfaces } = props;
+  const { onMove, indexSurfaces } = props;
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
-    const toIndex = surfaces.findIndex((surface) => surface.id === over.id);
+    const toIndex = indexSurfaces.findIndex((surface) => surface.id === over.id);
     if (toIndex >= 0) onMove?.(String(active.id), toIndex);
   };
   return (
@@ -1272,6 +1321,46 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       : []),
   ] as const;
 
+  const dynamicSurfaces = rightPanelDynamicTabSurfaces(props.surfaces);
+  const activeSection = rightPanelSectionOf(focusedSurface);
+  const sectionTabs = [
+    {
+      section: "changes",
+      label: msg("Changes"),
+      icon: FileDiff,
+      count: props.changesCount ?? null,
+      available: props.diffAvailable,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.diff),
+      create: props.onAddDiff,
+    },
+    {
+      section: "terminal",
+      label: msg("Terminal"),
+      icon: TerminalSquare,
+      count: null,
+      available: props.terminalAvailable,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.terminal),
+      create: props.onAddTerminal,
+    },
+    {
+      section: "browser",
+      label: msg("Browser"),
+      icon: Globe2,
+      count: null,
+      available: props.browserAvailable,
+      disabledReason: messages(SURFACE_DISABLED_REASONS.browser),
+      create: props.onAddBrowser,
+    },
+  ] as const;
+  const showSection = (section: RightPanelSection) => {
+    const target = rightPanelSectionTarget(props.surfaces, props.activeSurfaceId, section);
+    if (target) {
+      props.onActivate(target);
+      return;
+    }
+    sectionTabs.find((tab) => tab.section === section)?.create();
+  };
+
   const handleAddSurfaceMenuKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     const action = surfaceShortcutActionForKey(addSurfaceActions, event.nativeEvent);
     if (!action) return;
@@ -1490,8 +1579,35 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           data-right-panel-tab-list
         >
           <div className="flex h-full w-max min-w-full items-center gap-1">
-            <SortableTabList surfaces={props.surfaces} onMove={props.onMoveSurface}>
-              {props.surfaces.map((surface) => {
+            <div
+              role="group"
+              aria-label={gt("Panel sections")}
+              className="flex shrink-0 items-center gap-0.5"
+              data-right-panel-sections
+            >
+              {sectionTabs.map((tab) => (
+                <RightPanelSectionTab
+                  key={tab.section}
+                  label={messages(tab.label)}
+                  icon={tab.icon}
+                  count={tab.count}
+                  active={activeSection === tab.section}
+                  available={tab.available}
+                  disabledReason={tab.disabledReason}
+                  ownsDesktopTitleBar={ownsDesktopTitleBar}
+                  onSelect={() => showSection(tab.section)}
+                />
+              ))}
+            </div>
+            {dynamicSurfaces.length > 0 ? (
+              <span aria-hidden className="mx-1 h-4 w-px shrink-0 bg-border" />
+            ) : null}
+            <SortableTabList
+              surfaces={dynamicSurfaces}
+              indexSurfaces={props.surfaces}
+              onMove={props.onMoveSurface}
+            >
+              {dynamicSurfaces.map((surface) => {
                 const previewTabId = previewTabIdOf(surface, props.previewSessions);
                 const favicon = previewFaviconOf(
                   surface,
