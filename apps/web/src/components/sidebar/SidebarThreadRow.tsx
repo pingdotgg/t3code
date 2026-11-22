@@ -609,8 +609,13 @@ type SortableThreadRowBag = Pick<
   "listeners" | "setNodeRef" | "transform" | "transition" | "isDragging"
 >;
 
-export const draftSurfaceClassName = "bg-warning/4 hover:bg-warning/8";
 export const draftPenClassName = "size-3 shrink-0 text-warning-foreground";
+export const SIDEBAR_CARD_BODY_CLASS_NAME =
+  "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)";
+export const SIDEBAR_CARD_PROJECT_LABEL_CLASS_NAME =
+  "min-w-0 flex-1 truncate font-normal text-secondary-label text-meta";
+export const SIDEBAR_CARD_META_LINE_CLASS_NAME =
+  "mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-meta font-normal";
 
 // useSortable memoizes on its `disabled` object, so a fresh one per render
 // re-renders every row and marker on each sidebar update.
@@ -1104,7 +1109,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
         : isSelected || props.sweepAction !== null
           ? "surface-sidebar-row-selected text-sidebar-foreground light:ring-1 light:ring-inset light:ring-sidebar-border/70"
           : hasUnsentDraft
-            ? cn(draftSurfaceClassName, "text-sidebar-foreground")
+            ? "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover"
             : shouldRecede
               ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
               : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
@@ -1375,7 +1380,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
     diff === null &&
     runningTerminalIds.length === 0;
   const metaLine = metaLineEmpty ? null : (
-    <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-meta font-normal">
+    <div className={SIDEBAR_CARD_META_LINE_CLASS_NAME}>
       {props.environmentLabel !== null ? (
         <>
           <EnvironmentMachineIcon
@@ -1661,12 +1666,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
             />
           }
         >
-          <div
-            className={cn(
-              "relative z-10 h-[4.875rem] px-(--sidebar-row-content-inset) py-(--sidebar-content-inset)",
-              metaLineEmpty && "h-auto",
-            )}
-          >
+          <div className={cn(SIDEBAR_CARD_BODY_CLASS_NAME, metaLineEmpty && "h-auto")}>
             <div className="flex h-5 min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
@@ -1674,11 +1674,7 @@ export const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThr
               ) : null}
               {pinIndicator}
               {props.projectDisplayName ? (
-                <span
-                  className={cn(
-                    "min-w-0 flex-1 truncate font-normal text-secondary-label text-meta",
-                  )}
-                >
+                <span className={SIDEBAR_CARD_PROJECT_LABEL_CLASS_NAME}>
                   {props.projectDisplayName}
                 </span>
               ) : (

@@ -13,6 +13,7 @@ const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
 function DraftBlock(props: {
   routeDraftId?: string | null;
   terminalLabels?: ReadonlyMap<string, string>;
+  environmentLabelById?: ReadonlyMap<EnvironmentId, string>;
 }) {
   const routeDraftId = props.routeDraftId ?? null;
   const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
@@ -25,6 +26,7 @@ function DraftBlock(props: {
       jumpLabelByDraftId={null}
       projectByKey={new Map()}
       projectDisplayNameByKey={new Map()}
+      {...(props.environmentLabelById ? { environmentLabelById: props.environmentLabelById } : {})}
       routeDraftId={routeDraftId}
       onNavigateToDraft={vi.fn()}
       onDraftContextMenu={vi.fn()}
@@ -46,11 +48,12 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const projectRef = scopeProjectRef(environmentId, ProjectId.make("draft-preview-project"));
   const draftId = DraftId.make("draft-preview");
   const threadId = ThreadId.make("draft-preview-thread");
+  const environmentLabelById = new Map([[environmentId, "workstation"]]);
   const onRender = vi.fn();
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
       <ul>
-        <DraftBlock />
+        <DraftBlock environmentLabelById={environmentLabelById} />
       </ul>
     </Profiler>,
   );
@@ -62,6 +65,8 @@ it("keeps draft previews current through edits, promotion and removal", async ()
     initial.setPrompt(draftId, "First draft preview");
   });
   await expect.element(row).toHaveAccessibleName("First draft preview, Unsent draft");
+  await expect.element(row.getByText("workstation")).toBeVisible();
+  await expect.element(row.getByText("Draft")).toBeVisible();
 
   const rendersBeforeOtherComposer = onRender.mock.calls.length;
   await act(() =>
