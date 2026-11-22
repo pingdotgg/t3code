@@ -15,6 +15,7 @@ import {
   effectiveShortcutsForCommand,
   formatShortcutLabel,
   isRichTextBoldShortcut,
+  isSidebarToggleShortcut,
   isTerminalNewShortcut,
   isTerminalSplitShortcut,
   resolveChatShortcutCommand,
@@ -685,6 +686,53 @@ describe("resolveShortcutCommand", () => {
     );
   });
 
+  it('matches Ctrl+layout "+" as itself unless Shift, Alt or the number row is involved', () => {
+    assert.isNull(
+      resolveShortcutCommand(
+        event({ key: "+", code: "BracketRight", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { terminalFocus: false } },
+      ),
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Minus", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { previewFocus: true } },
+      ),
+      "preview.zoomIn",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Digit1", ctrlKey: true }),
+        DEFAULT_RESOLVED_KEYBINDINGS,
+        { platform: "Linux", context: { isDesktop: true } },
+      ),
+      "thread.jump.1",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "BracketRight", altKey: true }),
+        compile([
+          {
+            shortcut: modShortcut("]", { modKey: false, altKey: true }),
+            command: "terminal.toggle",
+          },
+        ]),
+        { platform: "Linux" },
+      ),
+      "terminal.toggle",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(
+        event({ key: "+", code: "Equal", ctrlKey: true, shiftKey: true }),
+        compile([{ shortcut: modShortcut("=", { shiftKey: true }), command: "terminal.toggle" }]),
+        { platform: "Linux" },
+      ),
+      "terminal.toggle",
+    );
+  });
+
   it("does not let a punctuation position shadow a Latin layout key", () => {
     const keybindings = compile([
       { shortcut: modShortcut("m"), command: "diff.toggle" },
@@ -766,7 +814,51 @@ describe("isRichTextBoldShortcut", () => {
   });
 });
 
+describe("isSidebarToggleShortcut", () => {
+  it("leaves Ctrl+B to a focused terminal, where it is the tmux prefix", () => {
+    const ctrlB = event({ key: "b", ctrlKey: true });
+    assert.isFalse(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+    assert.isTrue(
+      isSidebarToggleShortcut(ctrlB, DEFAULT_BINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+    );
+  });
+
+  it("keeps Cmd+B toggling the sidebar from a focused terminal on macOS", () => {
+    assert.isTrue(
+      isSidebarToggleShortcut(event({ key: "b", metaKey: true }), DEFAULT_BINDINGS, {
+        platform: "MacIntel",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+});
+
 describe("composer and pull request shortcuts", () => {
+  it("uses the dictation chord outside the terminal and preserves terminal split", () => {
+    const chord = event({ key: "d", ctrlKey: true, shiftKey: true });
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.dictation",
+    );
+    assert.strictEqual(
+      resolveShortcutCommand(chord, DEFAULT_RESOLVED_KEYBINDINGS, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+      "terminal.splitVertical",
+    );
+  });
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>

@@ -19,7 +19,9 @@ export function toJsonSchemaObject(schema: Schema.Top): unknown {
 
 export function limitSection(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
-  const truncated = value.slice(0, maxChars);
+  // Half an emoji serializes to a lone surrogate escape, which provider JSON parsers reject.
+  const last = value.charCodeAt(maxChars - 1);
+  const truncated = value.slice(0, last >= 0xd800 && last <= 0xdbff ? maxChars - 1 : maxChars);
   return `${truncated}\n\n[truncated]`;
 }
 
@@ -62,7 +64,7 @@ export function sanitizeThreadTitle(raw: string): string {
     .trim()
     .split(/\r?\n/g)[0]
     ?.trim()
-    .replace(/^['"`]+|['"`]+$/g, "")
+    .replace(/^(['"`])((?:(?!\1).)*)\1$/, "$2")
     .trim()
     .replace(/\s+/g, " ");
 

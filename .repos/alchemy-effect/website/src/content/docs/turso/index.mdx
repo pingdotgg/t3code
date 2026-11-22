@@ -1,0 +1,58 @@
+---
+title: Turso
+description: Create Turso SQLite databases and query them from your Workers.
+---
+
+Turso hosts SQLite databases for you. Create them in the same Stack as your Workers, and query them with Effect SQL or Drizzle.
+
+New here? [Set up credentials](/turso/setup) first, then [build the tutorial](/turso/tutorial/part-1).
+
+## Create a database
+
+Every database lives in a group. The group decides where its databases run.
+
+```typescript
+import * as Turso from "@alchemy.run/turso";
+
+export const Group = Turso.Group("Group", { location: "aws-us-east-1" });
+
+export const Db = Effect.gen(function* () {
+  const group = yield* Group;
+  return yield* Turso.Database("Db", {
+    group: group.name,
+    migrations: "./migrations",
+  });
+});
+```
+
+Each deploy runs any new migrations. See [Migrations](/turso/migrations).
+
+## Query it from a Worker
+
+`Turso.Connect` gives the Worker the database's URL and a token. Pass it to [Drizzle](/sql/drizzle/libsql) or [Effect SQL](/sql/effect-sql/libsql):
+
+```typescript
+const conn = yield* Turso.Connect(Db);
+const db = yield* Drizzle.LibSQL(conn);
+```
+
+See [Connections](/turso/connections).
+
+## One database per tenant
+
+Turso databases are cheap, so you can give each customer their own. `Turso.ManageDatabases` lets a Worker create, query, and delete databases in one group:
+
+```typescript
+const tenants = yield* Turso.ManageDatabases(Tenants);
+const acme = yield* tenants.create("acme");
+const sql = yield* SQL.LibSQL(tenants.connect(acme.name));
+```
+
+The [tutorial](/turso/tutorial/part-1) builds this step by step. The [Database per tenant](/turso/database-per-tenant) guide has the details.
+
+## Where next
+
+- [Groups](/turso/groups) and [Databases](/turso/databases)
+- [Tokens](/turso/tokens) for apps outside your Stack
+- [Preview databases](/turso/preview-databases), one copy per pull request
+- [Team & organization](/turso/organization): invites, members, and settings

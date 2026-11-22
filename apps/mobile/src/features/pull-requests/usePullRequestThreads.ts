@@ -1,6 +1,8 @@
+import { errorDisplayMessage } from "@t3tools/client-runtime/errors";
 import { useAtomValue } from "@effect/atom-react";
 import { visibleLinkedThreads } from "@t3tools/client-runtime/state/threads";
 import { AsyncResult } from "effect/reactivity";
+import { useGT } from "gt-react-native";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import * as Dialog from "../../components/ui/Dialog";
 import {
@@ -19,10 +21,9 @@ import {
 } from "@t3tools/contracts";
 import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { normalizeThreadPullRequestKey } from "@t3tools/client-runtime/thread-pull-requests";
 import { useRef, useState } from "react";
-import { Platform } from "react-native";
-import { useSelectWorkspaceDetail } from "../workspace/useSelectWorkspaceDetail";
 import { pullRequestComposerContext } from "../../lib/composerContext";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { uuidv4 } from "../../lib/uuid";
@@ -46,6 +47,7 @@ import {
   pullRequestAgentPrompt,
   type PullRequestAgentTask,
 } from "./pullRequestAgentTasks";
+import { m } from "../../i18n/messages";
 
 type LinkedThread = PullRequestLinkedThreadsResult["threads"][number];
 
@@ -89,16 +91,14 @@ export function usePullRequestThreads(
   const canAsk = !connected || canOperate;
   const canCheckout = useEnvironmentScope(target.environmentId, AuthSourceControlWriteScope);
   const navigation = useNavigation();
-  const selectDetail = useSelectWorkspaceDetail();
+  const gt = useGT();
   const pending = useRef(false);
   const previousPrompts = useRef(new Map<string, string>());
   const openThread = (thread: LinkedThread) => {
     openThreadRoute({ environmentId: params.environmentId, threadId: thread.id });
   };
-  // Android shows one page at a time; iOS opens the thread over the pull request, so Back returns.
   const openThreadRoute = (destination: ReactNavigation.RootParamList["Thread"]) => {
-    if (Platform.OS === "android") selectDetail({ name: "Thread", params: destination });
-    else navigation.dispatch(StackActions.push("Thread", destination));
+    navigation.dispatch(StackActions.push("Thread", destination));
   };
   const [busy, setBusy] = useState(false);
   const ask = async (thread?: LinkedThread, task: PullRequestAgentTask = "ask") => {
@@ -109,7 +109,12 @@ export function usePullRequestThreads(
     const result = await settlePromise(async () => {
       if (connected && !thread && !canCheckout)
         throw new Error(
-          `Starting work from this ${terminology.shortLabel} requires source control write access.`,
+          gt(
+            "Starting work from this {term, select, mr {MR} cr {change request} other {PR}} requires source control write access.",
+            {
+              term: changeRequestTermKind(terminology),
+            },
+          ),
         );
       await waitForComposerDraftsLoaded();
       const draftKey = thread
@@ -160,7 +165,7 @@ export function usePullRequestThreads(
           { text: draft.text, start: draft.text.length, end: draft.text.length },
         )
       )
-        throw new Error("Remove some context from this thread's draft, then try again.");
+        throw new Error(gt("Remove some context from this thread's draft, then try again."));
       const withContext = getComposerDraftSnapshot(draftKey);
       setComposerDraftText(
         draftKey,
@@ -173,13 +178,21 @@ export function usePullRequestThreads(
       );
       previousPrompts.current.set(draftKey, pullRequestAgentPrompt(task, terminology));
       if (thread) openThread(thread);
-      else openThreadRoute({ draft: { draftId: draftKey, title: `Ask about #${pr.number}` } });
+      else
+        openThreadRoute({
+          draft: { draftId: draftKey, title: gt("Ask about #{number}", { number: pr.number }) },
+        });
     });
     pending.current = false;
     setBusy(false);
     if (AsyncResult.isFailure(result)) {
       const cause = squashAtomCommandFailure(result);
-      Dialog.alert("Couldn't open a thread", cause instanceof Error ? cause.message : "Try again.");
+      Dialog.alert(
+        gt("Couldn't open a thread"),
+        cause instanceof Error
+          ? (errorDisplayMessage(cause, m) ?? cause.message)
+          : gt("Try again."),
+      );
     }
   };
   return {

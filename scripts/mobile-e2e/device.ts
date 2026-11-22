@@ -3,6 +3,7 @@
 import * as NodeChildProcess from "node:child_process";
 import * as NodePath from "node:path";
 import * as NodeProcess from "node:process";
+import * as Schema from "effect/Schema";
 
 import type { Snapshot } from "./checks.ts";
 import type { Pose } from "./poses.ts";
@@ -61,7 +62,11 @@ export interface Pool {
   readonly env: NodeJS.ProcessEnv;
 }
 
-class AgentDeviceError extends Error {}
+class AgentDeviceError extends Schema.TaggedError<AgentDeviceError>()("AgentDeviceError", {
+  message: Schema.String,
+}) {}
+
+const isAgentDeviceError = Schema.is(AgentDeviceError);
 
 // A shared pool's workers drop off the gateway and stall under load for seconds at a time.
 const TRANSIENT =
@@ -112,7 +117,7 @@ export class Device {
       try {
         return await this.agentOnce(args, options);
       } catch (error) {
-        if (attempt >= 5 || !(error instanceof AgentDeviceError) || !TRANSIENT.test(error.message))
+        if (attempt >= 5 || !isAgentDeviceError(error) || !TRANSIENT.test(error.message))
           throw error;
         await delay(5_000 * attempt);
       }
@@ -137,10 +142,14 @@ export class Device {
     try {
       parsed = JSON.parse(stdout);
     } catch {
-      throw new AgentDeviceError(`agent-device ${args[0]}: ${(stderr || stdout).slice(-400)}`);
+      throw new AgentDeviceError({
+        message: `agent-device ${args[0]}: ${(stderr || stdout).slice(-400)}`,
+      });
     }
     if (!parsed.success)
-      throw new AgentDeviceError(`agent-device ${args.join(" ")}: ${parsed.error?.message}`);
+      throw new AgentDeviceError({
+        message: `agent-device ${args.join(" ")}: ${parsed.error?.message}`,
+      });
     return parsed.data ?? {};
   }
 
