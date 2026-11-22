@@ -730,14 +730,18 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
   Effect.gen(function* () {
     const launches = yield* Ref.make(0);
     const sends = yield* Ref.make<Array<{ threadId: ThreadId; freshContext?: boolean }>>([]);
+    const messageIds = yield* Ref.make<Array<string>>([]);
     const launched = ThreadId.make("thread:fresh-session-task");
     const layer = ScheduledTaskService.layer.pipe(
       Layer.provide(
         Layer.mergeAll(
           ManagedPolicy.layerTest(),
           Layer.mock(ThreadLaunchService.ThreadLaunchService)({
-            launch: () =>
+            launch: (input) =>
               Ref.update(launches, (n) => n + 1).pipe(
+                Effect.andThen(
+                  Ref.update(messageIds, (all) => [...all, input.initialMessage.messageId]),
+                ),
                 Effect.as({ threadId: launched, resumed: false } as never),
               ),
           }),
@@ -755,7 +759,10 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
                   threadId: input.threadId,
                   ...(input.freshContext === undefined ? {} : { freshContext: input.freshContext }),
                 },
-              ]).pipe(Effect.as({} as never)),
+              ]).pipe(
+                Effect.andThen(Ref.update(messageIds, (all) => [...all, input.messageId])),
+                Effect.as({} as never),
+              ),
           }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({
@@ -800,6 +807,8 @@ it.effect("a fresh-session task launches one thread, then starts each later run 
 
       assert.equal(yield* Ref.get(launches), 1);
       assert.deepEqual(yield* Ref.get(sends), [{ threadId: launched, freshContext: true }]);
+      // Both runs start at the same instant; each still sends its own message.
+      assert.equal(new Set(yield* Ref.get(messageIds)).size, 2);
       // Its thread stays in the old project, so moving the task leaves it for a new one.
       const moved = yield* service.upsert({
         ...input,
