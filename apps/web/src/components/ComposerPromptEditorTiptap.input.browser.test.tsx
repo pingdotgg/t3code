@@ -7,6 +7,7 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
+import { matchComposerInlineSuggestion } from "@t3tools/client-runtime/composerInlineSuggestion";
 import {
   ComposerContextId,
   type ComposerContextRecord,
@@ -70,6 +71,7 @@ function Composer({
   disabled = false,
   placeholder = "",
   placeholderSuffix,
+  ...inlineSuggestions
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -81,7 +83,7 @@ function Composer({
   disabled?: boolean;
   placeholder?: string;
   placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
-}) {
+} & Pick<ComposerPromptEditorProps, "matchInlineSuggestion" | "onAcceptInlineSuggestion">) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
     <ComposerPromptEditor
@@ -102,6 +104,7 @@ function Composer({
       onCommandKeyDown={onCommandKeyDown}
       importContextFragment={importContextFragment}
       literalText={literalText}
+      {...inlineSuggestions}
     />
   );
 }
@@ -418,6 +421,116 @@ it.each([false, true])(
     expect(serializeEditorDoc(editor.state.doc).value).toBe("ö");
   },
 );
+
+it("draws a completion while typing, reports Tab, and keeps a dismissed one gone", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-vps"),
+    label: "Hetzner VPS",
+  } as const;
+  const onAccept = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+      onAcceptInlineSuggestion={onAccept}
+    />,
+  );
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion")?.textContent;
+  await act(async () => editorIn(screen.container).view.focus());
+
+  await userEvent.keyboard("on hetz");
+  await vi.waitFor(() => expect(ghost()).toBe("ner VPSTab"));
+  await userEvent.keyboard("{Tab}");
+  expect(onAccept).toHaveBeenCalledWith({ candidate, typed: "hetz", remainder: "ner VPS" });
+
+  await userEvent.keyboard("{Escape}");
+  await vi.waitFor(() => expect(ghost()).toBeUndefined());
+  await userEvent.keyboard("n");
+  expect(ghost()).toBeUndefined();
+
+  await userEvent.keyboard(" hetz");
+  await vi.waitFor(() => expect(ghost()).toBe("ner VPSTab"));
+  await userEvent.keyboard("{ArrowLeft}");
+  await vi.waitFor(() => expect(ghost()).toBeUndefined());
+  expect(onAccept).toHaveBeenCalledTimes(1);
+});
+
+it("proposes no completion for pasted text or a name crossing formatting", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-mini"),
+    label: "Mac mini",
+  } as const;
+  await using screen = await render(
+    <Composer
+      value="**Mac** m"
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+    />,
+  );
+  const editor = editorIn(screen.container);
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion");
+  await act(async () => {
+    editor.view.focus();
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+
+  await userEvent.keyboard("i");
+  await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("mi"));
+  expect(ghost()).toBeNull();
+
+  await userEvent.keyboard(" ");
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", "mac");
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  await vi.waitFor(() => expect(editor.state.doc.textContent).toContain("mi mac"));
+  expect(ghost()).toBeNull();
+
+  await userEvent.keyboard(" mac");
+  await vi.waitFor(() => expect(ghost()).not.toBeNull());
+
+  // Revealing and then hiding the bold's Markdown source rewrites the document without typing.
+  await act(async () => {
+    editor.commands.setTextSelection(2);
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  expect(editor.state.doc.textContent).toContain("mi mac mac");
+  expect(ghost()).toBeNull();
+});
+
+it("completes the first name typed inside Markdown source shown after an undo", async () => {
+  const candidate = {
+    kind: "environment",
+    environmentId: EnvironmentId.make("env-vps"),
+    label: "Hetzner VPS",
+  } as const;
+  await using screen = await render(
+    <Composer
+      value="**on he z** x"
+      richTextEnabled
+      skills={[]}
+      matchInlineSuggestion={(text) => matchComposerInlineSuggestion(text, [candidate])}
+    />,
+  );
+  const editor = editorIn(screen.container);
+  const ghost = () => screen.container.querySelector(".composer-inline-suggestion")?.textContent;
+  await act(async () => {
+    editor.view.focus();
+    editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+  });
+  await userEvent.keyboard("y{Control>}z{/Control}");
+  await act(async () => editor.commands.setTextSelection(6));
+  expect(editor.state.doc.textContent).toBe("**on he z** x");
+
+  await userEvent.keyboard("t");
+  await vi.waitFor(() => expect(ghost()).toBe("zner VPSTab"));
+});
 
 it("lets composition replace selected text without surrounding it", async () => {
   await using screen = await mountEditor("word");
