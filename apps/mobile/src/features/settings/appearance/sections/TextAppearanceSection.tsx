@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import {
   BASE_FONT_SIZE_STEP,
   MAX_BASE_FONT_SIZE,
@@ -13,28 +14,29 @@ import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 export function TextAppearanceSection() {
+  const gt = useGT();
   const { isReady, appearance, setBaseFontSize, mathRenderingEnabled, setMathRenderingEnabled } =
     useAppearancePreferences();
 
   return (
-    <SettingsSection title="Text">
+    <SettingsSection title={gt("Text", { $context: "settings section for text size" })}>
       <TextAppearancePreview fontSize={appearance.baseFontSize} />
       <AppearancePreviewSeparator />
       <FontSizeSliderRow
         disabled={!isReady}
         icon="textformat.size"
-        label="Text size"
+        label={gt("Text size")}
         max={MAX_BASE_FONT_SIZE}
         min={MIN_BASE_FONT_SIZE}
         onChange={setBaseFontSize}
         step={BASE_FONT_SIZE_STEP}
         value={appearance.baseFontSize}
-        valueLabel={`${appearance.baseFontSize} pt`}
+        valueLabel={gt("{size} pt", { size: appearance.baseFontSize })}
       />
       <SettingsSwitchRow
         disabled={!isReady}
         icon="plusminus"
-        label="Render math"
+        label={gt("Render math")}
         value={mathRenderingEnabled}
         onValueChange={setMathRenderingEnabled}
       />
