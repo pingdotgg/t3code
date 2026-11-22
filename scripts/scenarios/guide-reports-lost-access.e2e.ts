@@ -1,28 +1,46 @@
 /// <reference lib="dom" />
 import {
+  ProjectSnapshot,
   SourceControlProviderKind,
   type PullRequestDetail,
   type PullRequestReviewGuideResult,
 } from "@t3tools/contracts";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import { T3_HOME } from "../e2e.config.ts";
-import { rpcClient, runPromise, test, WEB } from "./t3.ts";
+import { makeState, rpcClient, runPromise, test, WEB } from "./t3.ts";
 
 const repository = "scenario/demo";
 
-const enableReviewGuides = Effect.fn("scenario.enableReviewGuides")(function* (origin: string) {
-  const rpc = yield* rpcClient(T3_HOME, origin);
-  yield* rpc["server.updateSettings"]({ patch: { reviewGuidesEnabled: true } });
-}, Effect.scoped);
+const projectIn = Effect.fn("scenario.projectIn")(
+  function* (origin: string, workspaceRoot: string) {
+    const issued = yield* makeState(T3_HOME).cli(["auth", "session", "issue", "--token-only"]);
+    const { projects } = yield* HttpClient.execute(
+      HttpClientRequest.get(`${origin}/api/projects`).pipe(
+        HttpClientRequest.bearerToken(issued.stdout.trim()),
+      ),
+    ).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk),
+      Effect.flatMap(HttpClientResponse.schemaBodyJson(ProjectSnapshot)),
+    );
+    const project = projects.find((entry) => entry.workspaceRoot === workspaceRoot);
+    if (!project) throw new Error("Scenario project is missing.");
+    const rpc = yield* rpcClient(T3_HOME, origin);
+    yield* rpc["server.updateSettings"]({ patch: { reviewGuidesEnabled: true } });
+    return project;
+  },
+  Effect.scoped,
+  Effect.provide(FetchHttpClient.layer),
+);
 
 test(
   "The Guide tab reports that it lost access to a running guide",
   WEB,
   async ({ t3, app, browser, screen }) => {
-    const project = await t3.projectWithMetadata("demo");
-    await runPromise(enableReviewGuides(app.baseUrl ?? ""));
+    const workspace = await t3.project("demo");
+    const project = await runPromise(projectIn(app.baseUrl ?? "", workspace));
     const reference = { projectId: project.id, host: "gitlab.com", repository, number: 42 };
     const now = "2026-10-01T00:00:00.000Z";
     const detail = {
@@ -79,10 +97,14 @@ test(
           currentHeadSha: headSha,
         };
         let removed = false;
-        const guideAccess = (available: boolean) => {
-          removed = !available;
-        };
-        Object.assign(window, { guideAccess });
+        Object.assign(window, {
+          removeGuideAccess: () => {
+            removed = true;
+          },
+          restoreGuideAccess: () => {
+            removed = false;
+          },
+        });
         const send = WebSocket.prototype.send;
         WebSocket.prototype.send = function (data) {
           const request: { _tag: string; id: string; tag: string } | null =
@@ -161,7 +183,7 @@ test(
     await screen.getByRole("button", "Write guide", { exact: true }).tap();
     await screen.getByText("Writing a review guide", { exact: true }).waitFor();
     await browser.evaluate(() => {
-      (window as unknown as { guideAccess: (available: boolean) => void }).guideAccess(false);
+      (window as unknown as { removeGuideAccess: () => void }).removeGuideAccess();
       return null;
     });
     await browser
@@ -181,7 +203,7 @@ test(
     await browser.keyboard.press("Escape");
 
     await browser.evaluate(() => {
-      (window as unknown as { guideAccess: (available: boolean) => void }).guideAccess(true);
+      (window as unknown as { restoreGuideAccess: () => void }).restoreGuideAccess();
       return null;
     });
     await expect(screen.getByText("Writing a review guide", { exact: true })).toBeVisible();

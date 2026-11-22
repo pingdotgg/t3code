@@ -9,7 +9,6 @@ import {
   CommandId,
   EnvironmentHttpApi,
   ORCHESTRATION_PROTOCOL_VERSION,
-  type Project,
   type ProjectMutation,
   ProjectId,
   WsRpcGroup,
@@ -36,11 +35,6 @@ export interface T3State {
     title: string,
     files?: Readonly<Record<string, string | Uint8Array>>,
   ) => Promise<string>;
-  /** Creates a project like `project` and returns the server's project record. */
-  readonly projectWithMetadata: (
-    title: string,
-    files?: Readonly<Record<string, string | Uint8Array>>,
-  ) => Promise<Project>;
   /**
    * Starts a thread in a project and plays one replayed turn per message before returning.
    * `model` is a dev replay recording: showcase, todo-list, approval, question, multi-turn,
@@ -191,7 +185,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
       workspaceRoot: workspace,
     });
     projects.push(created.id);
-    return { workspace, created };
+    return workspace;
   });
 
   const thread = Effect.fn("scenario.thread")(function* (input: {
@@ -214,10 +208,7 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
   return {
     cli,
     state: {
-      project: (title, files = {}) =>
-        runPromise(project(title, files).pipe(Effect.map(({ workspace }) => workspace))),
-      projectWithMetadata: (title, files = {}) =>
-        runPromise(project(title, files).pipe(Effect.map(({ created }) => created))),
+      project: (title, files = {}) => runPromise(project(title, files)),
       thread: (input) => runPromise(thread(input)),
     } satisfies T3State,
     // The server outlives the test, so the next one must not see this one's projects.
