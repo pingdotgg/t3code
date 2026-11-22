@@ -944,6 +944,37 @@ export function hubRoutes(
     account.models ? listed(account) : serving.has(account.driver) || account.driver === driver;
 }
 
+// A readable reading beats an unreadable one; between equals the later check wins.
+function fresherLimits(next: ServerProviderUsageLimits, previous: ServerProviderUsageLimits) {
+  const previousUsable = limitsNotice(previous) === null;
+  const usable = limitsNotice(next) === null;
+  return (
+    (usable && !previousUsable) ||
+    (usable === previousUsable && Date.parse(next.checkedAt) > Date.parse(previous.checkedAt))
+  );
+}
+
+/** The freshest readable limits any enabled login of this provider's account reports across environments. */
+export function accountUsageLimits(
+  provider: ServerProvider,
+  own: ServerProviderUsageLimits,
+  peers: Iterable<ServerProvider>,
+): ServerProviderUsageLimits {
+  if (!provider.enabled || own.unavailable?.reason === "unsupported") return own;
+  const enabledPeers = [...peers].filter((peer) => peer.enabled);
+  const resolveKey = accountKeyResolver([provider, ...enabledPeers].map(nativeReport));
+  const key = resolveKey(nativeReport(provider));
+  if (key === null) return own;
+  let best = own;
+  for (const peer of enabledPeers) {
+    if (peer.driver !== provider.driver || !peer.usageLimits) continue;
+    if (limitsNotice(peer.usageLimits) !== null) continue;
+    if (resolveKey(nativeReport(peer)) !== key) continue;
+    if (fresherLimits(peer.usageLimits, best)) best = peer.usageLimits;
+  }
+  return best;
+}
+
 export function collectProviderUsageLimits(
   instanceId: ProviderInstanceId,
   providers: readonly ServerProvider[],
@@ -988,13 +1019,7 @@ export function collectProviderUsageLimits(
     const snapshot = { provider, limits: provider.usageLimits };
     const key = accountKey ?? `instance:${provider.instanceId}`;
     const previous = nativeByAccount.get(key);
-    const previousUsable = previous ? limitsNotice(previous.usage.limits) === null : false;
-    const usable = limitsNotice(snapshot.limits) === null;
-    const providerWins =
-      !previous ||
-      (usable && !previousUsable) ||
-      (usable === previousUsable &&
-        Date.parse(snapshot.limits.checkedAt) > Date.parse(previous.usage.limits.checkedAt));
+    const providerWins = !previous || fresherLimits(snapshot.limits, previous.usage.limits);
     const previousCredit = previous?.credits;
     const credits =
       snapshot.limits.resetCredits &&

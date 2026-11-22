@@ -6,6 +6,7 @@ import {
   type UsageLimitSourceSnapshots,
 } from "@t3tools/contracts";
 import {
+  accountUsageLimits,
   antigravityWindowLimitsModel,
   collectLimitAccounts,
   collectLimitPools,
@@ -30,6 +31,7 @@ export function resolveThreadDetailsLimits(
   providers: readonly ServerProvider[],
   sources: UsageLimitSourceSnapshots,
   now: number,
+  peers: Iterable<ServerProvider> = [],
 ): ThreadDetailsLimits | null {
   const provider = providers.find((entry) => entry.instanceId === providerInstanceId);
   if (!provider) return null;
@@ -41,7 +43,10 @@ export function resolveThreadDetailsLimits(
     provider.usageLimits;
   if (!own) return null;
   const hubs = instanceHubs(provider, sources);
-  if (limitsNotice(own) === null || hubs.length === 0) return { kind: "instance", limits: own };
+  // Linked environments can hold a fresher reading of the same account; a hub-routed instance never takes theirs.
+  if (limitsNotice(own) === null || hubs.length === 0) {
+    return { kind: "instance", limits: accountUsageLimits(provider, own, peers) };
+  }
   // An instance sent to a hub reads no limits of its own; its hub pools the accounts it spends.
   return hubPool(provider.driver, model, providers, hubs, now) ?? { kind: "instance", limits: own };
 }
