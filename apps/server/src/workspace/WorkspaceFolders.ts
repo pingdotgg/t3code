@@ -64,6 +64,8 @@ export class WorkspaceFolders extends Context.Service<
     readonly submodules: (input: {
       readonly projectId: ProjectId;
       readonly worktreePath: string | null;
+      /** The thread's `forThread` folders, when the caller has them; each read walks the project. */
+      readonly folders?: ReadonlyArray<ThreadFolder>;
     }) => Effect.Effect<ReadonlyArray<ThreadFolder>, WorkspaceFoldersError>;
     readonly list: (
       input: WorkspaceListFoldersInput,
@@ -506,7 +508,7 @@ const make = Effect.gen(function* () {
   const submodules: WorkspaceFolders["Service"]["submodules"] = Effect.fn(
     "WorkspaceFolders.submodules",
   )(function* (input) {
-    const { folders } = yield* forThread(input);
+    const folders = input.folders ?? (yield* forThread(input)).folders;
     // A worktree can outlive its project record; its submodules are then named by where they are.
     const projectRoot = yield* readProject(input.projectId).pipe(
       Effect.map((project) => path.resolve(project.workspaceRoot)),
