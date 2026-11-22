@@ -1321,3 +1321,608 @@ fn thread_bounded_snapshot_multi_page_prepend_and_deduplication() {
         "multi-page prepend must assemble complete chronological timeline"
     );
 }
+
+#[test]
+fn thread_queued_messages_appear_edit_cancel_and_transition_to_user() {
+    let mut state = ThreadState::new("thread-q");
+
+    // 1. Snapshot with an active running turn and one queued run + message (with image attachment).
+    let snap = decode_thread(json!({
+        "kind": "snapshot",
+        "snapshotSequence": 10,
+        "projection": {
+            "thread": thread_json("thread-q", "proj-1", "Queued test", "running", "2026-11-22T12:00:00.000Z", None),
+            "runs": [
+                {
+                    "id": "run-active",
+                    "threadId": "thread-q",
+                    "ordinal": 1,
+                    "providerInstanceId": "claudeAgent",
+                    "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                    "providerThreadId": null,
+                    "userMessageId": "msg-1",
+                    "rootNodeId": null,
+                    "activeAttemptId": null,
+                    "status": "running",
+                    "requestedAt": "2026-11-22T12:00:00.000Z",
+                    "startedAt": "2026-11-22T12:00:00.000Z",
+                    "completedAt": null,
+                    "checkpointId": null,
+                    "contextHandoffId": null
+                },
+                {
+                    "id": "run-q1",
+                    "threadId": "thread-q",
+                    "ordinal": 2,
+                    "providerInstanceId": "claudeAgent",
+                    "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                    "providerThreadId": null,
+                    "userMessageId": "msg-q1",
+                    "rootNodeId": null,
+                    "activeAttemptId": null,
+                    "status": "queued",
+                    "queuePosition": 1,
+                    "requestedAt": "2026-11-22T12:00:05.000Z",
+                    "startedAt": null,
+                    "completedAt": null,
+                    "checkpointId": null,
+                    "contextHandoffId": null
+                }
+            ],
+            "attempts": [],
+            "nodes": [],
+            "subagents": [],
+            "providerSessions": [],
+            "providerThreads": [],
+            "providerTurns": [],
+            "runtimeRequests": [],
+            "messages": [
+                {
+                    "id": "msg-q1",
+                    "threadId": "thread-q",
+                    "runId": "run-q1",
+                    "nodeId": null,
+                    "role": "user",
+                    "text": "First queued prompt",
+                    "attachments": [
+                        {
+                            "type": "image",
+                            "id": "att-img-1",
+                            "name": "screenshot.png",
+                            "mimeType": "image/png",
+                            "sizeBytes": 4096
+                        }
+                    ],
+                    "streaming": false,
+                    "createdBy": "user",
+                    "creationSource": "web",
+                    "createdAt": "2026-11-22T12:00:05.000Z",
+                    "updatedAt": "2026-11-22T12:00:05.000Z"
+                }
+            ],
+            "plans": [],
+            "turnItems": [],
+            "checkpointScopes": [],
+            "checkpoints": [],
+            "contextHandoffs": [],
+            "contextTransfers": [],
+            "visibleTurnItems": [
+                {
+                    "position": 0,
+                    "visibility": "local",
+                    "sourceThreadId": "thread-q",
+                    "sourceItemId": "item-1",
+                    "item": {
+                        "id": "item-1",
+                        "threadId": "thread-q",
+                        "runId": "run-active",
+                        "nodeId": null,
+                        "providerThreadId": null,
+                        "providerTurnId": null,
+                        "nativeItemRef": null,
+                        "parentItemId": null,
+                        "ordinal": 1,
+                        "status": "completed",
+                        "title": null,
+                        "startedAt": "2026-11-22T12:00:00.000Z",
+                        "completedAt": "2026-11-22T12:00:00.000Z",
+                        "updatedAt": "2026-11-22T12:00:00.000Z",
+                        "createdBy": "user",
+                        "creationSource": "web",
+                        "type": "user_message",
+                        "messageId": "msg-1",
+                        "inputIntent": "turn_start",
+                        "text": "Active prompt",
+                        "attachments": []
+                    }
+                }
+            ],
+            "updatedAt": "2026-11-22T12:00:05.000Z"
+        }
+    }));
+
+    assert!(state.apply(snap), "snapshot with queued run should apply");
+    assert!(state.working, "active run should mark working=true");
+    assert_eq!(
+        state.active_run_id(),
+        Some("run-active"),
+        "active_run_id should return the running run"
+    );
+    assert_eq!(
+        state.entries.len(),
+        2,
+        "snapshot should contain active user message and trailing queued message"
+    );
+    assert!(
+        matches!(
+            &state.entries[1],
+            TimelineEntry::QueuedUser {
+                run_id,
+                message_id,
+                text,
+                attachments,
+                created_at,
+                created_by_agent: false,
+                ..
+            } if run_id == "run-q1"
+                && message_id == "msg-q1"
+                && text == "First queued prompt"
+                && attachments.len() == 1
+                && created_at == "2026-11-22T12:00:05.000Z"
+        ),
+        "queued run should surface as TimelineEntry::QueuedUser with attachment preserved, got {:?}",
+        state.entries[1]
+    );
+
+    // 2. Live edit (`queued-run.edit` emits `message.updated`).
+    let edit_event = decode_thread(json!({
+        "kind": "event",
+        "sequence": 11,
+        "event": {
+            "id": "ev-edit-q1",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:10.000Z",
+            "type": "message.updated",
+            "payload": {
+                "id": "msg-q1",
+                "threadId": "thread-q",
+                "runId": "run-q1",
+                "nodeId": null,
+                "role": "user",
+                "text": "Edited queued prompt",
+                "attachments": [
+                    {
+                        "type": "image",
+                        "id": "att-img-1",
+                        "name": "screenshot.png",
+                        "mimeType": "image/png",
+                        "sizeBytes": 4096
+                    }
+                ],
+                "streaming": false,
+                "createdBy": "user",
+                "creationSource": "web",
+                "createdAt": "2026-11-22T12:00:05.000Z",
+                "updatedAt": "2026-11-22T12:00:10.000Z"
+            }
+        }
+    }));
+    assert!(
+        state.apply(edit_event),
+        "editing a queued message via message.updated should report change"
+    );
+    assert!(
+        matches!(
+            &state.entries[1],
+            TimelineEntry::QueuedUser { text, attachments, .. }
+                if text == "Edited queued prompt" && attachments.len() == 1
+        ),
+        "queued entry text should update in place, got {:?}",
+        state.entries[1]
+    );
+
+    // 3. Second queued run arrives via live run.created + message.updated, and a live tool streams
+    //    ahead of both queued messages.
+    let q2_run = decode_thread(json!({
+        "kind": "event",
+        "sequence": 12,
+        "event": {
+            "id": "ev-q2-run",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:12.000Z",
+            "type": "run.created",
+            "payload": {
+                "id": "run-q2",
+                "threadId": "thread-q",
+                "ordinal": 3,
+                "providerInstanceId": "claudeAgent",
+                "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                "providerThreadId": null,
+                "userMessageId": "msg-q2",
+                "rootNodeId": null,
+                "activeAttemptId": null,
+                "status": "queued",
+                "queuePosition": 2,
+                "requestedAt": "2026-11-22T12:00:12.000Z",
+                "startedAt": null,
+                "completedAt": null,
+                "checkpointId": null,
+                "contextHandoffId": null
+            }
+        }
+    }));
+    state.apply(q2_run);
+    let q2_msg = decode_thread(json!({
+        "kind": "event",
+        "sequence": 13,
+        "event": {
+            "id": "ev-q2-msg",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:12.000Z",
+            "type": "message.updated",
+            "payload": {
+                "id": "msg-q2",
+                "threadId": "thread-q",
+                "runId": "run-q2",
+                "nodeId": null,
+                "role": "user",
+                "text": "Second queued prompt",
+                "attachments": [],
+                "streaming": false,
+                "createdBy": "user",
+                "creationSource": "web",
+                "createdAt": "2026-11-22T12:00:12.000Z",
+                "updatedAt": "2026-11-22T12:00:12.000Z"
+            }
+        }
+    }));
+    assert!(
+        state.apply(q2_msg),
+        "message.updated for new queued run should append QueuedUser"
+    );
+    assert_eq!(state.entries.len(), 3, "should have 1 sent + 2 queued");
+
+    let live_reply = decode_thread(json!({
+        "kind": "event",
+        "sequence": 14,
+        "event": {
+            "id": "ev-a1",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:13.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "item-a1",
+                "threadId": "thread-q",
+                "runId": "run-active",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 2,
+                "status": "running",
+                "title": null,
+                "startedAt": "2026-11-22T12:00:13.000Z",
+                "completedAt": null,
+                "updatedAt": "2026-11-22T12:00:13.000Z",
+                "type": "assistant_message",
+                "messageId": "msg-a1",
+                "text": "Working on it",
+                "streaming": true
+            }
+        }
+    }));
+    assert!(state.apply(live_reply), "streaming reply should insert");
+    assert!(
+        matches!(&state.entries[1], TimelineEntry::Assistant { id, .. } if id == "item-a1"),
+        "active turn item must insert ahead of trailing queued entries, got {:?}",
+        state.entries
+    );
+
+    // 4. Cancel second queued message (`queued-run.cancel` -> `run.updated` status=cancelled).
+    let cancel_q2 = decode_thread(json!({
+        "kind": "event",
+        "sequence": 15,
+        "event": {
+            "id": "ev-q2-cancel",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:14.000Z",
+            "type": "run.updated",
+            "payload": {
+                "id": "run-q2",
+                "threadId": "thread-q",
+                "ordinal": 3,
+                "providerInstanceId": "claudeAgent",
+                "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                "providerThreadId": null,
+                "userMessageId": "msg-q2",
+                "rootNodeId": null,
+                "activeAttemptId": null,
+                "status": "cancelled",
+                "requestedAt": "2026-11-22T12:00:12.000Z",
+                "startedAt": null,
+                "completedAt": "2026-11-22T12:00:14.000Z",
+                "checkpointId": null,
+                "contextHandoffId": null
+            }
+        }
+    }));
+    assert!(state.apply(cancel_q2), "cancelling q2 should update state");
+    assert!(
+        state.working,
+        "cancelling a queued run must NOT clear working while run-active is still running"
+    );
+    assert_eq!(
+        state.entries.len(),
+        3,
+        "cancelled queued message should disappear"
+    );
+
+    // 5. Promote first queued message to steer (`run.updated` cancelled + `turn-item.updated`
+    //    with `promoted_queued_to_steer` / `completed`).
+    let promote_cancel = decode_thread(json!({
+        "kind": "event",
+        "sequence": 16,
+        "event": {
+            "id": "ev-q1-promote-run",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:15.000Z",
+            "type": "run.updated",
+            "payload": {
+                "id": "run-q1",
+                "threadId": "thread-q",
+                "ordinal": 2,
+                "providerInstanceId": "claudeAgent",
+                "modelSelection": { "instanceId": "claudeAgent", "model": "claude-haiku-5-5" },
+                "providerThreadId": null,
+                "userMessageId": "msg-q1",
+                "rootNodeId": null,
+                "activeAttemptId": null,
+                "status": "cancelled",
+                "requestedAt": "2026-11-22T12:00:05.000Z",
+                "startedAt": null,
+                "completedAt": "2026-11-22T12:00:15.000Z",
+                "checkpointId": null,
+                "contextHandoffId": null
+            }
+        }
+    }));
+    assert!(
+        state.apply(promote_cancel),
+        "promote run cancel should apply"
+    );
+    let promote_item = decode_thread(json!({
+        "kind": "event",
+        "sequence": 17,
+        "event": {
+            "id": "ev-q1-promote-item",
+            "threadId": "thread-q",
+            "occurredAt": "2026-11-22T12:00:15.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "turn-item:msg-q1",
+                "threadId": "thread-q",
+                "runId": "run-active",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 3,
+                "status": "completed",
+                "title": null,
+                "startedAt": "2026-11-22T12:00:15.000Z",
+                "completedAt": "2026-11-22T12:00:15.000Z",
+                "updatedAt": "2026-11-22T12:00:15.000Z",
+                "createdBy": "user",
+                "creationSource": "web",
+                "type": "user_message",
+                "messageId": "msg-q1",
+                "inputIntent": "promoted_queued_to_steer",
+                "text": "Edited queued prompt",
+                "attachments": []
+            }
+        }
+    }));
+    assert!(state.apply(promote_item), "promoted turn item should apply");
+    assert!(
+        !state
+            .entries
+            .iter()
+            .any(|e| matches!(e, TimelineEntry::QueuedUser { .. })),
+        "promoted message should no longer be QueuedUser"
+    );
+    assert_eq!(
+        state.entries.last(),
+        Some(&TimelineEntry::User {
+            id: "turn-item:msg-q1".to_owned(),
+            text: "Edited queued prompt".to_owned(),
+            created_by_agent: false,
+        }),
+        "promoted queued message should transition to normal TimelineEntry::User"
+    );
+}
+
+#[test]
+fn thread_pending_queued_turn_item_transitions_to_user_and_cancel() {
+    let mut state = ThreadState::new("thread-pending-ti");
+
+    // 1. Standalone pending QueuedTurn user_message turn item appears as QueuedUser.
+    let pending = decode_thread(json!({
+        "kind": "event",
+        "sequence": 1,
+        "event": {
+            "id": "ev-ti-q1",
+            "threadId": "thread-pending-ti",
+            "occurredAt": "2026-11-22T12:10:00.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "item-q1",
+                "threadId": "thread-pending-ti",
+                "runId": "run-q1",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 1,
+                "status": "pending",
+                "title": null,
+                "startedAt": "2026-11-22T12:10:00.000Z",
+                "completedAt": null,
+                "updatedAt": "2026-11-22T12:10:00.000Z",
+                "createdBy": "user",
+                "creationSource": "web",
+                "type": "user_message",
+                "messageId": "msg-q1",
+                "inputIntent": "queued_turn",
+                "text": "Wait my turn",
+                "attachments": []
+            }
+        }
+    }));
+    assert!(
+        state.apply(pending),
+        "pending queued turn item should apply"
+    );
+    assert!(
+        matches!(
+            state.entries.as_slice(),
+            [TimelineEntry::QueuedUser { id, run_id, text, .. }]
+                if id == "item-q1" && run_id == "run-q1" && text == "Wait my turn"
+        ),
+        "pending QueuedTurn must map to QueuedUser, got {:?}",
+        state.entries
+    );
+
+    // 2. Transitions from pending -> completed (started): becomes normal User entry.
+    let started = decode_thread(json!({
+        "kind": "event",
+        "sequence": 2,
+        "event": {
+            "id": "ev-ti-q1-started",
+            "threadId": "thread-pending-ti",
+            "occurredAt": "2026-11-22T12:10:05.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "item-q1",
+                "threadId": "thread-pending-ti",
+                "runId": "run-q1",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 1,
+                "status": "completed",
+                "title": null,
+                "startedAt": "2026-11-22T12:10:00.000Z",
+                "completedAt": "2026-11-22T12:10:05.000Z",
+                "updatedAt": "2026-11-22T12:10:05.000Z",
+                "createdBy": "user",
+                "creationSource": "web",
+                "type": "user_message",
+                "messageId": "msg-q1",
+                "inputIntent": "queued_turn",
+                "text": "Wait my turn",
+                "attachments": []
+            }
+        }
+    }));
+    assert!(
+        state.apply(started),
+        "started queued turn item should apply"
+    );
+    assert_eq!(
+        state.entries,
+        vec![TimelineEntry::User {
+            id: "item-q1".to_owned(),
+            text: "Wait my turn".to_owned(),
+            created_by_agent: false,
+        }],
+        "started queued turn item must transition cleanly into TimelineEntry::User"
+    );
+
+    // 3. Another pending queued item cancelled via turn-item.updated disappears.
+    let pending2 = decode_thread(json!({
+        "kind": "event",
+        "sequence": 3,
+        "event": {
+            "id": "ev-ti-q2",
+            "threadId": "thread-pending-ti",
+            "occurredAt": "2026-11-22T12:10:10.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "item-q2",
+                "threadId": "thread-pending-ti",
+                "runId": "run-q2",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 2,
+                "status": "pending",
+                "title": null,
+                "startedAt": "2026-11-22T12:10:10.000Z",
+                "completedAt": null,
+                "updatedAt": "2026-11-22T12:10:10.000Z",
+                "createdBy": "user",
+                "creationSource": "web",
+                "type": "user_message",
+                "messageId": "msg-q2",
+                "inputIntent": "queued_turn",
+                "text": "Cancel me",
+                "attachments": []
+            }
+        }
+    }));
+    assert!(
+        state.apply(pending2),
+        "second pending queued item should apply"
+    );
+    assert_eq!(state.entries.len(), 2, "second queued item should appear");
+
+    let cancelled2 = decode_thread(json!({
+        "kind": "event",
+        "sequence": 4,
+        "event": {
+            "id": "ev-ti-q2-cancel",
+            "threadId": "thread-pending-ti",
+            "occurredAt": "2026-11-22T12:10:12.000Z",
+            "type": "turn-item.updated",
+            "payload": {
+                "id": "item-q2",
+                "threadId": "thread-pending-ti",
+                "runId": "run-q2",
+                "nodeId": null,
+                "providerThreadId": null,
+                "providerTurnId": null,
+                "nativeItemRef": null,
+                "parentItemId": null,
+                "ordinal": 2,
+                "status": "cancelled",
+                "title": null,
+                "startedAt": "2026-11-22T12:10:10.000Z",
+                "completedAt": "2026-11-22T12:10:12.000Z",
+                "updatedAt": "2026-11-22T12:10:12.000Z",
+                "createdBy": "user",
+                "creationSource": "web",
+                "type": "user_message",
+                "messageId": "msg-q2",
+                "inputIntent": "queued_turn",
+                "text": "Cancel me",
+                "attachments": []
+            }
+        }
+    }));
+    assert!(
+        state.apply(cancelled2),
+        "cancelling pending queued item should report change"
+    );
+    assert_eq!(
+        state.entries.len(),
+        1,
+        "cancelled pending queued item should be removed"
+    );
+}

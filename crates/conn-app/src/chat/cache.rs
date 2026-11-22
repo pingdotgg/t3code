@@ -69,6 +69,9 @@ pub(super) enum VirtualItem {
         grouped_with_previous: bool,
         grouped_with_next: bool,
     },
+    QueuedUser {
+        row_idx: usize,
+    },
     Assistant {
         row_idx: usize,
         followed_by_work: bool,
@@ -107,6 +110,20 @@ impl VirtualItem {
                 *grouped_with_previous as u8,
                 *grouped_with_next as u8
             ),
+            Self::QueuedUser { row_idx } => match &rows[*row_idx].entry {
+                TimelineEntry::QueuedUser {
+                    id,
+                    run_id,
+                    text,
+                    attachments,
+                    ..
+                } => format!(
+                    "qu:{id}:{run_id}:{:016x}:{}",
+                    fnv1a64(text.as_bytes()),
+                    attachments.len()
+                ),
+                other => format!("qu:{}", other.id()),
+            },
             Self::Assistant {
                 row_idx,
                 followed_by_work,
@@ -164,9 +181,9 @@ impl VirtualItem {
                         .iter()
                         .any(|r| r.entry.id() == target_id)
             }
-            Self::Approval { row_idx } | Self::Notice { row_idx } => {
-                rows[*row_idx].entry.id() == target_id
-            }
+            Self::Approval { row_idx }
+            | Self::Notice { row_idx }
+            | Self::QueuedUser { row_idx } => rows[*row_idx].entry.id() == target_id,
             Self::LoadEarlier { .. } | Self::ChangedFiles { .. } | Self::Working => false,
         }
     }
@@ -462,6 +479,7 @@ impl RowCache {
     ) {
         let rows = &self.rows;
         let mut base_items: Vec<VirtualItem> = Vec::with_capacity(rows.len());
+        let mut queued_items: Vec<VirtualItem> = Vec::new();
         let mut idx = 0usize;
 
         while idx < rows.len() {
@@ -505,6 +523,10 @@ impl RowCache {
                     });
                     idx += 1;
                 }
+                TimelineEntry::QueuedUser { .. } => {
+                    queued_items.push(VirtualItem::QueuedUser { row_idx: idx });
+                    idx += 1;
+                }
                 TimelineEntry::Assistant { .. } => {
                     let followed_by_work = idx + 1 < rows.len()
                         && matches!(
@@ -540,6 +562,7 @@ impl RowCache {
                     rows.get(row_end.saturating_sub(1))?.entry.id()
                 }
                 VirtualItem::LoadEarlier { .. }
+                | VirtualItem::QueuedUser { .. }
                 | VirtualItem::ChangedFiles { .. }
                 | VirtualItem::Working => return None,
             };
@@ -667,11 +690,23 @@ impl RowCache {
             items.push(VirtualItem::Working);
         }
 
+        // Queued user messages always render at the bottom of the timeline, after Working.
+        items.extend(queued_items);
+
         let item_keys = items.iter().map(|item| item.stable_key(rows)).collect();
         self.items = items;
         self.item_keys = item_keys;
         self.toc = toc;
     }
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x0100_0000_01b3);
+    }
+    hash
 }
 
 #[cfg(test)]
@@ -709,6 +744,8 @@ mod tests {
                 &thread.entry_timings,
                 &thread.turn_checkpoints,
                 false,
+                false,
+                false,
             );
             let first_ms = t.elapsed().as_secs_f64() * 1e3;
             let t = Instant::now();
@@ -716,6 +753,8 @@ mod tests {
                 &thread.entries,
                 &thread.entry_timings,
                 &thread.turn_checkpoints,
+                false,
+                false,
                 false,
             );
             let again_ms = t.elapsed().as_secs_f64() * 1e3;
@@ -1130,5 +1169,71 @@ mod tests {
         );
         assert_eq!(s5.splice_start, 1);
         assert_eq!(s5.prepended_delta, 2);
+    }
+
+    #[test]
+    fn renders_queued_user_items_after_working_and_invalidates_on_edit() {
+        let mut cache = RowCache::default();
+        let entries = vec![
+            TimelineEntry::User {
+                id: "u1".to_owned(),
+                text: "Start".to_owned(),
+                created_by_agent: false,
+            },
+            TimelineEntry::QueuedUser {
+                id: "turn-item:q1".to_owned(),
+                run_id: "run-q1".to_owned(),
+                message_id: "q1".to_owned(),
+                text: "ABCD".to_owned(),
+                attachments: Vec::new(),
+                created_at: "2026-11-22T12:00:00.000Z".to_owned(),
+                created_by_agent: false,
+            },
+        ];
+
+        cache.sync(
+            &entries,
+            &empty_timings(),
+            &empty_checkpoints(),
+            true,
+            false,
+            false,
+        );
+        assert_eq!(
+            cache.items().len(),
+            3,
+            "expected User, Working, then QueuedUser at the tail"
+        );
+        assert!(
+            matches!(cache.items()[1], VirtualItem::Working),
+            "Working row should precede queued messages"
+        );
+        assert!(
+            matches!(cache.items()[2], VirtualItem::QueuedUser { row_idx: 1 }),
+            "QueuedUser should sit at the bottom after Working"
+        );
+        assert_eq!(
+            cache.toc().len(),
+            1,
+            "queued messages should not be counted as sent TOC turns"
+        );
+
+        // Same-length edit must still trigger a splice at the queued item's index.
+        let mut edited = entries;
+        if let TimelineEntry::QueuedUser { text, .. } = &mut edited[1] {
+            *text = "WXYZ".to_owned();
+        }
+        let stats = cache.sync(
+            &edited,
+            &empty_timings(),
+            &empty_checkpoints(),
+            true,
+            false,
+            false,
+        );
+        assert_eq!(
+            stats.splice_start, 2,
+            "editing queued text to same length must invalidate its VirtualItem key"
+        );
     }
 }

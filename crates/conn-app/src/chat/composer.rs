@@ -108,6 +108,16 @@ impl DictationState {
     }
 }
 
+/// Active queued-message edit session in the composer (`useQueuedRunEdit.ts`).
+#[derive(Clone, Debug, PartialEq)]
+struct EditingQueuedRun {
+    run_id: String,
+    /// Draft text captured before entering edit mode, restored on cancel or save.
+    saved_draft: String,
+    /// Attachments already uploaded on the queued message (removable locally until saved).
+    existing_attachments: Vec<ChatAttachment>,
+}
+
 /// Events emitted by [`Composer`] to its host view (`ChatView` -> `ConnApp`).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ComposerEvent {
@@ -115,6 +125,14 @@ pub(crate) enum ComposerEvent {
         text: String,
         attachments: Vec<ChatAttachment>,
     },
+    /// Save an edit to an existing server-backed queued message (`queued-run.edit`).
+    EditQueuedMessage {
+        run_id: String,
+        text: String,
+        attachments: Option<Vec<ChatAttachment>>,
+    },
+    /// Cancelled editing a queued message (Escape or Cancel button).
+    CancelEditQueuedMessage,
     Stop,
     ModelSelected {
         instance_id: String,
@@ -162,6 +180,7 @@ pub(crate) struct Composer {
     file_search_generation: u64,
     attachments: Vec<PendingAttachment>,
     next_attachment_id: u64,
+    editing_queued: Option<EditingQueuedRun>,
     dictation: DictationState,
     dictation_error: Option<String>,
     next_dictation_seq: u64,
@@ -273,6 +292,7 @@ impl Composer {
             file_search_generation: 0,
             attachments: Vec::new(),
             next_attachment_id: 1,
+            editing_queued: None,
             dictation: DictationState::Idle,
             dictation_error: None,
             next_dictation_seq: 1,
@@ -383,6 +403,84 @@ impl Composer {
             input.focus(window, cx);
         });
         self.on_draft_changed(cx);
+    }
+
+    /// Loads a server-backed queued message into the composer for editing.
+    ///
+    /// Preserves any existing unsent thread draft so cancelling restores it.
+    pub(crate) fn begin_edit_queued(
+        &mut self,
+        run_id: String,
+        text: String,
+        attachments: Vec<ChatAttachment>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let saved_draft = match self.editing_queued.take() {
+            Some(prev) => prev.saved_draft,
+            None => self.textarea.read(cx).value().to_string(),
+        };
+        self.editing_queued = Some(EditingQueuedRun {
+            run_id,
+            saved_draft,
+            existing_attachments: attachments,
+        });
+        self.attachments.clear();
+        self.close_overlays(cx);
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(text, window, cx);
+            input.focus(window, cx);
+        });
+        self.on_draft_changed(cx);
+    }
+
+    /// Exits queued-message edit mode, restoring the saved thread draft.
+    pub(crate) fn cancel_edit_queued(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        let Some(editing) = self.editing_queued.take() else {
+            return;
+        };
+        self.attachments.clear();
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(editing.saved_draft, window, cx);
+            input.focus(window, cx);
+        });
+        self.on_draft_changed(cx);
+        cx.emit(ComposerEvent::CancelEditQueuedMessage);
+        cx.notify();
+    }
+
+    /// Clears queued edit mode without window focus (e.g. when the queued run left the queue or
+    /// the user switched threads). Returns `true` when edit mode was active and cleared.
+    pub(crate) fn clear_edit_queued_if_missing(
+        &mut self,
+        active_queued_run_ids: &[&str],
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        let should_clear = self
+            .editing_queued
+            .as_ref()
+            .is_some_and(|e| !active_queued_run_ids.contains(&e.run_id.as_str()));
+        if should_clear {
+            self.editing_queued = None;
+            cx.notify();
+        }
+        should_clear
+    }
+
+    fn remove_editing_queued_attachment(
+        &mut self,
+        attachment_id: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(editing) = &mut self.editing_queued {
+            let before = editing.existing_attachments.len();
+            editing
+                .existing_attachments
+                .retain(|att| chat_attachment_id(att) != attachment_id);
+            if editing.existing_attachments.len() != before {
+                cx.notify();
+            }
+        }
     }
 
     /// Returns the composer's resolved `(instance_id, model_slug, options)` selection,
@@ -919,7 +1017,8 @@ impl Composer {
         }
     }
 
-    /// Submits the current non-empty draft (and any uploaded attachments) via [`ComposerEvent::Send`].
+    /// Submits the current non-empty draft (and any uploaded attachments) via [`ComposerEvent::Send`],
+    /// or saves an edited queued message via [`ComposerEvent::EditQueuedMessage`].
     pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         if self.submitting {
             return;
@@ -941,6 +1040,35 @@ impl Composer {
                 _ => None,
             })
             .collect();
+
+        if self.editing_queued.is_some() {
+            // `conn-server`'s `queued-run.edit` requires non-empty text.
+            if trimmed.is_empty() {
+                return;
+            }
+            let Some(mut editing) = self.editing_queued.take() else {
+                return;
+            };
+            editing.existing_attachments.extend(ready_attachments);
+            let combined = editing.existing_attachments;
+            let attachments = Some(combined);
+            self.textarea.update(cx, |input, cx| {
+                input.set_value(editing.saved_draft, window, cx);
+                input.focus(window, cx);
+            });
+            self.attachments.clear();
+            self.active_trigger = None;
+            self.dismissed_trigger_text = None;
+            self.model_picker_open = false;
+            cx.emit(ComposerEvent::EditQueuedMessage {
+                run_id: editing.run_id,
+                text: trimmed,
+                attachments,
+            });
+            cx.notify();
+            return;
+        }
+
         if trimmed.is_empty() && ready_attachments.is_empty() {
             return;
         }
@@ -1484,6 +1612,7 @@ fn runtime_mode_label(mode: &str) -> &'static str {
 
 impl Render for Composer {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let is_editing_queued = self.editing_queued.is_some();
         let has_ready_attachments = self
             .attachments
             .iter()
@@ -1492,10 +1621,12 @@ impl Render for Composer {
             .attachments
             .iter()
             .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
-        let has_sendable = (!self.textarea.read(cx).value().trim().is_empty()
-            || has_ready_attachments)
-            && !is_uploading
-            && !self.submitting;
+        let has_non_empty_text = !self.textarea.read(cx).value().trim().is_empty();
+        let has_sendable = if is_editing_queued {
+            has_non_empty_text && !is_uploading && !self.submitting
+        } else {
+            (has_non_empty_text || has_ready_attachments) && !is_uploading && !self.submitting
+        };
         let (model_label, driver) = self.display_model_and_driver();
         let tokens = self.tokens.clone();
 
@@ -1729,6 +1860,7 @@ impl Render for Composer {
         let action_btn = render_primary_action_button(
             self.working,
             has_sendable,
+            is_editing_queued,
             &tokens,
             cx.listener(|_composer, _, _, cx| {
                 cx.emit(ComposerEvent::Stop);
@@ -1745,10 +1877,80 @@ impl Render for Composer {
             .rounded(px(COMPOSER_RADIUS_PX))
             .bg(card_bg)
             .border_1()
-            .border_color(card_border)
+            .border_color(if is_editing_queued {
+                hsla_alpha(tokens.primary, 0.45)
+            } else {
+                card_border
+            })
             .overflow_hidden();
 
-        if !self.attachments.is_empty() {
+        if is_editing_queued {
+            card = card.child(
+                div()
+                    .id("chat-composer-editing-queued-bar")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.0))
+                    .px(px(14.0))
+                    .py(px(6.0))
+                    .border_b_1()
+                    .border_color(hsla(tokens.shell_divider))
+                    .text_size(px(12.0))
+                    .line_height(px(16.0))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .text_color(muted)
+                            .child(icons::icon(icons::EDIT, 12.0, muted))
+                            .child(
+                                div()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(fg)
+                                    .child("Editing queued message"),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(div().text_color(muted).child("Esc to cancel"))
+                            .child(
+                                div()
+                                    .id("chat-composer-cancel-edit-queued")
+                                    .a11y_button(
+                                        "composer.cancel-edit-queued",
+                                        "Cancel editing queued message",
+                                    )
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .size(px(18.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .hover(move |s| s.bg(highlight_bg))
+                                    .on_click(cx.listener(|composer, _, window, cx| {
+                                        composer.cancel_edit_queued(window, cx);
+                                    }))
+                                    .conn_tooltip("Cancel editing (Esc)", &tokens)
+                                    .child(icons::icon(icons::CLOSE, 11.0, muted)),
+                            ),
+                    ),
+            );
+        }
+
+        let existing_queued_attachments: &[ChatAttachment] = self
+            .editing_queued
+            .as_ref()
+            .map_or(&[], |e| e.existing_attachments.as_slice());
+
+        if !existing_queued_attachments.is_empty() || !self.attachments.is_empty() {
             let mut strip = div()
                 .flex()
                 .flex_row()
@@ -1757,6 +1959,63 @@ impl Render for Composer {
                 .gap(px(6.0))
                 .px(px(14.0))
                 .pt(px(12.0));
+            for (idx, att) in existing_queued_attachments.iter().enumerate() {
+                let att_id = chat_attachment_id(att).to_owned();
+                let att_name = chat_attachment_name(att);
+                let is_image = matches!(att, ChatAttachment::Image(_));
+                let leading_icon = if is_image {
+                    icons::icon(icons::IMAGE, 14.0, muted)
+                } else {
+                    let file_icon = crate::file_icons::file_icon(att_name);
+                    let icon_color = file_icon
+                        .color
+                        .map(|c| hsla(c.for_appearance(tokens.appearance)))
+                        .unwrap_or(muted);
+                    icons::icon(file_icon.asset, 14.0, icon_color)
+                };
+                strip = strip.child(
+                    div()
+                        .id(("composer-queued-att", idx))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6.0))
+                        .h(px(28.0))
+                        .max_w(px(220.0))
+                        .px(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(hsla(tokens.shell_control))
+                        .border_1()
+                        .border_color(hsla(tokens.shell_inner_border))
+                        .child(leading_icon)
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .text_color(fg)
+                                .child(att_name.to_owned()),
+                        )
+                        .child(
+                            div()
+                                .id(("composer-queued-att-rm", idx))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(16.0))
+                                .flex_shrink_0()
+                                .rounded(px(4.0))
+                                .cursor_pointer()
+                                .hover(move |s| s.bg(highlight_bg))
+                                .on_click(cx.listener(move |composer, _, _, cx| {
+                                    composer.remove_editing_queued_attachment(&att_id, cx);
+                                }))
+                                .child(icons::icon(icons::CLOSE, 11.0, muted)),
+                        ),
+                );
+            }
             for att in &self.attachments {
                 let local_id = att.local_id;
                 let file_icon = crate::file_icons::file_icon(&att.name);
@@ -1887,7 +2146,7 @@ impl Render for Composer {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|composer, _: &Escape, _window, cx| {
+            .capture_action(cx.listener(|composer, _: &Escape, window, cx| {
                 if let Some(session_id) = composer.dictation.session_id().map(str::to_owned) {
                     composer.cancel_dictation(session_id, cx);
                     cx.stop_propagation();
@@ -1899,6 +2158,11 @@ impl Render for Composer {
                     || composer.active_trigger.is_some()
                 {
                     composer.close_overlays(cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                if composer.editing_queued.is_some() {
+                    composer.cancel_edit_queued(window, cx);
                     cx.stop_propagation();
                 }
             }))
@@ -2046,10 +2310,11 @@ where
     btn.into_any_element()
 }
 
-/// Round send / stop primary button matching `ComposerPrimaryActions.tsx`.
+/// Round send / stop / save-edit primary button matching `ComposerPrimaryActions.tsx`.
 fn render_primary_action_button<FStop, FSend>(
     working: bool,
     has_text: bool,
+    is_editing_queued: bool,
     tokens: &Tokens,
     on_stop: FStop,
     on_send: FSend,
@@ -2058,7 +2323,7 @@ where
     FStop: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
     FSend: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
 {
-    if working && !has_text {
+    if working && !has_text && !is_editing_queued {
         div()
             .id("chat-composer-stop")
             .a11y_button("composer.stop", "Stop generation")
@@ -2079,10 +2344,18 @@ where
             ))
             .into_any_element()
     } else if has_text {
-        // Conn `ComposerPrimaryActions`: when running with sendable content, swap the stop
-        // button for the active primary pill with `CornerUpRight` (`forward.svg`) so users
-        // know submitting will queue/steer into the live turn.
-        let (icon_path, icon_size, label, tooltip) = if working {
+        // Conn `ComposerPrimaryActions`:
+        // - Editing queued message: `CheckIcon` (`check.svg`), "Update queued message".
+        // - Running with sendable content: `CornerUpRight` (`forward.svg`), "Queue message".
+        // - Idle: `ArrowUp` (`arrow-up.svg`), "Submit message".
+        let (icon_path, icon_size, label, tooltip) = if is_editing_queued {
+            (
+                icons::CHECK,
+                16.0,
+                "Update queued message",
+                "Update queued message",
+            )
+        } else if working {
             (icons::FORWARD, 16.0, "Queue message", "Queue message")
         } else {
             (icons::ARROW_UP, 14.0, "Send message", "Submit message")
@@ -2108,9 +2381,14 @@ where
             .into_any_element()
     } else {
         // Conn: `disabled:bg-foreground/12 disabled:text-muted-foreground`.
+        let (icon_path, icon_size, label) = if is_editing_queued {
+            (icons::CHECK, 16.0, "Update queued message (disabled)")
+        } else {
+            (icons::ARROW_UP, 14.0, "Send message (disabled)")
+        };
         div()
             .id("chat-composer-send-disabled")
-            .a11y_button("composer.send", "Send message (disabled)")
+            .a11y_button("composer.send", label)
             .flex()
             .items_center()
             .justify_center()
@@ -2118,11 +2396,27 @@ where
             .rounded_full()
             .bg(hsla_alpha(tokens.foreground, 0.12))
             .child(icons::icon(
-                icons::ARROW_UP,
-                14.0,
+                icon_path,
+                icon_size,
                 hsla(tokens.muted_foreground),
             ))
             .into_any_element()
+    }
+}
+
+fn chat_attachment_id(att: &ChatAttachment) -> &str {
+    match att {
+        ChatAttachment::Image(a) => &a.id,
+        ChatAttachment::File(a) => &a.id,
+        ChatAttachment::Unknown(a) => &a.id,
+    }
+}
+
+fn chat_attachment_name(att: &ChatAttachment) -> &str {
+    match att {
+        ChatAttachment::Image(a) => &a.name,
+        ChatAttachment::File(a) => &a.name,
+        ChatAttachment::Unknown(a) => &a.name,
     }
 }
 

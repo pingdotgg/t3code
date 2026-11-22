@@ -207,6 +207,70 @@ pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, ser
     }))
 }
 
+/// `queued-message.promote-to-steer`: promote a queued run into the currently active turn (`Send now`).
+pub(crate) fn promote_queued_to_steer(
+    thread_id: &str,
+    queued_run_id: &str,
+    target_run_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "queued-message.promote-to-steer",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "queuedRunId": queued_run_id,
+        "targetRunId": target_run_id,
+    }))
+}
+
+/// `queued-run.start`: start a queued run immediately when the thread has no active turn (`Send now`).
+pub(crate) fn start_queued_run(
+    thread_id: &str,
+    run_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "queued-run.start",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "runId": run_id,
+    }))
+}
+
+/// `queued-run.edit`: update the text (and optional attachments) of a queued run.
+pub(crate) fn edit_queued_run(
+    thread_id: &str,
+    run_id: &str,
+    text: &str,
+    attachments: Option<&[ChatAttachment]>,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    let mut payload = serde_json::Map::new();
+    payload.insert("type".to_owned(), json!("queued-run.edit"));
+    payload.insert("commandId".to_owned(), json!(new_id("cmd")));
+    payload.insert("threadId".to_owned(), json!(thread_id));
+    payload.insert("runId".to_owned(), json!(run_id));
+    payload.insert("text".to_owned(), json!(text));
+    if let Some(atts) = attachments {
+        let atts_json: Vec<serde_json::Value> = atts.iter().map(conn_contract::to_json).collect();
+        payload.insert(
+            "attachments".to_owned(),
+            serde_json::Value::Array(atts_json),
+        );
+    }
+    conn_contract::from_json(serde_json::Value::Object(payload))
+}
+
+/// `queued-run.cancel`: remove a queued run from the queue.
+pub(crate) fn cancel_queued_run(
+    thread_id: &str,
+    run_id: &str,
+) -> Result<OrchestrationV2Command, serde_json::Error> {
+    conn_contract::from_json(json!({
+        "type": "queued-run.cancel",
+        "commandId": new_id("cmd"),
+        "threadId": thread_id,
+        "runId": run_id,
+    }))
+}
+
 /// `thread.interaction-mode.set`: switch the thread between `"default"` and `"plan"`.
 pub(crate) fn set_interaction_mode(
     thread_id: &str,
@@ -301,10 +365,30 @@ mod tests {
             "message.dispatch decodes"
         );
         assert!(
-            send_message("t1", "hi", &[sample_attachment], true).is_ok(),
+            send_message("t1", "hi", std::slice::from_ref(&sample_attachment), true).is_ok(),
             "queued dispatch with attachment decodes"
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
+        assert!(
+            promote_queued_to_steer("t1", "run-q1", "run-active").is_ok(),
+            "queued-message.promote-to-steer decodes"
+        );
+        assert!(
+            start_queued_run("t1", "run-q1").is_ok(),
+            "queued-run.start decodes"
+        );
+        assert!(
+            edit_queued_run("t1", "run-q1", "updated text", None).is_ok(),
+            "queued-run.edit without attachments decodes"
+        );
+        assert!(
+            edit_queued_run("t1", "run-q1", "updated text", Some(&[sample_attachment])).is_ok(),
+            "queued-run.edit with attachments decodes"
+        );
+        assert!(
+            cancel_queued_run("t1", "run-q1").is_ok(),
+            "queued-run.cancel decodes"
+        );
         assert!(
             set_model_selection("t1", "claudeAgent", "haiku", None).is_ok(),
             "thread.model-selection.set decodes"

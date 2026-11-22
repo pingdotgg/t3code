@@ -232,6 +232,19 @@ impl ConnApp {
                 crate::chat::ChatEvent::LoadEarlierHistory => {
                     app.load_earlier_history(cx);
                 }
+                crate::chat::ChatEvent::PromoteQueuedMessage { run_id } => {
+                    app.promote_queued_message(run_id, cx);
+                }
+                crate::chat::ChatEvent::CancelQueuedMessage { run_id } => {
+                    app.cancel_queued_message(run_id, cx);
+                }
+                crate::chat::ChatEvent::EditQueuedMessage {
+                    run_id,
+                    text,
+                    attachments,
+                } => {
+                    app.edit_queued_message(run_id, text, attachments.as_deref(), cx);
+                }
             },
         )
         .detach();
@@ -1579,6 +1592,128 @@ impl ConnApp {
         cx.spawn(async move |_, _| {
             if let Err(e) = connection.dispatch_command(command).await {
                 eprintln!("stop: dispatchCommand failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Promotes a queued message to steer the active turn, or starts it immediately when stopped.
+    pub(crate) fn promote_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let active_run_id = self
+            .threads
+            .get(&thread_id)
+            .and_then(|t| t.active_run_id().map(str::to_owned));
+        let command = match active_run_id {
+            Some(target_run_id) => {
+                crate::commands::promote_queued_to_steer(&thread_id, run_id, &target_run_id)
+            }
+            None => crate::commands::start_queued_run(&thread_id, run_id),
+        };
+        let command = match command {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                eprintln!("queue: could not build send-now command: {err}");
+                self.chat.update(cx, |chat, cx| {
+                    chat.set_error(Some(format!("Could not send queued message: {err}")), cx);
+                });
+                return;
+            }
+        };
+        let generation = self.connection_gen;
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = connection.dispatch_command(command).await {
+                let msg = crate::commands::format_client_error(&err);
+                eprintln!("queue: send-now dispatchCommand failed: {msg}");
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen != generation {
+                        return;
+                    }
+                    app.chat.update(cx, |chat, cx| {
+                        chat.set_error(Some(format!("Send now failed: {msg}")), cx);
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Removes a queued message from the selected thread's queue (`queued-run.cancel`).
+    pub(crate) fn cancel_queued_message(&mut self, run_id: &str, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let command = match crate::commands::cancel_queued_run(&thread_id, run_id) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                eprintln!("queue: could not build queued-run.cancel: {err}");
+                return;
+            }
+        };
+        let generation = self.connection_gen;
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = connection.dispatch_command(command).await {
+                let msg = crate::commands::format_client_error(&err);
+                eprintln!("queue: queued-run.cancel failed: {msg}");
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen != generation {
+                        return;
+                    }
+                    app.chat.update(cx, |chat, cx| {
+                        chat.set_error(Some(format!("Could not remove queued message: {msg}")), cx);
+                    });
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Saves edits to a queued message (`queued-run.edit`).
+    pub(crate) fn edit_queued_message(
+        &mut self,
+        run_id: &str,
+        text: &str,
+        attachments: Option<&[conn_contract::ChatAttachment]>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let command = match crate::commands::edit_queued_run(&thread_id, run_id, text, attachments)
+        {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                eprintln!("queue: could not build queued-run.edit: {err}");
+                self.chat.update(cx, |chat, cx| {
+                    chat.set_error(Some(format!("Could not update queued message: {err}")), cx);
+                });
+                return;
+            }
+        };
+        let generation = self.connection_gen;
+        cx.spawn(async move |this, cx| {
+            if let Err(err) = connection.dispatch_command(command).await {
+                let msg = crate::commands::format_client_error(&err);
+                eprintln!("queue: queued-run.edit failed: {msg}");
+                let _ = this.update(cx, |app, cx| {
+                    if app.connection_gen != generation {
+                        return;
+                    }
+                    app.chat.update(cx, |chat, cx| {
+                        chat.set_error(Some(format!("Could not update queued message: {msg}")), cx);
+                    });
+                });
             }
         })
         .detach();

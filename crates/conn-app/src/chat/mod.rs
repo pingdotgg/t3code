@@ -13,11 +13,13 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::rc::Rc;
 
+use conn_contract::ChatAttachment;
 use conn_state::{
     EntryTiming, ItemStatus, RunTiming, ThreadState, TimelineEntry, TurnCheckpointSummary,
 };
 use conn_theme::Tokens;
 use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
     InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
@@ -30,6 +32,7 @@ use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foregro
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::{SHIMMER_STEP_INTERVAL, TurningArc, shimmer_text};
 use crate::a11y::ConnA11yExt as _;
+use crate::panels::chrome::ConnTooltipExt as _;
 
 /// Centered chat content lane width matching Conn's `--chat-content-max-width` (`46rem`).
 const CHAT_CONTENT_MAX_WIDTH_PX: f32 = 736.0;
@@ -105,6 +108,20 @@ pub(crate) enum ChatEvent {
     SlashCommand(String),
     /// Request the next older history page for the active bounded thread.
     LoadEarlierHistory,
+    /// Promote a queued message to steer the active turn (or start it when stopped).
+    PromoteQueuedMessage {
+        run_id: String,
+    },
+    /// Remove a queued message from the queue (`queued-run.cancel`).
+    CancelQueuedMessage {
+        run_id: String,
+    },
+    /// Save an edit to a queued message (`queued-run.edit`).
+    EditQueuedMessage {
+        run_id: String,
+        text: String,
+        attachments: Option<Vec<ChatAttachment>>,
+    },
 }
 
 /// GPUI entity rendering the Conn chat card (timeline + composer).
@@ -142,6 +159,7 @@ pub(crate) struct ChatView {
     list_state: ListState,
     toc_hovered_slot: Option<usize>,
     toc_pinned_slot: Option<usize>,
+    editing_queued_run_id: Option<String>,
     composer: Entity<Composer>,
     _input_sub: Subscription,
 }
@@ -210,6 +228,24 @@ impl ChatView {
                     });
                     cx.notify();
                 }
+                ComposerEvent::EditQueuedMessage {
+                    run_id,
+                    text,
+                    attachments,
+                } => {
+                    this.editing_queued_run_id = None;
+                    cx.emit(ChatEvent::EditQueuedMessage {
+                        run_id: run_id.clone(),
+                        text: text.clone(),
+                        attachments: attachments.clone(),
+                    });
+                    cx.notify();
+                }
+                ComposerEvent::CancelEditQueuedMessage => {
+                    if this.editing_queued_run_id.take().is_some() {
+                        cx.notify();
+                    }
+                }
                 ComposerEvent::Stop => cx.emit(ChatEvent::Stop),
                 ComposerEvent::ModelSelected {
                     instance_id,
@@ -267,6 +303,7 @@ impl ChatView {
             list_state,
             toc_hovered_slot: None,
             toc_pinned_slot: None,
+            editing_queued_run_id: None,
             composer,
             _input_sub: input_sub,
         }
@@ -400,9 +437,13 @@ impl ChatView {
             self.copied_code_key = None;
             self.toc_hovered_slot = None;
             self.toc_pinned_slot = None;
+            self.editing_queued_run_id = None;
             self.list_state.reset(0);
             self.list_state.set_follow_mode(FollowMode::Tail);
-            self.composer.update(cx, |c, cx| c.set_working(false, cx));
+            self.composer.update(cx, |c, cx| {
+                c.set_working(false, cx);
+                c.clear_edit_queued_if_missing(&[], cx);
+            });
             cx.notify();
             return;
         };
@@ -415,6 +456,7 @@ impl ChatView {
             self.copied_code_key = None;
             self.toc_hovered_slot = None;
             self.toc_pinned_slot = None;
+            self.editing_queued_run_id = None;
             self.working_started_at_ms = None;
         } else if self.has_thread
             && self.synced_revision == Some(thread.revision)
@@ -430,6 +472,27 @@ impl ChatView {
 
         let was_following_tail = self.list_state.is_following_tail();
         let prev_scroll = self.list_state.logical_scroll_top();
+
+        let queued_run_ids: Vec<&str> = thread
+            .entries
+            .iter()
+            .filter_map(|entry| match entry {
+                TimelineEntry::QueuedUser { run_id, .. } if !run_id.is_empty() => {
+                    Some(run_id.as_str())
+                }
+                _ => None,
+            })
+            .collect();
+        if self
+            .editing_queued_run_id
+            .as_deref()
+            .is_some_and(|id| !queued_run_ids.contains(&id))
+        {
+            self.editing_queued_run_id = None;
+        }
+        self.composer.update(cx, |c, cx| {
+            c.clear_edit_queued_if_missing(&queued_run_ids, cx);
+        });
 
         self.has_thread = true;
         self.synchronized = thread.synchronized;
@@ -595,6 +658,31 @@ impl ChatView {
             self.expanded_ids.insert(id.to_owned());
         }
         self.remeasure_for_id(id);
+        cx.notify();
+    }
+
+    fn begin_edit_queued(
+        &mut self,
+        entry_id: String,
+        run_id: String,
+        text: String,
+        attachments: Vec<ChatAttachment>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.editing_queued_run_id = Some(run_id.clone());
+        self.composer.update(cx, |c, cx| {
+            c.begin_edit_queued(run_id, text, attachments, window, cx);
+        });
+        self.remeasure_for_id(&entry_id);
+        cx.notify();
+    }
+
+    fn cancel_edit_queued(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.editing_queued_run_id = None;
+        self.composer.update(cx, |c, cx| {
+            c.cancel_edit_queued(window, cx);
+        });
         cx.notify();
     }
 
@@ -1317,6 +1405,21 @@ impl ChatView {
                         div().into_any_element()
                     }
                 }
+                VirtualItem::QueuedUser { row_idx } => {
+                    if let TimelineEntry::QueuedUser {
+                        id,
+                        run_id,
+                        text,
+                        attachments,
+                        created_at,
+                        ..
+                    } = &rows[*row_idx].entry
+                    {
+                        self.render_queued_user_row(id, run_id, text, attachments, created_at, cx)
+                    } else {
+                        div().into_any_element()
+                    }
+                }
                 VirtualItem::Assistant {
                     row_idx,
                     followed_by_work,
@@ -1510,6 +1613,303 @@ impl ChatView {
             .w_full()
             .pb(px(if grouped_with_next { 4.0 } else { 16.0 }))
             .child(bubble)
+            .into_any_element()
+    }
+
+    /// Renders a server-backed queued user message at the bottom of the timeline, matching
+    /// Conn's `QueuedRunsControl.tsx`:
+    /// - Right-aligned bubble with `1px` dashed border (`rounded-[14px]`), unfilled background,
+    ///   optional attachment thumbnails/pills, and wrapped prompt text.
+    /// - Quiet right-aligned action row below: timestamp, `↑ Send now`, pencil Edit button,
+    ///   and `×` Remove button (or `"Editing in the composer"` + `Cancel` while being edited).
+    fn render_queued_user_row(
+        &self,
+        id: &str,
+        run_id: &str,
+        text: &str,
+        attachments: &[ChatAttachment],
+        created_at: &str,
+        cx: &mut Context<'_, Self>,
+    ) -> AnyElement {
+        let is_editing =
+            !run_id.is_empty() && self.editing_queued_run_id.as_deref() == Some(run_id);
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let hover_bg = hsla(self.tokens.shell_highlight);
+        let bubble_border = if is_editing {
+            hsla_alpha(self.tokens.primary, 0.60)
+        } else {
+            hsla_alpha(self.tokens.muted_foreground, 0.40)
+        };
+        let bubble_fg = if is_editing { fg } else { muted };
+        let preview: String = text.chars().take(120).collect();
+
+        let mut bubble = div()
+            .id(SharedString::from(format!("chat-queued-{id}")))
+            .a11y(
+                gpui_kit::Role::Article,
+                SharedString::from(format!("chat.message.queued.{id}")),
+                format!("Queued message: {preview}"),
+            )
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .max_w(relative(0.8))
+            .min_w_0()
+            .rounded(px(BUBBLE_RADIUS_PX))
+            .border_1()
+            .border_dashed()
+            .border_color(bubble_border)
+            .px(px(12.0))
+            .py(px(8.0))
+            .text_size(px(BODY_FONT_PX))
+            .line_height(px(BODY_LINE_HEIGHT_PX))
+            .text_color(bubble_fg);
+
+        if !attachments.is_empty() {
+            let mut att_row = div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.0));
+            for (att_idx, att) in attachments.iter().enumerate() {
+                match att {
+                    ChatAttachment::Image(img) => {
+                        att_row = att_row.child(
+                            div()
+                                .id((SharedString::from(format!("queued-img-{id}")), att_idx))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .size(px(32.0))
+                                .rounded(px(6.0))
+                                .bg(hsla_alpha(self.tokens.muted, 0.60))
+                                .border_1()
+                                .border_color(hsla_alpha(self.tokens.border, 0.70))
+                                .conn_tooltip(img.name.clone(), &self.tokens)
+                                .child(icons::icon(icons::IMAGE, 14.0, muted)),
+                        );
+                    }
+                    ChatAttachment::File(file) => {
+                        let file_icon = crate::file_icons::file_icon(&file.name);
+                        let icon_color = file_icon
+                            .color
+                            .map(|c| hsla(c.for_appearance(self.tokens.appearance)))
+                            .unwrap_or(muted);
+                        att_row = att_row.child(
+                            div()
+                                .id((SharedString::from(format!("queued-file-{id}")), att_idx))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(4.0))
+                                .h(px(24.0))
+                                .max_w(px(200.0))
+                                .px(px(8.0))
+                                .rounded(px(6.0))
+                                .bg(hsla_alpha(self.tokens.muted, 0.45))
+                                .border_1()
+                                .border_color(hsla_alpha(self.tokens.border, 0.70))
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .text_color(muted)
+                                .child(icons::icon(file_icon.asset, 12.0, icon_color))
+                                .child(div().min_w_0().truncate().child(file.name.clone())),
+                        );
+                    }
+                    ChatAttachment::Unknown(unknown) => {
+                        att_row = att_row.child(
+                            div()
+                                .id((SharedString::from(format!("queued-unk-{id}")), att_idx))
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(4.0))
+                                .h(px(24.0))
+                                .max_w(px(200.0))
+                                .px(px(8.0))
+                                .rounded(px(6.0))
+                                .bg(hsla_alpha(self.tokens.muted, 0.45))
+                                .border_1()
+                                .border_color(hsla_alpha(self.tokens.border, 0.70))
+                                .text_size(px(12.0))
+                                .line_height(px(16.0))
+                                .text_color(muted)
+                                .child(div().min_w_0().truncate().child(unknown.name.clone())),
+                        );
+                    }
+                }
+            }
+            bubble = bubble.child(att_row);
+        }
+
+        if !text.is_empty() {
+            bubble = bubble.child(div().min_w_0().child(text.to_owned()));
+        }
+
+        let mut actions = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .justify_end()
+            .gap(px(2.0))
+            .pr(px(4.0))
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .text_color(muted);
+
+        if let Some(timestamp) = format_queued_timestamp(created_at) {
+            actions = actions.child(
+                div()
+                    .mr(px(4.0))
+                    .text_size(px(12.0))
+                    .line_height(px(16.0))
+                    .text_color(muted)
+                    .child(timestamp),
+            );
+        }
+
+        let has_run_id = !run_id.is_empty();
+        if is_editing {
+            actions = actions
+                .child(
+                    div()
+                        .px(px(4.0))
+                        .text_color(fg)
+                        .child("Editing in the composer"),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!("queued-cancel-edit-{id}")))
+                        .a11y_button(
+                            SharedString::from(format!("chat.queued.cancel-edit.{id}")),
+                            "Cancel editing queued message",
+                        )
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .h(px(22.0))
+                        .px(px(6.0))
+                        .rounded(px(6.0))
+                        .cursor_pointer()
+                        .text_color(muted)
+                        .hover(move |s| s.bg(hover_bg).text_color(fg))
+                        .on_click(cx.listener(|view, _, window, cx| {
+                            view.cancel_edit_queued(window, cx);
+                        }))
+                        .child("Cancel"),
+                );
+        } else {
+            let send_tooltip = if self.working {
+                "Send into the current turn"
+            } else {
+                "Start a turn with this message"
+            };
+            let run_id_for_send = run_id.to_owned();
+            let send_now_btn = div()
+                .id(SharedString::from(format!("queued-send-now-{id}")))
+                .a11y_button(
+                    SharedString::from(format!("chat.queued.send-now.{id}")),
+                    "Send now",
+                )
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(4.0))
+                .h(px(22.0))
+                .px(px(6.0))
+                .rounded(px(6.0))
+                .text_color(muted)
+                .when(has_run_id, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(hover_bg).text_color(fg))
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(ChatEvent::PromoteQueuedMessage {
+                                run_id: run_id_for_send.clone(),
+                            });
+                        }))
+                })
+                .conn_tooltip(send_tooltip, &self.tokens)
+                .child(icons::icon(icons::ARROW_UP, 12.0, muted))
+                .child("Send now");
+
+            let entry_id_for_edit = id.to_owned();
+            let run_id_for_edit = run_id.to_owned();
+            let text_for_edit = text.to_owned();
+            let attachments_for_edit = attachments.to_vec();
+            let edit_btn = div()
+                .id(SharedString::from(format!("queued-edit-{id}")))
+                .a11y_button(
+                    SharedString::from(format!("chat.queued.edit.{id}")),
+                    "Edit queued message",
+                )
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(22.0))
+                .rounded(px(6.0))
+                .when(has_run_id, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(hover_bg).text_color(fg))
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            view.begin_edit_queued(
+                                entry_id_for_edit.clone(),
+                                run_id_for_edit.clone(),
+                                text_for_edit.clone(),
+                                attachments_for_edit.clone(),
+                                window,
+                                cx,
+                            );
+                        }))
+                })
+                .conn_tooltip("Edit in the composer", &self.tokens)
+                .child(icons::icon(icons::EDIT, 12.0, muted));
+
+            let run_id_for_cancel = run_id.to_owned();
+            let cancel_btn = div()
+                .id(SharedString::from(format!("queued-remove-{id}")))
+                .a11y_button(
+                    SharedString::from(format!("chat.queued.remove.{id}")),
+                    "Remove queued message",
+                )
+                .flex()
+                .items_center()
+                .justify_center()
+                .size(px(22.0))
+                .rounded(px(6.0))
+                .when(has_run_id, |el| {
+                    el.cursor_pointer()
+                        .hover(move |s| s.bg(hover_bg).text_color(fg))
+                        .on_click(cx.listener(move |view, _, window, cx| {
+                            if view.editing_queued_run_id.as_deref()
+                                == Some(run_id_for_cancel.as_str())
+                            {
+                                view.cancel_edit_queued(window, cx);
+                            }
+                            cx.emit(ChatEvent::CancelQueuedMessage {
+                                run_id: run_id_for_cancel.clone(),
+                            });
+                        }))
+                })
+                .conn_tooltip("Remove from queue", &self.tokens)
+                .child(icons::icon(icons::CLOSE, 12.0, muted));
+
+            actions = actions
+                .child(send_now_btn)
+                .child(edit_btn)
+                .child(cancel_btn);
+        }
+
+        div()
+            .flex()
+            .flex_col()
+            .items_end()
+            .gap(px(4.0))
+            .w_full()
+            .pb(px(12.0))
+            .child(bubble)
+            .child(actions)
             .into_any_element()
     }
 
@@ -2410,7 +2810,11 @@ impl ChatView {
             })
             .unwrap_or_else(|| "Working...".to_owned());
         let has_live_work_group = matches!(
-            self.cache.items().last(),
+            self.cache
+                .items()
+                .iter()
+                .rev()
+                .find(|item| !matches!(item, VirtualItem::QueuedUser { .. })),
             Some(VirtualItem::WorkGroup {
                 has_active: true,
                 ..
@@ -2650,6 +3054,30 @@ impl Render for ChatView {
     }
 }
 
+/// Formats an ISO-8601 queued message timestamp as local `HH:MM` (falling back to UTC `HH:MM`).
+#[must_use]
+fn format_queued_timestamp(iso: &str) -> Option<String> {
+    let epoch_ms = conn_state::parse_iso8601_epoch_ms(iso)?;
+    let epoch_secs = epoch_ms.div_euclid(1000);
+    #[cfg(unix)]
+    {
+        let raw_time = epoch_secs as libc::time_t;
+        let mut local_tm = std::mem::MaybeUninit::<libc::tm>::zeroed();
+        // SAFETY: `raw_time` is a valid `time_t` by value and `local_tm` is valid writable
+        // stack storage; `localtime_r` is thread-safe and returns null on failure.
+        let ptr = unsafe { libc::localtime_r(&raw_time, local_tm.as_mut_ptr()) };
+        if !ptr.is_null() {
+            // SAFETY: `localtime_r` succeeded and initialized `local_tm`.
+            let tm = unsafe { local_tm.assume_init() };
+            return Some(format!("{:02}:{:02}", tm.tm_hour, tm.tm_min));
+        }
+    }
+    let day_secs = epoch_secs.rem_euclid(86_400);
+    let hour = day_secs / 3600;
+    let minute = (day_secs % 3600) / 60;
+    Some(format!("{hour:02}:{minute:02}"))
+}
+
 /// Current wall-clock timestamp in Unix epoch milliseconds.
 #[must_use]
 fn now_epoch_ms() -> i64 {
@@ -2810,7 +3238,25 @@ fn format_worked_label(duration_ms: Option<u64>) -> String {
 
 #[cfg(test)]
 mod worked_label_tests {
-    use super::{format_worked_label, format_working_elapsed, live_thought_preview};
+    use super::{
+        format_queued_timestamp, format_worked_label, format_working_elapsed, live_thought_preview,
+    };
+
+    #[test]
+    fn formats_queued_timestamp_as_hh_mm() {
+        let formatted = format_queued_timestamp("2026-11-22T12:34:56.000Z");
+        assert!(
+            formatted
+                .as_deref()
+                .is_some_and(|s| s.len() == 5 && s.as_bytes()[2] == b':'),
+            "expected HH:MM timestamp, got {formatted:?}"
+        );
+        assert_eq!(
+            format_queued_timestamp("not-a-date"),
+            None,
+            "invalid ISO timestamp should return None"
+        );
+    }
 
     #[test]
     fn formats_worked_duration_labels() {

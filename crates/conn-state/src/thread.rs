@@ -2,9 +2,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use conn_contract::{
-    OrchestrationV2Actor as Actor, OrchestrationV2Checkpoint as Checkpoint,
-    OrchestrationV2CheckpointStatus as CheckpointStatus, OrchestrationV2DomainEvent as DomainEvent,
-    OrchestrationV2LinkRequestStatus as LinkStatus,
+    ChatAttachment, OrchestrationV2Actor as Actor, OrchestrationV2Checkpoint as Checkpoint,
+    OrchestrationV2CheckpointStatus as CheckpointStatus,
+    OrchestrationV2ConversationMessage as ConversationMessage,
+    OrchestrationV2DomainEvent as DomainEvent, OrchestrationV2LinkRequestStatus as LinkStatus,
     OrchestrationV2PlanStepStatus as PlanStepStatus, OrchestrationV2Run as Run,
     OrchestrationV2RunStatus as RunStatus, OrchestrationV2SecretRequestStatus as SecretStatus,
     OrchestrationV2ThreadProjectionTurnItemsItem as ProjectionTurnItem,
@@ -62,6 +63,17 @@ pub enum TimelineEntry {
         /// (Conn renders these as a collapsible `"Agent <preview>"` row).
         created_by_agent: bool,
     },
+    /// A server-backed queued user message waiting to run after the active turn (or while the
+    /// queue is held).
+    QueuedUser {
+        id: String,
+        run_id: String,
+        message_id: String,
+        text: String,
+        attachments: Vec<ChatAttachment>,
+        created_at: String,
+        created_by_agent: bool,
+    },
     /// Assistant Markdown. `streaming` is true while deltas still arrive.
     Assistant {
         id: String,
@@ -102,6 +114,7 @@ impl TimelineEntry {
     pub fn id(&self) -> &str {
         match self {
             Self::User { id, .. }
+            | Self::QueuedUser { id, .. }
             | Self::Assistant { id, .. }
             | Self::Thinking { id, .. }
             | Self::Tool { id, .. }
@@ -136,6 +149,28 @@ pub struct TurnCheckpointSummary {
     pub deletions: i64,
 }
 
+/// Run metadata tracked to derive `working`, `active_run_id`, and queued message order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TrackedRun {
+    id: String,
+    ordinal: i64,
+    user_message_id: String,
+    status: RunStatus,
+    queue_position: Option<i64>,
+    queue_held: bool,
+    requested_at: String,
+}
+
+/// Conversation message body tracked for live queued-run presentation and edits.
+#[derive(Clone, Debug, PartialEq)]
+struct TrackedMessage {
+    text: String,
+    attachments: Vec<ChatAttachment>,
+    created_at: String,
+    created_by_agent: bool,
+    is_automatic: bool,
+}
+
 /// One thread's timeline from `orchestration.subscribeThread`.
 #[derive(Clone, Debug, Default)]
 pub struct ThreadState {
@@ -163,6 +198,8 @@ pub struct ThreadState {
     pub has_more_history: bool,
     /// True while an on-demand earlier-history page request is in flight.
     pub loading_earlier: bool,
+    runs: HashMap<String, TrackedRun>,
+    messages: HashMap<String, TrackedMessage>,
 }
 
 impl ThreadState {
@@ -235,6 +272,18 @@ impl ThreadState {
         self.turn_checkpoints.get(run_id)
     }
 
+    /// Returns the id of the latest active (`preparing`/`starting`/`running`/`waiting`) run,
+    /// matching Conn's `resolveActiveThreadRun`. Used to decide whether `Send now` on a queued
+    /// message dispatches `queued-message.promote-to-steer` or `queued-run.start`.
+    #[must_use]
+    pub fn active_run_id(&self) -> Option<&str> {
+        self.runs
+            .values()
+            .filter(|run| is_run_active(run.status))
+            .max_by_key(|run| run.ordinal)
+            .map(|run| run.id.as_str())
+    }
+
     /// Replaces this thread's timeline from a full [`conn_contract::OrchestrationV2ThreadProjection`]
     /// (from `subscribeThread` snapshots or `orchestration.launchThread` responses).
     pub fn apply_projection(
@@ -247,11 +296,18 @@ impl ThreadState {
         if let Some(seq) = sequence {
             self.advance_sequence(seq);
         }
-        self.working = runs_are_working(&projection.runs);
 
+        self.runs.clear();
         self.run_timings.clear();
         for run in &projection.runs {
+            self.record_run(run);
             self.record_run_timing(run);
+        }
+        self.working = self.runs.values().any(is_tracked_run_working);
+
+        self.messages.clear();
+        for message in &projection.messages {
+            self.record_message(message);
         }
 
         self.turn_checkpoints.clear();
@@ -318,6 +374,7 @@ impl ThreadState {
         self.history_cursor = None;
         self.has_more_history = false;
         self.loading_earlier = false;
+        self.reconcile_queued_runs(true);
     }
 
     /// Replaces this thread's timeline from an [`conn_contract::OrchestrationV2ThreadDetailSnapshot`],
@@ -478,24 +535,165 @@ impl ThreadState {
         changed
     }
 
+    fn record_run(&mut self, run: &Run) {
+        self.runs.insert(
+            run.id.clone(),
+            TrackedRun {
+                id: run.id.clone(),
+                ordinal: run.ordinal,
+                user_message_id: run.user_message_id.clone(),
+                status: run.status,
+                queue_position: run.queue_position.flatten(),
+                queue_held: run.queue_held == Some(true),
+                requested_at: run.requested_at.clone(),
+            },
+        );
+    }
+
+    fn record_message(&mut self, msg: &ConversationMessage) {
+        let is_automatic = msg.delegated_completion.is_some() || msg.notification.is_some();
+        self.messages.insert(
+            msg.id.clone(),
+            TrackedMessage {
+                text: msg.text.clone(),
+                attachments: msg.attachments.clone(),
+                created_at: msg.created_at.clone(),
+                created_by_agent: msg.created_by != Actor::User,
+                is_automatic,
+            },
+        );
+    }
+
+    /// Reconciles `TimelineEntry::QueuedUser` entries at the bottom of `self.entries` against
+    /// tracked `runs` and `messages`, matching Conn's `deriveThreadQueueWorkflowState`.
+    fn reconcile_queued_runs(&mut self, allow_placeholder: bool) -> bool {
+        let mut queued_runs: Vec<&TrackedRun> = self
+            .runs
+            .values()
+            .filter(|run| {
+                run.status == RunStatus::Queued
+                    && !self
+                        .messages
+                        .get(&run.user_message_id)
+                        .is_some_and(|m| m.is_automatic)
+            })
+            .collect();
+        queued_runs.sort_by_key(|run| (run.queue_position.unwrap_or(run.ordinal), run.ordinal));
+
+        let mut existing_queued: Vec<TimelineEntry> = Vec::new();
+        let mut non_queued: Vec<TimelineEntry> = Vec::with_capacity(self.entries.len());
+        let mut saw_queued = false;
+        let mut interleaved = false;
+        for entry in std::mem::take(&mut self.entries) {
+            if matches!(entry, TimelineEntry::QueuedUser { .. }) {
+                saw_queued = true;
+                existing_queued.push(entry);
+            } else {
+                if saw_queued {
+                    interleaved = true;
+                }
+                non_queued.push(entry);
+            }
+        }
+
+        let old_queued = existing_queued.clone();
+        let mut next_queued: Vec<TimelineEntry> = Vec::with_capacity(queued_runs.len());
+        let mut consumed = vec![false; existing_queued.len()];
+
+        for run in &queued_runs {
+            let existing_idx = existing_queued.iter().enumerate().find_map(|(idx, e)| {
+                if consumed[idx] {
+                    return None;
+                }
+                match e {
+                    TimelineEntry::QueuedUser {
+                        run_id, message_id, ..
+                    } if run_id == &run.id || message_id == &run.user_message_id => Some(idx),
+                    _ => None,
+                }
+            });
+
+            if let Some(msg) = self.messages.get(&run.user_message_id) {
+                let id = existing_idx
+                    .map(|idx| existing_queued[idx].id().to_owned())
+                    .unwrap_or_else(|| format!("turn-item:{}", run.user_message_id));
+                if let Some(idx) = existing_idx {
+                    consumed[idx] = true;
+                }
+                next_queued.push(TimelineEntry::QueuedUser {
+                    id,
+                    run_id: run.id.clone(),
+                    message_id: run.user_message_id.clone(),
+                    text: msg.text.clone(),
+                    attachments: msg.attachments.clone(),
+                    created_at: msg.created_at.clone(),
+                    created_by_agent: msg.created_by_agent,
+                });
+            } else if let Some(idx) = existing_idx {
+                consumed[idx] = true;
+                next_queued.push(existing_queued[idx].clone());
+            } else if allow_placeholder {
+                next_queued.push(TimelineEntry::QueuedUser {
+                    id: format!("turn-item:{}", run.user_message_id),
+                    run_id: run.id.clone(),
+                    message_id: run.user_message_id.clone(),
+                    text: "Queued message".to_owned(),
+                    attachments: Vec::new(),
+                    created_at: run.requested_at.clone(),
+                    created_by_agent: false,
+                });
+            }
+        }
+
+        // Preserve standalone pending turn-item queued entries whose run_id is not tracked in
+        // `self.runs` (for example, projections or streams emitting only `turn-item.updated`).
+        for (idx, entry) in existing_queued.into_iter().enumerate() {
+            if consumed[idx] {
+                continue;
+            }
+            if let TimelineEntry::QueuedUser { ref run_id, .. } = entry
+                && (run_id.is_empty() || !self.runs.contains_key(run_id))
+            {
+                next_queued.push(entry);
+            }
+        }
+
+        let changed = interleaved || next_queued != old_queued;
+        non_queued.extend(next_queued);
+        self.entries = non_queued;
+        changed
+    }
+
     fn apply_domain_event(&mut self, event: DomainEvent) -> bool {
         match event {
             DomainEvent::RunCreated(ev) => {
+                self.record_run(&ev.payload);
                 self.record_run_timing(&ev.payload);
-                let next_working = is_run_working(ev.payload.status);
-                let changed = self.working != next_working;
+                let next_working = self.runs.values().any(is_tracked_run_working);
+                let working_changed = self.working != next_working;
                 self.working = next_working;
-                changed
+                let queue_changed = self.reconcile_queued_runs(false);
+                working_changed || queue_changed
             }
             DomainEvent::RunUpdated(ev) => {
+                self.record_run(&ev.payload);
                 self.record_run_timing(&ev.payload);
-                let next_working = is_run_working(ev.payload.status);
-                let changed = self.working != next_working;
+                let next_working = self.runs.values().any(is_tracked_run_working);
+                let working_changed = self.working != next_working;
                 self.working = next_working;
-                changed
+                let queue_changed = self.reconcile_queued_runs(false);
+                working_changed || queue_changed
+            }
+            DomainEvent::MessageUpdated(ev) => {
+                self.record_message(&ev.payload);
+                self.reconcile_queued_runs(false)
             }
             DomainEvent::TurnItemUpdated(ev) => {
                 let item_id = turn_item_id(&ev.payload).to_owned();
+                let (item_run_id, item_message_id) = match &ev.payload {
+                    TurnItem::UserMessage(i) => (i.run_id.clone(), Some(i.message_id.clone())),
+                    _ => (None, None),
+                };
                 if let TurnItem::ApprovalRequest(i) = &ev.payload {
                     self.approval_requests
                         .insert(i.id.clone(), i.request_id.clone());
@@ -503,7 +701,30 @@ impl ThreadState {
                 let timing = extract_turn_item_timing(&ev.payload);
                 self.entry_timings.insert(item_id.clone(), timing);
                 if let Some(entry) = map_turn_item(ev.payload) {
-                    upsert_entry(&mut self.entries, entry)
+                    let mut changed = false;
+                    if matches!(entry, TimelineEntry::User { .. }) {
+                        let before = self.entries.len();
+                        self.entries.retain(|existing| match existing {
+                            TimelineEntry::QueuedUser {
+                                id,
+                                run_id,
+                                message_id,
+                                ..
+                            } => {
+                                id != entry.id()
+                                    && item_message_id
+                                        .as_deref()
+                                        .is_none_or(|mid| mid != message_id)
+                                    && item_run_id
+                                        .as_deref()
+                                        .is_none_or(|rid| rid.is_empty() || rid != run_id)
+                            }
+                            _ => true,
+                        });
+                        changed |= self.entries.len() != before;
+                    }
+                    changed |= upsert_entry(&mut self.entries, entry);
+                    changed
                 } else {
                     remove_entry(&mut self.entries, &item_id)
                 }
@@ -524,7 +745,6 @@ impl ThreadState {
             | DomainEvent::ProviderThreadUpdated(_)
             | DomainEvent::ProviderTurnUpdated(_)
             | DomainEvent::RuntimeRequestUpdated(_)
-            | DomainEvent::MessageUpdated(_)
             | DomainEvent::PlanUpdated(_)
             | DomainEvent::CheckpointScopeCreated(_)
             | DomainEvent::CheckpointRollbackRequested(_)
@@ -663,19 +883,15 @@ fn hydrate_deduped_projection_item(
     }
 }
 
-fn runs_are_working(runs: &[Run]) -> bool {
-    runs.iter().any(|run| is_run_working(run.status))
-}
-
-fn is_run_working(status: RunStatus) -> bool {
+fn is_run_active(status: RunStatus) -> bool {
     matches!(
         status,
-        RunStatus::Preparing
-            | RunStatus::Queued
-            | RunStatus::Starting
-            | RunStatus::Running
-            | RunStatus::Waiting
+        RunStatus::Preparing | RunStatus::Starting | RunStatus::Running | RunStatus::Waiting
     )
+}
+
+fn is_tracked_run_working(run: &TrackedRun) -> bool {
+    is_run_active(run.status) || (run.status == RunStatus::Queued && !run.queue_held)
 }
 
 fn is_pending_item_status(status: TurnItemStatus) -> bool {
@@ -707,11 +923,39 @@ fn upsert_entry(entries: &mut Vec<TimelineEntry>, entry: TimelineEntry) -> bool 
             return false;
         }
         *existing = entry;
-        true
-    } else {
-        entries.push(entry);
-        true
+        return true;
     }
+    if let TimelineEntry::QueuedUser {
+        ref run_id,
+        ref message_id,
+        ..
+    } = entry
+    {
+        if let Some(existing) = entries.iter_mut().find(|e| match e {
+            TimelineEntry::QueuedUser {
+                run_id: er,
+                message_id: em,
+                ..
+            } => {
+                (!run_id.is_empty() && er == run_id) || (!message_id.is_empty() && em == message_id)
+            }
+            _ => false,
+        }) {
+            if *existing == entry {
+                return false;
+            }
+            *existing = entry;
+            return true;
+        }
+        entries.push(entry);
+    } else {
+        let insert_pos = entries
+            .iter()
+            .position(|e| matches!(e, TimelineEntry::QueuedUser { .. }))
+            .unwrap_or(entries.len());
+        entries.insert(insert_pos, entry);
+    }
+    true
 }
 
 fn remove_entry(entries: &mut Vec<TimelineEntry>, id: &str) -> bool {
@@ -817,9 +1061,22 @@ fn map_turn_item(item: TurnItem) -> Option<TimelineEntry> {
 }
 
 fn map_user_message(item: UserMessageItem) -> Option<TimelineEntry> {
-    if item.input_intent == UserMessageIntent::QueuedTurn && item.status == TurnItemStatus::Pending
-    {
-        return None;
+    if item.input_intent == UserMessageIntent::QueuedTurn {
+        match item.status {
+            TurnItemStatus::Pending => {
+                return Some(TimelineEntry::QueuedUser {
+                    id: item.id,
+                    run_id: item.run_id.unwrap_or_default(),
+                    message_id: item.message_id,
+                    text: item.text,
+                    attachments: item.attachments,
+                    created_at: item.started_at.unwrap_or(item.updated_at),
+                    created_by_agent: item.created_by != Actor::User,
+                });
+            }
+            TurnItemStatus::Cancelled => return None,
+            _ => {}
+        }
     }
     Some(TimelineEntry::User {
         id: item.id,

@@ -31,6 +31,9 @@ pub(super) const CARET_DOWN: &str = "superhero/chevron-down.svg";
 pub(super) const ARROW_UP: &str = "superhero/arrow-up.svg";
 pub(super) const FORWARD: &str = "superhero/forward.svg";
 pub(super) const CHECK: &str = "superhero/check.svg";
+pub(super) const EDIT: &str = "superhero/edit.svg";
+pub(super) const CLOSE: &str = "superhero/close.svg";
+pub(super) const IMAGE: &str = "superhero/image.svg";
 
 /// Returns the superheroicons asset path for a `TimelineEntry::Tool` using both its
 /// contract `kind` and human-readable `title` (matching Conn's `toolGroupAction`).
