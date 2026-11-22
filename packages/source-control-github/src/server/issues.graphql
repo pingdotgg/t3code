@@ -99,6 +99,10 @@ query IssueDetail($owner: String!, $name: String!, $number: Int!) {
         }
       }
       closedByPullRequestsReferences(first: 20, includeClosedPrs: true) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
         nodes {
           number
           title
@@ -266,6 +270,16 @@ query IssueComments($owner: String!, $name: String!, $number: Int!, $cursor: Str
   }
 }
 
+query IssueLinkMetadata($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    issue(number: $number) {
+      number
+      title
+      url
+    }
+  }
+}
+
 query IssueNodeId($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
@@ -363,10 +377,14 @@ query IssueCollections(
   $number: Int!
   $labelsCursor: String
   $assigneesCursor: String
+  $closingPullRequestsCursor: String
+  $withLabels: Boolean!
+  $withAssignees: Boolean!
+  $withClosingPullRequests: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
     issue(number: $number) {
-      labels(first: 100, after: $labelsCursor) {
+      labels(first: 100, after: $labelsCursor) @include(if: $withLabels) {
         pageInfo {
           hasNextPage
           endCursor
@@ -376,7 +394,7 @@ query IssueCollections(
           color
         }
       }
-      assignees(first: 100, after: $assigneesCursor) {
+      assignees(first: 100, after: $assigneesCursor) @include(if: $withAssignees) {
         pageInfo {
           hasNextPage
           endCursor
@@ -385,6 +403,26 @@ query IssueCollections(
           login
           name
           avatarUrl
+        }
+      }
+      closedByPullRequestsReferences(
+        first: 100
+        after: $closingPullRequestsCursor
+        includeClosedPrs: true
+      ) @include(if: $withClosingPullRequests) {
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+        nodes {
+          number
+          title
+          url
+          state
+          isDraft
+          repository {
+            nameWithOwner
+          }
         }
       }
     }

@@ -433,7 +433,7 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     const store = yield* ProjectionStore.ProjectionStoreV2;
     yield* createThread("no-links");
     yield* createThread("empty-links", { pullRequests: [] });
-    yield* createThread("archived-link", {
+    const archived = yield* createThread("archived-link", {
       archivedAt: old,
       pullRequests: [pullRequestLink(1)],
     });
@@ -458,6 +458,12 @@ it.effect("sql: lists only active threads with pull request links, oldest first"
     assert.deepEqual(
       (yield* store.getThreadsWithPullRequests(open)).map((thread) => thread.id),
       [open],
+    );
+    assert.deepEqual(
+      (yield* store.getThreadsWithPullRequests(undefined, { includeArchived: true })).map(
+        (thread) => thread.id,
+      ),
+      [settled, archived, open],
     );
   }).pipe(Effect.provide(layerSql)),
 );

@@ -73,6 +73,18 @@ it.each<{ focus: string; control: ReactNode; toggles: boolean }>([
     ),
     toggles: false,
   },
+  {
+    focus: "a device screen that takes the key",
+    control: (
+      <div
+        role="application"
+        aria-label="Focused"
+        tabIndex={0}
+        onKeyDown={(event) => event.preventDefault()}
+      />
+    ),
+    toggles: false,
+  },
 ])(
   "digit shortcut with focus in $focus toggles an option: $toggles",
   async ({ control, toggles }) => {
