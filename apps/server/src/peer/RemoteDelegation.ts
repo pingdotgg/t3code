@@ -539,6 +539,7 @@ const make = Effect.gen(function* () {
     result: string,
     stoppedThere: "ran-out" | "stopped" | undefined,
     stopCount?: number,
+    executedModel?: string,
   ) {
     const attempt = yield* random.uuidV4();
     yield* threads
@@ -551,6 +552,7 @@ const make = Effect.gen(function* () {
         result,
         ...(stoppedThere === undefined ? {} : { stoppedThere }),
         ...(stopCount === undefined ? {} : { stopCount }),
+        ...(executedModel === undefined ? {} : { executedModel }),
       })
       .pipe(
         Effect.catch((error) =>
@@ -613,19 +615,25 @@ const make = Effect.gen(function* () {
     remote: OrchestrationV2RemoteTaskChild,
     runId: RunId | null,
     failed = false,
+    probeSuccess = true,
   ) {
     let reply: OrchestratorMcpThreadTimelineItem | undefined;
     let error: OrchestratorMcpThreadTimelineItem | undefined;
-    let afterPosition: number | undefined;
+    // Linked peers read newest first without a cursor; this scan runs forward.
+    let afterPosition = -1;
     let run: OrchestratorMcpThreadRun | undefined;
+    let remainingItems = 0;
+    let tailProbed = false;
     while (true) {
       const read = yield* forwarding.readThread(scope, remote.environmentId, {
         threadId: remote.threadId,
         view: failed ? "activity" : "messages",
         limit: 100,
         runLimit: 50,
-        maxCharsPerItem: 20_000,
-        ...(afterPosition === undefined ? {} : { afterPosition }),
+        // Keep the first and expected final activity pages whole. A result on a
+        // middle page then needs an extra text read after the scan.
+        maxCharsPerItem: failed && remainingItems > 100 ? 1 : 20_000,
+        afterPosition,
       });
       run ??= read.recentRuns.find((candidate) => candidate.runId === runId);
       reply =
@@ -639,10 +647,32 @@ const make = Effect.gen(function* () {
           ) ?? error;
       }
       if (!read.hasMore || read.nextPosition === null) break;
+      if (!failed && probeSuccess && !tailProbed) {
+        tailProbed = true;
+        const tailPosition = Math.floor((read.thread.itemCount - 1) / 100) * 100 - 1;
+        if (tailPosition > read.nextPosition) {
+          const tail = yield* forwarding.readThread(scope, remote.environmentId, {
+            threadId: remote.threadId,
+            view: "messages",
+            limit: 100,
+            maxCharsPerItem: 20_000,
+            afterPosition: tailPosition,
+          });
+          const tailReply = tail.items.findLast(
+            (item) => item.type === "assistant_message" && (runId === null || item.runId === runId),
+          );
+          if (!tail.hasMore && tailReply !== undefined) {
+            reply = tailReply;
+            break;
+          }
+        }
+      }
       afterPosition = read.nextPosition;
+      remainingItems = read.thread.itemCount - afterPosition - 1;
     }
     reply = error ?? reply;
-    if (reply === undefined) return undefined;
+    const executedModel = run?.executedModel ?? undefined;
+    if (reply === undefined) return { text: undefined, executedModel };
     let text = reply.text ?? "";
     let textOffset = reply.textTruncated ? (reply.nextTextOffset ?? null) : null;
     while (textOffset !== null) {
@@ -657,7 +687,10 @@ const make = Effect.gen(function* () {
       text += part.text ?? "";
       textOffset = part.textTruncated ? (part.nextTextOffset ?? null) : null;
     }
-    return run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel);
+    return {
+      text: run === undefined ? text : withExecutedModelNote(text, run.model, run.executedModel),
+      executedModel,
+    };
   });
 
   /**
@@ -823,8 +856,8 @@ const make = Effect.gen(function* () {
       yield* complete(
         parentThreadId,
         taskId,
-        reply === undefined ? "failed" : "completed",
-        reply ?? "The thread in the linked environment has no run to follow.",
+        reply.text === undefined ? "failed" : "completed",
+        reply.text ?? "The thread in the linked environment has no run to follow.",
         "ran-out",
       );
       return yield* settled(parentThreadId, taskId);
@@ -855,13 +888,21 @@ const make = Effect.gen(function* () {
       waited.resultRun !== undefined && !sharedThread
         ? waited.resultRun
         : { runId: waited.runId, status: waited.status };
-    const result = yield* lastReply(scope, remote, resultRun.runId, resultRun.status === "failed");
+    const result = yield* lastReply(
+      scope,
+      remote,
+      resultRun.runId,
+      resultRun.status === "failed",
+      resultRun.status === "completed",
+    );
     yield* complete(
       parentThreadId,
       taskId,
       terminalStatus(resultRun.status),
-      result ?? noReply,
+      result.text ?? noReply,
       "ran-out",
+      undefined,
+      result.executedModel,
     );
     return yield* settled(parentThreadId, taskId);
   });

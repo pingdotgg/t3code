@@ -6,6 +6,12 @@ import {
   type OrchestrationV2ServerCommand as OrchestrationCommand,
   PullRequestOperationError,
   type OrchestrationProjectShell,
+  type PullRequestActionInput,
+  type PullRequestDiffResult,
+  type PullRequestSubmitReviewInput,
+  type PullRequestActivity,
+  type PullRequestListInput,
+  type PullRequestDetail,
   type PullRequestRef,
   type PullRequestReviewGuideResult,
   type ThreadPullRequestLink,
@@ -14,12 +20,14 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Base64Url from "effect/encoding/Base64Url";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import type { Tool } from "effect/ai";
 
+import * as GitManager from "../../../git/GitManager.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import {
   type PullRequestTestThread,
@@ -28,6 +36,7 @@ import {
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as PullRequestWatchService from "../../../pullRequest/PullRequestWatchService.ts";
 import * as PullRequestReviewGuideService from "../../../pullRequest/PullRequestReviewGuideService.ts";
+import * as PullRequestService from "../../../pullRequest/PullRequestService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as McpToolAccessTestkit from "../../McpToolAccess.testkit.ts";
@@ -144,6 +153,8 @@ interface HarnessOptions {
     PullRequestReviewGuideResult & { started: boolean },
     PullRequestOperationError
   >;
+  readonly pullRequests?: Partial<PullRequestService.PullRequestService["Service"]>;
+  readonly git?: Partial<GitManager.GitManager["Service"]>;
 }
 
 const NO_GUIDE: PullRequestReviewGuideResult = { guide: null, run: null, currentHeadSha: "head-1" };
@@ -196,6 +207,8 @@ const makeHarness = Effect.fn("makePullRequestsToolkitHarness")(function* (
         Effect.succeed(id === thread?.id ? v2PullRequestThread(thread) : null),
       dispatch,
     }),
+    Layer.mock(PullRequestService.PullRequestService)(options.pullRequests ?? {}),
+    Layer.mock(GitManager.GitManager)(options.git ?? {}),
     Layer.succeed(SecureRandom.SecureRandom, testCrypto),
     McpToolAccessTestkit.liveThreadsLayer,
   );
@@ -684,12 +697,33 @@ describe("pull request guide tools", () => {
           }),
           id: ProjectId.make("project-web"),
         };
-        const harness = yield* makeHarness({ projects: [makeProject(), other] });
+        // A fork's canonical key follows its upstream; its own repository is `origin`.
+        const fork = {
+          ...makeProject({
+            canonicalKey: "github.com/acme/web",
+            locator: {
+              source: "git-remote",
+              remoteName: "upstream",
+              remoteUrl: "https://github.com/acme/web.git",
+            },
+            origin: {
+              canonicalKey: "github.com/someone/web",
+              remoteUrl: "https://github.com/someone/web.git",
+            },
+            provider: SourceControlProviderKind.make("github"),
+            displayName: "acme/web",
+            owner: "acme",
+            name: "web",
+          }),
+          id: ProjectId.make("project-fork"),
+        };
+        const harness = yield* makeHarness({ projects: [makeProject(), other, fork] });
         const result = yield* harness.call("write_pull_request_guides", {
           pullRequests: [
             { url: "https://github.com/acme/web/pull/7" },
             { repository: "t3tools/t3code", number: 12 },
             { url: "https://github.com/someone/else/pull/1" },
+            { url: "https://github.com/someone/web/pull/3" },
           ],
         });
         expect(
@@ -698,6 +732,7 @@ describe("pull request guide tools", () => {
           ["acme/web", 7, "started"],
           ["t3tools/t3code", 12, "started"],
           ["someone/else", 1, "failed"],
+          ["someone/web", 3, "started"],
         ]);
         expect(result.guides[2]?.detail).toContain("No project in this environment");
         expect(
@@ -705,6 +740,7 @@ describe("pull request guide tools", () => {
         ).toEqual([
           ["project-web", 7],
           [PROJECT_ID, 12],
+          ["project-fork", 3],
         ]);
       }),
   );
@@ -781,6 +817,556 @@ describe("pull request guide tools", () => {
       expect((yield* Ref.get(harness.guideRequests)).map((ref) => ref.projectId)).toEqual([
         "project-azure",
       ]);
+    }),
+  );
+});
+
+describe("source control tools", () => {
+  const branchThread = {
+    ...makeThread([]),
+    worktreePath: "/workspace/worktree",
+    branchPullRequest: {
+      projectId: PROJECT_ID,
+      repository: "t3tools/t3code",
+      number: 42,
+      url: "https://github.com/t3tools/t3code/pull/42",
+    },
+  };
+  const detail = {
+    title: "Add tools",
+    body: "Adds tools.",
+    state: "open",
+    isDraft: false,
+    author: null,
+    headBranch: "tools",
+    baseBranch: "main",
+    headSha: "abc123",
+    mergeability: "mergeable",
+    additions: 1,
+    deletions: 0,
+    changedFiles: 1,
+    labels: [],
+    reviewers: [],
+    checks: [
+      { name: "CI", status: "success", description: null, url: null },
+      { name: "Lint", status: "failure", description: null, url: null },
+      { name: "E2E", status: "cancelled", description: null, url: null },
+      { name: "Deploy", status: "pending", description: null, url: null },
+      {
+        name: "Approval",
+        status: "action-required",
+        description: null,
+        url: null,
+        placeholder: true,
+      },
+      { name: "Docs", status: "skipped", description: null, url: null },
+    ],
+  } as unknown as PullRequestDetail;
+  const reviewThread = (id: string, isResolved: boolean) => ({
+    id,
+    path: "a.ts",
+    line: 1,
+    side: "right" as const,
+    isResolved,
+    isOutdated: false,
+    comments: [],
+  });
+  const activity: PullRequestActivity = {
+    comments: [],
+    commentCount: 0,
+    commentsTruncated: false,
+    reviewThreads: [reviewThread("open-thread", false), reviewThread("done-thread", true)],
+    commits: [],
+  };
+
+  it.effect("reads the thread's branch PR compactly, adding only the sections asked", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      let reviewThreadsTruncated = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+          activity: () => Effect.sync(() => ({ ...activity, reviewThreadsTruncated })),
+        },
+      });
+      const compact = yield* harness.call("pull_request_read", {});
+      expect(compact).toMatchObject({
+        headSha: "abc123",
+        checks: { passed: 2, pending: 1, failed: ["Lint", "E2E"], incomplete: true },
+        unresolvedThreads: 1,
+      });
+      expect(compact.body).toBeUndefined();
+      expect(compact.checkRuns).toBeUndefined();
+      expect(compact.conversation).toBeUndefined();
+      expect(compact.unresolvedThreadsTruncated).toBeUndefined();
+      const result = yield* harness.call("pull_request_read", { include: ["body", "threads"] });
+      expect(asked[1]).toEqual({
+        projectId: PROJECT_ID,
+        host: "github.com",
+        repository: "t3tools/t3code",
+        number: 42,
+        allowStale: false,
+      });
+      expect(result.body).toBe("Adds tools.");
+      expect(result.checkRuns).toBeUndefined();
+      expect(result.conversation?.comments).toBeUndefined();
+      expect(result.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual([
+        "open-thread",
+      ]);
+      // Unfetched threads may be unresolved, so the compact count says it is partial.
+      reviewThreadsTruncated = true;
+      expect(yield* harness.call("pull_request_read", {})).toMatchObject({
+        unresolvedThreads: 1,
+        unresolvedThreadsTruncated: true,
+      });
+      const commentsOnly = yield* harness.call("pull_request_read", { include: ["comments"] });
+      expect(commentsOnly.conversation?.truncated).toBe(false);
+      const threadsOnly = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(threadsOnly.conversation?.truncated).toBe(true);
+    }),
+  );
+
+  it.effect("pages a long conversation and the PR list through the cursors they return", () =>
+    Effect.gen(function* () {
+      const comment = (body: string) =>
+        ({ id: body.slice(0, 8), author: null, body, createdAt: "2026-11-01T00:00:00Z" }) as never;
+      const long = (id: string) => ({
+        ...reviewThread(id, false),
+        comments: [comment("x".repeat(20_000))],
+      });
+      const listed: Array<PullRequestListInput> = [];
+      let firstResolved = false;
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          detail: () => Effect.succeed(detail),
+          activity: () =>
+            Effect.sync(() => ({
+              ...activity,
+              reviewThreads: [
+                {
+                  ...long("first"),
+                  isResolved: firstResolved,
+                  nextCommentsCursor: "later",
+                },
+                long("second"),
+                reviewThread("done-thread", true),
+              ],
+            })),
+          threadComments: (input) =>
+            Effect.succeed(
+              input.cursor === "later"
+                ? { comments: [comment("reply")], nextCursor: null }
+                : { comments: [], nextCursor: null },
+            ),
+          list: (input) =>
+            Effect.sync(() => listed.push(input)).pipe(
+              Effect.as({
+                viewers: {},
+                providers: [],
+                entries: [],
+                errors: [],
+                truncated: input.cursors === undefined,
+                nextCursors: input.cursors === undefined ? { "t3tools/t3code": "page-2" } : {},
+              }),
+            ),
+        },
+      });
+      const first = yield* harness.call("pull_request_read", { include: ["threads"] });
+      expect(first.conversation?.reviewThreads).toMatchObject([
+        { id: "first", moreComments: false, comments: [{}, { body: "reply" }] },
+      ]);
+      const cursor = first.conversation?.nextCursor;
+      expect(cursor).toEqual(expect.any(String));
+      // The agent resolves what it read; the next page still starts at the next thread.
+      firstResolved = true;
+      const second = yield* harness.call("pull_request_read", { cursor: cursor! });
+      expect(second.conversation?.comments).toBeUndefined();
+      expect(second.conversation?.reviewThreads?.map((thread) => thread.id)).toEqual(["second"]);
+      expect(second.conversation?.nextCursor).toBeNull();
+      // A cursor past the current end finishes instead of repeating an empty page.
+      const stale = Base64Url.encode(
+        JSON.stringify({ threads: 99, comments: null, includeResolved: false }),
+      );
+      const past = yield* harness.call("pull_request_read", { cursor: stale });
+      expect(past.conversation).toMatchObject({ reviewThreads: [], nextCursor: null });
+
+      const page = yield* harness.call("pull_request_list", {});
+      yield* harness.call("pull_request_list", { cursor: page.nextCursor! });
+      expect(listed.map((input) => input.cursors)).toEqual([
+        undefined,
+        { "t3tools/t3code": "page-2" },
+      ]);
+      const invalid = yield* harness
+        .call("pull_request_read", { cursor: "not-a-cursor" })
+        .pipe(Effect.flip);
+      expect(invalid._tag).toBe("PullRequestCursorInvalidError");
+    }),
+  );
+
+  it.effect("asks for a number when the thread's branch has no PR", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const error = yield* harness.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("reads the PR this thread opened before status sync reports it", () =>
+    Effect.gen(function* () {
+      const asked: Array<PullRequestRef> = [];
+      const opened = (headBranch: string) =>
+        makeHarness({
+          thread: { ...makeThread([makeLink(43, { source: "created" })]), branch: "tools" },
+          pullRequests: {
+            summary: () => Effect.succeed({ state: "open", headBranch } as never),
+            detail: (ref) => Effect.sync(() => asked.push(ref)).pipe(Effect.as(detail)),
+            activity: () => Effect.succeed(activity),
+          },
+        });
+      const harness = yield* opened("tools");
+      yield* harness.call("pull_request_read", {});
+      expect(asked).toMatchObject([{ number: 43 }]);
+
+      // Before sync, the host says which branch it came from; another branch's is not this one.
+      const moved = yield* opened("old");
+      const unsynced = yield* moved.call("pull_request_read", {}).pipe(Effect.flip);
+      expect(unsynced._tag).toBe("PullRequestBranchHasNoneError");
+
+      // After a switch to another branch, the PR opened from the old one is not the branch's.
+      const switched = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "created", headBranch: "old" })]),
+          branch: "new",
+        },
+      });
+      const error = yield* switched
+        .call("pull_request_update", { title: "New title" })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestBranchHasNoneError");
+    }),
+  );
+
+  it.effect("merges pinned to the head the agent checked", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "open" } as never),
+        },
+      });
+      const result = yield* harness.call("pull_request_merge", {
+        expectedHeadSha: "abc123",
+        method: "squash",
+        auto: true,
+      });
+      expect(result).toMatchObject({ number: 42, state: "open" });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "enable-auto-merge",
+          expectedHeadSha: "abc123",
+          mergeMethod: "squash",
+        },
+      ]);
+    }),
+  );
+
+  it.effect("a stack merge pins every open layer up to the PR", () =>
+    Effect.gen(function* () {
+      const actions: Array<PullRequestActionInput> = [];
+      let lowerHead: string | undefined = "bbb";
+      let targetHead = "stale";
+      const layer = (number: number, state: "open" | "merged", headSha: string | undefined) => ({
+        number,
+        state,
+        ...(headSha === undefined ? {} : { headSha }),
+        headBranch: `layer-${number}`,
+      });
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          stack: (_input, options) =>
+            options?.bypassCache !== true
+              ? Effect.die("a merge must not pin heads from the cache")
+              : Effect.succeed({
+                  id: "stack-1",
+                  number: 7,
+                  url: "https://github.com/acme/app/stacks/7",
+                  base: "main",
+                  layers: [
+                    layer(40, "merged", "aaa"),
+                    layer(41, "open", lowerHead),
+                    layer(42, "open", targetHead),
+                    layer(43, "open", "ddd"),
+                  ],
+                }),
+          runAction: (input) => Effect.sync(() => void actions.push(input)),
+          summary: () => Effect.succeed({ state: "merged" } as never),
+        },
+      });
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "ccc", stack: true });
+      expect(actions).toMatchObject([
+        {
+          number: 42,
+          action: "merge",
+          stackNumber: 7,
+          expectedStackHeads: [
+            { number: 41, headSha: "bbb" },
+            { number: 42, headSha: "ccc" },
+          ],
+        },
+      ]);
+      const fullHead = "c0ffee1234567890abcdef1234567890abcdef12";
+      targetHead = fullHead;
+      yield* harness.call("pull_request_merge", { expectedHeadSha: "c0ffee1", stack: true });
+      expect(actions[1]?.expectedStackHeads).toEqual([
+        { number: 41, headSha: "bbb" },
+        { number: 42, headSha: fullHead },
+      ]);
+      lowerHead = undefined;
+      const unpinned = yield* harness
+        .call("pull_request_merge", { expectedHeadSha: "ccc", stack: true })
+        .pipe(Effect.flip);
+      expect(unpinned._tag).toBe("PullRequestForgeError");
+      expect(actions).toHaveLength(2);
+    }),
+  );
+
+  it.effect("re-running checks reopens a watch that saw its checks finish", () =>
+    Effect.gen(function* () {
+      const watch = {
+        startedAt: "2026-08-20T00:00:00.000Z",
+        headSha: "abc123",
+        failedChecks: ["test"],
+        passed: false,
+        passedChecks: [],
+        remarksThrough: "2026-08-20T00:00:00.000Z",
+        remarkIds: [],
+        conflicting: false,
+        wakes: 0,
+      };
+      const rerun = (checksPending: boolean | undefined, reran: boolean) =>
+        Effect.gen(function* () {
+          const harness = yield* makeHarness({
+            thread: {
+              ...branchThread,
+              pullRequests: [
+                makeLink(42, {
+                  watch: checksPending === undefined ? watch : { ...watch, checksPending },
+                }),
+              ],
+            },
+            pullRequests: {
+              rerunChecks: () => Effect.succeed([{ name: "test", rerun: reran, detail: null }]),
+            },
+          });
+          yield* harness.call("ci_rerun", {});
+          return yield* Ref.get(harness.commands);
+        });
+      expect(yield* rerun(false, true)).toMatchObject([
+        { type: "thread.pull-request-watch.checks-reopen", threadId: THREAD_ID },
+      ]);
+      // Nothing re-ran, or the watch has no answer to clear.
+      expect(yield* rerun(false, false)).toEqual([]);
+      expect(yield* rerun(undefined, true)).toEqual([]);
+    }),
+  );
+
+  it.effect("opens a PR from the thread's worktree and links it even if dismissed", () =>
+    Effect.gen(function* () {
+      const opened: Array<{ readonly cwd: string; readonly draft: boolean | undefined }> = [];
+      const harness = yield* makeHarness({
+        thread: {
+          ...makeThread([makeLink(43, { source: "stack-dismissed" })]),
+          worktreePath: "/workspace/worktree",
+        },
+        git: {
+          createPullRequest: (input) =>
+            Effect.sync(() => opened.push({ cwd: input.cwd, draft: input.draft })).pipe(
+              Effect.as({
+                status: "created" as const,
+                url: "https://github.com/t3tools/t3code/pull/43",
+                number: 43,
+                baseBranch: "main",
+                headBranch: "tools",
+                title: input.title,
+              }),
+            ),
+        },
+      });
+      const result = yield* harness.call("pull_request_create", {
+        title: "Add tools",
+        body: "Adds tools.",
+        draft: true,
+      });
+      expect(result).toMatchObject({ number: 43, created: true });
+      expect(opened).toEqual([{ cwd: "/workspace/worktree", draft: true }]);
+      expect(yield* Ref.get(harness.commands)).toMatchObject([
+        { type: "thread.pull-request.link", number: 43, source: "created" },
+      ]);
+    }),
+  );
+
+  it.effect("replies to and resolves a review thread, and refuses resolving without one", () =>
+    Effect.gen(function* () {
+      const calls: Array<string> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          replyToThread: (input) => Effect.sync(() => calls.push(`reply ${input.threadId}`)),
+          setThreadResolution: (input) =>
+            input.threadId === "locked-thread"
+              ? Effect.fail(
+                  new PullRequestOperationError({
+                    operation: "setThreadResolution",
+                    detail: "Locked.",
+                  }),
+                )
+              : Effect.sync(() => void calls.push(`resolve ${input.threadId} ${input.resolved}`)),
+        },
+      });
+      const result = yield* harness.call("pull_request_respond", {
+        reviewThreadId: "open-thread",
+        body: "Fixed.",
+        resolved: true,
+      });
+      expect(result).toMatchObject({ replied: true, resolved: true });
+      expect(calls).toEqual(["reply open-thread", "resolve open-thread true"]);
+      const partial = yield* harness
+        .call("pull_request_respond", {
+          reviewThreadId: "locked-thread",
+          body: "Fixed.",
+          resolved: true,
+        })
+        .pipe(Effect.flip);
+      expect(partial.message).toContain("The reply was posted");
+      const error = yield* harness
+        .call("pull_request_respond", { body: "Done", resolved: true })
+        .pipe(Effect.flip);
+      expect(error._tag).toBe("PullRequestNothingToDoError");
+    }),
+  );
+
+  it.effect("places review comments by the diff page that shows their line", () =>
+    Effect.gen(function* () {
+      const reviews: Array<PullRequestSubmitReviewInput> = [];
+      const pages: Record<string, PullRequestDiffResult> = {
+        first: {
+          patch:
+            "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,2 +1,2 @@\n-old\n+new\n same\n",
+          truncated: false,
+          nextCursor: "second",
+        },
+        second: {
+          patch:
+            "diff --git a/b.ts b/b.ts\n--- a/b.ts\n+++ b/b.ts\n@@ -9,1 +9,2 @@\n kept\n+added\n",
+          truncated: false,
+          nextCursor: null,
+        },
+      };
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          diff: (input) => Effect.succeed(pages[input.cursor ?? "first"]!),
+          submitReview: (input) => Effect.sync(() => void reviews.push(input)),
+        },
+      });
+      yield* harness.call("pull_request_review", {
+        verdict: "request-changes",
+        body: "Two things.",
+        comments: [
+          { path: "b.ts", line: 10, startLine: 9, body: "Why?" },
+          { path: "a.ts", line: 1, side: "old", body: "Keep this." },
+        ],
+      });
+      expect(reviews).toMatchObject([
+        {
+          number: 42,
+          verdict: "request-changes",
+          body: "Two things.",
+          comments: [
+            {
+              path: "b.ts",
+              position: { kind: "added", newLine: 10 },
+              startPosition: { kind: "context", oldLine: 9, newLine: 9, side: "right" },
+            },
+            { path: "a.ts", position: { kind: "deleted", oldLine: 1 } },
+          ],
+        },
+      ]);
+
+      // A line the diff never shows fails before anything is posted.
+      const error = yield* harness
+        .call("pull_request_review", {
+          verdict: "comment",
+          comments: [{ path: "a.ts", line: 40, body: "Here?" }],
+        })
+        .pipe(Effect.flip);
+      expect(error.message).toContain("a.ts line 40 (new side) is not in this PR's diff");
+      expect(reviews).toHaveLength(1);
+    }),
+  );
+
+  it.effect("updates labels, requests reviewers by login, and closes the PR", () =>
+    Effect.gen(function* () {
+      const calls: Array<unknown> = [];
+      const harness = yield* makeHarness({
+        thread: branchThread,
+        pullRequests: {
+          setLabels: (input) =>
+            Effect.sync(() => void calls.push(["labels", input.labels, input.applied])),
+          reviewerCandidates: (input) =>
+            Effect.succeed({
+              candidates: [
+                {
+                  id: "MDQ6VXNlcjE=",
+                  kind: "user",
+                  login: input.query === "Octo" ? "octo" : "x",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+                {
+                  id: "core",
+                  kind: "team",
+                  login: "acme/core",
+                  name: null,
+                  avatarUrl: null,
+                  isRequested: false,
+                },
+              ],
+            } as never),
+          requestReviewers: (input) =>
+            Effect.sync(() => void calls.push(["reviewers", input.reviewers])),
+          runAction: (input) => Effect.sync(() => void calls.push(["action", input.action])),
+        },
+      });
+      yield* harness.call("pull_request_update", {
+        addLabels: ["bug"],
+        removeLabels: ["wip"],
+        requestReviewers: ["Octo", "acme/core"],
+        state: "closed",
+      });
+      expect(calls).toEqual([
+        ["labels", ["bug"], true],
+        ["labels", ["wip"], false],
+        [
+          "reviewers",
+          [
+            { id: "MDQ6VXNlcjE=", kind: "user" },
+            { id: "core", kind: "team" },
+          ],
+        ],
+        ["action", "close"],
+      ]);
+      const unknown = yield* harness
+        .call("pull_request_update", { requestReviewers: ["nobody"] })
+        .pipe(Effect.flip);
+      expect(unknown.message).toContain("No reviewer named nobody");
     }),
   );
 });

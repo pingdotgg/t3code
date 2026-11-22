@@ -2,13 +2,14 @@ import { FileTree, useFileTree } from "@pierre/trees/react";
 import type { EnvironmentId, SkillFileEntry } from "@t3tools/contracts";
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useMemo, useState } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import type { Components } from "hast-util-to-jsx-runtime";
 
 import { useTheme } from "../../hooks/useTheme";
 import { T3_PIERRE_ICONS } from "../../pierre-icons";
 import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "../../pierre-tree-theme";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import ReadOnlySourcePreview from "../files/ReadOnlySourcePreview";
+import { createMarkdownRenderer } from "../chat/markdownRenderer";
 import { Button } from "../ui/button";
 import { compareSkillFiles, skillBody } from "./toolsSettings.logic";
 
@@ -145,9 +146,7 @@ function FilePane({
             ) : null}
             {isSkillFile && !source ? (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 text-sm break-words">
-                <ReactMarkdown components={SKILL_MARKDOWN_COMPONENTS}>
-                  {skillBody(file.data.contents)}
-                </ReactMarkdown>
+                <SkillMarkdown text={skillBody(file.data.contents)} />
               </div>
             ) : (
               <ReadOnlySourcePreview
@@ -190,4 +189,23 @@ const SKILL_MARKDOWN_COMPONENTS = {
   ol: ({ children }) => <ol className="my-2 list-decimal pl-5">{children}</ol>,
   a: ({ children }) => <span className="underline">{children}</span>,
   img: ({ alt }) => <span className="text-muted-foreground">{alt}</span>,
-} satisfies Components;
+} satisfies Partial<Components>;
+
+const skillMarkdownRenderer = createMarkdownRenderer({
+  markdown: {
+    math: false,
+    breaks: false,
+    escapeHtml: true,
+    insights: false,
+    extensions: { inert: true },
+  },
+  components: SKILL_MARKDOWN_COMPONENTS,
+  urlTransform: (url) => url,
+});
+
+function SkillMarkdown({ text }: { text: string }) {
+  const entry = skillMarkdownRenderer.parse(text);
+  const element = skillMarkdownRenderer.element(entry);
+  skillMarkdownRenderer.remember(text, entry);
+  return element;
+}

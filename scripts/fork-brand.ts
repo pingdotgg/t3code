@@ -150,8 +150,8 @@ const EDITS: ReadonlyArray<Edit> = [
   // The wordmark renders "UP"; the caption beside it reads "Orchestrator" instead of "Code".
   {
     file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
-    find: /(>\s*)Code(\s*<\/span>)/,
-    replace: "$1Orchestrator$2",
+    find: '{"Code"}',
+    replace: '{"Orchestrator"}',
   },
   {
     file: "apps/web/src/components/sidebar/SidebarChrome.tsx",
@@ -160,8 +160,8 @@ const EDITS: ReadonlyArray<Edit> = [
   },
   {
     file: "apps/mobile/src/components/CompactBrandTitle.tsx",
-    find: /(>\s*)Code(\s*<\/Text>)/,
-    replace: "$1Orchestrator$2",
+    find: 'const WORDMARK_SUFFIX = "Code";',
+    replace: 'const WORDMARK_SUFFIX = "Orchestrator";',
   },
   // New projects get a README credit; t3.codes is not this product's site.
   {

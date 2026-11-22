@@ -6,7 +6,7 @@ import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { SettingsRow } from "./settingsLayout";
-import { searchableSetting } from "./settingsSearch";
+import { useSearchableSetting } from "./settingsSearch";
 
 const NO_FOLDER = "__none";
 const NEW_FOLDER = "__new";
@@ -85,6 +85,7 @@ export function ProjectFolderRow({
 }
 
 export function ProjectFoldersSettingsRow() {
+  const searchableSetting = useSearchableSetting();
   const { folders, projectCountByFolder, renameFolder } = useProjectFolders();
   return (
     <SettingsRow
