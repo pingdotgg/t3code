@@ -433,6 +433,21 @@ function applyAcpRegistryUrlAuthAction(
   };
 }
 
+function applyRegistryReadinessMetadata(
+  provider: ServerProvider,
+  baseSnapshot: ServerProvider,
+): ServerProvider {
+  const documentationUrl = baseSnapshot.setup?.documentationUrl;
+  if (provider.setup === undefined || provider.setup.documentationUrl === documentationUrl) {
+    return provider;
+  }
+  const { documentationUrl: _previous, ...setup } = provider.setup;
+  return {
+    ...provider,
+    setup: documentationUrl === undefined ? setup : { ...setup, documentationUrl },
+  };
+}
+
 const buildInitialAcpRegistrySnapshot = Effect.fn("AcpRegistryDriver.buildInitialSnapshot")(
   function* (input: SnapshotIdentity & { readonly settings: AcpRegistrySettings }) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
@@ -812,7 +827,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         )
       ) {
         return {
-          provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
+          provider: {
+            ...applyRegistryReadinessMetadata(cached.provider, baseSnapshot),
+            checkedAt: baseSnapshot.checkedAt,
+          },
           generation: cacheState.generation,
         };
       }
@@ -864,14 +882,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ).pipe(
             Effect.flatMap(
               Option.match({
-                onNone: () => Effect.void,
+                onNone: () => Effect.succeed(false),
                 onSome: ({ provider, generation }) =>
                   liveSnapshotSemaphore.withPermit(
                     Ref.get(enrichmentCache).pipe(
                       Effect.flatMap((current) =>
                         current.generation === generation
-                          ? withLiveRuntimeState(provider).pipe(Effect.flatMap(publishSnapshot))
-                          : Effect.void,
+                          ? withLiveRuntimeState(provider).pipe(
+                              Effect.flatMap(publishSnapshot),
+                              Effect.as(true),
+                            )
+                          : Effect.succeed(false),
                       ),
                     ),
                   ),
@@ -973,13 +994,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             return;
           }
           yield* liveSnapshotSemaphore.withPermit(publishSnapshot(rechecked));
-          yield* Ref.set(lastSeenIndexRevision, revision);
-          yield* runWithLiveWatchers(runProbeAndPublish(rechecked));
+          yield* runWithLiveWatchers(
+            runProbeAndPublish(rechecked).pipe(
+              Effect.tap((published) =>
+                published ? Ref.set(lastSeenIndexRevision, revision) : Effect.void,
+              ),
+              Effect.asVoid,
+            ),
+          );
           return;
         }
         const publishEnrichment = Effect.gen(function* () {
           // Probe or restore cached models before awaiting the network so startup and refreshes stay fast.
-          yield* runProbeAndPublish(snapshot);
+          const initialPublished = yield* runProbeAndPublish(snapshot);
           if (!tracksRegistryIndex) return;
           const revision = yield* refreshRegistryIndex();
           if (revision === (yield* Ref.get(lastSeenIndexRevision))) return;
@@ -989,10 +1016,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             yield* Ref.set(lastSeenIndexRevision, revision);
             return;
           }
-          if (rechecked.version !== snapshot.version) {
-            yield* runProbeAndPublish(rechecked);
+          if (!Equal.equals({ ...rechecked, checkedAt: snapshot.checkedAt }, snapshot)) {
+            const published = yield* runProbeAndPublish(rechecked);
+            if (published) {
+              yield* Ref.set(lastSeenIndexRevision, revision);
+            }
+            return;
           }
-          yield* Ref.set(lastSeenIndexRevision, revision);
+          if (initialPublished) {
+            yield* Ref.set(lastSeenIndexRevision, revision);
+          }
         });
         yield* runWithLiveWatchers(publishEnrichment);
       }),

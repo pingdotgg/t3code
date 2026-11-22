@@ -699,17 +699,23 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     readonly fetchedAtMs: number | undefined;
     // When a network fetch last failed; lets background max-age refreshes back off while offline.
     readonly failedAtMs: number | undefined;
+    // Last network failure; lets background refreshes fail fast during backoff when uncached.
+    readonly lastFailure: AcpRegistryError | undefined;
     // Advances when a refresh finishes with an index (fetched or fallback) so concurrent callers coalesce.
     readonly attemptRevision: number;
     // Advances only when a network fetch succeeds and updates index.
     readonly indexRevision: number;
+    // Advances on invalidateIndex so an in-flight attempt started earlier cannot mark the cache fresh or backed off.
+    readonly invalidationGeneration: number;
   }
   const registryState = yield* Ref.make<RegistryCacheState>({
     index: undefined,
     fetchedAtMs: undefined,
     failedAtMs: undefined,
+    lastFailure: undefined,
     attemptRevision: 0,
     indexRevision: 0,
+    invalidationGeneration: 0,
   });
   const registrySemaphore = yield* Semaphore.make(1);
   // Long installs must only block operations on the same agent.
@@ -964,49 +970,78 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return registry;
   });
 
-  const refreshRegistry = Effect.fn("AcpRegistryCatalog.refreshRegistry")(function* (
-    observedAttemptRevision?: number,
-  ) {
+  const refreshRegistry = Effect.fn("AcpRegistryCatalog.refreshRegistry")(function* (options?: {
+    readonly observedAttemptRevision?: number;
+    readonly failureBackoffMs?: number;
+  }) {
     const startRevision =
-      observedAttemptRevision ?? (yield* Ref.get(registryState)).attemptRevision;
+      options?.observedAttemptRevision ?? (yield* Ref.get(registryState)).attemptRevision;
+    const failureBackoffMs = options?.failureBackoffMs;
     return yield* registrySemaphore.withPermits(1)(
       Effect.gen(function* () {
         const current = yield* Ref.get(registryState);
         if (current.index !== undefined && current.attemptRevision !== startRevision) {
           return { index: current.index, indexRevision: current.indexRevision };
         }
+        if (failureBackoffMs !== undefined && current.failedAtMs !== undefined) {
+          const now = yield* Clock.currentTimeMillis;
+          if (now >= current.failedAtMs && now - current.failedAtMs < failureBackoffMs) {
+            if (current.index !== undefined) {
+              return { index: current.index, indexRevision: current.indexRevision };
+            }
+            if (current.lastFailure !== undefined) {
+              return yield* current.lastFailure;
+            }
+          }
+        }
 
+        const startInvalidationGeneration = current.invalidationGeneration;
         const result = yield* fetchRegistry().pipe(
-          Effect.map((index) => ({ index, refreshed: true })),
+          Effect.map((index) => ({ index, refreshed: true as const })),
           Effect.catch((networkError) =>
             Effect.gen(function* () {
               const now = yield* Clock.currentTimeMillis;
               yield* Effect.logDebug("ACP Registry index refresh failed", {
                 reason: networkError.reason,
-                detail: networkError.detail,
+                stage: "fetch_registry",
               });
               // Prefer an already-loaded index over disk so a cache-write failure cannot regress it.
               const inMemory = (yield* Ref.get(registryState)).index;
-              if (inMemory !== undefined) return { index: inMemory, refreshed: false };
+              if (inMemory !== undefined) {
+                return { index: inMemory, refreshed: false as const, failure: networkError };
+              }
               const cached = yield* readCachedRegistry;
-              if (Option.isSome(cached)) return { index: cached.value, refreshed: false };
-              yield* Ref.update(registryState, (state) => ({ ...state, failedAtMs: now }));
+              if (Option.isSome(cached)) {
+                return { index: cached.value, refreshed: false as const, failure: networkError };
+              }
+              yield* Ref.update(registryState, (state) =>
+                state.invalidationGeneration === startInvalidationGeneration
+                  ? { ...state, failedAtMs: now, lastFailure: networkError }
+                  : state,
+              );
               return yield* networkError;
             }),
           ),
         );
         const now = yield* Clock.currentTimeMillis;
         const indexRevision = yield* Ref.modify(registryState, (state) => {
+          const invalidatedDuringFetch =
+            state.invalidationGeneration !== startInvalidationGeneration;
           const nextIndexRevision = result.refreshed
             ? state.indexRevision + 1
             : state.indexRevision;
           return [
             nextIndexRevision,
             {
+              ...state,
               index: result.index,
-              fetchedAtMs: result.refreshed ? now : undefined,
-              failedAtMs: result.refreshed ? undefined : now,
-              attemptRevision: state.attemptRevision + 1,
+              fetchedAtMs: result.refreshed && !invalidatedDuringFetch ? now : undefined,
+              failedAtMs: !result.refreshed && !invalidatedDuringFetch ? now : undefined,
+              lastFailure:
+                !result.refreshed && !invalidatedDuringFetch ? result.failure : undefined,
+              attemptRevision: invalidatedDuringFetch
+                ? state.attemptRevision
+                : state.attemptRevision + 1,
               indexRevision: nextIndexRevision,
             },
           ] as const;
@@ -1018,6 +1053,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
   const recentRegistry = Effect.fn("AcpRegistryCatalog.recentRegistry")(function* (
     maxAgeMs = REGISTRY_SEARCH_MAX_AGE_MS,
+    failureBackoffMs?: number,
   ) {
     const state = yield* Ref.get(registryState);
     const now = yield* Clock.currentTimeMillis;
@@ -1030,7 +1066,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     ) {
       return { index: state.index, indexRevision: state.indexRevision };
     }
-    return yield* refreshRegistry(state.attemptRevision);
+    return yield* refreshRegistry({
+      observedAttemptRevision: state.attemptRevision,
+      ...(failureBackoffMs === undefined ? {} : { failureBackoffMs }),
+    });
   });
 
   const refreshIndex: AcpRegistryCatalog["Service"]["refreshIndex"] = Effect.fn(
@@ -1043,9 +1082,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       now >= state.failedAtMs &&
       now - state.failedAtMs < failureBackoffMs
     ) {
-      return state.indexRevision;
+      if (state.index !== undefined) return state.indexRevision;
+      if (state.lastFailure !== undefined) return yield* state.lastFailure;
     }
-    return (yield* recentRegistry(maxAgeMs)).indexRevision;
+    return (yield* recentRegistry(maxAgeMs, failureBackoffMs)).indexRevision;
   });
 
   const invalidateIndex: AcpRegistryCatalog["Service"]["invalidateIndex"] = Effect.fn(
@@ -1055,6 +1095,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ...state,
       fetchedAtMs: undefined,
       failedAtMs: undefined,
+      lastFailure: undefined,
+      invalidationGeneration: state.invalidationGeneration + 1,
     }));
   });
 

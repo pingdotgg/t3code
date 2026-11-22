@@ -968,6 +968,7 @@ const registryUrl = "https://registry.test/registry.json";
 const makeBinaryRegistry = (
   version: string,
   target: AcpRegistrySupport.AcpRegistryPlatformTarget = compatibleRegistryTarget,
+  options?: { readonly website?: string },
 ) =>
   JSON.stringify({
     version: "1.0.0",
@@ -977,6 +978,7 @@ const makeBinaryRegistry = (
         name: "Test Agent",
         version,
         description: "Test binary agent",
+        ...(options?.website ? { website: options.website } : {}),
         distribution: {
           binary: {
             [target]: {
@@ -990,7 +992,10 @@ const makeBinaryRegistry = (
   });
 
 // A disk-cached 1.0.0 index with its binary installed, as left behind by an earlier session.
-const seedInstalledBinaryAgent = Effect.fn("seedInstalledBinaryAgent")(function* (prefix: string) {
+const seedInstalledBinaryAgent = Effect.fn("seedInstalledBinaryAgent")(function* (
+  prefix: string,
+  options?: { readonly website?: string },
+) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix });
@@ -1001,7 +1006,7 @@ const seedInstalledBinaryAgent = Effect.fn("seedInstalledBinaryAgent")(function*
   yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
   yield* fileSystem.writeFileString(
     path.join(directory, "acp-registry", "registry.json"),
-    makeBinaryRegistry("1.0.0"),
+    makeBinaryRegistry("1.0.0", compatibleRegistryTarget, options),
   );
   const installedV1 = installedBinaryPath(path, directory, "1.0.0");
   yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
@@ -1629,6 +1634,219 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         yield* Deferred.succeed(secondGate.release, undefined);
         expect(Option.isSome(yield* Fiber.join(upgradedToV3))).toBe(true);
         expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
+      }),
+  );
+
+  it.effect(
+    "publishes same-version metadata changes with cached enrichment and retries skipped version probes after a session ends",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const { directory, agentPath, modelsPath } = yield* seedInstalledBinaryAgent(
+          "acp-driver-meta-session-",
+          { website: "https://example.test/v1" },
+        );
+
+        let remoteVersion = "1.0.0";
+        let remoteWebsite: string | undefined = "https://example.test/v1-updated";
+        let registryRequests = 0;
+        let resolveAttempts = 0;
+        let onInspect:
+          | ((inspection: AcpRegistrySupport.AcpRegistryInspection) => Effect.Effect<void>)
+          | null = null;
+        const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: directory,
+          toolsDir: path.join(directory, "tools"),
+          registryUrl,
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, testHostPlatform),
+          Effect.provideService(HostProcess.Architecture, "x64"),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make((request) => {
+              if (request.url === registryUrl) {
+                registryRequests += 1;
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(
+                    request,
+                    new Response(
+                      makeBinaryRegistry(
+                        remoteVersion,
+                        compatibleRegistryTarget,
+                        remoteWebsite ? { website: remoteWebsite } : undefined,
+                      ),
+                    ),
+                  ),
+                );
+              }
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(
+                  request,
+                  new Response(`#!/bin/sh\necho ${remoteVersion}\n`),
+                ),
+              );
+            }),
+          ),
+        );
+        const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+          ...realCatalog,
+          inspect: (settings, environment) =>
+            realCatalog
+              .inspect(settings, environment)
+              .pipe(
+                Effect.tap((inspection) =>
+                  onInspect === null ? Effect.void : onInspect(inspection),
+                ),
+              ),
+          resolve: (settings, cwd, environment) =>
+            Effect.sync(() => {
+              resolveAttempts += 1;
+            }).pipe(
+              Effect.andThen(() => realCatalog.resolve(settings, cwd, environment)),
+              Effect.map((resolved) => ({
+                ...resolved,
+                spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+              })),
+            ),
+        };
+
+        const instance = yield* AcpRegistryDriver.create({
+          instanceId: identity.instanceId,
+          displayName: identity.displayName,
+          enabled: true,
+          environment: [],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+        // 1. Same-version metadata update publishes the new documentationUrl while preserving cached models, commands, and auth actions.
+        yield* coordinator.publishAvailableCommands(identity.instanceId, {
+          slashCommands: [{ name: "status" }],
+          skills: [],
+        });
+        const authActionReady = yield* Deferred.make<void>();
+        const authWatcher = yield* coordinator
+          .watchUrlAuthAction(identity.instanceId, (action) =>
+            action === null
+              ? Effect.void
+              : Deferred.succeed(authActionReady, undefined).pipe(Effect.asVoid),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        const authRequest = yield* coordinator
+          .requestUrlAuthentication(identity.instanceId, {
+            elicitationId: "auth-1",
+            url: "https://example.test/auth",
+            message: "Continue in your browser",
+          })
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(authActionReady);
+        yield* Fiber.interrupt(authWatcher);
+        const updatedDocs = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "1.0.0" &&
+              snapshot.setup?.documentationUrl === "https://example.test/v1-updated" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const withUpdatedDocs = Option.getOrThrow(yield* Fiber.join(updatedDocs));
+        expect(withUpdatedDocs.models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
+        expect(withUpdatedDocs.slashCommands).toEqual([{ name: "status" }]);
+        expect(withUpdatedDocs.auth.action).toMatchObject({
+          elicitationId: "auth-1",
+          url: "https://example.test/auth",
+        });
+        const resolvesAfterDocsUpdate = resolveAttempts;
+        yield* Fiber.interrupt(authRequest);
+
+        // Removing website clears setup.documentationUrl via the cached probe without re-probing.
+        remoteWebsite = undefined;
+        const clearedDocs = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "1.0.0" &&
+              snapshot.setup?.documentationUrl === undefined &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* catalog.invalidateIndex();
+        yield* instance.snapshot.refresh;
+        const withClearedDocs = Option.getOrThrow(yield* Fiber.join(clearedDocs));
+        expect(withClearedDocs.models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
+        expect(resolveAttempts).toBe(resolvesAfterDocsUpdate);
+
+        // 2. When a foreground session skips a version-change probe, lastSeenIndexRevision stays pending and the next refresh after the session ends runs it.
+        remoteVersion = "2.0.0";
+        remoteWebsite = "https://example.test/v2";
+        const sessionStarted = yield* Deferred.make<void>();
+        const releaseSession = yield* Deferred.make<void>();
+        const sessionFiber = yield* coordinator
+          .withForegroundStartup(
+            "test-agent",
+            Deferred.succeed(sessionStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseSession)),
+            ),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(sessionStarted);
+
+        const firstV2Recheck = yield* Deferred.make<void>();
+        onInspect = (inspection) =>
+          inspection.status === "ready" && inspection.version === "2.0.0"
+            ? Deferred.succeed(firstV2Recheck, undefined).pipe(Effect.asVoid)
+            : Effect.void;
+        yield* TestClock.adjust("16 minutes");
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(firstV2Recheck);
+
+        // A second refresh while the session is still active rechecks v2 again because the skipped probe kept the revision pending.
+        let v2InspectsDuringSecondRefresh = 0;
+        const secondRefreshRechecked = yield* Deferred.make<void>();
+        onInspect = (inspection) =>
+          inspection.status === "ready" && inspection.version === "2.0.0"
+            ? Effect.sync(() => {
+                v2InspectsDuringSecondRefresh += 1;
+                return v2InspectsDuringSecondRefresh;
+              }).pipe(
+                Effect.flatMap((count) =>
+                  count >= 2
+                    ? Deferred.succeed(secondRefreshRechecked, undefined).pipe(Effect.asVoid)
+                    : Effect.void,
+                ),
+              )
+            : Effect.void;
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(secondRefreshRechecked);
+        expect(resolveAttempts).toBe(resolvesAfterDocsUpdate);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "2.0.0"))).toBe(false);
+
+        // Once the session ends, the next refresh runs the pending v2 probe without needing another registry fetch.
+        onInspect = null;
+        yield* Deferred.succeed(releaseSession, undefined);
+        yield* Fiber.join(sessionFiber);
+        const requestsBeforeRecovery = registryRequests;
+        const upgradedToV2 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "2.0.0" &&
+              snapshot.setup?.documentationUrl === "https://example.test/v2" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const recovered = Option.getOrThrow(yield* Fiber.join(upgradedToV2));
+        expect(recovered.version).toBe("2.0.0");
+        expect(registryRequests).toBe(requestsBeforeRecovery);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "2.0.0"))).toBe(true);
       }),
   );
 });

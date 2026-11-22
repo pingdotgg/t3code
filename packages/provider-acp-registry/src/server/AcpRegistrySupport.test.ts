@@ -1061,6 +1061,251 @@ describe("AcpRegistrySupport", () => {
   });
 
   it.effect(
+    "backs off queued and subsequent background refreshes when uncached and offline while keeping prepare eligible",
+    () => {
+      const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+      let online = false;
+      let registryRequests = 0;
+      let gate: {
+        readonly started: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      } | null = null;
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cold-backoff-",
+        });
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        });
+        const refreshOptions = { maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 } as const;
+
+        const firstGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        gate = firstGate;
+        const firstRefresh = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(firstGate.started);
+        const queuedRefresh = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.flip, Effect.forkScoped({ startImmediately: true }));
+
+        yield* Deferred.succeed(firstGate.release, undefined);
+        expect((yield* Fiber.join(firstRefresh)).reason).toBe("registry_unavailable");
+        expect((yield* Fiber.join(queuedRefresh)).reason).toBe("registry_unavailable");
+        expect(registryRequests).toBe(1);
+
+        // Subsequent background refreshes during the backoff window fail fast without hitting the network.
+        gate = null;
+        yield* TestClock.adjust("59 seconds");
+        expect((yield* resolver.refreshIndex(refreshOptions).pipe(Effect.flip)).reason).toBe(
+          "registry_unavailable",
+        );
+        expect(registryRequests).toBe(1);
+
+        // The first background retry after backoff expires fetches again and recovers.
+        online = true;
+        yield* TestClock.adjust("1 second");
+        expect(yield* resolver.refreshIndex(refreshOptions)).toBe(1);
+        expect(registryRequests).toBe(2);
+
+        // Explicit prepare remains eligible to fetch immediately even during a cold offline backoff window.
+        const secondCacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cold-backoff-prepare-",
+        });
+        const secondResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: secondCacheDir,
+          toolsDir: `${secondCacheDir}/tools`,
+          registryUrl,
+        });
+        online = false;
+        expect((yield* secondResolver.refreshIndex(refreshOptions).pipe(Effect.flip)).reason).toBe(
+          "registry_unavailable",
+        );
+        expect(registryRequests).toBe(3);
+
+        online = true;
+        expect(
+          (yield* secondResolver.prepare({ agentId: "missing-agent" }).pipe(Effect.flip)).reason,
+        ).toBe("agent_not_found");
+        expect(registryRequests).toBe(4);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            registryRequests += 1;
+            const activeGate = gate;
+            const respond = Effect.sync(() =>
+              HttpClientResponse.fromWeb(
+                request,
+                online
+                  ? new Response(makeRegistry(agent))
+                  : new Response("unavailable", { status: 503 }),
+              ),
+            );
+            return activeGate === null
+              ? respond
+              : Deferred.succeed(activeGate.started, undefined).pipe(
+                  Effect.andThen(Deferred.await(activeGate.release)),
+                  Effect.andThen(respond),
+                );
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "does not mark a refresh fresh or backed off when invalidated after response receipt",
+    () => {
+      const makeNpxAgent = (version: string) => ({
+        ...makeAgent({ npx: { package: `@example/acp@${version}` } }),
+        version,
+      });
+      let upstream = makeNpxAgent("1.2.4");
+      let online = true;
+      let registryRequests = 0;
+      let fetchGate: {
+        readonly started: Deferred.Deferred<void>;
+        readonly release: Deferred.Deferred<void>;
+      } | null = null;
+      return Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-invalidate-race-",
+        });
+        const registryDirectory = `${cacheDir}/acp-registry`;
+        const registryCachePath = `${registryDirectory}/registry.json`;
+        yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
+        yield* fileSystem.writeFileString(registryCachePath, makeRegistry(makeNpxAgent("1.2.3")));
+
+        let writeGate: {
+          readonly started: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        const gatedFileSystem: FileSystem.FileSystem = {
+          ...fileSystem,
+          writeFileString: (filePath, data, options) => {
+            const activeGate =
+              writeGate !== null && filePath.startsWith(`${registryCachePath}.`) ? writeGate : null;
+            return activeGate === null
+              ? fileSystem.writeFileString(filePath, data, options)
+              : Deferred.succeed(activeGate.started, undefined).pipe(
+                  Effect.andThen(Deferred.await(activeGate.release)),
+                  Effect.andThen(fileSystem.writeFileString(filePath, data, options)),
+                );
+          },
+        };
+        const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir: `${cacheDir}/tools`,
+          registryUrl,
+        }).pipe(Effect.provideService(FileSystem.FileSystem, gatedFileSystem));
+        const refreshOptions = { maxAgeMs: 15 * 60 * 1_000, failureBackoffMs: 60_000 } as const;
+
+        // 1. Invalidate after HTTP response receipt (during writeRegistryCache) before cache publication.
+        const firstWriteGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        writeGate = firstWriteGate;
+        const firstRefresh = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(firstWriteGate.started);
+        expect(registryRequests).toBe(1);
+        yield* resolver.invalidateIndex();
+        yield* Deferred.succeed(firstWriteGate.release, undefined);
+
+        // The fetched index is kept as fallback, while freshness stays unset so the next refresh fetches.
+        expect(yield* Fiber.join(firstRefresh)).toBe(1);
+        expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
+
+        // 2. A post-invalidation caller queued behind an in-flight pre-invalidation fetch does not coalesce.
+        upstream = makeNpxAgent("1.2.5");
+        const secondWriteGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        writeGate = secondWriteGate;
+        const secondRefresh = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(secondWriteGate.started);
+        expect(registryRequests).toBe(2);
+
+        yield* resolver.invalidateIndex();
+        upstream = makeNpxAgent("1.2.6");
+        writeGate = null;
+        const queuedPostInvalidation = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.succeed(secondWriteGate.release, undefined);
+
+        expect(yield* Fiber.join(secondRefresh)).toBe(2);
+        expect(yield* Fiber.join(queuedPostInvalidation)).toBe(3);
+        expect(registryRequests).toBe(3);
+        expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
+
+        // Attempts that started after invalidation still set freshness normally.
+        expect(yield* resolver.refreshIndex(refreshOptions)).toBe(3);
+        expect(registryRequests).toBe(3);
+
+        // 3. A failed refresh started before invalidation does not restore failure backoff.
+        yield* resolver.invalidateIndex();
+        online = false;
+        const offlineGate = {
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        fetchGate = offlineGate;
+        const failedRefresh = yield* resolver
+          .refreshIndex(refreshOptions)
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(offlineGate.started);
+        expect(registryRequests).toBe(4);
+        yield* resolver.invalidateIndex();
+        yield* Deferred.succeed(offlineGate.release, undefined);
+        expect(yield* Fiber.join(failedRefresh)).toBe(3);
+
+        online = true;
+        fetchGate = null;
+        upstream = makeNpxAgent("1.2.7");
+        expect(yield* resolver.refreshIndex(refreshOptions)).toBe(4);
+        expect(registryRequests).toBe(5);
+        expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          layerResolver((request) => {
+            registryRequests += 1;
+            const activeGate = fetchGate;
+            const respond = Effect.sync(() =>
+              HttpClientResponse.fromWeb(
+                request,
+                online
+                  ? new Response(makeRegistry(upstream))
+                  : new Response("unavailable", { status: 503 }),
+              ),
+            );
+            return activeGate === null
+              ? respond
+              : Deferred.succeed(activeGate.started, undefined).pipe(
+                  Effect.andThen(Deferred.await(activeGate.release)),
+                  Effect.andThen(respond),
+                );
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "prepares the registry version despite an older PATH binary and permits explicit overrides",
     () => {
       const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho managed\n");
