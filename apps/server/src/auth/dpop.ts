@@ -1,10 +1,8 @@
 import {
-  DPOP_MAX_CLOCK_SKEW_SECONDS,
   type DpopVerificationFailureCode as DpopVerificationFailureCodeType,
   verifyDpopProof,
 } from "@t3tools/shared/dpop";
 import type { DpopFailureReason } from "@t3tools/contracts";
-import * as Context from "effect/Context";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -42,24 +40,18 @@ const mapDpopFailureReason = (code: DpopVerificationFailureCodeType): DpopFailur
   }
 };
 
-/**
- * Proofs this process consumed, kept until their time window closes, so a replay check needs no
- * disk write. Markers on disk tell a later process which proofs were used; they are listed once,
- * on the first consume, and kept while a proof an earlier process accepted could still pass.
- */
-export const DpopReplayGuard = Context.Reference<{
-  readonly consumed: Map<string, number>;
-  earlierMarkers: ReadonlySet<string> | undefined;
-  earlierMarkersUntil: number;
-  nextSweepAt: number;
-}>("t3/auth/dpop/DpopReplayGuard", {
-  defaultValue: () => ({
-    consumed: new Map(),
-    earlierMarkers: undefined,
-    earlierMarkersUntil: 0,
-    nextSweepAt: 0,
-  }),
-});
+export const mapDpopReplayStoreError = (
+  error: ServerSecretStore.SecretStoreError,
+): ServerAuthInvalidCredentialError | ServerAuthInternalError =>
+  ServerSecretStore.isSecretAlreadyExistsError(error)
+    ? new ServerAuthInvalidCredentialError({
+        diagnostic: "DPoP proof replayed.",
+        dpopFailureReason: "replay",
+        cause: error,
+      })
+    : new ServerAuthDpopReplayStateRecordError({
+        cause: error,
+      });
 
 /** Checks a proof without recording it; `consume` records its jti so it cannot be replayed. */
 export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(function* (input: {
@@ -109,40 +101,9 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
               }),
           ),
         );
-      const markerName = `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`;
-      const nowSeconds = Math.floor(now.epochMilliseconds / 1_000);
-      const guard = yield* DpopReplayGuard;
-      if (guard.earlierMarkers === undefined) {
-        const names = secretStore.list
-          ? yield* secretStore
-              .list(DPOP_REPLAY_MARKER_PREFIX)
-              .pipe(Effect.mapError((cause) => new ServerAuthDpopReplayStateRecordError({ cause })))
-          : [];
-        if (guard.earlierMarkers === undefined) {
-          guard.earlierMarkers = new Set(names);
-          // An earlier process stopped before now, so it accepted no proof dated past now + skew.
-          guard.earlierMarkersUntil = nowSeconds + 2 * DPOP_MAX_CLOCK_SKEW_SECONDS;
-        }
-      }
-      if (nowSeconds >= guard.nextSweepAt) {
-        for (const [key, expiresAt] of guard.consumed) {
-          if (expiresAt < nowSeconds) guard.consumed.delete(key);
-        }
-        if (nowSeconds > guard.earlierMarkersUntil) guard.earlierMarkers = new Set();
-        guard.nextSweepAt = nowSeconds + 60;
-      }
-      if (guard.consumed.has(replayKey) || guard.earlierMarkers.has(markerName)) {
-        yield* Effect.annotateCurrentSpan({ "environment.dpop.failure_code": "replay" });
-        return yield* new ServerAuthInvalidCredentialError({
-          diagnostic: "DPoP proof replayed.",
-          dpopFailureReason: "replay",
-        });
-      }
-      guard.consumed.set(replayKey, result.iat + DPOP_MAX_CLOCK_SKEW_SECONDS);
-      // Only a later process reads the marker, so this request need not wait for the write.
       yield* secretStore
         .create(
-          markerName,
+          `${DPOP_REPLAY_MARKER_PREFIX}${replayKey}`,
           new TextEncoder().encode(
             [
               `thumbprint=${result.thumbprint}`,
@@ -151,12 +112,22 @@ export const checkRequestDpopProof = Effect.fn("dpop.checkRequestDpopProof")(fun
               `consumedAt=${DateTime.formatIso(now)}`,
             ].join("\n"),
           ),
+          // A marker must exist before the request is answered, but losing the last few to a
+          // power failure is acceptable; waiting on an fsync per request is not.
+          { durable: false },
         )
         .pipe(
-          Effect.catch((cause) =>
-            Effect.logWarning("Failed to record DPoP replay marker", { cause }),
+          Effect.catchIf(ServerSecretStore.isSecretStoreError, (error) =>
+            Effect.gen(function* () {
+              const mapped = mapDpopReplayStoreError(error);
+              if (mapped._tag === "ServerAuthInvalidCredentialError") {
+                yield* Effect.annotateCurrentSpan({
+                  "environment.dpop.failure_code": mapped.dpopFailureReason,
+                });
+              }
+              return yield* mapped;
+            }),
           ),
-          Effect.forkDetach,
         );
     });
   return { thumbprint: result.thumbprint, consume };

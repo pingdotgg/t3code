@@ -174,6 +174,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("ServerSecretStor
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 
+  it.effect("creates a non-durable secret once and reports AlreadyExists after", () =>
+    Effect.gen(function* () {
+      const secretStore = yield* ServerSecretStore.ServerSecretStore;
+      const value = new TextEncoder().encode("marker");
+
+      yield* secretStore.create("dpop-proof-x", value, { durable: false });
+      const again = yield* secretStore
+        .create("dpop-proof-x", value, { durable: false })
+        .pipe(Effect.flip);
+
+      assert.isTrue(ServerSecretStore.isSecretAlreadyExistsError(again));
+      assert.deepEqual(
+        Array.from(Option.getOrThrow(yield* secretStore.get("dpop-proof-x"))),
+        Array.from(value),
+      );
+    }).pipe(Effect.provide(layerServerSecretStore())),
+  );
+
   it.effect("refuses a name that would leave the secrets directory", () =>
     Effect.gen(function* () {
       const secretStore = yield* ServerSecretStore.ServerSecretStore;
