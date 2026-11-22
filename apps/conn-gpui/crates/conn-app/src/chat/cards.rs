@@ -2188,23 +2188,49 @@ impl ChatView {
         key: &str,
         label: &str,
     ) -> gpui_kit::Stateful<gpui_kit::Div> {
-        let hover_bg = hsla(self.tokens.shell_highlight);
-        div()
-            .id(SharedString::from(key.to_owned()))
-            .a11y_button(SharedString::from(format!("chat.{key}")), label.to_owned())
-            .flex()
-            .items_center()
-            .justify_center()
-            .h(px(32.0))
-            .px(px(12.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(hsla(self.tokens.border))
-            .cursor_pointer()
-            .text_size(px(UI_FONT_PX))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(hsla(self.tokens.foreground))
-            .hover(move |s| s.bg(hover_bg))
-            .child(label.to_owned())
+        outline_button_surface(
+            &self.tokens,
+            SharedString::from(key.to_owned()),
+            SharedString::from(format!("chat.{key}")),
+            label.to_owned(),
+        )
+        .h(px(32.0))
+        .px(px(12.0))
+        .rounded(px(8.0))
+        .text_size(px(UI_FONT_PX))
+        .child(label.to_owned())
     }
+}
+
+/// Colors and behavior of Conn `Button variant="outline"`: `border-input`, `bg-popover`
+/// (`dark:bg-input/32`), hover `bg-accent/50` (`dark:bg-input/64`). Callers add size and content.
+pub(super) fn outline_button_surface(
+    tokens: &conn_theme::Tokens,
+    id: SharedString,
+    ax_id: SharedString,
+    label: String,
+) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let dark = tokens.appearance == Appearance::Dark;
+    let (bg, hover_bg) = if dark {
+        (
+            hsla_alpha(tokens.input, tokens.input.a * 0.32),
+            hsla_alpha(tokens.input, tokens.input.a * 0.64),
+        )
+    } else {
+        (hsla(tokens.popover), hsla_alpha(tokens.accent, 0.5))
+    };
+    div()
+        .id(id)
+        .a11y_button(ax_id, label)
+        .flex()
+        .flex_row()
+        .items_center()
+        .justify_center()
+        .border_1()
+        .border_color(hsla(tokens.input))
+        .bg(bg)
+        .cursor_pointer()
+        .font_weight(FontWeight::MEDIUM)
+        .text_color(hsla(tokens.foreground))
+        .hover(move |s| s.bg(hover_bg))
 }

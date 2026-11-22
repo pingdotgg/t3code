@@ -8,10 +8,11 @@
 use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, Context, FontWeight, Hsla, InteractiveElement as _, IntoElement,
-    ParentElement as _, PathBuilder, StatefulInteractiveElement as _, Styled as _, canvas,
+    ParentElement as _, PathBuilder, Role, StatefulInteractiveElement as _, Styled as _, canvas,
     deferred, div, point, px,
 };
 
+use super::super::cards::outline_button_surface;
 use super::super::color::{hsla, hsla_alpha};
 use super::super::icons;
 use super::Composer;
@@ -222,6 +223,7 @@ pub(super) fn render_context_meter(
             deferred(
                 div().absolute().bottom_full().right_0().mb(px(6.0)).child(
                     popover_surface("composer-context-meter-popup", tokens)
+                        .a11y_group("composer.context-meter.popover", "Context window details")
                         .w(px(240.0))
                         .child(render_popover_body(
                             usage,
@@ -265,8 +267,10 @@ fn render_popover_body(
         ),
         _ => format_context_window_tokens(Some(usage.used_tokens)),
     };
-    let row = |label: &'static str, value: String| {
+    let row = |ax_id: &'static str, label: &'static str, value: String| {
         div()
+            .id(ax_id)
+            .a11y(Role::Group, ax_id, format!("{label}: {value}"))
             .flex()
             .flex_row()
             .items_center()
@@ -288,6 +292,12 @@ fn render_popover_body(
             .gap(px(12.0))
             .child(
                 div()
+                    .id("composer-context-meter-title")
+                    .a11y(
+                        Role::Label,
+                        "composer.context-meter.title",
+                        "Context Window",
+                    )
                     .text_size(px(12.0))
                     .line_height(px(16.0))
                     .font_weight(FontWeight::MEDIUM)
@@ -296,6 +306,8 @@ fn render_popover_body(
             )
             .child(
                 div()
+                    .id("composer-context-meter-usage")
+                    .a11y(Role::Label, "composer.context-meter.usage", summary.clone())
                     .text_size(px(11.0))
                     .line_height(px(16.0))
                     .text_color(secondary)
@@ -305,7 +317,16 @@ fn render_popover_body(
     if usage.max_tokens.is_some() {
         body = body.child(
             div()
-                .h(px(6.0))
+                .id("composer-context-meter-bar")
+                .a11y(
+                    Role::ProgressIndicator,
+                    "composer.context-meter.bar",
+                    match used_label {
+                        Some(pct) => format!("Context window usage, {pct} used"),
+                        None => "Context window usage".to_owned(),
+                    },
+                )
+                .h(px(5.0))
                 .w_full()
                 .rounded_full()
                 .overflow_hidden()
@@ -321,56 +342,59 @@ fn render_popover_body(
     }
     if let Some(total) = usage.total_processed_tokens.filter(|t| *t > 0.0) {
         body = body.child(row(
+            "composer.context-meter.total",
             "Total processed",
             format_context_window_tokens(Some(total)),
         ));
     }
     if let Some((amount, currency)) = &usage.cost {
-        body = body.child(row("Cost", format_cost(*amount, currency)));
+        body = body.child(row(
+            "composer.context-meter.cost",
+            "Cost",
+            format_cost(*amount, currency),
+        ));
     }
     if usage.compacts_automatically {
+        let message = compaction_message(model_display_name, usage.auto_compact_threshold);
         body = body.child(
             div()
+                .id("composer-context-meter-description")
+                .a11y(
+                    Role::Label,
+                    "composer.context-meter.description",
+                    message.clone(),
+                )
                 .mt(px(4.0))
                 .text_size(px(11.0))
                 .line_height(px(16.0))
                 .font_weight(FontWeight::MEDIUM)
                 .text_color(secondary)
-                .child(compaction_message(
-                    model_display_name,
-                    usage.auto_compact_threshold,
-                )),
+                .child(message),
         );
     }
     if show_compact {
         let fg = hsla(tokens.foreground);
-        let highlight = hsla(tokens.shell_highlight);
         body = body.child(
-            div()
-                .id("composer-context-compact")
-                .a11y_button("composer.context-compact", "Compact context")
-                .mt(px(4.0))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap(px(6.0))
-                .h(px(24.0))
-                .w_full()
-                .rounded(px(6.0))
-                .border_1()
-                .border_color(hsla(tokens.border))
-                .cursor_pointer()
-                .text_size(px(12.0))
-                .line_height(px(16.0))
-                .text_color(fg)
-                .hover(move |s| s.bg(highlight))
-                .on_click(cx.listener(|composer, _, _, cx| {
-                    composer.set_context_meter_open(false, cx);
-                    cx.emit(super::ComposerEvent::SlashCommand("compact".to_owned()));
-                }))
-                .child(icons::icon("superhero/minimize.svg", 14.0, fg))
-                .child("Compact context"),
+            // Conn `Button variant="outline" size="xs"`, full width.
+            outline_button_surface(
+                tokens,
+                "composer-context-compact".into(),
+                "composer.context-compact".into(),
+                "Compact context".to_owned(),
+            )
+            .mt(px(4.0))
+            .gap(px(4.0))
+            .h(px(24.0))
+            .w_full()
+            .rounded(px(6.0))
+            .text_size(px(12.0))
+            .line_height(px(16.0))
+            .on_click(cx.listener(|composer, _, _, cx| {
+                composer.set_context_meter_open(false, cx);
+                cx.emit(super::ComposerEvent::SlashCommand("compact".to_owned()));
+            }))
+            .child(icons::icon("superhero/minimize.svg", 14.0, fg))
+            .child("Compact context"),
         );
     }
     body.into_any_element()
