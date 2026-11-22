@@ -53,6 +53,21 @@ const RESPONSES: Record<string, unknown> = {
   "/repos/acme/web/pulls/42/stack": { members: [] },
   [`/repos/acme/web/check-runs?sha=${"c".repeat(40)}`]: [],
   "/repos/acme/web/ci/runs?pull=42&limit=30": { items: [], next: null },
+  "/repos/acme/web/issues/42": {
+    timeline: [
+      { id: 1, comment: "Looks good", author: "alice", at: 2_000 },
+      { event: "head_updated", actor: "bob", at: 3_000 },
+    ],
+    next: null,
+  },
+  "/repos/acme/web/pulls/42/comments": [],
+  "/repos/acme/web/pulls/42/commits": {
+    baseSha: null,
+    headSha: null,
+    mergeBaseSha: null,
+    available: true,
+    commits: [],
+  },
   "/user": { username: "alice" },
 };
 
@@ -102,5 +117,22 @@ describe("TanStackSourcePullRequestProvider.getChangeRequest", () => {
           [2, 7, 1],
         );
       }),
+  );
+});
+
+describe("TanStackSourcePullRequestProvider.getChangeRequestActivity", () => {
+  it.effect("reads the comments of a timeline that also holds events", () =>
+    Effect.gen(function* () {
+      const activity = yield* (yield* provider).getChangeRequestActivity({
+        host: HOST,
+        repository: "acme/web",
+        number: 42,
+        cwd: "/repo",
+      });
+      assert.deepStrictEqual(
+        activity.comments.map((comment) => comment.body),
+        ["Looks good"],
+      );
+    }),
   );
 });

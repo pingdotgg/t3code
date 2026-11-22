@@ -138,7 +138,8 @@ const TimelineEntry = Schema.Struct({
 type TimelineEntry = typeof TimelineEntry.Type;
 
 export const SourceTimeline = Schema.Struct({
-  timeline: Schema.Array(TimelineEntry),
+  // Events such as `head_updated` sit between the comments and carry no id.
+  timeline: Schema.Array(Schema.Union([TimelineEntry, Schema.Struct({ event: Schema.String })])),
   next: Schema.NullOr(Schema.String),
 });
 
@@ -393,7 +394,9 @@ export function toActivity(input: {
 }): ProviderChangeRequestActivity {
   const { host } = input;
   const page = pullUrl(host, input.repository, input.number);
-  const entries = input.timeline.timeline.filter(visible);
+  const entries = input.timeline.timeline.filter(
+    (entry): entry is TimelineEntry => "id" in entry && visible(entry),
+  );
   const comments: Array<PullRequestComment> = entries.map((entry: TimelineEntry) => ({
     id: String(entry.id),
     kind:

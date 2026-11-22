@@ -507,7 +507,8 @@ export const make = Effect.gen(function* () {
         return repository.defaultBranch;
       },
     ),
-    // Every pull request's head is published as `refs/pull/<n>/head`, forks and GitHub sync too.
+    // A pull request's head is published as `refs/pull/<n>/head`, forks and GitHub sync too. A
+    // private one has no such ref: its branch is read from the companion repository.
     checkoutChangeRequest: Effect.fn("TanStackSourceSourceControlProvider.checkoutChangeRequest")(
       function* (input) {
         const pull = yield* getPull(input);
@@ -532,9 +533,26 @@ export const make = Effect.gen(function* () {
                 });
           const operation = "TanStackSourceSourceControlProvider.checkoutChangeRequest";
           const branches = yield* git.listLocalBranchNames(input.cwd);
-          if (!pull.isCrossRepository) {
+          const companion =
+            pullRepository !== null &&
+            pull.headRepositoryNameWithOwner?.toLowerCase() ===
+              `${pullRepository}.private`.toLowerCase()
+              ? pull.headRepositoryNameWithOwner
+              : null;
+          if (!pull.isCrossRepository || companion !== null) {
             const localBranch = pull.headRefName;
-            const remoteBranch = { cwd: input.cwd, remoteName, remoteBranch: localBranch };
+            const remoteBranch = {
+              cwd: input.cwd,
+              remoteName:
+                companion === null
+                  ? remoteName
+                  : yield* git.ensureRemote({
+                      cwd: input.cwd,
+                      preferredName: companion.split("/")[0] ?? "private",
+                      url: `${Hosts.webRepositoryUrl(HOST, companion)}.git`,
+                    }),
+              remoteBranch: localBranch,
+            };
             if (input.force !== true && !branches.includes(localBranch))
               yield* git.fetchRemoteBranch({ ...remoteBranch, localBranch });
             else yield* git.fetchRemoteTrackingBranch(remoteBranch);

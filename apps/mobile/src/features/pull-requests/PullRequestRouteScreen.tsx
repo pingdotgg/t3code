@@ -85,7 +85,7 @@ import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
-import { SymbolView } from "../../components/ui/AppSymbol";
+import { SymbolView, type AppSymbolName } from "../../components/ui/AppSymbol";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
@@ -209,6 +209,8 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
   };
 }
 
+const PRIVATE_SYMBOL: AppSymbolName = { ios: "lock.fill", android: "lock" };
+
 function PullRequestIdentity(props: {
   readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
@@ -258,6 +260,16 @@ function PullRequestIdentity(props: {
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
+        {"visibility" in pr && pr.visibility === "private" ? (
+          <View
+            className="pt-0.5"
+            accessible
+            accessibilityRole="image"
+            accessibilityLabel={gt("Private")}
+          >
+            <SymbolView name={PRIVATE_SYMBOL} size={11} tintColorClassName="accent-icon-muted" />
+          </View>
+        ) : null}
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}

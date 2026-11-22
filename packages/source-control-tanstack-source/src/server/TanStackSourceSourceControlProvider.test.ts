@@ -35,6 +35,7 @@ const PULL = {
 function checkout(options: {
   readonly recordedOwner: string | null;
   readonly isAncestor: boolean;
+  readonly pull?: Partial<typeof PULL>;
 }) {
   const git: Array<string> = [];
   const config = new Map<string, string>(
@@ -43,14 +44,27 @@ function checkout(options: {
   const api = TanStackSourceApi.TanStackSourceApi.of({
     request: (input) =>
       input.path === "/repos/acme/web/pulls/42"
-        ? Effect.succeed(JSON.stringify(PULL))
+        ? Effect.succeed(JSON.stringify({ ...PULL, ...options.pull }))
         : Effect.die(`unexpected ${input.path}`),
     response: () => Effect.die("unexpected response read"),
   });
   const host = TestSourceControlHost.layer({
     git: {
       resolvePrimaryRemoteName: () => Effect.succeed("origin"),
-      ensureRemote: () => Effect.succeed("origin"),
+      ensureRemote: (input) =>
+        Effect.sync(() => {
+          git.push(`remote ${input.preferredName} ${input.url}`);
+          return input.url === REMOTE ? "origin" : input.preferredName;
+        }),
+      fetchRemoteBranch: (input) =>
+        Effect.sync(
+          () =>
+            void git.push(`fetch ${input.remoteName} ${input.remoteBranch}:${input.localBranch}`),
+        ),
+      setBranchUpstream: (input) =>
+        Effect.sync(
+          () => void git.push(`upstream ${input.branch} ${input.remoteName}/${input.remoteBranch}`),
+        ),
       readConfigValue: (_cwd, key) =>
         Effect.succeed(key === "remote.origin.url" ? REMOTE : (config.get(key) ?? null)),
       writeConfigValue: (input) => Effect.sync(() => void config.set(input.key, input.value)),
@@ -127,6 +141,25 @@ describe("TanStackSourceSourceControlProvider.checkoutChangeRequest", () => {
       const error = yield* Effect.flip(run);
       assert.include(error.detail, "has commits pull request #42 does not");
       assert.isFalse(git.some((command) => command.startsWith("checkout")));
+    });
+  });
+
+  // Source publishes no `refs/pull/<n>/head` for a private pull request, on either repository.
+  it.effect("takes a private pull request's branch from the companion repository", () => {
+    const { run, git } = checkout({
+      recordedOwner: null,
+      isAncestor: true,
+      pull: { head: "acme:fix-thing", headRepo: "acme/web.private" },
+    });
+    return Effect.gen(function* () {
+      yield* run;
+      assert.deepStrictEqual(git, [
+        `remote source ${REMOTE}`,
+        "remote acme https://source.tanstack.com/@acme/web.private.git",
+        "fetch acme fix-thing:fix-thing",
+        "upstream fix-thing acme/fix-thing",
+        "switch fix-thing",
+      ]);
     });
   });
 });

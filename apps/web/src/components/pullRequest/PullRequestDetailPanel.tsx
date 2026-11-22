@@ -90,6 +90,7 @@ import { MiddleTruncate } from "../ui/middle-truncate";
 import {
   PullRequestChecksStatusLine,
   PullRequestDetailHeaderBody,
+  PullRequestPrivateMark,
   PullRequestDetailTabBar,
 } from "./PullRequestDetailLayout";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
@@ -1726,6 +1727,9 @@ export function PullRequestDetailPanel({
                   </span>
                   <span aria-hidden className="h-3 w-px shrink-0 bg-border/70" />
                   <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-2xs text-muted-foreground/65">
+                    {detail.visibility === "private" ? (
+                      <PullRequestPrivateMark className="size-3" />
+                    ) : null}
                     <PullRequestBaseBranch
                       baseBranch={detail.baseBranch}
                       freshness={freshness}
@@ -1848,6 +1852,7 @@ export function PullRequestDetailPanel({
                     />
                   ) : null
                 }
+                isPrivate={detail.visibility === "private"}
                 base={
                   <PullRequestBaseBranch
                     baseBranch={detail.baseBranch}
