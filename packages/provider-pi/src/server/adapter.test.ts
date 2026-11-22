@@ -2096,12 +2096,15 @@ describe("PiAdapterV2", () => {
       const dialog = yield* takeEvent((event) => event.type === "runtime_request.updated");
       assert.isTrue(dialog.type === "runtime_request.updated");
       if (dialog.type !== "runtime_request.updated") return;
-      yield* TestClock.adjust("2 minutes");
+      yield* TestClock.adjust("119 seconds");
       yield* runtime.respondToRuntimeRequest({
         requestId: dialog.runtimeRequest.id,
         decision: "accept",
       });
       yield* fake.takeRequest("extension_ui_response");
+      // An answer just before a deadline still leaves Pi a whole window to finish the switch.
+      yield* TestClock.adjust("59 seconds");
+      assert.isUndefined(resumed.pollUnsafe());
       yield* TestClock.adjust("1 minute");
       const failure = yield* Fiber.join(resumed).pipe(Effect.flip);
       assert.include(String(failure.cause), "switch_session failed: timed out");

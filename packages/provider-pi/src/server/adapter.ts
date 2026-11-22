@@ -632,6 +632,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         ProviderAdapter.ProviderAdapterV2Error | Cause.Done
       >();
       const pendingPrompts = new Map<string, PendingPiPrompt>();
+      // Bumped when a dialog opens or settles; lifecycle deadlines restart from it.
+      let promptActivity = 0;
       // Custom answers waiting for their ask_user_question follow-up input, keyed by title prefix.
       // FIFO per prefix: the extension asks each follow-up right after its own select is answered.
       const customAnswerFollowUps = new Map<string, string[]>();
@@ -967,10 +969,14 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             )
               return yield* protocolError("Pi transport closed during status reset");
             yield* Deferred.await(reset.ready);
-            // Session hooks can wait on the user, so only time without an open dialog counts.
+            // Session hooks can wait on the user: time out only after a full window with no dialog
+            // open and none opened or answered, so Pi keeps a whole window after the last answer.
             const deadline = Effect.gen(function* () {
-              do yield* Effect.sleep(Duration.millis(PI_SESSION_TIMEOUT_MS));
-              while (pendingPrompts.size > 0);
+              let activity: number;
+              do {
+                activity = promptActivity;
+                yield* Effect.sleep(Duration.millis(PI_SESSION_TIMEOUT_MS));
+              } while (pendingPrompts.size > 0 || promptActivity !== activity);
               return yield* new PiRpcTimeoutError({
                 operation: String(record["type"]),
                 timeoutMs: PI_SESSION_TIMEOUT_MS,
@@ -1762,6 +1768,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       ) {
         const pending = Array.from(pendingPrompts.values());
         pendingPrompts.clear();
+        promptActivity++;
         customAnswerFollowUps.clear();
         yield* Effect.forEach(pending, (prompt) => cancelPrompt(prompt, resolvedAt), {
           discard: true,
@@ -1979,6 +1986,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           customAnswerRoute: askUser?.customAnswerRoute,
         };
         pendingPrompts.set(String(requestId), pending);
+        promptActivity++;
         yield* emit({
           type: "runtime_request.updated",
           driver: PI_PROVIDER,
@@ -2761,6 +2769,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             const pending = pendingPrompts.get(requestId);
             if (pending === undefined || pending !== event["pending"]) return;
             pendingPrompts.delete(requestId);
+            promptActivity++;
             yield* cancelPrompt(pending, yield* DateTime.now);
             return;
           }
@@ -3776,6 +3785,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               DateTime.toEpochMillis(answeredAt) >= pending.expiresAt
             ) {
               pendingPrompts.delete(String(requestInput.requestId));
+              promptActivity++;
               yield* cancelPrompt(pending, answeredAt);
               return yield* protocolError(
                 `Pi extension request ${requestInput.requestId} has expired`,
@@ -3801,6 +3811,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               ...response,
             });
             pendingPrompts.delete(String(requestInput.requestId));
+            promptActivity++;
             if (pending.expirationFiber !== null) yield* Fiber.interrupt(pending.expirationFiber);
             if (pending.method === "confirm" && requestInput.decision === "acceptForSession") {
               sessionApprovals.add(pending.approvalKey);
