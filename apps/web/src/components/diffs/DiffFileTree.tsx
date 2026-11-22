@@ -7,7 +7,11 @@ import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } fro
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
-import { PIERRE_TREE_UNSAFE_CSS, pierreTreeStyle } from "~/pierre-tree-theme";
+import {
+  PIERRE_TREE_UNSAFE_CSS,
+  pierreTreeStyle,
+  titleClippedPierreTreeRow,
+} from "~/pierre-tree-theme";
 
 import {
   areAllDirectoriesExpanded,
@@ -21,9 +25,9 @@ import {
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
   diffFileTreeModel,
-  diffFileTreePositions,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
+import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -253,6 +257,7 @@ export function DiffFileTree({
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
+        onPointerOver={titleClippedPierreTreeRow}
       />
       {footer}
     </div>
