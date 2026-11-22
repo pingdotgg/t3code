@@ -673,6 +673,37 @@ it.effect("creates pull requests using the official REST payload shape", () => {
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("marks pull requests as drafts through the draft body field", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json(bitbucketPullRequest),
+  });
+
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "bitbucket-pr-body-" });
+    yield* fileSystem.writeFileString(bodyFile, "PR body");
+
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.createPullRequest({
+      cwd: "/repo",
+      baseBranch: "main",
+      headSelector: "owner:feature/provider",
+      title: "Provider PR",
+      bodyFile,
+      draft: true,
+    });
+
+    const request = execute.mock.calls[0]?.[0];
+    assert.ok(request);
+    const rawBody = (request.body as { readonly body?: Uint8Array }).body;
+    assert.ok(rawBody);
+    assert.strictEqual(
+      (JSON.parse(new TextDecoder().decode(rawBody)) as { draft?: unknown }).draft,
+      true,
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 it.effect("reports the account Bitbucket confirms for the configured credential", () => {
   const { layer } = makeLayer({
     response: () => Response.json({ username: "bitbucket-user" }),

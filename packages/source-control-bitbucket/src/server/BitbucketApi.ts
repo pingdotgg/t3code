@@ -382,6 +382,7 @@ export class BitbucketApi extends Context.Service<
       readonly target?: SourceControlProvider.SourceControlRefSelector;
       readonly title: string;
       readonly bodyFile: string;
+      readonly draft?: boolean;
     }) => Effect.Effect<void, BitbucketApiError>;
     readonly getDefaultBranch: (input: {
       readonly cwd: string;
@@ -1173,6 +1174,7 @@ export const make = Effect.gen(function* () {
             name: input.target?.refName ?? input.baseBranch,
           },
         },
+        ...(input.draft === true ? { draft: true } : {}),
       };
 
       yield* executeJson(

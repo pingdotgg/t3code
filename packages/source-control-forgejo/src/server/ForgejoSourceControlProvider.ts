@@ -399,6 +399,7 @@ export const make = Effect.gen(function* () {
   );
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("forgejo"),
+    createsDraftChangeRequests: true,
     repositoryNameFromRemoteUrl,
     refineRepositoryIdentity,
     resolveRemoteWebHost,
@@ -513,8 +514,12 @@ export const make = Effect.gen(function* () {
           body: {
             base: input.target?.refName ?? input.baseRefName,
             head: owner ? `${owner}:${head}` : head,
-            title: input.title,
+            // "WIP:" is the convention both hosts read as a draft and strip on
+            // "Mark as ready"; it covers servers old enough to ignore the
+            // `draft` body field below.
+            title: input.draft === true ? `WIP: ${input.title}` : input.title,
             body: yield* fs.readFileString(input.bodyFile),
+            ...(input.draft === true ? { draft: true } : {}),
           },
         });
       },

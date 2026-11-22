@@ -44,6 +44,7 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: SourceControlProviderKind.make("bitbucket"),
+    createsDraftChangeRequests: true,
     listChangeRequests: Effect.fn("BitbucketSourceControlProvider.listChangeRequests")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -107,6 +108,7 @@ export const make = Effect.gen(function* () {
             ...(input.target ? { target: input.target } : {}),
             title: input.title,
             bodyFile: input.bodyFile,
+            ...(input.draft === true ? { draft: true } : {}),
           })
           .pipe(
             Effect.mapError(

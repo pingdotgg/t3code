@@ -2586,3 +2586,47 @@ it.effect("exposes fixed not-found details only for repository lookup", () =>
     ),
   ),
 );
+
+it.effect("marks pull requests as drafts through the WIP title convention", () => {
+  const writes: Array<ForgejoCli.ForgejoApiInput> = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoSourceControlProvider.make;
+    yield* provider.createChangeRequest({
+      cwd: "/forgejo",
+      baseRefName: "main",
+      headSelector: "feature/draft-pr",
+      title: "Add draft flow",
+      bodyFile: "/tmp/body.md",
+      draft: true,
+    });
+    const create = writes.find((write) => write.method === "POST");
+    const body = create?.body as { title?: unknown; draft?: unknown } | undefined;
+    assert.strictEqual(body?.title, "WIP: Add draft flow");
+    assert.strictEqual(body?.draft, true);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.succeed(
+          FileSystem.FileSystem,
+          FileSystem.makeNoop({
+            readFileString: () => Effect.succeed("body"),
+          }),
+        ),
+        TestSourceControlHost.layer(),
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          resolveRepository: () =>
+            Effect.succeed({
+              login: "maria",
+              repository: "maria/project",
+              baseUrl: "https://forgejo.test",
+            }),
+          api: (input) =>
+            Effect.sync(() => {
+              if (input.method === "POST") writes.push(input);
+              return processOutput("{}");
+            }),
+        }),
+      ),
+    ),
+  );
+});
