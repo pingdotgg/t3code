@@ -9,11 +9,13 @@ import {
   type EnvironmentSpeechModels,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -29,6 +31,7 @@ import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
@@ -58,10 +61,17 @@ const mapSpeechError = <A, R>(effect: Effect.Effect<A, SpeechService.SpeechError
 
 // A linked model's origin is a path on this machine; only filesystem readers may see it.
 // Untraced: it runs inside each handler's own span.
-const withoutHostPaths = Effect.fnUntraced(function* (result: EnvironmentSpeechModels) {
+const withoutHostPaths = Effect.fnUntraced(function* <Fields extends EnvironmentSpeechModels>({
+  models,
+  ...fields
+}: Fields) {
   const session = yield* EnvironmentAuthenticatedPrincipal;
-  if (session.scopes.has(AuthFilesystemReadScope)) return result;
-  return { models: result.models.map(({ linkedFrom: _, ...model }) => model) };
+  return {
+    ...fields,
+    models: session.scopes.has(AuthFilesystemReadScope)
+      ? models
+      : models.map(({ linkedFrom: _, ...model }) => model),
+  };
 });
 
 export const speechHttpApiLayer = HttpApiBuilder.group(
@@ -226,7 +236,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           return yield* postProcessing
             .process(args.payload)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+            .pipe(
+              Effect.catch((error) =>
+                failEnvironmentInternal(
+                  "internal_error",
+                  error,
+                  isTextGenerationError(error.cause) ? error.cause.detail : undefined,
+                ),
+              ),
+            );
         }),
       );
   }),

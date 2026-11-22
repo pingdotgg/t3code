@@ -3,22 +3,23 @@ import { describe, expect, it } from "vite-plus/test";
 import { formatWorkspaceRelativePath } from "./filePathDisplay";
 
 describe("formatWorkspaceRelativePath", () => {
-  // regression: #27308 a drive path outside the workspace is not a relative path
-  it("keeps an external Windows path absolute and uses slashes", () => {
-    expect(formatWorkspaceRelativePath("C:/tmp/image.png", "C:/work/project")).toBe(
-      "C:/tmp/image.png",
+  it("labels only relative paths, not Windows paths outside the workspace", () => {
+    const workspaceRoot = "C:\\Users\\mike\\dev-stuff\\t3code";
+    expect(
+      formatWorkspaceRelativePath("C:\\Users\\mike\\.claude\\settings.json:3", workspaceRoot),
+    ).toBe("C:/Users/mike/.claude/settings.json:3");
+    expect(formatWorkspaceRelativePath("D:/data/report.csv", workspaceRoot)).toBe(
+      "D:/data/report.csv",
     );
-    expect(formatWorkspaceRelativePath("C:\\tmp\\image.png", "C:\\work\\project")).toBe(
-      "C:/tmp/image.png",
-    );
-    expect(formatWorkspaceRelativePath("D:/tmp/image.png", "C:/work/project")).toBe(
-      "D:/tmp/image.png",
-    );
+    expect(formatWorkspaceRelativePath("src/app.ts", workspaceRoot)).toBe("t3code/src/app.ts");
   });
 
-  it("shows a file inside the workspace relative to the project folder", () => {
-    expect(formatWorkspaceRelativePath("C:/work/project/inside.png", "C:/work/project")).toBe(
-      "project/inside.png",
+  it("keeps home paths as written instead of labelling them as workspace paths", () => {
+    expect(formatWorkspaceRelativePath("~/.claude/CLAUDE.md", "/workspace/t3code")).toBe(
+      "~/.claude/CLAUDE.md",
+    );
+    expect(formatWorkspaceRelativePath("~\\.claude\\CLAUDE.md:3", "C:\\dev\\t3code")).toBe(
+      "~/.claude/CLAUDE.md:3",
     );
   });
 });

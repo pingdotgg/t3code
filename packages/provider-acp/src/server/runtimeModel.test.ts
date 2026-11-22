@@ -17,6 +17,7 @@ import {
   sessionUpdateIsReplay,
   syntheticLoadSessionResponseFromInitialize,
   toolCallProgressLength,
+  toolCallVisibleOutputChanged,
   withTrackedPermissionToolCall,
   type AcpToolCallState,
 } from "./runtimeModel.ts";
@@ -335,7 +336,6 @@ describe("AcpRuntimeModel", () => {
         update: {
           sessionUpdate: "tool_call_update",
           toolCallId: "read-1",
-          kind: "read",
           ...(locations === undefined ? {} : { locations }),
         },
       } satisfies EffectAcpSchema.SessionNotification);
@@ -351,14 +351,65 @@ describe("AcpRuntimeModel", () => {
     const cleared = mergeToolCallState(created, toolCall([]));
     expect(cleared.data.locations).toEqual([]);
     expect(mergeToolCallState(created, toolCall(null)).data.locations).toEqual([]);
-    expect(
+    const emits = (previous: AcpToolCallState, next: AcpToolCallState) =>
       decideToolCallUpdateEmission({
-        previous: created,
-        next: cleared,
+        previous,
+        next,
         lastEmittedDetailLength: 0,
         skippedSinceEmit: 0,
-      }).emit,
-    ).toBe(true);
+      }).emit;
+    expect(emits(created, cleared)).toBe(true);
+    expect(toolCallVisibleOutputChanged(created, cleared)).toBe(true);
+    const relocated = mergeToolCallState(cleared, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(cleared, relocated)).toBe(true);
+    expect(toolCallVisibleOutputChanged(cleared, relocated)).toBe(true);
+    const repeated = mergeToolCallState(relocated, toolCall([{ path: "/workspace/src/app.ts" }]));
+    expect(emits(relocated, repeated)).toBe(false);
+    expect(toolCallVisibleOutputChanged(relocated, repeated)).toBe(false);
+  });
+
+  it("clears explicitly nulled ACP v2 tool call fields and replaces raw input", () => {
+    const toolCall = (update: Omit<EffectAcpSchema.ToolCallUpdate, "toolCallId">) => {
+      const parsed = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: { sessionUpdate: "tool_call_update", toolCallId: "call-1", ...update },
+      } satisfies EffectAcpSchema.SessionNotification);
+      const event = parsed.events.find((candidate) => candidate._tag === "ToolCallUpdated");
+      if (!event || event._tag !== "ToolCallUpdated") {
+        throw new Error("expected a tool call update");
+      }
+      return event.toolCall;
+    };
+
+    const created = toolCall({
+      name: "old-name",
+      title: "Old title",
+      kind: "read",
+      status: "in_progress",
+      content: [{ type: "content", content: { type: "text", text: "old output" } }],
+      rawInput: { path: "old.txt", obsolete: true },
+      _meta: { old: true },
+    });
+
+    expect(
+      mergeToolCallState(created, toolCall({ rawInput: { path: "new.txt" } })).data.rawInput,
+    ).toEqual({ path: "new.txt" });
+
+    const cleared = mergeToolCallState(
+      created,
+      toolCall({
+        name: null,
+        title: null,
+        kind: null,
+        status: null,
+        content: null,
+        rawInput: null,
+        _meta: null,
+      }),
+    );
+    const { name, title, kind, content, rawInput, meta } = cleared.data;
+    expect({ name, title, kind, content, rawInput, meta }).toEqual({});
+    expect({ kind: cleared.kind, title: cleared.title, status: cleared.status }).toEqual({});
   });
 
   it("forwards an empty ACP v1 plan to clear previous entries", () => {
@@ -1048,6 +1099,65 @@ describe("AcpRuntimeModel", () => {
       },
     });
     expect(idle.events).toEqual([]);
+
+    const toolCall = (update: EffectAcpSchema.SessionUpdate) => {
+      const event = parseSessionUpdateEvent({ sessionId: "session-1", update }).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("expected a compaction tool call");
+      return event.toolCall;
+    };
+    const draft = toolCall({
+      sessionUpdate: "compaction_summary_chunk",
+      compactionId: "compact-1",
+      content: { type: "text", text: "Draft summary" },
+    });
+    const finish = (summary?: ReadonlyArray<EffectAcpSchema.ContentBlock> | null) =>
+      mergeToolCallState(
+        draft,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "completed",
+          ...(summary === undefined ? {} : { summary }),
+        }),
+      ).data.rawOutput;
+
+    expect(finish()).toBe("Draft summary");
+    expect([finish(null), finish([]), finish([{ type: "text", text: "" }])]).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+
+    const fail = (
+      previous: ReturnType<typeof toolCall>,
+      patch: Pick<
+        Extract<EffectAcpSchema.SessionUpdate, { sessionUpdate: "compaction_update" }>,
+        "summary" | "error"
+      >,
+    ) =>
+      mergeToolCallState(
+        previous,
+        toolCall({
+          sessionUpdate: "compaction_update",
+          compactionId: "compact-1",
+          status: "failed",
+          ...patch,
+        }),
+      );
+    const failed = fail(draft, { error: "Budget exhausted" });
+    const summaryCleared = fail(failed, { summary: null });
+    const errorCleared = fail(summaryCleared, { error: null });
+    const fields = (state: ReturnType<typeof toolCall>) => [
+      state.data.rawOutput,
+      state.data.compactionError,
+    ];
+    expect(fields(failed)).toEqual(["Draft summary", "Budget exhausted"]);
+    expect(fields(summaryCleared)).toEqual([undefined, "Budget exhausted"]);
+    expect(fields(errorCleared)).toEqual([undefined, undefined]);
+    expect(fields(fail(draft, { summary: null, error: "Budget exhausted" }))).toEqual([
+      undefined,
+      "Budget exhausted",
+    ]);
   });
 
   it("applies ACP v2 agent-owned terminal snapshots and output chunks", () => {
@@ -1271,6 +1381,28 @@ describe("extractMcpToolCallIdentity", () => {
     });
   });
 
+  it("recovers server, tool, and arguments from Antigravity call_mcp_tool calls", () => {
+    // agy 1.5.12 reaches MCP tools its context budget left out through call_mcp_tool.
+    const toolCall = toolCallFromUpdate({
+      sessionUpdate: "tool_call",
+      toolCallId: "call_13347576314095519317",
+      kind: "execute",
+      title: "MCP Tool navigate_page",
+      status: "in_progress",
+      rawInput: {
+        ServerName: "chrome-devtools",
+        ToolName: "navigate_page",
+        Arguments: { url: "https://example.com" },
+      },
+    });
+
+    expect(extractMcpToolCallIdentity(toolCall)).toEqual({
+      server: "chrome-devtools",
+      tool: "navigate_page",
+      input: { url: "https://example.com" },
+    });
+  });
+
   it("recovers T3 identity from acp-mcp-call fallback commands", () => {
     const toolCall = toolCallFromUpdate({
       sessionUpdate: "tool_call",
@@ -1332,6 +1464,7 @@ describe("extractMcpToolCallIdentity", () => {
     });
     const merged = mergeToolCallState(created, completed);
 
+    expect(merged.title).toBe(created.title);
     expect(extractMcpToolCallIdentity(merged)).toEqual({
       server: "t3-code",
       tool: "orchestrator_capabilities",
@@ -1351,6 +1484,10 @@ describe("extractMcpToolCallIdentity", () => {
       // Kimi retitles with partial JSON and middle-truncates args over 50 characters.
       'delegate_task: {"mode":"async","task":"Ru',
       'delegate_task: {"mode":"async","task":"Ru...cho child-result-42\'"}',
+      // Antigravity: "Running <tool>" before agy 1.5.8, "Run mcp_<server>_<tool>" since, "?" on prompts.
+      "Running delegate_task",
+      "Run mcp_t3-code_delegate_task",
+      "Run mcp_t3-code_delegate_task?",
     ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
@@ -1364,6 +1501,29 @@ describe("extractMcpToolCallIdentity", () => {
         tool: "delegate_task",
       });
     }
+  });
+
+  it("recovers T3 identity from Hermes editor-renamed MCP tool titles", () => {
+    const identityFor = (title: string) =>
+      extractMcpToolCallIdentity(
+        toolCallFromUpdate({
+          sessionUpdate: "tool_call",
+          toolCallId: "hermes-1",
+          kind: "other",
+          title,
+          status: "pending",
+          rawInput: { title: "Chart", html: "<p>hi</p>", height: 320 },
+        }),
+      );
+
+    expect(identityFor("mcp__editor_t3_code_f6129534__html_render")).toEqual({
+      server: "t3-code",
+      tool: "html_render",
+    });
+    expect(identityFor("mcp__editor_github_1234abcd__html_render")).toEqual({
+      server: "editor_github_1234abcd",
+      tool: "html_render",
+    });
   });
 
   it("recovers T3 identity from Kiro's @-scoped titles", () => {
@@ -1545,7 +1705,12 @@ describe("extractMcpToolCallIdentity", () => {
   });
 
   it("does not brand path-like or unknown-tool titles", () => {
-    for (const title of ["t3-code/README.md", "t3-code_not_a_real_tool"]) {
+    for (const title of [
+      "t3-code/README.md",
+      "t3-code_not_a_real_tool",
+      "Run mcp_t3-code_not_a_real_tool",
+      "Run manage_task",
+    ]) {
       const toolCall = toolCallFromUpdate({
         sessionUpdate: "tool_call",
         toolCallId: "path-1",
