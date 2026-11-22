@@ -9,6 +9,8 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { useState } from "react";
+import { msg, T, useMessages } from "gt-react-native";
+import type { MessageResolver } from "../../i18n/messages";
 import { Pressable, ScrollView, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -31,9 +33,9 @@ interface Row {
 }
 
 const GRADE_LABEL = {
-  "compiler-indexed": "compiler indexed",
-  "static-candidate": "static candidate",
-  "heuristic-candidate": "heuristic",
+  "compiler-indexed": msg("compiler indexed"),
+  "static-candidate": msg("static candidate"),
+  "heuristic-candidate": msg("heuristic"),
 } as const;
 
 // Only languages seen in this checkout; `languages` is the analyzer's catalog.
@@ -41,21 +43,33 @@ function indexedLanguagesSuffix(coverage: ProjectCodeCoverage): string {
   return coverage.indexedLanguages?.length ? ` (${coverage.indexedLanguages.join(", ")})` : "";
 }
 
-function coverageLine(coverage: ProjectCodeCoverage): string {
+function coverageLine(coverage: ProjectCodeCoverage, resolve: MessageResolver): string {
   switch (coverage.state) {
     case "complete":
-      return `Static candidates · ${coverage.filesIndexed} files indexed${indexedLanguagesSuffix(coverage)}`;
+      return resolve(msg("Static candidates · {files} files indexed{languages}"), {
+        files: coverage.filesIndexed,
+        languages: indexedLanguagesSuffix(coverage),
+      });
     case "partial":
-      return `Static candidates · ${coverage.filesIndexed} of ${coverage.filesListed} files indexed${indexedLanguagesSuffix(coverage)}`;
+      return resolve(msg("Static candidates · {indexed} of {listed} files indexed{languages}"), {
+        indexed: coverage.filesIndexed,
+        listed: coverage.filesListed,
+        languages: indexedLanguagesSuffix(coverage),
+      });
     case "stale":
-      return "Stale · some files changed since indexing. Verify in source.";
+      return resolve(msg("Stale · some files changed since indexing. Verify in source."));
     case "unavailable":
-      return "The code index is not ready for this checkout.";
+      return resolve(msg("The code index is not ready for this checkout."));
   }
 }
 
 /** Callers are one row per use site; impact is one row per affected file, tests first. */
-function relationRows(mode: Mode, result: ProjectCodeQueryResult, selectedId: string): Row[] {
+function relationRows(
+  mode: Mode,
+  result: ProjectCodeQueryResult,
+  selectedId: string,
+  resolve: MessageResolver,
+): Row[] {
   const nodes = new Map(result.nodes.map((node) => [node.id, node]));
   if (mode === "impact") {
     const byFile = new Map<string, number>();
@@ -70,7 +84,7 @@ function relationRows(mode: Mode, result: ProjectCodeQueryResult, selectedId: st
       })
       .map(([path, line]) => ({
         key: path,
-        label: isLikelyTestPath(path) ? "test" : "file",
+        label: isLikelyTestPath(path) ? resolve(msg("test")) : resolve(msg("file")),
         location: path,
         path,
         line,
@@ -88,7 +102,7 @@ function relationRows(mode: Mode, result: ProjectCodeQueryResult, selectedId: st
       {
         key,
         label: source.name,
-        location: `${source.path}:${line} · ${GRADE_LABEL[edge.evidenceGrade]}`,
+        location: `${source.path}:${line} · ${resolve(GRADE_LABEL[edge.evidenceGrade])}`,
         path: source.path,
         line,
       },
@@ -131,6 +145,7 @@ function Relations(props: {
   readonly symbol: ProjectCodeSymbol;
   readonly onOpenLocation: (path: string, line: number) => void;
 }) {
+  const m = useMessages();
   const [mode, setMode] = useState<Mode>("callers");
   const relation = useEnvironmentQuery(
     projectCode.query({
@@ -151,7 +166,7 @@ function Relations(props: {
     }),
   );
   const data = relation.data;
-  const rows = data ? relationRows(mode, data, props.symbol.id) : [];
+  const rows = data ? relationRows(mode, data, props.symbol.id, m) : [];
   return (
     <View className="gap-1 border-t border-border pt-1">
       <View className="flex-row gap-2 px-3" accessibilityRole="tablist">
@@ -163,21 +178,27 @@ function Relations(props: {
             onPress={() => setMode(value)}
             className={cn("rounded-full px-3 py-1", mode === value && "bg-subtle-strong")}
           >
-            <AppText className="text-xs">{value === "callers" ? "Callers" : "Impact"}</AppText>
+            <AppText className="text-xs">
+              {value === "callers" ? m(msg("Callers")) : m(msg("Impact"))}
+            </AppText>
           </Pressable>
         ))}
       </View>
       {data === null ? (
-        <Note>{relation.error ?? "Indexing… the first query on a checkout can take a while."}</Note>
+        <Note>
+          {relation.error ?? m(msg("Indexing… the first query on a checkout can take a while."))}
+        </Note>
       ) : data.selection.state === "ambiguous" ? (
-        <Note>Several symbols share this name here; the index cannot tell which one.</Note>
+        <Note>
+          {m(msg("Several symbols share this name here; the index cannot tell which one."))}
+        </Note>
       ) : data.selection.state === "not-found" ? (
-        <Note>This symbol is no longer in the index.</Note>
+        <Note>{m(msg("This symbol is no longer in the index."))}</Note>
       ) : rows.length === 0 ? (
         <Note>
           {mode === "callers"
-            ? "No static callers found. That does not prove nothing calls it."
-            : "No other files found in its static impact radius."}
+            ? m(msg("No static callers found. That does not prove nothing calls it."))
+            : m(msg("No other files found in its static impact radius."))}
         </Note>
       ) : (
         rows.map((row) => (
@@ -200,6 +221,7 @@ function Body(props: {
   readonly relativePath: string;
   readonly onOpenLocation: (path: string, line: number) => void;
 }) {
+  const m = useMessages();
   const [selected, setSelected] = useState<ProjectCodeSymbol | null>(null);
   const outline = useEnvironmentQuery(
     projectCode.query({
@@ -214,20 +236,24 @@ function Body(props: {
   const data = outline.data;
   if (data === null) {
     return (
-      <Note>{outline.error ?? "Indexing… the first query on a checkout can take a while."}</Note>
+      <Note>
+        {outline.error ?? m(msg("Indexing… the first query on a checkout can take a while."))}
+      </Note>
     );
   }
   return (
     <ScrollView className="max-h-80" nestedScrollEnabled>
-      <Note>{coverageLine(data.coverage)}</Note>
+      <Note>{coverageLine(data.coverage, m)}</Note>
       {data.coverage.state === "unavailable" ? null : data.nodes.length === 0 ? (
-        <Note>No indexed declarations in this file. Its language may be unsupported.</Note>
+        <Note>
+          {m(msg("No indexed declarations in this file. Its language may be unsupported."))}
+        </Note>
       ) : (
         data.nodes.map((node) => (
           <RowButton
             key={node.id}
             label={node.name}
-            detail={`${node.kind} · line ${node.startLine}`}
+            detail={m(msg("{kind} · line {line}"), { kind: node.kind, line: node.startLine })}
             selected={selected?.id === node.id}
             onPress={() => setSelected(selected?.id === node.id ? null : node)}
           />
@@ -258,6 +284,7 @@ export function FileCodeRelationships(props: {
   readonly relativePath: string;
   readonly onOpenLocation: (path: string, line: number) => void;
 }) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canQuery = useAtomValue(projectCode.query.permissionAtom(props.environmentId));
   const [expanded, setExpanded] = useState(false);
@@ -270,8 +297,12 @@ export function FileCodeRelationships(props: {
         onPress={() => setExpanded((value) => !value)}
         className="flex-row items-center justify-between px-4 py-3 active:opacity-70"
       >
-        <AppText className="text-sm font-t3-medium">Code relationships</AppText>
-        <AppText className="text-xs text-foreground-muted">{expanded ? "Hide" : "Show"}</AppText>
+        <AppText className="text-sm font-t3-medium">
+          <T>Code relationships</T>
+        </AppText>
+        <AppText className="text-xs text-foreground-muted">
+          {expanded ? m(msg("Hide")) : m(msg("Show"))}
+        </AppText>
       </Pressable>
       {expanded ? (
         <Body

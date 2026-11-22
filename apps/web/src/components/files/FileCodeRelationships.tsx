@@ -17,12 +17,14 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { NetworkIcon } from "lucide-react";
 import { useState } from "react";
+import { msg, T, useMessages } from "gt-react";
 
 import { CollapsibleSectionHeader } from "~/components/ui/collapsible-section-header";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { Button } from "~/components/ui/button";
+import type { MessageResolver } from "~/i18n/messages";
 import { randomUUID } from "~/lib/utils";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { useQuietThreadShell } from "~/state/entities";
@@ -83,6 +85,7 @@ function relationLocations(
   mode: RelationMode,
   result: ProjectCodeQueryResult,
   selectedId: string,
+  resolve: MessageResolver,
 ): ReadonlyArray<Location> {
   const nodes = new Map(result.nodes.map((node) => [node.id, node]));
   if (mode === "tests") {
@@ -96,7 +99,12 @@ function relationLocations(
           label: node.name,
           path: node.path,
           line: node.startLine,
-          detail: hops === null ? "static" : `${hops} ${hops === 1 ? "hop" : "hops"} · static`,
+          detail:
+            hops === null
+              ? resolve(msg("static"))
+              : resolve(msg("{count, plural, one {{count} hop} other {{count} hops}} · static"), {
+                  count: hops,
+                }),
           isTest: true,
         },
       ];
@@ -131,7 +139,14 @@ function relationLocations(
           label: path,
           path,
           line,
-          detail: `${count} ${count === 1 ? "symbol" : "symbols"}${grade ? ` · ${GRADE_LABEL[grade]}` : ""}`,
+          detail: grade
+            ? resolve(
+                msg("{count, plural, one {{count} symbol} other {{count} symbols}} · {grade}"),
+                { count, grade: resolve(GRADE_LABEL[grade]) },
+              )
+            : resolve(msg("{count, plural, one {{count} symbol} other {{count} symbols}}"), {
+                count,
+              }),
           isTest: isLikelyTestPath(path),
         };
       })
@@ -156,7 +171,7 @@ function relationLocations(
       label: other.name,
       path: other.path,
       line,
-      detail: GRADE_LABEL[edge.evidenceGrade],
+      detail: resolve(GRADE_LABEL[edge.evidenceGrade]),
       isTest: isLikelyTestPath(other.path),
     });
   }
@@ -164,18 +179,20 @@ function relationLocations(
 }
 
 const EMPTY_RELATION: Record<RelationMode, string> = {
-  callers: "No static callers found. That does not prove nothing calls it.",
-  callees: "No static callees found. Calls through values or dynamic dispatch are not tracked.",
-  references: "No static references found. That does not prove it is unused.",
-  impact: "No other files found in its static impact radius.",
-  tests: "No test file reaches it within 3 static hops. That does not mean it is untested.",
+  callers: msg("No static callers found. That does not prove nothing calls it."),
+  callees: msg(
+    "No static callees found. Calls through values or dynamic dispatch are not tracked.",
+  ),
+  references: msg("No static references found. That does not prove it is unused."),
+  impact: msg("No other files found in its static impact radius."),
+  tests: msg("No test file reaches it within 3 static hops. That does not mean it is untested."),
 };
 const RELATION_MODES: ReadonlyArray<readonly [RelationMode, string]> = [
-  ["callers", "Callers"],
-  ["callees", "Callees"],
-  ["references", "References"],
-  ["impact", "Impact"],
-  ["tests", "Tests"],
+  ["callers", msg("Callers")],
+  ["callees", msg("Callees")],
+  ["references", msg("References")],
+  ["impact", msg("Impact")],
+  ["tests", msg("Tests")],
 ];
 
 function RelationResults(props: {
@@ -185,6 +202,7 @@ function RelationResults(props: {
   readonly symbol: ProjectCodeSymbol;
   readonly canQueryTests: boolean;
 }) {
+  const m = useMessages();
   const [mode, setMode] = useState<RelationMode>("callers");
   const symbol = {
     name: props.symbol.name,
@@ -202,13 +220,14 @@ function RelationResults(props: {
             query: { operation: mode, symbol, limit: RESULT_LIMIT },
           },
         }),
+    m,
   );
   const data = relation.data;
-  const locations = data ? relationLocations(mode, data, props.symbol.id) : [];
+  const locations = data ? relationLocations(mode, data, props.symbol.id, m) : [];
   return (
     <div className="flex flex-col gap-1 border-t border-border/60 pt-1">
       <ToggleGroup
-        aria-label={`Relationships of ${props.symbol.name}`}
+        aria-label={m(msg("Relationships of {symbol}"), { symbol: props.symbol.name })}
         className="mx-2"
         value={[mode]}
         onValueChange={(next) => {
@@ -218,30 +237,41 @@ function RelationResults(props: {
       >
         {RELATION_MODES.map(([value, label]) => (
           <Toggle key={value} value={value}>
-            {label}
+            {m(label)}
           </Toggle>
         ))}
       </ToggleGroup>
       {mode === "tests" && !props.canQueryTests ? (
-        <EmptyNote>Update the server to use tests.</EmptyNote>
+        <EmptyNote>{m(msg("Update the server to use tests."))}</EmptyNote>
       ) : data === null ? (
         <QueryState pending error={relation.error} onRetry={relation.refresh} />
       ) : data.selection.state === "ambiguous" ? (
         <EmptyNote>
-          {`${data.selection.candidates.length} symbols match this name here; the index cannot tell which one you mean.`}
+          {m(
+            msg("{count} symbols match this name here; the index cannot tell which one you mean."),
+            { count: data.selection.candidates.length },
+          )}
         </EmptyNote>
       ) : data.selection.state === "not-found" ? (
-        <EmptyNote>This symbol is no longer in the index. Refresh after saving the file.</EmptyNote>
+        <EmptyNote>
+          {m(msg("This symbol is no longer in the index. Refresh after saving the file."))}
+        </EmptyNote>
       ) : (
         <>
           <CoverageNote coverage={data.coverage} />
           {locations.length === 0 ? (
-            <EmptyNote>{EMPTY_RELATION[mode]}</EmptyNote>
+            <EmptyNote>{m(EMPTY_RELATION[mode])}</EmptyNote>
           ) : (
             locations.map((location) => (
               <LocationRow
                 key={location.key}
-                label={mode === "impact" ? (location.isTest ? "test" : "file") : location.label}
+                label={
+                  mode === "impact"
+                    ? location.isTest
+                      ? m(msg("test"))
+                      : m(msg("file"))
+                    : location.label
+                }
                 location={mode === "impact" ? location.path : `${location.path}:${location.line}`}
                 detail={location.detail}
                 onOpen={() =>
@@ -281,6 +311,7 @@ function SymbolsTab(props: {
   readonly relativePath: string;
   readonly canQueryTests: boolean;
 }) {
+  const m = useMessages();
   const [selected, setSelected] = useState<ProjectCodeSymbol | null>(null);
   const openExplorer = useOpenCodeExplorer();
   const outline = useEnvironmentQuery(
@@ -290,6 +321,7 @@ function SymbolsTab(props: {
       props.threadRef.threadId,
       props.relativePath,
     ),
+    m,
   );
   const data = outline.data;
   if (data === null) return <QueryState pending error={outline.error} onRetry={outline.refresh} />;
@@ -305,23 +337,29 @@ function SymbolsTab(props: {
           disabled={outline.isPending}
           onClick={outline.refresh}
         >
-          Refresh
+          <T>Refresh</T>
         </Button>
       </div>
       {data.coverage.state === "unavailable" ? null : data.nodes.length === 0 ? (
         <EmptyNote>
-          No indexed declarations in this file. Its language may be unsupported, or it declares
-          nothing the index recognizes.
+          {m(
+            msg(
+              "No indexed declarations in this file. Its language may be unsupported, or it declares nothing the index recognizes.",
+            ),
+          )}
         </EmptyNote>
       ) : (
-        <div role="list" aria-label="Symbols in this file" className="flex flex-col">
+        <div role="list" aria-label={m(msg("Symbols in this file"))} className="flex flex-col">
           {data.nodes.map((node) => (
             <div role="listitem" key={node.id} className="flex min-w-0 items-center gap-1">
               <div className="min-w-0 flex-1">
                 <LocationRow
                   label={node.name}
-                  location={`${node.kind} · line ${node.startLine}`}
-                  detail={node.isExported ? "exported" : null}
+                  location={m(msg("{kind} · line {line}"), {
+                    kind: node.kind,
+                    line: node.startLine,
+                  })}
+                  detail={node.isExported ? m(msg("exported")) : null}
                   pressed={selected?.id === node.id}
                   onOpen={() => {
                     setSelected(selected?.id === node.id ? null : node);
@@ -337,7 +375,7 @@ function SymbolsTab(props: {
                     <Button
                       variant="ghost-muted"
                       size="icon-xs"
-                      aria-label={`Open ${node.name} in explorer`}
+                      aria-label={m(msg("Open {name} in explorer"), { name: node.name })}
                       onClick={() =>
                         openExplorer({
                           environmentId: props.environmentId,
@@ -352,7 +390,9 @@ function SymbolsTab(props: {
                 >
                   <NetworkIcon />
                 </TooltipTrigger>
-                <TooltipPopup>Open in explorer</TooltipPopup>
+                <TooltipPopup>
+                  <T>Open in explorer</T>
+                </TooltipPopup>
               </Tooltip>
             </div>
           ))}
@@ -401,10 +441,12 @@ function DecisionsTab(props: {
   readonly relativePath: string;
   readonly canReadCode: boolean;
 }) {
+  const m = useMessages();
   const outline = useEnvironmentQuery(
     props.canReadCode
       ? outlineQuery(props.environmentId, props.projectId, props.threadId, props.relativePath)
       : null,
+    m,
   );
   const outlineSettled = !props.canReadCode || outline.data !== null || outline.error !== null;
   const pathNames = new Set([
@@ -425,7 +467,7 @@ function DecisionsTab(props: {
         pending
         error={null}
         onRetry={outline.refresh}
-        pendingLabel="Searching project knowledge…"
+        pendingLabel={m(msg("Searching project knowledge…"))}
       />
     );
   return (
@@ -450,6 +492,7 @@ function DecisionPages(props: {
   readonly pathNames: ReadonlySet<string>;
   readonly symbolNames: ReadonlySet<string>;
 }) {
+  const m = useMessages();
   const [page, setPage] = useState(() => ({
     id: CommandId.make(randomUUID()),
     cursor: null as FactSearchPage["nextCursor"],
@@ -471,6 +514,7 @@ function DecisionPages(props: {
   };
   const search = useEnvironmentQuery(
     projectKnowledge.search({ environmentId: props.environmentId, input }),
+    m,
   );
   if (search.data === null && page.previous.length === 0) {
     return (
@@ -478,13 +522,17 @@ function DecisionPages(props: {
         pending
         error={search.error}
         onRetry={search.refresh}
-        pendingLabel="Searching project knowledge…"
+        pendingLabel={m(msg("Searching project knowledge…"))}
       />
     );
   }
   const facts = search.data?.facts;
   if (facts?.state === "unavailable") {
-    return <EmptyNote>Project knowledge search is unavailable on this server right now.</EmptyNote>;
+    return (
+      <EmptyNote>
+        {m(msg("Project knowledge search is unavailable on this server right now."))}
+      </EmptyNote>
+    );
   }
   const matches = [
     ...new Map(
@@ -499,29 +547,39 @@ function DecisionPages(props: {
   return (
     <div className="flex flex-col gap-1">
       <p className="px-2 text-2xs text-muted-foreground">
-        Facts whose entities name this file
-        {props.symbolNames.size > 0 ? " or one of its symbols" : ""}.
-        {props.canReadCode ? "" : " Symbol names need file access, so only the path is matched."}
+        {props.canReadCode
+          ? props.symbolNames.size > 0
+            ? m(msg("Facts whose entities name this file or one of its symbols."))
+            : m(msg("Facts whose entities name this file."))
+          : m(
+              msg(
+                "Facts whose entities name this file. Symbol names need file access, so only the path is matched.",
+              ),
+            )}
       </p>
       {rows.length === 0 ? (
-        <EmptyNote>No project knowledge names this file or its symbols.</EmptyNote>
+        <EmptyNote>{m(msg("No project knowledge names this file or its symbols."))}</EmptyNote>
       ) : (
-        <ul aria-label="Decisions for this file" className="flex flex-col gap-1">
+        <ul aria-label={m(msg("Decisions for this file"))} className="flex flex-col gap-1">
           {rows.map(({ fact, match }) => (
             <li key={fact.id} className="flex flex-col gap-0.5 rounded-sm px-2 py-1 text-xs">
               <span className="flex items-baseline gap-2 text-2xs text-muted-foreground">
                 <span className="font-medium text-foreground">{fact.kind}</span>
                 <span className="min-w-0 flex-1 truncate">
                   {match.by === "path"
-                    ? `matched by path ${match.label}`
-                    : `matched by name ${match.label}`}
+                    ? m(msg("matched by path {label}"), { label: match.label })
+                    : m(msg("matched by name {label}"), { label: match.label })}
                 </span>
               </span>
               <span className="line-clamp-3 text-foreground">{fact.content}</span>
               {match.by === "name" ? (
                 <span className="text-2xs text-warning-foreground">
-                  Name, not identity: a fact about another {match.label} elsewhere in the project
-                  matches too.
+                  {m(
+                    msg(
+                      "Name, not identity: a fact about another {name} elsewhere in the project matches too.",
+                    ),
+                    { name: match.label },
+                  )}
                 </span>
               ) : null}
             </li>
@@ -533,7 +591,7 @@ function DecisionPages(props: {
           pending
           error={search.error}
           onRetry={search.refresh}
-          pendingLabel="Searching project knowledge…"
+          pendingLabel={m(msg("Searching project knowledge…"))}
         />
       ) : null}
       {facts?.nextCursor ? (
@@ -550,12 +608,14 @@ function DecisionPages(props: {
               })
             }
           >
-            Show more
+            <T>Show more</T>
           </Button>
         </div>
       ) : null}
       {facts?.coverage === "partial" ? (
-        <EmptyNote>Only the most relevant facts were ranked; some may be missing.</EmptyNote>
+        <EmptyNote>
+          {m(msg("Only the most relevant facts were ranked; some may be missing."))}
+        </EmptyNote>
       ) : null}
     </div>
   );
@@ -570,12 +630,14 @@ function PriorWorkTab(props: {
   readonly projectId: ProjectId;
   readonly relativePath: string;
 }) {
+  const m = useMessages();
   const navigate = useNavigate();
   const history = useEnvironmentQuery(
     projectCode.fileHistory({
       environmentId: props.environmentId,
       input: { projectId: props.projectId, path: props.relativePath, limit: 20 },
     }),
+    m,
   );
   const data = history.data;
   if (data === null) {
@@ -584,26 +646,42 @@ function PriorWorkTab(props: {
         pending
         error={history.error}
         onRetry={history.refresh}
-        pendingLabel="Reading checkpoint history…"
+        pendingLabel={m(msg("Reading checkpoint history…"))}
       />
     );
   }
   return (
     <div className="flex flex-col gap-1">
       <p className="px-2 text-2xs text-muted-foreground">
-        Present at checkpoint: the file changed in that thread's workspace during a turn, by the
-        agent or anyone sharing the workspace.
+        <T>
+          Present at checkpoint: the file changed in that thread's workspace during a turn, by the
+          agent or anyone sharing the workspace.
+        </T>
       </p>
       {data.entries.length === 0 ? (
-        <EmptyNote>No thread checkpoint in this project has listed this file.</EmptyNote>
+        <EmptyNote>
+          {m(msg("No thread checkpoint in this project has listed this file."))}
+        </EmptyNote>
       ) : (
-        <div role="list" aria-label="Threads present at checkpoints" className="flex flex-col">
+        <div
+          role="list"
+          aria-label={m(msg("Threads present at checkpoints"))}
+          className="flex flex-col"
+        >
           {data.entries.map((entry) => (
             <div role="listitem" key={entry.threadId}>
               <LocationRow
                 label={entry.title}
-                location={`present at ${entry.checkpoints} ${entry.checkpoints === 1 ? "checkpoint" : "checkpoints"} · ${formatRelativeTimeLabel(entry.lastCheckpointAt)}`}
-                detail={entry.archived ? "archived" : null}
+                location={m(
+                  msg(
+                    "present at {count, plural, one {{count} checkpoint} other {{count} checkpoints}} · {time}",
+                  ),
+                  {
+                    count: entry.checkpoints,
+                    time: formatRelativeTimeLabel(entry.lastCheckpointAt, undefined, m),
+                  },
+                )}
+                detail={entry.archived ? m(msg("archived")) : null}
                 onOpen={() =>
                   void navigate({
                     to: "/$environmentId/$threadId",
@@ -617,14 +695,18 @@ function PriorWorkTab(props: {
           ))}
         </div>
       )}
-      {data.limitReached ? <EmptyNote>Showing the 20 most recent threads.</EmptyNote> : null}
+      {data.limitReached ? (
+        <EmptyNote>{m(msg("Showing the 20 most recent threads."))}</EmptyNote>
+      ) : null}
       {data.index.state === "catching-up" ? (
         <div className="flex items-center gap-2 px-2 text-2xs text-muted-foreground">
           <span className="min-w-0 flex-1">
-            {`${data.index.pendingCheckpoints} older checkpoints are not indexed yet.`}
+            {m(msg("{count} older checkpoints are not indexed yet."), {
+              count: data.index.pendingCheckpoints,
+            })}
           </span>
           <Button variant="ghost-muted" size="micro" onClick={history.refresh}>
-            Continue
+            <T>Continue</T>
           </Button>
         </div>
       ) : null}
@@ -633,9 +715,9 @@ function PriorWorkTab(props: {
 }
 
 const TAB_LABEL: Record<Tab, string> = {
-  symbols: "Symbols",
-  decisions: "Decisions",
-  history: "Prior work",
+  symbols: msg("Symbols"),
+  decisions: msg("Decisions"),
+  history: msg("Prior work"),
 };
 
 /**
@@ -648,6 +730,7 @@ export function FileCodeRelationships(props: {
   readonly threadRef: ScopedThreadRef;
   readonly relativePath: string;
 }) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canQueryCode = useAtomValue(projectCode.query.permissionAtom(props.environmentId));
   // File history and knowledge search both need thread read; history's guard carries it.
@@ -665,7 +748,10 @@ export function FileCodeRelationships(props: {
   if (thread === null || tabs.length === 0) return null;
   const tab = available[chosenTab] ? chosenTab : tabs[0]!;
   return (
-    <section aria-label="Code relationships" className="shrink-0 border-t border-border/60 px-1">
+    <section
+      aria-label={m(msg("Code relationships"))}
+      className="shrink-0 border-t border-border/60 px-1"
+    >
       <CollapsibleSectionHeader
         variant="panel"
         expanded={expanded}
@@ -680,14 +766,14 @@ export function FileCodeRelationships(props: {
           ) : null
         }
       >
-        Code relationships
+        <T>Code relationships</T>
       </CollapsibleSectionHeader>
       {expanded ? (
         <ScrollArea className="max-h-72" scrollFade>
           <div className="flex flex-col gap-1 pb-2">
             {tabs.length > 1 ? (
               <ToggleGroup
-                aria-label="Code relationship views"
+                aria-label={m(msg("Code relationship views"))}
                 className="mx-2"
                 value={[tab]}
                 onValueChange={(next) => {
@@ -697,7 +783,7 @@ export function FileCodeRelationships(props: {
               >
                 {tabs.map((value) => (
                   <Toggle key={value} value={value}>
-                    {TAB_LABEL[value]}
+                    {m(TAB_LABEL[value])}
                   </Toggle>
                 ))}
               </ToggleGroup>
@@ -719,7 +805,7 @@ export function FileCodeRelationships(props: {
                 canReadCode={available.symbols}
               />
             ) : capabilities?.projectCodeFileHistory !== true ? (
-              <EmptyNote>Update the server to use prior work.</EmptyNote>
+              <EmptyNote>{m(msg("Update the server to use prior work."))}</EmptyNote>
             ) : (
               <PriorWorkTab
                 environmentId={props.environmentId}

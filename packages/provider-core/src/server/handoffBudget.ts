@@ -8,6 +8,7 @@ import type {
   OrchestrationV2ProviderThread,
   OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
+import { isDeliveredProviderTurn } from "@t3tools/contracts";
 
 import * as Config from "effect/Config";
 import {
@@ -55,6 +56,7 @@ export function latestNativeContextUsage(
     if (
       turn.providerThreadId !== providerThread.id ||
       turn.runAttemptId === null ||
+      !isDeliveredProviderTurn(turn) ||
       !turn.tokenUsage
     )
       continue;
@@ -140,7 +142,9 @@ export function nativeContextHistory(
     ...deliveredItemIds,
     ...settledHandoffs.flatMap((handoff) => handoff.delivery?.omittedItemIds ?? []),
   ]);
-  const deliveredAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  const deliveredAttemptIds = new Set(
+    projection.providerTurns.filter(isDeliveredProviderTurn).map((turn) => turn.runAttemptId),
+  );
   const acceptedAttempts = projection.attempts.filter(
     (attempt) =>
       attempt.providerThreadId === providerThread.id && deliveredAttemptIds.has(attempt.id),

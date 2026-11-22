@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   AuthSettingsWriteScope,
@@ -19,6 +20,8 @@ export function AssistedLearningSection(props: {
   readonly projectId: ProjectId;
   readonly status: ProjectKnowledgeStatus | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canWrite = useEnvironmentScope(props.environmentId, AuthSettingsWriteScope);
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -48,23 +51,32 @@ export function AssistedLearningSection(props: {
     if (result._tag === "Failure") setError(String(squashAtomCommandFailure(result)));
   };
   return (
-    <section aria-label="Automatic memory" className="flex flex-col gap-1 rounded-md border p-3">
+    <section
+      aria-label={gt("Automatic memory")}
+      className="flex flex-col gap-1 rounded-md border p-3"
+    >
       <div className="flex items-center justify-between gap-3 font-medium text-sm">
-        <span>Save facts from finished runs</span>
+        <span>
+          <T>Save facts from finished runs</T>
+        </span>
         <Switch
-          aria-label="Save facts from finished runs"
+          aria-label={gt("Save facts from finished runs")}
           checked={enabled}
           disabled={!canWrite || busy}
           onCheckedChange={(checked) => void toggle(checked)}
         />
       </div>
       <p className="text-xs text-muted-foreground">
-        Completed runs are grouped into background learning batches. Your text generation model
-        saves up to three cited facts per batch; eligible batches use at most one model call.
+        <T>
+          Completed runs are grouped into background learning batches. Your text generation model
+          saves up to three cited facts per batch; eligible batches use at most one model call.
+        </T>
       </p>
-      {lastRun ? <p className="text-xs">{assistedLearningRunLabel(lastRun)}</p> : null}
+      {lastRun ? <p className="text-xs">{assistedLearningRunLabel(lastRun, m)}</p> : null}
       {!canWrite ? (
-        <p className="text-xs">This connection cannot change project settings.</p>
+        <p className="text-xs">
+          <T>This connection cannot change project settings.</T>
+        </p>
       ) : null}
       {error ? <p role="alert">{error}</p> : null}
     </section>

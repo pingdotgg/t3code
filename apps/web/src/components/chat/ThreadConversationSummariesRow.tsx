@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { BookTextIcon } from "lucide-react";
@@ -17,6 +18,7 @@ export function ThreadConversationSummariesRow(props: {
   readonly projectId: ProjectId;
   readonly threadId: ThreadId;
 }) {
+  const m = useMessages();
   const [open, setOpen] = useState(false);
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   if (config?.environment.capabilities.conversationSummaries !== true) return null;
@@ -25,7 +27,7 @@ export function ThreadConversationSummariesRow(props: {
       <ThreadDetailsControl onClick={() => setOpen(true)}>
         <BookTextIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
         <span className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}>
-          Conversation summaries
+          {m(msg("Conversation summaries"))}
         </span>
       </ThreadDetailsControl>
       <ConversationSummariesDialog {...props} open={open} onOpenChange={setOpen} />

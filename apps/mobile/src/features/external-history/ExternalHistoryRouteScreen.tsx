@@ -1,9 +1,11 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useIsFocused, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import {
   externalHistoryPagingReducer,
   initialExternalHistoryPaging,
   externalHistoryRangeLabel,
+  externalHistoryRoleLabel,
   externalHistorySearchFilters,
   externalHistorySourceStatusLabel,
 } from "@t3tools/client-runtime/externalHistory";
@@ -38,12 +40,13 @@ export function ExternalHistoryThreadButton(props: {
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
 }) {
+  const m = useMessages();
   const navigation = useNavigation();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const project = useProject(props);
   return config?.environment.capabilities.externalHistory === 1 ? (
     <Button
-      label="External history"
+      label={m(msg("External history"))}
       tone="text"
       onPress={() =>
         navigation.navigate("SettingsExternalHistory", {
@@ -61,6 +64,7 @@ export function ExternalHistoryRouteScreen(
     readonly currentProjectPath?: string;
   }>,
 ) {
+  const m = useMessages();
   const environmentId = EnvironmentId.make(props.route.params.environmentId);
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const navigation = useNavigation();
@@ -68,7 +72,7 @@ export function ExternalHistoryRouteScreen(
   const supported = config?.environment.capabilities.externalHistory === 1;
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <AppBar title="External history" onBack={() => navigation.goBack()} />
+      <AppBar title={m(msg("External history"))} onBack={() => navigation.goBack()} />
       <ScreenContent>
         {supported && focused && config ? (
           <ScrollView
@@ -79,8 +83,11 @@ export function ExternalHistoryRouteScreen(
             contentContainerStyle={{ padding: 20, paddingBottom: 40, gap: 16 }}
           >
             <Text className="text-sm text-foreground-muted">
-              Search agent conversations found on this environment. Open the original evidence
-              behind each match.
+              {m(
+                msg(
+                  "Search agent conversations found on this environment. Open the original evidence behind each match.",
+                ),
+              )}
             </Text>
             <HistorySettings
               environmentId={environmentId}
@@ -98,14 +105,14 @@ export function ExternalHistoryRouteScreen(
                 />
               ) : (
                 <Text className="text-sm text-foreground-muted">
-                  External history search is off for this environment.
+                  {m(msg("External history search is off for this environment."))}
                 </Text>
               )}
             </HistorySettings>
           </ScrollView>
         ) : !supported ? (
           <Text className="p-5 text-sm text-foreground-muted">
-            Update this server to search external history.
+            {m(msg("Update this server to search external history."))}
           </Text>
         ) : null}
       </ScreenContent>
@@ -118,6 +125,7 @@ function HistorySettings(props: {
   readonly settings: ExternalHistorySettings;
   readonly children: ReactNode;
 }) {
+  const m = useMessages();
   const canWrite = useAtomValue(
     serverEnvironment.updateSettings.permissionAtom(props.environmentId),
   );
@@ -139,18 +147,21 @@ function HistorySettings(props: {
     <View className="gap-4">
       <View className="gap-3 rounded-xl border border-border p-3">
         <SettingsSwitchRow
-          label="Allow external history search"
+          label={m(msg("Allow external history search"))}
           value={props.settings.enabled}
           disabled={pending || !canWrite}
           onValueChange={(enabled) => void save({ ...props.settings, enabled })}
         />
         <Text className="text-xs text-foreground-muted">
-          Makes these sources available to this environment's connected clients and agents with
-          thread access. Source files stay in their existing locations.
+          {m(
+            msg(
+              "Makes these sources available to this environment's connected clients and agents with thread access. Source files stay in their existing locations.",
+            ),
+          )}
         </Text>
         {!canWrite ? (
           <Text className="text-xs text-foreground-muted">
-            This connection cannot change environment settings.
+            {m(msg("This connection cannot change environment settings."))}
           </Text>
         ) : null}
         {error ? (
@@ -165,6 +176,7 @@ function HistorySettings(props: {
 }
 
 function HistorySources(props: Scope) {
+  const m = useMessages();
   const query = useEnvironmentQuery(
     externalHistory.query({
       environmentId: props.environmentId,
@@ -179,11 +191,11 @@ function HistorySources(props: Scope) {
       </Text>
     );
   if (!query.data || query.data.operation !== "sources")
-    return <Text className="text-foreground-muted">Loading history sources…</Text>;
+    return <Text className="text-foreground-muted">{m(msg("Loading history sources…"))}</Text>;
   if (!query.data.enabled)
     return (
       <Text className="text-foreground-muted">
-        External history search is off for this environment.
+        {m(msg("External history search is off for this environment."))}
       </Text>
     );
   const sources = query.data.sources;
@@ -193,10 +205,10 @@ function HistorySources(props: Scope) {
   return (
     <View className="gap-4">
       <View className="gap-2">
-        <Text className="text-sm text-foreground-muted">Found on this environment</Text>
+        <Text className="text-sm text-foreground-muted">{m(msg("Found on this environment"))}</Text>
         {sources.length === 0 ? (
           <Text className="text-foreground-muted">
-            No local history found. Refresh after adding conversations on this server.
+            {m(msg("No local history found. Refresh after adding conversations on this server."))}
           </Text>
         ) : null}
         {sources.map((item, index) => (
@@ -210,7 +222,7 @@ function HistorySources(props: Scope) {
               onPress={() => setSelected(item.id)}
             />
             <Text className="text-xs text-foreground-muted">
-              {externalHistorySourceStatusLabel(item.status)}
+              {externalHistorySourceStatusLabel(item.status, m)}
               {item.message ? ` · ${item.message}` : ""}
             </Text>
           </View>
@@ -221,7 +233,7 @@ function HistorySources(props: Scope) {
           </Text>
         ))}
         <Button
-          label="Refresh sources"
+          label={m(msg("Refresh sources"))}
           tone="text"
           disabled={query.isPending}
           onPress={query.refresh}
@@ -245,6 +257,7 @@ function HistorySearch(
     readonly capabilities: ExternalHistorySource["capabilities"];
   },
 ) {
+  const m = useMessages();
   const [text, setText] = useState("");
   const [filterCwd, setFilterCwd] = useState("");
   const [includeArchived, setIncludeArchived] = useState(false);
@@ -263,8 +276,8 @@ function HistorySearch(
   return (
     <View className="gap-3">
       <AppTextInput
-        accessibilityLabel="Search external history"
-        placeholder="Find text in messages and tool evidence"
+        accessibilityLabel={m(msg("Search external history"))}
+        placeholder={m(msg("Find text in messages and tool evidence"))}
         value={text}
         onChangeText={setText}
         maxLength={256}
@@ -274,8 +287,8 @@ function HistorySearch(
       {props.capabilities.cwdFilter ? (
         <>
           <AppTextInput
-            accessibilityLabel="History directory filter"
-            placeholder="All project directories"
+            accessibilityLabel={m(msg("History directory filter"))}
+            placeholder={m(msg("All project directories"))}
             value={filterCwd}
             onChangeText={(value) => {
               setFilterCwd(value);
@@ -288,7 +301,7 @@ function HistorySearch(
           {props.currentProjectPath ? (
             <View className="flex-row gap-2">
               <Button
-                label="This project"
+                label={m(msg("This project"))}
                 tone="text"
                 onPress={() => {
                   setFilterCwd(props.currentProjectPath!);
@@ -296,7 +309,7 @@ function HistorySearch(
                 }}
               />
               <Button
-                label="All projects"
+                label={m(msg("All projects"))}
                 tone="text"
                 onPress={() => {
                   setFilterCwd("");
@@ -309,7 +322,7 @@ function HistorySearch(
       ) : null}
       {props.capabilities.archived ? (
         <SettingsSwitchRow
-          label="Include archived threads"
+          label={m(msg("Include archived threads"))}
           value={includeArchived}
           onValueChange={(value) => {
             setIncludeArchived(value);
@@ -317,7 +330,7 @@ function HistorySearch(
           }}
         />
       ) : null}
-      <Button label="Search" onPress={submit} disabled={!text.trim()} />
+      <Button label={m(msg("Search"))} onPress={submit} disabled={!text.trim()} />
       {search ? (
         <HistoryResults
           key={JSON.stringify([search, generation])}
@@ -326,7 +339,7 @@ function HistorySearch(
         />
       ) : (
         <Text className="text-xs text-foreground-muted">
-          Search messages and tool evidence from the selected source.
+          {m(msg("Search messages and tool evidence from the selected source."))}
         </Text>
       )}
     </View>
@@ -334,6 +347,7 @@ function HistorySearch(
 }
 
 function HistoryResults(props: { readonly environmentId: EnvironmentId; readonly search: Search }) {
+  const m = useMessages();
   const [paging, dispatch] = useReducer(
     externalHistoryPagingReducer,
     undefined,
@@ -358,7 +372,7 @@ function HistoryResults(props: { readonly environmentId: EnvironmentId; readonly
   if (selected)
     return (
       <View className="gap-3">
-        <Button label="Back to matches" tone="text" onPress={() => setSelected(null)} />
+        <Button label={m(msg("Back to matches"))} tone="text" onPress={() => setSelected(null)} />
         <HistorySource
           key={selected.ref.readCursor + selected.ref.digest}
           environmentId={props.environmentId}
@@ -375,19 +389,21 @@ function HistoryResults(props: { readonly environmentId: EnvironmentId; readonly
   return (
     <View className="gap-3">
       <Text className="text-xs text-foreground-muted">
-        Searched {paging.examinedItems.toLocaleString()} items
-        {paging.status === "searching" ? "…" : "."}
+        {m(msg("Searched {count, plural, one {# item} other {# items}}{ending}"), {
+          count: paging.examinedItems,
+          ending: paging.status === "searching" ? "…" : ".",
+        })}
       </Text>
       {paging.status === "searching" ? (
-        <Button label="Stop search" onPress={() => dispatch({ type: "stop" })} />
+        <Button label={m(msg("Stop search"))} onPress={() => dispatch({ type: "stop" })} />
       ) : paging.status === "stopped" ? (
         <View className="gap-2">
-          <Text className="text-sm text-foreground-muted">Search stopped.</Text>
-          <Button label="Resume search" onPress={() => dispatch({ type: "resume" })} />
+          <Text className="text-sm text-foreground-muted">{m(msg("Search stopped."))}</Text>
+          <Button label={m(msg("Resume search"))} onPress={() => dispatch({ type: "resume" })} />
         </View>
       ) : null}
       {data?.matches.length === 0 ? (
-        <Text className="text-sm text-foreground">No more matches found.</Text>
+        <Text className="text-sm text-foreground">{m(msg("No more matches found."))}</Text>
       ) : null}
       {data?.matches.map((match) => (
         <View
@@ -396,23 +412,26 @@ function HistoryResults(props: { readonly environmentId: EnvironmentId; readonly
         >
           <Text className="text-sm font-t3-medium text-foreground">{match.threadTitle}</Text>
           <Text className="text-xs text-foreground-muted">
-            {match.role} · {match.totalChars.toLocaleString()} characters
+            {m(msg("{role} · {count, plural, one {# character} other {# characters}}"), {
+              role: externalHistoryRoleLabel(match.role, m),
+              count: match.totalChars,
+            })}
           </Text>
           <Text selectable className="text-sm text-foreground">
             {match.excerpt}
           </Text>
-          <Button label="Open source" tone="text" onPress={() => setSelected(match)} />
+          <Button label={m(msg("Open source"))} tone="text" onPress={() => setSelected(match)} />
         </View>
       ))}
       {paging.previous.length > 0 || data?.nextCursor != null ? (
         <View className="flex-row justify-between gap-2">
           <Button
-            label="Previous page"
+            label={m(msg("Previous page"))}
             disabled={paging.previous.length === 0}
             onPress={() => dispatch({ type: "previous" })}
           />
           <Button
-            label="Continue search"
+            label={m(msg("Continue search"))}
             disabled={data?.nextCursor == null}
             onPress={() => dispatch({ type: "next" })}
           />
@@ -426,6 +445,7 @@ function HistorySource(props: {
   readonly environmentId: EnvironmentId;
   readonly match: ExternalHistoryMatch;
 }) {
+  const m = useMessages();
   const [offsets, setOffsets] = useState<ReadonlyArray<number>>([0]);
   const query = useEnvironmentQuery(
     externalHistory.query({
@@ -445,16 +465,19 @@ function HistorySource(props: {
       </Text>
     );
   if (!query.data || query.data.operation !== "read")
-    return <Text className="text-foreground-muted">Reading source…</Text>;
+    return <Text className="text-foreground-muted">{m(msg("Reading source…"))}</Text>;
   const data = query.data;
   return (
     <View className="gap-3">
       <Text className="text-sm font-t3-medium text-foreground">{data.threadTitle}</Text>
       <Text className="text-xs text-foreground-muted">
-        {data.role} · {externalHistoryRangeLabel(data)}
+        {externalHistoryRoleLabel(data.role, m)} · {externalHistoryRangeLabel(data, m)}
       </Text>
       <Text selectable className="text-xs text-foreground-muted">
-        Thread {data.ref.threadId} · Item {props.match.itemId}
+        {m(msg("Thread {threadId} · Item {itemId}"), {
+          threadId: data.ref.threadId,
+          itemId: props.match.itemId,
+        })}
       </Text>
       <Text selectable className="text-sm text-foreground">
         {data.text}
@@ -462,12 +485,12 @@ function HistorySource(props: {
       {offsets.length > 1 || data.nextTextOffset !== null ? (
         <View className="flex-row justify-between gap-2">
           <Button
-            label="Previous source text"
+            label={m(msg("Previous source text"))}
             disabled={offsets.length === 1 || query.isPending}
             onPress={() => setOffsets((current) => current.slice(0, -1))}
           />
           <Button
-            label="More source text"
+            label={m(msg("More source text"))}
             disabled={data.nextTextOffset === null || query.isPending}
             onPress={() => {
               if (data.nextTextOffset !== null)

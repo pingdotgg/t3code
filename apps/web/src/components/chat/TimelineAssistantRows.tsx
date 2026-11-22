@@ -4,7 +4,7 @@ import {
   quietPassLine,
   withoutCloseLine,
 } from "@t3tools/client-runtime/state/thread-group";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { trimThreadAutolinkPadding } from "@t3tools/shared/threadLinks";
 import { MessageId, type RunId, type TurnItemId } from "@t3tools/contracts";
 import { canForkProjectedAssistantItem } from "@t3tools/client-runtime/state/thread-workflows";

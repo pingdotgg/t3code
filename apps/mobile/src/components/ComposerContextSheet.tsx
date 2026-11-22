@@ -1,4 +1,4 @@
-import { T, useGT, Var } from "gt-react-native";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 
 import { Button } from "./ui/Button";
 import * as Dialog from "./ui/Dialog";
@@ -102,6 +102,7 @@ function DeliveredProjectKnowledge(props: {
   readonly sent: { readonly threadId: ThreadId; readonly messageId: MessageId };
 }) {
   const gt = useGT();
+  const m = useMessages();
   const config = useAtomValue(
     serverEnvironment.configValueAtom(props.record.knowledge.environmentId),
   );
@@ -141,7 +142,7 @@ function DeliveredProjectKnowledge(props: {
       <Text className="text-sm text-foreground-muted">
         <T>The copy T3 delivered with this message. It does not show whether the agent used it.</T>
       </Text>
-      {deliveredKnowledgeNotes(snapshot).map((note) => (
+      {deliveredKnowledgeNotes(snapshot, m).map((note) => (
         <Text key={note} className="text-sm text-foreground-muted">
           {note}
         </Text>
@@ -149,7 +150,7 @@ function DeliveredProjectKnowledge(props: {
       {snapshot.omission ? (
         <Text className="text-sm text-foreground">
           {gt("Not sent: {reason}", {
-            reason: KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason],
+            reason: m(KNOWLEDGE_DELIVERY_OMISSION_LABEL[snapshot.omission.reason]),
           })}
         </Text>
       ) : snapshot.item.contentRemoved ? null : (

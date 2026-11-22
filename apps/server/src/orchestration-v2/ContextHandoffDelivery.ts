@@ -328,6 +328,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       delivered: Effect.void,
       unsent: Effect.void,
       uncoveredItems: 0,
+      inlineHandoffs: [] as ReadonlyArray<OrchestrationV2ContextHandoff>,
     };
     const nativeThreadId = input.providerThread.nativeThreadRef?.nativeId ?? undefined;
     const pending = input.handoffs.filter(
@@ -634,6 +635,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
           delivered: Effect.void,
           unsent: Effect.void,
           uncoveredItems,
+          inlineHandoffs: [] as ReadonlyArray<OrchestrationV2ContextHandoff>,
         };
       }
     } else {
@@ -654,6 +656,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         Effect.andThen(input.onDelivered?.(selected.messages, summaryFactIds) ?? Effect.void),
       ),
       unsent: Effect.forEach(pending, input.persist, { discard: true }),
+      inlineHandoffs: pending,
     };
   },
 );

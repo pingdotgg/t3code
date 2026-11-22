@@ -1,5 +1,6 @@
 import { cn, randomUUID } from "../../lib/utils";
 import { useContext, useEffect, useRef, useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
 import { flushSync } from "react-dom";
 import { RegistryContext, useAtom, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
@@ -85,8 +86,9 @@ let nextRequestKey = 0;
 // Module scope: the React Compiler cannot lower an update of a global inside a hook.
 const takeRequestKey = () => ++nextRequestKey;
 
-const FORGET_CONFIRM_DETAIL =
-  "Its content, history and every copy sent to agents are removed and cannot be restored. If the fact changed rather than became wrong, supersede it instead.";
+const FORGET_CONFIRM_DETAIL = msg(
+  "Its content, history and every copy sent to agents are removed and cannot be restored. If the fact changed rather than became wrong, supersede it instead.",
+);
 
 export function useProjectMemoryAvailable(environmentId: EnvironmentId | null): boolean {
   const config = useAtomValue(
@@ -133,7 +135,7 @@ export function ProjectMemoryPanel(props: ProjectScope) {
     <ThreadDetailsControl onClick={() => open(props)}>
       <BrainIcon aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
       <span className={`min-w-0 flex-1 truncate ${THREAD_DETAILS_PANEL_LABEL_CLASS}`}>
-        Project memory
+        <T>Project memory</T>
       </span>
     </ThreadDetailsControl>
   );
@@ -160,9 +162,13 @@ export function ProjectMemoryDialogHost(props: Scope) {
     >
       <DialogPopup className="h-[min(48rem,calc(100dvh-2rem))] max-w-5xl max-sm:h-[calc(100dvh-3rem)]">
         <DialogHeader>
-          <DialogTitle>Project memory</DialogTitle>
+          <DialogTitle>
+            <T>Project memory</T>
+          </DialogTitle>
           <DialogDescription>
-            Browse saved project facts and their evidence, and choose what belongs in this draft.
+            <T>
+              Browse saved project facts and their evidence, and choose what belongs in this draft.
+            </T>
           </DialogDescription>
         </DialogHeader>
         {active ? (
@@ -180,9 +186,9 @@ export function ProjectMemoryDialogHost(props: Scope) {
 
 type ListFilter = "saved" | "automatic" | "forgotten" | "lost";
 const FILTER_LABEL: Record<Exclude<ListFilter, "lost">, string> = {
-  saved: "Saved",
-  automatic: "Automatic",
-  forgotten: "Forgotten",
+  saved: msg("Saved", { $context: "project fact filter" }),
+  automatic: msg("Automatic", { $context: "project fact filter" }),
+  forgotten: msg("Forgotten", { $context: "project fact filter" }),
 };
 
 // What the inspector shows. Selecting for the draft is separate state: inspecting never selects.
@@ -197,6 +203,8 @@ function MemoryContents(
     readonly focusFact: FactFocus | null;
   },
 ) {
+  const gt = useGT();
+  const m = useMessages();
   const target = props.composerDraftTarget;
   const registry = useContext(RegistryContext);
   const draft = useComposerThreadDraft(target);
@@ -425,7 +433,9 @@ function MemoryContents(
     helpful = true,
   ) => {
     if (action === "forget") {
-      const message = `Forget this fact permanently?\n${FORGET_CONFIRM_DETAIL}`;
+      const message = gt("Forget this fact permanently?\n{detail}", {
+        detail: m(FORGET_CONFIRM_DETAIL),
+      });
       const confirmed =
         (await requestConfirmDialog(message, { variant: "destructive" })) ??
         window.confirm(message);
@@ -498,17 +508,29 @@ function MemoryContents(
   ];
   const filterLabel = (value: ListFilter) =>
     value === "lost"
-      ? `Lost source (${health.data?.unavailableSourcesCoverage === "partial" ? "at least " : ""}${lostCount})`
-      : FILTER_LABEL[value];
+      ? gt(
+          "{coverage, select, partial {Lost source (at least {count})} other {Lost source ({count})}}",
+          {
+            coverage: health.data?.unavailableSourcesCoverage ?? "complete",
+            count: lostCount,
+          },
+        )
+      : m(FILTER_LABEL[value]);
   const resultSummary = pending
-    ? "Reading project knowledge…"
+    ? gt("Reading project knowledge…")
     : searchInput
-      ? `${facts.length} ${facts.length === 1 ? "fact" : "facts"} · ${messages.length} ${messages.length === 1 ? "conversation" : "conversations"}`
-      : `${facts.length} ${facts.length === 1 ? "fact" : "facts"}`;
+      ? gt(
+          "{facts, plural, one {{facts} fact} other {{facts} facts}} · {conversations, plural, one {{conversations} conversation} other {{conversations} conversations}}",
+          { facts: facts.length, conversations: messages.length },
+        )
+      : gt("{facts, plural, one {{facts} fact} other {{facts} facts}}", { facts: facts.length });
   const labelFor = (selection: KnowledgeSelection) => {
-    if (selection.kind === "message") return `Message ${selection.messageId}`;
+    if (selection.kind === "message")
+      return gt("Message {messageId}", { messageId: selection.messageId });
     const content = facts.find((fact) => fact.id === selection.factId)?.content;
-    return content ? content.slice(0, 60) : `Fact ${shortFactId(selection.factId)}`;
+    return content
+      ? content.slice(0, 60)
+      : gt("Fact {factId}", { factId: shortFactId(selection.factId) });
   };
   const inspectedFactId = inspection.kind === "fact" ? inspection.factId : null;
   const inspectedFact = facts.find((fact) => fact.id === inspectedFactId);
@@ -529,9 +551,9 @@ function MemoryContents(
             }}
           >
             <Input
-              aria-label="Search project knowledge"
+              aria-label={gt("Search project knowledge")}
               data-memory-search
-              placeholder="Search facts and conversations"
+              placeholder={gt("Search facts and conversations")}
               size="sm"
               type="search"
               value={query}
@@ -539,11 +561,11 @@ function MemoryContents(
               onChange={(event) => setQuery(event.target.value)}
             />
             <Button type="submit" variant="outline" size="sm">
-              Search
+              <T context="search project memory">Search</T>
             </Button>
           </form>
           <ToggleGroup
-            aria-label="Filter facts"
+            aria-label={gt("Filter facts")}
             value={searchInput ? [] : [filter]}
             onValueChange={(next) => {
               const value = next[0] as ListFilter | undefined;
@@ -570,7 +592,7 @@ function MemoryContents(
                 setSearchInput(null);
               }}
             />
-            Include archived conversations
+            <T>Include archived conversations</T>
           </label>
           {historyAvailable ? (
             <label className="flex items-center gap-2">
@@ -582,7 +604,7 @@ function MemoryContents(
                   restartSearch(checked);
                 }}
               />
-              Show superseded
+              <T>Show superseded</T>
             </label>
           ) : null}
           <div className="ms-auto flex flex-wrap gap-1">
@@ -594,11 +616,11 @@ function MemoryContents(
                 variant="ghost"
                 onClick={() => setHealthOpen((value) => !value)}
               >
-                Memory health
+                <T>Memory health</T>
               </Button>
             ) : null}
             <Button size="sm" variant="ghost" onClick={() => refresh()}>
-              Refresh
+              <T>Refresh</T>
             </Button>
             <Button
               disabled={!canMutate}
@@ -606,7 +628,7 @@ function MemoryContents(
               variant="outline"
               onClick={() => openEditor({ mode: "create", content: "", sources: [] })}
             >
-              New fact
+              <T>New fact</T>
             </Button>
           </div>
         </div>
@@ -630,7 +652,7 @@ function MemoryContents(
         >
           <div className="flex shrink-0 items-baseline justify-between gap-2 px-5 pt-3 pb-2">
             <h3 id="project-memory-results" className="font-medium text-xs">
-              {searchInput ? "Search results" : "Project facts"}
+              {searchInput ? gt("Search results") : gt("Project facts")}
             </h3>
             <p role="status" className="text-muted-foreground text-xs">
               {resultSummary}
@@ -644,19 +666,21 @@ function MemoryContents(
             ) : null}
             {!searchInput && filter === "lost" ? (
               <p className="text-muted-foreground text-xs">
-                Facts whose cited message changed, moved or was deleted.
+                <T>Facts whose cited message changed, moved or was deleted.</T>
               </p>
             ) : null}
             {search.data?.facts.state === "unavailable" ? (
               <p className="text-muted-foreground text-xs">
-                Fact ranking is unavailable on this environment. Conversation search and saved facts
-                remain available.
+                <T>
+                  Fact ranking is unavailable on this environment. Conversation search and saved
+                  facts remain available.
+                </T>
               </p>
             ) : null}
             {search.data?.facts.state === "available" &&
             search.data.facts.coverage === "partial" ? (
               <p className="text-muted-foreground text-xs">
-                Partial coverage. Narrow the query to reach more facts.
+                <T>Partial coverage. Narrow the query to reach more facts.</T>
               </p>
             ) : null}
           </div>
@@ -677,10 +701,13 @@ function MemoryContents(
               {!pending && !listError && facts.length === 0 && messages.length === 0 ? (
                 <p className="px-3 py-6 text-center text-muted-foreground text-sm">
                   {searchInput
-                    ? `No matches for “${searchInput.query}”.`
+                    ? gt("No matches for “{query}”.", { query: searchInput.query })
                     : filter === "lost"
-                      ? "No facts have lost their source."
-                      : `No ${FILTER_LABEL[filter].toLowerCase()} facts.`}
+                      ? gt("No facts have lost their source.")
+                      : gt(
+                          "{filter, select, saved {No saved facts.} automatic {No automatic facts.} other {No forgotten facts.}}",
+                          { filter },
+                        )}
                 </p>
               ) : null}
               <div className="flex flex-wrap gap-2 px-1 empty:hidden">
@@ -690,12 +717,12 @@ function MemoryContents(
                     variant="outline"
                     onClick={() => setAfterId(list.data?.nextCursor ?? undefined)}
                   >
-                    Next facts
+                    <T>Next facts</T>
                   </Button>
                 ) : null}
                 {!searchInput && afterId ? (
                   <Button size="sm" variant="ghost" onClick={() => setAfterId(undefined)}>
-                    First facts
+                    <T>First facts</T>
                   </Button>
                 ) : null}
                 {searchInput &&
@@ -714,7 +741,7 @@ function MemoryContents(
                         });
                     }}
                   >
-                    Next fact matches
+                    <T>Next fact matches</T>
                   </Button>
                 ) : null}
                 {searchInput && search.data?.messages.nextCursor ? (
@@ -727,7 +754,7 @@ function MemoryContents(
                         setSearchInput({ ...searchInput, cursor: search.data.messages.nextCursor });
                     }}
                   >
-                    Next conversations
+                    <T>Next conversations</T>
                   </Button>
                 ) : null}
               </div>
@@ -735,12 +762,12 @@ function MemoryContents(
           </ScrollArea>
         </section>
         <section
-          aria-label="Inspector"
+          aria-label={gt("Inspector", { $context: "project memory inspector" })}
           className={cn("flex min-h-0 flex-col", !showDetail && "max-md:hidden")}
         >
           <div className="flex shrink-0 px-3 pt-2 md:hidden">
             <Button size="sm" variant="ghost" onClick={backToList}>
-              Back to list
+              <T>Back to list</T>
             </Button>
           </div>
           <ScrollArea className="flex-1" scrollFade viewportTabIndex={0}>
@@ -752,7 +779,7 @@ function MemoryContents(
               ) : null}
               {hintNotice ? (
                 <section
-                  aria-label="Possible conflicts"
+                  aria-label={gt("Possible conflicts")}
                   className="flex flex-col gap-2 rounded-md border p-3"
                 >
                   {hintNotice.hints.map((hint) => (
@@ -769,7 +796,7 @@ function MemoryContents(
                     variant="ghost"
                     onClick={() => setHintNotice(null)}
                   >
-                    Dismiss
+                    <T>Dismiss</T>
                   </Button>
                 </section>
               ) : null}

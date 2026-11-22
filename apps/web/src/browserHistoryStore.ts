@@ -256,23 +256,29 @@ let historyChannel: BroadcastChannel | undefined;
 
 function readLegacyHistory<Missing = PersistedBrowserHistory>(
   missing: Missing = EMPTY_PERSISTED_HISTORY as Missing,
-): PersistedBrowserHistory | Missing {
+): { raw: string | null; history: PersistedBrowserHistory | Missing } {
+  let raw: string | null = null;
   try {
-    const value = window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY);
-    if (value === null) return missing;
-    const parsed: { state?: unknown } | null = JSON.parse(value);
+    raw = window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY);
+    if (raw === null) return { raw, history: missing };
+    const parsed: { state?: unknown } | null = JSON.parse(raw);
     return {
-      ...migratePersistedBrowserHistoryState(parsed?.state),
-      projectKeyByThreadKey: migratePersistedThreadProjectKeys(parsed?.state),
+      raw,
+      history: {
+        ...migratePersistedBrowserHistoryState(parsed?.state),
+        projectKeyByThreadKey: migratePersistedThreadProjectKeys(parsed?.state),
+      },
     };
   } catch {
-    return EMPTY_PERSISTED_HISTORY;
+    return { raw, history: EMPTY_PERSISTED_HISTORY };
   }
 }
 
-function retireLegacyHistory(): void {
+function retireLegacyHistory(raw: string | null): void {
+  if (raw === null) return;
   try {
-    window.localStorage.removeItem(BROWSER_HISTORY_STORAGE_KEY);
+    if (window.localStorage.getItem(BROWSER_HISTORY_STORAGE_KEY) === raw)
+      window.localStorage.removeItem(BROWSER_HISTORY_STORAGE_KEY);
   } catch {
     // The browser can deny access to localStorage independently of IndexedDB.
   }
@@ -294,7 +300,7 @@ function mergeLegacyHistory(
 
 // Without IndexedDB, merge into the freshest localStorage snapshot so a reload keeps new visits.
 function transactLegacyHistory(update: UpdateHistory, current: PersistedBrowserHistory) {
-  const previous = readLegacyHistory(current);
+  const previous = readLegacyHistory(current).history;
   const next = update(previous);
   if (next === previous) return previous;
   const history = boundThreadMappings(previous, next);
@@ -353,9 +359,12 @@ async function transactIndexedHistory(update?: UpdateHistory, retry = true) {
     const request = store.get(BROWSER_HISTORY_STORAGE_KEY);
     let history: PersistedBrowserHistory;
     let changed = false;
+    let legacySnapshot: string | null = null;
     request.onsuccess = () => {
       const saved = request.result as PersistedBrowserHistory | undefined;
-      const legacy = update ? readLegacyHistory(null) : null;
+      const source = update ? readLegacyHistory(null) : null;
+      const legacy = source?.history;
+      legacySnapshot = source?.raw ?? null;
       const previous =
         saved && legacy
           ? mergeLegacyHistory(saved, legacy)
@@ -366,8 +375,8 @@ async function transactIndexedHistory(update?: UpdateHistory, retry = true) {
       if (update && changed) store.put(history, BROWSER_HISTORY_STORAGE_KEY);
     };
     transaction.oncomplete = () => {
-      // Keep the migration source until the IndexedDB snapshot has committed.
-      if (update) retireLegacyHistory();
+      // Retire only the committed source; another document may have saved more visits meanwhile.
+      if (update) retireLegacyHistory(legacySnapshot);
       resolve({ history, changed });
     };
     transaction.onabort = () => reject(transaction.error);
@@ -516,7 +525,7 @@ if (typeof window !== "undefined") {
   };
   void transactIndexedHistory((history) => history).then(
     ({ history }) => hydrate(history),
-    () => hydrate(readLegacyHistory()),
+    () => hydrate(readLegacyHistory().history),
   );
   import.meta.hot?.dispose(() => {
     historyChannel?.close();

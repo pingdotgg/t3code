@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -14,6 +15,7 @@ import { alertGroupCommandFailure } from "./groupCommandFailure";
 import { useOpenLinkedThread } from "./useOpenLinkedThread";
 
 export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadShell }) {
+  const m = useMessages();
   const { environmentId, group } = thread;
   const navigation = useNavigation();
   const config = useEnvironmentServerConfig(environmentId);
@@ -41,7 +43,7 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
         <ScrollView className="min-w-0 flex-1" horizontal showsHorizontalScrollIndicator={false}>
           <View className="flex-row items-center gap-2">
             <Text
-              accessibilityLabel={`${group.primary.label}, primary`}
+              accessibilityLabel={m(msg("{name}, primary"), { name: group.primary.label })}
               className="text-xs font-t3-medium text-foreground"
             >
               ★ {group.primary.label}
@@ -52,10 +54,10 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
                 <Menu
                   key={seat.threadId}
                   actions={[
-                    { id: "work", title: "Open work", image: "arrow.up.right" },
+                    { id: "work", title: m(msg("Open work")), image: "arrow.up.right" },
                     {
                       id: "remove",
-                      title: "Remove",
+                      title: m(msg("Remove")),
                       image: "person.fill.xmark",
                       attributes: { destructive: true, disabled: !canRemove },
                     },
@@ -68,13 +70,18 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
                         environmentId,
                         input: { threadId: thread.id, seatThreadId: seat.threadId },
                       }).then((result) =>
-                        alertGroupCommandFailure(`Could not remove ${seat.label}`, result),
+                        alertGroupCommandFailure(
+                          m(msg("Could not remove {name}"), { name: seat.label }),
+                          result,
+                        ),
                       );
                   }}
                 >
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`${seat.label}, group member actions`}
+                    accessibilityLabel={m(msg("{name}, group member actions"), {
+                      name: seat.label,
+                    })}
                     className="rounded-full border border-border bg-subtle px-3 py-2"
                   >
                     <Text className="text-xs text-foreground">{seat.label}</Text>
@@ -87,11 +94,11 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
         <Menu
           actions={[
             ...(inviteAvailable
-              ? [{ id: "invite", title: "Invite a model", image: "person.badge.plus" }]
+              ? [{ id: "invite", title: m(msg("Invite a model")), image: "person.badge.plus" }]
               : []),
             {
               id: "end",
-              title: `End group · Continue with ${group.primary.label}`,
+              title: m(msg("End group · Continue with {name}"), { name: group.primary.label }),
               image: "rectangle.portrait.and.arrow.right",
               attributes: { disabled: !canEnd },
             },
@@ -101,13 +108,13 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
               navigation.navigate("ThreadGroupInvite", { environmentId, threadId: thread.id });
             if (nativeEvent.event === "end")
               void end({ environmentId, input: { threadId: thread.id } }).then((result) =>
-                alertGroupCommandFailure("Could not end the group", result),
+                alertGroupCommandFailure(m(msg("Could not end the group")), result),
               );
           }}
         >
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Group actions"
+            accessibilityLabel={m(msg("Group actions"))}
             className="rounded-full p-2"
             hitSlop={8}
           >
@@ -117,7 +124,7 @@ export function ThreadGroupBar({ thread }: { readonly thread: EnvironmentThreadS
       </View>
       {group.discussion === null && group.closedBecause === "budget" ? (
         <Text accessibilityRole="text" className="text-xs text-foreground-muted">
-          A member has unanswered replies. Any message continues.
+          {m(msg("A member has unanswered replies. Any message continues."))}
         </Text>
       ) : null}
     </View>

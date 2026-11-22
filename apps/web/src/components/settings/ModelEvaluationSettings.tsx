@@ -15,7 +15,7 @@ import {
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as Equal from "effect/Equal";
-import { T, msg, useGT } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
 import { requestConfirmDialog } from "../../confirmDialog";
@@ -461,6 +461,7 @@ function ProjectEvaluationReport(props: {
 
 function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
   const gt = useGT();
+  const messages = useMessages();
   return (
     <details className="rounded-md border p-3 text-sm">
       <summary className="cursor-pointer break-words font-medium">
@@ -481,7 +482,7 @@ function GuidanceCard({ guidance }: { guidance: ModelEvaluationGuidance }) {
           })}
         </p>
         <dl className="grid grid-cols-2 gap-3">
-          {modelEvaluationScoreRows(guidance).map((score) => (
+          {modelEvaluationScoreRows(guidance, messages).map((score) => (
             <div key={score.key}>
               <dt className="text-xs text-muted-foreground">{score.label}</dt>
               <dd>

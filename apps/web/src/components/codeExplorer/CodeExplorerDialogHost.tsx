@@ -1,6 +1,7 @@
 import { useAtom } from "@effect/atom-react";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
 import { lazy, Suspense, useEffect } from "react";
+import { T } from "gt-react";
 
 import {
   Dialog,
@@ -38,9 +39,11 @@ export function CodeExplorerDialogHost(props: {
     >
       <DialogPopup className="max-w-6xl">
         <DialogHeader>
-          <DialogTitle>Code explorer</DialogTitle>
+          <DialogTitle>
+            <T>Code explorer</T>
+          </DialogTitle>
           <DialogDescription>
-            Static callers and callees around a symbol, read from this checkout's code index.
+            <T>Static callers and callees around a symbol, read from this checkout's code index.</T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -48,7 +51,7 @@ export function CodeExplorerDialogHost(props: {
             <Suspense
               fallback={
                 <p role="status" className="text-sm text-muted-foreground">
-                  Opening code explorer…
+                  <T>Opening code explorer…</T>
                 </p>
               }
             >

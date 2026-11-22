@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { projectCodeIndexBadge } from "@t3tools/client-runtime/projectCode";
 import type { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { msg, useMessages } from "gt-react";
 
 import { Badge } from "~/components/ui/badge";
 import { projectCode } from "~/state/projectCode";
@@ -19,6 +20,7 @@ export function CodeIndexBadge(props: {
   /** A draft has no server thread; the project's own checkout is read instead. */
   readonly threadId?: ThreadId | undefined;
 }) {
+  const m = useMessages();
   const config = useAtomValue(serverEnvironment.configValueAtom(props.environmentId));
   const canQuery = useAtomValue(projectCode.freshness.permissionAtom(props.environmentId));
   const supported =
@@ -36,19 +38,23 @@ export function CodeIndexBadge(props: {
           },
         })
       : null,
+    m,
   );
   if (!supported) return null;
   if (freshness.data === null && freshness.error === null) return null;
   const badge =
     freshness.data === null
-      ? { label: "Unavailable", tone: "muted" as const, detail: freshness.error ?? "" }
-      : projectCodeIndexBadge(freshness.data.index);
+      ? { label: m(msg("Unavailable")), tone: "muted" as const, detail: freshness.error ?? "" }
+      : projectCodeIndexBadge(freshness.data.index, m);
   return (
     <Badge
       variant={VARIANT[badge.tone]}
       size="sm"
       title={badge.detail}
-      aria-label={`Code index: ${badge.label}. ${badge.detail}`}
+      aria-label={m(msg("Code index: {label}. {detail}"), {
+        label: badge.label,
+        detail: badge.detail,
+      })}
     >
       {badge.label}
     </Badge>

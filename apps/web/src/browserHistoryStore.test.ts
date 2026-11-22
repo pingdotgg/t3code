@@ -157,6 +157,98 @@ const threadRef = {
   threadId: ThreadId.make("thread-1"),
 };
 
+it.each([false, true])(
+  "keeps fallback visits written during an IndexedDB commit (existing legacy snapshot: %s)",
+  async (hasLegacySnapshot) => {
+    resetBrowserHistoryForTests();
+    const storageKey = "t3code:browser-history:v1";
+    const legacy = entry({ url: "http://legacy.test/", lastVisitedAt: 1 });
+    const fallback = entry({ url: "http://fallback.test/", lastVisitedAt: 2 });
+    const online = entry({ url: "http://online.test/", lastVisitedAt: 3 });
+    const initialProjects: Record<string, BrowserHistoryEntry[]> = hasLegacySnapshot
+      ? { legacy: [legacy] }
+      : {};
+    const serialize = (byProjectKey: Record<string, BrowserHistoryEntry[]>) =>
+      JSON.stringify({ state: { byProjectKey, projectKeyByThreadKey: {} }, version: 1 });
+    let localSnapshot: string | null = hasLegacySnapshot ? serialize(initialProjects) : null;
+    const newerSnapshot = serialize({ ...initialProjects, fallback: [fallback] });
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (key: string) => (key === storageKey ? localSnapshot : null),
+        removeItem: (key: string) => {
+          if (key === storageKey) localSnapshot = null;
+        },
+      },
+    });
+    let saved: unknown;
+    let beforeCommit: (() => void) | undefined = () => {
+      localSnapshot = newerSnapshot;
+    };
+    const database = {
+      close: () => undefined,
+      onversionchange: undefined as (() => void) | undefined,
+      transaction: () => {
+        const request = { result: saved, onsuccess: undefined as (() => void) | undefined };
+        let next = saved;
+        const transaction = {
+          objectStore: () => ({
+            get: () => request,
+            put: (history: unknown) => {
+              next = structuredClone(history);
+            },
+          }),
+          oncomplete: undefined as (() => void) | undefined,
+        };
+        queueMicrotask(() => {
+          request.onsuccess?.();
+          // A document using the fallback writes after the read, before the commit.
+          beforeCommit?.();
+          beforeCommit = undefined;
+          saved = next;
+          transaction.oncomplete?.();
+        });
+        return transaction;
+      },
+    };
+    vi.stubGlobal("indexedDB", {
+      open: () => {
+        const request = { result: database, onsuccess: undefined as (() => void) | undefined };
+        queueMicrotask(() => request.onsuccess?.());
+        return request;
+      },
+    });
+    const recordVisit = async () => {
+      const updated = Promise.withResolvers<void>();
+      const unsubscribe = useBrowserHistoryStore.subscribe(() => updated.resolve());
+      try {
+        useBrowserHistoryStore.getState().recordVisit("online", online.url, online.lastVisitedAt);
+        await updated.promise;
+      } finally {
+        unsubscribe();
+      }
+    };
+    try {
+      await recordVisit();
+      expect(saved).toEqual({
+        byProjectKey: { ...initialProjects, online: [online] },
+        projectKeyByThreadKey: {},
+      });
+      expect(localSnapshot).toBe(newerSnapshot);
+
+      await recordVisit();
+      expect(saved).toEqual({
+        byProjectKey: { ...initialProjects, online: [online], fallback: [fallback] },
+        projectKeyByThreadKey: {},
+      });
+      expect(localSnapshot).toBeNull();
+    } finally {
+      database.onversionchange?.();
+      vi.unstubAllGlobals();
+      resetBrowserHistoryForTests();
+    }
+  },
+);
+
 let settledAt = 0;
 
 function settle(

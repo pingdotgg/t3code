@@ -1,3 +1,4 @@
+import { T, Var, useGT, useMessages } from "gt-react-native";
 import { type InferenceRouting, type InferenceProxyActionResult } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
@@ -24,7 +25,7 @@ import {
   type InferenceProxyAction,
   type InferenceUpstream,
 } from "@t3tools/contracts";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { Linking, TextInput, View } from "react-native";
 
 import { AppText } from "../../components/ui/AppText";
@@ -36,11 +37,14 @@ import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
 import type { SettingsTarget } from "./settings-environment-filter";
+import { m } from "../../i18n/messages";
 
 const upstreams = Object.keys(INFERENCE_UPSTREAMS) as ReadonlyArray<InferenceUpstream>;
 const { inferenceProxy } = serverEnvironment;
 
 function Route({ host, consumer }: { host: EnvironmentPresentation; consumer: SettingsTarget }) {
+  const gt = useGT();
+  const messages = useMessages();
   const grant = useAtomValue(inferenceProxy.canGrant(host.environmentId));
   const connect = useAtomValue(inferenceProxy.canConnect(consumer.environmentId));
   const status = useEnvironmentQuery(
@@ -48,25 +52,33 @@ function Route({ host, consumer }: { host: EnvironmentPresentation; consumer: Se
   );
   const route = useAtomCommand(inferenceProxy.routeInference, { reportFailure: false });
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   async function add(driver: InferenceDriver) {
     setBusy(true);
     const result = await route({ host, consumer, driver });
     setBusy(false);
     setNotice(
-      result._tag === "Success"
-        ? `${INFERENCE_HARNESSES[driver].label} now uses accounts on ${host.label}.`
-        : String(squashAtomCommandFailure(result)),
+      result._tag === "Success" ? (
+        <T>
+          <Var>{INFERENCE_HARNESSES[driver].label}</Var> now uses accounts on{" "}
+          <Var>{host.label}</Var>.
+        </T>
+      ) : (
+        String(squashAtomCommandFailure(result))
+      ),
     );
   }
   return (
     <View>
       {INFERENCE_DRIVERS.map((driver) => {
-        const issue = inferenceHostRoutingIssue(status.data, { host, consumer, driver });
+        const issue = inferenceHostRoutingIssue(status.data, { host, consumer, driver }, messages);
         return (
           <ListActionRow
             key={driver}
-            label={`Route ${INFERENCE_HARNESSES[driver].label} through ${host.label}`}
+            label={gt("Route {provider} through {host}", {
+              provider: INFERENCE_HARNESSES[driver].label,
+              host: host.label,
+            })}
             description={issue ?? undefined}
             disabled={busy || !grant || !connect || !!issue}
             onPress={() => void add(driver)}
@@ -95,6 +107,7 @@ function ProviderRoutingSwitch({
   onSetup: () => void;
   onRouteChange: () => void;
 }) {
+  const gt = useGT();
   const { environmentId } = environment;
   const { environments } = useEnvironments();
   const canConnect = useAtomValue(inferenceProxy.canConnect(environmentId));
@@ -122,6 +135,7 @@ function ProviderRoutingSwitch({
       ? await enable({
           consumer: { environmentId, label: environment.label },
           environments,
+          resolve: m,
           driver,
           ...(route
             ? { preferredHostId: route.inferenceHostId, preserveProviderEnabled: true }
@@ -143,21 +157,23 @@ function ProviderRoutingSwitch({
   return (
     <>
       <SettingsSwitchRow
-        label={`${INFERENCE_HARNESSES[driver].label} inference routing`}
+        label={gt("{provider} inference routing", { provider: INFERENCE_HARNESSES[driver].label })}
         subtitle={
           error ||
           (enabled
             ? route
-              ? `Using accounts on ${route.inferenceHostLabel || environment.label}.`
-              : "This inference route is incomplete. Turn it off to use the native provider."
-            : "Use accounts on this environment or a paired inference host.")
+              ? gt("Using accounts on {host}.", {
+                  host: route.inferenceHostLabel || environment.label,
+                })
+              : gt("This inference route is incomplete. Turn it off to use the native provider.")
+            : gt("Use accounts on this environment or a paired inference host."))
         }
         value={enabled}
         disabled={pending || locked || (enabled ? !canManage : !canConnect)}
         onValueChange={(value) => void change(value)}
       />
       {error && !enabled && canManage ? (
-        <ListActionRow label="Set up accounts here" onPress={onSetup} />
+        <ListActionRow label={gt("Set up accounts here")} onPress={onSetup} />
       ) : null}
     </>
   );
@@ -172,22 +188,46 @@ function HostedAccountRow({
   disabled: boolean;
   onRemove: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [revealed, setRevealed] = useState(false);
   const retryAfter = inferenceAccountRetryAfter(account);
   return (
     <View className="flex-row items-center pr-4">
       <View className="min-w-0 flex-1">
         <ListActionRow
-          label={revealed ? account.name : `${account.provider} account · ••••••`}
-          description={`${inferenceAccountStatus(account)}${retryAfter ? ` · Retry after ${new Date(retryAfter).toLocaleString()}` : ""} · Tap to ${revealed ? "hide" : "reveal"}`}
+          label={
+            revealed
+              ? account.name
+              : gt("{provider} account · ••••••", { provider: account.provider })
+          }
+          description={
+            retryAfter
+              ? revealed
+                ? gt("{status} · Retry after {time} · Tap to hide", {
+                    status: inferenceAccountStatus(account, messages),
+                    time: new Date(retryAfter).toLocaleString(),
+                  })
+                : gt("{status} · Retry after {time} · Tap to reveal", {
+                    status: inferenceAccountStatus(account, messages),
+                    time: new Date(retryAfter).toLocaleString(),
+                  })
+              : revealed
+                ? gt("{status} · Tap to hide", {
+                    status: inferenceAccountStatus(account, messages),
+                  })
+                : gt("{status} · Tap to reveal", {
+                    status: inferenceAccountStatus(account, messages),
+                  })
+          }
           onPress={() => setRevealed(!revealed)}
         />
       </View>
       {revealed && (
         <ControlPill
           variant="pill"
-          label="Remove"
-          accessibilityLabel={`Remove ${account.name}`}
+          label={gt("Remove")}
+          accessibilityLabel={gt("Remove {account}", { account: account.name })}
           disabled={disabled}
           onPress={onRemove}
         />
@@ -205,11 +245,14 @@ function InferenceRoutingControls({
   disabled: boolean;
   run: (action: InferenceProxyAction) => Promise<InferenceProxyActionResult | undefined>;
 }) {
+  const gt = useGT();
   return (
     <View className="gap-3">
       <SettingsSwitchRow
-        label="Round-robin routing"
-        subtitle="Distribute requests across eligible credentials. Turn off to use the first available credential."
+        label={gt("Round-robin routing")}
+        subtitle={gt(
+          "Distribute requests across eligible credentials. Turn off to use the first available credential.",
+        )}
         value={routing.strategy === "round-robin"}
         disabled={disabled}
         onValueChange={(enabled) =>
@@ -217,8 +260,8 @@ function InferenceRoutingControls({
         }
       />
       <SettingsSwitchRow
-        label="Keep sessions on one account"
-        subtitle="Reuse the same credential for a conversation while it is available."
+        label={gt("Keep sessions on one account")}
+        subtitle={gt("Reuse the same credential for a conversation while it is available.")}
         value={routing.sessionAffinity}
         disabled={disabled}
         onValueChange={(sessionAffinity) => void run({ operation: "setRouting", sessionAffinity })}
@@ -238,6 +281,7 @@ function InferenceControls({
   onConnected: () => void;
   onOpenHostingSettings: () => void;
 }) {
+  const gt = useGT();
   const { environmentId } = environment;
   const { environments } = useEnvironments();
   const query = useEnvironmentQuery(inferenceProxy.inferenceStatus({ environmentId, input: {} }));
@@ -249,7 +293,7 @@ function InferenceControls({
   const [pending, setPending] = useState(false);
   const [login, setLogin] = useState<{ url: string; state: string } | null>(null);
   const [callback, setCallback] = useState("");
-  const [notice, setNotice] = useState("");
+  const [notice, setNotice] = useState<ReactNode>("");
   const accountSetup = useRef({ active: false });
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- prevents an account operation from routing after its setup panel closes
   useEffect(() => {
@@ -284,9 +328,9 @@ function InferenceControls({
       setCallback("");
     }
     if (result.value.status === "error")
-      setNotice("Sign-in failed or expired. Start a new sign-in.");
+      setNotice(<T>Sign-in failed or expired. Start a new sign-in.</T>);
     if (result.value.status === "wait")
-      setNotice("Waiting for the host to finish sign-in. Check status after a moment.");
+      setNotice(<T>Waiting for the host to finish sign-in. Check status after a moment.</T>);
     if (
       setupDriver &&
       (result.value.status === "ok" ||
@@ -296,6 +340,7 @@ function InferenceControls({
       const connected = await enableRouting({
         consumer: { environmentId, label: environment.label },
         environments,
+        resolve: m,
         driver: setupDriver,
         onlyHostId: environmentId,
         ...(isInferenceProviderConfig(
@@ -332,19 +377,21 @@ function InferenceControls({
         <>
           {requiresHostingSettings ? (
             <ListActionRow
-              label="Manage inference hosting"
-              description="Start hosting in Inference accounts, then turn on routing."
+              label={gt("Manage inference hosting")}
+              description={gt("Start hosting in Inference accounts, then turn on routing.")}
               disabled={disabled}
               onPress={onOpenHostingSettings}
             />
           ) : (
             <SettingsSwitchRow
-              label="Host accounts here"
+              label={gt("Host accounts here")}
               subtitle={
                 host.problem ??
                 (host.running
-                  ? `CLIProxyAPI ${host.version} is running.`
-                  : `Enable to install and start CLIProxyAPI ${host.version}.`)
+                  ? gt("CLIProxyAPI {version} is running.", { version: host.version })
+                  : gt("Enable to install and start CLIProxyAPI {version}.", {
+                      version: host.version,
+                    }))
               }
               disabled={disabled}
               value={host.enabled}
@@ -362,13 +409,15 @@ function InferenceControls({
             <>
               <ListActionRow
                 label={
-                  available ? `Update CLIProxyAPI to ${available}` : "Check for CLIProxyAPI updates"
+                  available
+                    ? gt("Update CLIProxyAPI to {version}", { version: available })
+                    : gt("Check for CLIProxyAPI updates")
                 }
                 description={
                   updateQuery.error ??
                   (available
-                    ? "Restarts the inference host."
-                    : `Installed version: ${host.version}`)
+                    ? gt("Restarts the inference host.")
+                    : gt("Installed version: {version}", { version: host.version }))
                 }
                 disabled={disabled || updateQuery.isPending}
                 onPress={() =>
@@ -376,8 +425,10 @@ function InferenceControls({
                 }
               />
               <SettingsSwitchRow
-                label="Share inference with paired environments"
-                subtitle="Use Tailscale HTTPS or a trusted LAN. LAN HTTP sends requests and route keys unencrypted. Turning sharing off revokes remote access."
+                label={gt("Share inference with paired environments")}
+                subtitle={gt(
+                  "Use Tailscale HTTPS or a trusted LAN. LAN HTTP sends requests and route keys unencrypted. Turning sharing off revokes remote access.",
+                )}
                 disabled={disabled}
                 value={host.sharing}
                 onValueChange={(sharing) =>
@@ -395,7 +446,7 @@ function InferenceControls({
               {host.consumers.map((c) => (
                 <ListActionRow
                   key={c.environmentId}
-                  label={`Revoke access for ${c.label}`}
+                  label={gt("Revoke access for {environment}", { environment: c.label })}
                   disabled={disabled}
                   onPress={() => void run({ operation: "revoke", environmentId: c.environmentId })}
                 />
@@ -411,17 +462,19 @@ function InferenceControls({
               {login ? (
                 <>
                   <ListActionRow
-                    label="Open sign-in page"
-                    description="Paste the final localhost URL below, even if your browser cannot load it."
+                    label={gt("Open sign-in page")}
+                    description={gt(
+                      "Paste the final localhost URL below, even if your browser cannot load it.",
+                    )}
                     onPress={() =>
                       void Linking.openURL(login.url).catch(() =>
-                        setNotice("Could not open sign-in page."),
+                        setNotice(<T>Could not open sign-in page.</T>),
                       )
                     }
                   />
                   <TextInput
-                    accessibilityLabel="Sign-in callback URL"
-                    placeholder="Paste callback URL"
+                    accessibilityLabel={gt("Sign-in callback URL")}
+                    placeholder={gt("Paste callback URL")}
                     secureTextEntry
                     autoCapitalize="none"
                     autoCorrect={false}
@@ -431,19 +484,19 @@ function InferenceControls({
                     className="mx-4 rounded-lg border border-border-subtle px-3 py-2 text-foreground"
                   />
                   <ListActionRow
-                    label="Submit callback"
+                    label={gt("Submit callback")}
                     disabled={disabled || !callback}
                     onPress={() =>
                       void run({ operation: "callback", state: login.state, callback })
                     }
                   />
                   <ListActionRow
-                    label="Check sign-in status"
+                    label={gt("Check sign-in status")}
                     disabled={disabled}
                     onPress={() => void run({ operation: "check", state: login.state })}
                   />
                   <ListActionRow
-                    label="Cancel sign-in"
+                    label={gt("Cancel sign-in")}
                     disabled={disabled}
                     onPress={() => void run({ operation: "cancel", state: login.state })}
                   />
@@ -453,7 +506,9 @@ function InferenceControls({
                   (upstream) => (
                     <ListActionRow
                       key={upstream}
-                      label={`Add ${INFERENCE_UPSTREAMS[upstream]} account`}
+                      label={gt("Add {provider} account", {
+                        provider: INFERENCE_UPSTREAMS[upstream],
+                      })}
                       disabled={disabled}
                       onPress={() => void run({ operation: "signIn", upstream })}
                     />
@@ -465,7 +520,7 @@ function InferenceControls({
         </>
       ) : (
         <AppText className="px-4 text-foreground-muted">
-          {query.error ?? "Loading host status…"}
+          {query.error ?? gt("Loading host status…")}
         </AppText>
       )}
       {notice ? (
@@ -474,14 +529,18 @@ function InferenceControls({
         </AppText>
       ) : null}
       <AppText className="px-4 text-foreground-muted">
-        Choose a host for inference. Tools run on {environment.label}. Choosing a host changes where
-        this provider sends inference. That host manages the accounts.
+        <T>
+          Choose a host for inference. Tools run on <Var>{environment.label}</Var>. Choosing a host
+          changes where this provider sends inference. That host manages the accounts.
+        </T>
       </AppText>
       {host?.routes.map((route) => (
         <ListActionRow
           key={route.instanceId}
-          label={`Use native ${inferenceHarness(route.instanceId)?.label ?? route.instanceId}`}
-          description={`Now: ${route.label}`}
+          label={gt("Use native {provider}", {
+            provider: inferenceHarness(route.instanceId)?.label ?? route.instanceId,
+          })}
+          description={gt("Now: {route}", { route: route.label })}
           disabled={disabled}
           onPress={() => void run({ operation: "removeRoute", instanceId: route.instanceId })}
         />
@@ -500,6 +559,7 @@ export function InferenceAccounts({
   environment: SettingsTarget;
   providers: ReadonlyArray<ServerProvider>;
 }) {
+  const gt = useGT();
   const [panel, setPanel] = useState<"all" | InferenceDriver | null>(null);
   return (
     <>
@@ -524,11 +584,11 @@ export function InferenceAccounts({
         );
       })}
       <ListActionRow
-        label="Inference accounts"
+        label={gt("Inference accounts")}
         description={
           panel
-            ? "Hide hosting and account settings"
-            : "Add accounts, share a host, or choose a specific route."
+            ? gt("Hide hosting and account settings")
+            : gt("Add accounts, share a host, or choose a specific route.")
         }
         onPress={() => setPanel(panel ? null : "all")}
       />

@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
 import {
   type AccountSyncEnvironment,
@@ -57,13 +58,17 @@ function DestinationRow({
   readonly disabled: boolean;
   readonly onChange: (environmentId: EnvironmentId, checked: boolean) => void;
 }) {
+  const messages = useMessages();
   const canImport = useAtomValue(providerAccountSync.canImportAtom(destination.environmentId));
   const destinationEnvironment = useAccountSyncEnvironment(destination, canImport);
-  const choice = syncDestinationChoice({
-    source,
-    destination: destinationEnvironment,
-    instanceId: provider.instanceId,
-  });
+  const choice = syncDestinationChoice(
+    {
+      source,
+      destination: destinationEnvironment,
+      instanceId: provider.instanceId,
+    },
+    messages,
+  );
   return (
     <SettingsSwitchRow
       label={choice.label}
@@ -86,16 +91,20 @@ function ResultRow({
   readonly source: EnvironmentPresentation;
   readonly destination: EnvironmentPresentation | undefined;
 }) {
+  const messages = useMessages();
   const providers =
     useAtomValue(serverEnvironment.providersValueAtom(cell.destinationEnvironmentId)) ??
     EMPTY_PROVIDERS;
-  const row: SyncResultRow = syncResultRow({
-    cell,
-    accountLabel,
-    sourceLabel: source.label,
-    destinationLabel: destination?.label ?? cell.destinationEnvironmentId,
-    destinationProvider: providers.find((candidate) => candidate.instanceId === cell.instanceId),
-  });
+  const row: SyncResultRow = syncResultRow(
+    {
+      cell,
+      accountLabel,
+      sourceLabel: source.label,
+      destinationLabel: destination?.label ?? cell.destinationEnvironmentId,
+      destinationProvider: providers.find((candidate) => candidate.instanceId === cell.instanceId),
+    },
+    messages,
+  );
   return (
     <View className="gap-1 px-4 py-3">
       <Text textRole="body">{row.title}</Text>
@@ -123,6 +132,7 @@ export function ProviderAccountSync({
   readonly provider: ServerProvider;
   readonly accountLabel: string;
 }) {
+  const gt = useGT();
   const { environments } = useEnvironments();
   const canExport = useAtomValue(providerAccountSync.canExportAtom(environment.environmentId));
   const [open, setOpen] = useState(false);
@@ -140,8 +150,8 @@ export function ProviderAccountSync({
     <>
       <SettingsActionRow
         icon="arrow.left.arrow.right"
-        label="Sync to…"
-        description="Copy this account's settings to another device."
+        label={gt("Sync to…")}
+        description={gt("Copy this account's settings to another device.")}
         disabled={running}
         onPress={() => setOpen((current) => !current)}
       />
@@ -178,6 +188,7 @@ function SyncPanel({
   readonly setRunning: (running: boolean) => void;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
   const source = useAccountSyncEnvironment(environment, true);
   const sync = useAtomCommand(providerAccountSync, { reportFailure: false });
   const [chosen, setChosen] = useState<ReadonlySet<EnvironmentId>>(() => new Set());
@@ -198,8 +209,11 @@ function SyncPanel({
     <View>
       <Text textRole="footnote" className="px-4 py-3 text-foreground-muted">
         {report === null
-          ? `Settings and API keys are copied from ${environment.label}. Sign-ins are not: each device signs in on its own. Paths stay on ${environment.label}.`
-          : "Sync again at any time; it updates the copies without duplicating them."}
+          ? gt(
+              "Settings and API keys are copied from {environment}. Sign-ins are not: each device signs in on its own. Paths stay on {environment}.",
+              { environment: environment.label },
+            )
+          : gt("Sync again at any time; it updates the copies without duplicating them.")}
       </Text>
       {report === null ? (
         <>
@@ -223,12 +237,19 @@ function SyncPanel({
           ))}
           <SettingsActionRow
             icon="arrow.right"
-            label={running ? "Syncing…" : "Sync"}
+            label={
+              running ? gt("Syncing…") : gt("Sync", { $context: "verb, copy a provider account" })
+            }
             disabled={chosen.size === 0}
             loading={running}
             onPress={() => void runSync()}
           />
-          <SettingsActionRow icon="xmark" label="Cancel" disabled={running} onPress={onClose} />
+          <SettingsActionRow
+            icon="xmark"
+            label={gt("Cancel")}
+            disabled={running}
+            onPress={onClose}
+          />
         </>
       ) : (
         <>
@@ -246,12 +267,12 @@ function SyncPanel({
           {report.cells.some((cell) => cell.status === "failed") ? (
             <SettingsActionRow
               icon="arrow.clockwise"
-              label="Retry"
+              label={gt("Retry")}
               loading={running}
               onPress={() => void runSync()}
             />
           ) : null}
-          <SettingsActionRow icon="checkmark" label="Done" onPress={onClose} />
+          <SettingsActionRow icon="checkmark" label={gt("Done")} onPress={onClose} />
         </>
       )}
     </View>

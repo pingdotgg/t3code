@@ -1,4 +1,4 @@
-import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownWindowsPaths";
+import { UNFINISHED_DRIVE_PATH } from "@t3tools/shared/markdownLinks";
 
 const SKIPPED_TAGS = new Set(["BUTTON", "INPUT", "SCRIPT", "STYLE", "TEMPLATE"]);
 const SKIPPED_CLASS_NAMES = ["select-none", "sr-only"];
@@ -428,7 +428,7 @@ export function serializeTableElementToMarkdown(table: Element): string {
   return serializeTable(table).replaceAll(CODE_BOUNDARY, "").trim();
 }
 
-// The wrapper MarkdownMath puts on every formula it renders. The sanitizer drops
+// The wrapper wordsHast puts on every formula it renders. The sanitizer drops
 // the attribute from authored HTML.
 const MATH_SELECTOR = "[data-markdown-math]";
 

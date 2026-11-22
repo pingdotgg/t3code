@@ -1,5 +1,6 @@
 import type { KnowledgeSelection, ProjectKnowledgePreparedContext } from "@t3tools/contracts";
 import { XIcon } from "lucide-react";
+import { T, useGT } from "gt-react";
 import { Button } from "../ui/button";
 import { selectionKey } from "./projectMemoryLabels";
 
@@ -16,6 +17,7 @@ export function ProjectMemoryDraftFooter(props: {
   readonly onClear: () => void;
   readonly onAttach: () => void;
 }) {
+  const gt = useGT();
   const count = props.selections.length;
   return (
     <section
@@ -25,16 +27,25 @@ export function ProjectMemoryDraftFooter(props: {
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex flex-col">
           <h3 id="project-memory-draft-selection" className="font-medium text-sm">
-            Draft selection
+            <T>Draft selection</T>
           </h3>
           <p role="status" className="text-muted-foreground text-xs">
-            {count === 0 ? "Nothing selected" : `${count} selected`}
-            {count >= MAX_DRAFT_SELECTIONS ? ` (maximum ${MAX_DRAFT_SELECTIONS})` : ""}
-            {props.attached ? " · attached to draft" : ""}
+            {gt(
+              "{count, plural, =0 {Nothing selected} other {{count} selected}}{atLimit, select, yes { (maximum {maximum})} other {}}{attached, select, yes { · attached to draft} other {}}",
+              {
+                count,
+                atLimit: count >= MAX_DRAFT_SELECTIONS ? "yes" : "no",
+                maximum: MAX_DRAFT_SELECTIONS,
+                attached: props.attached ? "yes" : "no",
+              },
+            )}
           </p>
         </div>
         {count > 0 ? (
-          <ul aria-label="Selected for draft" className="flex min-w-0 flex-1 flex-wrap gap-1.5">
+          <ul
+            aria-label={gt("Selected for draft")}
+            className="flex min-w-0 flex-1 flex-wrap gap-1.5"
+          >
             {props.selections.map((selection) => {
               const label = props.labelFor(selection);
               return (
@@ -44,7 +55,7 @@ export function ProjectMemoryDraftFooter(props: {
                 >
                   <span className="truncate">{label}</span>
                   <Button
-                    aria-label={`Remove ${label} from draft selection`}
+                    aria-label={gt("Remove {label} from draft selection", { label })}
                     size="icon-micro"
                     variant="ghost"
                     onClick={() => props.onRemove(selection)}
@@ -57,7 +68,7 @@ export function ProjectMemoryDraftFooter(props: {
           </ul>
         ) : (
           <p className="min-w-0 flex-1 text-muted-foreground text-xs">
-            Check a fact or select a message to add it. Inspecting does not select.
+            <T>Check a fact or select a message to add it. Inspecting does not select.</T>
           </p>
         )}
         <div className="flex gap-2">
@@ -67,17 +78,17 @@ export function ProjectMemoryDraftFooter(props: {
             variant="outline"
             onClick={props.onClear}
           >
-            Clear selection
+            <T>Clear selection</T>
           </Button>
           <Button disabled={props.busy || count === 0} size="sm" onClick={props.onAttach}>
-            Preview and attach
+            <T>Preview and attach</T>
           </Button>
         </div>
       </div>
       {props.preview ? (
         <div className="flex flex-col gap-2">
           <section
-            aria-label="Attached preview"
+            aria-label={gt("Attached preview")}
             className="max-h-48 overflow-auto rounded-md border bg-background p-2 text-sm"
           >
             {props.preview.items ? (
@@ -94,16 +105,20 @@ export function ProjectMemoryDraftFooter(props: {
               </ul>
             ) : (
               <p className="text-muted-foreground">
-                This server cannot provide a readable preview. Expand the exact payload to review
-                what will be sent.
+                <T>
+                  This server cannot provide a readable preview. Expand the exact payload to review
+                  what will be sent.
+                </T>
               </p>
             )}
           </section>
           <details>
-            <summary className="cursor-pointer text-xs">Show exact payload</summary>
+            <summary className="cursor-pointer text-xs">
+              <T>Show exact payload</T>
+            </summary>
             <pre
               role="region"
-              aria-label="Exact payload"
+              aria-label={gt("Exact payload")}
               className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border bg-background p-2 text-xs"
             >
               {props.preview.text}

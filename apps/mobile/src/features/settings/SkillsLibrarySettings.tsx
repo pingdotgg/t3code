@@ -1,3 +1,4 @@
+import { useGT, useMessages } from "gt-react-native";
 import { LegendList } from "@legendapp/list/react-native";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useAtomValue } from "@effect/atom-react";
@@ -39,6 +40,8 @@ export function SkillsLibrarySettings({ environment }: { readonly environment: S
 }
 
 function LibraryControls({ environment }: { readonly environment: SettingsTarget }) {
+  const gt = useGT();
+  const messages = useMessages();
   const navigation = useNavigation();
   const environmentId = environment.environmentId;
   const enabled = environment.serverConfig.settings.skillsLibraryEnabled;
@@ -86,13 +89,15 @@ function LibraryControls({ environment }: { readonly environment: SettingsTarget
   };
   const failure = error ?? status.error;
   const needsRefresh = enabled || failure !== null || (status.data?.linked.length ?? 0) > 0;
-  const issueSummary = status.data ? skillsLibraryIssueSummary(status.data) : null;
+  const issueSummary = status.data ? skillsLibraryIssueSummary(status.data, messages) : null;
   return (
     <>
       <SettingsSwitchRow
         icon="square.grid.2x2"
-        label="Skills library"
-        subtitle="Share skills across providers and accounts. Off restores separate skill folders."
+        label={gt("Skills library")}
+        subtitle={gt(
+          "Share skills across providers and accounts. Off restores separate skill folders.",
+        )}
         value={enabled}
         disabled={pending || !canWrite || !canRefresh}
         onValueChange={(next) => void refresh(next)}
@@ -100,8 +105,8 @@ function LibraryControls({ environment }: { readonly environment: SettingsTarget
       {needsRefresh && canRefresh ? (
         <ListActionRow
           icon="arrow.clockwise"
-          label="Refresh skills library"
-          description="Update shared folders after fixing an issue or adding a skill."
+          label={gt("Refresh skills library")}
+          description={gt("Update shared folders after fixing an issue or adding a skill.")}
           loading={pending}
           onPress={() => void refresh()}
         />
@@ -114,7 +119,7 @@ function LibraryControls({ environment }: { readonly environment: SettingsTarget
       {issueSummary ? (
         <ListRow
           icon="exclamationmark.triangle"
-          label="Skill issues"
+          label={gt("Skill issues")}
           description={issueSummary}
           onPress={() => navigation.navigate("SettingsSkillsLibraryIssues", { environmentId })}
         />
@@ -126,27 +131,29 @@ function LibraryControls({ environment }: { readonly environment: SettingsTarget
 export function SkillsLibraryIssuesRouteScreen({
   route,
 }: StaticScreenProps<{ readonly environmentId: EnvironmentId }>) {
+  const gt = useGT();
+  const messages = useMessages();
   const { environmentId } = route.params;
   const { environments } = useEnvironments();
   const label =
     environments.find((environment) => environment.environmentId === environmentId)?.label ??
-    "this environment";
+    gt("this environment");
   const status = useEnvironmentQuery(
     serverEnvironment.skillsLibraryStatus({ environmentId, input: {} }),
   );
   const [query, setQuery] = useState("");
   const [openKey, setOpenKey] = useState<string | null>(null);
   const issues = filterSkillsLibraryIssues(
-    status.data ? skillsLibraryIssues(status.data) : [],
+    status.data ? skillsLibraryIssues(status.data, messages) : [],
     query,
   );
-  const summary = status.data ? skillsLibraryIssueSummary(status.data) : null;
+  const summary = status.data ? skillsLibraryIssueSummary(status.data, messages) : null;
   return (
     <PullRequestSearchSheet
-      title="Skill issues"
-      placeholder="Search skills or paths"
-      closeAccessibilityLabel="Close skill issues"
-      clearAccessibilityLabel="Clear skill issue search"
+      title={gt("Skill issues")}
+      placeholder={gt("Search skills or paths")}
+      closeAccessibilityLabel={gt("Close skill issues")}
+      clearAccessibilityLabel={gt("Clear skill issue search")}
       query={query}
       onQueryChange={setQuery}
     >
@@ -167,8 +174,11 @@ export function SkillsLibraryIssuesRouteScreen({
             <Text className="pb-3 text-xs text-foreground-muted">
               {status.error ??
                 (summary
-                  ? `${summary} on ${label}. Fix them, then refresh the skills library.`
-                  : `Skills library issues on ${label}.`)}
+                  ? gt("{summary} on {environment}. Fix them, then refresh the skills library.", {
+                      summary,
+                      environment: label,
+                    })
+                  : gt("Skills library issues on {environment}.", { environment: label }))}
             </Text>
           }
           renderItem={({ item, index }) => (
@@ -185,11 +195,14 @@ export function SkillsLibraryIssuesRouteScreen({
               <AppActivityIndicator className="my-8" />
             ) : status.error ? undefined : (
               <EmptyState
-                title={query.trim() ? "No issues match" : "No skill issues"}
+                title={query.trim() ? gt("No issues match") : gt("No skill issues")}
                 detail={
                   query.trim()
-                    ? "Try another skill name or path."
-                    : `The skills library on ${label} has no conflicts or name mismatches.`
+                    ? gt("Try another skill name or path.")
+                    : gt(
+                        "The skills library on {environment} has no conflicts or name mismatches.",
+                        { environment: label },
+                      )
                 }
                 variant="plain"
               />
@@ -208,6 +221,7 @@ function SkillsLibraryIssueRow(props: {
   readonly open: boolean;
   readonly onToggle: () => void;
 }) {
+  const gt = useGT();
   const { issue } = props;
   return (
     <View
@@ -221,7 +235,7 @@ function SkillsLibraryIssueRow(props: {
       <RowPressable
         accessibilityRole="button"
         accessibilityLabel={`${issue.name}, ${issue.kind}`}
-        accessibilityHint={props.open ? "Hides details" : "Shows paths and how to fix it"}
+        accessibilityHint={props.open ? gt("Hides details") : gt("Shows paths and how to fix it")}
         accessibilityState={{ expanded: props.open }}
         onPress={props.onToggle}
         className="gap-1 px-4 py-3"

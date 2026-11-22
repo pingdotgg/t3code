@@ -1,4 +1,5 @@
 import type { ServerProvider } from "@t3tools/contracts";
+import { useMessages } from "gt-react";
 
 import { useNowMinute } from "../../hooks/useNowMinute";
 import { useClientSettings } from "../../hooks/useSettings";
@@ -15,9 +16,10 @@ export function ProviderLimitedUntil({
   readonly provider: Pick<ServerProvider, "limitedUntil"> | undefined;
   readonly className?: string;
 }) {
+  const messages = useMessages();
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(`${nowMinute}:00.000Z`);
-  const label = provider ? limitedUntilLabel(provider, nowMs, timestampFormat) : null;
+  const label = provider ? limitedUntilLabel(provider, nowMs, timestampFormat, messages) : null;
   return label === null ? null : <span className={className}>{label}</span>;
 }

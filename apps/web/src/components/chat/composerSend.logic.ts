@@ -27,6 +27,9 @@ export function composerDraftContentChanged(
     before.reviewComments !== after.reviewComments ||
     before.threadContexts !== after.threadContexts ||
     before.environmentContexts !== after.environmentContexts ||
+    (before.knowledgeContexts !== after.knowledgeContexts &&
+      ((before.knowledgeContexts?.length ?? 0) > 0 ||
+        (after.knowledgeContexts?.length ?? 0) > 0)) ||
     before.replyTo !== after.replyTo
   );
 }

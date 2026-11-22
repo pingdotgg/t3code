@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useRef, type ComponentProps } from "react";
@@ -18,15 +19,18 @@ export function GroupInviteDialog(
     readonly onClose: () => void;
   },
 ) {
+  const m = useMessages();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const inviteToGroup = useAtomCommand(orchestrationEnvironment.inviteToGroup);
   const { threadRef, onClose, ...picker } = props;
   return (
     <Dialog open={threadRef !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogPopup showCloseButton={false} initialFocus={searchInputRef} className="max-w-sm">
-        <DialogTitle className="sr-only">Invite a model</DialogTitle>
+        <DialogTitle className="sr-only">{m(msg("Invite a model"))}</DialogTitle>
         <DialogDescription className="sr-only">
-          The model you pick joins this thread. You can talk to everyone or to one with @.
+          {m(
+            msg("The model you pick joins this thread. You can talk to everyone or to one with @."),
+          )}
         </DialogDescription>
         <ModelPickerContent
           {...picker}
@@ -43,7 +47,9 @@ export function GroupInviteDialog(
                 threadId: threadRef.threadId,
                 modelSelection: createModelSelection(instanceId, model),
               },
-            }).then((result) => reportGroupCommandFailure("Could not invite that model", result));
+            }).then((result) =>
+              reportGroupCommandFailure(m(msg("Could not invite that model")), result),
+            );
           }}
         />
       </DialogPopup>

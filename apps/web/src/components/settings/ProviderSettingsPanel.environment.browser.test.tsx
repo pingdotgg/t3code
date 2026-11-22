@@ -17,6 +17,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import "~/index.css";
 import { act, render } from "../../../test/render";
+import { m } from "../../i18n/messages";
 
 const state = vi.hoisted(() => ({
   providers: null as unknown as Atom.Writable<ReadonlyArray<ServerProvider>>,
@@ -326,6 +327,7 @@ describe("EnvironmentProviderSettings routing", () => {
       consumer: { environmentId, label: "Remote device" },
       driver: "codex",
       environments: expect.any(Array),
+      resolve: m,
     });
     await act(async () =>
       reply(AsyncResult.failure(Cause.fail(new Error("No connected inference host.")))),
@@ -418,6 +420,7 @@ describe("EnvironmentProviderSettings routing", () => {
         consumer: { environmentId, label: "Remote device" },
         driver,
         environments: expect.any(Array),
+        resolve: m,
         preferredHostId: environmentId,
         preserveProviderEnabled: true,
       });

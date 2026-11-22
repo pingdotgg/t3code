@@ -22,7 +22,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
-import { useGT } from "gt-react-native";
+import { useGT, useMessages } from "gt-react-native";
 import { useMemo } from "react";
 import { Pressable, View, type ColorValue } from "react-native";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -87,6 +87,7 @@ export function ThreadHandoffRow(props: {
   surfaceColor: string;
 }) {
   const gt = useGT();
+  const m = useMessages();
   const { item } = props.projectedItem;
   const endpointsAtom = useMemo(
     () => handoffEndpointsAtom(props.environmentId, props.projectedItem),
@@ -94,7 +95,7 @@ export function ThreadHandoffRow(props: {
   );
   const endpoints = useAtomValue(endpointsAtom);
   if (item.type === "handoff" && item.contextRestart !== undefined) {
-    const receipt = contextRestartReceipt(item.contextRestart);
+    const receipt = contextRestartReceipt(item.contextRestart, m);
     return (
       <ThreadContextDivider
         label={`${receipt.label} · ${receipt.detail}`}

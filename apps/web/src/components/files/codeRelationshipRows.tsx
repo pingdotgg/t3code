@@ -1,4 +1,6 @@
 import type { ProjectCodeCoverage, ProjectCodeEdge } from "@t3tools/contracts";
+import { msg, T, useMessages } from "gt-react";
+import type { MessageResolver } from "~/i18n/messages";
 
 import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
@@ -9,9 +11,9 @@ export const GRADE_RANK: Record<ProjectCodeEdge["evidenceGrade"], number> = {
   "heuristic-candidate": 2,
 };
 export const GRADE_LABEL: Record<ProjectCodeEdge["evidenceGrade"], string> = {
-  "compiler-indexed": "compiler indexed",
-  "static-candidate": "static candidate",
-  "heuristic-candidate": "heuristic",
+  "compiler-indexed": msg("compiler indexed"),
+  "static-candidate": msg("static candidate"),
+  "heuristic-candidate": msg("heuristic"),
 };
 
 // Only languages seen in this checkout; `languages` is the analyzer's catalog.
@@ -19,26 +21,37 @@ function indexedLanguagesSuffix(coverage: ProjectCodeCoverage): string {
   return coverage.indexedLanguages?.length ? ` (${coverage.indexedLanguages.join(", ")})` : "";
 }
 
-function coverageSummary(coverage: ProjectCodeCoverage): string {
+function coverageSummary(coverage: ProjectCodeCoverage, resolve: MessageResolver): string {
   switch (coverage.state) {
     case "complete":
-      return `Static candidates · ${coverage.filesIndexed} files indexed${indexedLanguagesSuffix(coverage)}`;
+      return resolve(msg("Static candidates · {files} files indexed{languages}"), {
+        files: coverage.filesIndexed,
+        languages: indexedLanguagesSuffix(coverage),
+      });
     case "partial":
-      return `Static candidates · partial coverage, ${coverage.filesIndexed} of ${coverage.filesListed} files indexed${indexedLanguagesSuffix(coverage)}`;
+      return resolve(
+        msg("Static candidates · partial coverage, {indexed} of {listed} files indexed{languages}"),
+        {
+          indexed: coverage.filesIndexed,
+          listed: coverage.filesListed,
+          languages: indexedLanguagesSuffix(coverage),
+        },
+      );
     case "stale":
-      return "Stale · some returned files changed since indexing. Verify in source.";
+      return resolve(msg("Stale · some returned files changed since indexing. Verify in source."));
     case "unavailable":
-      return "The code index is not ready for this checkout.";
+      return resolve(msg("The code index is not ready for this checkout."));
   }
 }
 
 export function CoverageNote(props: { readonly coverage: ProjectCodeCoverage }) {
+  const m = useMessages();
   const { coverage } = props;
   const warn = coverage.state === "stale" || coverage.state === "unavailable";
   return (
     <details className="px-2 text-2xs text-muted-foreground">
       <summary className={cn("cursor-pointer select-none", warn && "text-warning-foreground")}>
-        {coverageSummary(coverage)}
+        {coverageSummary(coverage, m)}
       </summary>
       <ul className="mt-1 flex list-disc flex-col gap-0.5 ps-4">
         {coverage.limitations.map((limitation) => (
@@ -81,12 +94,13 @@ export function QueryState(props: {
   readonly onRetry: () => void;
   readonly pendingLabel?: string;
 }) {
+  const m = useMessages();
   if (props.error !== null) {
     return (
       <div role="alert" className="flex items-center gap-2 px-2 py-1 text-xs text-destructive">
         <span className="min-w-0 flex-1">{props.error}</span>
         <Button variant="ghost-muted" size="micro" onClick={props.onRetry}>
-          Retry
+          <T>Retry</T>
         </Button>
       </div>
     );
@@ -94,7 +108,7 @@ export function QueryState(props: {
   if (props.pending) {
     return (
       <p role="status" className="px-2 py-1 text-xs text-muted-foreground">
-        {props.pendingLabel ?? "Indexing… the first query on a checkout can take a while."}
+        {props.pendingLabel ?? m(msg("Indexing… the first query on a checkout can take a while."))}
       </p>
     );
   }

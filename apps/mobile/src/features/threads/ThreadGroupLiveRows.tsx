@@ -1,3 +1,4 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -30,6 +31,7 @@ function SeatLiveRow(props: {
   readonly parentRef: ScopedThreadRef;
   readonly seat: ThreadGroupSeat;
 }) {
+  const m = useMessages();
   const { seat, parentRef } = props;
   const ref = scopeThreadRef(parentRef.environmentId, seat.threadId);
   useAtomMount(environmentThreads.stateAtom(ref.environmentId, ref.threadId));
@@ -42,6 +44,7 @@ function SeatLiveRow(props: {
   const activity = seatActivityLabel(
     structure?.projection.turnItems ?? [],
     shell?.runtime?.activeRunId,
+    m,
   );
   const now = useVisibleSecondClock(true);
   return (
@@ -57,15 +60,15 @@ function SeatLiveRow(props: {
         )}
       </View>
       <Button
-        label="Work"
-        accessibilityLabel={`Open ${seat.label}'s work`}
+        label={m(msg("Work"))}
+        accessibilityLabel={m(msg("Open {name}’s work"), { name: seat.label })}
         tone="text"
         size="compact"
         onPress={() => openWork(ref)}
       />
       <Button
-        label="Stop"
-        accessibilityLabel={`Stop ${seat.label}`}
+        label={m(msg("Stop"))}
+        accessibilityLabel={m(msg("Stop {name}"), { name: seat.label })}
         tone="text"
         size="compact"
         disabled={!canStop}

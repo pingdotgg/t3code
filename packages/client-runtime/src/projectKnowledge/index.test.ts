@@ -128,7 +128,7 @@ it("traces trust from before the first recorded event through each feedback", ()
   ];
   expect(projectFactTrustPoints(history)).toEqual([0.5, 0.55, 0.45]);
   expect(projectFactTrustPoints(history.slice(1))).toEqual([0.5, 0.55, 0.45]);
-  expect(history.map(projectFactHistoryLabel)).toEqual([
+  expect(history.map((entry) => projectFactHistoryLabel(entry))).toEqual([
     "History begins at revision 1",
     "Marked helpful",
     "Marked unhelpful",

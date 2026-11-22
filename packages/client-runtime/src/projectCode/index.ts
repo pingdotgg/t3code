@@ -9,6 +9,8 @@ import {
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import {
@@ -125,20 +127,22 @@ export type ProjectCodeIndexBadge = {
 };
 
 const REFRESH_DETAIL = {
-  building: "A newer index is being built.",
-  failed: "The last refresh failed, so this index is still answering.",
+  building: msg("A newer index is being built."),
+  failed: msg("The last refresh failed, so this index is still answering."),
 } as const;
 
 const FIRST_INDEX_BADGE: Record<"building" | "failed", ProjectCodeIndexBadge> = {
   building: {
-    label: "Indexing",
+    label: msg("Indexing"),
     tone: "muted",
-    detail: "Building the first index for this checkout.",
+    detail: msg("Building the first index for this checkout."),
   },
   failed: {
-    label: "Index failed",
+    label: msg("Index failed"),
     tone: "warn",
-    detail: "Building the first index for this checkout failed. The next code query tries again.",
+    detail: msg(
+      "Building the first index for this checkout failed. The next code query tries again.",
+    ),
   },
 };
 
@@ -148,59 +152,81 @@ const FIRST_INDEX_BADGE: Record<"building" | "failed", ProjectCodeIndexBadge> = 
  */
 export function projectCodeIndexBadge(
   index: ProjectCodeIndexInfo | undefined,
+  resolve: MFunctionType = mFallback,
 ): ProjectCodeIndexBadge {
-  const badge = describeIndexState(index);
+  const badge = describeIndexState(index, resolve);
   if (index?.refresh === undefined) return badge;
-  if (index.state === "unindexed") return FIRST_INDEX_BADGE[index.refresh];
-  return { ...badge, detail: `${badge.detail} ${REFRESH_DETAIL[index.refresh]}` };
+  if (index.state === "unindexed") {
+    const first = FIRST_INDEX_BADGE[index.refresh];
+    return { ...first, label: resolve(first.label), detail: resolve(first.detail) };
+  }
+  return { ...badge, detail: `${badge.detail} ${resolve(REFRESH_DETAIL[index.refresh])}` };
 }
 
-function describeIndexState(index: ProjectCodeIndexInfo | undefined): ProjectCodeIndexBadge {
+function describeIndexState(
+  index: ProjectCodeIndexInfo | undefined,
+  resolve: MFunctionType,
+): ProjectCodeIndexBadge {
   if (index === undefined) {
     return {
-      label: "Unavailable",
+      label: resolve(msg("Unavailable")),
       tone: "muted",
-      detail: "This server does not report index freshness.",
+      detail: resolve(msg("This server does not report index freshness.")),
     };
   }
   const indexedAt = index.indexedCommit === null ? null : index.indexedCommit.slice(0, 7);
   switch (index.state) {
     case "ready":
       return {
-        label: "Ready",
+        label: resolve(msg("Ready")),
         tone: "ok",
         detail:
           indexedAt === null
-            ? `Index generation ${index.generation} matches the checkout.`
-            : `Index generation ${index.generation} matches the checkout at ${indexedAt}.`,
+            ? resolve(msg("Index generation {generation} matches the checkout."), {
+                generation: index.generation,
+              })
+            : resolve(msg("Index generation {generation} matches the checkout at {commit}."), {
+                generation: index.generation,
+                commit: indexedAt,
+              }),
       };
     case "partial":
       return {
-        label: "Partial",
+        label: resolve(msg("Partial")),
         tone: "warn",
-        detail: "Some files are not indexed or references are unresolved. Results may be missing.",
+        detail: resolve(
+          msg("Some files are not indexed or references are unresolved. Results may be missing."),
+        ),
       };
     case "stale": {
-      const files = `${index.changedFiles} ${index.changedFiles === 1 ? "file has" : "files have"} changed since indexing.`;
       const moved =
         indexedAt !== null && index.headCommit !== null && index.headCommit !== index.indexedCommit;
       return {
-        label: moved ? `Stale @${indexedAt}` : "Stale",
+        label: moved
+          ? resolve(msg("Stale @{commit}"), { commit: indexedAt })
+          : resolve(msg("Stale")),
         tone: "warn",
-        detail: `${files} Code queries refresh the index, and so do agent turns while automatic indexing is on.`,
+        detail: resolve(
+          msg(
+            "{count, plural, one {{count} file has changed since indexing.} other {{count} files have changed since indexing.}} Code queries refresh the index, and so do agent turns while automatic indexing is on.",
+          ),
+          { count: index.changedFiles },
+        ),
       };
     }
     case "indexing":
       return {
-        label: "Indexing",
+        label: resolve(msg("Indexing")),
         tone: "muted",
-        detail: "Another code query is indexing this checkout.",
+        detail: resolve(msg("Another code query is indexing this checkout.")),
       };
     case "unindexed":
       return {
-        label: "Not indexed",
+        label: resolve(msg("Not indexed")),
         tone: "muted",
-        detail: "This checkout has not been indexed yet. The first code query indexes it.",
+        detail: resolve(
+          msg("This checkout has not been indexed yet. The first code query indexes it."),
+        ),
       };
   }
 }

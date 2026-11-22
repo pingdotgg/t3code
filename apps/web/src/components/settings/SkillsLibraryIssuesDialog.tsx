@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import type { SkillsLibraryStatus } from "@t3tools/contracts";
 import {
   filterSkillsLibraryIssues,
@@ -27,9 +28,11 @@ export function SkillsLibraryIssuesDialog({
   readonly environmentLabel: string;
   readonly onClose: () => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const [query, setQuery] = useState("");
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const issues = filterSkillsLibraryIssues(skillsLibraryIssues(status), query);
+  const issues = filterSkillsLibraryIssues(skillsLibraryIssues(status, messages), query);
   return (
     <Dialog
       open
@@ -39,27 +42,34 @@ export function SkillsLibraryIssuesDialog({
     >
       <DialogPopup className="max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Skill issues</DialogTitle>
+          <DialogTitle>
+            <T>Skill issues</T>
+          </DialogTitle>
           <DialogDescription>
-            {environmentLabel} · {skillsLibraryIssueSummary(status) ?? "No issues"}
+            {environmentLabel} · {skillsLibraryIssueSummary(status, messages) ?? gt("No issues")}
           </DialogDescription>
           <Input
-            aria-label="Search skill issues"
-            placeholder="Search skills or paths"
+            aria-label={gt("Search skill issues")}
+            placeholder={gt("Search skills or paths")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
           <p className="text-xs text-muted-foreground" role="status">
-            {issues.length} {issues.length === 1 ? "issue" : "issues"}
-            {query.trim() ? " found" : ""}
+            {query.trim()
+              ? gt("{count, plural, one {{count} issue found} other {{count} issues found}}", {
+                  count: issues.length,
+                })
+              : gt("{count, plural, one {{count} issue} other {{count} issues}}", {
+                  count: issues.length,
+                })}
           </p>
         </DialogHeader>
         <DialogPanel>
           {issues.length === 0 ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               {query.trim()
-                ? "No issues match. Try another skill name or path."
-                : "No conflicts or name mismatches."}
+                ? gt("No issues match. Try another skill name or path.")
+                : gt("No conflicts or name mismatches.")}
             </p>
           ) : (
             <div className="divide-y rounded-lg border">

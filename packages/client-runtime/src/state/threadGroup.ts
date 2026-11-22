@@ -6,6 +6,8 @@ import type {
   RunId,
   ThreadId,
 } from "@t3tools/contracts";
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 
 import { threadRuntimeIsActive, type ThreadStructureTurnItem } from "./models.ts";
 
@@ -193,6 +195,7 @@ const short = (text: string) =>
 export function seatActivityLabel(
   items: ReadonlyArray<ThreadStructureTurnItem>,
   runId: RunId | null | undefined,
+  resolve: MFunctionType = mFallback,
 ): string {
   const current = items
     .filter((item) => item.runId === runId && ACTIVE_ITEM_STATUSES.has(item.status))
@@ -202,22 +205,26 @@ export function seatActivityLabel(
     );
   switch (current?.type) {
     case "command_execution":
-      return `running ${short(current.input.trim().split("\n")[0] ?? "a command")}`;
+      return resolve(msg("running {command}"), {
+        command: short(current.input.trim().split("\n")[0] ?? resolve(msg("a command"))),
+      });
     case "file_change":
-      return `editing ${short(current.fileName)}`;
+      return resolve(msg("editing {file}"), { file: short(current.fileName) });
     case "file_search":
-      return current.pattern ? `searching ${short(current.pattern)}` : "searching files";
+      return current.pattern
+        ? resolve(msg("searching {pattern}"), { pattern: short(current.pattern) })
+        : resolve(msg("searching files"));
     case "web_search":
-      return "searching the web";
+      return resolve(msg("searching the web"));
     case "approval_request":
-      return "waiting for approval";
+      return resolve(msg("waiting for approval"));
     case "user_input_request":
-      return "waiting for an answer";
+      return resolve(msg("waiting for an answer"));
     case "reasoning":
-      return "thinking";
+      return resolve(msg("thinking"));
     case "assistant_message":
-      return "writing a reply";
+      return resolve(msg("writing a reply"));
     default:
-      return "working";
+      return resolve(msg("working"));
   }
 }

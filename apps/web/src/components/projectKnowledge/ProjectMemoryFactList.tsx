@@ -1,4 +1,5 @@
 import type { KeyboardEvent, ReactNode } from "react";
+import { T, useGT, useMessages } from "gt-react";
 import type {
   KnowledgeMessageRef,
   KnowledgeSourceUnavailableReason,
@@ -8,6 +9,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  KNOWLEDGE_FACT_KIND_LABEL,
   isSupersededFact,
 } from "@t3tools/client-runtime/projectKnowledge";
 import { Badge } from "../ui/badge";
@@ -57,15 +59,17 @@ export function ProjectMemoryFactList(props: {
   readonly onToggleFact: (fact: ProjectFact) => void;
   readonly children?: ReactNode;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <div className="flex flex-col gap-3 px-2 pb-3" onKeyDown={moveRowFocus}>
       {props.facts.length > 0 ? (
-        <ul aria-label="Project facts" className="flex flex-col gap-0.5">
+        <ul aria-label={gt("Project facts")} className="flex flex-col gap-0.5">
           {props.facts.map((fact) => {
             const key = factRowKey(fact.id);
-            const status = factStatusBadge(fact);
+            const status = factStatusBadge(fact, m);
             const unavailable = props.unavailableReasons.get(fact.id);
-            const excerpt = (fact.content ?? "Forgotten fact").slice(0, ROW_EXCERPT_LENGTH);
+            const excerpt = (fact.content ?? gt("Forgotten fact")).slice(0, ROW_EXCERPT_LENGTH);
             return (
               <li key={fact.id} className="relative">
                 <button
@@ -82,18 +86,20 @@ export function ProjectMemoryFactList(props: {
                     </Badge>
                     {fact.origin.kind === "assisted" ? (
                       <Badge size="sm" variant="outline">
-                        Automatic
+                        <T context="automatically learned project fact">Automatic</T>
                       </Badge>
                     ) : null}
-                    <span className="text-muted-foreground">{fact.kind}</span>
+                    <span className="text-muted-foreground">
+                      {m(KNOWLEDGE_FACT_KIND_LABEL[fact.kind])}
+                    </span>
                     {unavailable ? (
                       <Badge size="sm" variant="warning">
-                        {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[unavailable]}
+                        {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[unavailable])}
                       </Badge>
                     ) : null}
                     {isSupersededFact(fact) && fact.supersededBy ? (
                       <Badge size="sm" variant="secondary">
-                        Superseded by {shortFactId(fact.supersededBy)}
+                        {gt("Superseded by {factId}", { factId: shortFactId(fact.supersededBy) })}
                       </Badge>
                     ) : null}
                   </span>
@@ -102,7 +108,9 @@ export function ProjectMemoryFactList(props: {
                 {fact.status !== "forgotten" ? (
                   <Checkbox
                     className="absolute end-3 top-3"
-                    aria-label={`Select for draft: ${excerpt.slice(0, 80)}`}
+                    aria-label={gt("Select for draft: {excerpt}", {
+                      excerpt: excerpt.slice(0, 80),
+                    })}
                     checked={props.selectedFactIds.has(fact.id)}
                     onCheckedChange={() => props.onToggleFact(fact)}
                   />
@@ -118,7 +126,7 @@ export function ProjectMemoryFactList(props: {
             id="project-memory-conversations"
             className="px-3 font-medium text-muted-foreground text-xs"
           >
-            Conversations
+            <T>Conversations</T>
           </h3>
           <ul className="flex flex-col gap-0.5">
             {props.messages.map((match) => {

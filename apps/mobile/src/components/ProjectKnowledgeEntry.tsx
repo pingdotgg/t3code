@@ -1,5 +1,6 @@
 import { uuidv4 } from "../lib/uuid";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { T, useGT, useMessages } from "gt-react-native";
 import { useIsFocused } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
 import { useAtomValue } from "@effect/atom-react";
@@ -150,6 +151,8 @@ function ProjectKnowledgeSheet(
     readonly onClose: () => void;
   },
 ) {
+  const gt = useGT();
+  const m = useMessages();
   const scope = { environmentId: props.environmentId, projectId: props.projectId };
   const draft = useComposerDraft(props.draftKey);
   const attached = draft.context?.records.find(
@@ -258,9 +261,9 @@ function ProjectKnowledgeSheet(
     if (busy) return;
     if (!editorDirty.current) return leave();
     Dialog.confirm({
-      title: "Discard fact changes?",
-      message: "Your unsaved fact changes will be lost.",
-      confirmText: "Discard",
+      title: gt("Discard fact changes?"),
+      message: gt("Your unsaved fact changes will be lost."),
+      confirmText: gt("Discard", { $context: "discard unsaved project fact changes" }),
       destructive: true,
       onConfirm: leave,
     });
@@ -361,7 +364,9 @@ function ProjectKnowledgeSheet(
       result.value.context.projectId !== scope.projectId
     ) {
       setError(
-        "The prepared evidence belongs to a different environment or project. Refresh and try again.",
+        gt(
+          "The prepared evidence belongs to a different environment or project. Refresh and try again.",
+        ),
       );
       return;
     }
@@ -374,7 +379,7 @@ function ProjectKnowledgeSheet(
       );
     }
     if (!insertComposerDraftContext(props.draftKey, reference)) {
-      setError("Remove a context item before attaching project memory.");
+      setError(gt("Remove a context item before attaching project memory."));
       return;
     }
     props.onClose();
@@ -412,8 +417,11 @@ function ProjectKnowledgeSheet(
       label:
         known?.label ??
         (selection.kind === "fact"
-          ? `Fact ${selection.factId.slice(0, 8)} · revision ${selection.revision}`
-          : `Message ${selection.messageId.slice(0, 8)}`),
+          ? gt("Fact {factId} · revision {revision}", {
+              factId: selection.factId.slice(0, 8),
+              revision: selection.revision,
+            })
+          : gt("Message {messageId}", { messageId: selection.messageId.slice(0, 8) })),
     };
   });
   const selectionState = (current: KnowledgeSelection) =>
@@ -421,14 +429,14 @@ function ProjectKnowledgeSheet(
 
   const title =
     page.kind === "list"
-      ? "Project memory"
+      ? gt("Project memory")
       : page.kind === "fact"
-        ? "Fact"
+        ? gt("Fact", { $context: "project fact" })
         : page.kind === "source"
-          ? "Source message"
+          ? gt("Source message")
           : page.kind === "remember"
-            ? "New fact"
-            : factEditorTitle(page.mode);
+            ? gt("New fact")
+            : factEditorTitle(page.mode, m);
 
   return (
     <Sheet
@@ -448,7 +456,12 @@ function ProjectKnowledgeSheet(
         >
           {stack.length > 1 ? (
             <View className="flex-row">
-              <Button label="Back" icon="chevron.left" tone="text" onPress={pop} />
+              <Button
+                label={gt("Back", { $context: "project memory navigation" })}
+                icon="chevron.left"
+                tone="text"
+                onPress={pop}
+              />
             </View>
           ) : null}
           {error ? (
@@ -508,10 +521,11 @@ function ProjectKnowledgeSheet(
                 }}
                 onForget={() =>
                   Dialog.confirm({
-                    title: "Forget this fact permanently?",
-                    message:
+                    title: gt("Forget this fact permanently?"),
+                    message: gt(
                       "Its content, history and every copy sent to agents are removed and cannot be restored. If the fact changed rather than became wrong, supersede it instead.",
-                    confirmText: "Forget",
+                    ),
+                    confirmText: gt("Forget", { $context: "permanently forget a project fact" }),
                     destructive: true,
                     onConfirm: () =>
                       void apply({ action: "forget", ...factMutation(inspectedFact) }),
@@ -528,7 +542,9 @@ function ProjectKnowledgeSheet(
                 {detail.error}
               </AppText>
             ) : (
-              <AppText>Reading fact…</AppText>
+              <AppText>
+                <T>Reading fact…</T>
+              </AppText>
             )
           ) : null}
           {page.kind === "source" ? (
@@ -563,7 +579,9 @@ function ProjectKnowledgeSheet(
                 {sourceQuery.error}
               </AppText>
             ) : (
-              <AppText>Reading message…</AppText>
+              <AppText>
+                <T>Reading message…</T>
+              </AppText>
             )
           ) : null}
           {page.kind === "editor" ? (
@@ -613,6 +631,7 @@ function RememberEditor(props: {
   readonly onCancel: () => void;
   readonly onDirtyChange: (dirty: boolean) => void;
 }) {
+  const gt = useGT();
   const mode: FactEditorMode =
     props.source.state === "available"
       ? {
@@ -624,7 +643,9 @@ function RememberEditor(props: {
           kind: "create",
           content: "",
           sources: [{ kind: "user" }],
-          note: "That message can no longer be read, so the fact will be saved as your own assertion.",
+          note: gt(
+            "That message can no longer be read, so the fact will be saved as your own assertion.",
+          ),
         };
   return (
     <ProjectKnowledgeFactEditor

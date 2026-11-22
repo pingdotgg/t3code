@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { T, useGT, useMessages } from "gt-react";
 import type {
   KnowledgeConflictHint,
   KnowledgeMessageRef,
@@ -10,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL,
+  KNOWLEDGE_FACT_STATUS_LABEL,
   knowledgeConflictHintLabel,
   knowledgeOriginLabel,
   memoryCurationRunLabel,
@@ -32,6 +34,7 @@ const SPARK_HEIGHT = 24;
 // Trust lives in [0, 1]; a fixed scale keeps a flat history visibly flat instead of
 // stretching noise across the full height.
 function TrustSparkline(props: { readonly points: ReadonlyArray<number> }) {
+  const gt = useGT();
   const first = props.points[0] ?? 0;
   const last = props.points.at(-1) ?? 0;
   const step = SPARK_WIDTH / (props.points.length - 1);
@@ -44,7 +47,10 @@ function TrustSparkline(props: { readonly points: ReadonlyArray<number> }) {
   return (
     <svg
       role="img"
-      aria-label={`Trust from ${first.toFixed(2)} to ${last.toFixed(2)}`}
+      aria-label={gt("Trust from {first} to {last}", {
+        first: first.toFixed(2),
+        last: last.toFixed(2),
+      })}
       width={SPARK_WIDTH}
       height={SPARK_HEIGHT}
       viewBox={`0 0 ${SPARK_WIDTH} ${SPARK_HEIGHT}`}
@@ -61,33 +67,39 @@ export function ConflictHintRow(props: {
   readonly currentContent: string | null;
   readonly onOpenFact: OpenFact | null;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [comparing, setComparing] = useState(false);
   return (
     <div className="flex flex-col gap-1">
       <p>
-        {knowledgeConflictHintLabel(props.hint)}: <q>{props.hint.excerpt}</q>
+        {knowledgeConflictHintLabel(props.hint, m)}: <q>{props.hint.excerpt}</q>
       </p>
       <div className="flex flex-wrap gap-2">
         {props.onOpenFact ? (
           <Button variant="link" size="sm" onClick={() => props.onOpenFact?.(props.hint.factId)}>
-            Open that fact
+            <T>Open that fact</T>
           </Button>
         ) : null}
         {props.currentContent !== null ? (
           <Button variant="ghost" size="sm" onClick={() => setComparing((value) => !value)}>
-            {comparing ? "Hide comparison" : "Compare"}
+            {comparing
+              ? gt("Hide comparison")
+              : gt("Compare", { $context: "compare project facts" })}
           </Button>
         ) : null}
       </div>
       {comparing && props.currentContent !== null ? (
         <div className="grid gap-2 sm:grid-cols-2">
           <figure className="rounded-md border p-2">
-            <figcaption className="text-xs text-muted-foreground">This fact</figcaption>
+            <figcaption className="text-xs text-muted-foreground">
+              <T>This fact</T>
+            </figcaption>
             <p className="whitespace-pre-wrap text-sm">{props.currentContent}</p>
           </figure>
           <figure className="rounded-md border p-2">
             <figcaption className="text-xs text-muted-foreground">
-              Existing fact, revision {props.hint.revision}
+              {gt("Existing fact, revision {revision}", { revision: props.hint.revision })}
             </figcaption>
             <p className="whitespace-pre-wrap text-sm">{props.hint.excerpt}</p>
           </figure>
@@ -102,14 +114,20 @@ function SummaryRow(props: {
   readonly summary: ProjectFactSummary;
   readonly onOpenFact: OpenFact;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   return (
     <div className="flex flex-wrap items-center gap-2">
       <span>
-        {props.label}: {props.summary.excerpt ?? "Forgotten fact"} (revision{" "}
-        {props.summary.revision}, {props.summary.status})
+        {gt("{label}: {excerpt} (revision {revision}, {status})", {
+          label: props.label,
+          excerpt: props.summary.excerpt ?? gt("Forgotten fact"),
+          revision: props.summary.revision,
+          status: m(KNOWLEDGE_FACT_STATUS_LABEL[props.summary.status]),
+        })}
       </span>
       <Button variant="link" size="sm" onClick={() => props.onOpenFact(props.summary.id)}>
-        Open
+        <T context="open a project fact">Open</T>
       </Button>
     </div>
   );
@@ -119,27 +137,34 @@ function HistoryRow(props: {
   readonly entry: ProjectFactHistoryEntry;
   readonly onOpenSource: (source: KnowledgeMessageRef) => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const { entry } = props;
   const showsContent =
     (entry.event === "created" || entry.event === "edited") && entry.content !== null;
   return (
     <li className="flex flex-col gap-1 border-l-2 pl-3">
       <div className="flex flex-wrap items-baseline gap-x-2">
-        <span className="font-medium">{projectFactHistoryLabel(entry)}</span>
+        <span className="font-medium">{projectFactHistoryLabel(entry, m)}</span>
         <span className="text-xs text-muted-foreground">
-          {knowledgeOriginLabel(entry.actor)} ·{" "}
+          {knowledgeOriginLabel(entry.actor, m)} ·{" "}
           <time dateTime={entry.at}>{historyTimeFormatter.format(new Date(entry.at))}</time>
         </span>
       </div>
       {entry.event === "feedback" && entry.trustBefore !== null ? (
         <p className="text-xs">
-          Trust {entry.trustBefore.toFixed(2)} → {entry.trustAfter.toFixed(2)}
+          {gt("Trust {before} → {after}", {
+            before: entry.trustBefore.toFixed(2),
+            after: entry.trustAfter.toFixed(2),
+          })}
         </p>
       ) : null}
       {entry.reason ? <p className="text-xs text-muted-foreground">{entry.reason}</p> : null}
       {showsContent ? (
         <details>
-          <summary className="text-xs">Revision {entry.revision} content</summary>
+          <summary className="text-xs">
+            {gt("Revision {revision} content", { revision: entry.revision })}
+          </summary>
           <p className="whitespace-pre-wrap text-sm">{entry.content}</p>
         </details>
       ) : null}
@@ -154,13 +179,13 @@ function HistoryRow(props: {
                 size="sm"
                 onClick={() => props.onOpenSource(source)}
               >
-                Message {source.messageId}
+                {gt("Message {messageId}", { messageId: source.messageId })}
               </Button>
             ) : null,
           )}
           {entry.sourceUnavailable !== null ? (
             <Badge variant="warning">
-              {KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[entry.sourceUnavailable]}
+              {m(KNOWLEDGE_SOURCE_UNAVAILABLE_LABEL[entry.sourceUnavailable])}
             </Badge>
           ) : null}
         </div>
@@ -174,16 +199,21 @@ export function ProjectFactRelations(props: {
   readonly detail: ProjectKnowledgeFactDetail;
   readonly onOpenFact: OpenFact;
 }) {
+  const gt = useGT();
   const { detail } = props;
   if (!detail.supersedes && !detail.supersededBy && detail.hints.length === 0) return null;
   return (
     <div className="flex flex-col gap-2">
       {detail.supersedes ? (
-        <SummaryRow label="Supersedes" summary={detail.supersedes} onOpenFact={props.onOpenFact} />
+        <SummaryRow
+          label={gt("Supersedes", { $context: "project fact relation" })}
+          summary={detail.supersedes}
+          onOpenFact={props.onOpenFact}
+        />
       ) : null}
       {detail.supersededBy ? (
         <SummaryRow
-          label="Superseded by"
+          label={gt("Superseded by", { $context: "project fact relation" })}
           summary={detail.supersededBy}
           onOpenFact={props.onOpenFact}
         />
@@ -204,20 +234,23 @@ export function ProjectFactHistory(props: {
   readonly detail: ProjectKnowledgeFactDetail;
   readonly onOpenSource: (source: KnowledgeMessageRef) => void;
 }) {
+  const gt = useGT();
   const { detail } = props;
   const trust = projectFactTrustPoints(detail.history);
   return (
     <section aria-labelledby="project-fact-history" className="flex flex-col gap-2">
       <div className="flex flex-wrap items-center gap-3">
         <h4 id="project-fact-history" className="font-medium text-sm">
-          History
+          <T context="project fact history">History</T>
         </h4>
         {trust.length >= 2 ? <TrustSparkline points={trust} /> : null}
       </div>
       {detail.historyTruncated ? (
-        <p className="text-xs text-muted-foreground">Earlier history not shown</p>
+        <p className="text-xs text-muted-foreground">
+          <T>Earlier history not shown</T>
+        </p>
       ) : null}
-      <ol aria-label="Fact history" className="flex flex-col gap-2">
+      <ol aria-label={gt("Fact history")} className="flex flex-col gap-2">
         {detail.history.map((entry) => (
           <HistoryRow key={entry.sequence} entry={entry} onOpenSource={props.onOpenSource} />
         ))}
@@ -227,18 +260,20 @@ export function ProjectFactHistory(props: {
 }
 
 export function KnowledgeHealthStrip(props: { readonly status: ProjectKnowledgeStatus }) {
+  const gt = useGT();
+  const m = useMessages();
   const { status } = props;
   const counters = [
-    ["Saved", status.counts.saved],
-    ["Superseded", status.counts.superseded],
-    ["Below recall threshold", status.belowRecallThreshold],
-    ["Retrievals", status.retrievals],
-    ["Helpful", status.feedback.helpful],
-    ["Unhelpful", status.feedback.unhelpful],
+    [gt("Saved", { $context: "project fact count" }), status.counts.saved],
+    [gt("Superseded", { $context: "project fact count" }), status.counts.superseded],
+    [gt("Below recall threshold"), status.belowRecallThreshold],
+    [gt("Retrievals", { $context: "project fact retrieval count" }), status.retrievals],
+    [gt("Helpful", { $context: "project fact feedback count" }), status.feedback.helpful],
+    [gt("Unhelpful", { $context: "project fact feedback count" }), status.feedback.unhelpful],
   ] as const;
   return (
     <div className="flex flex-col gap-1 text-xs text-muted-foreground">
-      <dl aria-label="Memory health" className="flex flex-wrap gap-x-3 gap-y-1">
+      <dl aria-label={gt("Memory health")} className="flex flex-wrap gap-x-3 gap-y-1">
         {counters.map(([label, value]) => (
           <div key={label} className="flex gap-1">
             <dt>{label}</dt>
@@ -248,7 +283,7 @@ export function KnowledgeHealthStrip(props: { readonly status: ProjectKnowledgeS
       </dl>
       {status.curation ? (
         <p>
-          {memoryCurationRunLabel(status.curation)}
+          {memoryCurationRunLabel(status.curation, m)}
           {status.curation.completedAt ? (
             <>
               {" · "}
