@@ -1,0 +1,50 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..a395fe8a4d2bf306fb3ef7b250f4f6927990b66f 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -879,8 +879,20 @@ function ownOption(options, key) {
+ function invalidSelection(name, value, options) {
+ 	return /* @__PURE__ */ new RangeError(`The ICU variable "${name}" value ${JSON.stringify(String(value))} did not match any of: ${Object.keys(options).join(", ")}.`);
+ }
++const resolvedLocaleCache = /* @__PURE__ */ new Map();
+ function resolveLocale(locales) {
+ 	if (typeof Intl.Locale === "undefined") return void 0;
++	const key = typeof locales === "string" ? locales : Array.isArray(locales) ? locales.join("\0") : void 0;
++	if (key === void 0) return resolveLocaleUncached(locales);
++	let resolved = resolvedLocaleCache.get(key);
++	if (resolved === void 0) {
++		resolved = resolveLocaleUncached(locales);
++		if (resolvedLocaleCache.size >= 1e3) resolvedLocaleCache.delete(resolvedLocaleCache.keys().next().value);
++		resolvedLocaleCache.set(key, resolved);
++	}
++	return resolved;
++}
++function resolveLocaleUncached(locales) {
+ 	const supported = Intl.NumberFormat.supportedLocalesOf(locales)[0];
+ 	const requested = typeof locales === "string" ? locales : locales[0];
+ 	return new Intl.Locale(supported ?? requested);
+diff --git a/dist/index.mjs b/dist/index.mjs
+index a54f2235227290efe761215b30da542562b2e77f..ae2cc9d9318e6ae7e3f1b6cca2092596185852e2 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -878,8 +878,20 @@ function ownOption(options, key) {
+ function invalidSelection(name, value, options) {
+ 	return /* @__PURE__ */ new RangeError(`The ICU variable "${name}" value ${JSON.stringify(String(value))} did not match any of: ${Object.keys(options).join(", ")}.`);
+ }
++const resolvedLocaleCache = /* @__PURE__ */ new Map();
+ function resolveLocale(locales) {
+ 	if (typeof Intl.Locale === "undefined") return void 0;
++	const key = typeof locales === "string" ? locales : Array.isArray(locales) ? locales.join("\0") : void 0;
++	if (key === void 0) return resolveLocaleUncached(locales);
++	let resolved = resolvedLocaleCache.get(key);
++	if (resolved === void 0) {
++		resolved = resolveLocaleUncached(locales);
++		if (resolvedLocaleCache.size >= 1e3) resolvedLocaleCache.delete(resolvedLocaleCache.keys().next().value);
++		resolvedLocaleCache.set(key, resolved);
++	}
++	return resolved;
++}
++function resolveLocaleUncached(locales) {
+ 	const supported = Intl.NumberFormat.supportedLocalesOf(locales)[0];
+ 	const requested = typeof locales === "string" ? locales : locales[0];
+ 	return new Intl.Locale(supported ?? requested);

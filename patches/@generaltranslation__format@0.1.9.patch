@@ -1,0 +1,88 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 205502bd60b7aec8f2609468986c6b0d010afd61..bbe5f52293f17a4170985d44dc01096d31ba86ae 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -246,8 +246,19 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
+ */
++const maxLocaleCacheSize = 1e3;
++const rememberLocaleResult = (cache, locale, value) => {
++	if (cache.size >= maxLocaleCacheSize) cache.delete(cache.keys().next().value);
++	cache.set(locale, value);
++	return value;
++};
++const validityCache = /* @__PURE__ */ new Map();
+ const _isValidLocale = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
++	const isValid = validityCache.get(locale);
++	return isValid === void 0 ? rememberLocaleResult(validityCache, locale, validateLocaleCode(locale)) : isValid;
++};
++const validateLocaleCode = (locale) => {
+ 	try {
+ 		const localeObject = require_IntlCache.intlCache.get("Locale", locale);
+ 		const { language, region, script } = localeObject;
+@@ -271,12 +282,17 @@ const _isValidLocale = (locale, customMapping) => {
+ * @returns {string} The standardized BCP 47 locale, or the input string if it cannot be standardized.
+ * @internal
+ */
++const standardizedLocaleCache = /* @__PURE__ */ new Map();
+ const _standardizeLocale = (locale) => {
++	const standardized = standardizedLocaleCache.get(locale);
++	if (standardized !== void 0) return standardized;
++	let result;
+ 	try {
+-		return Intl.getCanonicalLocales(locale)[0];
++		result = Intl.getCanonicalLocales(locale)[0];
+ 	} catch {
+-		return locale;
++		result = locale;
+ 	}
++	return typeof locale === "string" ? rememberLocaleResult(standardizedLocaleCache, locale, result) : result;
+ };
+ //#endregion
+ //#region src/locales/approvedLocales.ts
+diff --git a/dist/index.mjs b/dist/index.mjs
+index e36debccece9da0c1f015a1ffaa8bc3f5f01a055..6125ecc74fb71e397517e9252ef1869e9cd14c4b 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -245,8 +245,19 @@ const isCustomLanguage = (language) => {
+ * @returns {boolean} True if the BCP 47 code is valid, false otherwise.
+ * @internal
+ */
++const maxLocaleCacheSize = 1e3;
++const rememberLocaleResult = (cache, locale, value) => {
++	if (cache.size >= maxLocaleCacheSize) cache.delete(cache.keys().next().value);
++	cache.set(locale, value);
++	return value;
++};
++const validityCache = /* @__PURE__ */ new Map();
+ const _isValidLocale = (locale, customMapping) => {
+ 	locale = getCustomLocaleCode(customMapping, locale) || locale;
++	const isValid = validityCache.get(locale);
++	return isValid === void 0 ? rememberLocaleResult(validityCache, locale, validateLocaleCode(locale)) : isValid;
++};
++const validateLocaleCode = (locale) => {
+ 	try {
+ 		const localeObject = intlCache.get("Locale", locale);
+ 		const { language, region, script } = localeObject;
+@@ -270,12 +281,17 @@ const _isValidLocale = (locale, customMapping) => {
+ * @returns {string} The standardized BCP 47 locale, or the input string if it cannot be standardized.
+ * @internal
+ */
++const standardizedLocaleCache = /* @__PURE__ */ new Map();
+ const _standardizeLocale = (locale) => {
++	const standardized = standardizedLocaleCache.get(locale);
++	if (standardized !== void 0) return standardized;
++	let result;
+ 	try {
+-		return Intl.getCanonicalLocales(locale)[0];
++		result = Intl.getCanonicalLocales(locale)[0];
+ 	} catch {
+-		return locale;
++		result = locale;
+ 	}
++	return typeof locale === "string" ? rememberLocaleResult(standardizedLocaleCache, locale, result) : result;
+ };
+ //#endregion
+ //#region src/locales/approvedLocales.ts

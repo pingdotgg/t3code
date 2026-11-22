@@ -288,6 +288,8 @@ overrides:
   '@pierre/diffs': 1.7.0-beta.4
   '@react-native-menu/menu': 2.0.0
   '@react-navigation/native-stack': 7.21.0
+  '@generaltranslation/format': 0.1.9
+  '@generaltranslation/icu': 0.1.2
   dbus-next: 0.10.2
   node-pty: 1.2.0-beta.15
   react-native-gesture-handler: 3.5.0
@@ -369,6 +371,8 @@ patchedDependencies:
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
+  '@generaltranslation/format@0.1.9': 59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d
+  '@generaltranslation/icu@0.1.2': df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f
   '@legendapp/list@3.7.3': 85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
@@ -13118,10 +13122,12 @@ packages:
   yuku-core@0.19.0:
     resolution: {integrity: sha512-kYK9e1XdfirNhkipzW0wmMcSWcVF/CWnuugodfVYRCUwvoBefweL9HzB96OiKEhsx78V5WbUxbJqlizMX869Qg==}
     engines: {node: '>=14.18.0'}
+    deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
 
   yuku-parser@0.19.0:
     resolution: {integrity: sha512-XrBh9ZiQK5mJVRxZBAvD6LwRyAYrK3MFtH3+onyuxFL5hFD44EC3QOmIC1FjTj6H2MMwq46/NAI+NZxLZPZgxg==}
     engines: {node: '>=14.18.0'}
+    deprecated: 'Yuku is now one package with one core. Use "yuku" instead: https://yuku.fyi/javascript/. Existing installs keep working but get no more fixes.'
 
   zod-to-json-schema@3.25.2:
     resolution: {integrity: sha512-O/PgfnpT1xKSDeQYSCfRI5Gy3hPf91mKVDuYLUHZJMiDFptvP41MSnWofm8dnCm0256ZNfZIM7DSzuSMAFnjHA==}
@@ -15357,11 +15363,11 @@ snapshots:
 
   '@generaltranslation/api@0.5.6': {}
 
-  '@generaltranslation/format@0.1.9':
+  '@generaltranslation/format@0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)':
     dependencies:
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
 
-  '@generaltranslation/icu@0.1.2': {}
+  '@generaltranslation/icu@0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)': {}
 
   '@generaltranslation/python-extractor@0.2.64':
     dependencies:
@@ -15370,7 +15376,7 @@ snapshots:
 
   '@generaltranslation/react-core@11.4.18(react@19.3.0)':
     dependencies:
-      '@generaltranslation/format': 0.1.9
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
       generaltranslation: 9.5.9
       gt-i18n: 1.0.40
       react: 19.3.0
@@ -15384,7 +15390,7 @@ snapshots:
       '@babel/parser': 7.29.8
       '@babel/traverse': 7.29.7(supports-color@8.1.1)
       '@babel/types': 7.29.8
-      '@generaltranslation/format': 0.1.9
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
       '@vue/shared': 3.5.45
       enhanced-resolve: 5.24.5
       entities: 7.0.1
@@ -19991,8 +19997,8 @@ snapshots:
   generaltranslation@9.5.9:
     dependencies:
       '@generaltranslation/api': 0.5.6
-      '@generaltranslation/format': 0.1.9
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
+      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
       '@noble/hashes': 2.4.0
 
   gensync@1.0.0-beta.2: {}
@@ -20094,7 +20100,7 @@ snapshots:
 
   gt-i18n@1.0.40:
     dependencies:
-      '@generaltranslation/format': 0.1.9
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
       generaltranslation: 9.5.9
 
   gt-react-native@11.4.18(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
@@ -20107,7 +20113,7 @@ snapshots:
       '@formatjs/intl-numberformat': 8.15.6
       '@formatjs/intl-pluralrules': 5.4.6
       '@formatjs/intl-relativetimeformat': 11.4.13
-      '@generaltranslation/format': 0.1.9
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
       '@generaltranslation/react-core': 11.4.18(react@19.3.0)
       '@generaltranslation/supported-locales': 2.1.45
       generaltranslation: 9.5.9
@@ -20145,8 +20151,8 @@ snapshots:
       '@babel/traverse': 7.29.7(supports-color@8.1.1)
       '@babel/types': 7.29.8
       '@clack/prompts': 1.0.0-alpha.6
-      '@generaltranslation/format': 0.1.9
-      '@generaltranslation/icu': 0.1.2
+      '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
+      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
       '@generaltranslation/python-extractor': 0.2.64
       '@generaltranslation/supported-locales': 2.1.45
       '@generaltranslation/vue-extractor': 0.1.23(supports-color@8.1.1)
