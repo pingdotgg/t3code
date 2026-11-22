@@ -18,6 +18,18 @@ import {
   requireDesktopTelemetryWriteProgress,
 } from "./DesktopTelemetryReceiver.ts";
 
+const PRIVATE_ROOT = `-----BEGIN CERTIFICATE-----
+MIIBoDCCAUWgAwIBAgIUJDvEBnGHOGPw0VhT8wjTRp0+2NcwCgYIKoZIzj0EAwIw
+JDEiMCAGA1UEAwwZVDMgQ29kZSB0ZXN0IHByaXZhdGUgcm9vdDAgFw0yNjExMjIy
+MzA5MTVaGA8yMTI2MTAyOTIzMDkxNVowJDEiMCAGA1UEAwwZVDMgQ29kZSB0ZXN0
+IHByaXZhdGUgcm9vdDBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABAItJggI0Ln1
+RcMHv22cPrQjJmdxkGDA3BkOITg7PNi/C00/yWlcb4lYcdn2PFW2cJjJWEoIZXxX
+yjd+pHt75e+jUzBRMB0GA1UdDgQWBBRCkSnvamUrxEghge6B5136UYt7rDAfBgNV
+HSMEGDAWgBRCkSnvamUrxEghge6B5136UYt7rDAPBgNVHRMBAf8EBTADAQH/MAoG
+CCqGSM49BAMCA0kAMEYCIQDyo/NmQL9achyOIIa4dsl7TQsadzc8u7N7zLdMhi2Q
+xAIhAO7C0ibQMSFThRnLQQs62QnExAicIinCp+NMQqlsr6QX
+-----END CERTIFICATE-----`;
+
 describe("DesktopTelemetryReceiver", () => {
   it.live(
     "preserves system and bundled roots when the first snapshot withdraws overlapping extras",
@@ -76,6 +88,55 @@ NodeAssert.deepEqual(fingerprints(NodeTls.getCACertificates("default")), expecte
         );
         expect(result.exitCode, result.stderr).toBe(0);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("keeps the launch environment's private CA when the shell does not set one", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const certificatePath = path.join(directory, "private-root.pem");
+      yield* fs.writeFileString(certificatePath, PRIVATE_ROOT);
+      const child = yield* spawner.spawn(
+        ChildProcess.make(
+          process.execPath,
+          [
+            "--input-type=module",
+            "--eval",
+            `
+import * as NodeAssert from "node:assert/strict";
+import * as NodeTls from "node:tls";
+import * as Effect from "effect/Effect";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { makeApplyDesktopShellEnvironmentSnapshot } from ${JSON.stringify(new URL("./DesktopTelemetryReceiver.ts", import.meta.url).href)};
+const isTrusted = () => NodeTls.getCACertificates("default").some((pem) => pem.trim() === ${JSON.stringify(PRIVATE_ROOT)});
+NodeAssert.ok(isTrusted());
+await Effect.runPromise(makeApplyDesktopShellEnvironmentSnapshot(process.env, process.platform)({
+  version: 1,
+  type: "shellEnvironment",
+  platform: process.platform,
+  discovered: true,
+  environment: { NODE_EXTRA_CA_CERTS: null },
+}).pipe(Effect.provide(NodeServices.layer)));
+NodeAssert.ok(isTrusted(), "the CA the server was launched with is no longer trusted");
+`,
+          ],
+          {
+            cwd: path.resolve(import.meta.dirname, "../.."),
+            env: { NODE_OPTIONS: "", NODE_EXTRA_CA_CERTS: certificatePath },
+          },
+        ),
+      );
+      const result = yield* Effect.all(
+        {
+          stderr: child.stderr.pipe(Stream.decodeText(), Stream.mkString),
+          exitCode: child.exitCode.pipe(Effect.map(Number)),
+        },
+        { concurrency: "unbounded" },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("updates live TLS trust when shell certificates arrive after startup", () =>
