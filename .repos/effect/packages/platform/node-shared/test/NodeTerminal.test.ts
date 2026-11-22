@@ -114,8 +114,12 @@ describe("NodeTerminal", { concurrent: false, timeout: 15_000 }, () => {
       assert.include(stderr, "RESULT \"apple\"")
     }))
 
-  it("does not install a readline interface until the terminal is used", () => {
-    assertResult("unused", "", "{\"dataListeners\":0}")
+  it("does not access stdio when building or disposing an unused layer", () => {
+    assertResult("unused", "", "{\"stdin\":0,\"stdout\":0}")
+  })
+
+  it("does not access stdin for output-only operations", () => {
+    assertResult("output", "", "{\"stdin\":0}")
   })
 
   it("fails a prompt with QuitError after piped input is exhausted", () => {
