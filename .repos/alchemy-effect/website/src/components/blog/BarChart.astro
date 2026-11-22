@@ -1,0 +1,221 @@
+---
+/**
+ * `<BarChart />` — server-rendered grouped horizontal bar chart for blog
+ * posts. Each row is one label with one bar per series. Styled with the
+ * brand tokens, so it follows the active theme.
+ *
+ * Usage in MDX:
+ *   <BarChart
+ *     title="Bundle size"
+ *     unit=" KB"
+ *     series={[{ name: "Official", tone: "official" }, { name: "distilled", tone: "distilled" }]}
+ *     rows={[{ label: "S3", values: [157, 61], note: "2.6× smaller" }]}
+ *   />
+ */
+type Tone = "official" | "distilled" | "strict" | "before";
+
+interface Props {
+  title: string;
+  caption?: string;
+  unit?: string;
+  decimals?: number;
+  log?: boolean;
+  /** Linear-scale maximum; longer bars are cut with a break mark. */
+  cap?: number;
+  series: ReadonlyArray<{ name: string; tone: Tone }>;
+  rows: ReadonlyArray<{ label: string; values: ReadonlyArray<number>; note?: string; /** Text shown instead of each value. */ labels?: ReadonlyArray<string> }>;
+}
+
+const { title, caption, unit = "", decimals = 1, log = false, cap, series, rows } = Astro.props;
+
+const W = 600;
+const LABEL_W = 170;
+const VALUE_W = 74;
+const BAR_W = W - LABEL_W - VALUE_W;
+const BAR_H = 16;
+const BAR_GAP = 3;
+const ROW_GAP = 16;
+const TOP = 12;
+
+const all = rows.flatMap((r) => r.values);
+const max = cap ?? Math.max(...all);
+const min = Math.min(...all);
+const logMin = Math.log10(min / 2);
+const scale = (v: number) =>
+  log
+    ? ((Math.log10(v) - logMin) / (Math.log10(max) - logMin)) * BAR_W
+    : (Math.min(v, max) / max) * BAR_W;
+
+const groupH = series.length * BAR_H + (series.length - 1) * BAR_GAP;
+const rowH = groupH + ROW_GAP;
+const H = TOP + rows.length * rowH;
+
+const fmt = (v: number) =>
+  `${v.toLocaleString("en-US", { maximumFractionDigits: decimals, minimumFractionDigits: decimals })}${unit}`;
+
+const label = `${title}. ${rows
+  .map((r) => `${r.label}: ${r.values.map((v, i) => `${series[i]!.name} ${r.labels?.[i] ?? fmt(v)}`).join(", ")}`)
+  .join("; ")}`;
+---
+
+<figure class="alc-bars" data-nosnippet>
+  <figcaption class="alc-bars__title">{title}</figcaption>
+  <ul class="alc-bars__legend">
+    {
+      series.map((s) => (
+        <li>
+          <span class={`alc-bars__swatch alc-bars__fill--${s.tone}`} />
+          {s.name}
+        </li>
+      ))
+    }
+  </ul>
+  <svg class="alc-bars__svg" viewBox={`0 0 ${W} ${H}`} role="img" aria-label={label}>
+    {
+      rows.map((row, r) => {
+        const y0 = TOP + r * rowH;
+        return (
+          <g>
+            <text class="alc-bars__label" x={LABEL_W - 14} y={y0 + groupH / 2 + (row.note ? -2 : 4)} text-anchor="end">
+              {row.label}
+            </text>
+            {row.note && (
+              <text class="alc-bars__note" x={LABEL_W - 14} y={y0 + groupH / 2 + 13} text-anchor="end">
+                {row.note}
+              </text>
+            )}
+            {row.values.map((v, i) => {
+              const y = y0 + i * (BAR_H + BAR_GAP);
+              const w = Math.max(2, scale(v));
+              return (
+                <g>
+                  <rect class={`alc-bars__fill--${series[i]!.tone}`} x={LABEL_W} y={y} width={w} height={BAR_H} rx="3" />
+                  {cap !== undefined && v > cap && (
+                    <path class="alc-bars__break" d={`M${LABEL_W + w - 26},${y - 2} l6,${BAR_H + 4} M${LABEL_W + w - 18},${y - 2} l6,${BAR_H + 4}`} />
+                  )}
+                  <text class="alc-bars__value" x={LABEL_W + w + 6} y={y + BAR_H - 3.5}>
+                    {row.labels?.[i] ?? fmt(v)}
+                  </text>
+                </g>
+              );
+            })}
+          </g>
+        );
+      })
+    }
+    <line class="alc-bars__axis" x1={LABEL_W} x2={LABEL_W} y1={TOP - 6} y2={H - ROW_GAP + 6} />
+  </svg>
+  {caption && <p class="alc-bars__caption">{caption}</p>}
+</figure>
+
+<style>
+  .alc-bars {
+    margin: 2rem 0;
+    padding: 1.25rem 1.25rem 1rem;
+    background: var(--alc-bg-elev-1);
+    border: 1px solid var(--alc-hairline-2);
+    border-radius: 10px;
+  }
+
+  .alc-bars__title {
+    font-family: var(--alc-font-sans);
+    font-weight: 700;
+    font-size: 1.05rem;
+    color: var(--alc-fg-1);
+  }
+
+  .alc-bars__legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+    margin: 0.5rem 0 0.75rem;
+    padding: 0;
+    list-style: none;
+    font-family: var(--alc-font-mono);
+    font-size: 0.78rem;
+    color: var(--alc-fg-2);
+  }
+
+  .alc-bars__legend li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0;
+  }
+
+  .alc-bars__swatch {
+    display: inline-block;
+    width: 0.8rem;
+    height: 0.8rem;
+    border-radius: 3px;
+  }
+
+  span.alc-bars__fill--official {
+    background: var(--alc-terracotta);
+  }
+  span.alc-bars__fill--distilled {
+    background: var(--alc-accent);
+  }
+  span.alc-bars__fill--strict {
+    background: var(--alc-info);
+  }
+  span.alc-bars__fill--before {
+    background: var(--alc-hairline-3);
+  }
+
+  .alc-bars__svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+  }
+
+  rect.alc-bars__fill--official {
+    fill: var(--alc-terracotta);
+  }
+  rect.alc-bars__fill--distilled {
+    fill: var(--alc-accent);
+  }
+  rect.alc-bars__fill--strict {
+    fill: var(--alc-info);
+  }
+  rect.alc-bars__fill--before {
+    fill: var(--alc-hairline-3);
+  }
+
+  .alc-bars__label {
+    font-family: var(--alc-font-mono);
+    font-size: 13.5px;
+    font-weight: 600;
+    fill: var(--alc-fg-1);
+  }
+
+  .alc-bars__note {
+    font-family: var(--alc-font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    fill: var(--alc-accent-text);
+  }
+
+  .alc-bars__value {
+    font-family: var(--alc-font-mono);
+    font-size: 12.5px;
+    fill: var(--alc-fg-2);
+  }
+
+  .alc-bars__break {
+    stroke: var(--alc-bg-elev-1);
+    stroke-width: 4;
+  }
+
+  .alc-bars__axis {
+    stroke: var(--alc-hairline-3);
+    stroke-width: 1;
+  }
+
+  .alc-bars__caption {
+    margin: 0.5rem 0 0;
+    font-size: 0.82rem;
+    color: var(--alc-fg-3);
+  }
+</style>

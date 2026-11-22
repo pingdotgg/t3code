@@ -8,6 +8,7 @@ import * as Path from "effect/Path";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { checkpointWorkspace } from "@t3tools/provider-testing/replayWorkspace";
 import { readProviderReplayTranscript } from "@t3tools/provider-testing/replayTranscript";
+import type { ProviderInstanceRegistry } from "../../provider/ProviderInstanceRegistry.ts";
 import { provideDeterministicTestRuntime } from "./DeterministicRuntime.ts";
 import { ORCHESTRATOR_REPLAY_FIXTURES } from "./fixtures/index.ts";
 import {
@@ -32,6 +33,7 @@ const DRIVERS_WITH_REPLAY_FIXTURE_FILES = new Set([
   "cursor",
   "fx",
   "grok",
+  "kiro",
   "muse",
   "opencode",
   "pi",
@@ -93,6 +95,8 @@ export interface ReplayFixtureCase {
   readonly buildInput: () => OrchestratorFixtureInput;
   readonly driver: ProviderOrchestratorReplayVariant;
   readonly transformTranscript?: (transcript: ProviderReplayTranscript) => ProviderReplayTranscript;
+  /** The instances the ingestor reads snapshots from, such as an endpoint behind a hub. */
+  readonly providerInstances?: Partial<ProviderInstanceRegistry["Service"]>;
 }
 
 export interface ReplayFixtureRun<
@@ -144,11 +148,12 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     },
   };
 
-  const result = yield* runOrchestratorV2ProviderReplayScenario(
-    scenario,
-    input.harness,
-    input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {},
-  ).pipe(provideDeterministicTestRuntime);
+  const result = yield* runOrchestratorV2ProviderReplayScenario(scenario, input.harness, {
+    ...(input.driver.runContinuationWorker === true ? { runContinuationWorker: true } : {}),
+    ...(input.providerInstances === undefined
+      ? {}
+      : { providerInstances: input.providerInstances }),
+  }).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
   assertProviderNativeSubagentRootTurns(result);
   const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;
@@ -173,7 +178,14 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
   const projection = result.projections.get(projectionThreadId);
   assert.isDefined(projection);
   const latestRun = projection.runs.at(-1);
-  assert.deepEqual(latestRun?.modelSelection, input.driver.modelSelection);
+  // A `set_model` step moves later runs to another model of the same instance.
+  const finalModel = fixtureInput.steps.findLast((step) => step.type === "set_model");
+  assert.deepEqual(
+    latestRun?.modelSelection,
+    finalModel?.type === "set_model"
+      ? { ...input.driver.modelSelection, model: finalModel.model }
+      : input.driver.modelSelection,
+  );
   if (projection.runs.some((run) => run.status === "completed")) {
     const threadStartCheckpoint = projection.checkpoints.find(
       (checkpoint) => checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null,

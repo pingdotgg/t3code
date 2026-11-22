@@ -1,16 +1,26 @@
-import { Toolbar } from "../../components/ui/Toolbar";
+import {
+  isFileDiffCollapsed,
+  withFileDiffFold,
+  type FileDiffFoldChoices,
+} from "@t3tools/client-runtime/pull-request-diff-fold";
+import {
+  parsePullRequestAnchor,
+  pullRequestAnchorMatchesUrl,
+  pullRequestDiffPathMatches,
+  pullRequestLinkCommit,
+  resolvePullRequestAnchorRange,
+  resolvePullRequestReviewAnchor,
+} from "@t3tools/shared/pullRequestAnchor";
+import { T, useGT, useMessages, Var } from "gt-react-native";
 import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
 import { Chip } from "../../components/ui/Chip";
 import { pullRequestTabOffset } from "./pullRequestTabScroll";
 import { guideFocusedRows, type GuideDiffFocus } from "./guide/guideDiffFocus";
 import { PullRequestGuideContent } from "./guide/PullRequestGuideScreen";
 import { useReviewGuidesEnabled } from "./guide/useReviewGuide";
-import {
-  filterPullRequestActivity,
-  DEFAULT_ACTIVITY_FILTER,
-  type ActivityFilter,
-} from "./pullRequestActivityFilter";
+import { filterPullRequestActivity, type ActivityFilter } from "./pullRequestActivityFilter";
 import { PullRequestActivityFilters } from "./PullRequestActivityFilters";
+import { usePullRequestActivityFilter } from "./usePullRequestActivityFilter";
 import type { LegendListRef } from "@legendapp/list/react-native";
 import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import Animated from "react-native-reanimated";
@@ -27,12 +37,11 @@ import {
   pullRequestActionLabel,
 } from "./pullRequestActions";
 import * as Clipboard from "expo-clipboard";
-import { Menu } from "../../components/ui/Menu";
-import { IconButton } from "../../components/ui/IconButton";
 import { Button } from "../../components/ui/Button";
 import { usePullRequestReviewDraft } from "./usePullRequestReviewDraft";
 import { usePullRequestFilesViewed } from "./usePullRequestFilesViewed";
 import { usePullRequestPermissions } from "./usePullRequestPermissions";
+import { usePullRequestDescription } from "./usePullRequestDescription";
 import { usePullRequestAction } from "./usePullRequestAction";
 import { annotatePullRequestDiff, reviewPosition } from "./pullRequestDiffComments";
 import { usePullRequestFileFilter } from "./usePullRequestFileFilter";
@@ -42,40 +51,44 @@ import {
 } from "./pullRequestDiffDebug";
 import { usePullRequestDiffHighlightFiles } from "./usePullRequestDiffHighlightFiles";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
-import { useFocusEffect, useNavigation, type StaticScreenProps } from "@react-navigation/native";
+import {
+  useFocusEffect,
+  useNavigation,
+  useRoute,
+  type StaticScreenProps,
+} from "@react-navigation/native";
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack";
 import { RegistryContext, useAtomRefresh, useAtomValue } from "@effect/atom-react";
+import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import { pullRequestReviewKey } from "./pullRequestReviewDrafts";
-import { type PullRequestDetail, type PullRequestListEntry } from "@t3tools/contracts";
+import {
+  pullRequestConversationThreads,
+  type PullRequestDetail,
+  type PullRequestListEntry,
+  type PullRequestSummary,
+} from "@t3tools/contracts";
 import { PullRequestOverviewLoading } from "./PullRequestOverviewLoading";
 import { copyPullRequestLink, sharePullRequestLink } from "./pullRequestLink";
 import { pullRequestStatus } from "./pullRequestStatus";
 import { use, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
-import {
-  Linking,
-  Platform,
-  Pressable,
-  RefreshControl,
-  ScrollView,
-  type ScrollViewProps,
-  StyleSheet,
-  View,
-} from "react-native";
-import { NativeScrollViewMarker as ScrollViewMarker } from "../../native/NativeScrollViewMarker";
+import { Platform, Pressable, StyleSheet, View } from "react-native";
+import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
+import { RefreshControl } from "../../components/ui/RefreshControl";
+import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
-import { AndroidScreenHeader } from "../../components/ui/AndroidScreenHeader";
+import { AppBar, type AppBarMenu } from "../../components/ui/AppBar";
+import { useContentTopInset } from "../../components/ui/useBarInset";
 import { useAndroidControlSizing } from "../../components/ui/useAndroidControlSizing";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
-import { AndroidWorkspaceSidebarButton } from "../layout/workspace-sidebar-toolbar";
-import { useWorkspaceSidebarHeaderItem } from "../layout/useWorkspaceSidebarHeaderItem";
-import { useAndroidWorkspaceBack } from "../workspace/useAndroidWorkspaceNavigation";
+import { useAndroidWorkspaceBack } from "../layout/workspace/useAndroidWorkspaceNavigation";
 import { EmptyState } from "../../components/ui/EmptyState";
 import { SegmentedControl } from "../../components/ui/SegmentedControl";
 import { SymbolView } from "../../components/ui/AppSymbol";
-import { relativeTime } from "../../lib/time";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { PullRequestGlyph } from "./pullRequestGlyphs";
+import { ScreenContent } from "../../components/ui/ScreenContent";
+import { RelativeTime } from "../../components/RelativeTime";
 import { usePullRequestConnected } from "./usePullRequestConnected";
 import { usePullRequestLiveChecks } from "./usePullRequestLiveChecks";
 import { pullRequestLabelColor } from "./pullRequestList";
@@ -97,7 +110,11 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { useAppearanceCodeSurface } from "../settings/appearance/useAppearanceCodeSurface";
 import { useNativeReviewDiffBridge } from "../review/useNativeReviewDiffBridge";
 import { pullRequestTimelineRows } from "./PullRequestTimeline";
-import { PullRequestActionToolbar, PullRequestCardGroup } from "./PullRequestControls";
+import {
+  PullRequestActionToolbar,
+  PullRequestCardGroup,
+  usePullRequestVerticalControls,
+} from "./PullRequestControls";
 import {
   pullRequestTarget as requestTarget,
   usePullRequestDiff,
@@ -125,53 +142,68 @@ import { PullRequestMergeControls } from "./PullRequestMergeControls";
 import { PullRequestStackCard } from "./PullRequestStackCard";
 import { usePullRequestStack, type PullRequestStackState } from "./usePullRequestStack";
 import { usePullRequestEnvironmentFallback } from "./usePullRequestEnvironmentFallback";
-import { pullRequestFileJumpScope, subscribePullRequestFileJump } from "./pullRequestFileJump";
-import {
-  capitalizeTerm,
-  sourceControlClients,
-} from "@t3tools/client-runtime/source-control-clients";
-
-const EMPTY_IDS: readonly string[] = [];
-
-function PullRequestTabScrollView(props: ScrollViewProps) {
-  return (
-    <ScrollViewMarker style={{ flex: 1 }}>
-      <ScrollView {...props} />
-    </ScrollViewMarker>
-  );
-}
+import { subscribePullRequestFileJump } from "./pullRequestFileJump";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 
 function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityFilter) {
   const navigation = useNavigation();
+  const messages = useMessages();
   const result = useEnvironmentQuery(composerPullRequests.activity(requestTarget(params)));
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(params)));
   const permissions = usePullRequestPermissions(params, detail.data);
   const filtered = result.data ? filterPullRequestActivity(result.data, filter) : null;
   const rows = (() => {
     if (!filtered) return [];
-    const rows = pullRequestTimelineRows(filtered.activity, params, navigation, {
-      permissions,
-      onChanged: result.refresh,
-    });
-    if (filter.newestFirst) {
-      const notice = rows.at(-1)?.key === "truncated" ? rows.pop() : undefined;
-      rows.reverse();
-      if (notice) rows.push(notice);
-    }
+    const rows = pullRequestTimelineRows(
+      filtered.activity,
+      params,
+      navigation,
+      { permissions, onChanged: result.refresh },
+      filter.newestFirst,
+      messages,
+    );
     if (!rows.length)
       rows.push({
         key: "empty",
         date: "",
         content: (
           <Text className="py-6 text-sm text-foreground-muted">
-            No activity matches these filters.
+            <T>No activity matches these filters.</T>
           </Text>
         ),
       });
     return rows;
   })();
+  const location = parsePullRequestAnchor(params.navigationUrl);
+  const anchor =
+    location?.kind !== "timeline"
+      ? null
+      : result.data
+        ? resolvePullRequestReviewAnchor(
+            location.anchor,
+            result.data.comments,
+            result.data.reviewThreads,
+          )
+        : location.anchor;
+  const targetComment = anchor
+    ? result.data?.comments.find((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url))
+    : null;
+  const targetThread = anchor
+    ? result.data &&
+      pullRequestConversationThreads(result.data).find((thread) =>
+        thread.comments.some((comment) => pullRequestAnchorMatchesUrl(anchor, comment.url)),
+      )
+    : null;
+  const targetKey = targetThread
+    ? `discussion:${targetThread.id}`
+    : targetComment
+      ? `comment:${targetComment.id}`
+      : null;
   return {
     rows,
+    targetKey,
+    targetThread,
     hiddenCount: filtered?.hiddenCount ?? 0,
     pending: result.isPending && !result.data,
     error: result.error,
@@ -179,11 +211,13 @@ function usePullRequestActivityRows(params: PullRequestParams, filter: ActivityF
 }
 
 function PullRequestIdentity(props: {
-  readonly pr: PullRequestDetail | PullRequestListEntry;
+  readonly pr: PullRequestDetail | PullRequestListEntry | PullRequestSummary;
   readonly params: PullRequestParams;
 }) {
   const { pr } = props;
-  const status = pullRequestStatus(pr);
+  const gt = useGT();
+  const messages = useMessages();
+  const status = pullRequestStatus({ state: pr.state, isDraft: pr.isDraft === true }, messages);
   return (
     <View className="gap-3">
       <View className="flex-row flex-wrap items-center gap-2">
@@ -195,10 +229,22 @@ function PullRequestIdentity(props: {
             <Text className={`text-xs font-t3-medium ${status.text}`}>{status.label}</Text>
           </View>
         )}
-        <PullRequestDiffStats additions={pr.additions} deletions={pr.deletions} compact />
-        {"changedFiles" in pr ? (
+        {"visibility" in pr && pr.visibility === "private" ? (
+          <View className="flex-row items-center gap-1">
+            <SymbolView
+              name={PullRequestGlyph.private}
+              size={12}
+              tintColorClassName="accent-icon-muted"
+            />
+            <Text className="text-xs font-t3-medium text-foreground-muted">{gt("Private")}</Text>
+          </View>
+        ) : null}
+        <PullRequestDiffStats additions={pr.additions ?? 0} deletions={pr.deletions ?? 0} compact />
+        {"changedFiles" in pr && pr.changedFiles !== undefined ? (
           <Text className="text-2xs text-foreground-muted">
-            {pr.changedFiles} {pr.changedFiles === 1 ? "file" : "files"}
+            {gt("{count, plural, one {{count} file} other {{count} files}}", {
+              count: pr.changedFiles,
+            })}
           </Text>
         ) : (
           <View className="h-3 w-12 rounded bg-subtle-strong" />
@@ -208,18 +254,24 @@ function PullRequestIdentity(props: {
         {pr.title}
       </Text>
       <View className="flex-row items-center gap-2">
-        <PullRequestAvatar actor={pr.author} size={20} />
+        <PullRequestAvatar actor={pr.author ?? null} size={20} />
         <Text className="min-w-0 flex-1 text-xs font-t3-medium" numberOfLines={1}>
-          {pr.author?.login ?? "Unknown author"}
+          {pr.author?.login ?? gt("Unknown author")}
         </Text>
         <Text className="shrink text-right text-2xs text-foreground-muted" numberOfLines={1}>
-          Updated {relativeTime(pr.updatedAt)} ago
+          <T>
+            Updated{" "}
+            <Var>
+              <RelativeTime timestamp={pr.updatedAt} />
+            </Var>{" "}
+            ago
+          </T>
         </Text>
       </View>
       <View className="flex-row items-start gap-1.5">
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Copy base branch ${pr.baseBranch}`}
+          accessibilityLabel={gt("Copy base branch {branch}", { branch: pr.baseBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.baseBranch)}
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
@@ -231,7 +283,7 @@ function PullRequestIdentity(props: {
         </View>
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`Copy head branch ${pr.headBranch}`}
+          accessibilityLabel={gt("Copy head branch {branch}", { branch: pr.headBranch })}
           onPress={() => void Clipboard.setStringAsync(pr.headBranch)}
           className="min-w-0 shrink active:opacity-70"
           hitSlop={8}
@@ -248,6 +300,7 @@ function PullRequestLabels(props: {
   readonly params: PullRequestParams;
 }) {
   const navigation = useNavigation();
+  const gt = useGT();
   const connected = usePullRequestConnected(props.params.environmentId);
   const canWrite = useAtomValue(
     composerPullRequests.setLabels.permissionAtom(requestTarget(props.params).environmentId),
@@ -280,10 +333,14 @@ function PullRequestLabels(props: {
       })}
       {editable ? (
         <Chip
-          label={props.pr.labels.length ? "Edit" : "Add labels"}
+          label={
+            props.pr.labels.length
+              ? gt("Edit", { $context: "verb, edit labels" })
+              : gt("Add labels")
+          }
           icon="tag"
           size="small"
-          accessibilityLabel="Edit labels"
+          accessibilityLabel={gt("Edit labels")}
           onPress={() => navigation.navigate("PullRequestLabels", props.params)}
         />
       ) : null}
@@ -293,6 +350,7 @@ function PullRequestLabels(props: {
 
 function PullRequestOverview(props: {
   readonly pr: PullRequestDetail;
+  readonly description: ReturnType<typeof usePullRequestDescription>;
   readonly params: PullRequestParams;
   readonly stack: PullRequestStackState;
   readonly onDescriptionLayout: (y: number) => void;
@@ -320,10 +378,13 @@ function PullRequestOverview(props: {
         onLayout={(event) => props.onDescriptionLayout(event.nativeEvent.layout.y)}
       >
         <PullRequestDescription
-          markdown={pr.body}
-          onCollapse={props.onDescriptionCollapse}
-          expanded={props.descriptionExpanded}
-          onExpandedChange={props.onDescriptionExpandedChange}
+          markdown={props.description.body}
+          onTaskListChange={props.description.toggleTask}
+          collapse={{
+            expanded: props.descriptionExpanded,
+            onExpandedChange: props.onDescriptionExpandedChange,
+            onCollapse: props.onDescriptionCollapse,
+          }}
           footer={<PullRequestReactions params={props.params} />}
         />
       </Animated.View>
@@ -337,18 +398,23 @@ function usePullRequestToolbarHeight(bottomInset: number) {
 }
 
 export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestParams>) {
-  const returnToList = useAndroidWorkspaceBack("pullRequests");
+  const returnToList = useAndroidWorkspaceBack();
   const { layout } = useAdaptiveWorkspaceLayout();
-  const sidebarHeaderItem = useWorkspaceSidebarHeaderItem();
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
-  // Only iOS lists run under the bars; Android lists start below the header.
-  const barInsets = Platform.OS === "ios" ? insets : { top: 0, bottom: 0 };
+  const contentTopInset = useContentTopInset();
+  // Only iOS lists run under the bottom safe area; Android's floating toolbar pads its own.
+  const contentBottomInset = Platform.OS === "ios" ? insets.bottom : 0;
   const params = route.params;
   usePullRequestEnvironmentFallback(params);
   const connected = usePullRequestConnected(params.environmentId);
-  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">("overview");
+  const [chosenSection, setSection] = useState<"overview" | "activity" | "guide">(() => {
+    const kind = parsePullRequestAnchor(params.navigationUrl)?.kind;
+    return kind === "timeline" || kind === "commits" ? "activity" : "overview";
+  });
   const requestedSection = useRef(chosenSection);
   const [listAnimationsReady, setListAnimationsReady] = useState(false);
   const [descriptionExpanded, setDescriptionExpanded] = useState(false);
@@ -359,14 +425,15 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const shown = (tab: typeof chosenSection) =>
     !guidesEnabled && tab === "guide" ? "overview" : tab;
   const section = shown(chosenSection);
-  const [activityFilter, setActivityFilter] = useState<ActivityFilter>(DEFAULT_ACTIVITY_FILTER);
+  const activity = usePullRequestActivityFilter(parsePullRequestAnchor(params.navigationUrl)?.kind);
+  const activityFilter = activity.filter;
   const activityContent = usePullRequestActivityRows(params, activityFilter);
   const scrollOffsets = useRef<Record<string, number>>({});
   // The offset of the tab last shown, and which tab that was: a tab standing in for a hidden guide
   // has its own offset, which only its next scroll would record here.
   const currentScrollOffset = useRef<{ tab: typeof section; offset: number }>({
     tab: "overview",
-    offset: -barInsets.top,
+    offset: -contentTopInset,
   });
   const bodyY = useRef(0);
   const [headerHeight, setHeaderHeight] = useState(0);
@@ -390,17 +457,84 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     const current =
       currentScrollOffset.current.tab === from
         ? currentScrollOffset.current.offset
-        : (scrollOffsets.current[from] ?? -barInsets.top);
+        : (scrollOffsets.current[from] ?? -contentTopInset);
     scrollOffsets.current[section] = current;
-    const headerEnd = Math.max(-barInsets.top, bodyY.current - barInsets.top);
+    const headerEnd = Math.max(-contentTopInset, bodyY.current - contentTopInset);
     const offset = pullRequestTabOffset(current, scrollOffsets.current[next], headerEnd);
     requestedSection.current = next;
     scrollOffsets.current[next] = offset;
     currentScrollOffset.current = { tab: next, offset };
-    // LegendList clamps to its measured rows, which leave out the short-tab minHeight below.
-    scrollViews.current[next]?.getNativeScrollRef().scrollTo({ y: offset, animated: false });
+    scrollViews.current[next]?.scrollToOffset({ offset, animated: false });
     setSection(next);
   };
+  const followLink = useEffectEvent(() => {
+    const target = parsePullRequestAnchor(params.navigationUrl);
+    if (target?.kind === "diff" || target?.kind === "code") {
+      const commit = pullRequestLinkCommit(params.navigationUrl);
+      navigation.navigate("PullRequestFile", {
+        ...params,
+        path: "",
+        ...(commit ? { commit } : {}),
+      });
+    } else if (target?.kind === "timeline") {
+      selectSection("activity");
+      activity.showTimeline();
+    } else if (target?.kind === "commits") {
+      selectSection("activity");
+      activity.showCommits();
+    } else if (target?.kind === "checks") {
+      selectSection("overview");
+      // Checks head Overview, which a reused screen may have scrolled past.
+      scrollViews.current.overview?.scrollToOffset({ offset: -contentTopInset, animated: false });
+    } else if (target?.kind === "summary") {
+      selectSection("overview");
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- a link selects its native PR section or diff even when the route is reused
+  useEffect(() => {
+    // oxlint-disable-next-line react/set-state-in-effect -- URL navigation selects the PR section and makes its target visible
+    followLink();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- each clicked URL is a fresh navigation request
+  }, [params.navigationUrl, params.navigationId]);
+
+  const activityTargetIndex = activityContent.rows.findIndex(
+    (row) => row.key === activityContent.targetKey,
+  );
+  const openedDiscussion = useRef<string | null>(null);
+  const positionedActivity = useRef<string | null>(null);
+  // Rows above the target measure in after the first jump, so it is held until the user scrolls.
+  const heldActivityRow = useRef<number | null>(null);
+  const positionActivityRow = (index: number) =>
+    void scrollViews.current.activity?.scrollToIndex({
+      index,
+      viewPosition: 0,
+      viewOffset: contentTopInset + 12,
+      animated: false,
+    });
+  const revealActivity = useEffectEvent(() => {
+    const key = `${params.navigationUrl}:${params.navigationId ?? 0}`;
+    if (activityContent.targetThread && openedDiscussion.current !== key) {
+      openedDiscussion.current = key;
+      navigation.navigate("PullRequestDiscussion", {
+        ...params,
+        discussionId: activityContent.targetThread.id,
+      });
+      return;
+    }
+    // Later filter or refresh changes move the row; they must not pull the user back to it.
+    if (activityTargetIndex >= 0 && positionedActivity.current !== key) {
+      positionedActivity.current = key;
+      // Its top sits under the app bar; centering a long comment pushed its start off screen.
+      heldActivityRow.current = activityTargetIndex + 1;
+      positionActivityRow(activityTargetIndex + 1);
+    }
+  });
+  const targetThreadId = activityContent.targetThread?.id;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveals the requested activity once its asynchronous rows arrive
+  useEffect(() => {
+    revealActivity();
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- reruns when activity resolves the URL target, even a thread the filter hides
+  }, [params.navigationUrl, params.navigationId, activityTargetIndex, targetThreadId]);
   const tabContent = activityContent;
   const filesY = useRef(0);
   const descriptionY = useRef(0);
@@ -416,6 +550,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const identity = pr ?? summary;
   const terminology = sourceControlClients.get(identity?.provider).changeRequest;
   const permissions = usePullRequestPermissions(params, pr);
+  const description = usePullRequestDescription(params, pr, permissions.canEditChangeRequest);
   const action = usePullRequestAction(params, pr);
   const maintainerEdits = usePullRequestMaintainerEdits(
     params,
@@ -423,12 +558,22 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
     permissions.canEditMaintainerEdits,
   );
   const showsDeleteBranch = pr !== null && canPerformPullRequestAction(pr, "delete-branch");
+  const stateAction = action.available("close")
+    ? "close"
+    : action.available("reopen")
+      ? "reopen"
+      : null;
+  const runStateAction = () =>
+    stateAction === "close" ? action.confirmClose() : void action.perform("reopen");
   const confirmDeleteBranch = () =>
     pr &&
     action.confirm(
       "delete-branch",
-      pullRequestActionLabel("delete-branch", terminology),
-      `Delete ${pr.headBranch} from ${pr.headRepositoryNameWithOwner ?? pr.repository}? Local branches and worktrees are not changed.`,
+      pullRequestActionLabel("delete-branch", terminology, messages),
+      gt("Delete {branch} from {repository}? Local branches and worktrees are not changed.", {
+        branch: pr.headBranch,
+        repository: pr.headRepositoryNameWithOwner ?? pr.repository,
+      }),
     );
   const stack = usePullRequestStack(params, pr);
   const refreshActivity = useAtomRefresh(composerPullRequests.activity(requestTarget(params)));
@@ -437,12 +582,12 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
   const refresh = () =>
     pullRefresh.onRefresh(async (signal) => {
       const target = requestTarget(params);
-      await composerPullRequests.invalidate
-        .run(registry, {
-          environmentId: target.environmentId,
-          input: { reference: target.input },
-        })
-        .catch(() => undefined);
+      await runAtomCommand(
+        registry,
+        composerPullRequests.invalidate,
+        { environmentId: target.environmentId, input: { reference: target.input } },
+        { reportFailure: false },
+      );
       if (signal.aborted) return;
       if (guidesEnabled) refreshGuide();
       stack.refresh();
@@ -450,8 +595,10 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       filesContent.refresh();
     });
   const jumpToFiles = () => {
-    scrollViews.current.overview?.scrollToOffset({
-      offset: bodyY.current + filesY.current - barInsets.top,
+    scrollViews.current.overview?.scrollToIndex({
+      index: 0,
+      viewPosition: 0,
+      viewOffset: -filesY.current,
       animated: true,
     });
     pendingFilesJump.current = false;
@@ -464,223 +611,133 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
       if (filesY.current > 0) requestAnimationFrame(jumpToFiles);
     }
   };
+  const verticalControls = usePullRequestVerticalControls();
+  const pullRequestMenu: AppBarMenu = {
+    title: gt(
+      "{term, select, mr {Merge request} cr {Change request} other {Pull request}} actions",
+      { term: changeRequestTermKind(terminology) },
+    ),
+    icon: "ellipsis",
+    items: [
+      ...(permissions.verdicts.length
+        ? [
+            {
+              id: "submit-review",
+              title: gt("Submit review"),
+              icon: "text.bubble",
+              onPress: () =>
+                navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
+            },
+          ]
+        : []),
+      ...(permissions.canComment
+        ? [
+            {
+              id: "add-comment",
+              title: gt("Add comment"),
+              icon: "plus.bubble",
+              onPress: () =>
+                navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
+            },
+          ]
+        : []),
+      ...(permissions.canEditChangeRequest
+        ? [
+            {
+              id: "edit-title",
+              title: gt("Edit title"),
+              icon: "pencil",
+              onPress: () => navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
+            },
+            {
+              id: "edit-description",
+              title: gt("Edit description"),
+              icon: "doc.text",
+              disabled: description.pending,
+              subtitle: description.pending ? gt("Saving…") : undefined,
+              onPress: () => navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
+            },
+          ]
+        : []),
+      ...(maintainerEdits.visible
+        ? [
+            {
+              id: "maintainer-edits",
+              title: gt("Allow edits from maintainers"),
+              icon: "pencil",
+              selected: maintainerEdits.value,
+              disabled: maintainerEdits.saving,
+              subtitle: maintainerEdits.subtitle,
+              onPress: maintainerEdits.toggle,
+            },
+          ]
+        : []),
+      ...(identity
+        ? [
+            {
+              id: "open-on-provider",
+              title: openOnProviderLabel(identity.provider, messages),
+              icon: "arrow.up.right",
+              onPress: () => void tryOpenExternalUrl(identity.url, "pull-request"),
+            },
+            {
+              id: "copy-link",
+              title: gt("Copy link"),
+              icon: "link",
+              onPress: () => copyPullRequestLink(identity),
+            },
+            {
+              id: "share",
+              title: gt("Share…"),
+              icon: "square.and.arrow.up",
+              onPress: () => sharePullRequestLink(identity),
+            },
+          ]
+        : []),
+      ...(stateAction
+        ? [
+            {
+              id: "state",
+              title: pullRequestActionLabel(stateAction, terminology, messages),
+              icon: PR_ACTION_ICONS[stateAction],
+              destructive: stateAction === "close",
+              onPress: runStateAction,
+            },
+          ]
+        : []),
+      ...(showsDeleteBranch
+        ? [
+            {
+              id: "delete-branch",
+              title: pullRequestActionLabel("delete-branch", terminology, messages),
+              icon: PR_ACTION_ICONS["delete-branch"],
+              destructive: true,
+              disabled: !action.available("delete-branch"),
+              subtitle: action.busy
+                ? gt("Deleting…")
+                : connected
+                  ? pr.headBranch
+                  : gt("Reconnect to delete this branch."),
+              onPress: confirmDeleteBranch,
+            },
+          ]
+        : []),
+    ],
+  };
   return (
     <PullRequestMarkdownRepository params={params} changeRequest={pr}>
-      <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
-        <NativeStackScreenOptions
-          options={{
-            title: `#${params.number}`,
-            headerTitle: `#${params.number}`,
-            unstable_headerSubtitle: connected
+      <View className="flex-1 android:bg-header ios:bg-screen">
+        <AppBar
+          title={`#${params.number}`}
+          subtitle={
+            connected
               ? params.repository
-              : `${params.repository} · Offline`,
-            unstable_headerLeftItems: layout.usesSplitView ? () => [sidebarHeaderItem] : undefined,
-          }}
-          optionsVersion={[layout.usesSplitView, sidebarHeaderItem]}
-        />
-        {Platform.OS === "android" ? (
-          <AndroidScreenHeader
-            title={`#${params.number}${connected ? "" : " · Offline"}`}
-            subtitle={params.repository}
-            onBack={layout.usesSplitView ? undefined : returnToList}
-            leading={layout.usesSplitView ? <AndroidWorkspaceSidebarButton /> : undefined}
-            actions={[
-              ...(permissions.verdicts.length
-                ? [
-                    {
-                      accessibilityLabel: "Submit review",
-                      icon: "text.bubble" as const,
-                      onPress: () =>
-                        navigation.navigate("PullRequestReview", { ...params, mode: "review" }),
-                    },
-                  ]
-                : []),
-              ...(permissions.canComment
-                ? [
-                    {
-                      accessibilityLabel: "Add comment",
-                      icon: "plus.bubble" as const,
-                      onPress: () =>
-                        navigation.navigate("PullRequestReview", { ...params, mode: "comment" }),
-                    },
-                  ]
-                : []),
-              ...(permissions.canEditChangeRequest
-                ? [
-                    {
-                      accessibilityLabel: "Edit title",
-                      icon: "pencil" as const,
-                      overflowOnly: true,
-                      onPress: () =>
-                        navigation.navigate("PullRequestEdit", { ...params, field: "title" }),
-                    },
-                    {
-                      accessibilityLabel: "Edit description",
-                      icon: "doc.text" as const,
-                      overflowOnly: true,
-                      onPress: () =>
-                        navigation.navigate("PullRequestEdit", { ...params, field: "body" }),
-                    },
-                  ]
-                : []),
-              ...(maintainerEdits.visible
-                ? [
-                    {
-                      accessibilityLabel: "Allow edits from maintainers",
-                      icon: "pencil" as const,
-                      selected: maintainerEdits.value,
-                      disabled: maintainerEdits.saving,
-                      subtitle: maintainerEdits.subtitle,
-                      overflowOnly: true,
-                      onPress: maintainerEdits.toggle,
-                    },
-                  ]
-                : []),
-              ...(identity
-                ? [
-                    {
-                      accessibilityLabel: openOnProviderLabel(identity.provider),
-                      icon: "arrow.up.right" as const,
-                      onPress: () => void Linking.openURL(identity.url),
-                    },
-                    {
-                      accessibilityLabel: "Copy link",
-                      icon: "link" as const,
-                      overflowOnly: true,
-                      onPress: () => copyPullRequestLink(identity),
-                    },
-                    {
-                      accessibilityLabel: "Share…",
-                      icon: "square.and.arrow.up" as const,
-                      overflowOnly: true,
-                      onPress: () => sharePullRequestLink(identity),
-                    },
-                  ]
-                : []),
-              ...(showsDeleteBranch
-                ? [
-                    {
-                      accessibilityLabel: pullRequestActionLabel("delete-branch", terminology),
-                      icon: PR_ACTION_ICONS["delete-branch"],
-                      disabled: !action.available("delete-branch"),
-                      destructive: true,
-                      overflowOnly: true,
-                      onPress: confirmDeleteBranch,
-                    },
-                  ]
-                : []),
-            ]}
-          />
-        ) : null}
-        <Toolbar placement="right">
-          <Toolbar.Menu
-            title={capitalizeTerm(terminology.singular)}
-            accessibilityLabel={`${capitalizeTerm(terminology.singular)} actions`}
-            icon="ellipsis"
-          >
-            {permissions.verdicts.length ? (
-              <Toolbar.MenuAction
-                icon="text.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "review" })
-                }
-              >
-                <Toolbar.Label>Submit review</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canComment ? (
-              <Toolbar.MenuAction
-                icon="plus.bubble"
-                onPress={() =>
-                  navigation.navigate("PullRequestReview", { ...params, mode: "comment" })
-                }
-              >
-                <Toolbar.Label>Add comment</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canEditChangeRequest ? (
-              <Toolbar.MenuAction
-                icon="pencil"
-                onPress={() =>
-                  navigation.navigate("PullRequestEdit", { ...params, field: "title" })
-                }
-              >
-                <Toolbar.Label>Edit title</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {permissions.canEditChangeRequest ? (
-              <Toolbar.MenuAction
-                icon="doc.text"
-                onPress={() => navigation.navigate("PullRequestEdit", { ...params, field: "body" })}
-              >
-                <Toolbar.Label>Edit description</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {maintainerEdits.visible ? (
-              <Toolbar.MenuAction
-                icon="pencil"
-                isOn={maintainerEdits.value}
-                disabled={maintainerEdits.saving}
-                subtitle={maintainerEdits.subtitle}
-                onPress={maintainerEdits.toggle}
-              >
-                <Toolbar.Label>Allow edits from maintainers</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {identity ? (
-              <Toolbar.MenuAction
-                icon="arrow.up.right"
-                onPress={() => void Linking.openURL(identity.url)}
-              >
-                <Toolbar.Label>{openOnProviderLabel(identity.provider)}</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {identity ? (
-              <Toolbar.MenuAction icon="link" onPress={() => copyPullRequestLink(identity)}>
-                <Toolbar.Label>Copy link</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {identity ? (
-              <Toolbar.MenuAction
-                icon="square.and.arrow.up"
-                onPress={() => sharePullRequestLink(identity)}
-              >
-                <Toolbar.Label>Share…</Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-            {showsDeleteBranch ? (
-              <Toolbar.MenuAction
-                icon={PR_ACTION_ICONS["delete-branch"]}
-                destructive
-                disabled={!action.available("delete-branch")}
-                subtitle={
-                  action.busy
-                    ? "Deleting…"
-                    : connected
-                      ? pr.headBranch
-                      : "Reconnect to delete this branch."
-                }
-                onPress={confirmDeleteBranch}
-              >
-                <Toolbar.Label>
-                  {pullRequestActionLabel("delete-branch", terminology)}
-                </Toolbar.Label>
-              </Toolbar.MenuAction>
-            ) : null}
-          </Toolbar.Menu>
-        </Toolbar>
-        <View
-          style={{
-            flex: 1,
-            marginHorizontal: Platform.OS === "android" && layout.usesSplitView ? 4 : 0,
-          }}
-          className={
-            Platform.OS === "android"
-              ? "overflow-hidden rounded-t-[28px] bg-sheet-solid"
-              : undefined
+              : gt("{repository} · Offline", { repository: params.repository })
           }
-          onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}
-        >
+          onBack={layout.usesSplitView ? undefined : returnToList}
+          menus={verticalControls ? undefined : [pullRequestMenu]}
+        />
+        <ScreenContent onLayout={(event) => setViewportHeight(event.nativeEvent.layout.height)}>
           {(["overview", "guide", "activity"] as const)
             .filter((tab) => tab !== "guide" || guidesEnabled)
             .map((tab) => (
@@ -696,6 +753,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   // The scroll view owns its resting offset. LegendList keeps the first
                   // initialScrollOffset it gets, and the first render has the window's top
                   // inset (0 on the folded iPhone Duo), not the header's.
+                  onScrollBeginDrag={
+                    tab === "activity"
+                      ? () => {
+                          heldActivityRow.current = null;
+                        }
+                      : undefined
+                  }
                   onScroll={(event) => {
                     const offset = event.nativeEvent.contentOffset.y;
                     scrollOffsets.current[tab] = offset;
@@ -703,15 +767,13 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                       currentScrollOffset.current = { tab, offset };
                   }}
                   className="flex-1"
-                  renderScrollComponent={
-                    Platform.OS === "ios" ? PullRequestTabScrollView : undefined
+                  renderScrollComponent={Platform.OS === "ios" ? NativeScrollView : undefined}
+                  contentInsetAdjustmentBehavior="never"
+                  contentInset={
+                    Platform.OS === "ios"
+                      ? { top: contentTopInset, bottom: contentBottomInset }
+                      : undefined
                   }
-                  // UIKit owns the bar's inset, so a minimizing bar and a resized column
-                  // move the list in the same frame as the bar.
-                  contentInsetAdjustmentBehavior="automatic"
-                  contentInsetStartAdjustment={barInsets.top}
-                  // RN scrollTo clamps against raw insets and ignores the automatic bar inset.
-                  scrollToOverflowEnabled
                   refreshControl={
                     <RefreshControl
                       refreshing={section === tab && pullRefresh.refreshing}
@@ -720,17 +782,26 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                   }
                   alwaysBounceVertical
                   scrollsToTop={section === tab}
-                  onContentSizeChange={() => {
+                  onItemSizeChanged={({ itemKey }) => {
+                    const held = heldActivityRow.current;
+                    if (tab === "activity" && held !== null) {
+                      // A filter or refresh that moved the row ends the hold.
+                      if (held !== activityTargetIndex + 1) heldActivityRow.current = null;
+                      else positionActivityRow(held);
+                      return;
+                    }
                     if (
                       tab !== "overview" ||
                       section !== "overview" ||
+                      itemKey !== "overview:body" ||
                       !pendingDescriptionJump.current
                     )
                       return;
                     pendingDescriptionJump.current = false;
-                    // Collapse changes the scroll range; restore the heading after that layout commits.
-                    scrollViews.current.overview?.scrollToOffset({
-                      offset: bodyY.current + descriptionY.current - barInsets.top,
+                    scrollViews.current.overview?.scrollToIndex({
+                      index: 0,
+                      viewPosition: 0,
+                      viewOffset: -descriptionY.current,
                       animated: false,
                     });
                   }}
@@ -741,7 +812,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                     // Short tabs must still be tall enough to preserve the collapsed header.
                     minHeight: Math.max(
                       0,
-                      viewportHeight + headerHeight - barInsets.top - barInsets.bottom,
+                      viewportHeight + headerHeight - contentTopInset - contentBottomInset,
                     ),
                   }}
                   data={[
@@ -760,6 +831,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                               {pr ? (
                                 <PullRequestOverview
                                   pr={pr}
+                                  description={description}
                                   params={params}
                                   stack={stack}
                                   descriptionExpanded={descriptionExpanded}
@@ -803,7 +875,7 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           {tab === "activity" ? (
                             <PullRequestActivityFilters
                               value={activityFilter}
-                              onChange={setActivityFilter}
+                              onChange={activity.setFilter}
                               hiddenCount={tabContent.hiddenCount}
                             />
                           ) : null}
@@ -873,19 +945,30 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                           }}
                         >
                           <PullRequestIdentity pr={identity} params={params} />
-                          <SegmentedControl
-                            options={[
-                              { value: "overview", label: "Overview" },
-                              ...(guidesEnabled
-                                ? [{ value: "guide" as const, label: "Guide" }]
-                                : []),
-                              { value: "activity", label: "Activity" },
-                            ]}
-                            selected={section}
-                            onSelect={selectSection}
-                            role="tab"
-                            size="compact"
-                          />
+                          {/* UIKit draws the tapped control's glass lens outside the hidden
+                              tab's opacity, so only the visible tab mounts the control. */}
+                          {Platform.OS !== "ios" || section === tab ? (
+                            <SegmentedControl
+                              options={[
+                                { value: "overview", label: gt("Overview") },
+                                ...(guidesEnabled
+                                  ? [
+                                      {
+                                        value: "guide" as const,
+                                        label: gt("Guide", { $context: "review guide tab" }),
+                                      },
+                                    ]
+                                  : []),
+                                { value: "activity", label: gt("Activity") },
+                              ]}
+                              selected={section}
+                              onSelect={selectSection}
+                              role="tab"
+                              size="compact"
+                            />
+                          ) : (
+                            <View style={{ height: 32 }} />
+                          )}
                         </View>
                       ) : null}
                     </>
@@ -894,10 +977,11 @@ export function PullRequestRouteScreen({ route }: StaticScreenProps<PullRequestP
                 />
               </View>
             ))}
-        </View>
+        </ScreenContent>
         <PullRequestActionToolbar
           pr={pr}
           params={params}
+          menu={pullRequestMenu}
           onOpenFiles={openFiles}
           onHeightChange={setToolbarHeight}
         />
@@ -918,25 +1002,25 @@ export function PullRequestFileRouteScreen(props: PullRequestFileRouteProps) {
   const navigation =
     useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList, "PullRequestFile">>();
   const ready = usePullRequestDiffEntry(navigation);
+  const gt = useGT();
   if (ready) return <PullRequestFileRouteContent {...props} />;
-  const title = props.route.params.commit ? "Commit changes" : "Changes";
+  const title = props.route.params.commit ? gt("Commit changes") : gt("Changes");
   return (
     <View className="flex-1 bg-screen">
-      <NativeStackScreenOptions options={{ title, headerTitle: title }} />
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader title={title} onBack={() => navigation.goBack()} />
-      ) : null}
+      <AppBar title={title} onBack={() => navigation.goBack()} />
       <View className="flex-1 items-center justify-center">
-        <AppActivityIndicator accessibilityLabel="Loading changes" />
+        <AppActivityIndicator accessibilityLabel={gt("Loading changes")} />
       </View>
     </View>
   );
 }
 
 function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
-  const { layout } = useAdaptiveWorkspaceLayout();
   const navigation = useNavigation();
+  const gt = useGT();
+  const messages = useMessages();
   const insets = useSafeAreaInsets();
+  const contentTopInset = useContentTopInset();
   const [toolbarHeight, setToolbarHeight] = usePullRequestToolbarHeight(insets.bottom);
   const commit = route.params.commit;
   const detail = useEnvironmentQuery(composerPullRequests.detail(requestTarget(route.params)));
@@ -944,9 +1028,20 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     (detail.data ?? route.params.initialSummary)?.provider,
   ).changeRequest;
   const result = usePullRequestDiff(route.params, terminology);
+  // Other screens open files with the link's params spread in; only the link's own entry follows it.
+  const linkAnchor =
+    route.params.path === "" &&
+    (route.params.commit ?? null) === pullRequestLinkCommit(route.params.navigationUrl)
+      ? parsePullRequestAnchor(route.params.navigationUrl)
+      : null;
+  const linkPath =
+    linkAnchor?.kind === "diff" && result.parsed.kind === "files"
+      ? result.parsed.files.find((file) => pullRequestDiffPathMatches(linkAnchor.digest, file.path))
+          ?.path
+      : undefined;
   const filter = usePullRequestFileFilter(
     result.parsed,
-    route.params.focus ? route.params.path : undefined,
+    linkPath ?? (route.params.focus ? route.params.path : undefined),
   );
   const { refresh: refreshDetail } = detail;
   useFocusEffect(refreshDetail);
@@ -969,6 +1064,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     !staleDiff &&
     !detail.isPending &&
     !result.isPending &&
+    !result.withheldRefetching &&
     !result.error;
   const activity = useEnvironmentQuery(composerPullRequests.activity(requestTarget(route.params)));
   const baseData = useMemo(() => getCachedNativeReviewDiffData({ parsedDiff: parsed }), [parsed]);
@@ -980,6 +1076,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
         staleDiff || commit ? [] : (activity.data?.reviewThreads ?? []),
         commit ? [] : reviewDraft.draft.comments,
         diffHead.sha ?? undefined,
+        messages,
       ),
     [
       baseData,
@@ -989,6 +1086,7 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       activity.data?.reviewThreads,
       reviewDraft.draft.comments,
       diffHead.sha,
+      messages,
     ],
   );
   const viewedIds = data.files
@@ -1018,26 +1116,68 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       code: row.content ?? "",
     });
   };
-  const [jumpPath, setJumpPath] = useState(route.params.path);
+  const [pickedPath, setJumpPath] = useState<string | null>(null);
+  const jumpPath = pickedPath ?? linkPath ?? route.params.path;
   const requestedFile =
     result.parsed.kind === "files"
       ? result.parsed.files.find((file) => file.path === jumpPath)
       : undefined;
   const targetFile =
     data.files.find((file) => file.path === jumpPath) ??
-    (!jumpPath || requestedFile ? data.files[0] : undefined);
-  const focus = route.params.focus;
+    (linkAnchor?.kind === "diff" && !linkPath
+      ? undefined
+      : !jumpPath || requestedFile
+        ? data.files[0]
+        : undefined);
+  const linkRange = pickedPath === null && linkAnchor?.kind === "diff" ? linkAnchor.range : null;
+  const range =
+    linkRange &&
+    resolvePullRequestAnchorRange(linkRange, (line) =>
+      data.rows.some(
+        (row) =>
+          row.fileId === targetFile?.id && row.change === "delete" && row.oldLineNumber === line,
+      ),
+    );
+  const focus =
+    route.params.focus ??
+    (range
+      ? {
+          side: range.side === "left" ? ("old" as const) : ("new" as const),
+          start: range.start,
+          end: range.end,
+          endSide: range.endSide === "left" ? ("old" as const) : ("new" as const),
+        }
+      : undefined);
   const focusedRows = guideFocusedRows(data.rows, targetFile?.id, focus);
   const focusIndex = focusedRows.length
     ? data.rows.findIndex((row) => row.id === focusedRows[0]?.id)
     : -1;
-  const [collapsedIds, setCollapsedIds] = useState<readonly string[]>(EMPTY_IDS);
+  const [foldChoices, setFoldChoices] = useState<FileDiffFoldChoices>(() => new Map());
+  const [foldScope, setFoldScope] = useState(`${scopeKey}:${commit ?? "all"}`);
+  const [revealedFileId, setRevealedFileId] = useState<string | null>(null);
+  if (foldScope !== `${scopeKey}:${commit ?? "all"}`) {
+    setFoldScope(`${scopeKey}:${commit ?? "all"}`);
+    setFoldChoices(new Map());
+    setRevealedFileId(null);
+  }
+  const requestedFileId =
+    (jumpPath ? data.files.find((file) => file.path === jumpPath)?.id : null) ?? null;
+  // A linked file must stay open if its Viewed response arrives after the first native draw.
+  if (requestedFileId !== revealedFileId) {
+    setRevealedFileId(requestedFileId);
+    if (requestedFileId)
+      setFoldChoices((current) => withFileDiffFold(current, requestedFileId, false));
+  }
+  const viewedIdSet = new Set(viewedIds);
+  const collapsedIds = data.files
+    .filter((file) => isFileDiffCollapsed(file.id, null, foldChoices, viewedIdSet.has(file.id)))
+    .map((file) => file.id);
   const [visibleFileId, setVisibleFileId] = useState<string | null>(null);
   const nativeView = useRef<NativeReviewDiffViewHandle>(null);
   // The filter the current jump was made under. Hiding or showing test files replaces the rows,
   // so a jump made under the other filter has to run again. Native applies the entry
   // destination before its first viewport, so the first one counts as made.
-  const jumpedUnder = useRef<boolean | null>(filter.hideTestFiles);
+  const jumpedUnder = useRef<boolean | null>(targetFile ? filter.hideTestFiles : null);
   const hasTestFiles =
     result.parsed.kind === "files" &&
     result.parsed.files.some((file) => isTestChangedFile(file.path));
@@ -1050,20 +1190,20 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       jumpedUnder.current = null;
     });
   };
-  const jumpScope = pullRequestFileJumpScope(route.params);
+  const routeKey = useRoute().key;
   const jumpToFile = useEffectEvent((path: string) => {
     setJumpPath(path);
     setSelectedRowId(null);
     jumpedUnder.current = null;
     const file = data.files.find((entry) => entry.path === path);
     if (!file) return;
-    setCollapsedIds((ids) => ids.filter((id) => id !== file.id));
+    setFoldChoices((current) => withFileDiffFold(current, file.id, false));
     scrollToFile(file.id);
   });
   // Subscribed for the whole screen, so a pick made while the diff is still loading is kept for
   // the first draw.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to pull request file jump requests for the screen's lifetime
-  useEffect(() => subscribePullRequestFileJump(jumpScope, (path) => jumpToFile(path)), [jumpScope]);
+  useEffect(() => subscribePullRequestFileJump(routeKey, (path) => jumpToFile(path)), [routeKey]);
   const { nativeReviewDiffStyle } = useAppearanceCodeSurface();
   const { themeAppearance, appearance, setCodeWordBreak } = useAppearancePreferences();
   const bridge = useNativeReviewDiffBridge({
@@ -1081,9 +1221,14 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   useEffect(() => {
     if (!targetFile) loadMore();
   }, [targetFile, loadMore]);
+  const lastFileRowIndex = data.rows.findLastIndex((row) => row.kind === "file");
+  const lastFileId = data.rows[lastFileRowIndex]?.fileId;
+  const lastShownRowIndex =
+    lastFileId && collapsedIds.includes(lastFileId) ? lastFileRowIndex : data.rows.length - 1;
   const onDebug: NonNullable<NativeReviewDiffViewProps["onDebug"]> = (event) =>
     handlePullRequestDiffDebugEvent(event, {
       rowCount: data.rows.length,
+      lastShownRowIndex,
       targetFileId: targetFile?.id,
       focusIndex,
       isIos: Platform.OS === "ios",
@@ -1098,8 +1243,8 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
   const onToggleFile: NonNullable<NativeReviewDiffViewProps["onToggleFile"]> = (event) => {
     const id = event.nativeEvent.fileId;
     if (!id) return;
-    setCollapsedIds((ids) =>
-      ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id],
+    setFoldChoices((current) =>
+      withFileDiffFold(current, id, !isFileDiffCollapsed(id, null, current, viewedIdSet.has(id))),
     );
   };
   const visibleFile = data.files.find((file) => file.id === visibleFileId) ?? targetFile;
@@ -1108,128 +1253,100 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
     setSelectedRowId(null);
     filter.toggle();
   };
-  const title = commit ? "Commit changes" : "Changes";
+  const title = commit ? gt("Commit changes") : gt("Changes");
   const seekingFile = !targetFile && result.nextCursor !== null;
   const loadingDiff = (result.isPending && !data.rows.length) || (seekingFile && !result.error);
+  const verticalControls = usePullRequestVerticalControls();
+  const diffMenu: AppBarMenu = {
+    title: gt("Diff options"),
+    icon: "ellipsis",
+    items: [
+      ...(permissions.verdicts.length
+        ? [
+            {
+              id: "submit-review",
+              title: gt("Submit review"),
+              icon: "text.bubble",
+              onPress: () =>
+                navigation.navigate("PullRequestReview", {
+                  ...route.params,
+                  mode: "review",
+                }),
+            },
+          ]
+        : []),
+      ...(permissions.canComment
+        ? [
+            {
+              id: "comment-on-pr",
+              title: gt("Add comment"),
+              icon: "plus.bubble",
+              onPress: () =>
+                navigation.navigate("PullRequestReview", {
+                  ...route.params,
+                  mode: "comment",
+                }),
+            },
+          ]
+        : []),
+      {
+        id: "word-wrap",
+        title: gt("Word wrap"),
+        icon: "text.alignleft",
+        selected: appearance.codeWordBreak,
+        onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
+      },
+      {
+        id: "hide-tests",
+        title: gt("Hide test files"),
+        icon: "line.3.horizontal.decrease",
+        selected: filter.hideTestFiles,
+        onPress: toggleTestFiles,
+      },
+      ...(selectedRow && selectedFile && canCommentOnDiff
+        ? [
+            {
+              id: "comment",
+              title: route.params.replacingDraftId
+                ? gt("Move draft to this line")
+                : gt("Add review comment"),
+              icon: "bubble.left",
+              onPress: () => commentOnLine(),
+            },
+          ]
+        : []),
+      ...(selectedRow && selectedFile
+        ? [
+            {
+              id: "copy",
+              title: gt("Copy line"),
+              icon: "document.on.document",
+              onPress: () => void Clipboard.setStringAsync(selectedRow.content ?? ""),
+            },
+          ]
+        : []),
+    ],
+  };
   return (
-    <View className={Platform.OS === "android" ? "flex-1 bg-header" : "flex-1 bg-screen"}>
-      <NativeStackScreenOptions
-        options={{
-          title,
-          headerTitle: title,
-          unstable_headerSubtitle: `${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${data.files.length} ${data.files.length === 1 ? "file" : "files"}${filter.hideTestFiles && filter.hiddenCount ? ` · ${filter.hiddenCount} ${filter.hiddenCount === 1 ? "test" : "tests"} hidden` : ""}`,
-        }}
+    <View className="flex-1 android:bg-header ios:bg-screen">
+      <AppBar
+        title={title}
+        subtitle={`${commit ? commit.slice(0, 7) : `#${route.params.number}`} · ${gt(
+          "{count, plural, one {{count} file} other {{count} files}}",
+          { count: data.files.length },
+        )}${
+          filter.hideTestFiles && filter.hiddenCount
+            ? ` · ${gt("{count, plural, one {{count} test hidden} other {{count} tests hidden}}", {
+                count: filter.hiddenCount,
+              })}`
+            : ""
+        }`}
+        onBack={() => navigation.goBack()}
+        menus={verticalControls ? undefined : [diffMenu]}
       />
-      {Platform.OS === "android" ? (
-        <AndroidScreenHeader
-          title={title}
-          onBack={() => navigation.goBack()}
-          trailing={
-            <Menu
-              actions={[
-                {
-                  id: "word-wrap",
-                  title: "Word wrap",
-                  image: "text.alignleft",
-                  state: appearance.codeWordBreak ? "on" : "off",
-                },
-                {
-                  id: "hide-tests",
-                  title: "Hide test files",
-                  image: "line.3.horizontal.decrease",
-                  state: filter.hideTestFiles ? "on" : "off",
-                },
-                ...(permissions.verdicts.length
-                  ? [{ id: "submit-review", title: "Submit review", image: "text.bubble" }]
-                  : []),
-                ...(permissions.canComment
-                  ? [{ id: "comment-on-pr", title: "Add comment", image: "plus.bubble" }]
-                  : []),
-                ...(selectedRow && selectedFile
-                  ? [
-                      ...(canCommentOnDiff ? [{ id: "comment", title: "Add review comment" }] : []),
-                      { id: "copy", title: "Copy line" },
-                    ]
-                  : []),
-              ]}
-              onPressAction={({ nativeEvent }) => {
-                if (nativeEvent.event === "word-wrap") setCodeWordBreak(!appearance.codeWordBreak);
-                else if (nativeEvent.event === "hide-tests") toggleTestFiles();
-                else if (
-                  nativeEvent.event === "submit-review" ||
-                  nativeEvent.event === "comment-on-pr"
-                )
-                  navigation.navigate("PullRequestReview", {
-                    ...route.params,
-                    mode: nativeEvent.event === "submit-review" ? "review" : "comment",
-                  });
-                else if (nativeEvent.event === "comment") commentOnLine();
-                else void Clipboard.setStringAsync(selectedRow?.content ?? "");
-              }}
-            >
-              <View pointerEvents="none">
-                <IconButton icon="ellipsis" accessibilityLabel="Diff options" />
-              </View>
-            </Menu>
-          }
-        />
-      ) : null}
-      <Toolbar placement="right">
-        <Toolbar.Menu title="Diff options" accessibilityLabel="Diff options" icon="ellipsis">
-          {permissions.verdicts.length ? (
-            <Toolbar.MenuAction
-              icon="text.bubble"
-              onPress={() =>
-                navigation.navigate("PullRequestReview", { ...route.params, mode: "review" })
-              }
-            >
-              <Toolbar.Label>Submit review</Toolbar.Label>
-            </Toolbar.MenuAction>
-          ) : null}
-          {permissions.canComment ? (
-            <Toolbar.MenuAction
-              icon="plus.bubble"
-              onPress={() =>
-                navigation.navigate("PullRequestReview", { ...route.params, mode: "comment" })
-              }
-            >
-              <Toolbar.Label>Add comment</Toolbar.Label>
-            </Toolbar.MenuAction>
-          ) : null}
-          <Toolbar.MenuAction
-            icon="text.alignleft"
-            isOn={appearance.codeWordBreak}
-            onPress={() => setCodeWordBreak(!appearance.codeWordBreak)}
-          >
-            <Toolbar.Label>Word wrap</Toolbar.Label>
-          </Toolbar.MenuAction>
-          <Toolbar.MenuAction
-            icon="line.3.horizontal.decrease"
-            isOn={filter.hideTestFiles}
-            onPress={toggleTestFiles}
-          >
-            <Toolbar.Label>Hide test files</Toolbar.Label>
-          </Toolbar.MenuAction>
-          {selectedRow && selectedFile && canCommentOnDiff ? (
-            <Toolbar.MenuAction icon="bubble.left" onPress={() => commentOnLine()}>
-              <Toolbar.Label>
-                {route.params.replacingDraftId ? "Move draft to this line" : "Add review comment"}
-              </Toolbar.Label>
-            </Toolbar.MenuAction>
-          ) : null}
-          {selectedRow && selectedFile ? (
-            <Toolbar.MenuAction
-              icon="document.on.document"
-              onPress={() => void Clipboard.setStringAsync(selectedRow.content ?? "")}
-            >
-              <Toolbar.Label>Copy line</Toolbar.Label>
-            </Toolbar.MenuAction>
-          ) : null}
-        </Toolbar.Menu>
-      </Toolbar>
       {route.params.replacingDraftId ? (
         <Text className="px-4 py-2 text-xs text-foreground-muted">
-          Select a current line, then choose “Move draft to this line” from its menu.
+          <T>Select a current line, then choose “Move draft to this line” from its menu.</T>
         </Text>
       ) : null}
       {viewed.error ? (
@@ -1238,153 +1355,156 @@ function PullRequestFileRouteContent({ route }: PullRequestFileRouteProps) {
       {staleDiff ? (
         <View
           className="flex-row items-center gap-2 px-4 py-2"
-          style={{ paddingTop: Platform.OS === "ios" ? insets.top + 8 : 8 }}
+          style={{ paddingTop: contentTopInset + 8 }}
         >
           <Text className="min-w-0 flex-1 text-xs text-foreground-muted">
-            The branch changed. Reload before adding line comments.
+            <T>The branch changed. Reload before adding line comments.</T>
           </Text>
           <Button
-            label="Reload changes"
+            label={gt("Reload changes")}
             onPress={() => {
               result.refresh();
               setDiffHead({ scopeKey, sha: detail.data?.headSha ?? null });
               jumpedUnder.current = null;
               setSelectedRowId(null);
-              setCollapsedIds(EMPTY_IDS);
+              setFoldChoices(new Map());
             }}
           />
         </View>
       ) : null}
-      <View
-        className={
-          Platform.OS === "android"
-            ? "flex-1 overflow-hidden rounded-t-[28px] bg-sheet-solid"
-            : "flex-1"
-        }
-        collapsable={false}
-        style={{ marginHorizontal: Platform.OS === "android" && layout.usesSplitView ? 4 : 0 }}
-      >
-        {loadingDiff || result.error ? (
-          <View style={{ paddingTop: Platform.OS === "ios" && !staleDiff ? insets.top : 0 }}>
-            <PullRequestReadStatus
-              pending={loadingDiff}
-              error={result.error}
-              terminology={terminology}
-            />
-          </View>
-        ) : null}
-        {NativeDiffView && data.rows.length && !seekingFile ? (
-          <View className="flex-1" collapsable={false}>
-            <NativeDiffView
-              {...pullRequestDiffInitialPosition(targetFile?.id, focusIndex)}
-              nativeViewRef={nativeView}
-              refreshing={result.refreshing}
-              onPullToRefresh={result.onPullRefresh}
-              style={StyleSheet.absoluteFill}
-              rowsJson={bridge.rowsJson}
-              themeJson={bridge.themeJson}
-              styleJson={bridge.styleJson}
-              tokensPatchJson={bridge.tokensPatchJson}
-              tokensResetKey={bridge.tokensResetKey}
-              collapsedFileIdsJson={bridge.collapsedFileIdsJson}
-              onDebug={onDebug}
-              viewedFileIdsJson={bridge.viewedFileIdsJson}
-              selectedRowIdsJson={bridge.selectedRowIdsJson}
-              onPressLine={(event) => {
-                const rowId = event.nativeEvent.rowId ?? null;
-                setSelectedRowId(rowId);
-                if (event.nativeEvent.gesture !== "longPress") commentOnLine(rowId);
-              }}
-              onToggleViewedFile={(event) => {
-                const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
-                if (!file || (!commit && !viewed.canToggle)) return;
-                const wasViewed = commit
-                  ? commitViewedPaths.has(file.path)
-                  : viewed.isViewed(file.path);
-                setCollapsedIds((ids) =>
-                  wasViewed
-                    ? ids.filter((id) => id !== file.id)
-                    : ids.includes(file.id)
-                      ? ids
-                      : [...ids, file.id],
-                );
-                if (commit)
-                  setCommitViewedPaths((current) => {
-                    const next = new Set(current);
-                    if (next.has(file.path)) next.delete(file.path);
-                    else next.add(file.path);
-                    return next;
-                  });
-                else void viewed.toggle(file.path);
-              }}
-              onToggleComment={(event) => {
-                const id = event.nativeEvent.commentId;
-                if (id?.startsWith("discussion:"))
-                  navigation.navigate("PullRequestDiscussion", {
-                    ...route.params,
-                    discussionId: id.slice("discussion:".length),
-                  });
-                if (id?.startsWith("draft:")) {
-                  const draft = reviewDraft.draft.comments.find(
-                    (draft) => draft.id === id.slice("draft:".length),
-                  );
-                  if (draft)
-                    navigation.navigate("PullRequestInlineComment", {
-                      ...route.params,
-                      ...draft,
-                      draftId: draft.id,
+      <ScreenContent>
+        <View className="flex-1" collapsable={false}>
+          {loadingDiff || result.error ? (
+            <View style={{ paddingTop: staleDiff ? 0 : contentTopInset }}>
+              <PullRequestReadStatus
+                pending={loadingDiff}
+                error={result.error}
+                terminology={terminology}
+              />
+            </View>
+          ) : null}
+          {NativeDiffView && data.rows.length && !seekingFile ? (
+            <View className="flex-1" collapsable={false}>
+              <NativeDiffView
+                {...pullRequestDiffInitialPosition(targetFile?.id, focusIndex)}
+                nativeViewRef={nativeView}
+                refreshing={result.refreshing}
+                onPullToRefresh={result.onPullRefresh}
+                style={StyleSheet.absoluteFill}
+                rowsJson={bridge.rowsJson}
+                themeJson={bridge.themeJson}
+                styleJson={bridge.styleJson}
+                tokensPatchJson={bridge.tokensPatchJson}
+                tokensResetKey={bridge.tokensResetKey}
+                collapsedFileIdsJson={bridge.collapsedFileIdsJson}
+                onDebug={onDebug}
+                viewedFileIdsJson={bridge.viewedFileIdsJson}
+                selectedRowIdsJson={bridge.selectedRowIdsJson}
+                onPressLine={(event) => {
+                  const rowId = event.nativeEvent.rowId ?? null;
+                  setSelectedRowId(rowId);
+                  if (event.nativeEvent.gesture !== "longPress") commentOnLine(rowId);
+                }}
+                onToggleViewedFile={(event) => {
+                  const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
+                  if (!file || (!commit && !viewed.canToggle)) return;
+                  setFoldChoices((current) => withFileDiffFold(current, file.id, undefined));
+                  if (commit)
+                    setCommitViewedPaths((current) => {
+                      const next = new Set(current);
+                      if (next.has(file.path)) next.delete(file.path);
+                      else next.add(file.path);
+                      return next;
                     });
+                  else void viewed.toggle(file.path);
+                }}
+                onPressNotice={(event) => {
+                  const file = data.files.find((file) => file.id === event.nativeEvent.fileId);
+                  if (file) result.loadWithheldFile(file.path);
+                }}
+                onToggleComment={(event) => {
+                  const id = event.nativeEvent.commentId;
+                  if (id?.startsWith("discussion:"))
+                    navigation.navigate("PullRequestDiscussion", {
+                      ...route.params,
+                      discussionId: id.slice("discussion:".length),
+                    });
+                  if (id?.startsWith("draft:")) {
+                    const draft = reviewDraft.draft.comments.find(
+                      (draft) => draft.id === id.slice("draft:".length),
+                    );
+                    if (draft)
+                      navigation.navigate("PullRequestInlineComment", {
+                        ...route.params,
+                        ...draft,
+                        draftId: draft.id,
+                      });
+                  }
+                }}
+                onToggleFile={onToggleFile}
+                onVisibleFileChange={(event) => setVisibleFileId(event.nativeEvent.fileId ?? null)}
+                appearanceScheme={themeAppearance}
+                rowHeight={nativeReviewDiffStyle.rowHeight}
+                contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
+                contentInsetTop={staleDiff ? 0 : contentTopInset}
+                contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
+                contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
+              />
+            </View>
+          ) : filter.hiddenCount > 0 &&
+            !data.rows.length &&
+            !result.isPending &&
+            !result.error &&
+            !seekingFile ? (
+            <View style={{ paddingTop: contentTopInset }}>
+              <EmptyState
+                title={gt("Only test files changed")}
+                detail={gt("Test files are hidden from this review.")}
+                action={
+                  <Button label={gt("Show test files")} tone="contrast" onPress={filter.showAll} />
                 }
-              }}
-              onToggleFile={onToggleFile}
-              onVisibleFileChange={(event) => setVisibleFileId(event.nativeEvent.fileId ?? null)}
-              appearanceScheme={themeAppearance}
-              rowHeight={nativeReviewDiffStyle.rowHeight}
-              contentWidth={NATIVE_REVIEW_DIFF_CONTENT_WIDTH}
-              contentInsetTop={Platform.OS === "ios" ? (staleDiff ? 0 : insets.top) : undefined}
-              contentInsetBottom={Platform.OS === "android" ? toolbarHeight : insets.bottom}
-              contentResetKey={`pull-request:${route.params.environmentId}:${route.params.repository}:${route.params.number}:${commit ?? "all"}`}
-            />
-          </View>
-        ) : filter.hiddenCount > 0 &&
-          !data.rows.length &&
-          !result.isPending &&
-          !result.error &&
-          !seekingFile ? (
-          <View style={{ paddingTop: Platform.OS === "ios" ? insets.top : 0 }}>
+                variant="plain"
+              />
+            </View>
+          ) : !result.isPending && !result.error && !seekingFile ? (
             <EmptyState
-              title="Only test files changed"
-              detail="Test files are hidden from this review."
-              action={<Button label="Show test files" tone="contrast" onPress={filter.showAll} />}
+              title={gt("Diff unavailable")}
+              detail={gt(
+                "Open this {term, select, mr {merge request} cr {change request} other {pull request}} on its provider to view the changes.",
+                {
+                  term: changeRequestTermKind(terminology),
+                },
+              )}
               variant="plain"
             />
-          </View>
-        ) : !result.isPending && !result.error && !seekingFile ? (
-          <EmptyState
-            title="Diff unavailable"
-            detail={`Open this ${terminology.singular} on its provider to view the changes.`}
-            variant="plain"
-          />
-        ) : null}
-        {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
-          <View className="flex-row items-center justify-center gap-2 py-2">
-            <AppActivityIndicator size="small" />
-            <Text className="text-xs text-foreground-muted">Loading more files…</Text>
-          </View>
-        ) : null}
-        {result.error && result.nextCursor ? (
-          <View className="self-center">
-            <Button label="Retry loading remaining files" tone="text" onPress={result.refresh} />
-          </View>
-        ) : null}
-        {parsed.kind === "files" && parsed.notice ? (
-          <Text className="px-4 py-2 text-2xs text-foreground-muted">{parsed.notice}</Text>
-        ) : null}
-      </View>
+          ) : null}
+          {result.nextCursor && result.isPending && data.rows.length && !seekingFile ? (
+            <View className="flex-row items-center justify-center gap-2 py-2">
+              <AppActivityIndicator size="small" />
+              <Text className="text-xs text-foreground-muted">
+                <T>Loading more files…</T>
+              </Text>
+            </View>
+          ) : null}
+          {result.error && result.nextCursor ? (
+            <View className="self-center">
+              <Button
+                label={gt("Retry loading remaining files")}
+                tone="text"
+                onPress={result.retry}
+              />
+            </View>
+          ) : null}
+          {parsed.kind === "files" && parsed.notice ? (
+            <Text className="px-4 py-2 text-2xs text-foreground-muted">{parsed.notice}</Text>
+          ) : null}
+        </View>
+      </ScreenContent>
       <PullRequestActionToolbar
         pr={detail.data}
         params={route.params}
         filePath={visibleFile?.path}
+        menu={diffMenu}
         onOpenFiles={() => navigation.navigate("PullRequestFiles", route.params)}
         onHeightChange={setToolbarHeight}
       />

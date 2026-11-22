@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -13,6 +14,7 @@ import {
   CLOUD_LINK_REVOKED,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
+  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
   RELAY_ISSUER_SECRET,
@@ -28,6 +30,7 @@ const persistedCloudLinkSecrets = [
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_ENDPOINT_CONFIRMED_ORIGIN,
   PUBLISH_AGENT_ACTIVITY_SECRET,
+  HOLD_WEBHOOKS_WHILE_OFFLINE_SECRET,
 ] as const;
 
 const layerTest = () =>
@@ -39,7 +42,7 @@ const layerTest = () =>
     ),
   );
 
-it.layer(NodeServices.layer)("CliState", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CliState", (it) => {
   it.effect("persists desired exposure and clears provisioned relay state", () =>
     Effect.gen(function* () {
       const secrets = yield* ServerSecretStore.ServerSecretStore;

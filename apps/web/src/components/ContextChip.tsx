@@ -6,7 +6,7 @@ import type * as React from "react";
 import { cn } from "~/lib/utils";
 
 const contextChipVariants = cva(
-  "inline-flex max-w-full items-center gap-[0.2em] font-medium leading-[normal] text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-accent)] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm disabled:cursor-default",
+  "inline-flex max-w-full items-center gap-[0.2em] font-medium leading-[normal] text-(--context-chip-ink) [--context-chip-ink:var(--context-chip-message-ink,var(--context-chip-accent))] [--document-icon-stroke:var(--context-chip-ink)] [&_svg]:block [&_svg]:size-[1em] [&_svg]:shrink-0 [&_svg]:self-center [button&,a&,[data-popup-open]&]:cursor-pointer focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-current rounded-sm disabled:cursor-default",
   {
     defaultVariants: { kind: "neutral" },
     variants: {
@@ -26,19 +26,26 @@ const contextChipVariants = cva(
         "pr-merged": "[--context-chip-accent:var(--context-chip-pr-merged)]",
         "pr-closed": "[--context-chip-accent:var(--context-chip-pr-closed)]",
         skill: "[--context-chip-accent:var(--context-chip-skill)]",
+        model: "[--context-chip-accent:var(--context-chip-model)]",
         thread: "[--context-chip-accent:var(--context-chip-thread)]",
         environment: "[--context-chip-accent:var(--context-chip-environment)]",
         citation: "[--context-chip-accent:var(--context-chip-citation)]",
-        "doc-pdf": "[--context-chip-accent:var(--context-chip-doc-pdf)]",
+        // PDF red reads as the invalid state, so only the icon carries it.
+        "doc-pdf":
+          "[--context-chip-accent:var(--context-chip-doc-pdf)] [--context-chip-ink:var(--context-chip-message-ink,currentColor)] [--document-icon-stroke:var(--context-chip-message-ink,var(--context-chip-accent))]",
         "doc-word": "[--context-chip-accent:var(--context-chip-doc-word)]",
         "doc-spreadsheet": "[--context-chip-accent:var(--context-chip-doc-spreadsheet)]",
         "doc-slides": "[--context-chip-accent:var(--context-chip-doc-slides)]",
         "doc-epub": "[--context-chip-accent:var(--context-chip-doc-epub)]",
       },
+      shape: {
+        inline: "",
+        bubble: "w-64 gap-2 rounded-2xl bg-message px-3 py-2 text-sm text-message-foreground",
+      },
       state: {
         unresolved: "data-[state=unresolved]:[--context-chip-accent:currentColor]",
         invalid:
-          "data-[state=invalid]:[--context-chip-accent:var(--context-chip-invalid,var(--destructive-foreground))]",
+          "data-[state=invalid]:[--context-chip-accent:var(--context-chip-invalid,var(--destructive-foreground))] data-[state=invalid]:[--context-chip-ink:var(--context-chip-message-ink,var(--context-chip-accent))]",
       },
     },
   },
@@ -49,11 +56,12 @@ type ContextChipKind = NonNullable<VariantProps<typeof contextChipVariants>["kin
 interface ContextChipProps extends useRender.ComponentProps<"span"> {
   kind?: ContextChipKind;
   state?: "unresolved" | "invalid";
+  shape?: "inline" | "bubble";
 }
 
-function ContextChip({ className, kind, state, render, ...props }: ContextChipProps) {
+function ContextChip({ className, kind, state, shape, render, ...props }: ContextChipProps) {
   const defaultProps = {
-    className: cn(contextChipVariants({ kind, state }), className),
+    className: cn(contextChipVariants({ kind, state, shape }), className),
     "data-slot": "context-chip",
     "data-state": state,
   };

@@ -1,5 +1,10 @@
 import type { ScopedThreadRef } from "@t3tools/contracts";
-import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@t3tools/shared/path";
+import {
+  isAbsolutePath,
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+  workspaceRelativeFilePath,
+} from "@t3tools/shared/path";
 
 import { useRightPanelStore } from "./rightPanelStore";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -12,16 +17,22 @@ interface OpenDiffFilePrimaryActionInput {
   readonly openInEditor: (targetPath: string) => void;
 }
 
-function normalizedRelativePathSegments(filePath: string): ReadonlyArray<string> | null {
+function normalizedRelativePathSegments(
+  filePath: string,
+  windowsRoot: boolean,
+): ReadonlyArray<string> | null {
   if (filePath.startsWith("/") || isWindowsAbsolutePath(filePath) || /^[a-zA-Z]:/.test(filePath)) {
     return null;
   }
 
-  const segments = filePath
-    .replaceAll("\\", "/")
-    .split("/")
-    .filter((segment) => segment.length > 0 && segment !== ".");
-  if (segments.length === 0 || segments.includes("..")) return null;
+  // On POSIX a backslash is part of a file name; Windows treats it as a separator
+  // (tool-call patches can name files with either), so reject ".." either way.
+  const parts = filePath.split(/[\\/]/);
+  if (parts.includes("..")) return null;
+  const segments = (windowsRoot ? parts : filePath.split("/")).filter(
+    (segment) => segment.length > 0 && segment !== ".",
+  );
+  if (segments.length === 0) return null;
   return segments;
 }
 
@@ -35,16 +46,13 @@ function repositoryRelativeWorkspaceSegments(
   const normalizedRepositoryRoot = normalizeProjectPathForComparison(repositoryRoot);
   if (normalizedWorkspaceRoot === normalizedRepositoryRoot) return [];
 
-  const separator = normalizedRepositoryRoot.includes("\\") ? "\\" : "/";
+  const separator = isWindowsAbsolutePath(normalizedRepositoryRoot) ? "\\" : "/";
   const repositoryPrefix = normalizedRepositoryRoot.endsWith(separator)
     ? normalizedRepositoryRoot
     : `${normalizedRepositoryRoot}${separator}`;
   if (!normalizedWorkspaceRoot.startsWith(repositoryPrefix)) return null;
 
-  return normalizedWorkspaceRoot
-    .slice(repositoryPrefix.length)
-    .split(/[\\/]+/)
-    .filter(Boolean);
+  return normalizedWorkspaceRoot.slice(repositoryPrefix.length).split(separator).filter(Boolean);
 }
 
 export function resolveDiffPathForWorkspace(input: {
@@ -52,7 +60,18 @@ export function resolveDiffPathForWorkspace(input: {
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot: string | undefined;
 }): string | null {
-  const fileSegments = normalizedRelativePathSegments(input.filePath);
+  const windowsRoot = [input.workspaceRoot, input.repositoryRoot].some(
+    (root) => root !== undefined && isWindowsAbsolutePath(root),
+  );
+  // Claude and ACP tool-call diffs name files by absolute path.
+  if (isAbsolutePath(input.filePath)) {
+    const relativePath = workspaceRelativeFilePath(input.filePath, input.workspaceRoot);
+    const segments =
+      relativePath === null ? null : normalizedRelativePathSegments(relativePath, windowsRoot);
+    return segments ? segments.join("/") : null;
+  }
+
+  const fileSegments = normalizedRelativePathSegments(input.filePath, windowsRoot);
   if (!fileSegments) return null;
 
   const workspaceSegments = repositoryRelativeWorkspaceSegments(

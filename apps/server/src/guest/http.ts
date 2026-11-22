@@ -1,6 +1,7 @@
 import {
   GUEST_ATTACHMENT_ROUTE,
   GUEST_COMMAND_OUTPUT_ROUTE,
+  GUEST_HISTORY_ROUTE,
   GUEST_ITEM_ROUTE,
   GUEST_MEDIA_ROUTE,
   GUEST_RENDER_ROUTE,
@@ -16,24 +17,23 @@ import {
   isProviderSendTurnSupportedImageMimeType,
   OrchestrationV2CommandOutputFrame,
   OrchestrationV2GetTurnItemResult,
+  OrchestrationV2ThreadHistoryPage,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import * as Stream from "effect/Stream";
 import { HttpRouter, HttpServerRequest, HttpServerResponse, Multipart } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 
 import { htmlRenderFileName } from "@t3tools/shared/htmlRender";
 
+import { eventStreamResponse } from "../eventStreamResponse.ts";
 import { assetFileResponse, downloadContentDisposition } from "../http.ts";
 import type { GuestUpload } from "./guestAttachments.ts";
 import { GuestShareAccessError, GuestShareService } from "./GuestShareService.ts";
 
-// Cloudflare closes idle streams after about 100 seconds.
-const HEARTBEAT_INTERVAL = Duration.seconds(20);
 const NO_STORE = { "cache-control": "no-store" };
 // A file never runs as a page on this origin, whatever its bytes.
 const FILE_HEADERS = {
@@ -52,6 +52,7 @@ const encodeOutputFrame = Schema.encodeEffect(
   Schema.fromJsonString(OrchestrationV2CommandOutputFrame),
 );
 const encodeItem = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2GetTurnItemResult));
+const encodeHistoryPage = Schema.encodeEffect(Schema.toCodecJson(OrchestrationV2ThreadHistoryPage));
 
 const errorResponse = (error: GuestShareAccessError) =>
   HttpServerResponse.json(
@@ -90,36 +91,6 @@ const sessionToken = Effect.map(HttpServerRequest.HttpServerRequest, (request) =
 const itemParam = Effect.map(HttpServerRequest.HttpServerRequest, (request) =>
   new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("item"),
 );
-
-/** Server-sent events with a heartbeat, never cached or buffered on the way. */
-const eventStreamResponse = <A>(
-  events: Stream.Stream<A>,
-  encode: (event: A) => Effect.Effect<string, Schema.SchemaError>,
-) => {
-  const data = events.pipe(
-    Stream.mapEffect((event) =>
-      encode(event).pipe(
-        Effect.map((json) => [`data: ${json}\n\n`]),
-        // The guest misses one update instead of the whole stream.
-        Effect.catch(() =>
-          Effect.logWarning("Dropped a guest stream event that failed to encode.").pipe(
-            Effect.as([]),
-          ),
-        ),
-      ),
-    ),
-    Stream.flattenIterable,
-  );
-  const heartbeat = Stream.tick(HEARTBEAT_INTERVAL).pipe(Stream.map(() => ": ping\n\n"));
-  return HttpServerResponse.stream(
-    data.pipe(Stream.merge(heartbeat, { haltStrategy: "left" }), Stream.encodeText),
-    {
-      contentType: "text/event-stream",
-      // no-transform keeps the compression middleware from buffering the stream.
-      headers: { "cache-control": "no-store, no-transform", "x-accel-buffering": "no" },
-    },
-  );
-};
 
 // Guest JSON bodies are a name or one message; anyone who can reach the tunnel can post them.
 const JSON_MAX_BODY_BYTES = 64 * 1024;
@@ -189,9 +160,12 @@ export const readSubmission = Effect.gen(function* () {
         }),
     ),
   );
-  const fields = yield* decodeSubmit({ shareId: parts.shareId, text: parts.text ?? "" }).pipe(
-    Effect.option,
-  );
+  const text = parts.text ?? "";
+  const fields = yield* decodeSubmit({
+    shareId: parts.shareId,
+    // Form data sends every line break as CRLF; the textarea gave the guest LF.
+    text: typeof text === "string" ? text.replaceAll("\r\n", "\n") : text,
+  }).pipe(Effect.option);
   if (fields._tag === "None") return null;
   const files = parts.file;
   const uploads: ReadonlyArray<GuestUpload> = Array.isArray(files)
@@ -292,6 +266,26 @@ const itemRoute = HttpRouter.add(
   }),
 );
 
+const historyRoute = HttpRouter.add(
+  "GET",
+  GUEST_HISTORY_ROUTE,
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const cursor = new URLSearchParams(request.url.split("?", 2)[1] ?? "").get("cursor");
+    if (!cursor) return yield* badRequest;
+    const guestShares = yield* GuestShareService;
+    return yield* guestShares.history(yield* sessionToken, cursor).pipe(
+      Effect.flatMap((page) =>
+        encodeHistoryPage(page).pipe(
+          Effect.mapError(() => new GuestShareAccessError({ reason: "unavailable" })),
+        ),
+      ),
+      Effect.map((body) => HttpServerResponse.jsonUnsafe(body, { headers: NO_STORE })),
+      Effect.catchTags({ GuestShareAccessError: errorResponse }),
+    );
+  }),
+);
+
 // Ends when the command settles; the page closes its EventSource on that last frame, so the
 // browser does not reconnect.
 const commandOutputRoute = HttpRouter.add(
@@ -365,6 +359,7 @@ export const layer = Layer.mergeAll(
   streamRoute,
   renderRoute,
   itemRoute,
+  historyRoute,
   commandOutputRoute,
   attachmentRoute,
   mediaRoute,

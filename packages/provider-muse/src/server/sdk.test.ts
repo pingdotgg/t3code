@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Mock native realpath to exercise macOS case correction on every platform.
+import * as NodeFSP from "node:fs/promises";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- The Muse SDK spawns with Node's child_process, so the launch test quotes arguments the same way.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -20,6 +22,8 @@ import {
   museWorkspaceRoot,
   type MuseSdkHost,
 } from "./sdk.ts";
+
+vi.mock("node:fs/promises", { spy: true });
 
 vi.mock("@muse-code/sdk", () => ({ spawnMspConnection: vi.fn() }));
 
@@ -286,6 +290,29 @@ describe("Muse launch", () => {
     }),
   );
 
+  // The SDK spawns natively: libuv would wait on a hung mount under the cwd or PATH.
+  it.effect("launches through env on Linux, which enters the cwd and searches PATH", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "linux") return;
+      const launched = (options: Parameters<typeof createMuseSdkHostEffect>[0]) =>
+        Effect.gen(function* () {
+          const createHost = vi.fn(async (_options: unknown) => ({}) as MuseSdkHost);
+          yield* createMuseSdkHostEffect(options, createHost);
+          return createHost.mock.calls[0]?.[0];
+        });
+      const throughEnv = yield* launched({ binaryPath: "muse", cwd: "/work space" });
+      expect(throughEnv).toMatchObject({
+        launch: { command: "/usr/bin/env", args: ["-C", "/work space", "--", "muse"] },
+      });
+      expect(throughEnv).not.toHaveProperty("cwd");
+      // env would read this path as an assignment.
+      expect(yield* launched({ binaryPath: "/opt/a=b/muse", cwd: "/work" })).toMatchObject({
+        launch: { command: "/opt/a=b/muse", args: [] },
+        cwd: "/work",
+      });
+    }),
+  );
+
   // cmd's quote rules only show with a real cmd.exe, spawning as the SDK does.
   it.effect("starts a real launcher from a folder with spaces and cmd metacharacters", () =>
     Effect.gen(function* () {
@@ -311,13 +338,54 @@ describe("Muse launch", () => {
 });
 
 describe("Muse workspace root", () => {
+  it.effect("uses native canonical case off Windows", () =>
+    Effect.gen(function* () {
+      using _realpath = vi.spyOn(NodeFSP, "realpath").mockResolvedValue("/workspace/eevee");
+      expect(yield* museWorkspaceRoot("/workspace/EEVEE")).toBe("/workspace/eevee");
+    }).pipe(Effect.provideService(HostProcess.Platform, "darwin")),
+  );
+
   it("writes Windows paths in their verbatim form", () => {
     expect(museVerbatimPath("C:\\Users\\Person\\repo")).toBe("\\\\?\\C:\\Users\\Person\\repo");
     expect(museVerbatimPath("\\\\server\\share\\repo")).toBe("\\\\?\\UNC\\server\\share\\repo");
     expect(museVerbatimPath("\\\\?\\C:\\repo")).toBe("\\\\?\\C:\\repo");
   });
 
-  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case differs from the disk's.
+  it.effect("keeps a root it cannot resolve off Windows", () =>
+    Effect.gen(function* () {
+      expect(yield* museWorkspaceRoot("/workspace/repo")).toBe("/workspace/repo");
+    }).pipe(Effect.provideService(HostProcess.Platform, "linux")),
+  );
+
+  it.effect("keeps a Windows root it cannot resolve, in verbatim form", () =>
+    Effect.gen(function* () {
+      expect(yield* museWorkspaceRoot("C:\\definitely-missing\\repo")).toBe(
+        "\\\\?\\C:\\definitely-missing\\repo",
+      );
+      expect(yield* museWorkspaceRoot("C:/definitely-missing/repo")).toBe(
+        "\\\\?\\C:\\definitely-missing\\repo",
+      );
+      expect(yield* museWorkspaceRoot("//server/share/missing")).toBe(
+        "\\\\?\\UNC\\server\\share\\missing",
+      );
+    }).pipe(Effect.provideService(HostProcess.Platform, "win32")),
+  );
+
+  // FileSystem.realPath keeps the case it is given; Muse rejects a root whose case
+  // differs from the disk's, and APFS is case-insensitive just like NTFS.
+  it.effect("fixes the case of a macOS root natively", () =>
+    Effect.gen(function* () {
+      if ((yield* HostProcess.Platform) !== "darwin") return;
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const created = yield* fs.makeTempDirectoryScoped({ prefix: "MuseRoot-" });
+      // Only a case-insensitive volume resolves the miscased path; skip on a case-sensitive one.
+      if (!(yield* fs.exists(created.toUpperCase()))) return;
+      const root = yield* museWorkspaceRoot(created.toUpperCase());
+      expect(path.basename(root)).toBe(path.basename(created));
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("fixes the case of a Windows root natively", () =>
     Effect.gen(function* () {
       if ((yield* HostProcess.Platform) !== "win32") return;

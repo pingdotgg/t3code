@@ -25,8 +25,11 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
-  it("names max instead of drawing it", () => {
+  it("names Max and Default instead of drawing them", () => {
     expect(resolveEffortGlyph(claude, "max")?.special).toBe("Max");
+    const reported = descriptor(["default", "low", "medium", "high", "xhigh", "max"]);
+    expect(resolveEffortGlyph(reported, "default")?.special).toBe("Default");
+    expect(resolveEffortGlyph(reported, "low")).toMatchObject({ count: 4, filled: 1 });
   });
 
   it("names Ultracode and Ultrathink instead of drawing a level", () => {
@@ -45,9 +48,11 @@ describe("resolveEffortGlyph", () => {
     });
   });
 
-  it("falls back to the word when the value is unknown or the scale has one level", () => {
+  it("falls back to the word when the value is unknown or the scale is too short or long", () => {
     expect(resolveEffortGlyph(claude, "unknown")).toBeNull();
     expect(resolveEffortGlyph(descriptor(["high"]), "high")).toBeNull();
+    const levels = Array.from({ length: 8 }, (_, index) => `level${index}`);
+    expect(resolveEffortGlyph(descriptor(levels), "level0")).toBeNull();
   });
 });
 
