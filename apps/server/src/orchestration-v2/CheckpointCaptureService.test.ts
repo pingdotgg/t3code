@@ -311,6 +311,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
                     ),
                   )
                 : Layer.mock(CheckpointService.CheckpointServiceV2)({
+                    capturesSoFar: () => Effect.succeed(0),
                     repositoryScopes: () => Effect.succeed([]),
                     materializeBaselineCheckpoint: () =>
                       Effect.die(
@@ -892,6 +893,7 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
           Layer.mergeAll(
             IdAllocator.layer,
             Layer.mock(CheckpointService.CheckpointServiceV2)({
+              capturesSoFar: () => Effect.succeed(0),
               repositoryScopes: () => Effect.succeed([]),
               materializeBaselineCheckpoint: () =>
                 Effect.die("baseline materialization must be skipped when ordinal 0 is ready"),
@@ -954,6 +956,23 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
         scopeId: cancelledScopeId,
       });
       assert.deepEqual(afterRewind.preservedCheckpointOrdinals, [0]);
+
+      // A failed capture still records which run ended there; the next capture must keep that link.
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-capture-cancelled:captured-error"),
+        type: "checkpoint.captured",
+        threadId: cancelledThreadId,
+        runId: cancelledRunId,
+        nodeId: cancelledRootNodeId,
+        providerInstanceId,
+        occurredAt: cancelledAt,
+        payload: { ...captured, status: "error" },
+      });
+      const afterFailedCapture = yield* projectionStore.getCheckpointCaptureContext(
+        cancelledThreadId,
+        { runId: cancelledRunId, scopeId: cancelledScopeId },
+      );
+      assert.deepEqual([...afterFailedCapture.preservedCheckpointOrdinals].toSorted(), [0, 1]);
     }),
   );
 

@@ -284,6 +284,13 @@ export const VcsStatusResult = Schema.Struct({
 });
 export type VcsStatusResult = typeof VcsStatusResult.Type;
 
+export const VcsRefreshStatusResult = Schema.Struct({
+  ...VcsStatusResult.fields,
+  // Digest of the repository's refs after the refresh; absent when they could not be read.
+  refsDigest: Schema.optional(TrimmedNonEmptyString),
+});
+export type VcsRefreshStatusResult = typeof VcsRefreshStatusResult.Type;
+
 export const VcsStatusStreamEvent = Schema.Union([
   Schema.TaggedStruct("snapshot", {
     local: VcsStatusLocalResult,
