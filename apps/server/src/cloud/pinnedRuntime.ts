@@ -416,7 +416,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const stagingDir = yield* fs
     .makeTempDirectory({
       directory: versionsDir,
-      prefix: ".staging-",
+      prefix: PINNED_RUNTIME_STAGING_PREFIX,
     })
     .pipe(
       Effect.mapError(
@@ -485,6 +485,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 export const ensurePinnedRuntimeInstalled = (input: PinnedRuntimeInstallInput) =>
   pinnedRuntimeInstallLock.withPermit(installPinnedRuntime(input));
 
+const PINNED_RUNTIME_STAGING_PREFIX = ".staging-";
 const PINNED_RUNTIME_PRUNED_PREFIX = ".pruned-";
 /**
  * Another process may have just published a runtime it has not yet pointed anything at: an
@@ -817,6 +818,16 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     (yield* Clock.currentTimeMillis) - Duration.toMillis(PINNED_RUNTIME_PRUNE_GRACE);
   const completed: Array<string> = [];
   for (const version of entries) {
+    if (version.startsWith(PINNED_RUNTIME_STAGING_PREFIX)) {
+      // A crashed or interrupted install leaves its staging directory behind.
+      const stagingDir = path.join(versionsDir, version);
+      const modifiedAt = yield* fs.stat(stagingDir).pipe(
+        Effect.map((info) => Option.getOrUndefined(info.mtime)?.getTime()),
+        Effect.orElseSucceed(() => undefined),
+      );
+      if (modifiedAt !== undefined && modifiedAt < settledBefore) pruned.add(stagingDir);
+      continue;
+    }
     if (!isExactServiceVersion(version)) continue;
     const versionDir = path.join(versionsDir, version);
     const sentinelPath = path.join(versionDir, ".install-complete");
@@ -854,7 +865,8 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
     if (state === undefined) return pruned;
     keep.add(state.activeVersion);
     if (state.update !== undefined) {
-      keep.add(state.update.fromVersion);
+      // A committed update never returns to the runtime it replaced.
+      if (state.update.status !== "committed") keep.add(state.update.fromVersion);
       keep.add(state.update.targetVersion);
     }
   }
@@ -901,8 +913,8 @@ const selectUnusedRuntimes = Effect.fn("cloud.pinned_runtime.select_unused")(fun
 
 /**
  * Keep runtimes named by callers, service state, running processes, launchers, or references,
- * and anything published within an hour. Only prune completed runtimes; leave staging
- * directories, symlinks, and unexpected entries untouched.
+ * and anything published within an hour. Only prune completed runtimes and staging directories
+ * untouched for an hour; leave symlinks and unexpected entries untouched.
  */
 export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(function* (input: {
   readonly baseDir: string;
@@ -917,11 +929,14 @@ export const prunePinnedRuntimes = Effect.fn("cloud.pinned_runtime.prune")(funct
   );
   const removed: Array<string> = [];
   for (const target of pruned) {
+    const name = path.basename(target);
     yield* fs.remove(target, { recursive: true, force: true }).pipe(
       Effect.andThen(
-        Effect.sync(() =>
-          removed.push(path.basename(target).slice(PINNED_RUNTIME_PRUNED_PREFIX.length)),
-        ),
+        Effect.sync(() => {
+          if (name.startsWith(PINNED_RUNTIME_PRUNED_PREFIX)) {
+            removed.push(name.slice(PINNED_RUNTIME_PRUNED_PREFIX.length));
+          }
+        }),
       ),
       Effect.catch((cause) =>
         Effect.logWarning("Could not remove an unused t3 runtime.", { target, cause }),
