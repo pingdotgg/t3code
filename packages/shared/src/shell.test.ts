@@ -577,7 +577,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           ),
         ).toBe(path.join(directory, "audit-command"));
         const resolveExecutable = yield* SpawnExecutableResolution;
-        expect(resolveExecutable("audit-command", "linux", env)).toBe(executable);
+        expect(
+          yield* Effect.promise(async () => resolveExecutable("audit-command", "linux", env)),
+        ).toBe(executable);
       }),
   );
 
@@ -764,7 +766,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
   // A POSIX directory joined with win32 separators names nothing, so this needs a Windows host.
   it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
-    "relists a changed PATH directory in the synchronous spawn resolver",
+    "relists a changed PATH directory in the spawn resolver",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -774,11 +776,17 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         yield* fs.utimes(directory, 946_684_800, 946_684_800);
         const env = { PATH: directory, PATHEXT: ".EXE;.CMD" };
         const resolveExecutable = yield* SpawnExecutableResolution;
-        expect(resolveExecutable("cursor", "win32", env)).toBe(path.join(directory, "cursor.CMD"));
-        expect(resolveExecutable("late", "win32", env)).toBeUndefined();
+        expect(yield* Effect.promise(async () => resolveExecutable("cursor", "win32", env))).toBe(
+          path.join(directory, "cursor.CMD"),
+        );
+        expect(
+          yield* Effect.promise(async () => resolveExecutable("late", "win32", env)),
+        ).toBeUndefined();
         yield* fs.writeFileString(path.join(directory, "late.EXE"), "");
         yield* fs.utimes(directory, 946_684_830, 946_684_830);
-        expect(resolveExecutable("late", "win32", env)).toBe(path.join(directory, "late.EXE"));
+        expect(yield* Effect.promise(async () => resolveExecutable("late", "win32", env))).toBe(
+          path.join(directory, "late.EXE"),
+        );
       }),
   );
 
@@ -794,8 +802,8 @@ const Shell = await import(shellPath);
 const resolved = {};
 const resolvedGit = {};
 const defaultResolver = Shell.SpawnExecutableResolution.defaultValue();
-const resolveExecutable = (...args) => {
-  const found = defaultResolver(...args);
+const resolveExecutable = async (...args) => {
+  const found = await defaultResolver(...args);
   return found === gitShim ? "/usr/bin/git" : found;
 };
 const locateXcodeGit = () => xcodeGit;
@@ -810,7 +818,7 @@ await Effect.runPromise(Effect.gen(function* () {
         Effect.provideService(HostProcess.Platform, process.platform),
         Effect.provideService(Shell.CommandResolutionCache, cache),
       ),
-      spawn: Shell.SpawnExecutableResolution.defaultValue()(command, process.platform, { PATH }) ?? null,
+      spawn: (yield* Effect.promise(async () => Shell.SpawnExecutableResolution.defaultValue()(command, process.platform, { PATH }))) ?? null,
     };
   }
   for (const [label, { PATH, cwd, cacheGroup }] of Object.entries(JSON.parse(rawGitPaths))) {
@@ -1002,8 +1010,8 @@ const { layer } = await import(requireFromShell.resolve("@effect/platform-node/N
 const HostProcess = await import(shellPath.replace(/shell\\.ts$/, "HostProcess.ts"));
 const Shell = await import(shellPath);
 const defaultResolver = Shell.SpawnExecutableResolution.defaultValue();
-const resolveExecutable = (...args) => {
-  const found = defaultResolver(...args);
+const resolveExecutable = async (...args) => {
+  const found = await defaultResolver(...args);
   return found === gitShim ? "/usr/bin/git" : found;
 };
 process.chdir(removed);
@@ -1285,6 +1293,73 @@ describe("npmShimExecutable", () => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect("yields while discovering a Windows executable", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+        const executable = path.join(directory, "tool.EXE");
+        yield* fs.writeFileString(executable, "");
+        let settled = false;
+        const pending = Promise.resolve(
+          SpawnExecutableResolution.defaultValue()(executable, "win32", { PATHEXT: ".EXE;.CMD" }),
+        ).then((value) => {
+          settled = true;
+          return value;
+        });
+        try {
+          yield* Effect.promise(() => Promise.resolve());
+          expect(settled).toBe(false);
+        } finally {
+          expect(yield* Effect.promise(() => pending)).toBe(executable);
+        }
+      }),
+    ),
+  );
+
+  it.effect("preserves PATH and PATHEXT order and discovers executables after a miss", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-spawn-" });
+        const fixture = NodePath.join(directory, "tool.EXE");
+        yield* fs.writeFileString(fixture, "");
+        const stat = yield* Effect.promise(() => NodeFS.promises.stat(fixture));
+        const files = new Set<string>();
+        using _stat = vi.spyOn(NodeFS.promises, "stat").mockImplementation(async (candidate) => {
+          if (!files.has(String(candidate))) throw new Error("not found");
+          return stat;
+        });
+        const lookup = resolveSpawnCommand("tool", ["status"], {
+          env: { PATH: "C:\\first;C:\\later", PATHEXT: ".EXE;.CMD" },
+        });
+        expect((yield* lookup).command).toBe("tool");
+        files.add("C:\\first\\tool.CMD");
+        files.add("C:\\first\\tool.EXE");
+        files.add("C:\\later\\tool.EXE");
+        expect(yield* lookup).toEqual({
+          command: "C:\\first\\tool.EXE",
+          args: ["status"],
+          shell: false,
+        });
+        files.delete("C:\\first\\tool.EXE");
+        expect((yield* lookup).command).toBe("C:\\first\\tool.EXE");
+        expect(
+          yield* Effect.promise(async () =>
+            SpawnExecutableResolution.defaultValue()("tool", "win32", {
+              PATH: "C:\\first;C:\\later",
+              PATHEXT: ".EXE;.CMD",
+            }),
+          ),
+        ).toBe("C:\\first\\tool.CMD");
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "win32"),
+        Effect.provideService(CommandResolutionCache, new Map()),
+      ),
+    ),
+  );
+
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {
