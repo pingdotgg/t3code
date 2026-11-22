@@ -6,6 +6,7 @@ import {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -15,11 +16,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveEditorCommand } from "@t3tools/shared/editor";
 import * as HostProcess from "@t3tools/shared/HostProcess";
-import {
-  isCommandAvailable,
-  resolveSpawnCommand,
-  withPathDirectoryListings,
-} from "@t3tools/shared/shell";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -40,6 +37,7 @@ export {
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherEditorSpawnError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherUnsupportedTargetError,
@@ -503,7 +501,7 @@ const readEditorEnv = Effect.fn("externalLauncher.readEditorEnv")(function* () {
 const resolveAvailableEditors = Effect.fn("externalLauncher.resolveAvailableEditors")(function* () {
   const platform = yield* HostProcess.Platform;
   const env = yield* readEditorEnv();
-  return yield* buildAvailableEditors(platform, env).pipe(withPathDirectoryListings);
+  return yield* buildAvailableEditors(platform, env);
 });
 
 const resolveFileManagerRevealKind = Effect.fn("externalLauncher.resolveFileManagerRevealKind")(
@@ -594,6 +592,13 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
   }
 
   if (input.reveal === true) {
+    // Explorer answers /select of a missing path by opening its default folder, not the parent.
+    const exists = yield* (yield* FileSystem.FileSystem)
+      .exists(target)
+      .pipe(Effect.orElseSucceed(() => true));
+    if (!exists) {
+      return yield* new ExternalLauncherRevealTargetMissingError({ editor: editorDef.id, target });
+    }
     return yield* resolveFileManagerRevealLaunch(target, platform, env, command);
   }
 

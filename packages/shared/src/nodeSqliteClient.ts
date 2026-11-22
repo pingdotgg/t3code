@@ -247,11 +247,13 @@ parentPort.on("message", (request) => {
     parentPort.close();
     return;
   }
-  const { id, sql, params, cached, values, raw, safeIntegers, received } = request;
+  const { id, sql, params, cached, values, raw, safeIntegers, received, savepoints } = request;
   let operation = "open";
   let iterator;
   try {
     if (db === undefined) throw new Error("database connection is unavailable");
+    operation = "execute";
+    for (const savepoint of savepoints) db.exec(savepoint);
     operation = "prepare";
     const statement = prepare(sql, cached);
     operation = "execute";
@@ -370,6 +372,8 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       }
     | undefined;
   let nextRequestId = 0;
+  // Materialize nested savepoints with the next statement; empty jobs need no worker round trip.
+  const pendingSavepoints: string[] = [];
   // A replacement writer would lose the pragmas callers set on it, such as foreign_keys.
   let writerStopped: string | undefined;
 
@@ -467,8 +471,18 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
           });
           if (pending.size === 1) worker.ref();
           const cached = input.cached && !hasLargeBinding(input.params);
+          const message = {
+            id,
+            safeIntegers,
+            ...input,
+            cached,
+            received,
+            savepoints: [...pendingSavepoints],
+          };
           // oxlint-disable-next-line unicorn/require-post-message-target-origin -- Node workers do not accept a target origin.
-          worker.postMessage({ id, safeIntegers, ...input, cached, received });
+          worker.postMessage(message);
+          // An unsent savepoint must stay queued, or its rollback would target an older sibling's.
+          pendingSavepoints.length = 0;
         });
         // A posted write runs to the end, as it did on the event loop; the caller and its lock
         // must not move on while the worker is still applying it. Reads stay cancellable.
@@ -492,12 +506,27 @@ const makeWorkerConnection = Effect.fnUntraced(function* (options: {
       executeUnprepared(sql, params, rowTransform) {
         // Read snapshots need deferred BEGIN; readonly connections reject IMMEDIATE and EXCLUSIVE.
         const statement = readOnly && /^\s*BEGIN\b/i.test(sql) ? "BEGIN" : sql;
-        const effect = request({
-          sql: statement,
-          params: params ?? [],
-          cached: false,
-          values: false,
-          raw: false,
+        const effect = Effect.suspend(() => {
+          if (!readOnly && /^SAVEPOINT effect_sql_\d+$/.test(statement)) {
+            pendingSavepoints.push(statement);
+            return Effect.succeed([]);
+          }
+          const rollback = /^ROLLBACK TO SAVEPOINT (effect_sql_\d+)$/.exec(statement);
+          if (rollback !== null) {
+            const pending = pendingSavepoints.lastIndexOf(`SAVEPOINT ${rollback[1]}`);
+            if (pending !== -1) {
+              pendingSavepoints.splice(pending);
+              return Effect.succeed([]);
+            }
+          }
+          if (statement === "COMMIT" || statement === "ROLLBACK") pendingSavepoints.length = 0;
+          return request({
+            sql: statement,
+            params: params ?? [],
+            cached: false,
+            values: false,
+            raw: false,
+          });
         });
         return rowTransform ? Effect.map(effect, rowTransform) : effect;
       },

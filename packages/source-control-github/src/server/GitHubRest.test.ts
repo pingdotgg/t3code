@@ -8,8 +8,10 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Keep the native socket path within the temporary directory.
 import * as NodePath from "node:path";
+import * as FeatureFlags from "@t3tools/shared/FeatureFlags";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -359,7 +361,10 @@ describe("GitHubRest", () => {
         const media = yield* instance.fetchMedia!({ url: mediaUrl, headers: {} });
         expect(media?.status).toBe(401);
         expect(directRequests).toEqual([mediaUrl]);
-      }).pipe(Effect.provide(layer), Effect.provideService(HostProcess.Environment, {}));
+      }).pipe(
+        Effect.provide(layer.pipe(Layer.provideMerge(FeatureFlags.layerTest()))),
+        Effect.provideService(HostProcess.Environment, {}),
+      );
     }),
   );
 
@@ -611,15 +616,17 @@ describe("GitHubCredentials", () => {
     GitHubCredentials.layer.pipe(
       Layer.provide(TestSourceControlHost.layer({ process: { run } })),
       Layer.provide(NodeCrypto.layer),
+      Layer.provide(FileSystem.layerNoop({})),
       Layer.provide(Layer.succeed(HttpClient.HttpClient, unexpectedHttp)),
     );
 
-  it.effect("does not cache a gh failure that is not about signing in", () => {
+  it.effect("reports a gh timeout as a timeout and does not cache it", () => {
     let calls = 0;
     return Effect.gen(function* () {
       const credentials = yield* GitHubCredentials.GitHubCredentials;
       const first = yield* Effect.flip(credentials.get("github.com"));
-      expect(first._tag).toBe("GitHubCliFailedError");
+      expect(first._tag).toBe("GitHubCliTimeoutError");
+      expect(first.message).not.toContain("gh auth status");
       expect((yield* credentials.get("github.com")).source).toBe("gh");
       expect(calls).toBe(2);
     }).pipe(

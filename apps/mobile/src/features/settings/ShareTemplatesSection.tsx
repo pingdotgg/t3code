@@ -1,5 +1,5 @@
 import { useGT } from "gt-react-native";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { TextInput, View } from "react-native";
@@ -8,14 +8,15 @@ import * as Dialog from "../../components/ui/Dialog";
 import { IconButton } from "../../components/ui/IconButton";
 import { ListActionRow } from "../../components/ui/ListActionRow";
 import { uuidv4 } from "../../lib/uuid";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { SHARE_TEMPLATE_PLACEHOLDER, type ShareTemplate } from "../sharing/share-templates";
 import { SettingsSection } from "./components/SettingsSection";
 
 export function ShareTemplatesSection() {
   const gt = useGT();
   const preferencesResult = useAtomValue(mobilePreferencesAtom);
-  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const [addedTemplateId, setAddedTemplateId] = useState<string | null>(null);
   const templates = AsyncResult.isSuccess(preferencesResult)
     ? (preferencesResult.value.shareTemplates ?? [])
@@ -23,10 +24,11 @@ export function ShareTemplatesSection() {
 
   const updateTemplates = (
     transform: (templates: ReadonlyArray<ShareTemplate>) => ReadonlyArray<ShareTemplate>,
-  ) =>
-    savePreferences({
+  ) => {
+    void savePreferences({
       transform: (current) => ({ shareTemplates: transform(current.shareTemplates ?? []) }),
     });
+  };
   const addTemplate = () => {
     const id = uuidv4();
     setAddedTemplateId(id);

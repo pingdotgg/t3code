@@ -33,7 +33,7 @@ effect/Schema#Annotations.GenericSchema:
   note: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
 effect/Schema#Annotations.Schema:
   replacement: none
-  note: The v3 helper/protocol type was removed by the v4 Schema model rewrite. Use the public v4 constructor and infer its result types instead.
+  note: "The v3 helper/protocol type was removed by the v4 Schema model rewrite. Schema.annotate accepts any string key, so the removed concurrency, batching, and parseOptions keys still type-check but are ignored at runtime. Pass concurrency and other parse options at runtime through SchemaAST.ParseOptions when creating or calling a parser; requests from sibling children share a batch only when that concurrency lets them be pending together, although requests started concurrently inside a transformation or by other fibers can still batch."
 effect/Schema#Any:
   replacement: Schema.Any
   note: The API remains public in v4, but its type/value declaration was consolidated; use the v4 declaration and update inferred types/signature as needed.
@@ -368,8 +368,8 @@ effect/Schema#FiniteSchemaId:
   replacement: none
   note: The v3 schema-id symbol was removed. Use the corresponding public v4 constructor/check instead of inspecting schema ids.
 effect/Schema#format:
-  replacement: SchemaRepresentation.toCodeDocument
-  note: Build a representation with `SchemaRepresentation.toRepresentation`, `toMultiDocument`, then `toCodeDocument`.
+  replacement: none
+  note: Schema.format was removed in v4 and has no replacement.
 effect/Schema#fromBrand:
   replacement: Schema.fromBrand
   note: Pass the constructor's single concrete string brand key as the first argument, followed by the constructor and then the schema. Apply fromBrand repeatedly for multiple brands; use Schema.Union for alternatives. Constructor checks remain at runtime, while the brand is type-only and does not add AST metadata.

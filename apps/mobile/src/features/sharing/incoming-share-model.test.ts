@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "@effect/vitest";
+import { describe, expect, it, vi } from "vite-plus/test";
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -13,6 +13,32 @@ import {
   selectIncomingShareAttachments,
   selectIncomingShareAttachmentsForServer,
 } from "./incoming-share-model";
+
+const nativeImage = vi.hoisted(() => ({
+  resize: vi.fn(),
+}));
+
+vi.mock("expo-image-manipulator", () => ({
+  SaveFormat: { PNG: "png", JPEG: "jpeg" },
+  ImageManipulator: {
+    manipulate: (source: string | { width: number; height: number }) => {
+      let size = typeof source === "string" ? { width: 3000, height: 1500 } : source;
+      const context = {
+        resize: (next: { width: number; height: number }) => {
+          nativeImage.resize(next);
+          size = next;
+          return context;
+        },
+        renderAsync: async () => ({
+          ...size,
+          release: () => {},
+          saveAsync: async () => ({ uri: "file:///cache/resized.png", base64: "YWJj" }),
+        }),
+      };
+      return context;
+    },
+  },
+}));
 
 describe("incoming native shares", () => {
   it("converts shared text, URLs, and images into a durable composer draft", async () => {
@@ -42,6 +68,11 @@ describe("incoming native shares", () => {
       originalName: "Screenshot.png",
     };
     const removeOwnedFile = vi.fn(() => Promise.resolve());
+    const readBase64 = vi.fn(async () => "YWJj");
+    const persistedUri = "file:///documents/t3-composer-attachments/Screenshot.png";
+    const persistFile = vi.fn(
+      async (_uri: string, name: string) => `file:///documents/t3-composer-attachments/${name}`,
+    );
 
     const build = (attachmentIdPrefix: string) =>
       buildIncomingShareDraft({
@@ -61,7 +92,9 @@ describe("incoming native shares", () => {
           },
         ],
         fileReader: {
-          readBase64: async () => "YWJj",
+          readBase64,
+          persistFile,
+          readSize: async () => 3,
           removeOwnedFile,
         },
       });
@@ -85,8 +118,8 @@ describe("incoming native shares", () => {
           name: "Screenshot.png",
           mimeType: "image/png",
           sizeBytes: 3,
-          dataUrl: "data:image/png;base64,YWJj",
-          previewUri: "data:image/png;base64,YWJj",
+          fileUri: persistedUri,
+          previewUri: persistedUri,
         },
         {
           id: "share-1-file-4",
@@ -94,7 +127,7 @@ describe("incoming native shares", () => {
           name: "report.pdf",
           mimeType: "application/pdf",
           sizeBytes: 3,
-          fileUri: "file:///shared/report.pdf",
+          fileUri: "file:///documents/t3-composer-attachments/report.pdf",
         },
       ],
       warnings: [],
@@ -105,7 +138,88 @@ describe("incoming native shares", () => {
       schemaVersion: 1,
     });
     expect(removeOwnedFile).toHaveBeenCalledWith(image.value);
+    expect(removeOwnedFile).not.toHaveBeenCalledWith(persistedUri);
     expect(hasIncomingShareContent(result)).toBe(true);
+  });
+
+  it("persists the resized PNG for a shared image over 2000px", async () => {
+    const header = Buffer.alloc(24);
+    header.set([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    header.set([0x49, 0x48, 0x44, 0x52], 12);
+    header.writeUInt32BE(3000, 16);
+    header.writeUInt32BE(1500, 20);
+    const persistedUri = "file:///documents/t3-composer-attachments/screenshot.png";
+    const persistFile = vi.fn(async () => persistedUri);
+    const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
+
+    const draft = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-resize",
+      id: "share-resize",
+      createdAt: "2026-07-15T10:00:00.000Z",
+      payloads: [
+        { shareType: "image", value: "content://shared/screenshot", mimeType: "image/png" },
+      ],
+      resolvedPayloads: [],
+      fileReader: {
+        readBase64: async () => header.toString("base64"),
+        persistFile,
+        readSize: async () => 3,
+        removeOwnedFile,
+      },
+    });
+
+    expect(nativeImage.resize).toHaveBeenCalledWith({ width: 2000, height: 1000 });
+    expect(persistFile).toHaveBeenCalledWith("file:///cache/resized.png", "screenshot");
+    expect(draft.attachments).toEqual([
+      {
+        id: "share-resize-image-0",
+        type: "image",
+        name: "screenshot",
+        mimeType: "image/png",
+        sizeBytes: 3,
+        fileUri: persistedUri,
+        previewUri: persistedUri,
+      },
+    ]);
+    expect(draft.warnings).toEqual([]);
+    expect(removeOwnedFile).not.toHaveBeenCalledWith(persistedUri);
+  });
+
+  it("releases a shared image when its stored size cannot be measured", async () => {
+    const image: SharePayload = {
+      shareType: "image",
+      value: "file:///shared/photo.png",
+      mimeType: "image/png",
+    };
+    const persistedUri = "file:///documents/t3-composer-attachments/photo.png";
+    const removeOwnedFile = vi.fn(async (_uri: string) => undefined);
+    const result = await buildIncomingShareDraft({
+      attachmentIdPrefix: "share-unmeasured",
+      id: "share-unmeasured",
+      createdAt: "2026-07-15T10:00:00.000Z",
+      payloads: [image],
+      resolvedPayloads: [
+        {
+          ...image,
+          contentUri: image.value,
+          contentType: "image",
+          contentMimeType: "image/png",
+          contentSize: 3,
+          originalName: "photo.png",
+        },
+      ],
+      fileReader: {
+        readBase64: async () => "unused",
+        persistFile: async () => persistedUri,
+        readSize: async () => null,
+        removeOwnedFile,
+      },
+    });
+
+    expect(result.attachments).toEqual([]);
+    expect(result.warnings).toEqual(["'photo.png' is empty or could not be read."]);
+    expect(removeOwnedFile).toHaveBeenCalledWith(persistedUri);
+    expect(removeOwnedFile).toHaveBeenCalledWith(image.value);
   });
 
   it("skips oversized images and releases the temporary native file", async () => {
