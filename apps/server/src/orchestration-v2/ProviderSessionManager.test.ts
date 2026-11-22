@@ -5600,10 +5600,12 @@ it.effect(
       const unloadStarted = yield* Deferred.make<void>();
       const releaseUnload = yield* Deferred.make<void>();
       let resumesBeforeUnload: number | undefined;
+      const order: Array<string> = [];
       const beforeUnload = Effect.gen(function* () {
         yield* Deferred.succeed(unloadStarted, undefined);
         yield* Deferred.await(releaseUnload);
         resumesBeforeUnload = (yield* Ref.get(state)).resumeCount;
+        order.push("unloaded");
       });
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
@@ -5669,11 +5671,20 @@ it.effect(
           .pipe(Effect.forkScoped);
         yield* Deferred.await(unloadStarted);
         const reattach = yield* resume.pipe(Effect.forkScoped);
+        // A workspace removal waits for the unload too: it must not let the folder go under it.
+        const removal = yield* manager
+          .closeInWorkspace(process.cwd())
+          .pipe(
+            Effect.andThen(Effect.sync(() => order.push("workspace cleared"))),
+            Effect.forkChild({ startImmediately: true }),
+          );
         yield* Effect.yieldNow;
         yield* Effect.yieldNow;
         yield* Deferred.succeed(releaseUnload, undefined);
         yield* Fiber.join(detach);
         yield* Fiber.join(reattach);
+        yield* Fiber.join(removal);
+        assert.deepEqual(order, ["unloaded", "workspace cleared"]);
 
         assert.equal(resumesBeforeUnload, 1);
         assert.equal((yield* Ref.get(state)).resumeCount, 2);

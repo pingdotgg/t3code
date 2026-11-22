@@ -558,6 +558,8 @@ export const layerWithOptions = (
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       /** Sessions being torn down, so a workspace removal can wait for their processes to exit. */
       const releasing = new Set<{ readonly cwd: string; readonly done: Deferred.Deferred<void> }>();
+      /** Detaches under way: one may still be unloading a thread from a process that stays up. */
+      const detaching = new Set<Deferred.Deferred<void>>();
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -3433,6 +3435,11 @@ export const layerWithOptions = (
                   workspacePath,
                   cause,
                 });
+            // An unload still in flight could address the folder after it was let go, loading it back.
+            yield* Effect.forEach([...detaching], (done) => Deferred.await(done), {
+              concurrency: "unbounded",
+              discard: true,
+            });
             yield* Effect.forEach(
               [...(yield* Ref.get(sessions)).values()],
               (entry) => {
@@ -3677,7 +3684,18 @@ export const layerWithOptions = (
             yield* scheduleIdleRelease(input.providerSessionId);
           },
           (effect, input) =>
-            effect.pipe(
+            Effect.suspend(() => {
+              const done = Deferred.makeUnsafe<void>();
+              detaching.add(done);
+              return effect.pipe(
+                Effect.ensuring(
+                  Effect.suspend(() => {
+                    detaching.delete(done);
+                    return Deferred.succeed(done, undefined);
+                  }),
+                ),
+              );
+            }).pipe(
               Effect.catchCause((cause) =>
                 Effect.fail(
                   new ProviderSessionReleaseError({
