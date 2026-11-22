@@ -9,6 +9,7 @@ import {
   type HtmlRenderReference,
   type HtmlRenderTheme,
 } from "@t3tools/shared/htmlRender";
+import { T, useGT } from "gt-react-native";
 import { useEffect, useRef, useState } from "react";
 import { Platform, Pressable, View, type ColorValue } from "react-native";
 import { WebView, type WebViewMessageEvent } from "react-native-webview";
@@ -19,12 +20,14 @@ import { mobileHtmlRenderTheme } from "../../lib/htmlRenderTheme";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useAssetUrlState, useRefreshAssetUrl } from "../../state/assets";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
+import { webViewDecelerationRate } from "../../lib/webViewDecelerationRate";
 
 const ROW_BOTTOM_MARGIN = 8;
+const ACTION_ROW_HEIGHT = 32;
 const FULL_SCREEN_GUTTER = 16;
 
 export function htmlRenderRowHeight(frameHeight: number) {
-  return frameHeight + ROW_BOTTOM_MARGIN;
+  return ACTION_ROW_HEIGHT + frameHeight + ROW_BOTTOM_MARGIN;
 }
 
 function useHtmlRenderTheme() {
@@ -130,7 +133,9 @@ export function HtmlRenderWebView(props: {
         showsVerticalScrollIndicator={!props.nested}
         showsHorizontalScrollIndicator={!props.nested}
         scrollEnabled={scrollable}
-        // Patched Android WebView hands vertical drags to the feed at its edges; horizontal-only overflow leaves them to the feed.
+        decelerationRate={webViewDecelerationRate}
+        // Android's patched WebView always keeps horizontal drags. Only pages
+        // with vertical overflow hold vertical drags until they reach an edge.
         nestedScrollEnabled={props.nested && overflow.y}
         overScrollMode={props.nested ? "never" : "always"}
         onShouldStartLoadWithRequest={(request) =>
@@ -176,6 +181,7 @@ export function ThreadHtmlRender(props: {
   readonly frameWidth: number;
   readonly iconColor: ColorValue;
 }) {
+  const gt = useGT();
   const navigation = useNavigation();
   const { attachmentId, title } = props.render;
   const height = htmlRenderFrameHeight(props.render, props.frameWidth);
@@ -210,39 +216,13 @@ export function ThreadHtmlRender(props: {
 
   return (
     <View style={{ marginBottom: ROW_BOTTOM_MARGIN }}>
-      <View style={{ height }}>
-        {uri !== null && !failed ? (
-          <HtmlRenderWebView
-            key={`${uri}:${attempt}`}
-            uri={uri}
-            title={title}
-            nested
-            onLoadError={handleLoadError}
-          />
-        ) : failed || asset._tag === "Failure" ? (
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={`Reload ${title}`}
-            className="flex-1 items-center justify-center"
-            onPress={() => {
-              retried.current = false;
-              setFailed(false);
-              if (uri === null) void refresh().then((next) => next !== null && setUri(next));
-            }}
-          >
-            <Text className="text-sm text-foreground-muted">Page unavailable</Text>
-          </Pressable>
-        ) : (
-          <View className="flex-1 items-center justify-center">
-            <AppActivityIndicator />
-          </View>
-        )}
+      <View style={{ height: ACTION_ROW_HEIGHT }} className="flex-row items-start justify-end">
         {uri !== null && !failed ? (
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel={`Open ${title}`}
+            accessibilityLabel={gt("Open {title}", { title })}
             hitSlop={8}
-            className="absolute right-1.5 top-1.5 h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
+            className="h-7 w-7 items-center justify-center rounded-full border border-border/60 bg-card/80"
             onPress={() =>
               navigation.navigate("ThreadAttachment", {
                 environmentId: String(props.environmentId),
@@ -263,6 +243,36 @@ export function ThreadHtmlRender(props: {
             />
           </Pressable>
         ) : null}
+      </View>
+      <View style={{ height }}>
+        {uri !== null && !failed ? (
+          <HtmlRenderWebView
+            key={`${uri}:${attempt}`}
+            uri={uri}
+            title={title}
+            nested
+            onLoadError={handleLoadError}
+          />
+        ) : failed || asset._tag === "Failure" ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={gt("Reload {title}", { title })}
+            className="flex-1 items-center justify-center"
+            onPress={() => {
+              retried.current = false;
+              setFailed(false);
+              if (uri === null) void refresh().then((next) => next !== null && setUri(next));
+            }}
+          >
+            <Text className="text-sm text-foreground-muted">
+              <T>Page unavailable</T>
+            </Text>
+          </Pressable>
+        ) : (
+          <View className="flex-1 items-center justify-center">
+            <AppActivityIndicator />
+          </View>
+        )}
       </View>
     </View>
   );

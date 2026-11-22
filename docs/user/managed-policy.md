@@ -127,8 +127,8 @@ cannot enforce, so upgrade T3 Code before you deploy a policy that uses them.
 ## Settings
 
 Each key under `settings` is a setting's path in the server's `settings.json`, such as
-`storageCleanup.logsAfterDays`. To find a path, change the setting in T3 Code and look in
-`settings.json` under `~/.t3/userdata`.
+`storageCleanup.logsAfterDays`. Run `t3 policy settings` to list every path a policy can manage,
+with its default.
 
 - `"locked": false` sets a default. It applies wherever the user has not chosen a value of their
   own, and users can change it.
@@ -146,6 +146,8 @@ A few settings need care:
 - `worktreeCleanup`, which projects can also set, overrides the `worktree` rules in
   `storageCleanup`. Lock it along with those rules; T3 Code refuses a policy that locks only the
   rules.
+- `observability` cannot be managed. Its OTLP endpoints come from each user's environment
+  variables, settings file and desktop startup input, which a policy cannot override.
 - Manage `idleCompaction`, not the older `compactIdleThreads`. A Claude instance's own idle
   compaction choice still wins over `idleCompaction`.
 - A provider instance's fields override each other, so lock `providerInstances.<id>` as a whole,
@@ -167,6 +169,7 @@ A few settings need care:
     "connect": false,
     "webhookTasks": false,
     "browserCookieImport": false,
+    "previewTunnel": false,
     "telemetry": false,
     "providers": {
       "allowedDrivers": ["claudeAgent", "codex"],
@@ -224,8 +227,10 @@ desktop app, keep `desktop` in the list, or the app cannot start.
 
 Without `remote`, the server listens only on a loopback address, creates no pairing links, and
 signs out devices that paired earlier. It does not start with a host other than a loopback
-address or `localhost`. The [background service](./background-service.md) listens on private
-networks by default, so set `T3CODE_HOST=127.0.0.1` in its `service.env`. The desktop app starts
+address or `localhost`. A [background service](./background-service.md) installed before
+`T3CODE_LAN` existed keeps private-network access, so without `remote` it refuses to start.
+Run `t3 up --no-lan` when its `service.env` sets no `T3CODE_HOST`, or set
+`T3CODE_HOST=127.0.0.1` in `service.env`, then run `t3 service restart`. The desktop app starts
 with network access and Tailscale Serve off, whatever the user chose. That also turns off
 T3 Connect. To keep other remote access but turn off T3 Connect alone, set `"connect": false`.
 
@@ -246,6 +251,10 @@ so restart T3 Code after that.
   but do not run, and cannot be turned back on. Users can still edit or delete them.
 - `browserCookieImport: false`: users cannot import cookies from another browser into T3 Code's
   browser.
+- `previewTunnel: false`: other devices cannot load this machine's `localhost` pages themselves.
+  Browser tabs stream from it instead, and port forwarding and **Open on this device** are
+  unavailable. This wins over the user's
+  [Preview tunnel setting](./remote-access.md#browser-on-a-remote-environment).
 - `telemetry: false`: the server and desktop app send no [product usage data](./telemetry.md) or
   relay connection traces. A policy cannot turn them on. A browser that opens the server, such as
   app.t3.codes, still sends its own relay traces.

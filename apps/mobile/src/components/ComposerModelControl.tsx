@@ -1,4 +1,5 @@
 import type { ModelSelection, ProviderDriverKind } from "@t3tools/contracts";
+import { useGT, useMessages } from "gt-react-native";
 import {
   buildTraitsTriggerDisplay,
   getPromptControlledTraits,
@@ -7,7 +8,7 @@ import type { ModelOption } from "../lib/modelOptions";
 import { resolveProviderOptionDescriptors } from "../lib/providerOptions";
 import { AppText as Text } from "./ui/AppText";
 import { ComposerInlineControl } from "./ComposerToolbar";
-import { ProviderIcon, ProviderInstanceIcon } from "./ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon, providerInstanceNameLabel } from "./ProviderIcon";
 
 export function ComposerModelControl(props: {
   readonly modelOption: ModelOption | null;
@@ -21,27 +22,40 @@ export function ComposerModelControl(props: {
   readonly iconOnly?: boolean;
   readonly onPress: () => void;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const descriptors = resolveProviderOptionDescriptors({
     capabilities: props.modelOption?.capabilities,
     selections: props.selection?.options,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
   const summary = props.provider
-    ? buildTraitsTriggerDisplay({
-        provider: props.provider,
-        descriptors,
-        primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
-        ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
-        modelSelection: props.selection,
-        reportedModelSelection: props.reportedSelection,
-      }).label
+    ? buildTraitsTriggerDisplay(
+        {
+          descriptors,
+          primarySelectDescriptorId: promptTraits.primarySelectDescriptor?.id ?? null,
+          ultrathinkPromptControlled: promptTraits.ultrathinkPromptControlled,
+          modelSelection: props.selection,
+          reportedModelSelection: props.reportedSelection,
+        },
+        m,
+      ).label
     : "";
   const badge = props.modelOption?.providerBadge;
-  const label = props.modelOption?.label ?? props.selection?.model ?? "Choose model";
+  const label = props.modelOption?.label ?? props.selection?.model ?? gt("Choose model");
+  const providerNameLabel = badge
+    ? providerInstanceNameLabel({
+        provider: props.modelOption?.providerDriver,
+        iconUrl: props.modelOption?.providerIconUrl,
+        displayName: badge.displayName,
+        showBadge: badge.showBadge,
+      })
+    : null;
+  const shortLabel = props.modelOption?.shortName ?? label;
   return (
     <ComposerInlineControl
       accessibilityLabel={[
-        "Model and reasoning settings",
+        gt("Model and reasoning settings"),
         label,
         badge?.showBadge ? badge.displayName : null,
         summary,
@@ -70,10 +84,24 @@ export function ComposerModelControl(props: {
           />
         )
       }
-      label={props.modelOption?.shortName ?? label}
+      label={providerNameLabel ?? shortLabel}
+      labelEllipsizeMode={providerNameLabel ? "middle" : undefined}
       iconOnly={props.iconOnly}
+      suffixWidth={providerNameLabel ? 96 : undefined}
       suffix={
-        summary ? (
+        providerNameLabel ? (
+          <Text
+            className={
+              props.size === "large"
+                ? "text-sm text-foreground-muted"
+                : "text-xs text-foreground-muted"
+            }
+            numberOfLines={1}
+          >
+            {shortLabel}
+            {summary ? ` · ${summary}` : ""}
+          </Text>
+        ) : summary ? (
           <Text
             className={
               props.size === "large"

@@ -1,11 +1,17 @@
+import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { m } from "~/i18n/messages";
+import * as Schema from "effect/Schema";
 import type { DeviceHubAccess } from "@t3tools/client-runtime/state/deviceHubAccess";
 import { useAtomMount, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { T, useGT } from "gt-react";
 import { useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { AndroidFoldError, setAndroidFold, type AndroidFoldPosture } from "./deviceFold";
 import { androidFoldReadAtom, androidFoldViewAtom, foldAngle, NOOP_ATOM } from "./deviceHubAtoms";
 import { DeviceDuoGlyph } from "./DeviceDuoGlyph";
+
+const isAndroidFoldError = Schema.is(AndroidFoldError);
 
 export function DeviceAndroidFoldControls(props: {
   readonly access: DeviceHubAccess;
@@ -17,6 +23,7 @@ export function DeviceAndroidFoldControls(props: {
   readonly screenHeight: number | undefined;
   readonly renewAccess: () => Promise<DeviceHubAccess | null>;
 }) {
+  const gt = useGT();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const busy = useRef(false);
@@ -47,7 +54,7 @@ export function DeviceAndroidFoldControls(props: {
     void send(props.access)
       .catch(async (cause: unknown) => {
         // Hub tickets expire after a few minutes, while the panel stays open much longer.
-        if (!(cause instanceof AndroidFoldError && cause.status === 401)) throw cause;
+        if (!(isAndroidFoldError(cause) && cause.status === 401)) throw cause;
         const renewed = await props.renewAccess();
         if (!renewed || controller.signal.aborted) throw cause;
         return send(renewed);
@@ -57,10 +64,8 @@ export function DeviceAndroidFoldControls(props: {
         setAngle(foldAngle(fold));
         setError(
           controller.signal.aborted
-            ? "Fold command timed out."
-            : cause instanceof Error
-              ? cause.message
-              : "Could not change fold posture.",
+            ? gt("Fold command timed out.")
+            : (thrownErrorMessage(cause, m) ?? gt("Could not change fold posture.")),
         );
       })
       .finally(() => {
@@ -71,7 +76,7 @@ export function DeviceAndroidFoldControls(props: {
   };
 
   return (
-    <div aria-label="Android fold controls" className="flex flex-col items-center gap-2">
+    <div aria-label={gt("Android fold controls")} className="flex flex-col items-center gap-2">
       <div className="pointer-events-auto flex shrink-0 flex-col items-center gap-1 rounded-full border border-border/50 bg-background/80 p-1 shadow-sm">
         <Tooltip>
           <TooltipTrigger
@@ -79,7 +84,7 @@ export function DeviceAndroidFoldControls(props: {
               <Button
                 size="icon"
                 variant={fold.posture === "closed" ? "secondary" : "ghost"}
-                aria-label="Fold device"
+                aria-label={gt("Fold device")}
                 aria-pressed={fold.posture === "closed"}
                 disabled={pending || !props.enabled}
                 onClick={() => change("closed")}
@@ -88,7 +93,9 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="closed" />
           </TooltipTrigger>
-          <TooltipPopup side="left">Fold device</TooltipPopup>
+          <TooltipPopup side="left">
+            <T>Fold device</T>
+          </TooltipPopup>
         </Tooltip>
         <Tooltip>
           <TooltipTrigger
@@ -96,7 +103,7 @@ export function DeviceAndroidFoldControls(props: {
               <Button
                 size="icon"
                 variant={fold.posture === "opened" ? "secondary" : "ghost"}
-                aria-label="Unfold device"
+                aria-label={gt("Unfold device")}
                 aria-pressed={fold.posture === "opened"}
                 disabled={pending || !props.enabled}
                 onClick={() => change("opened")}
@@ -105,7 +112,9 @@ export function DeviceAndroidFoldControls(props: {
           >
             <DeviceDuoGlyph pose="open" />
           </TooltipTrigger>
-          <TooltipPopup side="left">Unfold device</TooltipPopup>
+          <TooltipPopup side="left">
+            <T>Unfold device</T>
+          </TooltipPopup>
         </Tooltip>
       </div>
       {error ? (

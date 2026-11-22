@@ -1,13 +1,13 @@
-import { AppActivityIndicator } from "../../components/ui/AppActivityIndicator";
-import { SheetHeader } from "../../components/ui/SheetHeader";
-import { IconButton } from "../../components/ui/IconButton";
+import { useGT } from "gt-react-native";
+import { AppBar } from "../../components/ui/AppBar";
 import { Button } from "../../components/ui/Button";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 
 import { useAuth } from "@clerk/expo";
 import { useNavigation } from "@react-navigation/native";
 import { useState } from "react";
-import { Platform, RefreshControl, View } from "react-native";
+import { View } from "react-native";
+import { RefreshControl } from "../../components/ui/RefreshControl";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { reportAtomCommandResult, settlePromise } from "@t3tools/client-runtime/state/runtime";
@@ -26,6 +26,7 @@ export function ConnectOnboardingRouteScreen() {
 }
 
 function ConfiguredConnectOnboardingRouteScreen() {
+  const gt = useGT();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const { isSignedIn, userId } = useAuth({ treatPendingAsSignedOut: false });
@@ -60,30 +61,14 @@ function ConfiguredConnectOnboardingRouteScreen() {
 
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
-      <SheetHeader
-        presentation={Platform.OS === "android" ? "inline" : "native"}
-        title="Set up T3 Connect"
+      <AppBar
+        title={gt("Set up {product}", { product: "T3 Connect" })}
         onClose={handleClose}
-        trailing={
-          Platform.OS === "android" ? (
-            isRefreshing ? (
-              <View
-                className="size-12 items-center justify-center"
-                accessible
-                accessibilityLabel="Refreshing environments"
-                accessibilityState={{ busy: true }}
-              >
-                <AppActivityIndicator />
-              </View>
-            ) : (
-              <IconButton
-                accessibilityLabel="Refresh environments"
-                icon="arrow.clockwise"
-                onPress={handleRefresh}
-              />
-            )
-          ) : undefined
-        }
+        refresh={{
+          accessibilityLabel: gt("Refresh environments"),
+          disabled: isRefreshing,
+          onPress: handleRefresh,
+        }}
       />
       <ScrollView
         nestedScrollEnabled
@@ -91,17 +76,13 @@ function ConfiguredConnectOnboardingRouteScreen() {
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
         className="flex-1"
-        contentInset={{ bottom: Math.max(insets.bottom, 18) + 18 }}
         contentContainerStyle={{
           gap: 16,
           paddingHorizontal: 20,
           paddingTop: 16,
+          paddingBottom: Math.max(insets.bottom, 18) + 18,
         }}
-        refreshControl={
-          Platform.OS === "ios" ? (
-            <RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />
-          ) : undefined
-        }
+        refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={handleRefresh} />}
       >
         {isSignedIn ? (
           <CloudEnvironmentRows
@@ -113,13 +94,13 @@ function ConfiguredConnectOnboardingRouteScreen() {
         ) : (
           <View collapsable={false} className="rounded-[24px] bg-grouped-card p-5">
             <Text className="text-sm leading-normal text-foreground-muted">
-              Sign in to your T3 account to set up T3 Connect.
+              {gt("Sign in to your T3 account to set up {product}.", { product: "T3 Connect" })}
             </Text>
           </View>
         )}
 
         {userId ? (
-          <Button label={"Don't show this again"} tone="text" onPress={handleDontShowAgain} />
+          <Button label={gt("Don't show this again")} tone="text" onPress={handleDontShowAgain} />
         ) : null}
       </ScrollView>
     </View>

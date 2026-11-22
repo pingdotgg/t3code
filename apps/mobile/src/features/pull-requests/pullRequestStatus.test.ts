@@ -59,6 +59,7 @@ describe("mobile overview review status", () => {
       },
     );
     expect(result.title).toBe("Awaiting review");
+    expect(result.reviews.map((review) => review.outdated)).toEqual([true]);
   });
 
   it("keeps an approval when a later review only comments, and normalizes provider spelling", () => {
@@ -97,5 +98,8 @@ describe("mobile overview check status", () => {
     expect(
       pullRequestChecksSummary({ checks: [check("success"), check("pending"), check("failure")] }),
     ).toMatchObject({ title: "1 check failing", count: "1 of 3" });
+    expect(
+      pullRequestChecksSummary({ checks: [check("success"), check("cancelled")] }),
+    ).toMatchObject({ title: "1 check failing", tint: "accent-danger-foreground" });
   });
 });
