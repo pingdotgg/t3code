@@ -113,7 +113,7 @@ describe("chat file links into another project", () => {
       inner: "/home/user/reports/docs",
       found: "/home/user/reports/docs/handoff.txt",
     },
-    { outer: "C:\\Reports", inner: "C:/Reports/docs/", found: "C:\\Reports\\docs\\handoff.txt" },
+    { outer: "C:\\Reports", inner: "C:/Reports/docs/", found: "C:/Reports/docs/handoff.txt" },
   ])("resolves one file that a project nested in $outer also lists", ({ outer, inner, found }) => {
     expect(
       pickProjectLinkMatch("handoff.txt", [
