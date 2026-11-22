@@ -121,6 +121,7 @@ import { useComposerTriggerState } from "./useComposerTriggerState";
 import { useComposerMenuItems } from "./useComposerMenuItems";
 import { useComposerMultilinePrompt } from "./useComposerMultilinePrompt";
 import {
+  type QueuedAttachmentContextBinding,
   reconcileAttachmentContextReferences,
   useRetainedContextPayloads,
 } from "./composerContextUndo";
@@ -461,6 +462,7 @@ export interface ChatComposerProps {
     readonly url: string | null;
     readonly contextIds?: ReadonlyArray<ComposerContextId> | undefined;
   }> | null;
+  removedEditingQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
   onRestoreEditingQueuedAttachment?: ((attachment: ContractChatAttachment) => void) | undefined;
 
@@ -603,6 +605,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
     editingQueuedAttachments,
+    removedEditingQueuedAttachments,
     onRemoveEditingQueuedAttachment,
     onRestoreEditingQueuedAttachment,
   } = props;
@@ -1484,6 +1487,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    removedQueuedAttachments: removedEditingQueuedAttachments,
+    onRestoreQueuedAttachment: onRestoreEditingQueuedAttachment,
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -1799,11 +1804,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const attachmentChanges = reconcileAttachmentContextReferences({
       referencedContextIds: referenced,
       files: composerFiles,
-      queuedFiles: (editingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) =>
-        isQueuedFileAttachment(attachment) && contextIds && contextIds.length > 0
-          ? [{ attachment, contextIds }]
-          : [],
-      ),
+      queuedAttachments: (editingQueuedAttachments ?? []).map(({ attachment, contextIds }) => ({
+        attachment,
+        contextIds: contextIds ?? [],
+      })),
+      removedQueuedAttachments: removedEditingQueuedAttachments ?? [],
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
@@ -1826,7 +1831,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     for (const fileId of attachmentChanges.queuedFileIdsToRemove) {
       onRemoveEditingQueuedAttachment(fileId);
     }
-    for (const attachment of attachmentChanges.queuedFilesToRestore) {
+    for (const attachment of attachmentChanges.queuedAttachmentsToRestore) {
       onRestoreEditingQueuedAttachment?.(attachment);
     }
     setComposerCursor(nextCursor);

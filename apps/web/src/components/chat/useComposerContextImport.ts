@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 import type { RefObject } from "react";
 import type { ChatComposerProps } from "./ChatComposer";
 import {
+  type ChatAttachment,
   type ComposerContextClipboardFragment,
   type ComposerContextRecord,
   type EnvironmentId,
@@ -26,6 +27,7 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import {
   asKnownContextRecord,
+  attachmentContextRecord,
   composerContextImportLookupIds,
   isSameComposerContextPayload,
   previewAnnotationContextId,
@@ -59,6 +61,8 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { countPreparingComposerImages } from "./preparingComposerImages";
+import type { QueuedAttachmentContextBinding } from "./composerContextUndo";
+import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 
 const isUnreachable = Schema.is(
   Schema.Union([ConnectionTransientError, ConnectionBlockedError, EnvironmentRpcUnavailableError]),
@@ -94,6 +98,8 @@ export function useComposerContextImport(input: {
   readonly promptRef: RefObject<string>;
   readonly pendingThreadImportsRef: RefObject<Map<string, number>>;
   readonly addComposerFilesToDraft: (files: ComposerFileAttachment[]) => string[];
+  readonly removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding> | undefined;
+  readonly onRestoreQueuedAttachment?: ((attachment: ChatAttachment) => void) | undefined;
 }) {
   const {
     environmentId,
@@ -112,6 +118,8 @@ export function useComposerContextImport(input: {
     promptRef,
     pendingThreadImportsRef,
     addComposerFilesToDraft,
+    removedQueuedAttachments,
+    onRestoreQueuedAttachment,
   } = input;
   const getComposerDraft = useComposerDraftStore((store) => store.getComposerDraft);
   const addComposerDraftImages = useComposerDraftStore((store) => store.addImages);
@@ -433,6 +441,31 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
+          if (sourceEnvironmentId === environmentId && !conflicts) {
+            const restorable = (removedQueuedAttachments ?? []).find(
+              ({ attachment, contextIds }) =>
+                (isQueuedImageAttachment(attachment) || isQueuedFileAttachment(attachment)) &&
+                attachment.type === record.kind &&
+                contextIds.some((contextId) =>
+                  isSameComposerContextPayload(
+                    attachmentContextRecord({
+                      attachment,
+                      attachmentId: attachment.id,
+                      contextId,
+                    }),
+                    record,
+                  ),
+                ),
+            );
+            if (restorable) {
+              const restoredContextId =
+                restorable.contextIds.find((contextId) => contextId === record.contextId) ??
+                restorable.contextIds[0]!;
+              onRestoreQueuedAttachment?.(restorable.attachment);
+              rewritten.set(record.contextId, restoredContextId);
+              break;
+            }
+          }
           if (sourceEnvironmentId === null && !conflicts) {
             rewritten.set(record.contextId, record.contextId);
             break;

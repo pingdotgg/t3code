@@ -444,12 +444,16 @@ describe("useQueuedRunEdit", () => {
       imageId,
       unreferencedFileId,
     ]);
+    expect(requireHook(hook).removedEditingAttachments).toEqual([
+      { attachment: fileAttachment, contextIds: [fileContextId] },
+    ]);
     await act(() => requireHook(hook).restoreEditingAttachment(fileAttachment));
     expect(requireHook(hook).editingAttachments?.map(({ attachment }) => attachment.id)).toEqual([
       imageId,
       fileId,
       unreferencedFileId,
     ]);
+    expect(requireHook(hook).removedEditingAttachments).toEqual([]);
 
     await act(() => requireHook(hook).removeEditingAttachment(imageId));
     await act(() => requireHook(hook).removeEditingAttachment(fileId));

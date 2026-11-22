@@ -240,16 +240,32 @@ export function useQueuedRunEdit(input: {
   );
   const originalReferencedContextIds =
     editing === null ? null : new Set(collectInlineContextIds(editing.originalText));
+  const attachmentContextIds = (attachment: ChatAttachment) =>
+    editing === null
+      ? []
+      : attachmentContextIdsForRecord(editing.context, attachment).filter((contextId) =>
+          originalReferencedContextIds!.has(contextId),
+        );
   const editingAttachments =
     editing === null
       ? null
       : editing.existingAttachments.map((attachment) => ({
           attachment,
           url: urlByAttachmentId.get(attachment.id) ?? null,
-          contextIds: attachmentContextIdsForRecord(editing.context, attachment).filter(
-            (contextId) => originalReferencedContextIds!.has(contextId),
-          ),
+          contextIds: attachmentContextIds(attachment),
         }));
+  const existingAttachmentIds = new Set(
+    (editing?.existingAttachments ?? []).map((attachment) => attachment.id),
+  );
+  const removedEditingAttachments =
+    editing === null
+      ? []
+      : editing.originalAttachments
+          .filter((attachment) => !existingAttachmentIds.has(attachment.id))
+          .map((attachment) => ({
+            attachment,
+            contextIds: attachmentContextIds(attachment),
+          }));
 
   const focusComposerSoon = () => {
     window.requestAnimationFrame(() => composerRef.current?.focusAtEnd());
@@ -529,6 +545,7 @@ export function useQueuedRunEdit(input: {
     isSaving,
     draftTarget,
     editingAttachments,
+    removedEditingAttachments,
     beginEdit,
     cancelEdit,
     removeEditingAttachment,

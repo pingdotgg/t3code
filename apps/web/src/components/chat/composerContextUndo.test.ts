@@ -2,6 +2,7 @@ import {
   ChatAttachmentId,
   ComposerContextId,
   type ChatFileAttachment,
+  type ChatImageAttachment,
   type PreviewAnnotationPayload,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -42,7 +43,7 @@ const annotation = {
 } satisfies PreviewAnnotationPayload;
 
 function retention(): RetainedAttachmentContextPayloads {
-  return { files: new Map(), queuedFiles: new Map(), previewAnnotations: new Map() };
+  return { files: new Map(), previewAnnotations: new Map() };
 }
 
 describe("reconcileAttachmentContextReferences", () => {
@@ -94,7 +95,7 @@ describe("reconcileAttachmentContextReferences", () => {
     ]);
   });
 
-  it("removes and restores chip-backed queued files on delete and undo while preserving files with no chip", () => {
+  it("reconciles chip-backed queued files on delete and restores removed queued images and files on undo", () => {
     const retained = retention();
     const chipFile: ChatFileAttachment = {
       type: "file",
@@ -110,31 +111,48 @@ describe("reconcileAttachmentContextReferences", () => {
       mimeType: "application/pdf",
       sizeBytes: 40,
     };
+    const rowRemovedImage: ChatImageAttachment = {
+      type: "image",
+      id: ChatAttachmentId.make("server-image-1"),
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
     const chipContextId = ComposerContextId.make("file_local-1");
+    const imageContextId = ComposerContextId.make("image_local-1");
 
+    // Deleting a chip-backed file removes it; deleting an image chip or editing around an
+    // unreferenced file preserves both.
     const removed = reconcileAttachmentContextReferences({
       referencedContextIds: new Set(),
       files: [],
-      queuedFiles: [
+      queuedAttachments: [
         { attachment: chipFile, contextIds: [chipContextId] },
         { attachment: plainFile, contextIds: [] },
+        { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
+      removedQueuedAttachments: [],
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(removed.queuedFileIdsToRemove).toEqual([chipFile.id]);
-    expect(removed.queuedFilesToRestore).toEqual([]);
+    expect(removed.queuedAttachmentsToRestore).toEqual([]);
 
+    // Undoing restores both a keyboard-deleted file and a row-removed image when their chips return.
     const restored = reconcileAttachmentContextReferences({
-      referencedContextIds: new Set([chipContextId]),
+      referencedContextIds: new Set([chipContextId, imageContextId]),
       files: [],
-      queuedFiles: [{ attachment: plainFile, contextIds: [] }],
+      queuedAttachments: [{ attachment: plainFile, contextIds: [] }],
+      removedQueuedAttachments: [
+        { attachment: chipFile, contextIds: [chipContextId] },
+        { attachment: rowRemovedImage, contextIds: [imageContextId] },
+      ],
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(restored.queuedFileIdsToRemove).toEqual([]);
-    expect(restored.queuedFilesToRestore).toEqual([chipFile]);
+    expect(restored.queuedAttachmentsToRestore).toEqual([chipFile, rowRemovedImage]);
   });
 });

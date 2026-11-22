@@ -1,6 +1,7 @@
 import { threadContextRecord } from "@t3tools/shared/composerContextReferences";
 import { useEffect } from "react";
 import {
+  ChatAttachmentId,
   type ComposerContextRecord,
   ComposerContextId,
   EnvironmentId,
@@ -274,3 +275,71 @@ it.each(["same", "other-environment"] as const)(
     expect(store.getComposerDraft(target)!.threadContexts).toEqual(records);
   },
 );
+
+it("restores a cut queued file chip in the same edit without downloading or reminting its id", async () => {
+  const target = DraftId.make("queued-cut-paste");
+  const store = useComposerDraftStore.getState();
+  using _draft = { [Symbol.dispose]: () => store.clearComposerContent(target) };
+  const environmentId = EnvironmentId.make("env-same");
+  const attachmentId = ChatAttachmentId.make("server-file-1");
+  const contextId = ComposerContextId.make("file_local-1");
+  const removedAttachment = {
+    type: "file" as const,
+    id: attachmentId,
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 12,
+  };
+  const onRestoreQueuedAttachment = vi.fn();
+  const fetchSpy = vi.fn();
+  using _fetch = stubGlobal("fetch", fetchSpy);
+  let importer!: Importer;
+  await using _screen = await render(
+    <Harness
+      input={{
+        environmentId,
+        linkedEnvironments: new Map(),
+        activeThread: undefined,
+        activeThreadId: null,
+        composerDraftTarget: target,
+        attachmentDraftTarget: target,
+        attachmentTargetKey: target,
+        attachmentTargetKeyRef: { current: target },
+        questionAttachmentTarget: null,
+        pendingUserInputs: [],
+        composerContextRecords: new Map(),
+        composerImages: [],
+        composerFilesRef: { current: [] },
+        pendingThreadImportsRef: { current: new Map() },
+        promptRef: { current: "" },
+        addComposerFilesToDraft: () => [],
+        removedQueuedAttachments: [{ attachment: removedAttachment, contextIds: [contextId] }],
+        onRestoreQueuedAttachment,
+      }}
+      ready={(value) => {
+        importer = value;
+      }}
+    />,
+  );
+  const record = {
+    version: 1 as const,
+    kind: "file" as const,
+    contextId,
+    label: "notes.txt",
+    attachmentId,
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 12,
+  } satisfies ComposerContextRecord;
+
+  let remapped!: ReadonlyMap<string, string>;
+  await act(() => {
+    remapped = importer.importContextRecords([record], environmentId);
+  });
+
+  expect(remapped.get(contextId)).toBe(contextId);
+  expect(onRestoreQueuedAttachment).toHaveBeenCalledExactlyOnceWith(removedAttachment);
+  expect(fetchSpy).not.toHaveBeenCalled();
+  expect(pendingDraftWork.has(target)).toBe(false);
+  expect(store.getComposerDraft(target)?.files ?? []).toEqual([]);
+});
