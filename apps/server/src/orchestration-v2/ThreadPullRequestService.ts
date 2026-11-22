@@ -30,6 +30,11 @@ import { makeLinkedThreadsChangeDetector } from "../pullRequest/linkedThreads.ts
 import * as RepositoryIdentityResolver from "../project/RepositoryIdentityResolver.ts";
 import { forkParked } from "../serverActivation.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
+import { makeNoPullRequestRechecks } from "./noPullRequestRechecks.ts";
+import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+} from "../sourceControl/threadPullRequests.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 
 class ThreadPullRequestServiceV2 extends Context.Service<
@@ -105,6 +110,7 @@ export function projectWorkspaceMatchesSnapshot(
 }
 
 const BACKFILL_ATTEMPTS = 5;
+const REPOSITORY_LOOKUP_CONCURRENCY = 4;
 
 interface RefreshRequest {
   readonly threadId: ThreadId | null;
@@ -123,6 +129,7 @@ export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
   const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
   const pendingBackfill = new Map<ThreadId, number>();
+  const noPullRequestRechecks = makeNoPullRequestRechecks();
 
   const finishBackfill = (threads: ReadonlyArray<Pick<OrchestrationV2ThreadShell, "id">>) => {
     for (const thread of threads) pendingBackfill.delete(thread.id);
@@ -141,6 +148,78 @@ export const make = Effect.gen(function* () {
       threadId === null ? { unsettledOnly: !(backfill || pendingBackfill.size > 0) } : { threadId },
     );
 
+  // The tracked repositories a thread changed each have their own branch, so an open pull
+  // request there is linked like one the thread opened. Only a thread's own events ask: the
+  // sweep would query the host for every repository of every thread each minute.
+  const linkRepositoryPullRequests = Effect.fn(
+    "ThreadPullRequestServiceV2.linkRepositoryPullRequests",
+  )(function* (
+    thread: Pick<
+      OrchestrationV2ThreadShell,
+      "id" | "worktreePath" | "branch" | "archivedAt" | "pullRequests" | "linkedPullRequest"
+    >,
+    project: OrchestrationProjectShell,
+    refresh: boolean,
+  ) {
+    const tracked = project.trackedFolders ?? [];
+    if (tracked.length === 0 || thread.archivedAt !== null) return;
+    const { checkpointScopes } = yield* orchestrator.getCheckpointContext(thread.id);
+    const cwds = new Set(
+      checkpointScopes.flatMap((scope) =>
+        typeof scope.repositoryPath === "string" &&
+        tracked.some((folder) => folder.path === scope.repositoryPath)
+          ? [scope.cwd]
+          : [],
+      ),
+    );
+    yield* Effect.forEach(
+      cwds,
+      (cwd) =>
+        Effect.gen(function* () {
+          const local = yield* git.localStatus({ cwd });
+          if (!local.isRepo || local.refName === null || local.isDefaultRef) return;
+          // A worktree thread's repositories are on its branch. A scope recorded before the
+          // thread moved still names the shared checkout, whose branch is someone else's.
+          if (thread.worktreePath !== null && local.refName !== thread.branch) return;
+          const detected = yield* git.branchPullRequest(
+            { cwd, branch: local.refName },
+            { refresh, confirmTerminal: false },
+          );
+          if (detected === null || detected.state !== "open") return;
+          const key = sourceControlDefinitions.parseChangeRequestUrl(detected.url)?.link;
+          // A link the user removed from a stack stays as a tombstone and is not added back.
+          if (
+            key === undefined ||
+            threadPullRequestsOf(thread).some((link) => threadPullRequestKeysEqual(link, key))
+          ) {
+            return;
+          }
+          const uuid = yield* random.uuidV4();
+          yield* orchestrator.dispatch({
+            type: "thread.pull-request.link",
+            commandId: CommandId.make(`server:thread-repository-pull-request:${thread.id}:${uuid}`),
+            threadId: thread.id,
+            host: key.host,
+            repository: key.repository,
+            number: key.number,
+            url: detected.url,
+            source: "created",
+          });
+        }).pipe(
+          Effect.catchCauseIf(
+            (cause) => !Cause.hasInterruptsOnly(cause),
+            (cause) =>
+              Effect.logWarning("repository pull request lookup failed", {
+                threadId: thread.id,
+                cwd,
+                cause: Cause.pretty(cause),
+              }),
+          ),
+        ),
+      { concurrency: REPOSITORY_LOOKUP_CONCURRENCY, discard: true },
+    );
+  });
+
   const synchronize = Effect.fn("ThreadPullRequestServiceV2.synchronize")(function* (
     request: RefreshRequest,
   ) {
@@ -156,6 +235,7 @@ export const make = Effect.gen(function* () {
           )
         : threadSnapshot.threads;
     const projects = new Map(projectShells.map((project) => [project.id, project]));
+    const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     if (request.backfill) {
       for (const thread of snapshotThreads) {
         if (
@@ -185,13 +265,34 @@ export const make = Effect.gen(function* () {
       JSON.stringify([thread.projectId, thread.worktreePath, thread.branch]),
     );
 
+    // A thread's own events and a backfill read at once; only scheduled sweeps wait.
+    const scheduled = new Map(
+      request.threadId !== null
+        ? []
+        : [...groups].filter(
+            ([, group]) =>
+              group[0]!.branch !== null &&
+              group.every(
+                (thread) => thread.branchPullRequest == null && !pendingBackfill.has(thread.id),
+              ),
+          ),
+    );
+    const scheduledLookups = noPullRequestRechecks.select(
+      nowMs,
+      Array.from(scheduled, ([key, group]) => ({
+        key,
+        activityAtMs: Math.max(...group.map((thread) => DateTime.toEpochMillis(thread.updatedAt))),
+      })),
+    );
+
     yield* Effect.forEach(
-      groups.values(),
-      (group) =>
+      groups,
+      ([key, group]) =>
         Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
+          if (scheduled.has(key) && !scheduledLookups.has(key)) return;
           const { project: resolvedProject, repository } =
             yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities, {
               refresh: request.refresh,
@@ -214,6 +315,7 @@ export const make = Effect.gen(function* () {
                   { cwd, branch: first.branch },
                   { refresh: request.refresh, confirmTerminal: false },
                 );
+          if (first.branch !== null) noPullRequestRechecks.record(key, nowMs, detected !== null);
           if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);
           }
@@ -375,6 +477,26 @@ export const make = Effect.gen(function* () {
       // Batch concurrent branch lookups into one GitHub GraphQL document.
       { concurrency: 32, discard: true },
     );
+
+    const requested =
+      request.threadId === null
+        ? undefined
+        : snapshotThreads.find((thread) => thread.id === request.threadId);
+    const requestedProject =
+      requested === undefined ? undefined : projects.get(requested.projectId);
+    if (requested !== undefined && requestedProject !== undefined) {
+      yield* linkRepositoryPullRequests(requested, requestedProject, request.refresh).pipe(
+        Effect.catchCauseIf(
+          (cause) => !Cause.hasInterruptsOnly(cause),
+          (cause) =>
+            Effect.logWarning("repository pull request discovery failed", {
+              threadId: requested.id,
+              cause: Cause.pretty(cause),
+            }),
+        ),
+      );
+    }
+    if (request.threadId === null) noPullRequestRechecks.retain(groups);
   });
 
   // At most one queued request per thread, so a turn end's events share one lookup.

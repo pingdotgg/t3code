@@ -329,7 +329,11 @@ export const createDevRunnerEnv = Effect.fn("dev-runner.createDevRunnerEnv")(fun
       `http://${isDesktopMode ? DESKTOP_DEV_LOOPBACK_HOST : "localhost"}:${webPort}`,
   };
 
-  if (configuredBaseDir !== undefined) {
+  const path = yield* Path.Path;
+  // The server stores an explicit home's state in userdata, which for ~/.t3 is the live
+  // install. Left implicit, dev state goes to ~/.t3/dev.
+  const isLiveHome = resolvedBaseDir === path.join(yield* HostProcess.HomeDirectory, ".t3");
+  if (configuredBaseDir !== undefined && !isLiveHome) {
     output.T3CODE_HOME = resolvedBaseDir;
   } else {
     delete output.T3CODE_HOME;
@@ -614,9 +618,9 @@ const runRepoScript = Effect.fn("dev-runner.runRepoScript")(function* (
 });
 
 /**
- * The first start in a worktree seeds its empty database from a small live database
- * and warms the web dependency cache. Each step checks for its own output, so
- * later starts skip it.
+ * The first start in a worktree seeds its empty database from a small live database,
+ * builds the native resource monitor, and warms the web dependency cache. Each step
+ * checks for its own output, so later starts skip it.
  */
 const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (input: {
   readonly mode: DevMode;
@@ -668,6 +672,41 @@ const prepareFirstStart = Effect.fn("dev-runner.prepareFirstStart")(function* (i
   }
 
   const repoRoot = path.dirname(import.meta.dirname);
+  // Dev backends load the monitor from its Cargo output, which a fresh
+  // checkout or worktree does not have yet.
+  if (input.mode !== "dev:web") {
+    const crate = path.join(repoRoot, "native/resource-monitor");
+    const binary =
+      (yield* HostProcess.Platform) === "win32" ? "t3-resource-monitor.exe" : "t3-resource-monitor";
+    if (
+      !(yield* exists(path.join(crate, "target/release", binary))) &&
+      !(yield* exists(path.join(crate, "target/debug", binary)))
+    ) {
+      yield* Effect.logInfo("[dev-runner] building the resource monitor (first start only).");
+      const exitCode = yield* ChildProcess.make(
+        "cargo",
+        ["build", "--locked", "--release", "--manifest-path", path.join(crate, "Cargo.toml")],
+        {
+          cwd: repoRoot,
+          stdin: "ignore",
+          stdout: "inherit",
+          stderr: "inherit",
+          env: input.env,
+          extendEnv: false,
+        },
+      ).pipe(
+        Effect.flatMap((child) => child.exitCode),
+        Effect.scoped,
+        Effect.orElseSucceed(() => -1),
+      );
+      if (exitCode !== 0) {
+        yield* Effect.logWarning(
+          "[dev-runner] could not build the resource monitor; starting without process telemetry. Install Rust and run `vp run build:resource-monitor`.",
+        );
+      }
+    }
+  }
+
   if (
     input.mode !== "dev:server" &&
     !(yield* exists(path.join(repoRoot, "apps/web/node_modules/.vite/deps/_metadata.json")))
@@ -886,8 +925,10 @@ export const runDevRunnerWithInput = Effect.fn("dev-runner.runDevRunnerWithInput
     extendEnv: false,
     shell: spawnCommand.shell,
     // Its own process group: teardown signals the whole group, because vp
-    // does not pass SIGTERM on to Vite and the server.
-    detached: true,
+    // does not pass SIGTERM on to Vite and the server. Windows tears down with
+    // taskkill /T instead, and a detached shell there leaves vp to open a
+    // visible console of its own.
+    detached: (yield* HostProcess.Platform) !== "win32",
     forceKillAfter: "1500 millis",
   }).pipe(
     Effect.mapError(

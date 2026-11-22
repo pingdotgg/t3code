@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { TERMINAL_WRITE_MAX_LENGTH } from "./terminalInput";
+import { TERMINAL_WRITE_MAX_LENGTH } from "@t3tools/contracts";
 import { createTerminalPasteSession } from "./terminalPaste";
 
 function deferred<T>() {
@@ -32,6 +32,15 @@ describe("terminal paste session", () => {
     await paste;
 
     expect(writes).toEqual([]);
+  });
+
+  it("reports a liveness change after capture, including a restart in place", () => {
+    const session = createTerminalPasteSession();
+    session.reset(true);
+    const isSameShell = session.liveness();
+    expect(isSameShell()).toBe(true);
+    session.reset(true);
+    expect(isSameShell()).toBe(false);
   });
 
   it("never overlaps writes from rapid paste requests", async () => {

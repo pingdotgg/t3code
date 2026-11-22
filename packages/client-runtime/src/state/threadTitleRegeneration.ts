@@ -4,6 +4,7 @@ import type {
   ThreadId,
   ThreadTitleRegenerationOutcome,
 } from "@t3tools/contracts";
+import * as Effect from "effect/Effect";
 import type { Atom, AtomRegistry } from "effect/reactivity";
 
 export interface TitleRegenerationRequest {
@@ -40,27 +41,25 @@ export function waitForTitleRegenerationOutcome(
   registry: AtomRegistry.AtomRegistry,
   sources: TitleRegenerationSources,
   request: TitleRegenerationRequest,
-): Promise<ThreadTitleRegenerationOutcome | null> {
-  return new Promise((resolve) => {
-    let settled = false;
+): Effect.Effect<ThreadTitleRegenerationOutcome | null> {
+  return Effect.callback((resume) => {
     let unsubscribes: ReadonlyArray<() => void> = [];
     const release = () => {
       for (const unsubscribe of unsubscribes) unsubscribe();
+      unsubscribes = [];
     };
     const check = () => {
-      if (settled) return;
       let outcome = settledOutcome(registry.get(sources.snapshot), request);
       if (outcome === undefined && registry.get(sources.disconnected)) outcome = null;
       if (outcome === undefined) return;
-      settled = true;
       release();
-      resolve(outcome);
+      resume(Effect.succeed(outcome));
     };
     unsubscribes = [
       registry.subscribe(sources.snapshot, check),
       registry.subscribe(sources.disconnected, check),
     ];
-    if (settled) release();
-    else check();
+    check();
+    return Effect.sync(release);
   });
 }
