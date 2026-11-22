@@ -46,9 +46,6 @@ test(
       .getByText("budget.xlsx", { exact: true })
       .waitFor();
     // Cold dev servers can reload while optimizing the Office workers.
-    await browser
-      .locator('[role="tablist"] button[aria-selected="true"]')
-      .waitFor({ timeout: 120_000 });
     await screen.getByRole("tab", "Overview").waitFor({ timeout: 120_000 });
 
     // Deliver both keystrokes before the worker can report the first sheet switch.
