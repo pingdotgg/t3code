@@ -645,7 +645,7 @@ export const DEFAULT_FILE_LINK_INSTRUCTIONS =
   "You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.";
 
 // Keeps Codex's runtime context entry under its 4,000-byte cap, past which it drops the PR rules.
-export const FILE_LINK_INSTRUCTIONS_MAX_LENGTH = 800;
+export const FILE_LINK_INSTRUCTIONS_MAX_LENGTH = 600;
 
 export const FileLinkInstructionsSetting = TrimmedString.check(
   Schema.isMaxLength(FILE_LINK_INSTRUCTIONS_MAX_LENGTH),
@@ -1186,6 +1186,10 @@ export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
 export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
 
+/** `on-request`: agents report only when the user asks. `auto`: they also report on their own. */
+export const AgentFeedbackMode = Schema.Literals(["off", "on-request", "auto"]);
+export type AgentFeedbackMode = typeof AgentFeedbackMode.Type;
+
 const StorageRetentionDays = Schema.NullOr(
   Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 3650 })),
 );
@@ -1436,6 +1440,9 @@ export const ServerSettings = Schema.Struct({
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
+  agentFeedback: Schema.Struct({
+    mode: AgentFeedbackMode.pipe(Schema.withDecodingDefaultKey(Effect.succeed("off" as const))),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({ mode: "off" as const }))),
   enableProviderUpdateChecks: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   continueThreadsAfterServerUpdate: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(true)),
@@ -1907,6 +1914,7 @@ export const ServerSettingsPatch = Schema.Struct({
   worktreesDirectory: Schema.optionalKey(TrimmedString),
   fastWorktreeCheckout: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  agentFeedback: Schema.optionalKey(Schema.Struct({ mode: AgentFeedbackMode })),
   enableProviderUpdateChecks: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   keepAwakeWhileAgentsWork: Schema.optionalKey(Schema.Boolean),

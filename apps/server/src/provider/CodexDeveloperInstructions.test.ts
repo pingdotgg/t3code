@@ -16,6 +16,7 @@ describe("buildCodexAdditionalContext", () => {
       model: "custom-model-longest-file-link-instructions",
       modelName: "Custom 🦊 Model",
       reasoningEffort: "xhigh",
+      agentFeedback: "auto" as const,
       fileLinkInstructions: "界".repeat(FILE_LINK_INSTRUCTIONS_MAX_LENGTH),
     },
   ])("with runtime $model", (runtime) => {
