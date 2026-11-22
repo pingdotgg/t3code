@@ -553,6 +553,19 @@ describe("toCodecOpenAI", () => {
       await decoding.succeed({ "0": "a", "1": 1 }, ["a", 1])
     })
 
+    it("optional Tuple([String, Finite])", async () => {
+      const schema = Schema.Struct({ value: Schema.optional(Schema.Tuple([Schema.String, Schema.Finite])) })
+      const asserts = new TestSchema.Asserts(toCodecOpenAI(schema).codec)
+
+      const encoding = asserts.encoding()
+      await encoding.succeed({ value: ["a", 1] }, { value: { "0": "a", "1": 1 } })
+      await encoding.succeed({}, { value: null })
+
+      const decoding = asserts.decoding()
+      await decoding.succeed({ value: { "0": "a", "1": 1 } }, { value: ["a", 1] })
+      await decoding.succeed({ value: null }, {})
+    })
+
     it("Tuple([String, Finite]) + description", () => {
       const schema = Schema.Tuple([Schema.String, Schema.Finite]).annotate({ description: "description" })
       assertJsonSchema(schema, {
@@ -678,6 +691,39 @@ describe("toCodecOpenAI", () => {
       await decoding.succeed({ "a": "a", "b": 1 })
       await decoding.succeed({ "a": "a", "b": null }, { a: "a" })
     })
+
+    it("optional properties that already accept null", async () => {
+      const schema = Schema.Struct({
+        a: Schema.optional(Schema.Finite).annotate({ description: "Optional number" }),
+        b: Schema.optionalKey(Schema.NullOr(Schema.Finite))
+      })
+      assertJsonSchema(schema, {
+        type: "object",
+        properties: {
+          a: { anyOf: [{ type: "number" }, { type: "null" }], description: "Optional number" },
+          b: { anyOf: [{ type: "number" }, { type: "null" }] }
+        },
+        required: ["a", "b"],
+        additionalProperties: false
+      })
+      const asserts = new TestSchema.Asserts(toCodecOpenAI(schema).codec)
+      await asserts.encoding().succeed({ a: 1, b: 2 })
+      await asserts.encoding().succeed({}, { a: null, b: null })
+      await asserts.decoding().succeed({ a: 1, b: 2 })
+      await asserts.decoding().succeed({ a: null, b: null }, {})
+    })
+
+    it("optional checked nullable properties preserve absent keys", async () => {
+      const checked = Schema.NullOr(Schema.Record(Schema.String, Schema.Finite))
+        .check(Schema.makeFilter((value) => value !== null, { expected: "non-null" }))
+      const schema = Schema.Struct({
+        a: Schema.optionalKey(checked),
+        b: Schema.optionalKey(Schema.Union([Schema.String, checked]))
+      })
+      const asserts = new TestSchema.Asserts(toCodecOpenAI(schema).codec)
+      await asserts.encoding().succeed({}, { a: null, b: null })
+      await asserts.decoding().succeed({ a: null, b: null }, {})
+    })
   })
 
   it("Class", () => {
@@ -794,6 +840,19 @@ describe("toCodecOpenAI", () => {
         Schema.decodeUnknownExit(result.codec)({ value: [{ 0: "dynamic", 1: "value" }] })._tag,
         "Failure"
       )
+    })
+
+    it("optional Record(String, Finite)", async () => {
+      const schema = Schema.Struct({ value: Schema.optional(Schema.Record(Schema.String, Schema.Finite)) })
+      const asserts = new TestSchema.Asserts(toCodecOpenAI(schema).codec)
+
+      const encoding = asserts.encoding()
+      await encoding.succeed({ value: { "a": 1 } }, { value: [{ 0: "a", 1: 1 }] })
+      await encoding.succeed({}, { value: null })
+
+      const decoding = asserts.decoding()
+      await decoding.succeed({ value: [{ 0: "a", 1: 1 }] }, { value: { "a": 1 } })
+      await decoding.succeed({ value: null }, {})
     })
 
     it("Record(String, Finite) + description", () => {

@@ -15,7 +15,18 @@ irm https://vite.plus/ps1 | iex
 ```
 
 `vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
-needed. From the repository root:
+needed.
+
+On Windows, clone with Git's long-path support enabled. The bundled reference repositories
+under `.repos/` can otherwise make checkout fail with `Filename too long`:
+
+```powershell
+git clone -c core.longpaths=true https://github.com/pingdotgg/t3code.git
+```
+
+This saves the setting in the new clone before checkout, without changing your global Git settings.
+
+From the repository root:
 
 ```sh
 vp i
@@ -60,12 +71,24 @@ Running `vp run dev` through an agent's own shell tool does not attach it to thi
 ### State and ports
 
 Linked worktrees default to their own `.t3/userdata`, even when `T3CODE_HOME` is set.
-The main checkout defaults to `~/.t3/dev`. An explicit `--home-dir` wins in both cases.
+Any other checkout, including the main checkout and every plain `git clone`, uses
+`T3CODE_HOME` when it is set and otherwise `~/.t3/dev`, with default ports. Checkouts on
+`~/.t3/dev` share one database, settings, and secrets, and only one of their servers can run
+at a time. An explicit `--home-dir` wins in both cases. It and `T3CODE_HOME` store state in
+`<home>/userdata`.
+A home of `~/.t3`, from either source, still selects `~/.t3/dev`, because `~/.t3/userdata` is
+the live install.
 The first start in a worktree seeds its empty database from a read-only copy of
 `~/.t3/userdata/statev2.sqlite` if the source is at most 500 MiB. Larger sources warn
 and dev starts with an empty database. `--no-seed` or `T3CODE_DEV_SEED=0` skips seeding.
+Seeding targets only a worktree's own `.t3`, so a plain clone or a `--home-dir` outside the
+worktree starts empty. To give a clone its own seeded state, run
+`vp run migrate-dev-db --base-dir <clone>/.t3` and then `vp run dev --home-dir <clone>/.t3`.
 To copy a larger source, run `vp run migrate-dev-db` with dev stopped. It may use
 substantial disk space before pruning.
+The first start in any checkout also builds the native resource monitor with Cargo when
+`native/resource-monitor/target` has no binary. Without Rust, dev starts with a warning
+and no process telemetry; install Rust and run `vp run build:resource-monitor`.
 Never run a development server against the live `~/.t3/userdata`.
 See [test data](../../AGENTS.md#test-data) for copying a consistent database snapshot.
 
@@ -304,6 +327,7 @@ C/C++ build tools, libsecret development headers, pkg-config, and ImageMagick.
 Bytecode preparation also runs packaged Electron and requires GTK, NSS, ALSA, and GBM runtime libraries.
 Install Rust 1.95 or newer through [rustup](https://rust-lang.org/install), using the stable
 toolchain as release CI does.
+The packaged ELF compatibility check uses binutils’ `readelf`, included by the C/C++ toolchain.
 
 Ubuntu 24.04 and Debian 13:
 

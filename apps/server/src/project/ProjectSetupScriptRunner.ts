@@ -1,4 +1,5 @@
 import { linkOriginIsFenced, ProjectId, type ProjectScript, ThreadId } from "@t3tools/contracts";
+import { splitsSurrogatePair } from "@t3tools/shared/assistantCitations";
 import {
   projectScriptRuntimeEnv,
   projectScriptTerminalInput,
@@ -145,12 +146,10 @@ function completionSentinelPattern(token: string): RegExp {
   return new RegExp(`${COMPLETION_SENTINEL_PREFIX}_${token}:(-?\\d+)`);
 }
 
+// ECMA-48: CSI, OSC, then any other escape as intermediates (0x20-0x2F) and one final byte.
 function stripTerminalControl(text: string): string {
   return text
-    .replace(
-      /\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>]/g,
-      "",
-    )
+    .replace(/\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[ -/]*[0-~]/g, "")
     .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, "");
 }
 
@@ -177,7 +176,57 @@ function resolveCompletionShell(shell: string): CompletionShell | null {
   return "posix";
 }
 
-// A block with its own closing line protects the sentinel from trailing comments, heredocs and scripts reading stdin.
+const utf8 = new TextEncoder();
+// Canonical TTY input (before a line editor starts reading) caps a line below 1 KiB on Linux.
+const POSIX_MAX_LINE_BYTES = 1_023;
+const POSIX_APPEND = '__t3_command="$__t3_command"';
+
+function encodePosixScript(text: string): string {
+  let encoded = "";
+  for (const character of text) {
+    const code = character.charCodeAt(0);
+    if (character === "'") {
+      encoded += "'\\''";
+    } else if (character === "\\" || code <= 0x1f || code === 0x7f) {
+      encoded += `\\0${code.toString(8).padStart(3, "0")}`;
+    } else {
+      encoded += character;
+    }
+  }
+  return encoded;
+}
+
+// Line editors run each submitted line on its own, so every line must be a complete command.
+function wrapPosixCommand(command: string, sentinel: string): string {
+  const normalized = command.replace(/\r\n/g, "\n");
+  // The `_` suffix keeps trailing newlines; the subshell contains exits and syntax errors.
+  const evaluate = (payload: string) =>
+    `( __t3_command=$(printf '%b_' ${payload}); eval "\${__t3_command%_}" ); printf '\\n${sentinel}%s\\n' "$?"`;
+  const inline = evaluate(`'${encodePosixScript(normalized)}'`);
+  if (utf8.encode(` ${inline}\r`).byteLength <= POSIX_MAX_LINE_BYTES) return inline;
+
+  const maxChunkBytes = POSIX_MAX_LINE_BYTES - utf8.encode(` ${POSIX_APPEND}''\r`).byteLength;
+  const lines: string[] = [];
+  let prefix = "__t3_command=";
+  let chunk = "";
+  let chunkBytes = 0;
+  for (const character of normalized) {
+    const encoded = encodePosixScript(character);
+    const bytes = utf8.encode(encoded).byteLength;
+    if (chunkBytes + bytes > maxChunkBytes) {
+      lines.push(`${prefix}'${chunk}'`);
+      prefix = POSIX_APPEND;
+      chunk = "";
+      chunkBytes = 0;
+    }
+    chunk += encoded;
+    chunkBytes += bytes;
+  }
+  lines.push(`${prefix}'${chunk}'`, `${evaluate('"$__t3_command"')}; unset __t3_command`);
+  // The leading space gives every line the history suppression a short command gets.
+  return lines.join("\r ");
+}
+
 function wrapCommandForCompletion(
   command: string,
   shell: CompletionShell,
@@ -204,7 +253,7 @@ function wrapCommandForCompletion(
       ].join("; ");
     }
     case "posix":
-      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
+      return wrapPosixCommand(command, sentinel);
   }
 }
 
@@ -262,7 +311,14 @@ export const make = Effect.gen(function* () {
           ) {
             return Effect.void;
           }
-          return input.onOutputLine(cleaned.slice(0, OUTPUT_LINE_MAX_LENGTH));
+          return input.onOutputLine(
+            cleaned.slice(
+              0,
+              splitsSurrogatePair(cleaned, OUTPUT_LINE_MAX_LENGTH)
+                ? OUTPUT_LINE_MAX_LENGTH - 1
+                : OUTPUT_LINE_MAX_LENGTH,
+            ),
+          );
         });
 
       const unsubscribe = yield* terminalManager.subscribe((event) => {
@@ -276,7 +332,10 @@ export const make = Effect.gen(function* () {
           lineBuffer = lines.pop() ?? "";
           // Bound newline-free output; the sentinel has its own line, so retaining the tail is safe.
           if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
-            lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
+            const start = lineBuffer.length - PARTIAL_LINE_MAX_LENGTH;
+            lineBuffer = lineBuffer.slice(
+              splitsSurrogatePair(lineBuffer, start) ? start + 1 : start,
+            );
           }
           return Effect.forEach(lines, handleLine, { discard: true }).pipe(
             Effect.andThen(
@@ -455,6 +514,8 @@ export const make = Effect.gen(function* () {
       }),
       // Before client attachment, truecolor probes wait for terminal replies nobody can send.
       COLORTERM: "",
+      // Project scripts keep the default shell; the preference is for interactive terminals only.
+      T3CODE_TERMINAL_SHELL: "",
     };
     const observe = input.observeCompletion;
     const completionToken = observe ? (yield* random.uuidV4()).replaceAll("-", "") : null;
