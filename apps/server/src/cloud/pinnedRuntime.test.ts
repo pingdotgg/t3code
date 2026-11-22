@@ -152,6 +152,8 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
         },
       }).pipe(Effect.forkScoped);
       yield* Deferred.await(firstChunk);
+      // Nothing is staged mid-download, so an age-based prune elsewhere cannot remove it.
+      assert.deepEqual(yield* fs.readDirectory(path.join(baseDir, "runtime", "versions")), []);
       yield* Fiber.interrupt(install);
       assert.deepEqual(progress.at(-1), { stage: "download", received: 4, total: undefined });
       assert.isTrue(progress.every((event) => event.stage === "download"));

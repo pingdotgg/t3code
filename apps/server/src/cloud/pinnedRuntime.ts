@@ -260,11 +260,9 @@ const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(
   );
 });
 
-const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
+const downloadArchive = Effect.fn("cloud.pinned_runtime.download_archive")(function* (
   input: PinnedRuntimeInstallInput,
-  stagingDir: string,
 ) {
-  const { fs, path } = input;
   const platformKey = cliArchivePlatformKey(input.platform, input.arch);
   if (platformKey === undefined) {
     return yield* new PinnedRuntimeInstallError({
@@ -292,7 +290,15 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
       step: "verifying the t3 release archive checksum",
     });
   }
+  return archive;
+});
 
+const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(function* (
+  input: PinnedRuntimeInstallInput,
+  stagingDir: string,
+  archive: Uint8Array,
+) {
+  const { fs, path } = input;
   const archivePath = path.join(stagingDir, PINNED_RUNTIME_ARCHIVE_FILE);
   yield* fs
     .writeFile(archivePath, archive)
@@ -413,6 +419,9 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         }),
     ),
   );
+  // Downloads are buffered in memory and can take hours; staging only once they finish keeps a
+  // staging directory's age a sign of abandonment for prunes in other processes.
+  const archive = yield* downloadArchive(input);
   const stagingDir = yield* fs
     .makeTempDirectory({
       directory: versionsDir,
@@ -434,7 +443,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    yield* installFromArchive(input, stagingDir);
+    yield* installFromArchive(input, stagingDir, archive);
 
     input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);
