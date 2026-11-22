@@ -357,21 +357,16 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let accessToken: string;
     let account: string;
     let projectId: string | undefined;
-    if (!(yield* fs.exists(tokenPath))) {
+    // The agent runs with the CLI's own sign-in. A leftover acp_token.json from an older
+    // integration can hold a different account, so only fall back to it when the CLI has none.
+    // Google account instances bypass the keyring, whose one entry every profile shares.
+    const stored = (yield* fs.exists(cliTokenPath))
+      ? yield* fs.readFileString(cliTokenPath)
+      : input.authMethod === "oauth-business"
+        ? yield* readKeyringSecret.pipe(Effect.orElseSucceed(() => undefined))
+        : undefined;
+    if (stored !== undefined && stored.length > 0) {
       cached = undefined;
-      // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
-        ? yield* fs.readFileString(cliTokenPath)
-        : input.authMethod === "oauth-business"
-          ? yield* readKeyringSecret
-          : undefined;
-      if (stored === undefined) {
-        return makeUnavailableUsageLimits({
-          checkedAt,
-          reason: "unsupported",
-          message: "Sign in with Google to see Antigravity limits.",
-        });
-      }
       const { token } = yield* decodeCliToken(stored);
       if (!(Date.parse(token.expiry ?? "") > now + 60_000)) {
         return makeUnavailableUsageLimits({
@@ -390,6 +385,13 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
         Effect.flatMap(antigravityAccountFingerprint),
         Effect.catch(() => sha256(`antigravity-cli\0${token.refresh_token || accessToken}`)),
       );
+    } else if (!(yield* fs.exists(tokenPath))) {
+      cached = undefined;
+      return makeUnavailableUsageLimits({
+        checkedAt,
+        reason: "unsupported",
+        message: "Sign in with Google to see Antigravity limits.",
+      });
     } else {
       const token = yield* fs.readFileString(tokenPath).pipe(Effect.flatMap(decodeTokenFile));
       projectId = token.project_id;

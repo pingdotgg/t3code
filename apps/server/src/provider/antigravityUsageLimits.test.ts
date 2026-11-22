@@ -74,6 +74,8 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
     nativeKeyring?: boolean;
+    /** The CLI sign-in supplies no project, so quota requests carry an empty body. */
+    cliSignIn?: boolean;
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -119,7 +121,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual(
+        options.missingToken || options.cliSignIn ? {} : { project: "project-id" },
+      );
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -688,6 +692,35 @@ describe("Antigravity subscription limits", () => {
         "Sign in with Google to see Antigravity limits.",
       );
       expect(limits.unavailable?.reason).not.toBe("unsupported");
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("prefers the native CLI's sign-in over a leftover acp_token.json", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const writeCliToken = (tokenPath: string, expiry: string) =>
+        fs.writeFileString(
+          path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
+          JSON.stringify({
+            token: { access_token: "access-token", refresh_token: "refresh-a", expiry },
+          }),
+        );
+
+      const signedIn = yield* fixture({ userId: "google-user-1", cliSignIn: true });
+      yield* writeCliToken(signedIn.tokenPath, "2026-10-09T14:00:00Z");
+      const limits = yield* signedIn.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(signedIn.requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+
+      const expired = yield* fixture();
+      yield* writeCliToken(expired.tokenPath, "2026-10-09T12:00:30Z");
+      const expiredLimits = yield* expired.probe;
+      expect(expiredLimits.unavailable?.reason).toBe("probeFailed");
+      expect(expiredLimits.unavailable?.message).toContain("expired");
+      expect(expired.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
