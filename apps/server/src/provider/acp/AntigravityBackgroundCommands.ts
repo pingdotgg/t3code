@@ -8,7 +8,11 @@ import * as Schema from "effect/Schema";
 
 import { protoFields } from "./AntigravityChildWork.ts";
 import { antigravityManagedPath, antigravityProfileRoot } from "./AntigravityProfilePaths.ts";
-import { boundAntigravityToolText } from "./AntigravityProtocol.ts";
+import {
+  antigravityCommandOutlivesPrompt,
+  boundAntigravityCommandLine,
+  boundAntigravityToolText,
+} from "./AntigravityProtocol.ts";
 
 // CORTEX_STEP_TYPE_RUN_COMMAND in exa.cortex_pb.
 const RUN_COMMAND_STEP_TYPE = 21;
@@ -62,7 +66,12 @@ const CommandArgs = Schema.Struct({
 const decodeCommandArgsObject = Schema.decodeUnknownOption(CommandArgs);
 const decodeCommandArgsJson = Schema.decodeUnknownOption(Schema.fromJsonString(CommandArgs));
 
-const normalizeField = (value: string | undefined): string | undefined => {
+const normalizeCommand = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed ? boundAntigravityCommandLine(trimmed) : undefined;
+};
+
+const normalizeCwd = (value: string | undefined): string | undefined => {
   const trimmed = value?.trim();
   return trimmed ? boundAntigravityToolText(trimmed) : undefined;
 };
@@ -103,8 +112,8 @@ function decodeActiveCommand(
       fieldText(runCommand, RUN_COMMAND_CWD);
     return {
       callId,
-      command: normalizeField(rawCommand),
-      cwd: normalizeField(rawCwd),
+      command: normalizeCommand(rawCommand),
+      cwd: normalizeCwd(rawCwd),
       isDaemon: args?.IsDaemon === true,
     };
   } catch {
@@ -132,8 +141,8 @@ function toolCommandIdentity(tool: AcpToolCallState): {
     rawArgs?.workingDir ??
     rawArgs?.cwd;
   return {
-    command: normalizeField(rawCommand),
-    cwd: normalizeField(rawCwd),
+    command: normalizeCommand(rawCommand),
+    cwd: normalizeCwd(rawCwd),
   };
 }
 
@@ -159,7 +168,7 @@ export const readAntigravityRunningCommands = Effect.fn("readAntigravityRunningC
     const nonExecuteIds: Array<string> = [];
     const executeTools: Array<AcpToolCallState> = [];
     for (const tool of input.tools) {
-      if (tool.kind === "execute") executeTools.push(tool);
+      if (antigravityCommandOutlivesPrompt(tool)) executeTools.push(tool);
       else nonExecuteIds.push(tool.toolCallId);
     }
     if (executeTools.length === 0) return nonExecuteIds as ReadonlyArray<string>;

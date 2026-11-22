@@ -2,18 +2,21 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  CommandId,
   isOrchestrationV2WorkActive,
   ModelSelection,
   type OrchestrationV2AppThread,
   OrchestrationV2DomainEvent,
   OrchestrationV2ProviderSession,
   type OrchestrationV2PromptSuggestion,
+  type OrchestrationV2RestartCancelledBackgroundWork as Work,
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   OrchestrationV2RuntimeRequest,
   type OrchestrationV2Subagent,
   ProviderInstanceId,
   ProviderSessionId,
+  type RunId,
   ThreadId,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
@@ -54,7 +57,15 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import {
+  awaitingProviderThreadId,
+  cancelledRosterTaskWork,
+  cancelledTurnItemWork,
+  latestStartedRun,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
@@ -141,6 +152,15 @@ export type ProviderSessionReleaseReason = typeof ProviderSessionReleaseReason.T
 const releasedToolCallTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
   "command_execution",
   "dynamic_tool",
+];
+const lostWorkItemTypes: ReadonlyArray<OrchestrationV2TurnItem["type"]> = [
+  ...releasedToolCallTypes,
+  "subagent",
+];
+const lostTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
+  "interrupted",
+  "failed",
+  "cancelled",
 ];
 const activeTurnItemStatuses: ReadonlyArray<OrchestrationV2TurnItem["status"]> = [
   "pending",
@@ -950,8 +970,20 @@ export const layerWithOptions = (
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
-            for (const providerThread of projection.providerThreads) {
-              if (providerThread.providerSessionId !== providerSessionId) continue;
+            const sessionThreads = projection.providerThreads.filter(
+              (providerThread) => providerThread.providerSessionId === providerSessionId,
+            );
+            // Read before subscribers fail: a run's consumer may end this work first.
+            const openItems =
+              input.reason === "runtime_error" && sessionThreads.length > 0
+                ? (yield* projectionStore.getThreadRecords(threadId, ["turnItems"], {
+                    turnItemTypes: lostWorkItemTypes,
+                    turnItemStatuses: activeTurnItemStatuses,
+                  })).turnItems
+                : [];
+            for (const providerThread of sessionThreads) {
+              const noteLostWork =
+                input.reason === "runtime_error" && providerThread.ownerNodeId === null;
               released.push({
                 threadId,
                 providerSessionId,
@@ -960,6 +992,14 @@ export const layerWithOptions = (
                 taskIds: new Set(
                   (providerThread.pendingBackgroundTasks ?? []).map((task) => task.taskId),
                 ),
+                lostTasks: noteLostWork ? (providerThread.pendingBackgroundTasks ?? []) : [],
+                lostItems: noteLostWork
+                  ? openItems.filter(
+                      (item) =>
+                        item.providerThreadId === providerThread.id &&
+                        (item.type !== "subagent" || item.origin === "provider_native"),
+                    )
+                  : [],
               });
             }
           }
@@ -1181,6 +1221,80 @@ export const layerWithOptions = (
         });
       });
 
+      // Like restart recovery: an unexpected exit records the work it cancelled on the run that
+      // started it and wakes that run, so the agent restarts awaited work instead of waiting on it.
+      const writeReleasedWorkNote = Effect.fn("ProviderSessionManager.writeReleasedWorkNote")(
+        function* (
+          released: Pick<
+            ReleasedProviderThread,
+            "threadId" | "providerSessionId" | "providerThreadId" | "lostTasks" | "lostItems"
+          >,
+        ) {
+          const { threadId, providerSessionId, lostTasks, lostItems } = released;
+          if (lostTasks.length === 0 && lostItems.length === 0) return;
+          const { runs, turnItems } = yield* projectionStore.getThreadRecords(
+            threadId,
+            ["runs", "turnItems"],
+            { turnItemTypes: lostWorkItemTypes, turnItemStatuses: lostTurnItemStatuses },
+          );
+          // Either this release or the run's consumer ended it; a late completion means it finished.
+          const lostItemIds = new Set(lostItems.map((item) => item.id));
+          const lost = [
+            ...lostTasks.map((task) => ({
+              providerThreadId: released.providerThreadId,
+              work: cancelledRosterTaskWork(task),
+            })),
+            ...turnItems.flatMap((item) => {
+              const work = lostItemIds.has(item.id) ? cancelledTurnItemWork(item) : undefined;
+              const providerThreadId = awaitingProviderThreadId(item, runs);
+              return work === undefined || providerThreadId == null
+                ? []
+                : [{ providerThreadId, work }];
+            }),
+          ];
+          const workByRun = new Map<RunId, { run: OrchestrationV2Run; work: Array<Work> }>();
+          for (const { providerThreadId, work } of lost) {
+            const run = latestStartedRun(runs, providerThreadId);
+            if (run === undefined) continue;
+            const entry = workByRun.get(run.id) ?? { run, work: [] };
+            entry.work.push(work);
+            workByRun.set(run.id, entry);
+          }
+          if (workByRun.size === 0) return;
+          const now = yield* DateTime.now;
+          const events: Array<OrchestrationV2DomainEvent> = [];
+          const effects: Array<EffectOutbox.PendingOrchestrationEffectV2> = [];
+          for (const { run, work } of workByRun.values()) {
+            events.push({
+              id: yield* idAllocator.allocate.event({ threadId, providerSessionId }),
+              type: "run.background-work-cancelled",
+              threadId,
+              runId: run.id,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                runId: run.id,
+                restartCancelledBackgroundWork: mergeRestartCancelledBackgroundWork(
+                  run.restartCancelledBackgroundWork ?? [],
+                  work,
+                ),
+              },
+            });
+            effects.push({
+              id: `effect:restart-continuation:${run.id}`,
+              commandId: CommandId.make(`command:provider-exit-continuation:${run.id}`),
+              threadId,
+              request: {
+                type: "provider-runtime.continue",
+                sourceRunId: run.id,
+                cause: "provider_exit",
+              },
+            });
+          }
+          yield* eventSink.writeWithEffects({ events, effects });
+        },
+      );
+
       const writeReleasedBackgroundWorkEvents = (
         released: ReadonlyArray<ReleasedProviderThread>,
         releasedAt: DateTime.Utc,
@@ -1191,6 +1305,7 @@ export const layerWithOptions = (
             writeReleasedRosterEvents(providerThread).pipe(
               Effect.andThen(writeReleasedToolCallEvents(providerThread, releasedAt)),
               Effect.andThen(writeReleasedSubagentEvents(providerThread, releasedAt)),
+              Effect.andThen(writeReleasedWorkNote(providerThread)),
             ),
           { discard: true },
         );
@@ -2822,6 +2937,26 @@ export const layerWithOptions = (
             // Live output bypasses persistence and subscribers so floods cannot delay domain events.
             if (nativeEvent.type === "command_output.delta") {
               return commandOutput.append(nativeEvent);
+            }
+            // A query process can exit under a live session, after the run's last event.
+            if (nativeEvent.type === "background_work.lost") {
+              return writeReleasedWorkNote({
+                threadId: nativeEvent.threadId,
+                providerSessionId: entry.runtime.providerSessionId,
+                providerThreadId: nativeEvent.providerThreadId,
+                lostTasks: nativeEvent.tasks,
+                lostItems: [],
+              }).pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterEventStreamError({
+                      driver: entry.runtime.driver,
+                      providerSessionId: entry.runtime.providerSessionId,
+                      raisedByT3: true,
+                      cause,
+                    }),
+                ),
+              );
             }
             if (nativeEvent.type === "prompt_suggestion.updated") {
               return SubscriptionRef.update(promptSuggestionStore, (current) => {

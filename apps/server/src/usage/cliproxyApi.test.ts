@@ -359,7 +359,10 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const api = yield* test.api;
       const result = yield* api.readAccounts(config);
-      expect(result[0]?.usageLimits.unavailable?.reason).toBe("probeFailed");
+      expect(result[0]?.usageLimits.unavailable).toEqual({
+        reason: "probeFailed",
+        message: "The provider refused the hub request (HTTP 401).",
+      });
       expect(result[1]?.usageLimits.windows[0]?.usedPercent).toBe(12);
       expect(encodeJson(result)).not.toContain("do-not-publish");
     }),

@@ -224,7 +224,7 @@ describe("readAntigravityRunningCommands", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const profileDirectory = yield* fs.makeTempDirectoryScoped();
-        const longCommand = `python3 -c "${"x".repeat(5_000)}"`;
+        const longCommand = `python3 -c "${"x".repeat(9_000)}"`;
         const meta = commandStepMetadata({
           callId: "call_native_20",
           args: { CommandLine: longCommand, Cwd: "/repo-b" },

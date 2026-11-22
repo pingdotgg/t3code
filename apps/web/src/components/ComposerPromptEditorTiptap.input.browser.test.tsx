@@ -68,6 +68,8 @@ function Composer({
   importContextFragment,
   literalText = false,
   disabled = false,
+  placeholder = "",
+  placeholderSuffix,
 }: {
   value: string;
   richTextEnabled: boolean;
@@ -77,6 +79,8 @@ function Composer({
   importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
   literalText?: boolean;
   disabled?: boolean;
+  placeholder?: string;
+  placeholderSuffix?: ComposerPromptEditorProps["placeholderSuffix"];
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -88,7 +92,8 @@ function Composer({
       contextRecords={new Map()}
       skills={skills}
       disabled={disabled}
-      placeholder=""
+      placeholder={placeholder}
+      placeholderSuffix={placeholderSuffix}
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
@@ -677,6 +682,18 @@ it("reopens a long draft scrolled to its caret without taking focus", async () =
   expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
 });
 
+it("does not outline the line under a click made with the node-select modifier held", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const paragraph = editor.view.dom.querySelector("p")!;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  await userEvent.keyboard(`{${mod}>}`);
+  await userEvent.click(paragraph);
+  await userEvent.keyboard(`{/${mod}}`);
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  expect(getComputedStyle(paragraph).outlineStyle).toBe("none");
+});
+
 describe("Markdown markers around styled text", () => {
   it.each([
     { keys: "{Backspace}", expected: "**** after" },
@@ -951,7 +968,7 @@ const file = {
 } satisfies ComposerFileAttachment;
 
 describe("composer context undo lifetime", () => {
-  async function mountComposer(destinationValue = "") {
+  async function mountComposer(destinationValue = "", disabled = false) {
     const initialValue = `Draft A ${formatInlineContextReference(fileContextReference(file))}`;
     const editorRef = createRef<ComposerPromptEditorHandle>();
     let current: { value: string; files: ComposerFileAttachment[] };
@@ -982,7 +999,7 @@ describe("composer context undo lifetime", () => {
           ]),
         ),
         skills: [],
-        disabled: false,
+        disabled,
         placeholder: "",
         onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
           const changes = reconcileAttachmentContextReferences({
@@ -1052,6 +1069,19 @@ describe("composer context undo lifetime", () => {
     await composer.unmount();
     expect(retained.files.size).toBe(0);
   });
+
+  it.each(["Backspace", "Delete"])(
+    "removes a focused chip with %s while dictation makes the composer read-only",
+    async (key) => {
+      await using composer = await mountComposer("", true);
+      composer
+        .getByRole("button", { name: /notes\.txt/ })
+        .element()
+        .focus();
+      await userEvent.keyboard(`{${key}}`);
+      expect(composer.draft()).toEqual({ value: "Draft A ", files: [] });
+    },
+  );
 
   it.each(["", "Draft B"])(
     "releases deleted payloads and prevents undo into the previous draft when switching to %j",
@@ -1189,3 +1219,25 @@ it.each(["other field", "document body"])(
     );
   },
 );
+
+it("lets a one-line placeholder's button take clicks and passes the rest to the editor", async () => {
+  const onClick = vi.fn();
+  await using screen = await render(
+    <Composer
+      value=""
+      richTextEnabled
+      skills={[]}
+      placeholder="Run the tests"
+      placeholderSuffix={
+        <button type="button" className="pointer-events-auto" onClick={onClick}>
+          Tab
+        </button>
+      }
+    />,
+  );
+  const editor = editorIn(screen.container);
+  await userEvent.click(editor.view.dom, { position: { x: 12, y: 12 } });
+  await vi.waitFor(() => expect(editor.view.hasFocus()).toBe(true));
+  await userEvent.click(screen.getByRole("button", { name: "Tab" }));
+  expect(onClick).toHaveBeenCalledOnce();
+});
