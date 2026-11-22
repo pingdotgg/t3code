@@ -30,9 +30,11 @@ describe("mistralVibeAccountToUsageLimits", () => {
         {
           id: "monthly-budget",
           kind: "monthly",
-          label: "Monthly Vibe Code budget",
+          label: "Monthly",
           usedPercent: 42.5,
           resetsAt: "2026-12-01T00:00:00.000Z",
+          // 30 days: 2026-11-01 to 2026-12-01.
+          windowDurationMins: 30 * 24 * 60,
         },
       ],
     });
@@ -44,6 +46,7 @@ describe("mistralVibeAccountToUsageLimits", () => {
       checkedAt,
     );
     expect(report?.windows[0]).not.toHaveProperty("resetsAt");
+    expect(report?.windows[0]).not.toHaveProperty("windowDurationMins");
   });
 
   it("returns nothing when the budget is null or absent", () => {

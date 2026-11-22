@@ -21,6 +21,13 @@ const MistralVibeAccountRead = Schema.Struct({
 
 const decodeAccountRead = Schema.decodeUnknownOption(MistralVibeAccountRead);
 
+/** The budget resets monthly, so the window began one calendar month before the reset. */
+function monthlyWindowMinutes(resetMs: number): number {
+  const reset = DateTime.makeUnsafe(resetMs);
+  const start = DateTime.subtract(reset, { months: 1 });
+  return Math.round((resetMs - DateTime.toEpochMillis(start)) / 60_000);
+}
+
 /** A null budget (non-Mistral model, no billing permission, self-hosted) yields no window. */
 export function mistralVibeAccountToUsageLimits(
   accountRead: unknown,
@@ -35,10 +42,13 @@ export function mistralVibeAccountToUsageLimits(
       {
         id: "monthly-budget",
         kind: "monthly",
-        label: "Monthly Vibe Code budget",
+        label: "Monthly",
         usedPercent: clampPercent(budget.usagePercentage),
         ...(Number.isFinite(resetMs)
-          ? { resetsAt: DateTime.formatIso(DateTime.makeUnsafe(resetMs)) }
+          ? {
+              resetsAt: DateTime.formatIso(DateTime.makeUnsafe(resetMs)),
+              windowDurationMins: monthlyWindowMinutes(resetMs),
+            }
           : {}),
       },
     ],
