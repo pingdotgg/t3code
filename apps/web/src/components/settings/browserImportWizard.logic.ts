@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 import type { BrowserImportFailureReason, BrowserImportSource } from "@t3tools/contracts";
 
 export interface WizardTargetProfile {
@@ -142,9 +145,23 @@ export function isRetryableReason(reason: BrowserImportFailureReason): boolean {
   }
 }
 
-export function formatSkippedDomains(domains: ReadonlyArray<string>): string {
+export function formatSkippedDomains(
+  domains: ReadonlyArray<string>,
+  resolve: MessageResolver = m,
+): string {
   if (domains.length === 0) return "";
   if (domains.length === 1) return domains[0]!;
-  if (domains.length <= 3) return `${domains.slice(0, -1).join(", ")} and ${domains.at(-1)}`;
-  return `${domains.slice(0, 3).join(", ")} and ${domains.length - 3} more`;
+  if (domains.length <= 3)
+    return resolve(
+      msg("{domains} and {last}", {
+        domains: domains.slice(0, -1).join(", "),
+        last: domains.at(-1),
+      }),
+    );
+  return resolve(
+    msg("{count, plural, one {{domains} and {count} more} other {{domains} and {count} more}}", {
+      domains: domains.slice(0, 3).join(", "),
+      count: domains.length - 3,
+    }),
+  );
 }

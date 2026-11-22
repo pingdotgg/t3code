@@ -6,7 +6,7 @@ import {
   planCloudAccountStep,
 } from "./cloudAccountService.ts";
 
-type Emit = (user: { readonly id: string } | null | undefined) => void;
+type Emit = (user: { readonly id: string } | null | undefined, clientId?: string) => void;
 
 function makeSource() {
   let listener: Parameters<CloudAccountSource["addListener"]>[0] | null = null;
@@ -18,7 +18,8 @@ function makeSource() {
       };
     },
   };
-  const emit: Emit = (user) => listener?.({ user });
+  const emit: Emit = (user, clientId = "client_1") =>
+    listener?.({ user, client: { id: clientId } });
   return { source, emit, isSubscribed: () => listener !== null };
 }
 
@@ -151,6 +152,32 @@ describe("createCloudAccountService", () => {
     emit(null);
     await cleanUp;
     expect(service.getState()).toEqual({ _tag: "SignedOut" });
+    expect(log).toEqual(["signOutTransition", "deactivate", "cleanUp:a:true"]);
+  });
+
+  it("waits for Clerk's API to confirm a signed-out launch before cleaning up", async () => {
+    const { service, log, nextActivation, nextCleanUp } = makeService();
+    const { source, emit } = makeSource();
+    service.attach(source);
+
+    // Offline: an id-less client, or the placeholder built from the session cookie.
+    emit(null, "");
+    emit(null, "client_init");
+    expect(service.getState()).toEqual({ _tag: "Unobserved" });
+    expect(log).toEqual([]);
+
+    const cleanUp = nextCleanUp();
+    emit(null);
+    await cleanUp;
+    expect(log).toEqual(["deactivate", "cleanUp:null:false"]);
+
+    const activation = nextActivation();
+    emit({ id: "a" });
+    await activation;
+    log.length = 0;
+    const signOut = nextCleanUp();
+    emit(null, "client_init");
+    await signOut;
     expect(log).toEqual(["signOutTransition", "deactivate", "cleanUp:a:true"]);
   });
 

@@ -1,6 +1,7 @@
 import type * as AcpCompat from "./compat.ts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
@@ -115,6 +116,15 @@ export interface AcpPatchedProtocolOptions {
   };
 }
 
+/**
+ * Provided to a request call, settles once that request is queued for writing. Messages queued
+ * later are written after it; the call itself returns only with the reply.
+ */
+export const AcpOutgoingQueued = Context.Reference<Deferred.Deferred<void> | undefined>(
+  "effect-acp/protocol/AcpOutgoingQueued",
+  { defaultValue: () => undefined },
+);
+
 export interface AcpPatchedProtocol {
   readonly clientProtocol: RpcClient.Protocol["Service"];
   readonly serverProtocol: RpcServer.Protocol["Service"];
@@ -164,6 +174,15 @@ const decodeSessionUpdate = Schema.decodeUnknownEffect(
         _meta: AcpSchema.UpdateSessionNotification.fields._meta,
       }),
     }),
+    // fx reports command cancellation outside ACP's standard tool fields.
+    Schema.Struct({
+      ...AcpSchemaV1.SessionNotification.fields,
+      update: Schema.Struct({
+        ...AcpSchemaV1.ToolCallUpdate.fields,
+        sessionUpdate: Schema.Literals(["tool_call", "tool_call_update"]),
+        command_result: Schema.Json,
+      }),
+    }),
     AcpSchema.UpdateSessionNotification,
     AcpSchemaV1.SessionNotification,
   ]),
@@ -173,7 +192,7 @@ const decodeElicitationComplete = Schema.decodeUnknownEffect(
 );
 const parserFactory = RpcSerialization.ndJsonRpc();
 // ndJsonRpc skips lines that are not JSON. A malformed agent line has to end the
-// session, so frames are split here and each one goes through the strict codec.
+// session, so frames are split here and each nonblank one goes through the strict codec.
 const makeStrictNdJsonRpcParser = () => {
   const codec = RpcSerialization.jsonRpc().makeUnsafe();
   const decoder = new TextDecoder();
@@ -197,7 +216,7 @@ const makeStrictNdJsonRpcParser = () => {
       }
       const lines = (buffer + chunk.slice(0, lastNewline)).split("\n");
       buffer = chunk.slice(lastNewline + 1);
-      return lines.flatMap(decodeLine);
+      return lines.flatMap((line) => (line.trim() === "" ? [] : decodeLine(line)));
     },
     // A truncated final line is left to the exit status, which explains a crash better.
     end: (): ReadonlyArray<AcpDecodedWireMessage> => {
@@ -313,9 +332,8 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   const serverQueue = yield* Queue.unbounded<RpcMessage.FromClientEncoded>();
   const clientQueue = yield* Queue.unbounded<RpcMessage.FromServerEncoded>();
   const rawNotifications = yield* Queue.unbounded<AcpBufferedRawNotification, Cause.Done<void>>();
-  // JSON length of the notifications offered since the queue was last empty.
-  // `incoming` takes the whole backlog on every pull, so an empty queue holds
-  // nothing, and a read can only make this an overestimate.
+  // JSON length of the notifications still in the queue. `incoming` takes one
+  // at a time, so a slow reader holds at most one outside this budget.
   let rawNotificationsJsonLength = 0;
   // Raw readers finish with the connection: termination ends the queue, and so
   // does closing the scope, which interrupts the reader before it terminates.
@@ -439,6 +457,10 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
               }).pipe(Effect.andThen(Deferred.fail(acknowledgement, error)), Effect.asVoid),
         ),
       );
+      const queued = yield* AcpOutgoingQueued;
+      if (queued !== undefined) {
+        yield* Deferred.succeed(queued, undefined);
+      }
       if (acknowledgement !== undefined) {
         yield* Deferred.await(acknowledgement);
       }
@@ -494,7 +516,6 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
   // so readers never see more than the limits allow.
   const bufferRawNotification = (notification: AcpIncomingNotification, lineLength: number) =>
     Effect.sync(() => {
-      if (Queue.sizeUnsafe(rawNotifications) === 0) rawNotificationsJsonLength = 0;
       if (!Queue.offerUnsafe(rawNotifications, { notification, lineLength })) return;
       rawNotificationsJsonLength += lineLength;
       while (
@@ -1101,8 +1122,15 @@ export const makeAcpPatchedProtocol = Effect.fn("makeAcpPatchedProtocol")(functi
     clientProtocol,
     serverProtocol,
     get incoming() {
-      return Stream.fromQueue(rawNotifications).pipe(
-        Stream.map(({ notification }) => notification),
+      return Stream.fromPull(
+        Effect.succeed(
+          Queue.take(rawNotifications).pipe(
+            Effect.map(({ notification, lineLength }) => {
+              rawNotificationsJsonLength -= lineLength;
+              return [notification] as const;
+            }),
+          ),
+        ),
       );
     },
     request: sendRequest,

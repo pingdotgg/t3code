@@ -202,6 +202,31 @@ describe("Xml", () => {
         })
       }))
 
+    it.effect("distinguishes contradictory and unsupported encoding declarations", () =>
+      Effect.gen(function*() {
+        for (
+          const [prefix, encoding, kind] of [
+            ["", "UTF-16", "Syntax"],
+            ["", "utf-32le", "Syntax"],
+            ["", "ISO-10646-UCS-2", "Syntax"],
+            [BOM, "ISO-8859-1", "Syntax"],
+            [BOM, "US-ASCII", "Syntax"],
+            [BOM, "UTF8", "Unsupported"],
+            [BOM, "unicode-1-1-utf-8", "Unsupported"],
+            [BOM, "unknown", "Unsupported"]
+          ] as const
+        ) {
+          const document = prefix + `<?xml version="1.0" encoding="${encoding}"?><a/>`
+          for (const chunks of byteSplits(textEncoder.encode(document))) {
+            assert.deepStrictEqual(yield* failure(decodeBytes(chunks)), [kind, 1, 1])
+          }
+        }
+        assert.deepStrictEqual(
+          (yield* decodeString([BOM + "<?xml version=\"1.0\" encoding=\"UTF-16\"?><a/>"])).map((event) => event._tag),
+          ["Declaration", "StartElement", "EndElement"]
+        )
+      }))
+
     it.effect("rejects UTF-16 byte order marks as unsupported across chunk boundaries", () =>
       Effect.gen(function*() {
         for (
@@ -243,6 +268,32 @@ describe("Xml", () => {
           }
         }))
     }
+
+    it.effect("reports start element positions when enabled", () =>
+      Effect.gen(function*() {
+        // Positions match XmlError: the start tag's "<", one-based UTF-16 columns, LF, CR and CRLF line endings, and a
+        // leading BOM excluded
+        const xml = BOM + "<a>\r\n <b x='1'/>\r😀<c>\n\t<d/></c></a>"
+        const expected: ReadonlyArray<Xml.Event> = [
+          { _tag: "StartElement", name: "a", attributes: {}, line: 1, column: 1 },
+          text("\n "),
+          { _tag: "StartElement", name: "b", attributes: { x: "1" }, line: 2, column: 2 },
+          end("b"),
+          text("\n😀"),
+          { _tag: "StartElement", name: "c", attributes: {}, line: 3, column: 3 },
+          text("\n\t"),
+          { _tag: "StartElement", name: "d", attributes: {}, line: 4, column: 2 },
+          end("d"),
+          end("c"),
+          end("a")
+        ]
+        for (const chunks of splits(xml)) {
+          assert.deepStrictEqual(yield* decodeString(chunks, { positions: true }), expected, JSON.stringify(chunks))
+        }
+        for (const chunks of byteSplits(textEncoder.encode(xml))) {
+          assert.deepStrictEqual(yield* decodeBytes(chunks, { positions: true }), expected)
+        }
+      }))
 
     it.effect("fails on malformed documents with positions", () =>
       Effect.gen(function*() {
@@ -320,7 +371,102 @@ describe("Xml", () => {
       }
       assert.throws(() => Xml.elements([]))
       assert.throws(() => Xml.elements(["a b"]))
+      assert.throws(() => Xml.decodeString({ namespaces: "lenient" } as unknown as Xml.DecodeOptions))
     })
+  })
+
+  describe("namespaces", () => {
+    const strict: Xml.DecodeOptions = { namespaces: "strict" }
+
+    it.effect("resolves element names in nested scopes", () =>
+      Effect.gen(function*() {
+        const document = "<r xmlns:p=\"urn:a\" xmlns=\"urn:d\"><p:s xmlns:p=\"urn:b\" a=\"1\" p:a=\"2\">" +
+          "<u xmlns=\"\" xml:lang=\"en\"/><v/></p:s><p:s/></r>"
+        const names = (events: ReadonlyArray<Xml.Event>) =>
+          events.map((event) =>
+            event._tag === "StartElement" || event._tag === "EndElement" ?
+              [event._tag, event.name, event.namespace, event.localName] :
+              [event._tag]
+          )
+        const expected = [
+          ["StartElement", "r", "urn:d", "r"],
+          ["StartElement", "p:s", "urn:b", "s"],
+          ["StartElement", "u", "", "u"],
+          ["EndElement", "u", "", "u"],
+          ["StartElement", "v", "urn:d", "v"],
+          ["EndElement", "v", "urn:d", "v"],
+          ["EndElement", "p:s", "urn:b", "s"],
+          ["StartElement", "p:s", "urn:a", "s"],
+          ["EndElement", "p:s", "urn:a", "s"],
+          ["EndElement", "r", "urn:d", "r"]
+        ]
+        for (const chunks of splits(document)) {
+          assert.deepStrictEqual(names(yield* decodeString(chunks, strict)), expected)
+        }
+        // Attributes stay keyed as written, including declarations
+        const [root] = yield* decodeString([document], { namespaces: "strict", positions: true })
+        assert.deepStrictEqual(root, {
+          _tag: "StartElement",
+          name: "r",
+          attributes: { "xmlns:p": "urn:a", xmlns: "urn:d" },
+          line: 1,
+          column: 1,
+          namespace: "urn:d",
+          localName: "r"
+        })
+      }))
+
+    it.effect("rejects documents that are not namespace-well-formed", () =>
+      Effect.gen(function*() {
+        const cases: ReadonlyArray<readonly [string, number]> = [
+          ["<a b:c=\"1\"/>", 1],
+          ["<r><a xmlns:p=\"urn:p\"/><p:b/></r>", 24],
+          ["<a:b:c xmlns:a=\"urn:a\"/>", 1],
+          ["<a xmlns:1=\"urn:a\"/>", 1],
+          // Fails as Syntax even though a DTD could declare other prefixes
+          ["<!DOCTYPE a><xmlns:a/>", 13],
+          ["<a xmlns:xmlns=\"urn:x\"/>", 1],
+          ["<a xmlns:b=\"\"/>", 1],
+          ["<a xmlns:xml=\"urn:x\"/>", 1],
+          ["<a xmlns=\"http://www.w3.org/XML/1998/namespace\"/>", 1],
+          ["<r xmlns:p=\"urn:x\" xmlns:q=\"urn:x\"><e p:a=\"1\" q:a=\"2\"/></r>", 36],
+          ["<a><?b:c?></a>", 4]
+        ]
+        for (const [document, column] of cases) {
+          for (const chunks of splits(document)) {
+            assert.deepStrictEqual(yield* failure(decodeString(chunks, strict)), ["Syntax", 1, column], document)
+          }
+          assert.isTrue((yield* decodeString([document])).length > 0)
+        }
+        // Enough released declarations that the bindings are compacted while p
+        // is shadowed
+        const released = Array.from({ length: 1000 }, (_, i) => `<c xmlns:q${i}="urn:q"/>`).join("")
+        const shadowed = `<r xmlns:p="urn:x"><a xmlns:p="urn:y">${released}</a><b xmlns:s="urn:x" p:x="1" s:x="2"/></r>`
+        assert.deepStrictEqual(
+          yield* failure(decodeString([shadowed], strict)),
+          ["Syntax", 1, shadowed.lastIndexOf("<b") + 1]
+        )
+        // A DTD could declare the prefix with a default attribute value
+        assert.deepStrictEqual(
+          yield* failure(decodeString(["<!DOCTYPE a><a p:x=\"1\"/>"], strict)),
+          ["Unsupported", 1, 13]
+        )
+      }))
+
+    it.effect("bounds the declarations of open elements", () =>
+      Effect.gen(function*() {
+        const tag = (name: string) => `<${name} xmlns:${name}="0123456789">`
+        const options: Xml.DecodeOptions = { namespaces: "strict", maxTokenSize: 40 }
+        // Each tag declares 11 characters, so three open tags fit
+        const siblings = "<a>" + tag("p") + tag("q") + "</q>" + tag("r") + "</r>" + tag("s") + "</s></p></a>"
+        const nested = "<a>" + tag("p") + tag("q") + tag("r") + tag("s") + "</s></r></q></p></a>"
+        for (const chunks of splits(siblings)) {
+          assert.isTrue((yield* decodeString(chunks, options)).length > 0)
+        }
+        for (const chunks of splits(nested)) {
+          assert.deepStrictEqual(yield* failure(decodeString(chunks, options)), ["Limit", 1, 76])
+        }
+      }))
   })
 
   describe("encode", () => {
@@ -468,6 +614,32 @@ describe("Xml", () => {
           assert.deepStrictEqual([error.line, error.column], [undefined, undefined])
         }
       }))
+  })
+
+  describe("toEvents", () => {
+    it("preserves child order, attributes and empty text nodes", () => {
+      const element: Xml.Element = {
+        name: "a",
+        attributes: { x: "1" },
+        children: ["", "t", "u", { name: "b", attributes: {}, children: [] }, "v"]
+      }
+      assert.deepStrictEqual(Xml.toEvents(element), [
+        start("a", { x: "1" }),
+        text(""),
+        text("t"),
+        text("u"),
+        start("b"),
+        end("b"),
+        text("v"),
+        end("a")
+      ])
+    })
+
+    it("converts deep trees without overflowing the stack", () => {
+      let element: Xml.Element = { name: "a", attributes: {}, children: [] }
+      for (let i = 0; i < 100_000; i++) element = { name: "a", attributes: {}, children: [element] }
+      assert.strictEqual(Xml.toEvents(element).length, 200_002)
+    })
   })
 
   describe("channels", () => {
