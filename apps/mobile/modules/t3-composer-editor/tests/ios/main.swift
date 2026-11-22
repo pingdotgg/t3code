@@ -252,6 +252,20 @@ let halfA = String(repeating: "A", count: 20_000)
 let halfB = String(repeating: "B", count: 20_000)
 check(interceptedPaste([halfA, halfB]) == halfA + halfB, "Text items that together reach the threshold must fold")
 
+do {
+  let savedItems = UIPasteboard.general.items
+  let editor = ComposerTextView()
+  let opaqueItem: [String: Any] = ["com.example.t3-composer-test": Data([1])]
+  let imageItem: [String: Any] = [UTType.png.identifier: image.pngData()!]
+  var canPaste: [Bool] = []
+  for item in [opaqueItem, imageItem, opaqueItem] {
+    UIPasteboard.general.items = [item]
+    canPaste.append(editor.canPerformAction(#selector(UIResponder.paste(_:)), withSender: nil))
+  }
+  UIPasteboard.general.items = savedItems
+  check(canPaste == [false, true, false], "Paste availability must follow pasteboard changes: \(canPaste)")
+}
+
 // Two-frame animated GIF: a mixed paste keeps the GIF's original bytes and the still image's PNG, in order.
 private let gifBytes = Data(base64Encoded: "R0lGODlhAQABAIEAAP8AAAAAAAAAAAAAACH/C05FVFNDQVBFMi4wAwEAAAAh+QQACgAAACwAAAAAAQABAAAIBAABBAQAIfkEAAoAAAAsAAAAAAEAAQCBAP8AAAAAAAAAAAAACAQAAQQEADs=")!
 private let gifProvider = NSItemProvider()
