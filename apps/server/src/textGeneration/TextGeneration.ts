@@ -68,7 +68,7 @@ const resolveInstance = (
   );
 
 // Review guides investigate the checkout read-only; the other drivers reject that request.
-const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent"]);
+const INVESTIGATING_DRIVERS = new Set(["codex", "claudeAgent", "antigravity"]);
 
 /** @public */
 export const make = Effect.gen(function* () {
@@ -156,7 +156,7 @@ export const make = Effect.gen(function* () {
       return yield* new TextGenerationError({
         operation,
         detail:
-          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex or Claude as the review guide model in Settings → Source control & issues.",
+          "Review guides need a coding agent that can read the checkout. None is ready. Pick Codex, Claude or Antigravity as the review guide model in Settings → Source control & issues.",
       });
     }
     if (selectedDisabled && selection.instanceId === selected.instanceId) {

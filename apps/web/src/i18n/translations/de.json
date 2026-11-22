@@ -10917,7 +10917,7 @@
   "1d918492dbeb2149": "Eigene Anweisungen für Commits und Pull Requests",
   "a265a27605be72a2": "Pull Requests einen Leitfaden-Tab hinzufügen. Ein Agent erklärt die Änderungen und weist auf Entscheidungen hin, die ein Review brauchen.",
   "a740e9d82dfb7f0e": "Review-Leitfäden",
-  "b774fa25f501b7da": "Muss ein Coding-Agent sein: Er liest den Pull Request in vielen Schritten. „Aus“ verwendet das Schreibmodell oder Codex bzw. Claude, falls dieses Modell ein Textgenerator ist.",
+  "bbd2beefe42051c3": "Muss ein Coding-Agent sein: Er liest den Pull Request in vielen Schritten. „Aus“ verwendet das Schreibmodell oder Codex, Claude bzw. Antigravity, falls dieses Modell ein Textgenerator ist.",
   "394b290be2a7e75b": "Modell für Review-Leitfäden",
   "4d4003dd00d53a99": "Modell für Review-Leitfäden nicht gespeichert",
   "d9bfa32de282be21": "Separates Modell für Review-Leitfäden verwenden",

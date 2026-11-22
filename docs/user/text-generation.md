@@ -36,7 +36,7 @@ model.
 ## What text generators can't do
 
 Review guides read the checkout over many steps, so they always use a coding agent. If your source
-control writer model is a text generator, review guides use Codex or Claude instead, and fail if
-neither is set up. To choose which, pick one in **Settings → Source control & issues → Review guide model**.
+control writer model is a text generator, review guides use Codex, Claude or Antigravity instead,
+and fail if none is set up. To choose which, pick one in **Settings → Source control & issues → Review guide model**.
 
 A [managed policy](./managed-policy.md) that limits providers also turns off text generators.

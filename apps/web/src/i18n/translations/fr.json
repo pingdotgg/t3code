@@ -10916,7 +10916,7 @@
   "1d918492dbeb2149": "Instructions personnalisées pour les commits et pull requests",
   "a265a27605be72a2": "Ajoute un onglet Guide aux pull requests. Un agent explique les modifications et signale les décisions à relire.",
   "a740e9d82dfb7f0e": "Guides de revue",
-  "b774fa25f501b7da": "Doit être un agent de code : il lit la pull request en de nombreuses étapes. Désactivé, le modèle de rédaction est utilisé, ou Codex ou Claude si ce modèle est un générateur de texte.",
+  "bbd2beefe42051c3": "Doit être un agent de code : il lit la pull request en de nombreuses étapes. Désactivé, le modèle de rédaction est utilisé, ou Codex, Claude ou Antigravity si ce modèle est un générateur de texte.",
   "394b290be2a7e75b": "Modèle des guides de revue",
   "4d4003dd00d53a99": "Modèle des guides de revue non enregistré",
   "d9bfa32de282be21": "Utiliser un modèle distinct pour les guides de revue",

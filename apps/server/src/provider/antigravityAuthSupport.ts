@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
@@ -47,8 +48,24 @@ const ProfileSettingsFile = Schema.Struct({
       location: Schema.optional(Schema.String),
     }),
   ),
+  enableTerminalSandbox: Schema.optional(Schema.Boolean),
+  toolPermission: Schema.optional(Schema.String),
 });
 const encodeProfileSettings = Schema.encodeSync(Schema.fromJsonString(ProfileSettingsFile));
+// Over ACP, agy 1.5 loads permission rules from here and ignores `permissions` in settings.json.
+const encodeReadOnlyGrants = Schema.encodeSync(
+  Schema.fromJsonString(
+    Schema.Struct({
+      userSettings: Schema.Struct({
+        globalPermissionGrants: Schema.Struct({
+          allow: Schema.Array(Schema.String),
+          deny: Schema.Array(Schema.String),
+        }),
+      }),
+    }),
+  ),
+);
+const ANTIGRAVITY_SIGN_IN_FILE = "antigravity-oauth-token";
 const isAcpRequestError = Schema.is(AcpErrors.AcpRequestError);
 const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 
@@ -143,7 +160,7 @@ export function antigravityAuthConfigIssue(auth: AntigravityAuthConfig): string 
  * `auth.type` names the selected method so a native logout clears only that method's credentials
  * instead of every stored token. Never holds a credential.
  */
-function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
+function antigravityProfileSettings(auth: AntigravityAuthConfig, readOnly = false): string {
   const gcp = {
     ...(auth.gcpProject ? { project: auth.gcpProject } : {}),
     ...(auth.gcpLocation ? { location: auth.gcpLocation } : {}),
@@ -151,6 +168,8 @@ function antigravityProfileSettings(auth: AntigravityAuthConfig): string {
   return `${encodeProfileSettings({
     auth: { type: auth.authMethod },
     ...(Object.keys(gcp).length > 0 ? { gcp } : {}),
+    // Commands run sandboxed without asking; leaving the sandbox asks, and the caller refuses.
+    ...(readOnly ? { enableTerminalSandbox: true, toolPermission: "proceed-in-sandbox" } : {}),
   })}\n`;
 }
 
@@ -543,6 +562,77 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   return profile;
 });
 
+/**
+ * A throwaway profile for one read-only run. It carries no user hooks, MCP servers, skills or
+ * rules, and its permission rules admit only reads of `readRoots`. Removed with the scope.
+ */
+export const prepareAntigravityReadOnlyProfile = Effect.fn("prepareAntigravityReadOnlyProfile")(
+  function* (input: {
+    readonly profile: AntigravityProfile;
+    readonly auth: AntigravityAuthConfig;
+    readonly readRoots: ReadonlyArray<string>;
+  }): Effect.fn.Return<
+    AntigravityProfile,
+    AcpErrors.AcpTransportError,
+    FileSystem.FileSystem | Path.Path | Scope.Scope
+  > {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const failed = () =>
+      authSupportError("The Antigravity read-only profile could not be created.");
+    // Beside the process temp directory, never inside it: sandboxed commands can read temp files.
+    const geminiHome = yield* Effect.acquireRelease(
+      fs
+        .makeTempDirectory({ directory: input.profile.tempDirectory, prefix: "read-only-" })
+        .pipe(Effect.mapError(failed)),
+      (directory) =>
+        fs
+          .remove(directory, { recursive: true, force: true })
+          .pipe(
+            Effect.catch(() =>
+              Effect.logWarning("Could not remove an Antigravity read-only profile."),
+            ),
+          ),
+    );
+    const acpDirectory = path.join(geminiHome, "antigravity-acp");
+    const configDirectory = path.join(geminiHome, "config");
+    const signIn = path.join(input.profile.acpDirectory, ANTIGRAVITY_SIGN_IN_FILE);
+    yield* Effect.gen(function* () {
+      yield* fs.makeDirectory(acpDirectory);
+      yield* fs.makeDirectory(configDirectory);
+      yield* fs.writeFileString(
+        path.join(acpDirectory, "settings.json"),
+        antigravityProfileSettings(input.auth, true),
+      );
+      yield* fs.writeFileString(
+        path.join(configDirectory, "config.json"),
+        `${encodeReadOnlyGrants({
+          userSettings: {
+            globalPermissionGrants: {
+              allow: input.readRoots.map((root) => `read_file(${root})`),
+              deny: ["write_file(*)", "mcp(*)", "read_url(*)"],
+            },
+          },
+        })}\n`,
+      );
+      if (yield* fs.exists(signIn)) {
+        const link = path.join(acpDirectory, ANTIGRAVITY_SIGN_IN_FILE);
+        // agy saves a refreshed sign-in in place, so a link keeps every session on one file.
+        // File symlinks need elevation on Windows; the copy there would miss a rotated token.
+        yield* input.profile.platform === "win32"
+          ? fs.copyFile(signIn, link)
+          : fs.symlink(signIn, link);
+      }
+    }).pipe(Effect.mapError(failed));
+    return {
+      ...input.profile,
+      geminiHome,
+      acpDirectory,
+      tokenPath: path.join(acpDirectory, "acp_token.json"),
+    };
+  },
+);
+
 export function buildAntigravityAcpSpawnInput(input: {
   readonly installation: { readonly executablePath: string };
   readonly profile: AntigravityProfile;
@@ -550,6 +640,8 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
   readonly runtimeTempDirectory?: string;
+  /** Run the agent's shell commands in agy's terminal sandbox. */
+  readonly sandbox?: boolean;
 }): AcpSessionRuntime.AcpSpawnInput {
   return {
     command: input.installation.executablePath,
@@ -560,6 +652,7 @@ export function buildAntigravityAcpSpawnInput(input: {
       "--app-data-dir",
       // The CLI joins this beneath gemini-dir, including when the value is absolute.
       "antigravity-acp",
+      ...(input.sandbox === true ? ["--sandbox"] : []),
     ],
     cwd: input.cwd,
     env: antigravityEnvironment(

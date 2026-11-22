@@ -26,6 +26,13 @@ import * as TextGenerationOperations from "@t3tools/provider-core/server/textGen
 
 const ANTIGRAVITY_TIMEOUT_MS = 180_000;
 const MAX_OUTPUT_CHARS = 128_000;
+/** Everything else, subagents included, reaches the client as another kind such as "other". */
+const INVESTIGATION_TOOL_KINDS = new Set(["read", "search", "think", "execute"]);
+// agy runs hooks from its working directory outside the sandbox, so that is never the checkout.
+const investigationPreamble = (checkout: string) => [
+  `The checkout is at ${checkout}, not in your shell's directory. Where the task says the current directory, it means that checkout: run git as \`git -C "${checkout}" ...\` and read files by their absolute path under it.`,
+  "Your commands run in a read-only sandbox with no network. Do not write files, leave the sandbox, start subagents, or ask questions: each of those ends this task.",
+];
 const isTextGenerationError = Schema.is(TextGenerationError);
 const isProviderSetupError = Schema.is(ProviderSetupError);
 const isNativeSessionId = Schema.is(Schema.String.check(Schema.isUUID(4)));
@@ -61,6 +68,8 @@ export interface AntigravityTextGenerationOptions {
   readonly defaultModel?: Effect.Effect<string | undefined>;
   readonly makeRuntime: (
     cwd: string,
+    /** Launch from a throwaway profile that may only read these directories. */
+    readOnlyRoots?: ReadonlyArray<string>,
   ) => Effect.Effect<AntigravityTextRuntime, AcpError | ProviderSetupError, Scope.Scope>;
   readonly withProcess: <A, E, R>(
     stop: Effect.Effect<void>,
@@ -137,6 +146,27 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
     return true;
   });
 
+  /** The checkout and, for a linked worktree, the main repository's git directory git reads. */
+  const investigationRoots = Effect.fn("AntigravityTextGeneration.investigationRoots")(function* (
+    cwd: string,
+  ) {
+    const checkout = yield* fs.realPath(cwd);
+    const linked = yield* fs.readFileString(path.join(checkout, ".git")).pipe(
+      Effect.map((text) => /^gitdir: (.+)$/m.exec(text)?.[1]?.trim()),
+      Effect.orElseSucceed(() => undefined),
+    );
+    if (linked === undefined) return { checkout, roots: [checkout] };
+    const gitDirectory = path.resolve(checkout, linked);
+    const common = yield* fs.readFileString(path.join(gitDirectory, "commondir")).pipe(
+      Effect.map((text) => path.resolve(gitDirectory, text.trim())),
+      Effect.orElseSucceed(() => gitDirectory),
+    );
+    return {
+      checkout,
+      roots: [checkout, yield* fs.realPath(common).pipe(Effect.orElseSucceed(() => common))],
+    };
+  });
+
   const available = isAntigravityTextGenerationAvailable(options.profileDirectory).pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
@@ -144,10 +174,12 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
 
   const runAntigravityJson = Effect.fn("AntigravityTextGeneration.runJson")(
     function* <S extends Schema.Top>(input: TextGenerationOperations.Request<S>) {
-      const { operation } = input;
+      const { operation, investigate } = input;
       const scope = yield* Scope.make();
       yield* Effect.addFinalizer((exit) => Scope.close(scope, exit));
       const helper = Effect.gen(function* () {
+        // An investigation's throwaway profile has no hooks, yet it is refused with the rest:
+        // one capability flag says what the model pickers offer for all text generation.
         if (!(yield* available)) {
           return yield* new TextGenerationError({
             operation,
@@ -156,6 +188,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
           });
         }
 
+        const investigation = investigate ? yield* investigationRoots(input.cwd) : undefined;
         const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-antigravity-text-" });
         let sessionId: string | undefined;
         yield* Effect.addFinalizer(() =>
@@ -170,7 +203,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         );
 
         const rawResult = yield* Effect.gen(function* () {
-          const runtime = yield* options.makeRuntime(cwd);
+          const runtime = yield* options.makeRuntime(cwd, investigation?.roots);
           yield* runtime.getEvents().pipe(
             Stream.runForEach((event) =>
               event._tag === "EventStreamBarrier"
@@ -197,10 +230,20 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
               ),
             );
 
-          yield* runtime.handleRequestPermission(() =>
-            reject("Antigravity text generation requested a tool permission or user input.").pipe(
-              Effect.as({ outcome: { outcome: "cancelled" as const } }),
-            ),
+          const toolKinds = new Map<string, string>();
+          yield* runtime.handleRequestPermission((request) =>
+            (investigation === undefined
+              ? reject("Antigravity text generation requested a tool permission or user input.")
+              : Effect.logInfo("Antigravity asked for an approval while investigating read-only", {
+                  title: request.toolCall.title,
+                }).pipe(
+                  Effect.andThen(
+                    reject(
+                      "Antigravity asked for an approval, and a read-only investigation grants none. It tried to leave the checkout, or its terminal sandbox is unavailable on this machine.",
+                    ),
+                  ),
+                )
+            ).pipe(Effect.as({ outcome: { outcome: "cancelled" as const } })),
           );
           yield* runtime.handleElicitation(() =>
             reject("Antigravity text generation requested user input.").pipe(
@@ -222,7 +265,20 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 update.sessionUpdate === "tool_call" ||
                 update.sessionUpdate === "tool_call_update"
               ) {
-                return yield* reject("Antigravity attempted tool work during text generation.");
+                if (investigation === undefined) {
+                  return yield* reject("Antigravity attempted tool work during text generation.");
+                }
+                const kind = update.kind ?? toolKinds.get(update.toolCallId) ?? "other";
+                toolKinds.set(update.toolCallId, kind);
+                // Only the text after the last tool call is the answer.
+                yield* Ref.set(output, "");
+                // A rule-denied call fails and the turn goes on; completed work is what breaks read-only.
+                if (update.status === "completed" && !INVESTIGATION_TOOL_KINDS.has(kind)) {
+                  return yield* reject(
+                    "Antigravity used a tool that a read-only investigation does not allow.",
+                  );
+                }
+                return;
               }
               if (
                 notification.sessionId !== sessionId ||
@@ -293,7 +349,11 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
                 {
                   type: "text",
                   text: [
-                    "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
+                    ...(investigation === undefined
+                      ? [
+                          "Use only the input below. Do not use tools, read or write files, run commands, or ask questions.",
+                        ]
+                      : investigationPreamble(investigation.checkout)),
                     "Return only the requested JSON object.",
                     "",
                     input.prompt,
@@ -334,7 +394,7 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
         return yield* TextGenerationOperations.decodeJsonReply(input, "Antigravity", rawResult);
       }).pipe(
         Effect.scoped,
-        Effect.timeoutOption(ANTIGRAVITY_TIMEOUT_MS),
+        Effect.timeoutOption(investigate?.timeoutMs ?? ANTIGRAVITY_TIMEOUT_MS),
         Effect.flatMap(
           Option.match({
             onNone: () =>
@@ -372,8 +432,5 @@ export const makeAntigravityTextGeneration = Effect.fn("makeAntigravityTextGener
       ),
   );
 
-  return TextGenerationOperations.fromRunner(
-    "AntigravityTextGeneration",
-    TextGenerationOperations.withoutInvestigation("Antigravity", runAntigravityJson),
-  );
+  return TextGenerationOperations.fromRunner("AntigravityTextGeneration", runAntigravityJson);
 });

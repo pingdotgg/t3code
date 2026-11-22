@@ -94,6 +94,13 @@ Use `/compact` to summarize a long conversation when your Antigravity runtime
 offers that command. If it is unavailable, update Antigravity in provider settings
 or send `/clear` when you need a fresh context.
 
+### Review guides
+
+Antigravity can write [review guides](./source-control.md#review-guides). It reads the pull request
+inside Antigravity's terminal sandbox, without your hooks, MCP servers, skills or rules, and cannot
+change files or reach the network. Where that sandbox is unavailable the guide fails; choose
+another review guide model on that environment.
+
 ### Skills and attachments
 
 Put project skills in `.agents/skills`. T3 Code also reads `.gemini/skills` and the

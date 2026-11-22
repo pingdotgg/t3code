@@ -10926,7 +10926,7 @@
   "1d918492dbeb2149": "Custom commit and pull request instructions",
   "a265a27605be72a2": "Add a Guide tab to pull requests. An agent explains the changes and points out decisions that need review.",
   "a740e9d82dfb7f0e": "Review guides",
-  "b774fa25f501b7da": "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.",
+  "bbd2beefe42051c3": "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex, Claude or Antigravity if that model is a text generator.",
   "394b290be2a7e75b": "Review guide model",
   "4d4003dd00d53a99": "Review guide model not saved",
   "d9bfa32de282be21": "Use a separate review guide model",

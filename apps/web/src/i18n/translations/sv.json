@@ -10924,7 +10924,7 @@
   "1d918492dbeb2149": "Anpassade instruktioner för commits och pull requests",
   "a265a27605be72a2": "Lägg till fliken Guide i pull requests. En agent förklarar ändringarna och pekar ut beslut som behöver granskas.",
   "a740e9d82dfb7f0e": "Granskningsguider",
-  "b774fa25f501b7da": "Måste vara en kodagent: den läser pull requesten i många steg. Av använder skrivmodellen, eller Codex eller Claude om den modellen är en textgenerator.",
+  "bbd2beefe42051c3": "Måste vara en kodagent: den läser pull requesten i många steg. Av använder skrivmodellen, eller Codex, Claude eller Antigravity om den modellen är en textgenerator.",
   "394b290be2a7e75b": "Modell för granskningsguider",
   "4d4003dd00d53a99": "Modellen för granskningsguider sparades inte",
   "d9bfa32de282be21": "Använd en separat modell för granskningsguider",

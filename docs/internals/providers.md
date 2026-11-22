@@ -80,6 +80,16 @@ run before the prompt. They reject profiles with such configuration before launc
 instructions and tool denial do not create a native sandbox.
 See [helper constraints](../../apps/server/src/textGeneration/AntigravityTextGeneration.ts).
 
+Read-only investigation, which review guides use, launches from a throwaway profile in an empty
+working directory instead. Antigravity runs hooks from its working directory outside its terminal
+sandbox, so an untrusted checkout is only ever a read root. Over ACP it loads permission rules from
+the profile's `config/config.json` and ignores `permissions` in `settings.json`. A `command` allow
+rule lets the agent rerun that command outside the sandbox unasked, so commands are admitted by
+`proceed-in-sandbox` alone and the helper refuses every approval request. The throwaway profile
+links the saved sign-in instead of copying it, because Antigravity saves a refreshed sign-in in
+place and a copy would strand a rotated token.
+See [read-only profile](../../apps/server/src/provider/antigravityAuthSupport.ts).
+
 ## Provider updates run only through the owning installer
 
 A package manager runs only when the resolved executable's path proves it owns the install. Homebrew

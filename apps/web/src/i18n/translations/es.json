@@ -10911,7 +10911,7 @@
   "1d918492dbeb2149": "Instrucciones personalizadas de commits y pull requests",
   "a265a27605be72a2": "Añade una pestaña Guía a las pull requests. Un agente explica los cambios y señala las decisiones que requieren revisión.",
   "a740e9d82dfb7f0e": "Guías de revisión",
-  "b774fa25f501b7da": "Debe ser un agente de código: lee la pull request en muchos pasos. Desactivado usa el modelo de escritura, o Codex o Claude si ese modelo es un generador de texto.",
+  "bbd2beefe42051c3": "Debe ser un agente de código: lee la pull request en muchos pasos. Desactivado usa el modelo de escritura, o Codex, Claude o Antigravity si ese modelo es un generador de texto.",
   "394b290be2a7e75b": "Modelo de la guía de revisión",
   "4d4003dd00d53a99": "No se guardó el modelo de la guía de revisión",
   "d9bfa32de282be21": "Usar un modelo distinto para la guía de revisión",

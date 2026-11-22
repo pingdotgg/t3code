@@ -10,11 +10,13 @@ import { ProviderInstanceId } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Ndjson from "effect/encoding/Ndjson";
 import * as AcpErrors from "effect-acp/errors";
@@ -33,6 +35,7 @@ import {
   antigravityLoginResponse,
   parseAntigravityAuthorizationUrl,
   prepareAntigravityProfile,
+  prepareAntigravityReadOnlyProfile,
   resolveAntigravityInstanceDirectories,
 } from "./antigravityAuthSupport.ts";
 
@@ -635,6 +638,78 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       yield* prepareAntigravityProfile({ profileDirectory: profile.geminiHome });
       expect(yield* fs.readFileString(profile.tokenPath)).toBe("synthetic-token-fixture");
     }),
+  );
+
+  it.effect.skipIf(!symlinksSupported)(
+    "builds a throwaway read-only profile that shares the saved sign-in",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+        const profile = yield* prepareAntigravityProfile({
+          profileDirectory: path.join(temporaryDirectory, "profile"),
+        });
+        const signIn = path.join(profile.acpDirectory, "antigravity-oauth-token");
+        yield* fs.writeFileString(signIn, "saved-sign-in");
+        yield* fs.makeDirectory(path.join(profile.geminiHome, "config"), { recursive: true });
+        yield* fs.writeFileString(path.join(profile.geminiHome, "config", "hooks.json"), "{}");
+
+        const scope = yield* Scope.make();
+        const readOnly = yield* prepareAntigravityReadOnlyProfile({
+          profile,
+          auth: { authMethod: "oauth-personal", apiKey: "", gcpProject: "", gcpLocation: "" },
+          readRoots: ["/repository/checkout", "/repository/.git"],
+        }).pipe(Scope.provide(scope));
+
+        expect(path.dirname(readOnly.geminiHome)).toBe(profile.tempDirectory);
+        expect(
+          decodeJson(yield* fs.readFileString(path.join(readOnly.acpDirectory, "settings.json"))),
+        ).toEqual({
+          auth: { type: "oauth-personal" },
+          enableTerminalSandbox: true,
+          toolPermission: "proceed-in-sandbox",
+        });
+        const configDirectory = path.join(readOnly.geminiHome, "config");
+        expect(yield* fs.readDirectory(configDirectory)).toEqual(["config.json"]);
+        expect(
+          decodeJson(yield* fs.readFileString(path.join(configDirectory, "config.json"))),
+        ).toEqual({
+          userSettings: {
+            globalPermissionGrants: {
+              allow: ["read_file(/repository/checkout)", "read_file(/repository/.git)"],
+              deny: ["write_file(*)", "mcp(*)", "read_url(*)"],
+            },
+          },
+        });
+        expect(
+          buildAntigravityAcpSpawnInput({
+            installation: { executablePath: "/usr/bin/agy" },
+            profile: readOnly,
+            cwd: temporaryDirectory,
+            sandbox: true,
+          }).args,
+        ).toEqual([
+          "acp",
+          "--gemini-dir",
+          readOnly.geminiHome,
+          "--app-data-dir",
+          "antigravity-acp",
+          "--sandbox",
+        ]);
+
+        // agy saves a refreshed sign-in in place; every session must then see it.
+        const shared = (yield* HostProcess.Platform) !== "win32";
+        yield* fs.writeFileString(
+          path.join(readOnly.acpDirectory, "antigravity-oauth-token"),
+          "refreshed-sign-in",
+        );
+        const saved = shared ? "refreshed-sign-in" : "saved-sign-in";
+        expect(yield* fs.readFileString(signIn)).toBe(saved);
+        yield* Scope.close(scope, Exit.void);
+        expect(yield* fs.exists(readOnly.geminiHome)).toBe(false);
+        expect(yield* fs.readFileString(signIn)).toBe(saved);
+      }),
   );
 
   it.effect.skipIf(!symlinksSupported)(

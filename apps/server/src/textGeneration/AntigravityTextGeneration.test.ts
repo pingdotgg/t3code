@@ -82,6 +82,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
   const enteredPrompt = yield* Deferred.make<void>();
   const state = {
     workspaces: [] as Array<string>,
+    readOnlyRoots: [] as Array<ReadonlyArray<string> | undefined>,
     closed: [] as Array<string>,
     prompts: [] as Array<Parameters<TextRuntime["prompt"]>[0]>,
     selectedModels: [] as Array<string>,
@@ -124,10 +125,11 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
       );
     });
 
-  const makeRuntime: AntigravityTextGenerationOptions["makeRuntime"] = (cwd) =>
+  const makeRuntime: AntigravityTextGenerationOptions["makeRuntime"] = (cwd, readOnlyRoots) =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<AcpSessionRuntime.AcpSessionRuntimeEvent>();
       state.workspaces.push(cwd);
+      state.readOnlyRoots.push(readOnlyRoots);
       expect(yield* fs.readDirectory(cwd).pipe(Effect.orDie)).toEqual([]);
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
@@ -296,6 +298,16 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     withProcess,
   });
   const titleInput = { cwd: projectDirectory, message: "Repair Google login", modelSelection };
+  const guideInput = {
+    cwd: projectDirectory,
+    number: 7,
+    title: "Repair Google login",
+    description: "",
+    baseBranch: "main",
+    baseCommit: "abc1234",
+    settledReview: "",
+    modelSelection,
+  };
   const assertCleaned = Effect.gen(function* () {
     expect(state.closed).toEqual(state.workspaces);
     for (const workspace of state.workspaces) {
@@ -322,6 +334,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     enteredPrompt,
     textGeneration,
     titleInput,
+    guideInput,
     assertCleaned,
   };
 });
@@ -402,6 +415,118 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         expect(fixture.state.cancellations).toBe(1);
         yield* fixture.assertCleaned;
       }),
+  );
+
+  it.effect("investigates a linked worktree read-only and returns the text after its tools", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        prompt: ({ emit }) =>
+          Effect.gen(function* () {
+            yield* emit({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: "Reading the diff for {stops}." },
+            });
+            yield* emit({
+              sessionUpdate: "tool_call",
+              toolCallId: "command-1",
+              title: "git diff --stat",
+              kind: "execute",
+              status: "in_progress",
+            });
+            yield* emit({
+              sessionUpdate: "tool_call_update",
+              toolCallId: "command-1",
+              status: "completed",
+            });
+            // agy fails a write its deny rule refuses, and the turn goes on.
+            yield* emit({
+              sessionUpdate: "tool_call",
+              toolCallId: "edit-1",
+              title: "File notes.md",
+              kind: "edit",
+              status: "pending",
+            });
+            yield* emit({
+              sessionUpdate: "tool_call_update",
+              toolCallId: "edit-1",
+              status: "failed",
+            });
+            yield* emit({
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: '{"stops":[]}' },
+            });
+            return { stopReason: "end_turn" };
+          }),
+      });
+      const { fs, path } = fixture;
+      const repository = path.join(path.dirname(fixture.projectDirectory), "repository", ".git");
+      const linked = path.join(repository, "worktrees", "project");
+      yield* fs.makeDirectory(linked, { recursive: true });
+      yield* fs.writeFileString(path.join(linked, "commondir"), "../..\n");
+      yield* fs.writeFileString(path.join(fixture.projectDirectory, ".git"), `gitdir: ${linked}\n`);
+
+      expect(yield* fixture.textGeneration.generateReviewGuide(fixture.guideInput)).toEqual({
+        stops: [],
+      });
+      const checkout = yield* fs.realPath(fixture.projectDirectory);
+      expect(fixture.state.readOnlyRoots).toEqual([[checkout, yield* fs.realPath(repository)]]);
+      expect(fixture.state.workspaces).not.toContain(checkout);
+      expect(fixture.state.selectedModes).toEqual(["default"]);
+      expect(fixture.state.prompts[0]?.prompt).toEqual([
+        { type: "text", text: expect.stringContaining(`git -C "${checkout}"`) },
+      ]);
+    }),
+  );
+
+  it.effect.each([
+    { name: "an approval request", detail: "asked for an approval" },
+    { name: "a subagent", detail: "does not allow" },
+    { name: "a completed write", detail: "does not allow" },
+  ])("fails a read-only investigation on $name", ({ name, detail }) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        prompt: ({ emit, permission }) =>
+          Effect.gen(function* () {
+            if (name === "an approval request") {
+              yield* permission(
+                {
+                  sessionId: SESSION_ID,
+                  toolCall: { toolCallId: "command-1", title: "touch file", kind: "execute" },
+                  options: [{ optionId: "allow", name: "Allow", kind: "allow_once" }],
+                },
+                requestContext,
+              );
+            } else if (name === "a subagent") {
+              yield* emit({
+                sessionUpdate: "tool_call",
+                toolCallId: "subagent-1",
+                title: "Run invoke_subagent",
+                kind: "other",
+                status: "completed",
+              });
+            } else {
+              yield* emit({
+                sessionUpdate: "tool_call",
+                toolCallId: "edit-1",
+                title: "File notes.md",
+                kind: "edit",
+                status: "pending",
+              });
+              yield* emit({
+                sessionUpdate: "tool_call_update",
+                toolCallId: "edit-1",
+                status: "completed",
+              });
+            }
+            return yield* Effect.never;
+          }),
+      });
+      const error = yield* fixture.textGeneration
+        .generateReviewGuide(fixture.guideInput)
+        .pipe(Effect.flip);
+      expect(error.detail).toContain(detail);
+      expect(fixture.state.closed).toEqual(fixture.state.workspaces);
+    }),
   );
 
   it.effect("rejects native permission and choice requests instead of answering them", () =>
@@ -633,6 +758,8 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
         .pipe(Effect.exit);
       expect(Exit.isSuccess(result)).toBe(available);
       expect(fixture.state.workspaces.length).toBe(available ? 1 : 0);
+      yield* fixture.textGeneration.generateReviewGuide(fixture.guideInput).pipe(Effect.exit);
+      expect(fixture.state.workspaces.length).toBe(available ? 2 : 0);
       yield* fixture.assertCleaned;
     }),
   );

@@ -46,6 +46,7 @@ import {
   buildAntigravityAcpSpawnInput,
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
+  prepareAntigravityReadOnlyProfile,
   resolveAntigravityInstanceDirectories,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
@@ -227,6 +228,7 @@ export const AntigravityDriver: ProviderDriver<
     const prepareSpawn = Effect.fn("AntigravityDriver.prepareSpawn")(function* (
       cwd: string,
       baseEnv: NodeJS.ProcessEnv,
+      readOnlyRoots?: ReadonlyArray<string>,
     ): Effect.fn.Return<
       {
         readonly executable: AntigravityInstallation.AntigravityExecutable;
@@ -302,17 +304,31 @@ export const AntigravityDriver: ProviderDriver<
         executable,
         spawn: buildAntigravityAcpSpawnInput({
           installation: executable,
-          profile,
+          profile:
+            readOnlyRoots === undefined
+              ? profile
+              : yield* prepareAntigravityReadOnlyProfile({
+                  profile,
+                  auth,
+                  readRoots: readOnlyRoots,
+                }).pipe(
+                  Effect.provideService(FileSystem.FileSystem, fileSystem),
+                  Effect.provideService(Path.Path, path),
+                ),
           cwd,
           baseEnv,
           auth,
           runtimeTempDirectory,
+          sandbox: readOnlyRoots !== undefined,
         }),
       };
     });
 
     const makeRuntime = Effect.fn("AntigravityDriver.makeRuntime")(function* (
-      input: AntigravityAdapterV2RuntimeInput,
+      input: AntigravityAdapterV2RuntimeInput & {
+        /** Launch from a throwaway profile that may only read these directories. */
+        readonly readOnlyRoots?: ReadonlyArray<string> | undefined;
+      },
     ): Effect.fn.Return<
       AcpSessionRuntime.AcpSessionRuntime["Service"],
       AcpErrors.AcpError | ProviderSetupError,
@@ -320,12 +336,13 @@ export const AntigravityDriver: ProviderDriver<
     > {
       // `buildAntigravityAcpSpawnInput` sets `extendEnv: false`, so thread variables only reach the
       // agent's shell through `baseEnv`.
-      const { processEnvironment: threadEnvironment, ...runtimeInput } = input;
+      const { processEnvironment: threadEnvironment, readOnlyRoots, ...runtimeInput } = input;
       const { executable, spawn } = yield* prepareSpawn(
         runtimeInput.cwd,
         threadEnvironment === undefined
           ? processEnvironment
           : { ...processEnvironment, ...threadEnvironment },
+        readOnlyRoots,
       );
       const runtime = yield* makeAntigravityAcpRuntime({
         ...runtimeInput,
@@ -653,10 +670,11 @@ export const AntigravityDriver: ProviderDriver<
       profileDirectory,
       defaultModel,
       withProcess: authFlow.withProcess,
-      makeRuntime: (cwd) =>
+      makeRuntime: (cwd, readOnlyRoots) =>
         makeRuntime({
           cwd,
           mcpServers: [],
+          readOnlyRoots,
         }),
     });
 

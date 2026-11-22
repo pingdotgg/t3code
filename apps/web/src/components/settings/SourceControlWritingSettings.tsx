@@ -349,7 +349,7 @@ export function SourceControlWritingSettingsSection() {
             settingKeys={["reviewGuideModelSelection"]}
             {...setting("review-guide-model")}
             description={gt(
-              "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex or Claude if that model is a text generator.",
+              "Must be a coding agent: it reads the pull request over many steps. Off uses the writer model, or Codex, Claude or Antigravity if that model is a text generator.",
             )}
             control={
               !hasServerTargets ? (
