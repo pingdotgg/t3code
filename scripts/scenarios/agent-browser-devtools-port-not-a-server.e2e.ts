@@ -3,10 +3,12 @@ import * as HostProcess from "@t3tools/shared/HostProcess";
 import { expect } from "e2e";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { ScenarioError } from "./shell.ts";
 import { runPromise, test, WEB } from "./t3.ts";
 
 // Serves on the port its last argument ends in, and prints once it listens.
@@ -37,7 +39,10 @@ const listen = Effect.fn("scenario.listen")(function* (threadId: string, arg: st
       stderr: "ignore",
     }),
   );
-  yield* Stream.runDrain(Stream.take(child.stdout, 1));
+  const output = yield* child.stdout.pipe(Stream.decodeText(), Stream.runHead);
+  if (!Option.getOrElse(output, () => "").includes("listening")) {
+    return yield* new ScenarioError({ message: `The listener for ${arg} exited before listening` });
+  }
 });
 
 test(
