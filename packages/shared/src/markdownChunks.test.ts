@@ -78,9 +78,9 @@ describe("splitLargeMarkdown", () => {
     expect(starts(text)).toEqual(["<!--", "after"]);
   });
 
-  it("still cuts after an autolink line", () => {
-    const text = ["<https://example.com>", "# next"].join("\n");
-    expect(starts(text)).toEqual(["<https://example.com>", "# next"]);
+  it("treats an autolink line as a paragraph, so a following fence still opens", () => {
+    const text = ["<https://example.com>", "```md", "", "# literal", "```", "", "after"].join("\n");
+    expect(starts(text)).toEqual(["<https://example.com>", "after"]);
   });
 
   it("waits for the target size before cutting", () => {
