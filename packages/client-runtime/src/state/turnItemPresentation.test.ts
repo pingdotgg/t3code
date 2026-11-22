@@ -92,5 +92,15 @@ describe("workspacePreparationRetryRunIds", () => {
         [preparationFailure("failed", "provider_crashed")],
       ).size,
     ).toBe(0);
+    const stopped = [{ ...command("Preparing workspace"), status: "interrupted" as const }];
+    expect([...workspacePreparationRetryRunIds([run("interrupted", worktree)], stopped)]).toEqual([
+      RunId.make("run-1"),
+    ]);
+    expect(
+      workspacePreparationRetryRunIds(
+        [run("interrupted", worktree)],
+        [command("Preparing workspace")],
+      ).size,
+    ).toBe(0);
   });
 });
