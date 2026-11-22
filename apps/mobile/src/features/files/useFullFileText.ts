@@ -37,8 +37,10 @@ export function useFullFileText(input: {
     fetch(uri, { cache: "no-store", signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        // The file can grow after the preview read; never buffer past the cap.
-        if (Number(response.headers.get("content-length")) > MOBILE_FULL_FILE_MAX_BYTES) {
+        // The file can grow after the preview read; never buffer past the cap. React Native's fetch
+        // buffers the whole body, so a response without a length is refused rather than trusted.
+        const length = Number(response.headers.get("content-length") ?? Number.NaN);
+        if (!Number.isFinite(length) || length > MOBILE_FULL_FILE_MAX_BYTES) {
           controller.abort();
           throw new Error("File too large");
         }
