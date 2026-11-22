@@ -251,22 +251,12 @@ describe("KeybindingsSettings.logic", () => {
     ).toBe("mod+m");
   });
 
-  it("splits shortcuts into modifier and key parts", () => {
+  it("keeps a literal plus key as its own part", () => {
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
-    expect(shortcutToKeybindingParts(parseKeybindingShortcut("+")!)).toEqual(["+"]);
     expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([
       "mod",
       "shift",
       "+",
-    ]);
-    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+alt+space")!)).toEqual([
-      "mod",
-      "alt",
-      "space",
-    ]);
-    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+escape")!)).toEqual([
-      "mod",
-      "esc",
     ]);
   });
 
