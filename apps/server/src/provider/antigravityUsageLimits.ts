@@ -247,12 +247,11 @@ const readMacOsCliCredential = Effect.fn("antigravityUsageLimits.readMacOsCliCre
       [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
       { concurrency: 2 },
     );
-    const code = Number(exitCode);
     // errSecItemNotFound
-    if (code === 44) return undefined;
-    if (code !== 0) {
+    if (exitCode === 44) return undefined;
+    if (exitCode !== 0) {
       return yield* new AntigravityKeyringError({
-        cause: `/usr/bin/security exited with status ${code}`,
+        cause: `/usr/bin/security exited with status ${exitCode}`,
       });
     }
     const trimmed = stdout.trim();

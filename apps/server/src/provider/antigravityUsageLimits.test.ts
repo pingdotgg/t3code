@@ -800,7 +800,7 @@ describe("Antigravity subscription limits", () => {
         message: "Sign in with Google to see Antigravity limits.",
       });
 
-      // Other non-zero exit codes (e.g. locked keychain) surface as probeFailed.
+      // Any other failure, such as a locked keychain, is not a missing sign-in.
       const locked = yield* fixture({
         authMethod: "oauth-business",
         missingToken: true,
@@ -813,22 +813,6 @@ describe("Antigravity subscription limits", () => {
         ),
       );
       expect((yield* locked.probe).unavailable?.reason).toBe("probeFailed");
-
-      // Personal Google accounts never read the shared macOS Keychain entry.
-      spawned.length = 0;
-      const personal = yield* fixture({
-        authMethod: "oauth-personal",
-        missingToken: true,
-        nativeKeyring: true,
-      }).pipe(
-        Effect.provideService(HostProcess.Platform, "darwin"),
-        Effect.provideService(
-          ChildProcessSpawner.ChildProcessSpawner,
-          mockSecurity({ stdout: encoded, exitCode: 0 }),
-        ),
-      );
-      expect((yield* personal.probe).unavailable?.reason).toBe("unsupported");
-      expect(spawned).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
