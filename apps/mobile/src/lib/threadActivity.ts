@@ -5,6 +5,7 @@ import type {
 import { linkRequestTargetName } from "@t3tools/client-runtime/link-request";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   isLiveSubagentTurnItem,
@@ -1558,6 +1559,10 @@ function presentationRestart(
     const firstEntry = runId === null ? undefined : previous.firstEntryByRun.get(runId);
     if (firstEntry !== undefined && firstEntry < restart.entry) return null;
   }
+  // The reused rows hold the live run's fold, which a rebuilt tail would add again.
+  const liveRunId = unsettledRunId(latestRun);
+  const liveRunStart = liveRunId === null ? undefined : previous.firstEntryByRun.get(liveRunId);
+  if (liveRunStart !== undefined && liveRunStart < restart.entry) return null;
   return { ...restart, index };
 }
 
@@ -2496,6 +2501,7 @@ function checkpointSummariesEqual(
       summary.completedAt === other.completedAt &&
       summary.status === other.status &&
       summary.files === other.files &&
+      summary.repositories === other.repositories &&
       summary.assistantMessageId === other.assistantMessageId
     );
   });
@@ -2787,7 +2793,12 @@ export function buildThreadFeed(
   }
   const checkpointByMessageId = new Map(
     (options?.checkpointSummaries ?? [])
-      .filter((checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0)
+      // A plain folder holding repositories never has a ready checkpoint of its own.
+      .filter(
+        (checkpoint) =>
+          (checkpoint.status === "ready" || checkpoint.repositories !== undefined) &&
+          turnHasChanges(checkpoint),
+      )
       .map((checkpoint) => [checkpoint.assistantMessageId, checkpoint]),
   );
   const grouped = groupAdjacentActivities(

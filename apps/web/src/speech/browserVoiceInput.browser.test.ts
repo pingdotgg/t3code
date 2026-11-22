@@ -9,8 +9,12 @@ import { decodeSpeechPcmRequest } from "@t3tools/shared/speech";
 import { expect, it, vi } from "vite-plus/test";
 
 import { stubGlobal } from "../../test/render";
+import { resolveAppleSpeechLocale } from "./appleSpeech";
 import { createBrowserPcmCapture } from "./browserPcmCapture";
-import { createBrowserVoiceInputPlatform } from "./browserVoiceInput";
+import {
+  createAppleSpeechVoiceInputPlatform,
+  createBrowserVoiceInputPlatform,
+} from "./browserVoiceInput";
 
 vi.mock("../connection/runtime", async () => {
   const [{ Atom }, { layerRemoteHttpClient }] = await Promise.all([
@@ -193,6 +197,61 @@ it("retains all PCM until stop, retries batch audio, and captures preferences be
   expect(requests).toHaveLength(2);
   expect(platform.recorder.uri).toBeNull();
 });
+
+it.each([
+  ["fr", ["en-US"], "fr"],
+  ["auto", ["nl-NL", "en-US"], "en-US"],
+] as const)(
+  "resolves Apple Speech language %s with Mac preferences %j",
+  (preference, system, expected) => {
+    expect(resolveAppleSpeechLocale(["en-US", "fr-FR"], preference, system)).toBe(expected);
+  },
+);
+
+it.each(["prepare", "transcribe"] as const)(
+  "cancels Apple Speech while native %s is pending",
+  async (stage) => {
+    const entered = Promise.withResolvers<void>();
+    const pending = Promise.withResolvers<{ ok: true; value: string }>();
+    using _bridge = stubGlobal("desktopBridge", {
+      appleSpeech: {
+        prepare: async () => {
+          if (stage !== "prepare") return { ok: true, value: "en-US" };
+          entered.resolve();
+          return pending.promise;
+        },
+        transcribe: async () => {
+          entered.resolve();
+          return pending.promise;
+        },
+      },
+    });
+    const platform = createAppleSpeechVoiceInputPlatform({
+      hasAudioConsent: () => true,
+      getTranscriptionOptions: () => DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
+      getMicrophoneId: () => "",
+      onLevel() {},
+      onDurationLimit() {},
+      onError() {},
+    });
+    const abort = new AbortController();
+    using _cleanup = {
+      [Symbol.dispose]: () => {
+        abort.abort();
+        pending.resolve({ ok: true, value: "late" });
+        platform.cancelRecording();
+      },
+    };
+    const options = { signal: abort.signal };
+    const transcription = await platform.transcriber.prepare(options);
+    const uri = URL.createObjectURL(new Blob([new Float32Array([0.5])]));
+    using _blob = { [Symbol.dispose]: () => URL.revokeObjectURL(uri) };
+    const result = transcription.transcribe(uri, options);
+    await entered.promise;
+    abort.abort();
+    await expect(result).rejects.toThrow();
+  },
+);
 
 it("streams the opening audio in order when the destination becomes ready during capture", async () => {
   using microphone = capture();

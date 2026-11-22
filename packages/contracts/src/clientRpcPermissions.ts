@@ -69,6 +69,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.gitPreparePullRequestThread]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateWorktree]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsRemoveWorktree]: AuthSourceControlWriteScope,
+  [WS_METHODS.workspaceAddTaskFolderRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
@@ -90,6 +91,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   // A link lets every agent here reach the other environment: Settings' bar.
   [WS_METHODS.peerLinksAnswerRequest]: AuthAccessWriteScope,
   [WS_METHODS.peerLinksPairClient]: AuthAccessWriteScope,
+  [WS_METHODS.peerLinksPairLink]: AuthAccessWriteScope,
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 

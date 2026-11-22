@@ -15,7 +15,18 @@ irm https://vite.plus/ps1 | iex
 ```
 
 `vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
-needed. From the repository root:
+needed.
+
+On Windows, clone with Git's long-path support enabled. The bundled reference repositories
+under `.repos/` can otherwise make checkout fail with `Filename too long`:
+
+```powershell
+git clone -c core.longpaths=true https://github.com/pingdotgg/t3code.git
+```
+
+This saves the setting in the new clone before checkout, without changing your global Git settings.
+
+From the repository root:
 
 ```sh
 vp i
@@ -96,9 +107,7 @@ Dev servers add it back on start, so turn it off in Settings instead of removing
 To add a scenario, point a `SCENARIOS` entry at a generic ACP replay fixture
 (`registry_transcript.ndjson`) or a file in [dev-replay](../../apps/server/scripts/dev-replay).
 The agent replays session updates, permission requests, and questions. It drops session setup
-and vendor frames, so Grok and fx recordings lose their vendor-only behavior. A `t3/mcp_call`
-request frame (`{ name, arguments }`) makes the agent call that T3 tool itself over its MCP
-session, and `<var:name>` in any frame is filled from the JSON file at `T3_DEV_REPLAY_VARS`.
+and vendor frames, so Grok and fx recordings lose their vendor-only behavior.
 
 ### Profiling dev startup
 

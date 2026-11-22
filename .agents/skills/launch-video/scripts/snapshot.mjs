@@ -86,6 +86,10 @@ async function freeze(known) {
   const styleEl = document.createElement("style");
   styleEl.textContent = css;
   head.append(styleEl);
+  const viewport = document.createElement("meta");
+  viewport.name = "kit-viewport";
+  viewport.content = `${innerWidth}x${innerHeight}`;
+  head.append(viewport);
   const restore = document.createElement("script");
   restore.textContent = `for (const el of document.querySelectorAll("[data-kit-scroll]")) { const [x, y] = el.dataset.kitScroll.split(",").map(Number); el.scrollLeft = x; el.scrollTop = y; }`;
   clone.querySelector("body").append(restore);
