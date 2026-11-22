@@ -86,6 +86,14 @@ export const make = (
  * layer still requires the server, a scope, and any non-request dependencies of
  * the response effect or middleware.
  *
+ * **Gotchas**
+ *
+ * The response effect and middleware run uninterruptibly by default, so a
+ * client disconnect does not stop the effect and shutdown waits for it to
+ * finish. Wrap the effect in `Effect.interruptible` to let both interrupt it.
+ * `HttpRouter` routes are interruptible unless added with
+ * `uninterruptible: true`.
+ *
  * @stability unstable
  * @category layers
  * @since 4.0.0
@@ -135,6 +143,14 @@ export const serve: {
  * The request service is supplied by the server for each request; the effect
  * requires a scope and any non-request dependencies of the response effect or
  * middleware.
+ *
+ * **Gotchas**
+ *
+ * The response effect and middleware run uninterruptibly by default, so a
+ * client disconnect does not stop the effect and shutdown waits for it to
+ * finish. Wrap the effect in `Effect.interruptible` to let both interrupt it.
+ * `HttpRouter` routes are interruptible unless added with
+ * `uninterruptible: true`.
  *
  * @stability unstable
  * @category accessors
