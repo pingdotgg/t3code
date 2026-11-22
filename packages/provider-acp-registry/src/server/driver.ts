@@ -664,6 +664,7 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     readonly fallbackTargetLaunchIdentity?: string | null;
     readonly fallbackTargetVersion?: string | null;
     readonly fallbackTargetIndexRevision?: number | null;
+    readonly probedLaunchIdentity?: string | null;
     readonly failedTargetLaunchIdentity?: string | null;
     readonly probeFailed?: boolean;
   },
@@ -737,9 +738,18 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
               ? {}
               : { launchIdentity: resolvedDuringProbe.launchIdentity }),
           };
-    const failedLaunchIdentity =
+    const probedLaunchIdentity =
       resolvedDuringProbe?.launchIdentity ?? inspected.success.launchIdentity ?? null;
-    const failedIndexRevision = resolvedDuringProbe?.indexRevision ?? inspectedIndexRevision;
+    const failedTargetLaunchIdentity =
+      (resolvedDuringProbe?.fallback
+        ? resolvedDuringProbe.failedTarget?.launchIdentity
+        : undefined) ?? probedLaunchIdentity;
+    const failedIndexRevision =
+      (resolvedDuringProbe?.fallback
+        ? resolvedDuringProbe.failedTarget?.indexRevision
+        : undefined) ??
+      resolvedDuringProbe?.indexRevision ??
+      inspectedIndexRevision;
     return {
       provider: buildCheckedAcpRegistrySnapshot({
         ...input,
@@ -747,10 +757,11 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
         inspection: failedInspection,
         probeError: probed.failure,
       }),
-      launchIdentity: failedLaunchIdentity,
+      launchIdentity: null,
       indexRevision: failedIndexRevision,
       cacheable: false,
-      failedTargetLaunchIdentity: failedLaunchIdentity,
+      probedLaunchIdentity,
+      failedTargetLaunchIdentity,
       probeFailed: true,
     };
   }
@@ -1368,6 +1379,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             fallbackTargetLaunchIdentity: fallbackState.targetLaunchIdentity,
             fallbackTargetVersion: fallbackState.targetVersion,
             fallbackTargetIndexRevision: fallbackState.targetIndexRevision,
+            probedLaunchIdentity: null,
             failedTargetLaunchIdentity: null,
             probeFailed: false,
             fromCache: true,
@@ -1396,6 +1408,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           fallbackTargetLaunchIdentity: null,
           fallbackTargetVersion: null,
           fallbackTargetIndexRevision: null,
+          probedLaunchIdentity: null,
           failedTargetLaunchIdentity: null,
           probeFailed: false,
           fromCache: true,
@@ -1411,6 +1424,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         fallbackTargetLaunchIdentity,
         fallbackTargetVersion,
         fallbackTargetIndexRevision,
+        probedLaunchIdentity,
         failedTargetLaunchIdentity,
         probeFailed,
       } = yield* enrichProvider;
@@ -1443,6 +1457,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         fallbackTargetLaunchIdentity: fallbackTargetLaunchIdentity ?? target.launchIdentity,
         fallbackTargetVersion: fallbackTargetVersion ?? target.snapshot.version,
         fallbackTargetIndexRevision: fallbackTargetIndexRevision ?? target.indexRevision,
+        probedLaunchIdentity: probedLaunchIdentity ?? null,
         failedTargetLaunchIdentity: failedTargetLaunchIdentity ?? null,
         probeFailed: probeFailed === true,
         fromCache: false,
@@ -1502,7 +1517,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         }>({ inFlight: null, pending: null });
         const maybeReconcileUnmatchedRuntime = (
           incomingIdentity: string | undefined,
-          allowDefectReplay = true,
         ): Effect.Effect<void> => {
           if (incomingIdentity === undefined || !tracksRegistryIndex) return Effect.void;
           return Effect.gen(function* () {
@@ -1592,10 +1606,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return [pending, next] as const;
                 }).pipe(
                   Effect.flatMap((replayPending) =>
-                    // Replay a parked update once after an unexpected defect (not scope
-                    // interruption), bounding replay so repeated defects cannot loop.
-                    replayPending && allowDefectReplay && !Cause.hasInterruptsOnly(cause)
-                      ? maybeReconcileUnmatchedRuntime(incomingIdentity, false)
+                    // Replay a parked update after an unexpected defect (never on interruption).
+                    replayPending && !Cause.hasInterruptsOnly(cause)
+                      ? maybeReconcileUnmatchedRuntime(incomingIdentity)
                       : Effect.void,
                   ),
                 ),
@@ -1673,6 +1686,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   fallbackTargetLaunchIdentity,
                   fallbackTargetVersion,
                   fallbackTargetIndexRevision,
+                  probedLaunchIdentity,
                   failedTargetLaunchIdentity,
                   probeFailed,
                   fromCache,
@@ -1698,6 +1712,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         // accepted snapshot only when one exists for previousIdentity so we never
                         // overlay A's live models/commands onto B's failure snapshot.
                         const lastRuntime = yield* Ref.get(lastSuccessfulRuntime);
+                        const isProbedDifferentRuntime =
+                          probedLaunchIdentity !== null &&
+                          probedLaunchIdentity !== previousIdentity;
                         const isUpgradeFailure =
                           failedTargetLaunchIdentity !== null &&
                           failedTargetLaunchIdentity !== previousIdentity;
@@ -1708,7 +1725,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             checkedAt: provider.checkedAt,
                             status: provider.status,
                             auth:
-                              !isUpgradeFailure && provider.auth.status === "unauthenticated"
+                              !isProbedDifferentRuntime &&
+                              provider.auth.status === "unauthenticated"
                                 ? provider.auth
                                 : base.auth,
                             ...(provider.message !== undefined
@@ -1738,13 +1756,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           const published = yield* tryPublishSnapshot(nextSnapshot);
                           if (published) {
                             yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
-                            if (isUpgradeFailure) {
-                              yield* Ref.set(failedUpgradeTarget, {
-                                targetLaunchIdentity: failedTargetLaunchIdentity,
-                                status: provider.status,
-                                message: provider.message,
-                              });
-                            }
+                            yield* Ref.set(
+                              failedUpgradeTarget,
+                              isUpgradeFailure
+                                ? {
+                                    targetLaunchIdentity: failedTargetLaunchIdentity,
+                                    status: provider.status,
+                                    message: provider.message,
+                                  }
+                                : null,
+                            );
                           }
                           return {
                             published,
@@ -1763,11 +1784,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         // snapshot directly without attaching previousIdentity's live state and
                         // align watcher identities so previousIdentity updates cannot land on it.
                         const published = yield* tryPublishSnapshot(provider);
+                        const failedIdentity = runtimeIdentityFor(
+                          provider,
+                          probedLaunchIdentity ?? failedTargetLaunchIdentity,
+                        );
                         if (published) {
-                          const failedIdentity = runtimeIdentityFor(
-                            provider,
-                            failedTargetLaunchIdentity ?? launchIdentity,
-                          );
                           if (failedIdentity !== null && failedIdentity !== previousIdentity) {
                             yield* clearLiveState({ preserveRuntimeIdentity: failedIdentity });
                           }
@@ -1778,7 +1799,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           readiness: published
                             ? {
                                 snapshot: provider,
-                                launchIdentity,
+                                launchIdentity: failedIdentity,
                                 indexRevision,
                                 probeFailed: true,
                               }
@@ -1974,7 +1995,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                                 identity: prev.identity,
                                 provider: { ...prev.provider, slashCommands, skills },
                               }
-                            : prev === null
+                            : prev === null && current.auth.status !== "unauthenticated"
                               ? {
                                   identity: activeId,
                                   provider: {
@@ -2025,6 +2046,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       failedUpgrade !== null &&
                       activeId !== null &&
                       failedUpgrade.targetLaunchIdentity !== activeId;
+                    const preserveUnauthenticated =
+                      !preserveFallbackMessage &&
+                      !preserveUpgradeFailure &&
+                      current.auth.status === "unauthenticated";
                     const next = preserveFallbackMessage
                       ? { ...applied, message: fallbackState.message }
                       : preserveUpgradeFailure
@@ -2035,7 +2060,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               ? { message: failedUpgrade.message }
                               : {}),
                           }
-                        : applied;
+                        : preserveUnauthenticated
+                          ? {
+                              ...applied,
+                              status: applied.enabled ? current.status : applied.status,
+                              ...(current.message !== undefined
+                                ? { message: current.message }
+                                : {}),
+                            }
+                          : applied;
                     const published = yield* tryPublishSnapshot(next);
                     if (!published) return undefined;
                     if (!gate.runtimeTransitioning && next.models !== current.models) {
@@ -2043,10 +2076,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     }
                     if (!gate.runtimeTransitioning && activeId !== null) {
                       const { message: _transientMsg, ...appliedClean } = applied;
+                      const isUnauthenticated = current.auth.status === "unauthenticated";
                       yield* Ref.update(lastSuccessfulRuntime, (prev) =>
                         prev !== null && prev.identity === activeId
-                          ? { identity: prev.identity, provider: appliedClean }
-                          : prev === null
+                          ? {
+                              identity: prev.identity,
+                              provider: isUnauthenticated
+                                ? { ...appliedClean, auth: prev.provider.auth }
+                                : appliedClean,
+                            }
+                          : prev === null && !isUnauthenticated
                             ? {
                                 identity: activeId,
                                 provider: {

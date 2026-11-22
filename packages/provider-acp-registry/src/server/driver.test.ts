@@ -23,6 +23,7 @@ import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Scheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -3585,6 +3586,8 @@ describe("AcpRegistryDriver registry recovery", () => {
           "acp-driver-reconcile-edge-",
         );
         const authFailAgentPath = path.join(directory, "auth-fail-agent.mjs");
+        const exitFailAgentPath = path.join(directory, "exit-fail-agent.mjs");
+        yield* fileSystem.writeFileString(exitFailAgentPath, "process.exit(1);\n");
         yield* fileSystem.writeFileString(
           authFailAgentPath,
           `
@@ -3617,6 +3620,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         let failArchiveVersions = new Set<string>();
         let failProbeSpawn = false;
         let failProbeAuth = false;
+        let failProbeExit = false;
+        let probeResolveCount = 0;
         let defectInspectCount = 0;
         let inspectCalls = 0;
         let onRefreshIndex: (() => Effect.Effect<void>) | null = null;
@@ -3762,6 +3767,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             }),
           resolve: (settings, cwd, environment) =>
             Effect.gen(function* () {
+              if (environment?.MISE_OFFLINE === "1") {
+                probeResolveCount += 1;
+              }
               if (environment?.MISE_OFFLINE === "1" && onBeforeProbeResolve !== null) {
                 const hook = onBeforeProbeResolve;
                 onBeforeProbeResolve = null;
@@ -3789,9 +3797,11 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                 spawn: {
                   command: process.execPath,
                   args:
-                    environment?.MISE_OFFLINE === "1" && failProbeAuth
-                      ? [authFailAgentPath]
-                      : [agentPath, modelsPath],
+                    environment?.MISE_OFFLINE === "1" && failProbeExit
+                      ? [exitFailAgentPath]
+                      : environment?.MISE_OFFLINE === "1" && failProbeAuth
+                        ? [authFailAgentPath]
+                        : [agentPath, modelsPath],
                 },
               };
             }),
@@ -4008,11 +4018,97 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(fallbackAuthSnapshot.status).toBe("warning");
         expect(fallbackAuthSnapshot.auth.status).toBe("unauthenticated");
         expect(fallbackAuthSnapshot.message).toContain("API key");
+
+        // A live config update while the active runtime itself is unauthenticated must preserve
+        // warning status, unauthenticated auth, and sign-in guidance instead of flipping to ready.
+        const unauthLiveUpdated = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "fg-v1-d")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgConfigOnlyId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-d",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-d", name: "fg-v1-d" },
+            ],
+          }),
+          v1Identity,
+        );
+        const unauthWithD = Option.getOrThrow(yield* Fiber.join(unauthLiveUpdated));
+        expect(unauthWithD.status).toBe("warning");
+        expect(unauthWithD.auth.status).toBe("unauthenticated");
+        expect(unauthWithD.message).toContain("API key");
+
+        // (c) Fallback auth failure records failedTarget.indexRevision so a refresh where resolve
+        //     discovers a newer failing target (2.0.1) and falls back to 1.0.0 does not re-probe
+        //     2.0.1 / 1.0.0 a second time inside the same refresh.
+        failArchiveVersions = new Set(["2.0.0", "2.0.1"]);
+        onBeforeProbeResolve = () => {
+          remoteVersion = "2.0.1";
+          return realCatalog
+            .invalidateIndex()
+            .pipe(
+              Effect.andThen(realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 })),
+              Effect.ignore,
+            );
+        };
+        probeResolveCount = 0;
+        const fallbackRevDedupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackRevDedupDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fallbackRevDedupDone);
+        expect(probeResolveCount).toBe(1);
+
+        // (d) A post-resolution non-auth failure after fallback (2.0.1 download fails, fallback
+        //     1.0.0 exits immediately) must preserve warning + the real probe error and replace
+        //     failedUpgradeTarget so the stale "API key" message does not return on live updates.
+        failProbeAuth = false;
+        failProbeExit = true;
+        const fallbackExitDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackExitDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(fallbackExitDone);
+        const fallbackExitSnapshot = yield* fgConfigInstance.snapshot.getSnapshot;
+        expect(fallbackExitSnapshot.version).toBe("1.0.0");
+        expect(fallbackExitSnapshot.status).toBe("warning");
+        expect(fallbackExitSnapshot.auth.status).toBe("unknown");
+        expect(fallbackExitSnapshot.message).toBeDefined();
+        expect(fallbackExitSnapshot.message).not.toContain("API key");
+        const exitLiveUpdated = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "fg-v1-e")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgConfigOnlyId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-e",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-e", name: "fg-v1-e" },
+            ],
+          }),
+          v1Identity,
+        );
+        const exitWithE = Option.getOrThrow(yield* Fiber.join(exitLiveUpdated));
+        expect(exitWithE.status).toBe("warning");
+        expect(exitWithE.message).toBeDefined();
+        expect(exitWithE.message).not.toContain("API key");
+        failProbeExit = false;
         failArchiveVersions = new Set();
+        remoteVersion = "2.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
 
         // Now make 2.0.0 fail with a different install_failed message and verify the earlier
         // auth warning message did not leak into lastSuccessfulRuntime.
-        failProbeAuth = false;
         failProbeSpawn = true;
         const fgSwitchedWarning = yield* fgConfigInstance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => Boolean(snapshot.message?.includes("2.0.0"))),
@@ -4028,7 +4124,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         yield* Deferred.await(fgSwitchedDone);
         expect(fgSwitchedSnapshot.version).toBe("1.0.0");
         expect(fgSwitchedSnapshot.message).not.toContain("API key");
-        expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-c");
+        expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-e");
 
         // 2. When no snapshot was ever accepted for 1.0.0 (neither probe nor live session), a failed
         // 2.0.0 probe discovered via recheck (with expectedRuntimeIdentity still on 1.0.0!) publishes
@@ -4054,6 +4150,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           );
         yield* Deferred.await(coldFgStarted);
         const noAcceptId = ProviderInstanceId.make("acpRegistry_no_accepted_v1");
+        // Drain makeManagedServerProvider's automatic startup enrichment before arming hooks
+        // so it cannot consume onRefreshIndex out of order.
+        const noAcceptStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(noAcceptStartupDone, Exit.void);
         const noAcceptInstance = yield* AcpRegistryDriver.create({
           instanceId: noAcceptId,
           displayName: "No Accepted V1",
@@ -4066,7 +4166,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
             coordinator,
           ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
+        yield* Deferred.await(noAcceptStartupDone);
         const noAcceptColdEnrichmentDone = yield* Deferred.make<void>();
         onEnrichmentEnd = () => Deferred.doneUnsafe(noAcceptColdEnrichmentDone, Exit.void);
         yield* noAcceptInstance.snapshot.refresh.pipe(
@@ -4139,6 +4241,14 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         remoteVersion = "2.0.0";
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const controlledDispatcher = new Scheduler.MixedScheduler("async").makeDispatcher();
+        const controlledScheduler: Scheduler.Scheduler = {
+          executionMode: "async",
+          shouldYield: () => false,
+          makeDispatcher: () => controlledDispatcher,
+        };
+        const fallbackStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackStartupDone, Exit.void);
         const fallbackRetireInstance = yield* AcpRegistryDriver.create({
           instanceId: fallbackRetireId,
           displayName: "Fallback Retire Rev",
@@ -4152,7 +4262,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
             coordinator,
           ),
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
         );
+        yield* Deferred.await(fallbackStartupDone);
         const v2Ready = yield* fallbackRetireInstance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) => snapshot.version === "2.0.0" && snapshot.nativeSessions !== undefined,
@@ -4162,7 +4274,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         );
         const v2ReadyDone = yield* Deferred.make<void>();
         onEnrichmentEnd = () => Deferred.doneUnsafe(v2ReadyDone, Exit.void);
-        yield* fallbackRetireInstance.snapshot.refresh;
+        yield* fallbackRetireInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
         expect(Option.isSome(yield* Fiber.join(v2Ready))).toBe(true);
         yield* Deferred.await(v2ReadyDone);
         const v2Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
@@ -4387,53 +4501,68 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(Option.isSome(yield* Fiber.join(v4RecoveredByReplay))).toBe(true);
         yield* Deferred.await(v4RecoveredEnrichmentDone);
 
-        // Defect replay is bounded to one retry so a parked event arriving during the replay's
-        // own defect cannot loop forever (while still releasing reconcilingState cleanly).
+        // A defect with no parked update does not self-loop, and scope interruption of a
+        // reconciliation with a parked update does NOT replay (!Cause.hasInterruptsOnly).
         remoteExtraAgentVersion = "10.0.3";
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const boundedGate1 = {
+        defectInspectCount = 1;
+        const inspectsBeforeNoPending = inspectCalls;
+        const noPendingDefectDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(noPendingDefectDone, Exit.void);
+        yield* coordinator.publishAvailableCommands(
+          fallbackRetireId,
+          { slashCommands: [{ name: "v2-defect-no-pending" }], skills: [] },
+          v2Identity,
+        );
+        yield* Deferred.await(noPendingDefectDone);
+        controlledDispatcher.flush();
+        expect(inspectCalls).toBe(inspectsBeforeNoPending + 1);
+
+        const interruptScope = yield* Scope.make();
+        const interruptId = ProviderInstanceId.make("acpRegistry_interrupt_reconcile");
+        const interruptStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(interruptStartupDone, Exit.void);
+        yield* AcpRegistryDriver.create({
+          instanceId: interruptId,
+          displayName: "Interrupt Reconcile",
+          enabled: true,
+          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
+          config: decodeSettings({ agentId: "test-agent" }),
+        }).pipe(
+          Scope.provide(interruptScope),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
+        );
+        yield* Deferred.await(interruptStartupDone);
+        const interruptGate = {
           started: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
         };
-        const boundedGate2 = {
-          started: yield* Deferred.make<void>(),
-          release: yield* Deferred.make<void>(),
-        };
-        inspectGate = boundedGate1;
-        defectInspectCount = 2;
-        const inspectsBeforeBounded = inspectCalls;
+        inspectGate = interruptGate;
+        const inspectsBeforeInterrupt = inspectCalls;
         yield* coordinator.publishAvailableCommands(
-          fallbackRetireId,
-          { slashCommands: [{ name: "v2-bounded-defect-1" }], skills: [] },
+          interruptId,
+          { slashCommands: [{ name: "v2-interrupt-1" }], skills: [] },
           v2Identity,
         );
-        yield* Deferred.await(boundedGate1.started);
-        const boundedParked1 = yield* Deferred.make<void>();
-        onCommandHandled = { matchName: "v2-bounded-defect-2", done: boundedParked1 };
+        yield* Deferred.await(interruptGate.started);
+        const interruptParked = yield* Deferred.make<void>();
+        onCommandHandled = { matchName: "v2-interrupt-2", done: interruptParked };
         yield* coordinator.publishAvailableCommands(
-          fallbackRetireId,
-          { slashCommands: [{ name: "v2-bounded-defect-2" }], skills: [] },
+          interruptId,
+          { slashCommands: [{ name: "v2-interrupt-2" }], skills: [] },
           v2Identity,
         );
-        yield* Deferred.await(boundedParked1);
-        inspectGate = boundedGate2;
-        yield* Deferred.succeed(boundedGate1.release, undefined);
-        yield* Deferred.await(boundedGate2.started);
-        // Park another v2 event during the replay defect; bounded replay must NOT launch a 3rd inspect.
-        const boundedParked2 = yield* Deferred.make<void>();
-        onCommandHandled = { matchName: "v2-bounded-defect-3", done: boundedParked2 };
-        yield* coordinator.publishAvailableCommands(
-          fallbackRetireId,
-          { slashCommands: [{ name: "v2-bounded-defect-3" }], skills: [] },
-          v2Identity,
-        );
-        yield* Deferred.await(boundedParked2);
-        const boundedSecondSpanDone = yield* Deferred.make<void>();
-        onReconcileEnd = () => Deferred.doneUnsafe(boundedSecondSpanDone, Exit.void);
-        yield* Deferred.succeed(boundedGate2.release, undefined);
-        yield* Deferred.await(boundedSecondSpanDone);
-        expect(inspectCalls).toBe(inspectsBeforeBounded + 2);
+        yield* Deferred.await(interruptParked);
+        yield* Scope.close(interruptScope, Exit.void);
+        controlledDispatcher.flush();
+        expect(inspectCalls).toBe(inspectsBeforeInterrupt + 1);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });
