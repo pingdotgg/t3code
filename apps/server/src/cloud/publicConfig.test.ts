@@ -20,6 +20,21 @@ it.effect("rejects an insecure runtime relay URL override", () =>
   ),
 );
 
+it.effect("accepts RELAY_PUBLIC_URL and CLERK_PUBLISHABLE_KEY env aliases", () =>
+  Effect.gen(function* () {
+    const relayUrl = yield* makeRelayUrlConfig("").pipe(
+      provideEnv({ RELAY_PUBLIC_URL: "https://relay.kbcode.example" }),
+    );
+    assert.strictEqual(relayUrl, "https://relay.kbcode.example");
+
+    const oauth = yield* makeCloudCliOAuthConfig({
+      clerkPublishableKeyFallback: "",
+      clerkCliOAuthClientIdFallback: "oauth_client_kbcode",
+    }).pipe(provideEnv({ CLERK_PUBLISHABLE_KEY: "pk_test_Y2xlcmsuZXhhbXBsZS50ZXN0JA==" }));
+    assert.strictEqual(oauth.tokenEndpoint, "https://clerk.example.test/oauth/token");
+  }),
+);
+
 it.effect("rejects malformed or insecure hosted app URLs", () =>
   Effect.gen(function* () {
     for (const value of [

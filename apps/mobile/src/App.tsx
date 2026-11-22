@@ -20,6 +20,11 @@ import {
   type NavigationState,
 } from "@react-navigation/native";
 import { pipe } from "effect/Function";
+import {
+  BRAND_URL_SCHEME,
+  BRAND_URL_SCHEME_DEV,
+  BRAND_URL_SCHEME_PREVIEW,
+} from "@t3tools/shared/brand";
 import { DEFAULT_HOSTED_APP_URL } from "@t3tools/shared/connectAuth";
 
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
@@ -140,6 +145,9 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
 const appLinking = {
   prefixes: [
     Linking.createURL("/"),
+    `${BRAND_URL_SCHEME}://`,
+    `${BRAND_URL_SCHEME_DEV}://`,
+    `${BRAND_URL_SCHEME_PREVIEW}://`,
     "t3code://",
     "t3code-dev://",
     "t3code-preview://",

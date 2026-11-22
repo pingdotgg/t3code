@@ -131,7 +131,11 @@ import {
   makeProviderFailure,
   makeProviderRetryTurnItem,
 } from "@t3tools/provider-core/server/failure";
-import { acpSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
+import {
+  acpSelectionTransition,
+  type ProviderSelectionTransitionInput,
+  type ProviderSelectionTransitionPlan,
+} from "@t3tools/provider-core/server/selectionTransition";
 import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
@@ -215,6 +219,7 @@ const ACP_PROMPT_ACTIVITY_UPDATES: ReadonlySet<string> = new Set([
 export interface AcpAdapterV2RuntimeInput {
   readonly cwd: string;
   readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+  readonly modelSelection?: ModelSelection;
   readonly extraRoots?: ReadonlyArray<string>;
   readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
   readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
@@ -410,6 +415,9 @@ export interface AcpAdapterV2Flavor {
   ) => Effect.Effect<string, never, ChildProcessSpawner.ChildProcessSpawner>;
   readonly driver: ProviderDriverKind;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly planSelectionTransition?: (
+    input: ProviderSelectionTransitionInput,
+  ) => ProviderSelectionTransitionPlan;
   readonly supportsNativeGoals?: Effect.Effect<boolean>;
   readonly clientCapabilitiesMeta?: NonNullable<
     EffectAcpSchema.InitializeRequest["clientCapabilities"]
@@ -2061,7 +2069,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
       return yield* readCapabilities;
     }),
     planSelectionTransition: Effect.fn("AcpAdapter.planSelectionTransition")(function (input) {
-      return Effect.succeed(acpSelectionTransition(input));
+      return Effect.succeed(
+        flavor.planSelectionTransition
+          ? flavor.planSelectionTransition(input)
+          : acpSelectionTransition(input),
+      );
     }),
     openSession: Effect.fn("AcpAdapterV2.openSession")(
       function* (input: ProviderAdapter.ProviderAdapterV2OpenSessionInput) {
@@ -2839,6 +2851,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             runtimePolicy: input.runtimePolicy,
+            modelSelection: input.modelSelection,
             ...(input.runtimePolicy.workspace === undefined
               ? {}
               : { extraRoots: input.runtimePolicy.workspace.extraRoots }),

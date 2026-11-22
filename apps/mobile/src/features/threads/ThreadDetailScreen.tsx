@@ -130,6 +130,8 @@ import { useAppearancePreferences } from "../settings/appearance/AppearancePrefe
 import { collectProviderUsageLimits } from "@t3tools/shared/usageLimits";
 import type { ComposerEditorHandle } from "../../components/ComposerEditor";
 import type { StatusTone } from "../../components/StatusPill";
+import { isCloudSandboxEnvironment } from "@t3tools/client-runtime/provider-clients";
+import { PrimeAgentComposerControls } from "../../components/PrimeAgentComposerControls";
 import {
   captureComposerDraftInsertion,
   getComposerDraftSnapshot,
@@ -1279,15 +1281,15 @@ function ThreadDetailBody(
       ? null
       : { width: Math.max(0, columnWidth - controlInsets.left - controlInsets.right) };
   const selectedInstanceId = props.selectedThread.modelSelection.instanceId;
+  const selectedProvider = props.serverConfig?.providers.find(
+    (candidate) => candidate.instanceId === selectedInstanceId,
+  );
+  const selectedProviderDriver = selectedProvider?.driver;
+  const isCloudSandbox = isCloudSandboxEnvironment(props.serverConfig?.environment);
   useAtomMount(threadStreamHaptics(props.selectedThreadDetailRef));
-  const selectedProviderSkills = (() => {
-    const provider = props.serverConfig?.providers.find(
-      (candidate) => candidate.instanceId === selectedInstanceId,
-    );
-    return provider
-      ? resolveProviderSkillsForCwd(provider, props.threadCwd ?? props.projectWorkspaceRoot)
-      : [];
-  })();
+  const selectedProviderSkills = selectedProvider
+    ? resolveProviderSkillsForCwd(selectedProvider, props.threadCwd ?? props.projectWorkspaceRoot)
+    : [];
 
   const currentPendingApprovals = () =>
     props.selectedThreadDetailRef === null
@@ -1914,6 +1916,27 @@ function ThreadDetailBody(
                     </View>
                   ) : (
                     <>
+                      {selectedProviderDriver === "primeAgent" ? (
+                        <View className="self-center w-full" style={{ maxWidth: contentMaxWidth }}>
+                          <PrimeAgentComposerControls
+                            isCloudSandbox={isCloudSandbox}
+                            onApplyCommand={(transform) => {
+                              const current =
+                                props.composerDraftKey === null
+                                  ? ""
+                                  : getComposerDraftSnapshot(props.composerDraftKey).text;
+                              const next = transform(current);
+                              if (next !== current) {
+                                props.onChangeDraftMessage(next);
+                              }
+                              composerEditorRef.current?.setSelection({
+                                start: next.length,
+                                end: next.length,
+                              });
+                            }}
+                          />
+                        </View>
+                      ) : null}
                       <ThreadComposer
                         isDraft={Boolean(props.draftMode)}
                         canOperateThread={props.canOperateThread}

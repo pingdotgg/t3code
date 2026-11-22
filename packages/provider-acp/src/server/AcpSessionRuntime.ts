@@ -104,7 +104,7 @@ export interface AcpSessionRuntimeOptions {
   readonly spawn: AcpSpawnInput;
   readonly cwd: string;
   readonly resumeSessionId?: string;
-  readonly resumeMethod?: "load" | "resume";
+  readonly resumeMethod?: "load" | "resume" | "cli-flag";
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
   // Treat replay going quiet as loaded, for agents whose session/load may never reply.
@@ -2447,6 +2447,19 @@ export const make = Effect.fn("AcpSessionRuntime.make")(function* (
             resumePayload,
             acp.agent.resumeSession(resumePayload),
           );
+        } else if (options.resumeMethod === "cli-flag") {
+          const createPayload = {
+            cwd: options.cwd,
+            mcpServers: sessionMcpServers(initializeResult),
+            ...additionalDirectories,
+          } satisfies EffectAcpSchema.NewSessionRequest;
+          const created = yield* runLoggedRequest(
+            "session/new",
+            createPayload,
+            acp.agent.createSession(createPayload),
+          );
+          sessionId = created.sessionId || sessionId;
+          sessionSetupResult = created;
         } else {
           return yield* new EffectAcpErrors.AcpRequestError({
             code: -32601,

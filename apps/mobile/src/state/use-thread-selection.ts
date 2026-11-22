@@ -20,7 +20,7 @@ import {
 import * as Option from "effect/Option";
 
 import { scopedThreadKey } from "../lib/scopedEntities";
-import { useProject, useQuietThreadShell } from "./entities";
+import { useProject, useQuietThreadShell, useResolvedThreadEnvironmentId } from "./entities";
 import { useEnvironmentThread } from "./threads";
 import {
   resolvePendingThreadCreation,
@@ -114,8 +114,9 @@ function threadDetailToShell(
 
 function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefined) {
   const routeParams = params ?? {};
-  const routeEnvironmentId = firstRouteParam(routeParams.environmentId);
+  const routeEnvironmentIdRaw = firstRouteParam(routeParams.environmentId);
   const routeThreadId = firstRouteParam(routeParams.threadId);
+  const routeEnvironmentId = useResolvedThreadEnvironmentId(routeEnvironmentIdRaw, routeThreadId);
   // Retain the last complete thread ref while closing routes drop params.
   const [lastRouteThreadRef, setLastRouteThreadRef] = useState<ScopedThreadRef | null>(null);
   if (
@@ -125,7 +126,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
       lastRouteThreadRef.threadId !== routeThreadId)
   ) {
     setLastRouteThreadRef({
-      environmentId: EnvironmentId.make(routeEnvironmentId),
+      environmentId: routeEnvironmentId,
       threadId: ThreadId.make(routeThreadId),
     });
   }
@@ -135,7 +136,7 @@ function useResolvedThreadSelection(params: ThreadSelectionRouteParams | undefin
         lastRouteThreadRef.threadId === routeThreadId
         ? lastRouteThreadRef
         : {
-            environmentId: EnvironmentId.make(routeEnvironmentId),
+            environmentId: routeEnvironmentId,
             threadId: ThreadId.make(routeThreadId),
           }
       : lastRouteThreadRef;

@@ -66,6 +66,11 @@ export const PROVIDER_CHIP_ICONS: Readonly<
     source: require("../../assets/context-chip-icons/provider-pi.png"),
     tintsIcon: true,
   },
+  primeAgent: {
+    source: require("../../assets/context-chip-icons/provider-primeAgent.png"),
+    tintsIcon: false,
+    accent: "#5B5CE6",
+  },
   antigravity: {
     source: require("../../assets/antigravity.png"),
     tintsIcon: false,

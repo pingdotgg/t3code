@@ -102,7 +102,9 @@ export function resolveRelayClientTracingConfig(
 }
 
 export function makeRelayUrlConfig(fallback = buildTimeRelayUrl) {
-  const runtimeConfig = Config.NonEmptyString("T3CODE_RELAY_URL");
+  const runtimeConfig = Config.NonEmptyString("T3CODE_RELAY_URL").pipe(
+    Config.orElse(() => Config.NonEmptyString("RELAY_PUBLIC_URL")),
+  );
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.mapEffect(validateRelayUrl),
   );
@@ -113,6 +115,7 @@ export const relayUrlConfig = makeRelayUrlConfig();
 export const hostedAppUrlConfig = makePublicValueConfig(
   "T3CODE_HOSTED_APP_URL",
   DEFAULT_HOSTED_APP_URL,
+  "HOSTED_APP_URL",
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 const NIGHTLY_HOSTED_APP_URL = "https://nightly.app.t3.codes";
@@ -126,6 +129,7 @@ export const agentApprovalAppUrlConfig = makePublicValueConfig(
   typeof __T3CODE_BUILD_CHANNEL__ !== "undefined" && __T3CODE_BUILD_CHANNEL__ === "nightly"
     ? NIGHTLY_HOSTED_APP_URL
     : DEFAULT_HOSTED_APP_URL,
+  "HOSTED_APP_URL",
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
 function validateHostedAppUrl(value: string) {
@@ -156,8 +160,11 @@ function validateHostedAppUrl(value: string) {
   }
 }
 
-function makePublicValueConfig(name: string, fallback: string) {
-  const runtimeConfig = Config.NonEmptyString(name);
+function makePublicValueConfig(name: string, fallback: string, alias?: string) {
+  const baseConfig = Config.NonEmptyString(name);
+  const runtimeConfig = alias
+    ? baseConfig.pipe(Config.orElse(() => Config.NonEmptyString(alias)))
+    : baseConfig;
   return (fallback ? runtimeConfig.pipe(Config.withDefault(fallback)) : runtimeConfig).pipe(
     Config.map((value) => value.trim()),
   );
@@ -183,6 +190,7 @@ export function makeCloudCliOAuthConfig({
     clerkPublishableKey: makePublicValueConfig(
       "T3CODE_CLERK_PUBLISHABLE_KEY",
       clerkPublishableKeyFallback,
+      "CLERK_PUBLISHABLE_KEY",
     ),
     clientId: makePublicValueConfig(
       "T3CODE_CLERK_CLI_OAUTH_CLIENT_ID",
@@ -219,7 +227,10 @@ export function makeCloudCliOAuthConfig({
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
 export const hasCloudPublicConfig = Boolean(
-  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
-  (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
+  (normalizeSecureRelayUrl(process.env.T3CODE_RELAY_URL ?? process.env.RELAY_PUBLIC_URL ?? "") ??
+    buildTimeRelayUrl) &&
+  (process.env.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ||
+    process.env.CLERK_PUBLISHABLE_KEY?.trim() ||
+    buildTimeClerkPublishableKey) &&
   (process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
 );

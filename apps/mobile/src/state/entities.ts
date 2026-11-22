@@ -201,6 +201,31 @@ export function useThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.threadShellsAtom);
 }
 
+const NULL_ENVIRONMENT_ID_ATOM = Atom.make<EnvironmentId | null>(null).pipe(
+  Atom.withLabel("mobile-thread-env-lookup:empty"),
+);
+
+const threadEnvironmentIdByThreadIdAtom = Atom.family((threadId: string) =>
+  Atom.make((get): EnvironmentId | null => {
+    const match = get(environmentThreadShells.threadShellsAtom).find(
+      (shell) => shell.id === threadId,
+    );
+    return match?.environmentId ?? null;
+  }).pipe(Atom.withLabel(`mobile-thread-env-lookup:${threadId}`)),
+);
+
+export function useResolvedThreadEnvironmentId(
+  environmentIdRaw: string | null,
+  threadIdRaw: string | null,
+): EnvironmentId | null {
+  const lookedUp = useAtomValue(
+    environmentIdRaw === null && threadIdRaw !== null
+      ? threadEnvironmentIdByThreadIdAtom(threadIdRaw)
+      : NULL_ENVIRONMENT_ID_ATOM,
+  );
+  return environmentIdRaw !== null ? EnvironmentId.make(environmentIdRaw) : lookedUp;
+}
+
 /** Thread shells minus those the tag filter hides, for lists that show threads to the user. */
 export function useVisibleThreadShells(): ReadonlyArray<EnvironmentThreadShell> {
   return useAtomValue(environmentThreadShells.visibleThreadShellsAtom);

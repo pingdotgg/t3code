@@ -8,6 +8,7 @@
     "directory": "apps/server"
   },
   "bin": {
+    "kbcode": "./dist/bin.mjs",
     "t3": "./dist/bin.mjs"
   },
   "files": [
@@ -53,6 +54,8 @@
     "@t3tools/provider-muse": "workspace:*",
     "@t3tools/provider-opencode": "workspace:*",
     "@t3tools/provider-pi": "workspace:*",
+    "@t3tools/provider-prime-agent": "workspace:*",
+    "@t3tools/sandbox-providers": "workspace:*",
     "@t3tools/source-control-azure-devops": "workspace:*",
     "@t3tools/source-control-bitbucket": "workspace:*",
     "@t3tools/source-control-core": "workspace:*",

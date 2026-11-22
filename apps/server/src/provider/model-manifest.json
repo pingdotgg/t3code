@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updatedAt": "2026-11-20T23:50:00Z",
+  "updatedAt": "2026-11-22T12:50:00Z",
   "compatibility": [
     {
       "driver": "codex",
@@ -110,6 +110,13 @@
         { "range": ">=0.84.3", "status": "supported" },
         { "range": "<0.84.3", "status": "broken" }
       ]
+    },
+    {
+      "driver": "primeAgent",
+      "t3CodeRange": ">=0.0.46",
+      "versionPattern": "^(\\d+\\.\\d+\\.\\d+)(?:-[0-9A-Za-z.-]+)?$",
+      "recommendedRange": ">=0.1.0",
+      "ranges": [{ "range": ">=0.1.0", "status": "supported" }]
     },
     {
       "driver": "muse",

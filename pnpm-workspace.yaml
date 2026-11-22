@@ -214,6 +214,8 @@ overrides:
   # zod 3 has a high advisory (GHSA-mrhx-c7xc-m3w5) fixed only in 4.6.6. @vercel/config only
   # builds a z.object of z.string().regex() and calls parse, which zod 4 keeps unchanged.
   "@vercel/config>zod": 4.6.7
+  # blessed-contrib@4.11.1 (transitive dep of @codesandbox/sdk) declares an invalid semver spec "~>=4.17.21".
+  "blessed-contrib>lodash": "^4.17.21"
 
 packageExtensions:
   "@clerk/expo@*":
@@ -346,3 +348,5 @@ minimumReleaseAgeExclude:
   - "@effect/sql-sqlite-do@4.1.5"
   - "@effect/vitest@4.1.5"
   - effect@4.1.5
+  - "@upstash/box@0.8.1"
+  - "@vercel/sandbox@4.1.0"

@@ -1,3 +1,4 @@
+import { BRAND_SUPPORTED_SCHEME_PATTERN, BRAND_URL_SCHEME } from "./brand.ts";
 import { DEFAULT_HOSTED_APP_URL } from "./connectAuth.ts";
 import { parseUrl } from "./url.ts";
 
@@ -206,8 +207,9 @@ export function buildNewThreadLink(input: {
   return url.toString();
 }
 
-const APP_SCHEME = /^t3code(?:-[a-z]+)?:$/;
+const APP_SCHEME = BRAND_SUPPORTED_SCHEME_PATTERN;
 const THREAD_PATH = /^\/([^/]+)\/([^/]+)\/?$/;
+const SINGLE_THREAD_PATH = /^\/([^/]+)\/?$/;
 
 export function promptLinkAppPath(
   value: string,
@@ -218,6 +220,10 @@ export function promptLinkAppPath(
   if (APP_SCHEME.test(url.protocol)) {
     if (url.host === "new" && (url.pathname === "" || url.pathname === "/")) {
       return `/new${url.search}`;
+    }
+    if (url.host === "thread") {
+      const singleThread = SINGLE_THREAD_PATH.exec(url.pathname);
+      return singleThread ? `/thread/${singleThread[1]}${url.search}` : null;
     }
     const thread = url.host === "threads" ? THREAD_PATH.exec(url.pathname) : null;
     return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
@@ -233,7 +239,7 @@ export function promptLinkAppPath(
   return thread ? `/${thread[1]}/${thread[2]}${url.search}` : null;
 }
 
-export function promptLinkDeepLink(appPath: string, scheme = "t3code"): string {
+export function promptLinkDeepLink(appPath: string, scheme = BRAND_URL_SCHEME): string {
   const url = new URL(appPath, "https://app.invalid");
   const host = url.pathname === "/new" ? "new" : `threads${url.pathname}`;
   return `${scheme}://${host}${url.search}`;
