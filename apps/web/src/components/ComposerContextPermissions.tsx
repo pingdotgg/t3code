@@ -1,5 +1,6 @@
 import type { EnvironmentId, RuntimeMode } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { T, useGT, useMessages } from "gt-react";
 
 import { shortcutLabelForCommand } from "../keybindings";
 import { useManagedPolicy } from "../state/managedPolicy";
@@ -22,6 +23,8 @@ export function ComposerContextPermissions(props: {
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined;
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const shortcutLabel = shortcutLabelForCommand(
     useAtomValue(primaryServerKeybindingsAtom),
     "composer.mode",
@@ -30,9 +33,10 @@ export function ComposerContextPermissions(props: {
     props.runtimeMode,
     props.supportedRuntimeModes,
   );
-  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId));
+  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId), messages);
   const composerMenuProps = useComposerMenuProps();
-  const { icon: Icon, label } = runtimeModeConfig[mode];
+  const { icon: Icon } = runtimeModeConfig[mode];
+  const label = messages(runtimeModeConfig[mode].label);
   return (
     <Menu>
       <Tooltip>
@@ -43,7 +47,7 @@ export function ComposerContextPermissions(props: {
                 <ComposerControl
                   size="xs"
                   className="ms-auto min-w-0 shrink-0"
-                  aria-label={`Permissions: ${label}`}
+                  aria-label={gt("Permissions: {label}", { label })}
                   data-composer-context-control
                 />
               }
@@ -53,7 +57,10 @@ export function ComposerContextPermissions(props: {
           <Icon aria-hidden="true" className="size-3" />
           <ComposerContextLabel>{label}</ComposerContextLabel>
         </TooltipTrigger>
-        <TooltipPopup>Permissions{shortcutLabel ? ` · ${shortcutLabel}` : null}</TooltipPopup>
+        <TooltipPopup>
+          <T>Permissions</T>
+          {shortcutLabel ? ` · ${shortcutLabel}` : null}
+        </TooltipPopup>
       </Tooltip>
       <MenuPopup side="top" align="end" {...composerMenuProps}>
         <ComposerPermissionsSection
