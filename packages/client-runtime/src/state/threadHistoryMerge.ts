@@ -191,7 +191,16 @@ export function mergeOlderHistoryIntoProjection(
     ];
     const ordered = section
       .map((row) => (projectedItemKey(row) === projectedItemKey(anchor) ? updated : row))
-      .sort((left, right) => left.item.ordinal - right.item.ordinal);
+      // Matches the server's `ORDER BY ordinal, turn_item_id` (binary collation).
+      .sort(
+        (left, right) =>
+          left.item.ordinal - right.item.ordinal ||
+          (left.sourceItemId < right.sourceItemId
+            ? -1
+            : left.sourceItemId > right.sourceItemId
+              ? 1
+              : 0),
+      );
     visible = [
       ...projection.visibleTurnItems.slice(0, start),
       ...ordered,

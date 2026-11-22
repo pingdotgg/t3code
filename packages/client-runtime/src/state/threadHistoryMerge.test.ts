@@ -195,6 +195,34 @@ describe("threadHistoryMerge", () => {
     ]);
     expect(expanded.visibleTurnItems[0]?.item).toBe(preview.item);
     expect(expanded.visibleTurnItems[1]?.item.deferredWork).toBeUndefined();
+
+    // Equal-ordinal rows split between held rows and the page sort by item id.
+    const tied = (id: string, ordinal: number) => ({
+      ...local,
+      sourceItemId: id as never,
+      item: { ...local.item, id: id as never, ordinal },
+    });
+    const tiedAnchor = {
+      ...tied("item-a", 10),
+      item: {
+        ...tied("item-a", 10).item,
+        deferredWork: { cursor: "work", itemCount: 3, lastOrdinal: 11 },
+      },
+    };
+    const tiedExpanded = mergeOlderHistoryIntoProjection(
+      {
+        ...projection,
+        turnItems: [tiedAnchor.item, tied("item-b", 11).item],
+        visibleTurnItems: [tiedAnchor, tied("item-b", 11)],
+      },
+      [tied("item-c", 11)],
+      { anchorId: "item-a", nextCursor: null },
+    );
+    expect(tiedExpanded.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-a",
+      "item-b",
+      "item-c",
+    ]);
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {
