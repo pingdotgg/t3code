@@ -12809,7 +12809,6 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           { operation: "delete", path: "/w/e.ts" },
           { operation: "add", path: "/w/a.ts" },
         ]);
-        // "Open diff" renders diffStr; every file's diff must be in it, not only the first.
         assert.equal(
           fileChanges[0]?.diffStr,
           [
