@@ -84,14 +84,18 @@ export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOw
 
 /**
  * Shows `dialog` while the ownership lock stays held past the grace, and interrupts it once the
- * lock frees. Returns whether the lock freed; false means the dialog was dismissed first.
+ * lock frees. Returns whether the lock is free, checked again when the dialog is dismissed:
+ * Electron shows an ownerless box synchronously on macOS, so nothing polls while it is open.
  */
 export const awaitHomeOwnershipReleaseOrDismissal = Effect.fn(
   "DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal",
 )(function* <E, R>(dialog: Effect.Effect<unknown, E, R>) {
   return yield* Effect.raceFirst(
     awaitHomeOwnershipFree().pipe(Effect.as(true)),
-    dialog.pipe(Effect.as(false)),
+    dialog.pipe(
+      Effect.andThen(isHomeOwnershipLocked()),
+      Effect.map((locked) => !locked),
+    ),
   );
 });
 

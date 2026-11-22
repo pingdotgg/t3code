@@ -161,4 +161,22 @@ describe("DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal", () => {
       }),
     ),
   );
+
+  it.effect("reports the release when the dialog is dismissed after the lock frees", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const held = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        held.exec("BEGIN EXCLUSIVE;");
+        const dismissed = yield* Deferred.make<void>();
+        const released = yield* Effect.forkChild(
+          DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal(Deferred.await(dismissed)),
+        );
+        yield* TestClock.adjust("1 minute");
+        // A synchronous macOS box blocks polling, so only the dismissal sees the free lock.
+        held.close();
+        yield* Deferred.succeed(dismissed, undefined);
+        assert.isTrue(yield* Fiber.join(released));
+      }),
+    ),
+  );
 });

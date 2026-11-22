@@ -251,7 +251,6 @@ const startLocalBackend = Effect.gen(function* () {
           title: m(msg("This T3 home is unavailable")),
           message: m(msg("This T3 home is unavailable")),
           detail: DesktopHomeOwner.homeOwnedMessage(owner),
-          buttons: [m(msg("Quit", { $context: "button, quits the app" }))],
         })
         .pipe(Effect.ignore),
     );

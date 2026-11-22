@@ -171,10 +171,15 @@ export const make = ElectronDialog.of({
   }),
   showMessageBox: Effect.fn("ElectronDialog.showMessageBox")(function (options, owner) {
     return Effect.tryPromise({
-      try: (signal) =>
-        owner === undefined
+      try: (interrupted) => {
+        const signal =
+          options.signal === undefined
+            ? interrupted
+            : AbortSignal.any([options.signal, interrupted]);
+        return owner === undefined
           ? Electron.dialog.showMessageBox({ ...options, signal })
-          : Electron.dialog.showMessageBox(owner, { ...options, signal }),
+          : Electron.dialog.showMessageBox(owner, { ...options, signal });
+      },
       catch: (cause) =>
         new ElectronDialogShowMessageBoxError({
           type: options.type ?? null,
