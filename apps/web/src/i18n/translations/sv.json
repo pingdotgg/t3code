@@ -9376,6 +9376,8 @@
   "33fbce50a4ea67e6": "Extra CLI-argument som skickas när sessionen startar.",
   "abdee70d90cb26a3": "Komprimera efter 100 000 till 1 000 000 token. Lämna tomt för att använda Claudes standard.",
   "f907b2466603538e": "När en inaktiv tråd över 200 000 token ska komprimeras: när du kommer tillbaka, precis innan dess promptcache går ut, eller aldrig. Åsidosätter standardvärdet i Leverantörer > Avancerat.",
+  "8f6abfa865196423": "Stoppa vid plangränsen",
+  "559981b71d24d908": "Stoppar turen när en plangräns nås i stället för att fortsätta med extra användning. Snooza och automatisk återupptagning behandlar det som en användningsgräns.",
   "484df18e29b21047": "Google-konton använder din prenumeration; API-nycklar och Agent Platform debiteras efter användning.",
   "931df01584748bf9": "Express-nyckel för Gemini eller Vertex AI. Lagras separat på värden.",
   "8bf0f6ed8dd4b77e": "Krävs för Gemini Enterprise. Agent Platform använder den när ingen API-nyckel är angiven.",

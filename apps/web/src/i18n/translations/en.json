@@ -9378,6 +9378,8 @@
   "33fbce50a4ea67e6": "Additional CLI arguments passed on session start.",
   "abdee70d90cb26a3": "Compact after 100,000 to 1,000,000 tokens. Leave empty to use Claude's default.",
   "f907b2466603538e": "When to compact an idle thread over 200,000 tokens: after you return, just before its prompt cache expires, or never. Overrides the default in Providers > Advanced.",
+  "8f6abfa865196423": "Stop at plan limit",
+  "559981b71d24d908": "Stop the turn when a plan limit is reached instead of continuing on extra usage. Snooze and auto-resume treat it as a usage limit.",
   "484df18e29b21047": "Google accounts use your subscription; API keys and Agent Platform bill usage.",
   "931df01584748bf9": "Gemini or Vertex AI express key. Stored separately on the host.",
   "8bf0f6ed8dd4b77e": "Required for Gemini Enterprise. Agent Platform uses it when no API key is set.",

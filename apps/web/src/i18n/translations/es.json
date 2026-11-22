@@ -9368,6 +9368,8 @@
   "33fbce50a4ea67e6": "Argumentos de CLI adicionales que se pasan al iniciar la sesión.",
   "abdee70d90cb26a3": "Compacta tras 100 000 a 1 000 000 de tokens. Déjalo vacío para usar el valor predeterminado de Claude.",
   "f907b2466603538e": "Cuándo compactar un hilo inactivo de más de 200 000 tokens: cuando vuelvas, justo antes de que caduque su caché de prompts, o nunca. Sustituye el valor predeterminado de Proveedores > Avanzado.",
+  "8f6abfa865196423": "Detener en el límite del plan",
+  "559981b71d24d908": "Detiene el turno al alcanzar un límite del plan en lugar de seguir con uso adicional. Posponer y la reanudación automática lo tratan como un límite de uso.",
   "484df18e29b21047": "Las cuentas de Google usan tu suscripción; las claves de API y Agent Platform facturan el uso.",
   "931df01584748bf9": "Clave exprés de Gemini o Vertex AI. Se guarda por separado en el host.",
   "8bf0f6ed8dd4b77e": "Obligatorio para Gemini Enterprise. Agent Platform lo usa cuando no hay ninguna clave de API.",

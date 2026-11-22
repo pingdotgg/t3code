@@ -89,6 +89,12 @@ Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
 
+If your Claude account has extra usage turned on, Claude Code keeps working past
+a plan limit and bills extra usage instead of stopping. To stop at the plan limit
+instead, turn on **Stop at plan limit** in the Claude instance's settings under
+**Settings → Providers**. The turn then ends as a usage limit, so snooze and
+resume at reset apply to it.
+
 ## Steering
 
 A steer waits until Claude finishes the tool calls it is running, then Claude reads it

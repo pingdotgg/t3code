@@ -9370,6 +9370,8 @@
   "33fbce50a4ea67e6": "Argumentos de CLI adicionais passados no início da sessão.",
   "abdee70d90cb26a3": "Compactar após 100.000 a 1.000.000 tokens. Deixe vazio para usar o padrão do Claude.",
   "f907b2466603538e": "Quando compactar uma thread ociosa com mais de 200.000 tokens: depois que você voltar, pouco antes de o cache do prompt expirar ou nunca. Substitui o padrão em Provedores > Avançado.",
+  "8f6abfa865196423": "Parar no limite do plano",
+  "559981b71d24d908": "Para o turno ao atingir um limite do plano em vez de continuar com uso adicional. Adiar e a retomada automática tratam isso como um limite de uso.",
   "484df18e29b21047": "Contas Google usam sua assinatura; chaves de API e o Agent Platform cobram pelo uso.",
   "931df01584748bf9": "Chave express do Gemini ou do Vertex AI. Armazenada separadamente no host.",
   "8bf0f6ed8dd4b77e": "Obrigatório para o Gemini Enterprise. O Agent Platform usa quando nenhuma chave de API está definida.",

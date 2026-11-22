@@ -8861,6 +8861,78 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect.each([{ stopAtExtraUsage: false }, { stopAtExtraUsage: true }])(
+    "stops a turn at a plan limit on extra usage only with stopAtExtraUsage: $stopAtExtraUsage",
+    ({ stopAtExtraUsage }) =>
+      Effect.gen(function* () {
+        const closeRequested = yield* Deferred.make<void>();
+        const harness = yield* makeWakeHarnessWithOptions({
+          settings: { ...DEFAULT_CLAUDE_SETTINGS, stopAtExtraUsage },
+          close: (sdkMessages) =>
+            Deferred.succeed(closeRequested, undefined).pipe(
+              Effect.andThen(Queue.shutdown(sdkMessages)),
+            ),
+        });
+        const now = yield* DateTime.now;
+        const resetsAt = Math.floor(DateTime.toEpochMillis(now) / 1000) + 7_200;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-extra-usage"),
+            text: "Continue.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "rate_limit_event",
+            rate_limit_info: {
+              status: "rejected",
+              rateLimitType: "five_hour",
+              resetsAt,
+              overageStatus: "allowed",
+              isUsingOverage: true,
+              overageInUse: true,
+            },
+            uuid: "00000000-0000-4000-8000-000000000604",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        if (!stopAtExtraUsage) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000605", result: "Done." }),
+          );
+        }
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(yield* Deferred.isDone(closeRequested), stopAtExtraUsage);
+        if (!stopAtExtraUsage) {
+          assert.equal(terminal.status, "completed");
+          return;
+        }
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "usage_limit");
+        assert.equal(
+          terminal.failure.resetAt,
+          DateTime.formatIso(DateTime.makeUnsafe(resetsAt * 1000)),
+        );
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
+  );
+
   it.effect("keeps a later future-window event-supplied Claude reset over the embedded reset", () =>
     Effect.gen(function* () {
       const harness = yield* makeWakeHarness;

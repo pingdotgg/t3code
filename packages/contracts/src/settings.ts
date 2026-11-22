@@ -857,9 +857,25 @@ export const ClaudeSettings = makeProviderSettingsSchema(
         },
       }),
     ),
+    stopAtExtraUsage: Schema.Boolean.pipe(
+      Schema.withDecodingDefault(Effect.succeed(false)),
+      Schema.annotateKey({
+        title: "Stop at plan limit",
+        description:
+          "Stop the turn when a plan limit is reached instead of continuing on extra usage. Snooze and auto-resume treat it as a usage limit.",
+        providerSettingsForm: { control: "switch", clearWhenEmpty: "omit" },
+      }),
+    ),
   },
   {
-    order: ["binaryPath", "homePath", "autoCompactWindow", "idleCompaction", "launchArgs"],
+    order: [
+      "binaryPath",
+      "homePath",
+      "autoCompactWindow",
+      "idleCompaction",
+      "stopAtExtraUsage",
+      "launchArgs",
+    ],
   },
 );
 export type ClaudeSettings = typeof ClaudeSettings.Type;
