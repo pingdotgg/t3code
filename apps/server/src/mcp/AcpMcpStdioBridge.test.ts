@@ -18,6 +18,7 @@ function makeHarness(
   const bridge = runAcpMcpStdioBridge({
     endpoint: "http://127.0.0.1:1/mcp",
     authorization: "Bearer bridge-test",
+    toolExposure: "deferred",
     input,
     output: {
       write: (chunk: string) => {
@@ -162,6 +163,7 @@ describe("AcpMcpStdioBridge", () => {
       expect(JSON.parse(written[0]!)).toMatchObject({ id: 1 });
       expect(JSON.parse(written[1]!)).toMatchObject({ id: 2, result: { ok: true } });
       expect(requests[0]?.headers.get("authorization")).toBe("Bearer bridge-test");
+      expect(requests[1]?.headers.get("t3-tool-exposure")).toBe("deferred");
       expect(requests[1]?.headers.get("mcp-session-id")).toBe("session-42");
       expect(requests[1]?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
     }),

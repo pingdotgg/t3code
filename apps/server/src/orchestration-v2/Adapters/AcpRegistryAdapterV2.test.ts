@@ -1565,14 +1565,6 @@ describe("AcpRegistryAdapterV2", () => {
         };
         return { new: sent("session/new"), load: sent("session/load") };
       });
-      const plainHttp = (authorization: string) => [
-        {
-          type: "http",
-          name: "t3-code",
-          url: endpoint,
-          headers: [{ name: "Authorization", value: authorization }],
-        },
-      ];
       const http = (authorization: string) => [
         {
           type: "http",
@@ -1584,7 +1576,7 @@ describe("AcpRegistryAdapterV2", () => {
           ],
         },
       ];
-      const stdio = (authorization: string) => [
+      const stdio = (authorization: string, deferred = true) => [
         {
           name: "t3-code",
           command: selfInvocation.command,
@@ -1593,6 +1585,7 @@ describe("AcpRegistryAdapterV2", () => {
             { name: "ELECTRON_RUN_AS_NODE", value: "1" },
             { name: "T3_ACP_MCP_ENDPOINT", value: endpoint },
             { name: "T3_ACP_MCP_AUTHORIZATION", value: authorization },
+            ...(deferred ? [{ name: "T3_ACP_MCP_TOOL_EXPOSURE", value: "deferred" }] : []),
           ],
         },
       ];
@@ -1617,6 +1610,11 @@ describe("AcpRegistryAdapterV2", () => {
         new: stdio("Bearer opened-token"),
         load: stdio("Bearer rotated-token"),
       });
+      // Claude has its own ToolSearch, so it lists every T3 tool.
+      assert.deepEqual(yield* sessionMcpServers({ agentId: "claude-acp" }), {
+        new: stdio("Bearer opened-token", false),
+        load: stdio("Bearer rotated-token", false),
+      });
       // Command Code cannot start the stdio bridge on Windows: it spawns MCP commands through
       // cmd.exe, which splits the unquoted T3 executable path at the space.
       const commandCode = {
@@ -1624,10 +1622,9 @@ describe("AcpRegistryAdapterV2", () => {
         commandPath: "C:\\tools\\cmdc.exe",
         commandArgs: ["acp"],
       };
-      // Command Code is not Copilot: no deferred tool-exposure header.
       assert.deepEqual(yield* sessionMcpServers(commandCode, { T3_ACP_MCP_HTTP: "1" }), {
-        new: plainHttp("Bearer opened-token"),
-        load: plainHttp("Bearer rotated-token"),
+        new: http("Bearer opened-token"),
+        load: http("Bearer rotated-token"),
       });
       assert.deepEqual(yield* sessionMcpServers(commandCode), {
         new: stdio("Bearer opened-token"),

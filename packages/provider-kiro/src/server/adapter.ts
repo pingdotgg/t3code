@@ -549,6 +549,7 @@ function makeKiroAcpAdapterFlavor(options: KiroAdapterV2Options): AcpAdapterV2Fl
   const stripSteeringNote = makeKiroSteeringNoteFilter();
   return {
     driver: KIRO_PROVIDER,
+    deferMcpTools: true,
     runtimeHarness: "Kiro",
     capabilities: KiroProviderCapabilitiesV2,
     // Kiro V3 loads the user's hooks only when the client opts in. `v2` makes
