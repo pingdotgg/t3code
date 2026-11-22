@@ -717,8 +717,10 @@ async function convertHeicImage(
       const { heicTo } = await import("heic-to/csp");
       bitmap = await heicTo({ blob: file, type: "bitmap" });
     }
-    const scaledSize = fitImageAttachmentSize(bitmap);
-    const imageSize = scaledSize ?? { width: bitmap.width, height: bitmap.height };
+    const imageSize = fitImageAttachmentSize(bitmap) ?? {
+      width: bitmap.width,
+      height: bitmap.height,
+    };
     // heic-to ignores the color profile and hands back the raw Display P3 values as sRGB.
     if (!decodedNatively && metadata.displayP3) {
       const source = bitmap;
