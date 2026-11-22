@@ -51,6 +51,7 @@ import {
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
 import { writeFileStringAtomically } from "@t3tools/shared/atomicWrite";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { appLinkUrl } from "@t3tools/shared/appLinks";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import { resolvePreviewViewport } from "@t3tools/shared/previewViewport";
 import * as NodeCrypto from "node:crypto";
@@ -1245,9 +1246,18 @@ const make = Effect.gen(function* () {
     }
     // Playwright's `request.frame()` throws for a request issued before its frame exists, and a
     // throw from a page listener is uncaught, so such a request is not a main-frame navigation.
-    const isMainNavigation = (request: { isNavigationRequest(): boolean; frame(): unknown }) => {
+    const isMainNavigation = (request: {
+      isNavigationRequest(): boolean;
+      url(): string;
+      frame(): unknown;
+    }) => {
       try {
-        return request.isNavigationRequest() && request.frame() === page.mainFrame();
+        // Chromium aborts an app link's request and keeps the page.
+        return (
+          request.isNavigationRequest() &&
+          appLinkUrl(request.url()) === null &&
+          request.frame() === page.mainFrame()
+        );
       } catch {
         return false;
       }

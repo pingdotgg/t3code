@@ -2144,6 +2144,29 @@ it.effect("a request whose frame is not available yet is not a main navigation",
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("an app link's aborted request leaves the page it was clicked on", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      // Chromium hands the link to the OS, aborts the request and keeps the current page.
+      page.emit("request", {
+        url: () => "obsidian://open?vault=notes",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => page,
+      });
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
