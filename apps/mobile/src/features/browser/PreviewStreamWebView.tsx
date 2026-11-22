@@ -31,6 +31,8 @@ import { m } from "../../i18n/messages";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { beginForegroundHandoff } from "../../lib/foreground-handoff";
 import { usePreviewStreamAccess } from "../../state/preview";
+import { useOpenThreadLink } from "../threads/useOpenThreadLink";
+import { openPreviewAppLink } from "./openPreviewAppLink";
 import { previewPromptText } from "./previewPromptText";
 
 import {
@@ -168,8 +170,10 @@ export function PreviewStreamWebView(
 function AuthorizedPreviewStream({
   ref,
   ...props
-}: Omit<PreviewStreamConfiguration, "labels"> & NativeStreamBridge) {
+}: Omit<PreviewStreamConfiguration, "labels"> &
+  NativeStreamBridge & { readonly environmentId: EnvironmentId }) {
   const gt = useGT();
+  const openThreadLink = useOpenThreadLink(props.environmentId);
   const [attempt, setAttempt] = useState(0);
   const [previousAccess, setPreviousAccess] = useState(props.access);
   // Wait for refreshed access, including cookie credentials with unchanged JSON.
@@ -198,6 +202,13 @@ function AuthorizedPreviewStream({
       {...props}
       ref={ref}
       configuration={configuration}
+      onAppLink={(url) =>
+        openPreviewAppLink({
+          url,
+          environmentId: props.environmentId,
+          openThread: (thread) => openThreadLink(thread),
+        })
+      }
       onUnauthorized={() => {
         const refusals = ++unauthorized.current;
         if (refusals >= MAX_REFUSALS) return false;
@@ -239,8 +250,10 @@ function PreviewStreamDocumentView({
   onRetry,
   onStreaming,
   onRecoverProcess,
+  onAppLink,
 }: Omit<NativeStreamBridge, "onUnauthorized" | "onRefused"> & {
   readonly configuration: string;
+  readonly onAppLink: (url: string) => void;
   readonly background: string;
   readonly onUnauthorized: () => boolean;
   readonly onRetry: () => void;
@@ -421,6 +434,9 @@ function PreviewStreamDocumentView({
                 return;
               case "download":
                 offerDownload(message);
+                return;
+              case "appLink":
+                onAppLink(message.url);
                 return;
               case "fileChooser":
                 setFileChooser(message.chooser);

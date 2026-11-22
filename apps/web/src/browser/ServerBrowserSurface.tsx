@@ -38,6 +38,7 @@ import { AgentCursorMark } from "~/components/preview/AgentBrowserCursor";
 import { CommandBlock } from "~/components/CommandBlock";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
+import { useOpenAppLink } from "~/lib/openAppLink";
 import { toastManager } from "~/components/ui/toast";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m } from "~/i18n/messages";
@@ -231,6 +232,10 @@ export function ServerBrowserSurface(props: {
   );
   const controlChanged = useEffectEvent((next: PreviewStreamControl | null) => onControl?.(next));
   const popupOpened = useEffectEvent((popupTabId: string) => onPopup?.(popupTabId));
+  const openAppLink = useOpenAppLink(environmentId);
+  const appLinkOpened = useEffectEvent((url: string) => {
+    void openAppLink(url).catch((cause: unknown) => console.error(cause));
+  });
   const [cap, setCap] = useState<{ width: number; height: number } | null>(null);
 
   // Keep clearInput stable: a new identity reconnects the stream.
@@ -419,6 +424,7 @@ export function ServerBrowserSurface(props: {
         onClipboard: (text) => void copyPageText(text),
         onDownload: offerDownload,
         onPopup: popupOpened,
+        onAppLink: appLinkOpened,
         onFileChooser: setFileChooser,
         onViewport: (viewport) => {
           viewportRef.current = viewport;

@@ -1897,6 +1897,9 @@
     }
   },
   "4d1f68ef069c7a0b": "Nueva pestaña",
+  "2107cc3e7c4ac833": "¿Abrir este enlace {protocol}?",
+  "050db36de6624203": "Una página del navegador quiere abrir otra aplicación:\n\n{url}",
+  "565970a378986341": "Abrir",
   "9c149c8c50e58e4c": "Actualizar entornos",
   "d81626aad3a95cb2": "Inicia sesión en tu cuenta de T3 para configurar {product}.",
   "a1b125c5ff7c2dd3": "No volver a mostrar",

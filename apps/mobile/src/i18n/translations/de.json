@@ -1897,6 +1897,9 @@
     }
   },
   "4d1f68ef069c7a0b": "Neuer Tab",
+  "2107cc3e7c4ac833": "Diesen {protocol}-Link öffnen?",
+  "050db36de6624203": "Eine Seite im Browser möchte eine andere Anwendung öffnen:\n\n{url}",
+  "565970a378986341": "Öffnen",
   "9c149c8c50e58e4c": "Umgebungen aktualisieren",
   "d81626aad3a95cb2": "Melde dich bei deinem T3-Konto an, um {product} einzurichten.",
   "a1b125c5ff7c2dd3": "Nicht mehr anzeigen",

@@ -36,6 +36,7 @@ export type PreviewStreamMessage =
   | { readonly type: "scroll"; readonly direction: "up" | "down" }
   | { readonly type: "clipboard"; readonly text: string }
   | ({ readonly type: "download" } & PreviewStreamDownload)
+  | { readonly type: "appLink"; readonly url: string }
   | { readonly type: "fileChooser"; readonly chooser: PreviewStreamFileChooser | null }
   | {
       readonly type: "pictureInPicture";

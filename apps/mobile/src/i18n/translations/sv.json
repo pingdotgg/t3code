@@ -1897,6 +1897,9 @@
     }
   },
   "4d1f68ef069c7a0b": "Ny flik",
+  "2107cc3e7c4ac833": "Öppna den här {protocol}-länken?",
+  "050db36de6624203": "En sida i webbläsaren vill öppna ett annat program:\n\n{url}",
+  "565970a378986341": "Öppna",
   "9c149c8c50e58e4c": "Uppdatera miljöer",
   "d81626aad3a95cb2": "Logga in på ditt T3-konto för att konfigurera {product}.",
   "a1b125c5ff7c2dd3": "Visa inte det här igen",

@@ -95,6 +95,7 @@ import * as ServerBrowserPage from "./ServerBrowserPage.ts";
 import * as PreviewBrowser from "./PreviewBrowser.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { presentAsChrome, ServerBrowserContexts } from "./ServerBrowserContexts.ts";
+import { type AppLinkRequest, watchAppLinks } from "./ServerBrowserAppLinks.ts";
 import { BrowserControlInterrupted, SessionControl } from "./SessionControl.ts";
 import { installPdfDocumentNavigation, isPdfAssetUrl } from "./PdfDocumentNavigation.ts";
 
@@ -252,6 +253,7 @@ export type ServerBrowserViewerOutput =
     }
   | { readonly _tag: "fileChooserClosed"; readonly id: string }
   | { readonly _tag: "popup"; readonly tabId: string }
+  | { readonly _tag: "appLink"; readonly url: string }
   | {
       readonly _tag: "download";
       readonly id: string;
@@ -363,6 +365,8 @@ interface ServerTab {
   readonly desktop: { readonly close: () => Promise<void> } | null;
   readonly profileId: string | undefined;
   readonly openerTabId: string | undefined;
+  /** Windows opened for app links that headless Chromium has yet to report as popups. */
+  appLinkPopups: number;
 
   readonly downloads: Array<ServerDownload>;
   fileChooser: {
@@ -1180,6 +1184,7 @@ const make = Effect.gen(function* () {
       desktop: desktop === null ? null : { close: desktop.close },
       profileId: snapshot.profileId,
       openerTabId: adopted?.openerTabId,
+      appLinkPopups: 0,
       downloads: [],
       fileChooser: null,
       dialog: null,
@@ -1303,6 +1308,7 @@ const make = Effect.gen(function* () {
       if (frame === page.mainFrame() && !tab.loading) void reportLoaded(tab);
       if (!desktop) void recordFrameCopies(tab, frame);
     });
+    if (!desktop) watchAppLinks(cdp, (link) => forwardAppLink(tab, link));
     // An adopted popup's frames may have loaded before the tab listened.
     if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
@@ -1679,6 +1685,15 @@ const make = Effect.gen(function* () {
       if (!frame.isDetached()) void recordFrameCopies(tab, frame);
     });
     await recordCopies(cdp).catch(constVoid);
+    watchAppLinks(cdp, (link) => forwardAppLink(tab, link));
+  };
+
+  /** The browser runs on the server, so the controlling viewer's device opens app links. */
+  const forwardAppLink = (tab: ServerTab, link: AppLinkRequest) => {
+    if (link.opensWindow) tab.appLinkPopups += 1;
+    // Agents act only while no person holds control, so their clicks never reach a device.
+    const controller = [...tab.viewers].find((viewer) => viewer.id === tab.control.controller);
+    controller?.push({ _tag: "appLink", url: link.url });
   };
 
   const takeSessionCopies = async (cdp: CDPSession, since: number, until: number) => {
@@ -1715,6 +1730,12 @@ const make = Effect.gen(function* () {
   };
 
   const adoptPopup = async (opener: ServerTab, popup: Page) => {
+    // An app link's window aborts its only navigation and would stay an empty tab.
+    if (popup.url() === "" && opener.appLinkPopups > 0) {
+      opener.appLinkPopups -= 1;
+      await popup.close().catch(constVoid);
+      return;
+    }
     if (opener.closing) {
       await popup.close().catch(constVoid);
       return;

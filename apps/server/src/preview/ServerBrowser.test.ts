@@ -2681,6 +2681,49 @@ it.effect("a page's file picker goes to the controller and takes its uploaded fi
   ).pipe(Effect.provide(layer)),
 );
 
+it.effect("app links go to the controlling viewer, and their empty popups never become tabs", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const browser = yield* ServerBrowser.ServerBrowser;
+      const manager = yield* Manager.PreviewManager;
+      yield* Effect.yieldNow;
+      const opened = yield* manager.open({ threadId: scope.thread.threadId, runtime: "server" });
+      const viewer = yield* browser.attachViewer(viewerInput(opened.tabId, true));
+      yield* viewer.input({ type: "takeControl" });
+      const page = contexts[0]!.page;
+      const cdp = contexts[0]!.sessions[0]!;
+      const nextAppLink = Effect.gen(function* () {
+        let output = yield* Queue.take(viewer.output);
+        while (output._tag !== "appLink") output = yield* Queue.take(viewer.output);
+        return output.url;
+      });
+      cdp.emit("Page.frameRequestedNavigation", {
+        url: "https://example.com/",
+        disposition: "currentTab",
+      });
+      cdp.emit("Page.frameRequestedNavigation", {
+        url: "obsidian://open?vault=notes",
+        disposition: "currentTab",
+      });
+      expect(yield* nextAppLink).toBe("obsidian://open?vault=notes");
+
+      cdp.emit("Page.windowOpen", { url: "t3-thread://v2/env-1/thread-1" });
+      expect(yield* nextAppLink).toBe("t3-thread://v2/env-1/thread-1");
+      // Headless Chromium still opens the window; its aborted navigation leaves it empty.
+      const popup = makeContext(undefined, "").page;
+      page.emit("popup", popup);
+      expect(popup.close).toHaveBeenCalled();
+
+      // An empty popup the page opened on its own still becomes a tab.
+      const own = makeContext(undefined, "").page;
+      page.emit("popup", own);
+      let adopted = yield* Queue.take(viewer.output);
+      while (adopted._tag !== "popup") adopted = yield* Queue.take(viewer.output);
+      expect(own.close).not.toHaveBeenCalled();
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect("overlapping file pickers keep the newer offer answerable", () =>
   Effect.scoped(
     Effect.gen(function* () {

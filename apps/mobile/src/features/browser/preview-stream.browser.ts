@@ -175,6 +175,7 @@ export function start(configuration: PreviewStreamConfiguration) {
         onPointer: showAgentCursor,
         onClipboard: (text) => post({ type: "clipboard", text }),
         onDownload: (download) => post({ type: "download", ...download }),
+        onAppLink: (url) => post({ type: "appLink", url }),
         onFileChooser: (chooser) => post({ type: "fileChooser", chooser }),
         onViewport: (page) => {
           if (viewport?.width === page.width && viewport.height === page.height) return;

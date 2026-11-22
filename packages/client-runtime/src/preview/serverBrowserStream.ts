@@ -199,6 +199,8 @@ export interface PreviewStreamEvents {
   readonly onClipboard?: (text: string) => void;
   readonly onDownload?: (download: PreviewStreamDownload) => void;
   readonly onPopup?: (tabId: string) => void;
+  /** An app link the page opened, such as `obsidian:` or `t3-thread:`, for this device to open. */
+  readonly onAppLink?: (url: string) => void;
   readonly onFileChooser?: (chooser: PreviewStreamFileChooser | null) => void;
   readonly onConnectedChange: (connected: boolean) => void;
   /** The upgrade was refused; refresh access and start a new client. */
@@ -286,6 +288,7 @@ export function createPreviewStreamClient(
         phase,
         sequence,
         tabId,
+        url,
       } = message as Record<string, unknown>;
       if (
         type === "fileChooser" &&
@@ -314,6 +317,8 @@ export function createPreviewStreamClient(
         events.onPointer?.({ phase, x, y, sequence });
       } else if (type === "popup" && typeof tabId === "string") {
         events.onPopup?.(tabId);
+      } else if (type === "appLink" && typeof url === "string") {
+        events.onAppLink?.(url);
       } else if (type === "clipboard" && typeof text === "string") {
         events.onClipboard?.(text);
       } else if (
