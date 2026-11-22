@@ -1148,11 +1148,13 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "project-browser-profile",
-    title: "Browser profile",
+    title: msg("Browser profile"),
     to: "/settings/browser",
     scope: "project",
     desktopOnly: true,
-    searchTerms: ["default profile project repository new tabs agent cookies logins work personal"],
+    searchTerms: [
+      msg("default profile project repository new tabs agent cookies logins work personal"),
+    ],
   },
   {
     id: "browser-default-viewport",

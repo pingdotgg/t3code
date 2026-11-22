@@ -3740,11 +3740,19 @@ it.effect("a report interrupted while an earlier save holds the lock is still sa
 );
 
 it.effect("preview_open defaults to the profile a client reported for the thread's project", () =>
-  Effect.scoped(
-    Effect.gen(function* () {
-      const { browser, broker } = yield* ready;
+  Effect.gen(function* () {
+    const projectScope = { ...scope, thread: { ...testThread, threadId: projectThread } };
+    const open = (target: typeof scope, profileId?: string) =>
+      Effect.flatMap(Broker.PreviewAutomationBroker, (broker) =>
+        broker.invoke<PreviewAutomationStatus>({
+          scope: target,
+          operation: "open",
+          input: { reuseExistingTab: false, show: false, ...(profileId ? { profileId } : {}) },
+        }),
+      );
+    yield* Effect.gen(function* () {
+      const { browser } = yield* ready;
       contextRequests.length = 0;
-      const projectScope = { ...scope, thread: { ...testThread, threadId: projectThread } };
       yield* (yield* browser.profileReporter)({
         profiles: [
           { id: "profile-work", name: "Work", kind: "persistent" },
@@ -3753,12 +3761,6 @@ it.effect("preview_open defaults to the profile a client reported for the thread
         defaultProfileId: "profile-work",
         projectProfileIds: { [browserProject]: "profile-client" },
       });
-      const open = (target: typeof scope, profileId?: string) =>
-        broker.invoke<PreviewAutomationStatus>({
-          scope: target,
-          operation: "open",
-          input: { reuseExistingTab: false, show: false, ...(profileId ? { profileId } : {}) },
-        });
 
       expect(yield* open(projectScope)).toMatchObject({ defaultProfileId: "profile-client" });
       expect(yield* open(projectScope, "Work")).toMatchObject({
@@ -3770,8 +3772,19 @@ it.effect("preview_open defaults to the profile a client reported for the thread
         { profileId: "profile-work", isolated: false },
         { profileId: "profile-work", isolated: false },
       ]);
-    }),
-  ).pipe(Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(Layer.fresh(ServerBrowser.layer)));
+
+    // The project's profile is saved with the catalog, so it applies after a restart too.
+    const restarted = yield* Effect.gen(function* () {
+      yield* ServerBrowser.ServerBrowser;
+      yield* Effect.yieldNow;
+      return yield* open(projectScope);
+    }).pipe(Effect.provide(Layer.fresh(ServerBrowser.layer)));
+    expect(restarted).toMatchObject({
+      defaultProfileId: "profile-client",
+      tabs: [{ profileId: "profile-client" }],
+    });
+  }).pipe(Effect.provide(dependencies)),
 );
 
 it.effect("profiles reported by one client survive another client's report", () =>

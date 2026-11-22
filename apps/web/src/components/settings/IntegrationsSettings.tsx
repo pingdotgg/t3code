@@ -1185,6 +1185,8 @@ const USE_GLOBAL_BROWSER_PROFILE = "\u0000global";
 
 function ProjectBrowserProfileSetting({ disabled }: { readonly disabled: boolean }) {
   const { scope } = useSettingsScope();
+  const searchableSetting = useSearchableSetting();
+  const gt = useGT();
   const profiles = useClientSettings((settings) =>
     resolveBrowserProfiles(settings.browserProfiles).filter(
       (profile) => profile.kind !== "incognito",
@@ -1206,9 +1208,9 @@ function ProjectBrowserProfileSetting({ disabled }: { readonly disabled: boolean
   const globalName = previewProfileLabel(profiles, globalDefault.profileId);
   const labelFor = (id: string | null) =>
     id === null
-      ? "Mixed"
+      ? gt("Mixed", { $context: "values differ across targets" })
       : id === USE_GLOBAL_BROWSER_PROFILE
-        ? `Use default (${globalName})`
+        ? gt("Use default ({profile})", { profile: globalName })
         : previewProfileLabel(profiles, id);
   const choose = (id: string) => {
     const next = { ...getClientSettings().browserProjectProfileIds };
@@ -1224,13 +1226,15 @@ function ProjectBrowserProfileSetting({ disabled }: { readonly disabled: boolean
       {...searchableSetting("project-browser-profile")}
       description={
         keys.every((key) => key.startsWith("repository:"))
-          ? "New tabs for this repository open in this profile, on every checkout and machine, including tabs agents open."
-          : "New tabs for this project open in this profile, including tabs agents open."
+          ? gt(
+              "New tabs for this repository open in this profile, on every checkout and machine, including tabs agents open.",
+            )
+          : gt("New tabs for this project open in this profile, including tabs agents open.")
       }
       resetAction={
         !disabled && value !== USE_GLOBAL_BROWSER_PROFILE ? (
           <SettingResetButton
-            label="project browser profile"
+            ariaLabel={gt("Reset project browser profile to default")}
             onClick={() => choose(USE_GLOBAL_BROWSER_PROFILE)}
           />
         ) : null
@@ -1243,7 +1247,11 @@ function ProjectBrowserProfileSetting({ disabled }: { readonly disabled: boolean
             if (next !== null) choose(next);
           }}
         >
-          <SelectTrigger size="sm" className="w-full sm:w-48" aria-label="Project browser profile">
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-48"
+            aria-label={gt("Project browser profile")}
+          >
             <SelectValue>{labelFor(value)}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
