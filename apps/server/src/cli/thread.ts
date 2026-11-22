@@ -459,7 +459,8 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
       );
       afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
     } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
-    thread = page.thread;
+    // Only the first read carries pull request previews; later pages omit them.
+    thread = Object.assign({}, thread, page.thread);
     // A window can hold the whole --messages count, too many to spread as arguments.
     messages = window.concat(messages);
     before = start;
