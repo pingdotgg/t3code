@@ -2455,7 +2455,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           watch.state.roster?.length === 0,
       );
       assert.deepEqual(Object.fromEntries(watch.calls), {
-        Sleep: { status: "completed", result: "CHILD_STARTED" },
+        Sleep: { status: "completed", result: "CHILD_WAITING" },
         Grand: { status: "completed", result: "GRAND_STARTED" },
       });
     });
@@ -2478,49 +2478,100 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ]),
   );
 
+  const jobsBelow = (...jobs: ReadonlyArray<{ kind: string; status: string }>) => ({
+    data: jobs.map((job, index) => ({ ...job, id: `job_${index}`, sessionID: CHILD })),
+  });
   it.effect.each([
     {
       name: "a Code Mode script still runs below it",
-      jobs: [{ kind: "codemode", status: "running" }],
+      listed: jobsBelow({ kind: "codemode", status: "running" }),
+      result: "TESTS_PASSED",
     },
     {
       name: "only finished jobs remain below it",
-      jobs: [{ kind: "codemode", status: "completed" }],
+      listed: jobsBelow({ kind: "codemode", status: "completed" }),
+      result: "TESTS_STARTED",
     },
-  ])("after a reconnect, keeps a kept subagent only while $name", ({ jobs }) =>
-    Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed(
-        [
+    {
+      name: "OpenCode lists only a stored subagent job below it",
+      listed: jobsBelow({ kind: "subagent", status: "running" }),
+      result: "TESTS_STARTED",
+    },
+    {
+      name: "OpenCode's job list can't be read",
+      listed: { status: 500, body: {} },
+      result: "TESTS_STARTED",
+    },
+  ])(
+    "after a reconnect, judges a kept subagent by OpenCode's jobs when $name",
+    ({ listed, result }) =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed(
+          [
+            ...reportedRunning,
+            { type: "runtime_exit", status: "success" } as const,
+            out("event.subscribe"),
+            out("rpc.call", "<any>"),
+            out("rpc.call", "<any>"),
+            reply("rpc.call", { output: null }),
+            reply("rpc.call", { output: null }),
+            out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
+            reply("job.list", { data: [] }),
+            out("job.list", { sessionID: CHILD, kind: "shell", descendants: "true" }),
+            reply("job.list", { data: [] }),
+            out("session.active"),
+            replyData("session.active", {}),
+            out("job.list", { sessionID: CHILD, descendants: "true" }),
+            reply("job.list", listed),
+            // The reconnect has finished before this arrives; only a call it kept takes it.
+            childReport("msg_report_2", "TESTS_PASSED"),
+          ],
+          { version: "2.2.6" },
+        );
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
+        assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result });
+      }),
+  );
+
+  it.effect(
+    "after a reconnect, settles a kept subagent whose session holds only an unread report",
+    () =>
+      Effect.gen(function* () {
+        const { runtime, thread } = yield* resumed([
           ...reportedRunning,
+          event("session.inbox.enqueued", {
+            inboxID: "msg_grand_report",
+            sessionID: CHILD,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${GRAND}" state="completed" description="Grand">\nGRAND_OK\n</subagent>`,
+                description: "Grand",
+                metadata: {
+                  source: "subagent",
+                  childID: GRAND,
+                  agent: "General",
+                  state: "completed",
+                },
+              },
+              delivery: "steer",
+            },
+          }),
           { type: "runtime_exit", status: "success" } as const,
           out("event.subscribe"),
-          out("rpc.call", "<any>"),
-          out("rpc.call", "<any>"),
-          reply("rpc.call", { output: null }),
-          reply("rpc.call", { output: null }),
-          out("job.list", { sessionID: SESSION, kind: "shell", descendants: "true" }),
-          reply("job.list", { data: [] }),
-          out("job.list", { sessionID: CHILD, kind: "shell", descendants: "true" }),
-          reply("job.list", { data: [] }),
           out("session.active"),
           replyData("session.active", {}),
-          out("job.list", { sessionID: CHILD, descendants: "true" }),
-          reply("job.list", {
-            data: jobs.map((job) => ({ ...job, id: "job_1", sessionID: CHILD })),
-          }),
-          // The reconnect has finished before this arrives; only a call it kept takes it.
-          childReport("msg_report_2", "TESTS_PASSED"),
-        ],
-        { version: "2.2.6" },
-      );
-      const watch = yield* watchCalls(runtime, thread);
-      yield* runtime.startTurn(withLineage(thread));
-      yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
-      assert.deepEqual(watch.calls.get("Sleep"), {
-        status: "completed",
-        result: jobs[0]!.status === "running" ? "TESTS_PASSED" : "TESTS_STARTED",
-      });
-    }),
+        ]);
+        const watch = yield* watchCalls(runtime, thread);
+        yield* runtime.startTurn(withLineage(thread));
+        yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
+        assert.deepEqual(watch.calls.get("Sleep"), {
+          status: "completed",
+          result: "TESTS_STARTED",
+        });
+      }),
   );
 
   it.effect.each([

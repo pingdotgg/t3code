@@ -1076,9 +1076,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
     };
     let replaying: Wake | undefined;
 
-    const owesWork = (state: ThreadState) =>
+    const runsJobs = (state: ThreadState) =>
       [...shells.values()].some((shell) => shell.state === state && shell.running) ||
-      [...state.imageJobs.values()].some((job) => job.status === "running") ||
+      [...state.imageJobs.values()].some((job) => job.status === "running");
+
+    const owesWork = (state: ThreadState) =>
+      runsJobs(state) ||
       state.wakes.length > 0 ||
       state.reports.size > 0 ||
       (state.subagent !== undefined && busy.has(state.sessionId)) ||
@@ -3317,8 +3320,12 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
         if (running && each.background) each.reported = answer;
         else yield* settleCall(each, status, output);
       }
-      // Any other report means the child went idle with nothing left running.
-      if (!running) for (const each of kept) yield* settleCall(each, status, output);
+      // Calls kept earlier take the child's latest text; a report not tagged running means the
+      // child went idle with nothing left running.
+      for (const each of kept) {
+        if (running) each.reported = answer;
+        else yield* settleCall(each, status, output);
+      }
     });
 
     const holderOf = (sessionId: string) => {
@@ -3856,9 +3863,10 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           .withPermit(recoverImages(state).pipe(Effect.timeout(INVENTORY_TIMEOUT)))
           .pipe(Effect.ignore({ log: true }));
       }
-      // OpenCode's own jobs below a kept call (shells, Code Mode scripts, subagents, images); a
-      // failed read counts as work.
-      const jobsBelow = new Map<string, number | undefined>();
+      // OpenCode's running jobs below a kept call other than subagents (shells, Code Mode scripts,
+      // images): it also lists stored subagent jobs it never closed, and subagents count by their
+      // sessions. A failed read counts as none.
+      const jobsBelow = new Map<string, number>();
       if (
         compareSemverVersions(connection.version, "2.2.6") >= 0 &&
         connection.runningJobs !== undefined
@@ -3868,41 +3876,30 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             const child = call.child?.sessionId;
             if (call.reported === undefined || child === undefined || jobsBelow.has(child))
               continue;
-            const jobs = yield* connection
-              .runningJobs(child)
-              .pipe(Effect.timeout(INVENTORY_TIMEOUT), Effect.option);
-            jobsBelow.set(child, Option.getOrUndefined(jobs));
+            const jobs = yield* connection.runningJobs(child).pipe(
+              Effect.timeout(INVENTORY_TIMEOUT),
+              Effect.orElseSucceed(() => 0),
+            );
+            jobsBelow.set(child, jobs);
           }
         }
       }
       yield* lock.withPermit(
         Effect.gen(function* () {
           for (const state of background) {
-            const kept: Array<SubagentCall> = [];
             for (const call of runningCalls(state)) {
               const child = call.child?.sessionId;
-              if (call.reported !== undefined && call.child !== undefined) kept.push(call);
-              else if (child === undefined || !(child in active)) {
+              if (call.reported !== undefined && call.child !== undefined) {
+                // Its child already reported; only a session or job still running below it keeps it.
+                const working =
+                  (jobsBelow.get(call.child.sessionId) ?? 0) > 0 ||
+                  sessionsOf(call.child).some(
+                    (session) => session.sessionId in active || runsJobs(session),
+                  );
+                if (!working) yield* settleCall(call, "completed", call.reported);
+              } else if (child === undefined || !(child in active)) {
                 yield* settleCall(call, "interrupted", LOST_BACKGROUND);
               }
-            }
-            // Its child already reported; only work still running below it keeps a kept call.
-            // Deepest first, so the calls below one are settled before it is checked.
-            const deepestFirst = kept.toSorted(
-              (left, right) =>
-                callsAbove(right.state.sessionId).length - callsAbove(left.state.sessionId).length,
-            );
-            for (const call of deepestFirst) {
-              if (call.child === undefined || !isOrchestrationV2WorkActive(call.status)) continue;
-              const below = sessionsOf(call.child);
-              const jobs = jobsBelow.has(call.child.sessionId)
-                ? jobsBelow.get(call.child.sessionId)
-                : 0;
-              const working =
-                jobs === undefined ||
-                jobs > 0 ||
-                below.some((session) => session.sessionId in active || owesWork(session));
-              if (!working) yield* settleCall(call, "completed", call.reported);
             }
             const sessions = sessionsOf(state);
             for (const session of sessions) {
