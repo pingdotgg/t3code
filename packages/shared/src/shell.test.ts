@@ -22,6 +22,8 @@ import {
   pathSetupCommand,
   CommandAvailability,
   CommandResolutionCache,
+  makePathDirectoryListings,
+  PathDirectoryListings,
   type CommandAvailabilityChecker,
   gitForWindowsBash,
   isCommandAvailable,
@@ -39,7 +41,6 @@ import {
   windowsEnvironmentValueCommand,
   SpawnExecutableResolution,
   WindowsShellEnvironment,
-  withPathDirectoryListings,
   type WindowsShellEnvironmentReader,
   XcodeGitLocation,
 } from "./shell.ts";
@@ -591,7 +592,8 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
             stat: (filePath) =>
               Effect.sync(() => {
                 probed.push(filePath);
-                return { type: "Directory" } as FileSystem.File.Info;
+                // No mtime, so no listing: every candidate is probed directly.
+                return { type: "Directory", mtime: Option.none() } as FileSystem.File.Info;
               }),
           }),
         ),
@@ -609,7 +611,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       });
 
       // Windows PATH directories can be case-sensitive; preserve both spellings.
-      expect(probed).toHaveLength(8);
+      expect(probed.filter((file) => file.includes("definitely-not-installed"))).toHaveLength(8);
     }),
   );
 
@@ -635,7 +637,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
               ...fs,
               stat: (filePath) =>
                 fs.stat(
-                  filePath === executable || filePath === decoy
+                  [cwd, executable, decoy].includes(filePath)
                     ? filePath
                     : path.join(cwd, "missing"),
                 ),
@@ -646,37 +648,110 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
       }),
   );
 
-  it.effect("probes only listed PATH names and relists a directory that changes", () =>
+  // Seconds; the tests below run their clock a minute later, past the window in which a listing is not kept.
+  const AGED_MTIME = 4_102_444_800;
+  const afterAgedMtime = TestClock.setTime((AGED_MTIME + 60) * 1000);
+
+  it.effect("reuses PATH listings across lookups until a directory changes", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const first = yield* fs.makeTempDirectoryScoped();
       const second = yield* fs.makeTempDirectoryScoped();
       yield* fs.writeFileString(path.join(first, "cursor.CMD"), "");
+      yield* fs.writeFileString(path.join(first, "MyToolLongName.cmd"), "");
       yield* fs.writeFileString(path.join(second, "cursor.EXE"), "");
+      yield* fs.utimes(first, AGED_MTIME, AGED_MTIME);
+      yield* fs.utimes(second, AGED_MTIME, AGED_MTIME);
+      yield* afterAgedMtime;
       const env = { PATH: `${first};${second}`, PATHEXT: ".EXE;.CMD" };
+      // Windows resolves an 8.3 alias that a directory listing never names.
+      const alias = path.join(first, "MYTOOL~1.CMD");
       const probed: Array<string> = [];
+      const listed: Array<string> = [];
       yield* Effect.gen(function* () {
         expect(yield* resolveCommandPath("cursor", { env })).toBe(path.join(first, "cursor.CMD"));
         expect(yield* isCommandAvailable("absent", { env })).toBe(false);
+        expect(yield* isCommandAvailable("also-absent", { env })).toBe(false);
+        expect(yield* resolveCommandPath("MYTOOL~1", { env })).toBe(alias);
+        expect(listed).toEqual([first, second]);
         yield* fs.writeFileString(path.join(second, "late.EXE"), "");
-        yield* fs.utimes(second, 4_102_444_800, 4_102_444_800);
+        yield* fs.utimes(second, AGED_MTIME + 30, AGED_MTIME + 30);
         expect(yield* resolveCommandPath("late", { env })).toBe(path.join(second, "late.EXE"));
+        expect(listed).toEqual([first, second, second]);
       }).pipe(
-        withPathDirectoryListings,
         Effect.provideService(FileSystem.FileSystem, {
           ...fs,
           stat: (file) => {
             if (file !== first && file !== second) probed.push(file);
-            return fs.stat(file);
+            return fs.stat(file === alias ? path.join(first, "MyToolLongName.cmd") : file);
+          },
+          readDirectory: (directory, options) => {
+            listed.push(directory);
+            return fs.readDirectory(directory, options);
           },
         }),
       );
-      expect(probed).toEqual([path.join(first, "cursor.CMD"), path.join(second, "late.EXE")]);
+      expect(probed).toEqual([
+        path.join(first, "cursor.CMD"),
+        path.join(first, "MYTOOL~1.EXE"),
+        path.join(first, "MYTOOL~1.exe"),
+        alias,
+        path.join(second, "late.EXE"),
+      ]);
     }).pipe(
       Effect.provideService(HostProcess.Platform, "win32"),
       Effect.provideService(CommandResolutionCache, new Map()),
+      Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
     ),
+  );
+
+  it.effect("does not keep the listing of a PATH directory that changed moments ago", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.utimes(directory, AGED_MTIME + 59, AGED_MTIME + 59);
+      yield* afterAgedMtime;
+      const env = { PATH: directory, PATHEXT: ".CMD" };
+      let listings = 0;
+      yield* Effect.gen(function* () {
+        expect(yield* isCommandAvailable("absent", { env })).toBe(false);
+        expect(yield* isCommandAvailable("also-absent", { env })).toBe(false);
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fs,
+          readDirectory: (target, options) => {
+            listings += 1;
+            return fs.readDirectory(target, options);
+          },
+        }),
+      );
+      expect(listings).toBe(2);
+    }).pipe(
+      Effect.provideService(HostProcess.Platform, "win32"),
+      Effect.provideService(CommandResolutionCache, new Map()),
+      Effect.provideServiceEffect(PathDirectoryListings, makePathDirectoryListings),
+    ),
+  );
+
+  // A POSIX directory joined with win32 separators names nothing, so this needs a Windows host.
+  it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
+    "relists a changed PATH directory in the synchronous spawn resolver",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const directory = yield* fs.makeTempDirectoryScoped();
+        yield* fs.writeFileString(path.join(directory, "cursor.CMD"), "");
+        yield* fs.utimes(directory, 946_684_800, 946_684_800);
+        const env = { PATH: directory, PATHEXT: ".EXE;.CMD" };
+        const resolveExecutable = yield* SpawnExecutableResolution;
+        expect(resolveExecutable("cursor", "win32", env)).toBe(path.join(directory, "cursor.CMD"));
+        expect(resolveExecutable("late", "win32", env)).toBeUndefined();
+        yield* fs.writeFileString(path.join(directory, "late.EXE"), "");
+        yield* fs.utimes(directory, 946_684_830, 946_684_830);
+        expect(resolveExecutable("late", "win32", env)).toBe(path.join(directory, "late.EXE"));
+      }),
   );
 });
 
