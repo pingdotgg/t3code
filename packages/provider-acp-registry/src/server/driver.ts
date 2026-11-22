@@ -1703,8 +1703,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // creation, sign-out, or full cache clear), excluding invalidateCaches which preserves
     // coordinator state.
     const liveSessionResetRevision = yield* Ref.make(initialLiveSessionResetRevision);
-    // Tracks the last definitive unauthenticated probe so signed-out readiness refreshes and the
-    // watcher both reject options-only updates until a ready probe or confirmed sign-in succeeds.
+    // Tracks the last definitive signed-out state (unauthenticated probe or explicit sign-out)
+    // so readiness refreshes and the watcher both reject options-only updates until a ready probe
+    // or confirmed sign-in succeeds.
     const lastProbeUnauthenticated = yield* Ref.make(false);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
@@ -1907,9 +1908,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             )
           : acceptedBefore.reasoningDisabledModelSlugs;
         const savedToAccepted =
-          current.installed &&
-          (current.auth.status !== "unauthenticated" || replacesCatalog) &&
-          (replacesCatalog || acceptedBefore.models.length > 0);
+          current.installed && (replacesCatalog || acceptedBefore.models.length > 0);
         if (savedToAccepted) {
           yield* Ref.update(acceptedCatalog, (previous) =>
             replacesCatalog
@@ -2191,6 +2190,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   };
                 }
                 if (fresh && provider.status === "ready") {
+                  yield* Ref.set(lastProbeUnauthenticated, false);
                   const accepted = yield* Ref.get(acceptedCatalog);
                   const liveCatalog = Option.filter(
                     Option.map(liveSnapshot.catalog, (entry) => entry.configuration),
@@ -2234,7 +2234,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       : Option.some(0)
                     : Option.none<number>();
                   if (probeSupersedesLiveCatalog && Option.isNone(clearedThrough)) return;
-                  yield* Ref.set(lastProbeUnauthenticated, false);
                   if (effectiveConfig.source === "local") {
                     yield* Ref.set(reportedLocalVersion, provider.version);
                   }
@@ -2451,12 +2450,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const clearCachedState = (options?: {
       readonly clearCommands?: boolean;
       readonly clearLiveConfiguration?: boolean;
+      readonly markSignedOut?: boolean;
     }) =>
       liveSnapshotSemaphore.withPermit(
         Effect.uninterruptible(
           invalidateEnrichmentCache.pipe(
             Effect.andThen(clearLearnedModels),
             Effect.andThen(clearAcceptedCatalog),
+            Effect.andThen(
+              options?.markSignedOut === true
+                ? Ref.set(lastProbeUnauthenticated, true)
+                : Effect.void,
+            ),
             Effect.andThen(resetAppliedLiveRevisions),
             Effect.andThen(
               Option.isSome(runtimeCoordinator)
@@ -2482,6 +2487,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ),
       );
     const clearLiveState = clearCachedState({ clearCommands: true });
+    const clearSignedOutState = clearCachedState({ clearCommands: true, markSignedOut: true });
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -2498,7 +2504,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       Effect.andThen(Ref.set(lastProbeUnauthenticated, false)),
                     ),
                   )
-                : clearLiveState,
+                : clearSignedOutState,
             ),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
@@ -2599,7 +2605,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(SecureRandom.SecureRandom, random),
             Effect.tap(() => confirmedAuthentication.set(false)),
-            Effect.tap(() => clearLiveState),
+            Effect.tap(() => clearSignedOutState),
           );
           return Option.isSome(runtimeCoordinator)
             ? logout.pipe(
