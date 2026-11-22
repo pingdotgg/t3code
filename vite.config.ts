@@ -31,18 +31,21 @@ const TEST_CONFIG_PACKAGES = [
 const isRepoRootTestRun = process.cwd() === import.meta.dirname;
 
 /** Debt ceilings for files that still exist, so a branch deleting a file can't break the config. */
-const existingCeilings = (ceilings: Record<string, number>) =>
+const existingCeilings = <Entry>(ceilings: Record<string, Entry>) =>
   Object.entries(ceilings).filter(([file]) =>
     NodeFS.existsSync(NodeURL.fileURLToPath(new URL(file, import.meta.url))),
   );
 
 /** Per-file debt ceilings for the design-system rules, generated into lint-ceilings.json. */
-const lintCeilings: Record<string, Record<string, number>> = JSON.parse(
+const lintCeilings: Record<string, Record<string, number | Array<string>>> = JSON.parse(
   NodeFS.readFileSync(new URL("./lint-ceilings.json", import.meta.url), "utf8"),
 );
 const generatedCeilings = (rule: string) =>
-  existingCeilings(lintCeilings[rule] ?? {}).map(([file, maxOccurrences]) => {
-    const options: ["error", { maxOccurrences: number }] = ["error", { maxOccurrences }];
+  existingCeilings(lintCeilings[rule] ?? {}).map(([file, entry]) => {
+    const options: ["error", { maxOccurrences: number } | { allowed: Array<string> }] = [
+      "error",
+      typeof entry === "number" ? { maxOccurrences: entry } : { allowed: entry },
+    ];
     return { files: [file], rules: { [rule]: options } };
   });
 
@@ -399,9 +402,15 @@ export default defineConfig({
       {
         // Surfaces come from the surface-* utilities and radius tokens, not hand-built
         // bg, border, rounded and shadow classes that the surface styles cannot repaint.
+        // components/ui is included, so a feature look moved into a variant still counts.
         files: ["apps/web/src/**"],
-        excludeFiles: ["apps/web/src/components/ui/**", "apps/web/src/**/*.test.{ts,tsx}"],
+        excludeFiles: ["apps/web/src/**/*.test.{ts,tsx}"],
         rules: { "t3code/no-raw-surface": "error" },
+      },
+      {
+        files: ["apps/web/src/components/ui/**"],
+        excludeFiles: ["apps/web/src/**/*.test.{ts,tsx}"],
+        rules: { "t3code/no-new-ui-variants": "error" },
       },
       {
         files: ["packages/client-runtime/src/state/**", "apps/{web,mobile,desktop}/src/**"],
@@ -736,6 +745,7 @@ export default defineConfig({
       ...generatedCeilings("t3code/no-styled-raw-controls"),
       ...generatedCeilings("t3code/no-raw-type-classes"),
       ...generatedCeilings("t3code/no-raw-surface"),
+      ...generatedCeilings("t3code/no-new-ui-variants"),
     ],
     options: {
       reportUnusedDisableDirectives: "error",

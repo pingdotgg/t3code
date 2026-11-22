@@ -20,7 +20,7 @@ type Table = Record<string, Record<string, Entry>>;
 const FILE = "lint-ceilings.json";
 const COUNT = /file has (\d+)/u;
 const NEW_VARIANT = /^New components\/ui variant "([^"]+)"/u;
-const GONE_VARIANTS = /no longer exist: ([^.]+)\./u;
+const GONE_VARIANTS = /no longer exist: (.+?)\. Run /u;
 
 const root = NodePath.resolve(import.meta.dirname, "..");
 const sortedTable = (table: Table): Table =>

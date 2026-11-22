@@ -1,4 +1,4 @@
-import { defineRule } from "@oxlint/plugins";
+import { defineRule, type ESTree } from "@oxlint/plugins";
 
 import {
   baseClass,
@@ -15,6 +15,8 @@ import {
 // Select or link: it skips the components/ui variants, so it drifts from every
 // other control and escapes shadcn/no-restyle, which only checks ui components.
 const RAW_CONTROLS = new Set(["a", "button", "input", "select", "summary", "textarea"]);
+// Intrinsic elements that can carry a control's look for it; icons and images size themselves.
+const WRAPPER = /^(?!svg$|img$)[a-z]/u;
 
 // Appearance belongs to UI primitives; layout, overflow and resets stay on raw controls.
 const APPEARANCE = [
@@ -71,40 +73,61 @@ export default defineRule({
         scope = scope.upper;
       }
     };
+    const classAttribute = (opening: ESTree.JSXOpeningElement) => {
+      const attribute = opening.attributes.find(
+        (candidate): candidate is ESTree.JSXAttribute =>
+          candidate.type === "JSXAttribute" &&
+          candidate.name.type === "JSXIdentifier" &&
+          candidate.name.name === "className" &&
+          candidate.value !== null,
+      );
+      return attribute && { attribute, line: attribute.loc.start.line };
+    };
     // Checked once the whole file is read, so a constant declared below its use still counts.
-    const classNames: Array<{
+    const controls: Array<{
       element: string;
-      value: unknown;
-      line: number;
-      report: (message: string) => void;
+      own: ReturnType<typeof classAttribute>;
+      child: { name: string; classes: ReturnType<typeof classAttribute> } | undefined;
     }> = [];
 
     return {
-      JSXOpeningElement(node) {
-        if (node.name.type !== "JSXIdentifier" || !RAW_CONTROLS.has(node.name.name)) return;
-        const element = node.name.name;
-
-        for (const attribute of node.attributes) {
-          if (attribute.type !== "JSXAttribute" || attribute.name.type !== "JSXIdentifier")
-            continue;
-          if (attribute.name.name !== "className" || attribute.value === null) continue;
-          classNames.push({
-            element,
-            value: attribute.value,
-            line: attribute.loc.start.line,
-            report: (message) => context.report({ node: attribute, message }),
-          });
-        }
+      JSXElement(node) {
+        const opening = node.openingElement;
+        if (opening.name.type !== "JSXIdentifier" || !RAW_CONTROLS.has(opening.name.name)) return;
+        // Classes moved onto a lone wrapper still style the control: <summary><span className=…>.
+        const children = node.children.filter(
+          (child) => child.type !== "JSXText" || child.value.trim() !== "",
+        );
+        const only = children.length === 1 ? children[0] : undefined;
+        const childName =
+          only?.type === "JSXElement" && only.openingElement.name.type === "JSXIdentifier"
+            ? only.openingElement.name.name
+            : undefined;
+        controls.push({
+          element: opening.name.name,
+          own: classAttribute(opening),
+          child:
+            only?.type === "JSXElement" && childName !== undefined && WRAPPER.test(childName)
+              ? { name: childName, classes: classAttribute(only.openingElement) }
+              : undefined,
+        });
       },
       "Program:exit"(node) {
         let occurrenceCount = 0;
         const suppressed = suppressedLines(context.sourceCode, "t3code/no-styled-raw-controls");
-        for (const { element, value, line, report } of classNames) {
-          const found = classStrings(value, resolveConstant).flatMap(appearanceClasses);
-          if (found.length === 0) continue;
+        const appearanceOf = (classes: ReturnType<typeof classAttribute>) =>
+          classes
+            ? classStrings(classes.attribute.value, resolveConstant).flatMap(appearanceClasses)
+            : [];
+        for (const { element, own, child } of controls) {
+          const ownFound = appearanceOf(own);
+          const childFound = appearanceOf(child?.classes);
+          const target = ownFound.length > 0 ? own : child?.classes;
+          if (target === undefined || ownFound.length + childFound.length === 0) continue;
+          const found = ownFound.length > 0 ? ownFound : childFound;
 
-          if (!suppressed.has(line)) occurrenceCount++;
-          if (!suppressed.has(line) && occurrenceCount <= allowedCount) continue;
+          if (!suppressed.has(target.line)) occurrenceCount++;
+          if (!suppressed.has(target.line) && occurrenceCount <= allowedCount) continue;
 
           const replacement =
             element === "a"
@@ -112,9 +135,14 @@ export default defineRule({
               : element === "input" || element === "textarea" || element === "select"
                 ? "Input, Textarea or Select"
                 : "Button with a variant and size";
-          report(
-            `<${element}> is styled by hand (${found.slice(0, 4).join(" ")}). Render ${replacement} from components/ui; only layout classes belong on a raw control.`,
-          );
+          const how =
+            ownFound.length > 0
+              ? "is styled by hand"
+              : `is styled through its only child <${child?.name}>`;
+          context.report({
+            node: target.attribute,
+            message: `<${element}> ${how} (${found.slice(0, 4).join(" ")}). Render ${replacement} from components/ui; only layout classes belong on a raw control.`,
+          });
         }
         const mismatch = ceilingMismatch(allowedCount, occurrenceCount);
         if (mismatch) context.report({ node, message: mismatch });

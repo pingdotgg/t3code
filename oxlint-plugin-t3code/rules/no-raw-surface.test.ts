@@ -77,3 +77,34 @@ describe("t3code/no-raw-surface maxOccurrences", () => {
     (output) => assert.match(output, /Debt ceiling 1, file has 0: lower it to 0/),
   );
 });
+
+// Inside components/ui the two rules work together: no-raw-surface counts a feature's raw look
+// moved into a variant, and no-new-ui-variants names any variant the table does not list.
+const variants = createOxlintRuleHarness("t3code/no-new-ui-variants", {
+  filename: "button.tsx",
+  ruleOptions: [{ allowed: ["buttonVariants.size.sm", "buttonVariants.variant.ghost"] }],
+});
+
+describe("t3code/no-new-ui-variants", () => {
+  variants.valid(
+    "allows the listed variants",
+    `const buttonVariants = cva("", { variants: { size: { sm: "h-7" }, variant: { ghost: "" } } });`,
+  );
+
+  variants.invalid(
+    "reports a variant the table does not list",
+    `const buttonVariants = cva("", { variants: { size: { sm: "h-7" }, variant: { ghost: "", "fleet-node": "surface-raised" } } });`,
+    (output) => {
+      assert.match(output, /New components\/ui variant "buttonVariants\.variant\.fleet-node"/);
+      assert.match(output, /stays in that feature's component/);
+    },
+  );
+
+  variants.invalid(
+    "reports listed variants that are gone",
+    `const buttonVariants = cva("", { variants: { size: { sm: "h-7" } } });`,
+    (output) => {
+      assert.match(output, /no longer exist: buttonVariants\.variant\.ghost\. Run/);
+    },
+  );
+});
