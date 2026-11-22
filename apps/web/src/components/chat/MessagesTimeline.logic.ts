@@ -1041,11 +1041,31 @@ export function timelineEntryStartsResponse(entry: TimelineEntry): boolean {
   );
 }
 
+/** A notification starts a turn only as its run's first input; later ones in the same run are mid-turn. */
+function notificationIsMidTurn(entries: ReadonlyArray<TimelineEntry>, index: number): boolean {
+  const entry = entries[index];
+  if (entry?.kind !== "work" || entry.entry.itemType !== "notification") return false;
+  const runId = entry.entry.runId;
+  if (runId == null) return false;
+  for (let cursor = index - 1; cursor >= 0; cursor -= 1) {
+    if (responseBoundaryRunId(entries[cursor]!) === runId) return true;
+  }
+  return false;
+}
+
 function steerReplyEntryIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<string> {
   const ids = new Set<string>();
+  const seenRunIds = new Set<RunId>();
   let lastReply: string | null = null;
   for (const entry of entries) {
-    if (timelineEntryStartsResponse(entry)) {
+    const isMidTurnNotification =
+      entry.kind === "work" &&
+      entry.entry.itemType === "notification" &&
+      entry.entry.runId != null &&
+      seenRunIds.has(entry.entry.runId);
+    const runId = responseBoundaryRunId(entry);
+    if (runId !== null) seenRunIds.add(runId);
+    if (timelineEntryStartsResponse(entry) && !isMidTurnNotification) {
       lastReply = null;
     } else if (timelineEntryIsSteer(entry)) {
       if (entry.kind !== "message" || entry.message.runId == null) continue;
@@ -1101,10 +1121,20 @@ function lastResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>
   return timelineEntries.findLastIndex(timelineEntryStartsResponse);
 }
 
+function lastFoldResponseBoundaryIndex(timelineEntries: ReadonlyArray<TimelineEntry>): number {
+  for (let index = timelineEntries.length - 1; index >= 0; index -= 1) {
+    if (!timelineEntryStartsResponse(timelineEntries[index]!)) continue;
+    if (notificationIsMidTurn(timelineEntries, index)) continue;
+    return index;
+  }
+  return -1;
+}
+
 function deriveActiveVisualResponseRunIds(input: {
   timelineEntries: ReadonlyArray<TimelineEntry>;
   unsettledRunId: RunId | null;
   isWorking: boolean;
+  turnWorkFold?: boolean | undefined;
 }): ReadonlySet<RunId> {
   const runIds = new Set<RunId>();
   if (input.unsettledRunId === null) {
@@ -1116,7 +1146,10 @@ function deriveActiveVisualResponseRunIds(input: {
     return runIds;
   }
 
-  const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
+  const latestResponseBoundaryIndex =
+    input.turnWorkFold === true
+      ? lastFoldResponseBoundaryIndex(input.timelineEntries)
+      : lastResponseBoundaryIndex(input.timelineEntries);
   for (
     let index = latestResponseBoundaryIndex + 1;
     index < input.timelineEntries.length;
@@ -1539,10 +1572,19 @@ function deriveTurnFolds(input: {
   const interruptedRunIds = new Set<RunId>();
   const usageLimitedRunIds = usageLimitedTimelineRunIds(input.timelineEntries);
   const promptIndexByRunId = new Map<RunId, number>();
+  const promptSeenRunIds = new Set<RunId>();
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (timelineEntryStartsResponse(entry)) {
-      const runId = responseBoundaryRunId(entry);
-      if (runId !== null && !promptIndexByRunId.has(runId)) promptIndexByRunId.set(runId, index);
+    const isMidTurnNotification =
+      entry.kind === "work" &&
+      entry.entry.itemType === "notification" &&
+      entry.entry.runId != null &&
+      promptSeenRunIds.has(entry.entry.runId);
+    const entryRunId = responseBoundaryRunId(entry);
+    if (entryRunId !== null) promptSeenRunIds.add(entryRunId);
+    if (timelineEntryStartsResponse(entry) && !isMidTurnNotification) {
+      if (entryRunId !== null && !promptIndexByRunId.has(entryRunId)) {
+        promptIndexByRunId.set(entryRunId, index);
+      }
     }
     if (
       entry.kind === "event" &&
@@ -1563,24 +1605,31 @@ function deriveTurnFolds(input: {
   }
   const groupsByRunId = new Map<RunId, TurnGroup>();
   const runlessFailedKeys = new Set<RunId>();
+  const seenRunIds = new Set<RunId>();
 
   // Key runless responses per prompt to prevent V2 runs unfolding imported turns.
   let runlessKey: RunId | null = null;
   let responseKey: RunId | null = null;
   let pendingBoundary: { createdAt: string; anchorEntryId: string } | null = null;
   for (const [index, entry] of input.timelineEntries.entries()) {
-    if (timelineEntryStartsResponse(entry)) {
+    const isMidTurnNotification =
+      entry.kind === "work" &&
+      entry.entry.itemType === "notification" &&
+      entry.entry.runId != null &&
+      seenRunIds.has(entry.entry.runId);
+    const entryRunId = responseBoundaryRunId(entry);
+    if (entryRunId !== null) seenRunIds.add(entryRunId);
+    if (timelineEntryStartsResponse(entry) && !isMidTurnNotification) {
       const nextEntry = input.timelineEntries[index + 1];
       pendingBoundary = nextEntry
         ? { createdAt: entry.createdAt, anchorEntryId: nextEntry.id }
         : null;
-      const boundaryRunId = responseBoundaryRunId(entry);
-      runlessKey = boundaryRunId == null ? runlessTurnFoldRunId(entry.id) : null;
-      responseKey = boundaryRunId ?? runlessKey;
+      runlessKey = entryRunId == null ? runlessTurnFoldRunId(entry.id) : null;
+      responseKey = entryRunId ?? runlessKey;
       continue;
     }
-    if (entry.kind === "message" && timelineEntryIsSteer(entry)) {
-      const steerRunId = entry.message.runId ?? responseKey;
+    if ((entry.kind === "message" && timelineEntryIsSteer(entry)) || isMidTurnNotification) {
+      const steerRunId = entryRunId ?? responseKey;
       const group = steerRunId === null ? undefined : groupsByRunId.get(steerRunId);
       const nextEntry = input.timelineEntries[index + 1];
       if (nextEntry !== undefined) {
@@ -2187,6 +2236,7 @@ function deriveTimelineTurnFolds(
     timelineEntries,
     unsettledRunId,
     isWorking: input.isWorking,
+    turnWorkFold: input.turnWorkFold,
   });
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   if (input.turnWorkFold !== true) {
@@ -2309,6 +2359,7 @@ export function deriveMessagesTimelineRows(
     timelineEntries: timelineEntries,
     unsettledRunId,
     isWorking: input.isWorking,
+    turnWorkFold: input.turnWorkFold,
   });
   const runlessWorkActive = input.isWorking && input.runlessWorkActive === true;
   const turnFolds =
@@ -2382,7 +2433,9 @@ export function deriveMessagesTimelineRows(
     (entry.runId == null ? runlessWorkActive : entry.runId === unsettledRunId);
 
   const activeTurnHeaderIndex = input.isWorking
-    ? lastResponseBoundaryIndex(timelineEntries) + 1
+    ? (input.turnWorkFold === true
+        ? lastFoldResponseBoundaryIndex(timelineEntries)
+        : lastResponseBoundaryIndex(timelineEntries)) + 1
     : timelineEntries.length;
 
   const activeToolEntries: Array<Extract<TimelineEntry, { kind: "work" }>> = [];
@@ -3171,7 +3224,21 @@ function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesT
     if (timelineRowIsWorkLog(row) || row.kind === "background-activity") {
       const precedesPrompt =
         (row.kind !== "background-activity" || !row.expanded) && timelineRowIsUserPrompt(next);
-      return (row.precedesPrompt ?? false) === precedesPrompt ? row : { ...row, precedesPrompt };
+      const isWorkLog = timelineRowIsWorkLog(row);
+      const continuesWorkLog = isWorkLog && timelineRowIsWorkLog(next);
+      if (
+        (row.precedesPrompt ?? false) === precedesPrompt &&
+        (!isWorkLog || (row.continuesWorkLog ?? false) === continuesWorkLog)
+      ) {
+        return row;
+      }
+      return {
+        ...row,
+        precedesPrompt,
+        ...(isWorkLog && (row.continuesWorkLog ?? false) !== continuesWorkLog
+          ? { continuesWorkLog }
+          : {}),
+      };
     }
     if (
       (row.kind === "message" && row.message.role === "assistant") ||
@@ -3471,8 +3538,9 @@ export function applyWorkingWindow(
     timelineEntries: entries,
     unsettledRunId,
     isWorking: true,
+    turnWorkFold: true,
   });
-  const boundaryIndex = lastResponseBoundaryIndex(entries);
+  const boundaryIndex = lastFoldResponseBoundaryIndex(entries);
   // Steer replies reset at each response boundary, so only the last response's entries matter.
   const replyIds = steerReplyEntryIds(entries.slice(Math.max(boundaryIndex, 0)));
   let key = entries[boundaryIndex]?.id ?? "working";
@@ -3492,6 +3560,8 @@ export function applyWorkingWindow(
   let interruptSettled = false;
   let itemsBeforeLatestPrompt = 0;
   const supersededWork: WorkLogEntry[] = [];
+  const midTurnNotificationIds = new Set<string>();
+  const skippedWorkIds = new Set<string>();
   for (let index = boundaryIndex + 1; index < entries.length; index += 1) {
     const entry = entries[index]!;
     if (entry.kind === "message" && entry.message.role === "user") {
@@ -3509,11 +3579,15 @@ export function applyWorkingWindow(
     }
     if (replyIds.has(entry.id)) continue;
     if (entry.kind === "work") {
+      if (entry.entry.itemType === "notification") {
+        midTurnNotificationIds.add(entry.id);
+        itemsBeforeLatestPrompt = items.length;
+        continue;
+      }
       const item = entry.entry.projectedItem?.item;
       if (
         (item?.type === "approval_request" &&
           input.pendingApprovalRequestIds?.has(item.requestId)) ||
-        entry.entry.itemType === "notification" ||
         entry.entry.itemType === "system_notice" ||
         (entry.entry.sourceActivityKind === "context-compaction" &&
           (compactCommandRunIds.has(runId) ||
@@ -3521,9 +3595,12 @@ export function applyWorkingWindow(
             workingRow.compacting !== undefined)) ||
         (entry.entry.questionAnswer !== undefined &&
           claudeResumeCompactionAge(entry.entry.questionAnswer) !== null &&
-          runWasCompacted(runId)) ||
-        !workEntryIsVisibleInGroup(entry.entry, true)
+          runWasCompacted(runId))
       ) {
+        continue;
+      }
+      if (!workEntryIsVisibleInGroup(entry.entry, true)) {
+        skippedWorkIds.add(entry.id);
         continue;
       }
       items.push({ kind: "work", id: entry.id, entry: entry.entry });
@@ -3575,16 +3652,29 @@ export function applyWorkingWindow(
       ? items.pop()
       : undefined;
   const ids = collectWindowIds(items);
+  for (const id of skippedWorkIds) ids.add(id);
+  const boundaryRowIndex =
+    boundaryIndex >= 0 ? rows.findIndex((row) => row.id === entries[boundaryIndex]!.id) : -1;
+  const turnStartRowIndex =
+    boundaryRowIndex >= 0
+      ? Math.min(workingIndex, boundaryRowIndex + 1)
+      : boundaryIndex < 0
+        ? 0
+        : workingIndex;
   const windowStartIndex = Math.max(
-    workingIndex,
-    rows.findLastIndex((row) => row.kind === "message" && row.message.role === "user"),
+    turnStartRowIndex - 1,
+    rows.findLastIndex(
+      (row) =>
+        (row.kind === "message" && row.message.role === "user") ||
+        midTurnNotificationIds.has(row.id),
+    ),
   );
   const keptRows = (start: number, end?: number) =>
-    rows.slice(start, end).filter((row) => !rowIsReplacedByWindow(row, ids));
+    rows.slice(start, end).filter((row) => row !== workingRow && !rowIsReplacedByWindow(row, ids));
   const before: MessagesTimelineRow[] = [];
   const supersededAttempts: MessagesTimelineRow[] = [];
   let inSupersededAttempt = false;
-  for (const row of keptRows(workingIndex + 1, windowStartIndex + 1)) {
+  for (const row of keptRows(turnStartRowIndex, windowStartIndex + 1)) {
     if (row.kind === "attempt-fold") inSupersededAttempt = runIds.has(row.runId);
     else if (row.kind === "message" && row.message.role === "user") inSupersededAttempt = false;
     (inSupersededAttempt ? supersededAttempts : before).push(row);
@@ -3604,9 +3694,9 @@ export function applyWorkingWindow(
     answering: answer !== undefined,
     historyOpen: historyOpenKey === key,
   };
-  // Steers move above the bar, next to the prompt they continue.
+  // Steers and mid-turn notifications move above the bar, next to the prompt they continue.
   return withPromptGrouping([
-    ...rows.slice(0, workingIndex),
+    ...rows.slice(0, turnStartRowIndex),
     ...before,
     ...supersededAttempts,
     { ...workingRow, window },
