@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  ContextHandoffId,
   ContextTransferId,
   NodeId,
   EventId,
@@ -8,6 +9,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderThreadId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -462,6 +464,68 @@ it.effect.each(["sqlite"] as const)(
         "message-file",
         recordingId,
       ]);
+
+      // Omitted IDs reach the reader only for a handoff this turn can still deliver or count as covered.
+      const providerThreadId = ProviderThreadId.make("provider-thread:current");
+      const otherProviderThreadId = ProviderThreadId.make("provider-thread:other");
+      const failedRunId = RunId.make("run:failed");
+      const completedRunId = RunId.make("run:completed");
+      yield* putRun({ ...run, ordinal: 3, providerThreadId });
+      yield* putRun({ ...run, id: failedRunId, ordinal: 99, status: "failed" });
+      yield* putRun({ ...run, id: completedRunId, ordinal: 98, status: "completed" });
+      const omitted = [TurnItemId.make("item:omitted")];
+      const handoffCases = [
+        ["settled elsewhere", completedRunId, otherProviderThreadId, "inline", false, false],
+        ["failed elsewhere", failedRunId, otherProviderThreadId, "injected", false, false],
+        ["settled here", completedRunId, providerThreadId, "injected", false, true],
+        ["failed here", failedRunId, providerThreadId, "inline", true, true],
+        ["uncertain here", completedRunId, providerThreadId, "pending", true, true],
+        ["for this run", runId, otherProviderThreadId, "inline", true, true],
+        ["undelivered", completedRunId, otherProviderThreadId, undefined, true, false],
+      ] as const;
+      for (const [name, targetRunId, toProviderThreadId, status] of handoffCases) {
+        yield* store.apply({
+          id: EventId.make(`event:handoff:${name}`),
+          type: "context-handoff.updated",
+          threadId,
+          runId: targetRunId,
+          occurredAt: now,
+          payload: {
+            id: ContextHandoffId.make(name),
+            threadId,
+            targetRunId,
+            fromProviderThreadIds: [],
+            toProviderThreadId,
+            coveredRunOrdinals: { from: 1, to: 1 },
+            strategy: "full_thread_summary",
+            status: "ready",
+            summaryMessageId: null,
+            summaryText: "Earlier work",
+            history: { messages: [], coverage: "", omittedItems: 1, omittedItemIds: omitted },
+            ...(status === undefined
+              ? {}
+              : {
+                  delivery: {
+                    nativeThreadId: "native:earlier",
+                    status,
+                    itemIds: [item.id],
+                    omittedItemIds: omitted,
+                  },
+                }),
+            createdByProviderInstanceId: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        });
+      }
+      const { contextHandoffs } = yield* store.getTurnStartContext(threadId, runId);
+      for (const [name, , , status, keepsHistory, keepsDelivery] of handoffCases) {
+        const read = contextHandoffs.find((handoff) => handoff.id === name)!;
+        assert.equal(read.summaryText, "Earlier work", name);
+        assert.deepEqual(read.history?.omittedItemIds, keepsHistory ? omitted : undefined, name);
+        assert.deepEqual(read.delivery?.omittedItemIds, keepsDelivery ? omitted : undefined, name);
+        if (status !== undefined) assert.deepEqual(read.delivery?.itemIds, [item.id], name);
+      }
     }).pipe(Effect.provide(layerDatabase)),
 );
 
