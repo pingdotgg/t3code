@@ -460,6 +460,8 @@ export function routeProviderEvent(
         },
       ];
     }
+    case "thread_model_selection.updated":
+      return [event.threadId === input.threadId, state];
     case "provider_thread.updated": {
       const belongs =
         state.ownedProviderThreadIds.has(event.providerThread.id) ||
@@ -587,9 +589,10 @@ export function routeProviderEvent(
       ];
     case "background_work.updated":
       return [state.ownedProviderTurns.has(event.providerTurnId), state];
+    case "background_work.lost":
     case "command_output.delta":
     case "prompt_suggestion.updated":
-      // The session manager serves these to clients directly; runs never see them.
+      // The session manager handles these itself; runs never see them.
       return [false, state];
     case "turn.terminal":
       return event.providerTurnId === state.rootProviderTurnId

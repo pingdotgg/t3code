@@ -28,6 +28,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthSettingsWriteScope,
   type KeybindingCommand,
+  type KeybindingShortcut,
   type KeybindingWhenNode,
   type ServerRemoveKeybindingInput,
   type ServerUpsertKeybindingInput,
@@ -86,6 +87,7 @@ import {
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   groupKeybindingRows,
+  shortcutToKeybindingParts,
   type KeybindingCommandOption,
   type KeybindingGroup,
   type KeybindingRow,
@@ -100,41 +102,34 @@ import { keybindingSearchAnchorId, useSearchableSetting } from "./settingsSearch
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { useAtomCommand } from "../../state/use-atom-command";
 
-function KeybindingPill({ value }: { value: string }) {
-  // A literal "+" key ends the value ("mod++") and splits into trailing empty strings,
-  // read back as one "+" key the way parseKeybindingShortcut does.
-  const tokens = value.split("+");
-  const endsWithPlusKey = tokens.at(-1) === "";
-  while (tokens.at(-1) === "") tokens.pop();
-  if (endsWithPlusKey) tokens.push("+");
-  // React keys stay unique when a part repeats.
-  const seenParts = new Map<string, number>();
-  const parts = tokens.map((part) => {
-    const seen = seenParts.get(part) ?? 0;
-    seenParts.set(part, seen + 1);
-    return { part, key: seen === 0 ? part : `${part}-${seen}` };
-  });
+function KeybindingPill({ shortcut }: { shortcut: KeybindingShortcut }) {
+  const isMac = navigator.platform.toLowerCase().includes("mac");
+  const parts = shortcutToKeybindingParts(shortcut);
+  const modifierParts = parts.slice(0, -1);
+  const keyPart = parts.at(-1);
+
   return (
     <KbdGroup>
-      {parts.map(({ part, key }) => (
-        <Kbd key={key}>
+      {modifierParts.map((part) => (
+        <Kbd key={part}>
           {part === "mod"
-            ? navigator.platform.toLowerCase().includes("mac")
+            ? isMac
               ? "⌘"
               : "Ctrl"
             : part === "shift"
               ? "⇧"
               : part === "alt"
-                ? navigator.platform.toLowerCase().includes("mac")
+                ? isMac
                   ? "⌥"
                   : "Alt"
                 : part === "ctrl"
                   ? "⌃"
-                  : part.length === 1
-                    ? part.toUpperCase()
-                    : part}
+                  : part}
         </Kbd>
       ))}
+      {keyPart !== undefined ? (
+        <Kbd key="key">{keyPart.length === 1 ? keyPart.toUpperCase() : keyPart}</Kbd>
+      ) : null}
     </KbdGroup>
   );
 }
@@ -921,7 +916,7 @@ function KeybindingKeyControl({
               <T context="keyboard shortcut with no key assigned">Unassigned</T>
             </span>
           ) : (
-            <KeybindingPill value={row.key} />
+            <KeybindingPill shortcut={row.binding.shortcut} />
           )}
         </button>
       ) : (

@@ -290,25 +290,31 @@ function claudeAutoCompactThreshold(autoCompactWindow: string, maxTokens: number
     : {};
 }
 
+function optionalClaudeUsageTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.round(value)
+    : undefined;
+}
+
 function claudeMessageInputTokens(usage: {
-  readonly input_tokens: number;
-  readonly cache_creation_input_tokens?: number | null;
-  readonly cache_read_input_tokens?: number | null;
+  readonly input_tokens?: number | null | undefined;
+  readonly cache_creation_input_tokens?: number | null | undefined;
+  readonly cache_read_input_tokens?: number | null | undefined;
 }): number {
   return (
-    usage.input_tokens +
-    (usage.cache_creation_input_tokens ?? 0) +
-    (usage.cache_read_input_tokens ?? 0)
+    (optionalClaudeUsageTokenCount(usage.input_tokens) ?? 0) +
+    (optionalClaudeUsageTokenCount(usage.cache_creation_input_tokens) ?? 0) +
+    (optionalClaudeUsageTokenCount(usage.cache_read_input_tokens) ?? 0)
   );
 }
 
 export function claudeProviderTurnTokenUsage(
   usage: {
-    readonly input_tokens: number;
-    readonly cache_creation_input_tokens?: number | null;
-    readonly cache_read_input_tokens?: number | null;
-    readonly cache_creation?: ClaudeCacheCreation | null;
-    readonly output_tokens: number;
+    readonly input_tokens?: number | null | undefined;
+    readonly cache_creation_input_tokens?: number | null | undefined;
+    readonly cache_read_input_tokens?: number | null | undefined;
+    readonly cache_creation?: ClaudeCacheCreation | null | undefined;
+    readonly output_tokens?: number | null | undefined;
   },
   maxTokens: number | null,
   updatedAt: string,
@@ -316,7 +322,8 @@ export function claudeProviderTurnTokenUsage(
   requestedAt?: DateTime.Utc,
 ) {
   const inputTokens = claudeMessageInputTokens(usage);
-  const outputTokens = usage.output_tokens;
+  const outputTokens = optionalClaudeUsageTokenCount(usage.output_tokens) ?? 0;
+  const cachedInputTokens = optionalClaudeUsageTokenCount(usage.cache_read_input_tokens) ?? 0;
   const promptCacheTtlMs = claudePromptCacheTtlMs(usage.cache_creation);
   // The cache lifetime starts with the request, not when its response ends.
   const promptCacheExpiresAt =
@@ -327,7 +334,7 @@ export function claudeProviderTurnTokenUsage(
     usedTokens: inputTokens + outputTokens,
     maxTokens,
     inputTokens,
-    cachedInputTokens: usage.cache_read_input_tokens ?? 0,
+    cachedInputTokens,
     outputTokens,
     reasoningOutputTokens: 0,
     ...(promptCacheTtlMs === undefined ? {} : { promptCacheTtlMs }),
@@ -343,20 +350,30 @@ type ClaudeMessageUsage = Parameters<typeof claudeProviderTurnTokenUsage>[0];
 function mergeClaudeStreamUsage(
   current: ClaudeMessageUsage,
   delta: {
-    readonly input_tokens?: number | null;
-    readonly cache_creation_input_tokens?: number | null;
-    readonly cache_read_input_tokens?: number | null;
-    readonly output_tokens: number;
+    readonly input_tokens?: number | null | undefined;
+    readonly cache_creation_input_tokens?: number | null | undefined;
+    readonly cache_read_input_tokens?: number | null | undefined;
+    readonly output_tokens?: number | null | undefined;
   },
 ): ClaudeMessageUsage {
   return {
     ...current,
-    input_tokens: delta.input_tokens ?? current.input_tokens,
+    input_tokens:
+      optionalClaudeUsageTokenCount(delta.input_tokens) ??
+      optionalClaudeUsageTokenCount(current.input_tokens) ??
+      0,
     cache_creation_input_tokens:
-      delta.cache_creation_input_tokens ?? current.cache_creation_input_tokens ?? null,
+      optionalClaudeUsageTokenCount(delta.cache_creation_input_tokens) ??
+      optionalClaudeUsageTokenCount(current.cache_creation_input_tokens) ??
+      null,
     cache_read_input_tokens:
-      delta.cache_read_input_tokens ?? current.cache_read_input_tokens ?? null,
-    output_tokens: delta.output_tokens,
+      optionalClaudeUsageTokenCount(delta.cache_read_input_tokens) ??
+      optionalClaudeUsageTokenCount(current.cache_read_input_tokens) ??
+      null,
+    output_tokens:
+      optionalClaudeUsageTokenCount(delta.output_tokens) ??
+      optionalClaudeUsageTokenCount(current.output_tokens) ??
+      0,
   };
 }
 export const CLAUDE_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CLAUDE_PROVIDER);
@@ -7117,13 +7134,15 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           nativeThreadId: string,
           options?: {
             readonly status?: OrchestrationV2ProviderThread["status"];
+            /** The process exited on its own, taking work whose outcome had not reached the agent. */
+            readonly exitedUnexpectedly?: boolean;
           },
         ) {
-          const hadRoster =
-            rosterForNativeThread(
-              yield* Ref.get(pendingBackgroundTasksByNativeThread),
-              nativeThreadId,
-            ).size > 0;
+          const roster = rosterForNativeThread(
+            yield* Ref.get(pendingBackgroundTasksByNativeThread),
+            nativeThreadId,
+          );
+          const hadRoster = roster.size > 0;
           const remembered = (yield* Ref.get(lastProviderThreadByNativeThread)).get(nativeThreadId);
           const hadPersistedRoster = (remembered?.pendingBackgroundTasks?.length ?? 0) > 0;
           const priorOpaqueTombstones = taskIdSetForNativeThread(
@@ -7142,6 +7161,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const preservedOpaqueTombstones = [...priorOpaqueTombstones].filter((taskId) =>
             bufferedTaskNotificationIds.has(taskId),
           );
+          // Idle outcomes reach Claude only through a wake; a requested one still delivers its buffer.
+          const wakeRequested = (yield* Ref.get(requestedContinuations)).has(nativeThreadId);
+          const lostBackgroundTasks =
+            options?.exitedUnexpectedly === true
+              ? [
+                  ...claudePendingBackgroundTasksFromRoster(
+                    roster,
+                    taskIdSetForNativeThread(
+                      yield* Ref.get(awaitedBackgroundTasksByNativeThread),
+                      nativeThreadId,
+                    ),
+                  ),
+                  ...(yield* owedWakeTasksForNativeThread(nativeThreadId)),
+                ].filter((task) => !(wakeRequested && bufferedTaskNotificationIds.has(task.taskId)))
+              : [];
           scheduledWakeupsByNativeThread.delete(nativeThreadId);
           possibleEarlyWakeNativeThreads.delete(nativeThreadId);
           yield* clearPendingBackgroundTasksForNativeThread(nativeThreadId);
@@ -7160,10 +7194,19 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               preservedOpaqueTombstones,
             );
           }
-          if (!hadRoster && !hadPersistedRoster) {
+          if (remembered === undefined) {
             return;
           }
-          if (remembered === undefined) {
+          if (lostBackgroundTasks.length > 0 && remembered.appThreadId !== null) {
+            yield* emitProviderEvent({
+              type: "background_work.lost",
+              driver: CLAUDE_PROVIDER,
+              threadId: remembered.appThreadId,
+              providerThreadId: remembered.id,
+              tasks: lostBackgroundTasks,
+            });
+          }
+          if (!hadRoster && !hadPersistedRoster) {
             return;
           }
           const activeContext = yield* Ref.get(activeTurn);
@@ -10051,7 +10094,9 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   }),
             });
           } else {
-            yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId);
+            yield* resetBackgroundTaskStateForNativeThreadProcess(closedQuery.nativeThreadId, {
+              exitedUnexpectedly: !interrupted,
+            });
           }
           // Preserve buffered outcomes before Stop clears the wake buffer.
           yield* endSubagentsOfClosedQuery({
@@ -11025,14 +11070,13 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               reasoning.messageId = event.message.id;
               reasoning.streamBlocks.clear();
               context.assistant.streamBlocks.clear();
-              const usage: ClaudeMessageUsage | undefined = event.message.usage;
-              context.streamUsage =
-                usage === undefined ? null : { messageId: event.message.id, usage };
-              if (usage !== undefined) yield* emitContextUsage(context, usage, true);
+              const usage: ClaudeMessageUsage = event.message.usage ?? {};
+              context.streamUsage = { messageId: event.message.id, usage };
+              yield* emitContextUsage(context, usage, true);
             } else if (event.type === "message_delta") {
-              const usage: typeof event.usage | undefined = event.usage;
+              const usage: typeof event.usage | null | undefined = event.usage;
               const stream = context.streamUsage;
-              if (stream?.usage && usage !== undefined) {
+              if (stream?.usage && usage != null) {
                 stream.usage = mergeClaudeStreamUsage(stream.usage, usage);
                 yield* emitContextUsage(context, stream.usage);
               }
@@ -11499,7 +11543,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             // CLI-generated <synthetic> frames report zero usage, not context usage.
             if (
               message.parent_tool_use_id === null &&
-              message.message.usage !== undefined &&
+              message.message.usage != null &&
               message.message.model !== "<synthetic>"
             ) {
               const snapshotUsage = message.message.usage;
@@ -11514,7 +11558,10 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               ) {
                 stream.usage = {
                   ...snapshotUsage,
-                  output_tokens: Math.max(snapshotUsage.output_tokens, stream.usage.output_tokens),
+                  output_tokens: Math.max(
+                    optionalClaudeUsageTokenCount(snapshotUsage.output_tokens) ?? 0,
+                    optionalClaudeUsageTokenCount(stream.usage.output_tokens) ?? 0,
+                  ),
                 };
                 yield* emitContextUsage(context, stream.usage);
               }
@@ -13232,6 +13279,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
           const closedExistingNativeThreadId = existing !== null ? existing.nativeThreadId : null;
           clearedNativeSessions.delete(nativeThreadId);
           if (existing !== null) {
+            existing.stopping = true;
             yield* existing.query.close.pipe(Effect.ignore);
             if (existing.nativeThreadId !== nativeThreadId) {
               yield* clearWakeStateForNativeThread(existing.nativeThreadId);
