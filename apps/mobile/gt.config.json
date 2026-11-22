@@ -1,6 +1,6 @@
 {
   "defaultLocale": "en",
-  "locales": ["es", "zh", "pt-BR", "fr", "de", "ja", "ko", "ru", "sv"],
+  "locales": ["es", "zh", "pt-BR", "fr", "de", "ja", "ko", "ru", "sv", "vi"],
   "src": [
     "src/**/*.{ts,tsx}",
     "../../packages/client-runtime/src/**/*.{ts,tsx}",
