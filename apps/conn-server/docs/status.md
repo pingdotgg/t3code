@@ -89,6 +89,28 @@ Nothing here was skipped without asking. RPC **203 of 251** after this step; `/m
   `CodexAdapterV2.uploadFeedback` (`classification: "bug"`, `includeLogs: true`, `reason`,
   `threadId`).
 
+## Attention events for iOS push (2026-11-22)
+
+The server side of nckrtl/conn#229, section 7 step 1: the server reports when a thread needs
+the user, and Orbit sends the push. Off unless `CONN_ATTENTION_PUSH=1`; with it off, nothing
+is written.
+
+- **Contract.** `conn-contract/src/attention.rs`: `ConnAttentionKind`, `ConnAttentionEvent`
+  (version 1), the body the Gateway takes. The title (64 characters at most) is the only
+  content.
+- **Emit points.** `conn-engine/src/attention.rs`: the commit that changes a shell row writes
+  `attention` (`approval`, `input`, `turn_finished`, `turn_failed`) or `attention_cleared` to
+  the `attention_outbox` table in the same transaction. The desktop's rules apply: top-level
+  threads only, snooze, the Monitor hold, the 5 s grace for a background wake, each key once.
+- **Sender.** `conn-server/src/attention.rs`: drains the outbox with backoff 1 s, 5 s, 30 s,
+  then every 5 minutes; drops events older than one hour; resumes after a restart. Container
+  servers send `POST /api/v1/conn/managed/attention` through the managed Gateway client.
+- **Not built.** Native servers (mini, nick.local) have no Gateway client:
+  `attention::native_sender` is a TODO, and a native server keeps the events off. The
+  shell's `latestRunBackgroundWake` is always false here, so the grace and the Monitor hold
+  wait on that field. Proof: `cargo test` (the attention tests in conn-contract, conn-support,
+  conn-engine and conn-server), with a fake sender; no live Gateway yet.
+
 ## T3 state import (2026-11-21)
 
 A Conn Server that starts in a T3 server's state folder has the same threads (Nick,

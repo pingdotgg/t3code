@@ -5772,3 +5772,90 @@ async fn upload_feedback_needs_a_running_session_that_supports_it() {
         "The provider session is no longer running. Send a message first."
     );
 }
+
+/// Attention events (`attention.rs`) through real commands and the fake provider.
+#[tokio::test(flavor = "current_thread")]
+async fn attention_events_follow_approvals_and_turn_ends() {
+    let db = TempDb::new("attention");
+    let provider = Arc::new(FakeProvider::new("claudeAgent"));
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![provider.clone()];
+    config.attention = true;
+    let engine = SqliteEngine::open(config).unwrap();
+    let signal = engine.attention_signal().expect("attention on");
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+
+    dispatch(&engine, message("t1", "c2", "ask")).await;
+    loop {
+        let item = next(&mut thread).await;
+        if item["event"]["type"] == "runtime-request.updated" {
+            break;
+        }
+    }
+    timeout(Duration::from_secs(5), signal.notified())
+        .await
+        .expect("the commit that wrote the event raises the signal");
+    dispatch(
+        &engine,
+        json!({"type": "runtime-request.respond", "commandId": "c3", "threadId": "t1",
+        "requestId": "request:1", "decision": "accept"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    dispatch(&engine, message("t1", "c4", "fail")).await;
+    until_run_ends(&mut thread).await;
+
+    let rows = engine.attention_due(u64::MAX >> 2, 100).await.unwrap();
+    let seen: Vec<(String, Option<&str>, Option<&str>)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row.event_type.as_str().to_owned(),
+                row.kind.map(|k| k.as_str()),
+                row.request_id.as_deref(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        seen,
+        vec![
+            ("attention".into(), Some("approval"), Some("request:1")),
+            ("attention_cleared".into(), None, Some("request:1")),
+            ("attention".into(), Some("turn_finished"), None),
+            ("attention".into(), Some("turn_failed"), None),
+        ]
+    );
+    assert!(rows.iter().all(|row| row.thread_id == "t1"));
+    assert_eq!(rows[0].thread_title.as_deref(), Some("New thread"));
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn attention_is_off_by_default() {
+    let db = TempDb::new("attention-off");
+    let (engine, _) = open(&db);
+    assert!(engine.attention_signal().is_none());
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "fail")).await;
+    until_run_ends(&mut thread).await;
+    assert!(
+        engine
+            .attention_due(u64::MAX >> 2, 100)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}

@@ -21,6 +21,7 @@ use std::sync::OnceLock;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
+pub mod attention;
 mod generated;
 pub mod ids;
 pub mod support;

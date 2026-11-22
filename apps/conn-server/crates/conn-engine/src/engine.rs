@@ -71,6 +71,9 @@ pub struct EngineConfig {
     /// (`CONN_SERVER_INERT`): its runs stay as imported, so nothing continues or touches a
     /// workspace the original still owns.
     pub recover_runs: bool,
+    /// Write attention events for iOS push to the outbox (`attention.rs`). Off by default:
+    /// with it off, nothing is written. The server's sender drains them.
+    pub attention: bool,
 }
 
 /// See [`EngineConfig::command_output_tap`].
@@ -130,6 +133,7 @@ impl EngineConfig {
             command_output_tap: None,
             clock: Arc::new(crate::SystemClock),
             recover_runs: true,
+            attention: false,
         }
     }
 }
@@ -146,6 +150,8 @@ impl std::fmt::Debug for SqliteEngine {
 
 pub(crate) struct Inner {
     store: Arc<Mutex<Store>>,
+    /// Raised after a commit wrote an attention event; `None` when they are off.
+    attention: Option<Arc<tokio::sync::Notify>>,
     /// The latest committed sequence. Stream tasks wake on it and read from the store.
     pub(crate) notify: watch::Sender<u64>,
     pub(crate) providers: conn_provider::ProviderSet,
@@ -268,6 +274,10 @@ impl SqliteEngine {
         let mut store = Store::open(&config.database)?;
         store.set_clock(config.clock.clone());
         store.generates_titles = config.title_generator.is_some();
+        let attention = config
+            .attention
+            .then(|| Arc::new(tokio::sync::Notify::new()));
+        store.attention = attention.clone();
         let (unfinished, pending_rollbacks) = if config.recover_runs {
             (store.unfinished_runs()?, store.pending_rollbacks()?)
         } else {
@@ -298,6 +308,7 @@ impl SqliteEngine {
         let engine = Self {
             inner: Arc::new(Inner {
                 store: Arc::new(Mutex::new(store)),
+                attention,
                 notify: watch::Sender::new(high),
                 providers: config
                     .provider_set
@@ -395,6 +406,61 @@ impl SqliteEngine {
                 )
             })
             .collect()
+    }
+
+    /// Raised after each commit that wrote an attention event; `None` when they are off
+    /// ([`EngineConfig::attention`]).
+    pub fn attention_signal(&self) -> Option<Arc<tokio::sync::Notify>> {
+        self.inner.attention.clone()
+    }
+
+    /// Now, by the engine's clock, in milliseconds since the epoch.
+    pub fn now_millis(&self) -> u64 {
+        self.inner.clock.now_millis()
+    }
+
+    /// Up to `limit` attention events due at `now_ms`, oldest due first.
+    pub async fn attention_due(
+        &self,
+        now_ms: u64,
+        limit: usize,
+    ) -> Result<Vec<crate::AttentionOutboxRow>, String> {
+        self.inner
+            .db(move |store| crate::attention::due(store.raw(), now_ms, limit))
+            .await
+    }
+
+    /// When the next attention event is due, if one waits.
+    pub async fn attention_next_due(&self) -> Result<Option<u64>, String> {
+        self.inner
+            .db(|store| crate::attention::next_due(store.raw()))
+            .await
+    }
+
+    /// Removes an event the Gateway took.
+    pub async fn attention_delivered(&self, outbox_id: i64) -> Result<(), String> {
+        self.inner
+            .db(move |store| crate::attention::delivered(store.raw(), outbox_id))
+            .await
+    }
+
+    /// Holds an event until `at_ms`, after `attempts` failed sends.
+    pub async fn attention_retry(
+        &self,
+        outbox_id: i64,
+        attempts: u32,
+        at_ms: u64,
+    ) -> Result<(), String> {
+        self.inner
+            .db(move |store| crate::attention::retry(store.raw(), outbox_id, attempts, at_ms))
+            .await
+    }
+
+    /// Drops the events written before `before_ms`. Returns how many.
+    pub async fn attention_drop_older(&self, before_ms: u64) -> Result<usize, String> {
+        self.inner
+            .db(move |store| crate::attention::drop_older(store.raw(), before_ms))
+            .await
     }
 
     /// The project id the engine gives a configured folder.

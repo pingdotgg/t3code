@@ -19,7 +19,7 @@ pub(crate) const ACTIVE_WORK_STATUSES: [&str; 3] = ["pending", "running", "waiti
 const SETTLED_RUN_STATUSES: [&str; 5] =
     ["cancelled", "completed", "failed", "interrupted", "waiting"];
 /// `PULL_REQUEST_WATCH_TASK_ID`.
-const PULL_REQUEST_WATCH_TASK_ID: &str = "pull-request-watch:";
+pub(crate) const PULL_REQUEST_WATCH_TASK_ID: &str = "pull-request-watch:";
 
 /// What `derivePendingBackgroundWork` reads.
 pub(crate) struct BackgroundInput<'a> {

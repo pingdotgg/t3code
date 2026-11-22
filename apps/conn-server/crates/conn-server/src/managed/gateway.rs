@@ -61,6 +61,13 @@ pub trait Gateway: Send + Sync {
         socket_id: String,
         channel_name: String,
     ) -> BoxFuture<'static, Result<Value, GatewayError>>;
+    /// `POST /attention`: one attention event for iOS push (`crate::attention`). A 2xx
+    /// answer, for a new or a repeated event, is success whatever its body.
+    fn attention(&self, _body: Value) -> BoxFuture<'static, Result<Value, GatewayError>> {
+        Box::pin(std::future::ready(Err(GatewayError::Transport(
+            "attention is not supported".into(),
+        ))))
+    }
 }
 
 /// The real Gateway over HTTPS.
@@ -185,6 +192,10 @@ impl Gateway for HttpsGateway {
             Envelope::Bare,
         )
     }
+
+    fn attention(&self, body: Value) -> BoxFuture<'static, Result<Value, GatewayError>> {
+        self.post_with("/attention", body, Envelope::Any)
+    }
 }
 
 /// A rustls client that trusts only the certificates in `ca_pem`, the lab Orbit CA.
@@ -268,8 +279,13 @@ async fn post_json(
         .await
         .map_err(|_| transport("answer"))?
         .to_bytes();
-    let answer: Value =
-        serde_json::from_slice(&bytes).map_err(|_| transport("answer is not JSON"))?;
+    let answer: Value = match serde_json::from_slice(&bytes) {
+        Ok(answer) => answer,
+        // A route that needs only the status may answer 2xx with no JSON; an error without
+        // JSON still has its status.
+        Err(_) if envelope == Envelope::Any => Value::Null,
+        Err(_) => return Err(transport("answer is not JSON")),
+    };
     decode_answer(status, answer, envelope)
 }
 
@@ -280,6 +296,8 @@ pub enum Envelope {
     Data,
     /// The bare object: `/broadcasting/auth` answers `{"auth": …}`, as Pusher expects.
     Bare,
+    /// Only the status counts: `/attention`.
+    Any,
 }
 
 /// The payload of a 2xx answer, or the error code of any other.
@@ -296,6 +314,7 @@ pub fn decode_answer(
                 .ok_or_else(|| GatewayError::Transport("answer has no data".into())),
             Envelope::Bare if answer.is_object() => Ok(answer),
             Envelope::Bare => Err(GatewayError::Transport("answer is not an object".into())),
+            Envelope::Any => Ok(answer),
         };
     }
     let code = answer
@@ -319,6 +338,17 @@ mod tests {
         assert_eq!(
             decode_answer(200, authority, Envelope::Data),
             Ok(json!({"kind": "current"}))
+        );
+        assert_eq!(
+            decode_answer(200, Value::Null, Envelope::Any),
+            Ok(Value::Null)
+        );
+        assert_eq!(
+            decode_answer(429, Value::Null, Envelope::Any),
+            Err(GatewayError::Refused {
+                status: 429,
+                code: "unknown".into()
+            })
         );
         let refused = json!({"status": 403, "error": {"code": "conn.managed_target_identity", "message": "m"}});
         assert_eq!(

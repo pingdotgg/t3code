@@ -262,6 +262,8 @@ pub(crate) struct Store {
     /// Which runs' provider starts were accepted or abandoned. In memory: a restart starts
     /// every active run again, so nothing here outlives the process.
     starts: StartLedger,
+    /// Set when attention events are on (`attention.rs`); raised after a commit that wrote one.
+    pub(crate) attention: Option<std::sync::Arc<tokio::sync::Notify>>,
 }
 
 /// The turn starts a Stop must know about, kept beside the store so a command decides under
@@ -294,6 +296,7 @@ impl Store {
         )
         .map_err(err)?;
         conn.execute_batch(SCHEMA).map_err(err)?;
+        conn.execute_batch(crate::attention::SCHEMA).map_err(err)?;
         migrate(&conn)?;
         let high: i64 = conn
             .query_row(
@@ -319,6 +322,7 @@ impl Store {
             clock: std::sync::Arc::new(crate::clock::SystemClock),
             generates_titles: false,
             starts: StartLedger::default(),
+            attention: None,
         })
     }
 
@@ -332,6 +336,11 @@ impl Store {
         stmt.query_map(args, |row| row.get::<_, String>(3))
             .and_then(|rows| rows.collect())
             .unwrap_or_default()
+    }
+
+    /// The connection, outside any write: the attention outbox reads and deletes its own rows.
+    pub(crate) fn raw(&self) -> &Connection {
+        &self.conn
     }
 
     pub(crate) fn set_clock(&mut self, clock: std::sync::Arc<dyn crate::clock::Clock>) {
@@ -357,7 +366,11 @@ impl Store {
     pub(crate) fn tx(&mut self) -> StoreResult<Tx<'_>> {
         let start = self.next_seq;
         let generates_titles = self.generates_titles;
+        let now_ms = self.clock.now_millis();
         Ok(Tx {
+            attention: self.attention.clone(),
+            attention_written: false,
+            now_ms,
             generates_titles,
             starts: &mut self.starts,
             starts_changed: None,
@@ -365,7 +378,7 @@ impl Store {
             store_seq: &mut self.next_seq,
             next_seq: start,
             start,
-            now: conn_support::time::iso_from_ms(self.clock.now_millis()),
+            now: conn_support::time::iso_from_ms(now_ms),
             touched: Vec::new(),
         })
     }
@@ -1023,6 +1036,10 @@ pub(crate) struct Tx<'a> {
     starts: &'a mut StartLedger,
     /// The ledger as this write changed it; it replaces the store's on commit only.
     starts_changed: Option<StartLedger>,
+    /// See [`Store::attention`].
+    attention: Option<std::sync::Arc<tokio::sync::Notify>>,
+    attention_written: bool,
+    now_ms: u64,
 }
 
 impl Tx<'_> {
@@ -1691,6 +1708,19 @@ impl Tx<'_> {
                 if previous.as_deref() == Some(text.as_str()) {
                     continue;
                 }
+                if self.attention.is_some() {
+                    let before = previous
+                        .as_deref()
+                        .and_then(|p| serde_json::from_str(p).ok());
+                    self.attention_written |= crate::attention::record(
+                        &self.tx,
+                        &thread_id,
+                        before.as_ref(),
+                        &row,
+                        self.now_ms,
+                        &self.now,
+                    )?;
+                }
                 self.tx
                     .execute(
                         "UPDATE threads SET shell = ?2 WHERE id = ?1",
@@ -1725,6 +1755,11 @@ impl Tx<'_> {
         }
         self.tx.commit().map_err(err)?;
         *self.store_seq = self.next_seq;
+        if self.attention_written
+            && let Some(attention) = &self.attention
+        {
+            attention.notify_one();
+        }
         if let Some(starts) = self.starts_changed.take() {
             *self.starts = starts;
         }

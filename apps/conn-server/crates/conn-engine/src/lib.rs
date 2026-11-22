@@ -18,6 +18,7 @@
 
 use std::{future::Future, pin::Pin};
 
+mod attention;
 mod background;
 mod background_wait;
 mod calls;
@@ -67,6 +68,7 @@ mod transcript;
 pub use conn_provider::tool_output;
 mod visibility;
 
+pub use attention::{AttentionOutboxRow, RELEASED_COMPLETION_GRACE_MS};
 pub use background_wait::{BackgroundWait, BackgroundWaitError};
 pub use clock::{Clock, ManualClock, SystemClock};
 pub use engine::{

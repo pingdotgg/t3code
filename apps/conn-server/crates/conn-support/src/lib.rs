@@ -33,11 +33,51 @@ pub fn uuid_v4() -> String {
         .to_string()
 }
 
+/// A ULID for `ms` milliseconds since the epoch: 48 bits of time, then 80 random bits from the
+/// OS random source, in Crockford base32 (26 characters). Ids made later sort later.
+///
+/// # Panics
+///
+/// When the OS random source fails, as [`uuid_v4`].
+pub fn ulid(ms: u64) -> String {
+    let mut random = [0u8; 10];
+    getrandom::fill(&mut random).expect("the OS random source is available");
+    ulid_from(ms, random)
+}
+
+fn ulid_from(ms: u64, random: [u8; 10]) -> String {
+    const ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+    let mut value = u128::from(ms & 0xFFFF_FFFF_FFFF) << 80;
+    for (i, byte) in random.iter().enumerate() {
+        value |= u128::from(*byte) << (8 * (9 - i));
+    }
+    (0..26)
+        .rev()
+        .map(|i| char::from(ALPHABET[((value >> (5 * i)) & 31) as usize]))
+        .collect()
+}
+
 #[cfg(test)]
 mod sealed_probe;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ulids_encode_time_then_randomness() {
+        // The time of the ULID spec's example id, 01ARYZ6S41…
+        assert_eq!(
+            super::ulid_from(1_469_918_176_385, [0; 10]),
+            "01ARYZ6S410000000000000000"
+        );
+        assert_eq!(
+            super::ulid_from(0, [0xFF; 10]),
+            "0000000000ZZZZZZZZZZZZZZZZ"
+        );
+        let (a, b) = (super::ulid(1_000), super::ulid(2_000));
+        assert_eq!(a.len(), 26);
+        assert!(a < b, "{a} {b}");
+    }
+
     #[test]
     fn uuids_have_the_v4_shape() {
         let id = super::uuid_v4();

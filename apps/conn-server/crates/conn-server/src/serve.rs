@@ -333,6 +333,23 @@ pub async fn serve_with_instances(
     config.turn_observer = Some(host.clone());
     config.checkpoints = !inert;
     config.recover_runs = !inert;
+    // Attention events for iOS push: off unless asked for, and only where a sender exists
+    // (`attention.rs`). A container server sends through its managed Gateway client.
+    let attention = !inert && crate::attention::enabled_by_env();
+    let native_attention = if attention && provision.is_none() {
+        let sender = crate::attention::native_sender();
+        if sender.is_none() {
+            eprintln!(
+                "conn-server: {} is set, but a native server has no attention sender yet; \
+                 attention events stay off",
+                crate::attention::ENABLE_VAR
+            );
+        }
+        sender
+    } else {
+        None
+    };
+    config.attention = attention && (provision.is_some() || native_attention.is_some());
     let text_generators = Arc::new(crate::text_generation::TextGenerators::for_environment(
         environment.clone(),
     ));
@@ -340,10 +357,11 @@ pub async fn serve_with_instances(
         crate::text_generation::title::Titles::new(text_generators.clone())
             .with_providers(providers.clone(), Some(state_dir.join("attachments"))),
     ));
-    let engine: Arc<dyn Engine> = Arc::new(or_exit(
+    let sqlite_engine = Arc::new(or_exit(
         SqliteEngine::open(config),
         "cannot open the engine",
     ));
+    let engine: Arc<dyn Engine> = sqlite_engine.clone();
     let secrets = conn_features::secrets::SecretRequests::new(
         &state_dir,
         engine.clone(),
@@ -446,9 +464,21 @@ pub async fn serve_with_instances(
     }
     // `model-manifest.json`, fetched and cached as the T3 server's provider checks do.
     crate::model_manifest::start(state_dir.clone(), environment.clone());
+    // `spawn` starts nothing when the engine has attention events off.
     let managed_server = match provision {
-        Some(provision) => Some(start_managed(provision, &environment, &state).await),
-        None => None,
+        Some(provision) => {
+            Some(start_managed(provision, &environment, &state, sqlite_engine.clone()).await)
+        }
+        None => {
+            if let Some(sender) = native_attention {
+                crate::attention::spawn(
+                    sqlite_engine.clone(),
+                    sender,
+                    environment.environment_id().to_owned(),
+                );
+            }
+            None
+        }
     };
     if !is_desktop && managed_server.is_none() {
         // One code, valid 24 hours, spent by the first device that pairs. A managed target
@@ -509,6 +539,7 @@ async fn start_managed(
     provision: crate::managed::Provision,
     environment: &Environment,
     state: &crate::AppState,
+    engine: Arc<SqliteEngine>,
 ) -> tokio::task::JoinHandle<()> {
     use crate::managed::{self, gateway::Gateway};
     if provision.environment_id != environment.environment_id() {
@@ -522,6 +553,11 @@ async fn start_managed(
     let tls = or_exit(managed::gateway::lab_tls(&provision.ca_pem), "managed CA");
     let shared = managed::Shared::new(provision.environment_id.clone(), provision.generation);
     shared.spawn(gateway.clone());
+    crate::attention::spawn(
+        engine,
+        Arc::new(crate::attention::ManagedSender::new(gateway.clone())),
+        provision.environment_id.clone(),
+    );
     tokio::spawn(managed::notices::run(
         shared.clone(),
         gateway.clone(),
