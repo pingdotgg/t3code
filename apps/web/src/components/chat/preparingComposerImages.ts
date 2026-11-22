@@ -192,7 +192,14 @@ export function holdComposerSend(
     });
     const stopWatchingDraft = useComposerDraftStore.subscribe((state) => {
       const next = state.getComposerDraft(draftTarget);
-      if (!preparedImagesJoiningDraft && composerDraftContentChanged(draft, next)) {
+      if (
+        !preparedImagesJoiningDraft &&
+        (composerDraftContentChanged(draft, next) ||
+          draft?.modelSelectionByProvider !== next?.modelSelectionByProvider ||
+          draft?.activeProvider !== next?.activeProvider ||
+          draft?.runtimeMode !== next?.runtimeMode ||
+          draft?.interactionMode !== next?.interactionMode)
+      ) {
         settle({ status: "cancelled" });
       }
       draft = next;

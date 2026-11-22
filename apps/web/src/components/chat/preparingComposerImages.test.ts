@@ -1,5 +1,5 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProviderDriverKind, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
 
 import { composerTargetKey, useComposerDraftStore } from "../../composerDraftStore";
@@ -41,6 +41,10 @@ it("holds a message send until its images join the draft, and cancels on edit, c
 
   for (const cancel of [
     () => drafts.setPrompt(draftTarget, "check again"),
+    () =>
+      drafts.setProviderModelOptions(draftTarget, ProviderDriverKind.make("codex"), [
+        { id: "reasoningEffort", value: "high" },
+      ]),
     () => cancelHeldComposerSend(target),
     () => addPreparingComposerImages(target, [preparingImage("added-mid-wait")]),
     () => removePreparingComposerImages(target, new Set(["later"]), { cancelSubmission: true }),
