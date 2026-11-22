@@ -1,7 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off - plain local servers stand in for LAN services.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, expect, it } from "@effect/vitest";
-import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  EnvironmentId,
+  type EnvironmentTheme as EnvironmentThemeContract,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
+import { OCEAN_THEME } from "@t3tools/shared/themePalettes";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
@@ -20,6 +27,8 @@ import * as NodeURL from "node:url";
 
 import { resolveAttachmentPathById } from "../attachmentStore.ts";
 import * as ServerConfig from "../config.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as HtmlRender from "./HtmlRender.ts";
 import { HtmlRenderBrowserError } from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
@@ -655,5 +664,152 @@ fs.createReadStream(null, { fd: 3 }).on("end", quit).on("data", (chunk) => {
       expect(requests).toEqual([]);
       expect(datagrams).toEqual([]);
     }),
+  );
+
+  it.effect(
+    "auto-sizes publish height when height is omitted and records omitted height for recovery",
+    () =>
+      Effect.gen(function* () {
+        const htmlRender = yield* HtmlRender.HtmlRender;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const threadId = ThreadId.make("thread-auto-height");
+        const page = { html: "<p>Auto</p>", title: "Auto" };
+        const published = yield* htmlRender.publish({ ...page, threadId });
+        expect(published.height).toBe(480);
+        expect(yield* mcpSessions.takeHtmlRender(threadId, page)).toEqual(published);
+      }).pipe(Effect.provide(layerTest)),
+  );
+
+  describe.skipIf(HostProcess.Platform.defaultValue() === "win32")(
+    "active theme defaulting in preview",
+    () => {
+      it.live(
+        "defaults preview appearance and colors to the active theme, with explicit override",
+        () =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const path = yield* Path.Path;
+            const directory = yield* fileSystem.makeTempDirectoryScoped({
+              prefix: "t3-theme-preview-",
+            });
+            const executable = path.join(directory, "chrome-headless-shell");
+            const capturedLog = path.join(directory, "captured.json");
+            yield* fileSystem.writeFileString(
+              executable,
+              `#!${process.execPath}
+const fs = require("node:fs");
+const captured = {};
+const reply = (message) => fs.writeSync(4, JSON.stringify(message) + "\\0");
+const results = {
+  "Target.createBrowserContext": { browserContextId: "context" },
+  "Target.createTarget": { targetId: "page" },
+  "Target.attachToTarget": { sessionId: "session" },
+  "Runtime.evaluate": { result: { value: 222 } },
+  "Page.captureScreenshot": { data: "iVBORw0KGgo=" },
+};
+let buffered = "";
+fs.createReadStream(null, { fd: 3 }).on("end", () => process.exit(0)).on("data", (chunk) => {
+  const messages = (buffered + chunk).split("\\0");
+  buffered = messages.pop();
+  for (const { id, method, params, sessionId } of messages.map((raw) => JSON.parse(raw))) {
+    if (method === "Emulation.setEmulatedMedia") captured.media = params;
+    if (method === "Page.navigate") captured.url = params.url;
+    if (method === "Browser.close") {
+      fs.writeFileSync(${JSON.stringify(capturedLog)}, JSON.stringify(captured));
+      process.exit(0);
+    }
+    reply({ id, sessionId, result: results[method] ?? {} });
+    if (method === "Page.navigate") {
+      reply({ sessionId, method: "Page.loadEventFired", params: {} });
+    }
+  }
+});
+`,
+              { mode: 0o755 },
+            );
+
+            const runWithTheme = (
+              settingsPatch: Partial<typeof DEFAULT_SERVER_SETTINGS>,
+              publishedThemes: ReadonlyArray<EnvironmentThemeContract>,
+              appearance?: "dark" | "light",
+            ) =>
+              Effect.gen(function* () {
+                const htmlRender = yield* HtmlRender.HtmlRender;
+                const preview = yield* htmlRender.preview({ html: "<p>Theme</p>", appearance });
+                const captured = JSON.parse(yield* fileSystem.readFileString(capturedLog)) as {
+                  url: string;
+                  media?: { features?: ReadonlyArray<{ name: string; value: string }> };
+                };
+                const encoded = new URL(captured.url).hash.split("=")[1] ?? "";
+                const themePayload = JSON.parse(decodeURIComponent(encoded)) as {
+                  appearance: string;
+                  variables: Record<string, string>;
+                };
+                return { preview, captured, themePayload };
+              }).pipe(
+                Effect.provide(
+                  layerHtmlRender(executable).pipe(
+                    Layer.provide(
+                      Layer.mock(ServerSettings.ServerSettingsService)({
+                        getSettings: Effect.succeed({
+                          ...DEFAULT_SERVER_SETTINGS,
+                          ...settingsPatch,
+                        }),
+                      }),
+                    ),
+                    Layer.provide(
+                      Layer.mock(EnvironmentTheme.EnvironmentThemeService)({
+                        current: Effect.succeed(publishedThemes),
+                      }),
+                    ),
+                  ),
+                ),
+              );
+
+            const oceanLight = yield* runWithTheme(
+              { defaultTheme: "ocean", defaultAppearance: "light" },
+              [],
+            );
+            expect(oceanLight.preview.appearance).toBe("light");
+            expect(oceanLight.themePayload.appearance).toBe("light");
+            expect(oceanLight.themePayload.variables["--background"]).toBe(
+              OCEAN_THEME.colors.canvas,
+            );
+            expect(oceanLight.captured.media?.features).toEqual([
+              { name: "prefers-color-scheme", value: "light" },
+            ]);
+
+            const customLight: EnvironmentThemeContract = {
+              id: "paper-light",
+              name: "Paper Light",
+              appearance: "light",
+              colors: { canvas: "#fefefe", accent: "#123456" },
+            };
+            const singleMode = yield* runWithTheme(
+              {
+                defaultTheme: "paper-light",
+                defaultThemeSetAt: "2026-11-22T10:00:00.000Z",
+                defaultAppearance: "dark",
+                defaultAppearanceSetAt: "2026-11-22T09:00:00.000Z",
+              },
+              [customLight],
+            );
+            expect(singleMode.preview.appearance).toBe("light");
+            expect(singleMode.themePayload.variables["--background"]).toBe("#fefefe");
+            expect(singleMode.themePayload.variables["--accent"]).toBe("#123456");
+
+            const explicitOverride = yield* runWithTheme(
+              { defaultTheme: "ocean", defaultAppearance: "light" },
+              [],
+              "dark",
+            );
+            expect(explicitOverride.preview.appearance).toBe("dark");
+            expect(explicitOverride.themePayload.appearance).toBe("dark");
+            expect(explicitOverride.themePayload.variables["--background"]).toBe(
+              OCEAN_THEME.variants?.dark?.canvas,
+            );
+          }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      );
+    },
   );
 });

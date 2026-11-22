@@ -363,6 +363,21 @@ it.effect("returns an HTML render reference that Codex and Claude tool rows both
     expect(
       htmlRenderFromToolItem({ toolName: "mcp__t3-code__html_render", output: result.content }),
     ).toEqual(reference);
+    const autoSized = yield* server
+      .callTool({
+        name: "html_render",
+        arguments: { html: "<p>Auto</p>", title: "Auto" },
+      })
+      .pipe(
+        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+        Effect.provideService(McpSchema.McpServerClient, client),
+      );
+    expect(
+      htmlRenderFromToolItem({
+        toolName: "t3-code.html_render",
+        output: autoSized.structuredContent,
+      }),
+    ).toMatchObject({ title: "Auto", height: expect.any(Number) });
     // Only a full-access thread may have the server read a file for it.
     const byPath = (name: string, caller: McpInvocationContext.McpInvocationScope) =>
       server

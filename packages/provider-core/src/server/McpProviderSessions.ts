@@ -23,7 +23,7 @@ const KEPT_HTML_END_LENGTH = 8_000;
 interface KeptHtmlRender {
   readonly path: string | undefined;
   readonly title: string;
-  readonly height: number;
+  readonly height: number | undefined;
   readonly htmlLength: number;
   readonly htmlHash: string;
   readonly htmlEnd: string;
@@ -61,7 +61,7 @@ export class McpProviderSessions extends Context.Service<
         readonly html: string;
         readonly path?: string | undefined;
         readonly title: string;
-        readonly height: number;
+        readonly height?: number | undefined;
       },
       reference: HtmlRenderReference,
     ) => Effect.Effect<void>;
@@ -104,9 +104,11 @@ interface PageInput {
 
 const matchingPageIndex = (kept: ReadonlyArray<KeptHtmlRender>, input: PageInput): number => {
   const height =
-    typeof input.height === "string" && input.height.trim() !== ""
-      ? Number(input.height)
-      : input.height;
+    input.height === null
+      ? undefined
+      : typeof input.height === "string" && input.height.trim() !== ""
+        ? Number(input.height)
+        : input.height;
   const sameFrame = (page: KeptHtmlRender) => page.title === input.title && page.height === height;
   const path = input.path;
   // The handler refuses a call with both sources, so it published nothing to recover. Its decoder

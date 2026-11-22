@@ -1,4 +1,4 @@
-import type { ThreadId } from "@t3tools/contracts";
+import type { EnvironmentTheme as EnvironmentThemeContract, ThreadId } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { isNetworkPath } from "@t3tools/shared/path";
@@ -14,9 +14,14 @@ import {
   type HtmlRenderReference,
 } from "@t3tools/shared/htmlRender";
 import {
+  BUILT_IN_THEMES,
+  getThemeColorsForAppearance,
+  MOBILE_DEFAULT_THEME_ID,
   T3_CODE_DARK_THEME_COLORS,
   T3_CODE_LIGHT_THEME_COLORS,
+  THEME_COLOR_ROLES,
   type ThemeAppearance,
+  type ThemeColors,
 } from "@t3tools/shared/themePalettes";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -27,7 +32,8 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import type * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as ChildProcess from "effect/process/ChildProcess";
+import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { openMediaFile } from "../assets/MediaFile.ts";
 import { resolveAttachmentRelativePath } from "../attachmentPaths.ts";
@@ -35,6 +41,8 @@ import { createAttachmentId } from "../attachmentStore.ts";
 import { makeIsServerInternalPath } from "../auth/serverInternalPaths.ts";
 import { resolveRootCliCommand } from "../cli/invocation.ts";
 import * as ServerConfig from "../config.ts";
+import * as EnvironmentTheme from "../environmentTheme.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as HeadlessChrome from "./headlessChrome.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import * as PreviewBrowserHost from "../preview/PreviewBrowserHost.ts";
@@ -137,6 +145,7 @@ export type HtmlRenderSource = { readonly html: string } | { readonly path: stri
 export interface HtmlPreview {
   readonly png: string;
   readonly width: number;
+  readonly appearance: ThemeAppearance;
   readonly contentHeight: number;
   readonly capturedHeight: number;
   readonly consoleMessages: ReadonlyArray<HeadlessChrome.ConsoleMessage>;
@@ -151,7 +160,7 @@ export class HtmlRender extends Context.Service<
       input: HtmlRenderSource & {
         readonly threadId: ThreadId;
         readonly title: string;
-        readonly height: number;
+        readonly height?: number | undefined;
       },
     ) => Effect.Effect<
       HtmlRenderReference,
@@ -360,10 +369,41 @@ const MIN_PREVIEW_WIDTH = 240;
 const MAX_PREVIEW_WIDTH = 1_600;
 const MAX_CONCURRENT_BROWSERS = 2;
 const MEASURE_TIMEOUT = "6 seconds";
+const DEFAULT_HTML_RENDER_HEIGHT = 480;
 
 const MEASURE_FRAGMENT = htmlRenderThemeFragment(
   htmlRenderTheme(T3_CODE_DARK_THEME_COLORS, "dark", HTML_RENDER_MEASURE_FONTS),
 );
+
+function singleAppearanceOfTheme(
+  theme: (typeof BUILT_IN_THEMES)[number] | EnvironmentThemeContract | undefined,
+): ThemeAppearance | undefined {
+  if (theme === undefined) return undefined;
+  const opposite: ThemeAppearance = theme.appearance === "dark" ? "light" : "dark";
+  return theme.variants?.[opposite] === undefined ? theme.appearance : undefined;
+}
+
+function resolveThemeColors(
+  themeId: string,
+  published: ReadonlyArray<EnvironmentThemeContract>,
+  appearance: ThemeAppearance,
+): ThemeColors {
+  const base = appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS;
+  if (themeId.length === 0 || themeId === MOBILE_DEFAULT_THEME_ID) return base;
+  const builtIn = BUILT_IN_THEMES.find((candidate) => candidate.id === themeId);
+  if (builtIn !== undefined) return getThemeColorsForAppearance(builtIn, appearance) ?? base;
+  const custom = published.find((candidate) => candidate.id === themeId);
+  if (custom === undefined) return base;
+  const overrides =
+    custom.appearance === appearance ? custom.colors : custom.variants?.[appearance];
+  if (overrides === undefined) return base;
+  const merged: Record<string, string> = { ...base };
+  for (const role of THEME_COLOR_ROLES) {
+    const value = overrides[role];
+    if (typeof value === "string") merged[role] = value;
+  }
+  return merged as ThemeColors;
+}
 
 const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
@@ -372,9 +412,64 @@ const make = Effect.gen(function* () {
   const isServerInternalPath = yield* makeIsServerInternalPath;
   const previewBrowser = yield* PreviewBrowser.PreviewBrowser;
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+  const environmentThemes = yield* Effect.serviceOption(EnvironmentTheme.EnvironmentThemeService);
+  const platform = yield* HostProcess.Platform;
   const services = yield* Effect.context<
     FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
   >();
+
+  const detectSystemAppearance = (): Effect.Effect<ThemeAppearance> => {
+    if (platform !== "darwin") return Effect.succeed("dark");
+    return Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const output = yield* spawner.string(
+        ChildProcess.make("defaults", ["read", "-g", "AppleInterfaceStyle"]),
+      );
+      return output.trim().toLowerCase() === "dark" ? "dark" : "light";
+    }).pipe(
+      Effect.provideContext(services),
+      // `defaults read -g AppleInterfaceStyle` exits 1 in light mode when the key is unset.
+      Effect.orElseSucceed((): ThemeAppearance => "light"),
+    );
+  };
+
+  const resolvePreviewTheme = Effect.fn("HtmlRender.resolvePreviewTheme")(function* (
+    requestedAppearance: ThemeAppearance | undefined,
+  ) {
+    const settings = Option.isSome(serverSettings)
+      ? Option.getOrUndefined(yield* serverSettings.value.getSettings.pipe(Effect.option))
+      : undefined;
+    const published = Option.isSome(environmentThemes)
+      ? Option.getOrElse(yield* environmentThemes.value.current.pipe(Effect.option), () => [])
+      : [];
+    const themeId = settings?.defaultTheme ?? "";
+    const activeTheme =
+      themeId.length === 0 || themeId === MOBILE_DEFAULT_THEME_ID
+        ? undefined
+        : (BUILT_IN_THEMES.find((candidate) => candidate.id === themeId) ??
+          published.find((candidate) => candidate.id === themeId));
+    let appearance: ThemeAppearance;
+    if (requestedAppearance !== undefined) {
+      appearance = requestedAppearance;
+    } else if (settings === undefined) {
+      appearance = "dark";
+    } else {
+      const single = singleAppearanceOfTheme(activeTheme);
+      const themeSetsOwnMode =
+        settings.defaultAppearance === "" ||
+        settings.defaultAppearanceSetAt < settings.defaultThemeSetAt;
+      if (single !== undefined && themeSetsOwnMode) {
+        appearance = single;
+      } else if (settings.defaultAppearance === "light" || settings.defaultAppearance === "dark") {
+        appearance = settings.defaultAppearance;
+      } else {
+        appearance = yield* detectSystemAppearance();
+      }
+    }
+    const colors = resolveThemeColors(themeId, published, appearance);
+    return { appearance, colors };
+  });
   const browsers = yield* Semaphore.make(MAX_CONCURRENT_BROWSERS);
   // Keep Chrome sandboxed unless explicitly disabled; root must opt out to run.
   const noSandbox = PreviewBrowserHost.sandboxDisabled(yield* HostProcess.Environment);
@@ -502,7 +597,7 @@ const make = Effect.gen(function* () {
     input: HtmlRenderSource & {
       readonly threadId: ThreadId;
       readonly title: string;
-      readonly height: number;
+      readonly height?: number | undefined;
     },
   ) {
     const source = yield* readSource(input);
@@ -519,18 +614,27 @@ const make = Effect.gen(function* () {
     if (attachmentId === null || filePath === null) {
       return yield* new HtmlRenderStoreError({ cause: new Error("Invalid thread id.") });
     }
+    const title = input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML";
+    const fallbackHeight = clampHtmlRenderHeight(input.height ?? DEFAULT_HTML_RENDER_HEIGHT);
     const baseReference: HtmlRenderReference = {
       attachmentId,
-      title: input.title.trim().slice(0, HTML_RENDER_MAX_TITLE_LENGTH) || "HTML",
-      height: clampHtmlRenderHeight(input.height),
+      title,
+      height: fallbackHeight,
     };
     return yield* fileSystem.writeFileString(filePath, html).pipe(
       Effect.mapError((cause) => new HtmlRenderStoreError({ cause })),
       Effect.uninterruptible,
       Effect.andThen(measure(html)),
       Effect.andThen((heights) => {
+        const measuredHeight =
+          heights?.find(([width]) => width === HTML_RENDER_COLUMN_WIDTH)?.[1] ?? heights?.[0]?.[1];
+        const height = clampHtmlRenderHeight(
+          input.height ?? measuredHeight ?? DEFAULT_HTML_RENDER_HEIGHT,
+        );
         const reference: HtmlRenderReference = {
-          ...baseReference,
+          attachmentId,
+          title,
+          height,
           ...(heights === undefined ? {} : { heights }),
         };
         return mcpSessions
@@ -569,16 +673,12 @@ const make = Effect.gen(function* () {
       MAX_PREVIEW_WIDTH,
       Math.max(MIN_PREVIEW_WIDTH, Math.round(input.width ?? HTML_RENDER_COLUMN_WIDTH)),
     );
-    const appearance = input.appearance ?? "dark";
+    const { appearance, colors } = yield* resolvePreviewTheme(input.appearance);
     const source = yield* readSource(input);
     yield* rejectViewportHeight(source);
     const inlined = yield* inline(source);
     const executable = yield* previewBrowser.executable;
-    const theme = htmlRenderTheme(
-      appearance === "light" ? T3_CODE_LIGHT_THEME_COLORS : T3_CODE_DARK_THEME_COLORS,
-      appearance,
-      HTML_RENDER_MEASURE_FONTS,
-    );
+    const theme = htmlRenderTheme(colors, appearance, HTML_RENDER_MEASURE_FONTS);
     const screenshot = yield* launching(executable, (noSandbox) =>
       HeadlessChrome.captureHtmlScreenshot({
         executable,
@@ -592,6 +692,7 @@ const make = Effect.gen(function* () {
     return {
       ...screenshot,
       width,
+      appearance,
       ...(inlined.missing.length === 0 ? {} : { missingImages: inlined.missing }),
     } satisfies HtmlPreview;
   });
