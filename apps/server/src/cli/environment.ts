@@ -293,16 +293,20 @@ const environmentUnlinkCommand = Command.make("unlink", {
   ),
 }).pipe(
   Command.withDescription(
-    "Forget a linked environment here. Revoke it in that environment's Sharing & access to end its session there too.",
+    "Forget a linked environment here, and end its session there when that environment answers.",
   ),
   Command.withHandler((flags) =>
     runWithPeerLinks(flags, (links) =>
       Effect.gen(function* () {
-        const removed = yield* links.unlink(EnvironmentId.make(flags.environmentId));
+        const { removed, endedThere } = yield* links.unlink(
+          EnvironmentId.make(flags.environmentId),
+        );
         yield* Console.log(
-          removed
-            ? `Forgot ${flags.environmentId}. Revoke it in that environment's Sharing & access to end its session there.\n`
-            : `No linked environment ${flags.environmentId}.\n`,
+          !removed
+            ? `No linked environment ${flags.environmentId}.\n`
+            : endedThere
+              ? `Forgot ${flags.environmentId} and ended its session there.\n`
+              : `Forgot ${flags.environmentId}. It did not answer, so revoke it in that environment's Sharing & access to end its session there.\n`,
         );
       }),
     ),
