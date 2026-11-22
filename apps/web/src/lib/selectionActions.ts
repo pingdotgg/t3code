@@ -165,6 +165,8 @@ export function observeSelectionActions({
     cancel,
     selectionChanged() {
       if (isActionTarget(document.activeElement)) return;
+      // A caret (typing elsewhere) shows nothing, and with no actions open there is nothing to dismiss.
+      if (getActionElement && !getActionElement() && document.getSelection()?.isCollapsed) return;
       if (pointerDown || gestureActive) {
         onDismiss("cancel");
       } else if (!dismissed && timer === null && frame === null) {
