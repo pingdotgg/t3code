@@ -187,10 +187,10 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           }
           yield* writeTextFile(path.join(sharedHome, "author.json"), '{"author":true}\n');
           yield* writeTextFile(path.join(shadowHome, "auth.json"), '{"shadow":true}\n');
-          // Older versions linked these into shadow homes; those links are removed, not rejected.
-          for (const name of ["auth.lock", "auth.json.bak"]) {
-            yield* fileSystem.symlink(path.join(sharedHome, name), path.join(shadowHome, name));
-          }
+          yield* fileSystem.symlink(
+            path.join(sharedHome, "auth.lock"),
+            path.join(shadowHome, "auth.lock"),
+          );
 
           const layout = yield* resolveCodexHomeLayout(
             decodeCodexSettings({ homePath: sharedHome, shadowHomePath: shadowHome }),
@@ -212,6 +212,21 @@ it.layer(NodeServices.layer)("CodexHomeLayout", (it) => {
           );
           expect(yield* fileSystem.readFileString(path.join(shadowHome, "auth.json"))).toBe(
             '{"shadow":true}\n',
+          );
+
+          // Older versions linked auth-like backups into shadow homes; those links fail closed.
+          const backupLink = path.join(shadowHome, "auth.json.bak");
+          yield* fileSystem.symlink(path.join(sharedHome, "auth.json.bak"), backupLink);
+          const error = yield* materializeCodexShadowHome(layout).pipe(Effect.flip);
+          expect(error).toMatchObject({
+            _tag: "CodexShadowHomePrivateEntrySymlinkError",
+            entryName: "auth.json.bak",
+          });
+          expect(yield* fileSystem.readLink(backupLink)).toBe(
+            path.join(sharedHome, "auth.json.bak"),
+          );
+          expect(yield* fileSystem.readFileString(path.join(sharedHome, "auth.json.bak"))).toBe(
+            '{"shared":"auth.json.bak"}\n',
           );
         }),
     );
