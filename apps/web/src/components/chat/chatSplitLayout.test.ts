@@ -7,6 +7,7 @@ const left = ThreadId.make("left");
 const right = ThreadId.make("right");
 const bottom = ThreadId.make("bottom");
 const lower = ThreadId.make("lower");
+const far = ThreadId.make("far");
 
 describe("chat split layout", () => {
   it("splits only the target pane vertically and restores it when the new pane closes", () => {
@@ -38,6 +39,29 @@ describe("chat split layout", () => {
       [right, 100 / 3],
       [bottom, 100 / 3],
       [lower, 100 / 3],
+    ]);
+  });
+
+  it("re-flattens a same-axis group left behind by a closed pane", () => {
+    const columns = splitChatPane(
+      splitChatPane(splitChatPane(MAIN_CHAT_PANE, null, right, "right"), null, bottom, "bottom"),
+      null,
+      far,
+      "right",
+    );
+    expect(chatPaneBounds(columns).map(({ id, width }) => [id, width])).toEqual([
+      [null, 25],
+      [far, 25],
+      [bottom, 50],
+      [right, 50],
+    ]);
+
+    const closed = closeChatPane(columns, bottom);
+    expect(closed).not.toBeNull();
+    expect(chatPaneBounds(closed!).map(({ id, width }) => [id, width])).toEqual([
+      [null, 100 / 3],
+      [far, 100 / 3],
+      [right, 100 / 3],
     ]);
   });
 });

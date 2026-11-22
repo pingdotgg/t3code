@@ -41,6 +41,13 @@ export function splitChatPane(
     : layout;
 }
 
+/** A split at the parent's axis would give its panes half the room they asked for. */
+function flattenAxis(axis: Axis, children: readonly ChatSplitLayout[]): readonly ChatSplitLayout[] {
+  return children.flatMap((child) =>
+    child.kind === "group" && child.axis === axis ? flattenAxis(axis, child.children) : [child],
+  );
+}
+
 export function closeChatPane(layout: ChatSplitLayout, id: ThreadId): ChatSplitLayout | null {
   if (layout.kind === "pane") return layout.id === id ? null : layout;
   const children = layout.children.flatMap((child) => {
@@ -48,7 +55,9 @@ export function closeChatPane(layout: ChatSplitLayout, id: ThreadId): ChatSplitL
     return next === null ? [] : [next];
   });
   if (children.length <= 1) return children[0] ?? null;
-  return { ...layout, children };
+  const flattened = flattenAxis(layout.axis, children);
+  if (flattened.length <= 1) return flattened[0] ?? null;
+  return { ...layout, children: flattened };
 }
 
 interface PaneBounds {
