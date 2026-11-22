@@ -239,7 +239,7 @@ import {
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import { SidebarPointerSensor } from "./Sidebar.pointer";
-import { createSidebarListMotion } from "./Sidebar.motion";
+import { createSidebarListMotion, sidebarListScrolled } from "./Sidebar.motion";
 import { createSidebarShiftGuard } from "./Sidebar.shiftGuard";
 import { pickSnoozePreset, resolveSnoozePresets, type SnoozePreset } from "./Sidebar.snooze";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -981,7 +981,10 @@ function revealSidebarRow(viewport: HTMLElement, row: HTMLElement) {
     target =
       bottom(item) <= withPrevious + clientHeight - SIDEBAR_LIST_FADE_PX ? withPrevious : top(item);
   }
-  if (target !== scrollTop) viewport.scrollTop = Math.min(maxScroll, Math.max(0, target));
+  const next = Math.min(maxScroll, Math.max(0, target));
+  if (next === scrollTop) return;
+  viewport.scrollTop = next;
+  sidebarListScrolled(list);
 }
 
 /**

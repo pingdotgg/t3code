@@ -8,6 +8,13 @@ const MAX_FADED_ROWS_PER_UPDATE = 40;
 
 type RowPosition = { top: number; left: number; width: number; height: number };
 
+const motions = new WeakMap<Element, { scrolled(): void }>();
+
+/** After the app scrolls a list's viewport, a scroll clamp still sliding out no longer applies. */
+export function sidebarListScrolled(list: Element) {
+  motions.get(list)?.scrolled();
+}
+
 function progress(animation: Animation) {
   return animation.playState === "finished"
     ? 1
@@ -51,6 +58,9 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const running = new Map<HTMLElement, { animation: Animation; offset: number }>();
   const entering = new Map<HTMLElement, { animation: Animation; travel: number }>();
   const exiting = new Map<HTMLElement, Animation>();
+  // The scroll clamp's part of a row's offset, added on top of its own motion so an app
+  // scroll can drop it alone.
+  const shifted = new Map<HTMLElement, { animation: Animation; shift: number }>();
   let released: Map<HTMLElement, number> | null = null;
   const scroller = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
   let scrollTop = scroller?.scrollTop ?? 0;
@@ -66,7 +76,8 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     const run = current ? current.offset * (1 - progress(current.animation)) : 0;
     const entry = entering.get(node);
     const enter = entry ? entry.travel * (1 - progress(entry.animation)) : 0;
-    return run + enter;
+    const clamp = shifted.get(node);
+    return run + enter + (clamp ? clamp.shift * (1 - progress(clamp.animation)) : 0);
   };
   const clearFades = () => {
     for (const entry of entering.values()) entry.animation.cancel();
@@ -129,9 +140,11 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   const cancel = (node: HTMLElement) => {
     running.get(node)?.animation.cancel();
     running.delete(node);
+    shifted.get(node)?.animation.cancel();
+    shifted.delete(node);
   };
   const suspend = () => {
-    for (const node of running.keys()) cancel(node);
+    for (const node of [...running.keys(), ...shifted.keys()]) cancel(node);
     clearFades();
     positions = null;
     released = null;
@@ -150,6 +163,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       "finish",
       () => {
         if (running.get(node)?.animation === animation) running.delete(node);
+      },
+      { once: true },
+    );
+  };
+  const shiftBy = (node: HTMLElement, shift: number) => {
+    const animation = node.animate(
+      [{ transform: `translateY(${shift}px)` }, { transform: "translateY(0px)" }],
+      { ...motionTiming, composite: "add" },
+    );
+    shifted.set(node, { animation, shift });
+    animation.addEventListener(
+      "finish",
+      () => {
+        if (shifted.get(node)?.animation === animation) shifted.delete(node);
       },
       { once: true },
     );
@@ -259,7 +286,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
           entering.delete(node);
         }
       }
-      for (const node of running.keys()) {
+      for (const node of [...running.keys(), ...shifted.keys()]) {
         if (!shouldAnimate || !next.has(node)) cancel(node);
       }
       if (shouldAnimate) {
@@ -276,7 +303,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
                 index,
                 (n) => positions!.has(n) && !crossing.has(n),
               );
-              const travel = delta === undefined ? -rowTravel(position.height) : delta;
+              const travel = delta === undefined ? -rowTravel(position.height) : delta - shift;
               const animation = node.animate(
                 [
                   { opacity: 0, transform: `translateY(${travel}px)` },
@@ -293,13 +320,16 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
                 },
                 { once: true },
               );
+              if (delta !== undefined && shift !== 0) shiftBy(node, shift);
             }
             continue;
           }
           const delta = movedDelta.get(node);
           // Computed progress includes easing; carry forward only our translation, never dnd-kit's
           // transforms.
-          if (delta !== undefined) move(node, delta);
+          if (delta === undefined) continue;
+          move(node, delta - shift);
+          if (shift !== 0) shiftBy(node, shift);
         }
       }
       if (released !== null) {
@@ -337,12 +367,20 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
       );
     },
     suspend,
+    /** Drop the clamp shift: rows an app scroll brings on screen land where they belong. */
+    scrolled() {
+      for (const { animation } of shifted.values()) animation.cancel();
+      shifted.clear();
+      if (scroller !== null) scrollTop = scroller.scrollTop;
+    },
     dispose() {
       suspend();
       if (frame !== 0) view?.cancelAnimationFrame(frame);
       scroller?.removeEventListener("scroll", trackScroll);
+      if (motions.get(parent) === api) motions.delete(parent);
       disposed = true;
     },
   };
+  motions.set(parent, api);
   return api;
 }
