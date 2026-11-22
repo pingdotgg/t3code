@@ -1153,10 +1153,10 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   return byUserMessageId;
 }
 
-// A missing snapshot (no git, or a side chat) still pins a conversation position; only
-// restoring files needs a ready one.
+// A missing or failed snapshot (no git, a side chat, a capture error) still pins a
+// conversation position; only restoring files needs a ready one.
 function isRewindableCheckpoint(checkpoint: Pick<OrchestrationV2Checkpoint, "status">) {
-  return checkpoint.status === "ready" || checkpoint.status === "missing";
+  return checkpoint.status !== "stale";
 }
 
 export function findRevertCheckpoint(
