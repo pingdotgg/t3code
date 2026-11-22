@@ -20,6 +20,11 @@ final class T3ScrollEdgeBleedView: ExpoView {
   /// React Native's clipping, saved while bleeding. React Native only rewrites it when the
   /// `overflow` style changes, so it stays off while bleeding.
   private var containerClipped: Bool?
+  /// React Native views between the scroll view and the column that reaches under the bar, with
+  /// their own hit areas. React Native only hit-tests a view's bounds unless its layout overflows,
+  /// so each one is widened by the bleed for touches to reach the strip under the bar.
+  private var widenedHitAreas: [(view: UIView, insets: UIEdgeInsets)] = []
+  private var widenedBleed = UIEdgeInsets.zero
   /// The bar's side is read from the root view controller, whose traits can settle after this
   /// view's own during a fold; with no size change after that, nothing else would recheck.
   private weak var observedWindow: UIWindow?
@@ -165,7 +170,38 @@ final class T3ScrollEdgeBleedView: ExpoView {
       containerClipped = containerClipped ?? true
       container.layer.masksToBounds = false
     }
+    widenHitAreas(from: container, around: scrollView.frame)
     applied = bleeding
+  }
+
+  /// Uses the `hitTestEdgeInsets` React Native sets from `hitSlop`, which it only rewrites when that
+  /// prop changes. The walk stops at the first view whose bounds already hold the scroll view.
+  private func widenHitAreas(from container: UIView, around scrollFrame: CGRect) {
+    let key = "hitTestEdgeInsets"
+    var chain: [UIView] = []
+    if bleed != .zero {
+      var ancestor: UIView? = container
+      while let view = ancestor {
+        let frame = view.convert(scrollFrame, from: container)
+        if view.bounds.minX <= frame.minX + 0.5, view.bounds.maxX >= frame.maxX - 0.5 { break }
+        if view.responds(to: NSSelectorFromString("setHitTestEdgeInsets:")) { chain.append(view) }
+        ancestor = view.superview
+      }
+    }
+    let unchanged = widenedBleed == bleed && widenedHitAreas.map(\.view) == chain
+    guard !unchanged else { return }
+    for (view, insets) in widenedHitAreas {
+      view.setValue(NSValue(uiEdgeInsets: insets), forKey: key)
+    }
+    widenedBleed = bleed
+    widenedHitAreas = chain.map { view in
+      let insets = (view.value(forKey: key) as? NSValue)?.uiEdgeInsetsValue ?? .zero
+      var widened = insets
+      widened.left -= bleed.left
+      widened.right -= bleed.right
+      view.setValue(NSValue(uiEdgeInsets: widened), forKey: key)
+      return (view, insets)
+    }
   }
 
   private func detach() {
