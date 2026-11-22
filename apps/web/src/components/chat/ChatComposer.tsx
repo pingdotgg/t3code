@@ -4027,7 +4027,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               : (offeredPromptSuggestion ?? m(DEFAULT_COMPOSER_PLACEHOLDER))
                     }
                     placeholderSuffix={
-                      offeredPromptSuggestion !== null && promptSuggestionShortcutLabel !== null ? (
+                      offeredPromptSuggestion !== null ? (
                         // The placeholder ignores pointer events so clicks reach the editor; only this hint opts back in.
                         <button
                           type="button"
@@ -4044,9 +4044,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                           }}
                         >
                           <Kbd variant="outline">
-                            {promptSuggestionShortcutLabel === "Tab"
-                              ? "⇥ Tab"
-                              : promptSuggestionShortcutLabel}
+                            {promptSuggestionShortcutLabel === null ? (
+                              <T>Accept</T>
+                            ) : promptSuggestionShortcutLabel === "Tab" ? (
+                              "⇥ Tab"
+                            ) : (
+                              promptSuggestionShortcutLabel
+                            )}
                           </Kbd>
                         </button>
                       ) : undefined

@@ -1402,6 +1402,15 @@ function ComposerPromptEditorTiptapInner(
             ) {
               return false;
             }
+            // An empty draft has no boundary to move to, so composer commands get the key.
+            if (
+              snapshotRef.current.value === "" &&
+              readCallbacks().onCommandKeyDown?.(event.key, event)
+            ) {
+              event.preventDefault();
+              event.stopPropagation();
+              return true;
+            }
             const selection = window.getSelection();
             if (
               selection?.anchorNode &&

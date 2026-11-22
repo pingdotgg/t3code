@@ -329,6 +329,27 @@ it("distinguishes text edits from caret moves in change notifications", async ()
   expect(onChange.mock.lastCall?.[5]).toBe(false);
 });
 
+it.each([
+  ["", 1],
+  ["word", 0],
+])(
+  "offers Home to composer commands only on an empty draft on macOS (%j)",
+  async (value, calls) => {
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    const composerCommand = vi.fn(() => true);
+    await using screen = await mountEditor(value, true, [], undefined, composerCommand);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+
+    await userEvent.keyboard("{Home}");
+
+    expect(composerCommand).toHaveBeenCalledTimes(calls);
+  },
+);
+
 // The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
 it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
   using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
