@@ -524,16 +524,14 @@ export interface ThreadManagementServiceShape {
     Orchestrator.OrchestratorV2Error | ThreadManagementProviderInstanceDisabledError
   >;
   /**
-   * Places an active thread directly before or after another active thread of
-   * this environment. Clients plan this from their own list; agents name a
-   * neighbor because order keys are not readable. A neighbor without a key may
-   * reseed the section, writing several threads.
+   * Places an active thread directly before another active thread of this
+   * environment. Agents name a neighbor because order keys are not readable.
+   * A neighbor without a key may reseed the section, writing several threads.
    */
   readonly reorderActiveThread: (input: {
     readonly threadId: ThreadId;
     readonly commandId: CommandId;
-    readonly placement: "before" | "after";
-    readonly targetThreadId: ThreadId;
+    readonly beforeThreadId: ThreadId;
     /** A caller fenced to one link may write only threads that link started. */
     readonly linkSessionId?: string | undefined;
   }) => Effect.Effect<
@@ -1391,15 +1389,15 @@ const make = Effect.gen(function* () {
     if (!orderedIds.includes(input.threadId)) {
       return yield* reject(`Thread ${input.threadId} is not active and cannot be reordered.`);
     }
-    if (input.targetThreadId === input.threadId) {
-      return yield* reject("A thread cannot be placed relative to itself.");
+    if (input.beforeThreadId === input.threadId) {
+      return yield* reject("A thread cannot be placed before itself.");
     }
     const nextIds = orderedIds.filter((id) => id !== input.threadId);
-    const target = nextIds.indexOf(input.targetThreadId);
+    const target = nextIds.indexOf(input.beforeThreadId);
     if (target === -1) {
-      return yield* reject(`Thread ${input.targetThreadId} is not an active thread.`);
+      return yield* reject(`Thread ${input.beforeThreadId} is not an active thread.`);
     }
-    nextIds.splice(target + (input.placement === "after" ? 1 : 0), 0, input.threadId);
+    nextIds.splice(target, 0, input.threadId);
     const assignments = planPinnedReorder({
       orderedIds: nextIds,
       keysById: new Map(threads.map((thread) => [thread.id, thread.activeOrderKey])),

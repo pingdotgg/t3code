@@ -420,8 +420,7 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         return yield* threads
           .reorderActiveThread({
             ...common,
-            placement: "before",
-            targetThreadId: input.beforeThreadId,
+            beforeThreadId: input.beforeThreadId,
             linkSessionId: fencingLinkOrigin({ scope, caller })?.sessionId,
           })
           .pipe(Effect.mapError(dispatchFailure));

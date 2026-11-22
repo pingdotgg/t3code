@@ -974,19 +974,13 @@ describe("reorderActiveThread", () => {
             activeOrderKey: thread.activeOrderKey,
           })),
       ).map((thread) => thread.id);
-    const run = (input: {
-      threadId: string;
-      placement: "before" | "after";
-      targetThreadId: string;
-      linkSessionId?: string;
-    }) =>
+    const run = (input: { threadId: string; beforeThreadId: string; linkSessionId?: string }) =>
       ThreadManagementService.ThreadManagementService.pipe(
         Effect.flatMap((service) =>
           service.reorderActiveThread({
             threadId: ThreadId.make(input.threadId),
             commandId: CommandId.make("command:reorder"),
-            placement: input.placement,
-            targetThreadId: ThreadId.make(input.targetThreadId),
+            beforeThreadId: ThreadId.make(input.beforeThreadId),
             linkSessionId: input.linkSessionId,
           }),
         ),
@@ -998,7 +992,7 @@ describe("reorderActiveThread", () => {
 
   const reorder = (
     threads: ReadonlyArray<OrchestrationV2ThreadShell>,
-    input: { threadId: string; placement: "before" | "after"; targetThreadId: string },
+    input: { threadId: string; beforeThreadId: string },
   ) =>
     Effect.gen(function* () {
       const service = reorderService([...threads]);
@@ -1014,7 +1008,7 @@ describe("reorderActiveThread", () => {
           shell("b", "2026-01-01T00:00:00Z", { activeOrderKey: "m" }),
           shell("c", "2026-01-01T00:00:00Z", { activeOrderKey: "t" }),
         ],
-        { threadId: "c", placement: "before", targetThreadId: "b" },
+        { threadId: "c", beforeThreadId: "b" },
       );
       expect(order).toEqual(["a", "c", "b"]);
       expect(dispatched).toHaveLength(1);
@@ -1032,7 +1026,7 @@ describe("reorderActiveThread", () => {
             pinnedAt: DateTime.makeUnsafe("2026-01-01T00:00:00Z"),
           }),
         ],
-        { threadId: "a", placement: "after", targetThreadId: "new" },
+        { threadId: "a", beforeThreadId: "old" },
       );
       expect(order).toEqual(["new", "a", "old"]);
     }),
@@ -1045,10 +1039,10 @@ describe("reorderActiveThread", () => {
         shell("settled", "2026-01-01T00:00:00Z", { settledOverride: "settled" }),
       ];
       const moved = yield* Effect.flip(
-        reorder(threads, { threadId: "settled", placement: "before", targetThreadId: "a" }),
+        reorder(threads, { threadId: "settled", beforeThreadId: "a" }),
       );
       const target = yield* Effect.flip(
-        reorder(threads, { threadId: "a", placement: "before", targetThreadId: "settled" }),
+        reorder(threads, { threadId: "a", beforeThreadId: "settled" }),
       );
       expect(moved).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
       expect(target).toBeInstanceOf(Orchestrator.OrchestratorDispatchError);
@@ -1064,7 +1058,7 @@ describe("reorderActiveThread", () => {
     Effect.gen(function* () {
       const service = reorderService(keyless());
       const error = yield* Effect.flip(
-        service.run({ threadId: "a", placement: "after", targetThreadId: "b" }).pipe(
+        service.run({ threadId: "a", beforeThreadId: "c" }).pipe(
           Effect.provideService(DispatchModeLimit, {
             runtimeMode: "auto",
             interactionMode: "default",
@@ -1088,8 +1082,7 @@ describe("reorderActiveThread", () => {
       const error = yield* Effect.flip(
         service.run({
           threadId: "a",
-          placement: "after",
-          targetThreadId: "b",
+          beforeThreadId: "user",
           linkSessionId: "link",
         }),
       );
@@ -1102,14 +1095,11 @@ describe("reorderActiveThread", () => {
     Effect.gen(function* () {
       const service = reorderService(keyless());
       service.refuse.add("c");
-      yield* Effect.flip(service.run({ threadId: "a", placement: "after", targetThreadId: "b" }));
+      yield* Effect.flip(service.run({ threadId: "a", beforeThreadId: "c" }));
       expect(service.dispatched.map((command) => command.threadId)).toEqual(["b", "a"]);
       service.refuse.clear();
-      // Keyless c now sorts above the keyed pair, so the retry replans a single
-      // write for a under a new key instead of conflicting with its receipt.
-      yield* service.run({ threadId: "a", placement: "after", targetThreadId: "b" });
-      expect(service.order()).toEqual(["c", "b", "a"]);
-      expect(service.dispatched.map((command) => command.threadId)).toEqual(["b", "a", "a"]);
+      yield* service.run({ threadId: "a", beforeThreadId: "c" });
+      expect(service.order()).toEqual(["a", "c", "b"]);
     }),
   );
 
@@ -1117,11 +1107,11 @@ describe("reorderActiveThread", () => {
     Effect.gen(function* () {
       const service = reorderService(keyless());
       service.refuse.add("a");
-      yield* Effect.flip(service.run({ threadId: "a", placement: "before", targetThreadId: "c" }));
+      yield* Effect.flip(service.run({ threadId: "a", beforeThreadId: "c" }));
       expect(service.dispatched.map((command) => command.threadId)).toEqual(["b"]);
       service.refuse.clear();
       // The retry plans different keys; b's receipt must not replay its old one.
-      yield* service.run({ threadId: "a", placement: "before", targetThreadId: "c" });
+      yield* service.run({ threadId: "a", beforeThreadId: "c" });
       const order = service.order();
       expect(order.indexOf(ThreadId.make("c"))).toBe(order.indexOf(ThreadId.make("a")) + 1);
       const keys = service.order().map((id) => service.keyOf(id));
