@@ -4,6 +4,7 @@ import {
 } from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import { definition } from "../shared/definition.ts";
 
@@ -20,8 +21,12 @@ const makeInstance = Effect.all({
   pullRequests: GitCafePullRequestProvider.make,
 });
 
+const isApiError = Schema.is(GitCafeApi.GitCafeApiError);
+
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
   make: withOwnServices(makeInstance, services),
+  rateLimitRefusal: (error) =>
+    isApiError(error) && error.reason === "rate-limited" ? {} : undefined,
 });

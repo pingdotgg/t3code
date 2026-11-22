@@ -2,7 +2,7 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { makeIsRepositoryStarred, makeStarRepository } from "./driver.ts";
+import { driver, makeIsRepositoryStarred, makeStarRepository } from "./driver.ts";
 import * as GitHubRequestPolicy from "./GitHubRequestPolicy.ts";
 import * as GitHubRest from "./GitHubRest.ts";
 
@@ -47,5 +47,25 @@ describe("starred", () => {
         "PUT user/starred/pingdotgg/uploadthing",
       ]);
     }).pipe(Effect.provide(api));
+  });
+});
+
+describe("rateLimitRefusal", () => {
+  it("recognizes a quota refusal and keeps its reset time", () => {
+    const refusal = (retryAt?: number) =>
+      driver.rateLimitRefusal?.(
+        new GitHubRequestPolicy.GitHubApiRateLimitError({
+          host: "github.com",
+          operation: "listPullRequests",
+          ...(retryAt === undefined ? {} : { retryAt }),
+        }),
+      );
+    assert.deepStrictEqual(refusal(1_000), { retryAt: 1_000 });
+    assert.deepStrictEqual(refusal(), {});
+    assert.isUndefined(
+      driver.rateLimitRefusal?.(
+        new GitHubRequestPolicy.GitHubApiNotFoundError({ host: "github.com", operation: "x" }),
+      ),
+    );
   });
 });

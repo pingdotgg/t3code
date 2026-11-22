@@ -3,6 +3,7 @@ import {
   withOwnServices,
 } from "@t3tools/source-control-core/server/driver";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { definition } from "../shared/definition.ts";
 
@@ -20,8 +21,12 @@ const makeInstance = Effect.all({
   issues: ForgejoIssueTracker.make,
 });
 
+const isCliError = Schema.is(ForgejoCli.ForgejoCliError);
+
 export const driver = defineSourceControlDriver({
   kind: definition.kind,
   definition,
   make: withOwnServices(makeInstance, services),
+  rateLimitRefusal: (error) =>
+    isCliError(error) && error.reason === "rate-limit" ? {} : undefined,
 });
