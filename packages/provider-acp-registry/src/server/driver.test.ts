@@ -3696,12 +3696,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
                 const gate = getAvailableCommandsGate;
                 getAvailableCommandsGate = null;
                 return Deferred.succeed(gate.started, undefined).pipe(
-                  Effect.andThen(
-                    Deferred.await(gate.release).pipe(
-                      Effect.onInterrupt(() =>
-                        Deferred.succeed(gate.interrupted, undefined).pipe(Effect.asVoid),
-                      ),
-                    ),
+                  Effect.andThen(Deferred.await(gate.release)),
+                  Effect.onInterrupt(() =>
+                    Deferred.succeed(gate.interrupted, undefined).pipe(Effect.asVoid),
                   ),
                   Effect.andThen(baseCoordinator.getAvailableCommands(instanceId, options)),
                 );
@@ -4430,6 +4427,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         onEnrichmentEnd = () => Deferred.doneUnsafe(v2ReadyDone, Exit.void);
         yield* fallbackRetireInstance.snapshot.refresh.pipe(
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
         );
         expect(Option.isSome(yield* Fiber.join(v2Ready))).toBe(true);
         yield* Deferred.await(v2ReadyDone);
@@ -4451,6 +4449,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         onEnrichmentEnd = () => Deferred.doneUnsafe(v4InitialDone, Exit.void);
         yield* fallbackRetireInstance.snapshot.refresh.pipe(
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
         );
         expect(Option.isSome(yield* Fiber.join(v4Ready))).toBe(true);
         yield* Deferred.await(v4InitialDone);
@@ -4486,6 +4485,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         onEnrichmentEnd = () => Deferred.doneUnsafe(fallbackEnrichmentDone, Exit.void);
         yield* fallbackRetireInstance.snapshot.refresh.pipe(
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
+          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
         );
         yield* Deferred.await(v2FallbackGate.started);
         remoteVersion = "4.0.0";
@@ -4917,8 +4917,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
         yield* Deferred.await(beforeLogoutDone);
-        expect((yield* logoutInstance.snapshot.getSnapshot).auth.status).toBe("authenticated");
-        expect((yield* logoutInstance.snapshot.getSnapshot).auth.canLogout).toBe(true);
+        const beforeLogoutSnap = yield* logoutInstance.snapshot.getSnapshot;
+        expect(beforeLogoutSnap.auth.status).toBe("authenticated");
+        expect(beforeLogoutSnap.auth.canLogout).toBe(true);
+        expect(beforeLogoutSnap.models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
         yield* logoutInstance.acpSessionManagement!.logout(directory);
         expect(yield* (yield* seedLogoutAuth()).get).toBe(false);
         // Same-runtime non-auth failure after logout must show unknown (never authenticated).
@@ -4931,8 +4933,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         yield* Deferred.await(afterLogoutSameFailDone);
         expect((yield* logoutInstance.snapshot.getSnapshot).status).toBe("warning");
         expect((yield* logoutInstance.snapshot.getSnapshot).auth.status).toBe("unknown");
-        // Failed upgrade to 2.0.0 after logout keeps A's capabilities and stays unknown across
-        // both retained-runtime publication and follow-up inspectReadiness.
+        // Failed upgrade to 2.0.0 after logout keeps A's discovered models and stays unknown
+        // across both retained-runtime publication and follow-up inspectReadiness.
         remoteVersion = "2.0.0";
         yield* realCatalog.invalidateIndex();
         yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
@@ -4946,7 +4948,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(afterLogoutUpgradeSnap.version).toBe("1.0.0");
         expect(afterLogoutUpgradeSnap.status).toBe("warning");
         expect(afterLogoutUpgradeSnap.auth.status).toBe("unknown");
-        expect(afterLogoutUpgradeSnap.models.length).toBeGreaterThan(0);
+        expect(afterLogoutUpgradeSnap.models.map((model) => model.slug)).toEqual([
+          "model-a",
+          "model-b",
+        ]);
         const afterLogoutSnapshots: Array<ServerProvider> = [];
         const afterLogoutCollector = yield* logoutInstance.snapshot.streamChanges.pipe(
           Stream.runForEach((snapshot) =>
@@ -5034,48 +5039,106 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           expect(emitted.auth.status).not.toBe("authenticated");
         }
 
-        // (f) Local agent (previousIdentity === null, normal branch) clears saved confirmation on auth failure.
+        // (f) Local agent (previousIdentity === null, normal branch): a superseded auth rejection
+        //     keeps saved confirmation intact, while an accepted auth rejection clears it.
         const localUnauthId = ProviderInstanceId.make("acpRegistry_local_unauth");
         const localUnauthSettings = decodeSettings({
           source: "local",
           commandPath: "local-auth-fail",
         });
+        const localUnauthEnv = [{ name: "MISE_OFFLINE", value: "0", sensitive: false }] as const;
         const seedLocalAuth = () =>
           AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
             cacheDir: host.paths.providerStatusCacheDir,
             instanceId: localUnauthId,
             settings: localUnauthSettings,
-            environment: [],
+            environment: localUnauthEnv,
             processEnvironment: process.env,
           });
         yield* (yield* seedLocalAuth()).set(true);
-        const localUnauthDone = yield* Deferred.make<void>();
-        onEnrichmentEnd = () => Deferred.doneUnsafe(localUnauthDone, Exit.void);
+        let localFailAuth = true;
+        const localWithLiveStarted = yield* Deferred.make<void>();
+        const localWithLiveRelease = yield* Deferred.make<void>();
+        const localWithLiveInterrupted = yield* Deferred.make<void>();
+        let localGateArmed = false;
+        const localCatalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+          ...catalogWithInspection({
+            status: "ready",
+            agentId: "local-auth-fail",
+            version: null,
+            distribution: "local",
+          }),
+          resolve: (_settings, _cwd, environment) =>
+            Effect.sync(() => {
+              if (environment?.MISE_OFFLINE === "1" && !localGateArmed) {
+                localGateArmed = true;
+                getAvailableCommandsGate = {
+                  instanceId: localUnauthId,
+                  started: localWithLiveStarted,
+                  release: localWithLiveRelease,
+                  interrupted: localWithLiveInterrupted,
+                };
+              }
+              return {
+                distribution: "local" as const,
+                spawn: {
+                  command: process.execPath,
+                  args: localFailAuth ? [authFailAgentPath] : [agentPath, modelsPath],
+                  cwd: directory,
+                  env: process.env,
+                },
+              };
+            }),
+        };
+        // Startup probe runs with previousIdentity === null (normal branch), fails auth, and pauses
+        // inside withLiveRuntimeState before tryPublishSnapshot; superseding refresh keeps auth.
         const localUnauthInstance = yield* AcpRegistryDriver.create({
           instanceId: localUnauthId,
           displayName: "Local Unauth",
           enabled: true,
-          environment: [],
+          environment: localUnauthEnv,
           config: localUnauthSettings,
         }).pipe(
-          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, {
-            ...catalogWithInspection({
-              status: "ready",
-              agentId: "local-auth-fail",
-              version: null,
-              distribution: "local",
-            }),
-            resolve: () =>
-              Effect.succeed({
-                distribution: "local",
-                spawn: {
-                  command: process.execPath,
-                  args: [authFailAgentPath],
-                  cwd: directory,
-                  env: process.env,
-                },
-              }),
-          }),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, localCatalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(localWithLiveStarted);
+        localFailAuth = false;
+        const localSupersedingDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(localSupersedingDone, Exit.void);
+        yield* localUnauthInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(localWithLiveInterrupted);
+        yield* Deferred.await(localSupersedingDone);
+        expect(yield* (yield* seedLocalAuth()).get).toBe(true);
+        expect((yield* localUnauthInstance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+        // Accepted normal-branch local auth rejection clears saved confirmation.
+        const localAcceptedId = ProviderInstanceId.make("acpRegistry_local_unauth_accepted");
+        const seedLocalAcceptedAuth = () =>
+          AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
+            cacheDir: host.paths.providerStatusCacheDir,
+            instanceId: localAcceptedId,
+            settings: localUnauthSettings,
+            environment: localUnauthEnv,
+            processEnvironment: process.env,
+          });
+        yield* (yield* seedLocalAcceptedAuth()).set(true);
+        localFailAuth = true;
+        const localUnauthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(localUnauthDone, Exit.void);
+        const localAcceptedInstance = yield* AcpRegistryDriver.create({
+          instanceId: localAcceptedId,
+          displayName: "Local Unauth Accepted",
+          enabled: true,
+          environment: localUnauthEnv,
+          config: localUnauthSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, localCatalog),
           Effect.provideService(
             AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
             coordinator,
@@ -5083,10 +5146,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           Effect.provideService(Tracer.Tracer, enrichmentTracer),
         );
         yield* Deferred.await(localUnauthDone);
-        expect((yield* localUnauthInstance.snapshot.getSnapshot).auth.status).toBe(
+        expect((yield* localAcceptedInstance.snapshot.getSnapshot).auth.status).toBe(
           "unauthenticated",
         );
-        expect(yield* (yield* seedLocalAuth()).get).toBe(false);
+        expect(yield* (yield* seedLocalAcceptedAuth()).get).toBe(false);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });

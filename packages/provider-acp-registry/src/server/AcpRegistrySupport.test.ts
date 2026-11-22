@@ -5112,10 +5112,8 @@ describe("AcpRegistrySupport", () => {
         let failReceiptTempWrite = false;
         let failSidecarWrite = false;
         let failSidecarRead = false;
-        let failSidecarReadOnCount: number | null = null;
-        let sidecarReadCount = 0;
-        let failReceiptReadOnCount: number | null = null;
-        let receiptReadCount = 0;
+        let failSidecarReadWhileLockedPath: string | null = null;
+        let failReceiptReadWhileLockedPath: string | null = null;
         let receiptRenameCount = 0;
         let onStatPath: {
           readonly matchPath: string;
@@ -5146,16 +5144,31 @@ describe("AcpRegistrySupport", () => {
           readFileString: (filePath, encoding) => {
             const base = path.basename(filePath);
             if (base === "binary-launch-options.json") {
-              sidecarReadCount += 1;
-              if (failSidecarRead || failSidecarReadOnCount === sidecarReadCount) {
+              if (failSidecarRead) {
                 return fileSystem.readFileString(path.dirname(filePath), encoding);
+              }
+              if (failSidecarReadWhileLockedPath !== null) {
+                const lockPath = failSidecarReadWhileLockedPath;
+                return fileSystem.exists(lockPath).pipe(
+                  Effect.orElseSucceed(() => false),
+                  Effect.flatMap((locked) =>
+                    locked
+                      ? fileSystem.readFileString(path.dirname(filePath), encoding)
+                      : fileSystem.readFileString(filePath, encoding),
+                  ),
+                );
               }
             }
-            if (base === ".t3-artifact.json") {
-              receiptReadCount += 1;
-              if (failReceiptReadOnCount === receiptReadCount) {
-                return fileSystem.readFileString(path.dirname(filePath), encoding);
-              }
+            if (base === ".t3-artifact.json" && failReceiptReadWhileLockedPath !== null) {
+              const lockPath = failReceiptReadWhileLockedPath;
+              return fileSystem.exists(lockPath).pipe(
+                Effect.orElseSucceed(() => false),
+                Effect.flatMap((locked) =>
+                  locked
+                    ? fileSystem.readFileString(path.dirname(filePath), encoding)
+                    : fileSystem.readFileString(filePath, encoding),
+                ),
+              );
             }
             return fileSystem.readFileString(filePath, encoding);
           },
@@ -6165,12 +6178,11 @@ describe("AcpRegistrySupport", () => {
         yield* edgeCatB.resolve(settings(), "/workspace");
         expect(receiptRenameCount).toBe(0);
         // 1b) Reverting to matching receipt (--edge-init rev 0) after observing newer sidecar rev 2
-        //     on the fast path, then hitting io_error on the locked read, keeps --edge-init pending.
+        //     on the fast path, then hitting io_error while locked, keeps --edge-init pending.
         failSidecarRead = false;
-        sidecarReadCount = 0;
-        failSidecarReadOnCount = 2;
+        failSidecarReadWhileLockedPath = edgeSyncSidecarLockPath;
         yield* edgeCatB.resolve(settings(), "/workspace");
-        failSidecarReadOnCount = null;
+        failSidecarReadWhileLockedPath = null;
         expect(receiptRenameCount).toBe(0);
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -6249,10 +6261,9 @@ describe("AcpRegistrySupport", () => {
         failReceiptTempWrite = false;
         failSidecarWrite = false;
         // Transient locked receipt reread failure must preserve pending --fail-2.
-        receiptReadCount = 0;
-        failReceiptReadOnCount = 2;
+        failReceiptReadWhileLockedPath = edgeSyncSidecarLockPath;
         yield* edgeCatA.resolve(settings(), "/workspace");
-        failReceiptReadOnCount = null;
+        failReceiptReadWhileLockedPath = null;
         // Before catalog B commits a newer rev, edgeCatA's in-process fallback uses pending --fail-2.
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -6334,7 +6345,8 @@ describe("AcpRegistrySupport", () => {
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--lock-c",
         ]);
-        // Retry with unreadable sidecar keeps baseDurableRevision=7 (not downgraded to receipt rev 4).
+        // Retry with unreadable sidecar keeps baseDurableRevision=7 (not downgraded to receipt rev 4)
+        // across sidecar io_error, locked receipt reread failure, and a second lock timeout.
         failSidecarRead = true;
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
@@ -6354,7 +6366,97 @@ describe("AcpRegistrySupport", () => {
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--lock-c-retry",
         ]);
-        // A newer committed rev 8 (--commit-8) still outranks pending base rev 7.
+        // Locked receipt reread error while sidecar is unreadable also preserves base rev 7.
+        failSidecarRead = true;
+        failReceiptReadWhileLockedPath = edgeSyncSidecarLockPath;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--lock-c-reread"],
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* lockTimeoutCat.resolve(settings(), "/workspace");
+        failReceiptReadWhileLockedPath = null;
+        failSidecarRead = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--lock-c-reread",
+        ]);
+        // A second lock timeout while sidecar is unreadable also preserves base rev 7.
+        failSidecarRead = true;
+        yield* fileSystem.writeFileString(edgeSyncSidecarLockPath, "external-holder-2");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--lock-c-timeout2"],
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        let nextLockStat2 = yield* Deferred.make<void>();
+        onStatPath = {
+          matchPath: edgeSyncSidecarLockPath,
+          onHit: () => {
+            Deferred.doneUnsafe(nextLockStat2, Exit.void);
+          },
+        };
+        const lockTimeoutFiber2 = yield* lockTimeoutCat
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        for (let step = 0; step < 20; step += 1) {
+          yield* Deferred.await(nextLockStat2);
+          nextLockStat2 = yield* Deferred.make<void>();
+          yield* TestClock.adjust("100 millis");
+        }
+        onStatPath = null;
+        yield* Fiber.join(lockTimeoutFiber2);
+        yield* fileSystem.remove(edgeSyncSidecarLockPath, { force: true });
+        failSidecarRead = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--lock-c-timeout2",
+        ]);
+        // Corrupt sidecar while pending base is rev 7 must allocate rev 8 (> 7), not rev 5.
+        const savedSidecarBeforeCorrupt = yield* fileSystem.readFileString(edgeSyncSidecarPath);
+        yield* fileSystem.writeFileString(edgeSyncSidecarPath, "{corrupt-sidecar");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--after-corrupt-rev8"],
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const afterCorruptResolved = yield* lockTimeoutCat.resolve(settings(), "/workspace");
+        const afterCorruptReceiptPath = path.join(
+          path.dirname(path.dirname(afterCorruptResolved.spawn.command)),
+          ".t3-artifact.json",
+        );
+        const afterCorruptReceipt = JSON.parse(
+          yield* fileSystem.readFileString(afterCorruptReceiptPath),
+        ) as { readonly launchOptionsRevision?: number };
+        expect(afterCorruptReceipt.launchOptionsRevision).toBe(8);
+        // Restore sidecar at rev 7 (lower than rev 8) and confirm rev 8 receipt wins cleanly.
+        yield* fileSystem.writeFileString(edgeSyncSidecarPath, savedSidecarBeforeCorrupt);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--after-corrupt-rev8",
+        ]);
+        // A newer committed rev 9 (--commit-9) still outranks everything cleanly.
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
           cmd: "./bin/example-agent",
@@ -6497,6 +6599,7 @@ describe("AcpRegistrySupport", () => {
         let sidecarFenceGate: {
           readonly entered: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
+          readonly requireLocked?: boolean;
         } | null = null;
         let uninstallFenceGate: {
           readonly entered: Deferred.Deferred<void>;
@@ -6525,6 +6628,21 @@ describe("AcpRegistrySupport", () => {
             }
             if (sidecarFenceGate !== null && filePath === fenceSidecarPath) {
               const gate = sidecarFenceGate;
+              if (gate.requireLocked === true) {
+                return fileSystem.exists(fenceSidecarLockPath).pipe(
+                  Effect.orElseSucceed(() => false),
+                  Effect.flatMap((locked) => {
+                    if (!locked || sidecarFenceGate !== gate) {
+                      return posixModeFs.readFileString(filePath, encoding);
+                    }
+                    sidecarFenceGate = null;
+                    return Deferred.succeed(gate.entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate.release)),
+                      Effect.andThen(posixModeFs.readFileString(filePath, encoding)),
+                    );
+                  }),
+                );
+              }
               sidecarFenceGate = null;
               return Deferred.succeed(gate.entered, undefined).pipe(
                 Effect.andThen(Deferred.await(gate.release)),
@@ -6609,7 +6727,8 @@ describe("AcpRegistrySupport", () => {
         expect((yield* holder1.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--fenced-sidecar",
         ]);
-        // Reverting to the receipt's no-args target clears stale pending options even on lock loss.
+        // Reverting to the receipt's no-args target clears stale pending options even on lock loss
+        // (for both stale rev-0 sidecar entries and corrupt sidecar files).
         yield* fileSystem.remove(fenceSidecarLockPath, { force: true });
         yield* fileSystem.writeFileString(
           fenceSidecarPath,
@@ -6632,22 +6751,10 @@ describe("AcpRegistrySupport", () => {
         yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         const revertEntered = yield* Deferred.make<void>();
         const releaseRevert = yield* Deferred.make<void>();
-        let revertReadCount = 0;
-        const origFenceRead = fencedFs.readFileString;
-        (fencedFs as { readFileString: FileSystem.FileSystem["readFileString"] }).readFileString = (
-          filePath,
-          encoding,
-        ) => {
-          if (filePath === fenceSidecarPath) {
-            revertReadCount += 1;
-            if (revertReadCount === 2) {
-              return Deferred.succeed(revertEntered, undefined).pipe(
-                Effect.andThen(Deferred.await(releaseRevert)),
-                Effect.andThen(origFenceRead(filePath, encoding)),
-              );
-            }
-          }
-          return origFenceRead(filePath, encoding);
+        sidecarFenceGate = {
+          entered: revertEntered,
+          release: releaseRevert,
+          requireLocked: true,
         };
         const fencedRevertResolve = yield* holder1
           .resolve(settings(), "/workspace")
@@ -6656,8 +6763,48 @@ describe("AcpRegistrySupport", () => {
         yield* fileSystem.writeFileString(fenceSidecarLockPath, "sidecar-holder-3");
         yield* Deferred.succeed(releaseRevert, undefined);
         yield* Fiber.join(fencedRevertResolve);
-        (fencedFs as { readFileString: FileSystem.FileSystem["readFileString"] }).readFileString =
-          origFenceRead;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* holder1.resolve(settings(), "/workspace")).spawn.args).toEqual([]);
+        // Same lock-lost revert check on a corrupt sidecar file.
+        yield* fileSystem.remove(fenceSidecarLockPath, { force: true });
+        failReceiptTempWrite = true;
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveBUrl,
+          cmd: "./bin/example-agent",
+          args: ["--fenced-before-corrupt"],
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* holder1.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = false;
+        yield* fileSystem.writeFileString(fenceSidecarPath, "{corrupt-fence");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveBUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const corruptRevertEntered = yield* Deferred.make<void>();
+        const releaseCorruptRevert = yield* Deferred.make<void>();
+        sidecarFenceGate = {
+          entered: corruptRevertEntered,
+          release: releaseCorruptRevert,
+          requireLocked: true,
+        };
+        const fencedCorruptRevert = yield* holder1
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(corruptRevertEntered);
+        yield* fileSystem.writeFileString(fenceSidecarLockPath, "sidecar-holder-4");
+        yield* Deferred.succeed(releaseCorruptRevert, undefined);
+        yield* Fiber.join(fencedCorruptRevert);
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
           cmd: "./bin/example-agent",

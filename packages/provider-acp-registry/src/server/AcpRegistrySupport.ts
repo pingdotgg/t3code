@@ -2795,6 +2795,18 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           receipt: buildLaunchOptionsReceipt(baseReceipt),
         });
       };
+      const recordPendingForInitialReceipt = () => {
+        const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
+        const currentPriorPendingBase =
+          currentPending !== undefined &&
+          receiptMatchesInstall(currentPending.receipt, initialReceipt)
+            ? currentPending.baseDurableRevision
+            : 0;
+        recordPending(
+          initialReceipt,
+          Math.max(receiptRev, observedDiskRev, initialPriorPendingBase, currentPriorPendingBase),
+        );
+      };
       yield* withBinaryLaunchOptionsLock((isLockOwned) =>
         Effect.gen(function* () {
           const freshReceiptRead = yield* Effect.result(fileSystem.readFileString(receiptPath));
@@ -2802,21 +2814,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             if (freshReceiptRead.failure.reason._tag === "NotFound") {
               pendingLaunchOptionsBySlotRoot.delete(slot.root);
             } else {
-              const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
-              const currentPriorPendingBase =
-                currentPending !== undefined &&
-                receiptMatchesInstall(currentPending.receipt, initialReceipt)
-                  ? currentPending.baseDurableRevision
-                  : 0;
-              recordPending(
-                initialReceipt,
-                Math.max(
-                  receiptRev,
-                  observedDiskRev,
-                  initialPriorPendingBase,
-                  currentPriorPendingBase,
-                ),
-              );
+              recordPendingForInitialReceipt();
             }
             return;
           }
@@ -2846,16 +2844,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             binaryLaunchOptionsPath,
           );
           if (diskResult.status === "io_error") {
-            // Do not rewrite a matching receipt or allocate a revision below an unreadable sidecar;
-            // keep launch usable via pending options and retry once sidecar reads recover.
-            if (
-              receiptMatchesLaunchOptions(freshReceipt, target) &&
-              effectiveObservedBase <= freshReceiptRev
-            ) {
-              pendingLaunchOptionsBySlotRoot.delete(slot.root);
-            } else {
-              recordPending(freshReceipt, effectiveObservedBase);
-            }
+            // Never treat an unreadable sidecar as absent or allocate below it; keep the target
+            // pending until the sidecar can be read and reconciled under the lock.
+            recordPending(freshReceipt, effectiveObservedBase);
             return;
           }
           const isCorrupt = diskResult.status === "corrupt";
@@ -2893,7 +2884,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             pendingLaunchOptionsBySlotRoot.delete(slot.root);
             return;
           }
-          const committedBaseRev = Math.max(freshReceiptRev, freshDiskRev);
+          const committedBaseRev = Math.max(effectiveObservedBase, freshDiskRev);
           const nextRevision = committedBaseRev + 1;
           const updatedReceipt = buildLaunchOptionsReceipt(freshReceipt, nextRevision);
           if (!(yield* isLockOwned)) {
@@ -2964,21 +2955,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ).pipe(
         Effect.catch(() =>
           Effect.sync(() => {
-            const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
-            const currentPriorPendingBase =
-              currentPending !== undefined &&
-              receiptMatchesInstall(currentPending.receipt, initialReceipt)
-                ? currentPending.baseDurableRevision
-                : 0;
-            recordPending(
-              initialReceipt,
-              Math.max(
-                receiptRev,
-                observedDiskRev,
-                initialPriorPendingBase,
-                currentPriorPendingBase,
-              ),
-            );
+            recordPendingForInitialReceipt();
           }),
         ),
       );
