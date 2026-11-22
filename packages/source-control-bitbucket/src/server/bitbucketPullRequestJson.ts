@@ -146,6 +146,11 @@ const RawViewerSchema = Schema.Struct({
   display_name: Schema.optional(Schema.NullOr(Schema.String)),
 });
 
+const RawMergeTaskSchema = Schema.Struct({
+  task_status: Schema.optional(Schema.NullOr(Schema.String)),
+  merge_result: Schema.optional(Schema.NullOr(RawPullRequestSchema)),
+});
+
 const RawRepositoryPermissionsSchema = Schema.Struct({
   values: Schema.optional(
     Schema.NullOr(
@@ -278,6 +283,7 @@ const decodeDiffstatEntry = Schema.decodeUnknownExit(RawDiffstatSchema);
 const decodeMemberEntry = Schema.decodeUnknownExit(RawMemberSchema);
 const decodeViewer = decodeJsonResult(RawViewerSchema);
 const decodeConflicts = decodeJsonResult(RawPageSchema);
+const decodeMergeTask = decodeJsonResult(RawMergeTaskSchema);
 const decodeRepositoryPermissions = decodeJsonResult(RawRepositoryPermissionsSchema);
 
 type DecodeFailure = Cause.Cause<Schema.SchemaError>;
@@ -318,6 +324,21 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
   return Result.isSuccess(decoded)
     ? Result.succeed(trimmed(decoded.success.nickname) ?? trimmed(decoded.success.display_name))
     : Result.fail(decoded.failure);
+}
+
+export function decodeMergeTaskJson(
+  raw: string,
+): Result.Result<
+  { readonly pending: boolean; readonly pullRequest: BitbucketPullRequest | undefined },
+  DecodeFailure
+> {
+  const decoded = decodeMergeTask(raw);
+  if (!Result.isSuccess(decoded)) return Result.fail(decoded.failure);
+  const result = decoded.success.merge_result;
+  return Result.succeed({
+    pending: decoded.success.task_status === "PENDING",
+    pullRequest: result == null ? undefined : toPullRequest(result),
+  });
 }
 
 export function decodeRepositoryPermissionJson(raw: string): Result.Result<boolean, DecodeFailure> {
