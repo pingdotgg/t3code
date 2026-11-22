@@ -389,6 +389,7 @@ export function planSidebarThreadDrop(input: {
   readonly activeKeysById: ReadonlyMap<string, string | null | undefined>;
   readonly activeReorderableKeys?: ReadonlySet<string>;
   readonly activeTimeOrdered?: boolean;
+  readonly landsInInput?: boolean;
 }): SidebarThreadDropPlan {
   const {
     activeKey,
@@ -404,6 +405,7 @@ export function planSidebarThreadDrop(input: {
     activeReorderableKeys,
   } = input;
   if (activeSection === "input" || activeSection === "working") return { kind: "none" };
+  if (target.section === "active" && input.landsInInput) return { kind: "none" };
   if (input.supportsSettlement === false && (target.section === "settled" || activeSettled)) {
     return { kind: "none" };
   }

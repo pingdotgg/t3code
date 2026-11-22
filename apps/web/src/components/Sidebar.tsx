@@ -1108,7 +1108,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const threadListRef = useRef<HTMLDivElement | null>(null);
   const searchResultsListRef = useRef<HTMLUListElement | null>(null);
   const sidebarContentRef = useRef<HTMLDivElement | null>(null);
-  const dragBoundaryTopRef = useRef<number | null>(null);
+  const dragBoundaryRef = useRef<{ header: HTMLElement; labelHeight: number } | null>(null);
   const listMotionRef = useRef<ReturnType<typeof createSidebarListMotion> | null>(null);
   const shiftGuardRef = useRef<ReturnType<typeof createSidebarShiftGuard> | null>(null);
   const [dragState, setDragState] = useState<{
@@ -1785,8 +1785,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       }
     })();
   };
-  const restrictBelowPins: Modifier = (args) =>
-    restrictBelowSidebarLabel(args, dragBoundaryTopRef.current);
+  const restrictBelowPins: Modifier = (args) => {
+    const boundary = dragBoundaryRef.current;
+    return restrictBelowSidebarLabel(
+      args,
+      boundary?.header.isConnected
+        ? boundary.header.getBoundingClientRect().top + boundary.labelHeight
+        : null,
+    );
+  };
   const dndModifiers = [restrictToVerticalAxis, restrictBelowPins];
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- re-registers DOM lists when Settled moves between viewports or search replaces them
   useLayoutEffect(() => {
@@ -1828,14 +1835,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     dragState?.activeSection === "input";
   const dragSourceChanged =
     dragState !== null && sectionByThreadKey.get(dragState.activeKey) !== dragState.activeSection;
+  const landsInInput = (thread: EnvironmentThreadShell) =>
+    resolveSidebarInboxSection(thread, workingShelfEnabled, false) === "input";
+  const draggedThread = dragState === null ? undefined : threadByKey.get(dragState.activeKey);
+  const draggedThreadLandsInInput = draggedThread !== undefined && landsInInput(draggedThread);
   const dragTargetSection =
-    isContextDrag || dragSourceChanged ? null : (dragState?.targetSection ?? null);
+    isContextDrag ||
+    dragSourceChanged ||
+    (dragState?.targetSection === "active" && draggedThreadLandsInInput)
+      ? null
+      : (dragState?.targetSection ?? null);
   const dragDropVerb =
     dragState === null ? null : resolveSidebarDropVerb(dragState.activeSection, dragTargetSection);
   const finishThreadDrag = (started: boolean) => {
     dragSensorRef.current = null;
     contextDragKeyRef.current = null;
     dragScrollRef.current = null;
+    dragBoundaryRef.current = null;
     endThreadContextDrag();
     if (started) {
       listMotionRef.current?.release();
@@ -2031,10 +2047,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (list && header) {
       const listRect = list.getBoundingClientRect();
       const scale = list.offsetWidth > 0 ? listRect.width / list.offsetWidth : 1;
-      dragBoundaryTopRef.current =
-        header.getBoundingClientRect().top + SIDEBAR_DRAG_LABEL_HEIGHT * scale;
+      dragBoundaryRef.current = { header, labelHeight: SIDEBAR_DRAG_LABEL_HEIGHT * scale };
     } else {
-      dragBoundaryTopRef.current = null;
+      dragBoundaryRef.current = null;
     }
     setDragState({
       activeKey,
@@ -2191,7 +2206,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (dragSourceChanged) return () => [];
     if (draggedThreadKey === undefined || draggedFromSection === undefined)
       return createSidebarCollisionDetection(() => true);
-    const source = threadByKey.get(draggedThreadKey);
+    const source = draggedThread;
     if (source === undefined) return createSidebarCollisionDetection(() => false);
     return createSidebarCollisionDetection(
       (id) => {
@@ -2212,6 +2227,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             activeKeysById,
             activeReorderableKeys: activeReorderableThreadKeys,
             activeTimeOrdered: workingShelfEnabled,
+            landsInInput: draggedThreadLandsInInput,
           }).kind !== "none"
         );
       },
@@ -2247,6 +2263,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       activeKeysById,
       activeReorderableKeys: activeReorderableThreadKeys,
       activeTimeOrdered: workingShelfEnabled,
+      landsInInput: landsInInput(activeThread),
     });
     if (plan.kind === "none") return;
     if (plan.kind === "settle" && settlingThreadKeysRef.current.has(activeKey)) return;

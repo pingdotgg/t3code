@@ -1586,6 +1586,15 @@ describe("Working shelf (beta)", () => {
           ...base,
           activeKey: "p1",
           activeSection: "pinned",
+          landsInInput: true,
+          target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
+        }),
+      ).toEqual({ kind: "none" });
+      expect(
+        planSidebarThreadDrop({
+          ...base,
+          activeKey: "p1",
+          activeSection: "pinned",
           target: { section: "active", pinnedOrder: [], activeOrder: ["a1", "p1", "a2"] },
         }),
       ).toEqual({
