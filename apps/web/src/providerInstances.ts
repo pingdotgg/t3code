@@ -43,9 +43,42 @@ export interface ProviderInstanceEntry {
   readonly models: ReadonlyArray<ServerProviderModel>;
 }
 
-/** Disabled instances may retain ready status until reconciliation. */
+/** Status dots share one corner per user, so a badge on one row can't move only that row's dot. */
+export function hasInstanceBadge(entries: ReadonlyArray<ProviderInstanceEntry>): boolean {
+  return entries.some((entry) => shouldShowInstanceBadge(entry, entries));
+}
+
+/**
+ * Disabled instances may retain ready status until reconciliation. A warning still offers
+ * the models of sub-providers that report no problem of their own.
+ */
+function isProviderInstanceHealthy(entry: ProviderInstanceEntry): boolean {
+  if (!entry.enabled || !entry.isAvailable) return false;
+  if (entry.status === "ready") return true;
+  if (entry.status !== "warning") return false;
+  const usable = new Set(
+    entry.snapshot.subProviders?.flatMap((subProvider) =>
+      subProvider.unavailableReason === undefined ? [subProvider.name] : [],
+    ),
+  );
+  return entry.models.some(
+    (model) => model.subProvider !== undefined && usable.has(model.subProvider),
+  );
+}
+
+/** Also true after a check that only failed or ran late: an earlier check's models stay offered. */
 export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boolean {
-  return entry.enabled && entry.isAvailable && entry.status === "ready";
+  if (isProviderInstanceHealthy(entry)) return true;
+  const { subProviders, auth, modelsRetained } = entry.snapshot;
+  if (!entry.enabled || !entry.isAvailable || subProviders !== undefined) return false;
+  if (modelsRetained === true) return true;
+  // The sign-in was confirmed, so the warning is about something else, such as a late catalog.
+  return (
+    entry.status === "warning" &&
+    entry.installed &&
+    auth.status === "authenticated" &&
+    entry.models.length > 0
+  );
 }
 
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
@@ -222,7 +255,7 @@ export function resolveSelectableProviderInstanceEntry(
     }
   }
   return (
-    entries.find(isProviderInstancePickerReady) ??
+    entries.find(isProviderInstanceHealthy) ??
     entries.find((entry) => isSelectableProviderInstanceEntry(entry) && entry.status !== "error")
   );
 }
