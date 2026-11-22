@@ -7200,13 +7200,16 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             return;
           }
           const activeContext = yield* Ref.get(activeTurn);
+          // A broken thread stays "error" so the next turn starts a fresh session.
           const status =
             options?.status ??
-            (activeContext === null
-              ? ("idle" as const)
-              : remembered.status === "idle"
-                ? ("active" as const)
-                : remembered.status);
+            (remembered.status === "error"
+              ? ("error" as const)
+              : activeContext === null
+                ? ("idle" as const)
+                : remembered.status === "idle"
+                  ? ("active" as const)
+                  : remembered.status);
           yield* emitProviderThreadRoster({
             nativeThreadId,
             providerThread: remembered,
