@@ -5,6 +5,7 @@ import { userEvent } from "vite-plus/test/browser";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
+import { m } from "../../i18n/messages";
 
 const actions = vi.hoisted(() => ({
   toast: vi.fn(),
@@ -226,6 +227,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
       consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
       driver: "codex",
       environments: expect.any(Array),
+      resolve: m,
     });
     expect(queryButton("Set up accounts here")).toBeDefined();
     await click("Back");
@@ -238,6 +240,7 @@ describe("AddProviderInstanceDialog environment routing", () => {
       consumer: { environmentId: remoteEnvironmentId, label: "Remote device" },
       driver: "claudeAgent",
       environments: expect.any(Array),
+      resolve: m,
     });
     expect(document.body.textContent).toContain("Using Studio for inference.");
     expect(settingsHooks.mutate).not.toHaveBeenCalled();

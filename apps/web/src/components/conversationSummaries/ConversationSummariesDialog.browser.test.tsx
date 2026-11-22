@@ -186,7 +186,7 @@ it("shows current summaries with their sources, hides outdated text, and opts th
   await expect
     .element(page.getByText("Last pass failed. No model 3 older sources wait for a summary."))
     .toBeVisible();
-  await expect.element(page.getByText(/Outdated: source changed\./)).toBeVisible();
+  await expect.element(page.getByText(/Outdated: Source changed\./)).toBeVisible();
 
   await userEvent.click(page.getByRole("button", { name: "Show sources" }).first());
   await expect.element(page.getByText("Please sign every release bundle.")).toBeVisible();
