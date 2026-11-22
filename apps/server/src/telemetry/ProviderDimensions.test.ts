@@ -7,15 +7,21 @@ const provider = (
   instanceId: string,
   driver: string,
   models: ReadonlyArray<{ slug: string; isCustom: boolean }>,
+  auth: Record<string, string> = {},
 ) =>
   ({
     instanceId: ProviderInstanceId.make(instanceId),
     driver,
+    auth: { status: "authenticated", ...auth },
     models,
   }) as unknown as ServerProvider;
 
 const providers = [
   provider("work-codex", "codex", [{ slug: "gpt-5.5", isCustom: false }]),
+  // An endpoint-marked instance lists whatever that endpoint serves.
+  provider("proxy-codex", "codex", [{ slug: "acme-internal-deployment", isCustom: false }], {
+    endpoint: "https://acme.example.com",
+  }),
   provider("claudeAgent", "claudeAgent", [
     { slug: "claude-opus-5-5", isCustom: false },
     { slug: "my-private-finetune", isCustom: true },
@@ -37,13 +43,18 @@ const thread = (
   ...overrides,
 });
 
-it("omits custom, user-configured, and unknown models and instance names", () => {
+it("omits custom, user-configured, endpoint-served, and unknown models and instance names", () => {
   expect(
     agentToolProperties({
       tool: "t3_thread_send",
       providers,
       caller: thread("claudeAgent", "my-private-finetune"),
-      targets: [thread("opencode", "ollama/acme-internal"), thread("removed-instance", "gpt-5.5")],
+      targets: [
+        thread("opencode", "ollama/acme-internal"),
+        thread("removed-instance", "gpt-5.5"),
+        thread("proxy-codex", "acme-internal-deployment"),
+        thread("work-codex", "gpt-5.5"),
+      ],
       outcome: { outcome: "ok" },
     }).map(({ callerProvider, callerModel, targetProvider, targetModel }) => ({
       callerProvider,
@@ -63,6 +74,18 @@ it("omits custom, user-configured, and unknown models and instance names", () =>
       callerModel: undefined,
       targetProvider: "unknown",
       targetModel: undefined,
+    },
+    {
+      callerProvider: "claudeAgent",
+      callerModel: undefined,
+      targetProvider: "codex",
+      targetModel: undefined,
+    },
+    {
+      callerProvider: "claudeAgent",
+      callerModel: undefined,
+      targetProvider: "codex",
+      targetModel: "gpt-5.5",
     },
   ]);
 });

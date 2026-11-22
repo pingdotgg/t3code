@@ -7,17 +7,28 @@ import type {
 import { BUNDLED_MODEL_MANIFEST } from "../provider/ModelManifest.ts";
 
 /**
- * Drivers whose model catalogs are published by the vendor. Other drivers
- * (OpenCode, Pi, ACP agents) list models from the user's own configuration,
- * such as local Ollama tags, so their model names stay out of analytics.
+ * Drivers whose model catalogs the vendor publishes. Other drivers (OpenCode,
+ * Pi, ACP agents) list models from the user's own configuration, such as local
+ * Ollama tags, so their model names stay out of analytics.
  */
 const VENDOR_CATALOG_DRIVERS: ReadonlySet<string> = new Set([
-  "codex",
+  "antigravity",
   "claudeAgent",
+  "codex",
   "cursor",
   "grok",
-  "antigravity",
 ]);
+
+/**
+ * Whether a provider's model list is the vendor's published catalog. Codex and
+ * Claude list whatever their configured endpoint serves, so a custom endpoint
+ * (`auth.endpoint`, or Claude's `customEndpoint` auth type) marks a
+ * user-defined list that never vouches.
+ */
+const vendorCatalogVouches = (provider: ServerProvider): boolean =>
+  VENDOR_CATALOG_DRIVERS.has(provider.driver) &&
+  provider.auth.endpoint === undefined &&
+  provider.auth.type !== "customEndpoint";
 
 export interface ProviderDimensions {
   readonly provider: string;
@@ -36,16 +47,15 @@ export function providerDimensions(
   const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
   if (provider === undefined) return { provider: "unknown" };
   const model = provider.models.find((candidate) => candidate.slug === selection.model);
-  return VENDOR_CATALOG_DRIVERS.has(provider.driver) && model !== undefined && !model.isCustom
+  return vendorCatalogVouches(provider) && model !== undefined && !model.isCustom
     ? { provider: provider.driver, model: model.slug }
     : { provider: provider.driver };
 }
 
 const DATED_SNAPSHOT = /-\d{8}$/u;
 
-// The bundled manifest is reviewed in this repo. Codex lists whatever its configured
-// model provider serves, so only the manifest vouches for Codex and Claude. Cursor, Grok,
-// and Antigravity list their vendor's catalog, which ships models before the manifest does.
+// The bundled manifest is reviewed in this repo. Provider catalogs ship models
+// before the manifest does, so a vendor-published list vouches too.
 const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
   Object.values(BUNDLED_MODEL_MANIFEST.providers ?? {}).flatMap((catalog) =>
     catalog.models.flatMap((model) =>
@@ -53,13 +63,12 @@ const MANIFEST_LABELS: ReadonlyMap<string, string> = new Map(
     ),
   ),
 );
-const REGISTRY_LABEL_DRIVERS: ReadonlySet<string> = new Set(["cursor", "grok", "antigravity"]);
 
 /**
  * The vendor catalog slug that a native or routed model id names, such as
  * `anthropic/claude-opus-5-5` or a dated snapshot. Models outside the bundled
- * manifest and the Cursor, Grok, and Antigravity catalogs, including user-added ones,
- * return undefined.
+ * manifest and the vendor catalogs, including user-added ones and models a
+ * custom endpoint serves, return undefined.
  */
 export function catalogModelLabel(
   providers: ReadonlyArray<ServerProvider>,
@@ -72,7 +81,7 @@ export function catalogModelLabel(
     if (label !== undefined) return label;
   }
   for (const provider of providers) {
-    if (!REGISTRY_LABEL_DRIVERS.has(provider.driver)) continue;
+    if (!vendorCatalogVouches(provider)) continue;
     const match = provider.models.find(
       (entry) =>
         !entry.isCustom &&

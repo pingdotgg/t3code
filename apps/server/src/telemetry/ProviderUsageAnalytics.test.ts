@@ -25,27 +25,50 @@ import {
   type ProviderTurnSegment,
 } from "./ProviderUsageAnalytics.ts";
 
+const provider = (
+  driver: string,
+  models: ReadonlyArray<{ slug: string; aliases?: ReadonlyArray<string> }>,
+  options: { readonly instanceId?: string; readonly auth?: Record<string, string> } = {},
+) =>
+  ({
+    instanceId: ProviderInstanceId.make(options.instanceId ?? driver),
+    driver,
+    auth: { status: "authenticated", ...options.auth },
+    models: models.map((model) => ({ ...model, isCustom: false })),
+  }) as unknown as ServerProvider;
+
 const providers = [
-  // Codex lists whatever its configured model provider serves, including private deployments.
-  { driver: "codex", models: [{ slug: "gpt-6-sol" }, { slug: "acme-azure-deployment" }] },
-  { driver: "claudeAgent", models: [{ slug: "claude-opus-5-5" }, { slug: "claude-haiku-4-5" }] },
-  { driver: "opencode", models: [{ slug: "ollama/acme-internal" }] },
+  // A natively-routed Codex instance lists OpenAI's catalog, which ships models
+  // before the bundled manifest lists them.
+  provider("codex", [{ slug: "gpt-6-sol" }, { slug: "gpt-6.2-sol" }]),
+  // A Codex routed through a custom endpoint serves whatever that endpoint
+  // returns, including private deployments; its list never vouches.
+  provider("codex", [{ slug: "acme-azure-deployment" }], {
+    instanceId: "codex-custom",
+    auth: { endpoint: "https://acme.example.com" },
+  }),
+  provider("claudeAgent", [
+    { slug: "claude-opus-5-5" },
+    { slug: "claude-haiku-4-5" },
+    { slug: "claude-opus-6" },
+  ]),
+  provider("claudeAgent", [{ slug: "claude-ops-internal" }], {
+    instanceId: "claudeAgent-custom",
+    auth: { type: "customEndpoint", endpoint: "https://claude-proxy.example.com" },
+  }),
+  // A custom endpoint that did not parse still carries its type marker.
+  provider("claudeAgent", [{ slug: "claude-ops-unparseable" }], {
+    instanceId: "claudeAgent-unparseable",
+    auth: { type: "customEndpoint" },
+  }),
+  provider("opencode", [{ slug: "ollama/acme-internal" }]),
   // Antigravity ships models before the bundled manifest lists them.
-  {
-    driver: "antigravity",
-    models: [
-      { slug: "gemini-4-neon", aliases: ["antigravity-default"] },
-      { slug: "gemini-4-hydrogen" },
-    ],
-  },
-].map(
-  ({ driver, models }) =>
-    ({
-      instanceId: ProviderInstanceId.make(driver),
-      driver,
-      models: models.map((model) => ({ ...model, isCustom: false })),
-    }) as unknown as ServerProvider,
-);
+  provider("antigravity", [
+    { slug: "gemini-4-neon", aliases: ["antigravity-default"] },
+    { slug: "gemini-4-hydrogen" },
+  ]),
+];
+
 const label = (model: string) => catalogModelLabel(providers, model);
 
 const at = (ms: number) => DateTime.makeUnsafe(ms);
@@ -337,6 +360,15 @@ describe("provider usage reporting", () => {
     expect(label("gemini-4-hydrogen")).toBe("gemini-4-hydrogen");
     expect(label("antigravity-default")).toBe("gemini-4-neon");
     expect(label("gemini-4-unlisted")).toBeUndefined();
+  });
+
+  it("reports Codex and Claude catalog models the bundled manifest does not list", () => {
+    expect(label("gpt-6.2-sol")).toBe("gpt-6.2-sol");
+    expect(label("claude-opus-6")).toBe("claude-opus-6");
+    // A custom endpoint's catalog is user-defined and never vouches.
+    expect(label("acme-azure-deployment")).toBeUndefined();
+    expect(label("claude-ops-internal")).toBeUndefined();
+    expect(label("claude-ops-unparseable")).toBeUndefined();
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
