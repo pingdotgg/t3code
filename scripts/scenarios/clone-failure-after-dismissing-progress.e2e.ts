@@ -54,15 +54,22 @@ test(
       );
       const response = await gitRequest.promise;
 
-      const progress = browser.locator(`[data-slot="toast-title"]:text-is("Cloning ${name}")`);
+      const toastTitle = (title: string) =>
+        browser.locator(`[data-slot="toast-title"]:text-is("${title}")`);
+      const dismiss = async (title: string) => {
+        await browser
+          .locator(
+            `[data-position]:has(> div > [data-slot="toast-close"]):has([data-slot="toast-title"]:text-is("${title}"))`,
+          )
+          .getByRole("button", "Dismiss notification", { exact: true })
+          .tap();
+        await toastTitle(title).waitFor({ state: "detached" });
+      };
+      const progress = toastTitle(`Cloning ${name}`);
+      const failure = toastTitle(`Failed to clone ${name}`);
+
       await progress.waitFor();
-      await browser
-        .locator(
-          `[data-position]:has(> div > [data-slot="toast-close"]):has([data-slot="toast-title"]:text-is("Cloning ${name}"))`,
-        )
-        .getByRole("button", "Dismiss notification", { exact: true })
-        .tap();
-      await progress.waitFor({ state: "detached" });
+      await dismiss(`Cloning ${name}`);
 
       response.writeHead(404).end();
       await runPromise(
@@ -78,24 +85,12 @@ test(
       );
 
       try {
-        const failure = browser.locator(
-          `[data-slot="toast-title"]:text-is("Failed to clone ${name}")`,
-        );
         await expect(failure).toBeVisible();
       } finally {
         await app.screenshot("after-background-clone-fails");
       }
 
-      const failure = browser.locator(
-        `[data-slot="toast-title"]:text-is("Failed to clone ${name}")`,
-      );
-      await browser
-        .locator(
-          `[data-position]:has(> div > [data-slot="toast-close"]):has([data-slot="toast-title"]:text-is("Failed to clone ${name}"))`,
-        )
-        .getByRole("button", "Dismiss notification", { exact: true })
-        .tap();
-      await failure.waitFor({ state: "detached" });
+      await dismiss(`Failed to clone ${name}`);
 
       const retryRequest = Promise.withResolvers<NodeHttp.ServerResponse>();
       remote.once("request", (_request, response) => retryRequest.resolve(response));
