@@ -254,13 +254,15 @@ const WorkspaceMenu = memo(function WorkspaceMenu({
         <TooltipTrigger
           render={
             <span
-              className="inline-flex h-7 shrink-0 items-center ps-2 pe-0.5 text-muted-foreground sm:h-5.5"
+              // The chips' 12px medium label at every size: caption on phones, meta above.
+              className="inline-flex h-7 min-w-0 shrink-0 items-center gap-1.25 border border-transparent px-2 text-caption text-muted-foreground sm:h-5.5 sm:text-meta"
               data-composer-context-control
               aria-label={workspaceLabel}
             />
           }
         >
           {icon}
+          <ComposerContextLabel>{workspaceLabel}</ComposerContextLabel>
         </TooltipTrigger>
         <TooltipPopup>{workspaceLabel}</TooltipPopup>
       </Tooltip>
