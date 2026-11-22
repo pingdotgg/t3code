@@ -2851,6 +2851,7 @@
   "f9d3c8aa453829ce": "Tap someone to request a review. Tap a requested reviewer to remove the request. Changes are sent when you close this sheet.",
   "8d3770f150f0bcb4": "Requested",
   "fff1c3d17603f394": "This provider accepts a reviewer ID but cannot list candidates.",
+  "bbb7d40a7ad7ab71": "Private",
   "85ae9979ad3b0c1e": "Copy base branch {branch}",
   "06a684782801e8f7": "Copy head branch {branch}",
   "8e4f3c862193b8a5": "Edit",
