@@ -554,13 +554,18 @@ describe("parseResolvedPath", () => {
 });
 
 // Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
-const WSL_EXE = "/windows/System32/wsl.exe";
+const STORE_WSL_EXE = "/program-files/WSL/wsl.exe";
+const INBOX_WSL_SERVICE = "/windows/System32/lxss/LxssManager.dll";
+const WSL_STUB = "/windows/System32/wsl.exe";
 
-const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0]) =>
-  makeIsAvailable("win32", "/windows").pipe(
+const isAvailable = (
+  policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
+  files: ReadonlyArray<string> = [WSL_STUB, STORE_WSL_EXE],
+) =>
+  makeIsAvailable("win32", "/windows", "/program-files").pipe(
     Effect.provide(
       Layer.mergeAll(
-        FileSystem.layerNoop({ exists: (path) => Effect.succeed(path === WSL_EXE) }),
+        FileSystem.layerNoop({ exists: (path) => Effect.succeed(files.includes(path)) }),
         Path.layer,
         DesktopManagedPolicy.layerTest(policy),
       ),
@@ -568,6 +573,13 @@ const isAvailable = (policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[
   );
 
 describe("makeIsAvailable", () => {
+  it.effect("needs an installed WSL, not just the System32 install stub", () =>
+    Effect.gen(function* () {
+      assert.isFalse(yield* isAvailable(undefined, [WSL_STUB]));
+      assert.isTrue(yield* isAvailable(undefined, [WSL_STUB, INBOX_WSL_SERVICE]));
+    }),
+  );
+
   it.effect("turns WSL off on a machine with a managed policy, even an invalid one", () =>
     Effect.gen(function* () {
       assert.isTrue(yield* isAvailable());

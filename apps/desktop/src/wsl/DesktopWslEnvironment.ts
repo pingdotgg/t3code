@@ -1122,6 +1122,7 @@ const getUserHomeImpl = (
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
+  programFiles: string,
 ): Effect.fn.Return<
   boolean,
   never,
@@ -1130,10 +1131,16 @@ export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable"
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  const wslExePath = path.join(windir, "System32", "wsl.exe");
-  if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
-    return false;
-  }
+  // System32\wsl.exe is an install stub on Windows without WSL; look for the Store WSL package
+  // or the inbox WSL service instead.
+  const installed = yield* Effect.forEach(
+    [
+      path.join(programFiles, "WSL", "wsl.exe"),
+      path.join(windir, "System32", "lxss", "LxssManager.dll"),
+    ],
+    (candidate) => fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)),
+  );
+  if (!installed.includes(true)) return false;
   // A server in WSL reads Linux's policy, never this machine's, so a managed machine runs none.
   return yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found === undefined),
@@ -1235,7 +1242,9 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     // Not Config: Windows variable names are case-insensitive only on the live process.env.
-    const windir = (yield* HostProcess.Environment).WINDIR ?? "C:\\Windows";
+    const hostEnvironment = yield* HostProcess.Environment;
+    const windir = hostEnvironment.WINDIR ?? "C:\\Windows";
+    const programFiles = hostEnvironment.ProgramFiles ?? "C:\\Program Files";
 
     const provideSpawner = <A, E>(
       effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,
@@ -1243,7 +1252,7 @@ export const layer = Layer.effect(
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
-    const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
+    const wslAvailable = yield* makeIsAvailable(environment.platform, windir, programFiles).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(Path.Path, environment.path),
       Effect.provideService(
