@@ -1,5 +1,5 @@
 import { Children, isValidElement, type ReactNode } from "react";
-import type { ExtraProps as ReactMarkdownExtraProps } from "react-markdown";
+import type { Element } from "hast";
 
 import type { DiffThemeName } from "../../lib/diffRendering";
 
@@ -44,11 +44,7 @@ export function extractPreCodeMeta(node: unknown): string | undefined {
   return typeof meta === "string" && meta.trim().length > 0 ? meta.trim() : undefined;
 }
 
-export function isClosedCodeFence(
-  node: ReactMarkdownExtraProps["node"],
-  text: string,
-  code: string,
-): boolean {
+export function isClosedCodeFence(node: Element | undefined, text: string, code: string): boolean {
   const start = node?.position?.start.offset;
   const end = node?.position?.end.offset;
   if (start === undefined || end === undefined) return false;
@@ -98,7 +94,7 @@ export function extractCodeBlock(
     return null;
   }
   // With a custom `code` component the child's type is that component, not
-  // the "code" tag — the hast node react-markdown attaches still names it.
+  // the "code" tag — the hast node the renderer passes still names it.
   if (onlyChild.type !== "code" && onlyChild.props.node?.tagName !== "code") {
     return null;
   }
