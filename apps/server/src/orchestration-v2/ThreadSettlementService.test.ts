@@ -3,6 +3,7 @@ import { assert, describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import {
   DEFAULT_SERVER_SETTINGS,
+  GitManagerError,
   ProjectId,
   EventId,
   ProviderInstanceId,
@@ -959,15 +960,67 @@ describe("ThreadSettlementServiceV2 worker", () => {
     }),
   );
 
+  it.effect("keeps idle unlinked branch threads with an open PR under retention", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(NOW));
+      const earlier = "2026-08-19T00:00:00.000Z";
+      const openPr = makeThread("idle-open", {
+        branch: "open",
+        latestUserMessageAt: DateTime.makeUnsafe(earlier),
+      });
+      const reused = makeThread("idle-reused", { branch: "reused" });
+      const noPr = makeThread("idle-none", { branch: "none" });
+      const extra = makeThread("idle-extra", { branch: "extra" });
+      const merged = makeThread("idle-merged", { branch: "merged" });
+      const failed = makeThread("idle-failed", { branch: "failed" });
+      const fixture = yield* makeHarness({
+        snapshot: makeSnapshot([openPr, reused, noPr, extra, merged, failed]),
+        settings: {
+          ...DEFAULT_SERVER_SETTINGS,
+          sidebarAutoSettleAfterDays: 3,
+          sidebarAutoSettleKeepPullRequests: true,
+        },
+        branchPullRequest: ({ branch, cwd }, options) =>
+          branch === "open"
+            ? Effect.succeed(makeBranchPullRequest("open"))
+            : branch === "reused"
+              ? Effect.succeed(
+                  options?.freshGitState === true
+                    ? makeBranchPullRequest("open")
+                    : { ...makeBranchPullRequest("merged"), mergedAt: "2026-07-01T00:00:00.000Z" },
+                )
+              : branch === "merged"
+                ? Effect.succeed({ ...makeBranchPullRequest("merged"), mergedAt: earlier })
+                : branch === "failed"
+                  ? Effect.fail(
+                      new GitManagerError({
+                        operation: "branchPullRequest",
+                        cwd,
+                        detail: "failed",
+                      }),
+                    )
+                  : Effect.succeed(null),
+      });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        expect(
+          (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
+        ).toEqual([extra.id, failed.id, merged.id, noPr.id]);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
   it.effect("does not auto-settle a thread whose terminal has an active subprocess", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
-      const thread = makeThread("active-terminal");
+      const thread = makeThread("active-terminal", { branch: "active-terminal" });
       const fixture = yield* makeHarness({
         snapshot: makeSnapshot([thread]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleAfterDays: 3,
+          sidebarAutoSettleKeepPullRequests: true,
         },
         hasActiveSubprocess: ({ threadId }) => Effect.succeed(threadId === thread.id),
       });
@@ -975,6 +1028,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* startHarness(service, fixture.activation, fixture.snapshotReads);
         expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([]);
+        expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
