@@ -7216,11 +7216,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         testCase.called ? ["checks" in testCase && testCase.checks === "full-access"] : [],
       );
       if ("claudeAsks" in testCase && !testCase.called) {
-        // Claude asked about a call nobody was prompted for, so the next one is prompted and runs.
-        const [relisted] = yield* mcpApps.listTools(target);
-        assert.deepEqual(relisted?.annotations, { destructiveHint: false });
-        yield* mcpApps.callTool({ ...target, tool, arguments: {} });
-        assert.lengthOf(calls, 1);
+        // Nobody was prompted for the refused call, so it cannot make a later unprompted one pass.
+        const retry = yield* Effect.exit(mcpApps.callTool({ ...target, tool, arguments: {} }));
+        assert.isTrue(Exit.isFailure(retry));
       }
     }).pipe(
       Effect.scoped,

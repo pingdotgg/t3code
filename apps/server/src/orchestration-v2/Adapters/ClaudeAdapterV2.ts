@@ -1095,7 +1095,7 @@ function claudeChecksMcpAppCalls(
 
 /**
  * Whether an ask rule names this tool as T3 spells it: the tool, its server, or a wildcard over the
- * whole name. Claude also matches spellings T3 can't list; such an ask is refused once, then prompted.
+ * whole name. Claude also matches spellings T3 can't list; it refuses those asks, as nobody was asked.
  */
 function claudeAskRuleNamesMcpTool(
   rules: ReadonlyArray<ClaudePermissionRule>,
@@ -1128,25 +1128,24 @@ function claudeWildcardMatches(pattern: string, value: string): boolean {
 
 /**
  * Whether a card runs this read-only tool without T3's prompt. A checked call is refused or asked
- * about by Claude, so only a tool it asks about (`asked`, or an ask rule naming it) needs the prompt,
- * which then answers the ask. An unchecked call skips Claude's check, so it needs readable rules
- * (null when not) with no ask or deny rule that may cover the tool.
+ * about by Claude, so only an ask rule naming the tool needs the prompt, which then answers the ask.
+ * An unchecked call skips Claude's check, so it needs readable rules (null when not) with no ask or
+ * deny rule that may cover the tool.
  */
 function claudeReadOnlyMcpToolSkipsPrompt(input: {
   readonly checked: boolean;
   readonly rules: ReadonlyArray<ClaudePermissionRule> | null;
-  readonly asked: ReadonlySet<string>;
   readonly server: string;
   readonly tool: string;
 }): boolean {
-  if (!input.checked) {
-    return input.rules !== null && !claudeRulesMayCoverMcpTools(input.rules, ["ask", "deny"]);
-  }
-  const toolName = claudeMcpToolName(input.server, input.tool);
-  return (
-    !input.asked.has(toolName) &&
-    (input.rules === null || !claudeAskRuleNamesMcpTool(input.rules, input.server, toolName))
-  );
+  if (input.rules === null) return input.checked;
+  return input.checked
+    ? !claudeAskRuleNamesMcpTool(
+        input.rules,
+        input.server,
+        claudeMcpToolName(input.server, input.tool),
+      )
+    : !claudeRulesMayCoverMcpTools(input.rules, ["ask", "deny"]);
 }
 
 /** Claude reports `annotations` as `readOnly`/`destructive`/`openWorld`; apps expect MCP's `*Hint` names. */
@@ -6167,8 +6166,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
         const deliveredAppContext = new Map<string, ReadonlyMap<string, string>>();
         // In-flight card calls, by Claude tool name, that T3 asked the user about first.
         const promptedMcpAppCalls = new Map<string, number>();
-        // Claude tool names whose unprompted card call Claude asked about; T3 prompts for them from then on.
-        const mcpAppToolsClaudeAskedAbout = new Set<string>();
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         // Claude 5 task tools edit one list per native session, across turns.
         const taskListsByNativeThread = yield* Ref.make(
@@ -12634,7 +12631,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                 toolUseID: callbackOptions.toolUseID,
               } satisfies PermissionResult;
             }
-            mcpAppToolsClaudeAskedAbout.add(toolName);
             return {
               behavior: "deny",
               message: "The user was not asked about this app call.",
@@ -14651,7 +14647,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeReadOnlyMcpToolSkipsPrompt({
                     checked,
                     rules,
-                    asked: mcpAppToolsClaudeAskedAbout,
                     server,
                     tool: tool.name,
                   }),
@@ -14703,7 +14698,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                   claudeReadOnlyMcpToolSkipsPrompt({
                     checked,
                     rules,
-                    asked: mcpAppToolsClaudeAskedAbout,
                     server: call.server,
                     tool: call.tool,
                   })
