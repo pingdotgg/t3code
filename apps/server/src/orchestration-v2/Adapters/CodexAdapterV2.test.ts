@@ -835,11 +835,8 @@ function codexReplayPreamble(input: {
 }
 
 /**
- * Every turn/start follows a config/read, and a thread's first turn on a connection names it
- * unless the transcript names it itself. A thread start, resume or fork follows a config/read
- * unless it retries a failed request or the transcript reads config itself. A turn/start the
- * transcript already precedes with a config/read gets no inserted exchanges. Inserts those
- * exchanges and shifts later client ids.
+ * Inserts the config/read before each turn/start and thread start, resume or fork, and names a
+ * thread before its first turn, unless the transcript already has them. Shifts later client ids.
  */
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
