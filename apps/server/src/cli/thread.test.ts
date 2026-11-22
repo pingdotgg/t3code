@@ -558,6 +558,40 @@ const timelineTools = (types: ReadonlyArray<string>) => {
 
 const tail = (tools: number) => [...Array<string>(tools).fill("tool_call"), "assistant_message"];
 
+it.effect("show retains pull request metadata when reading a later message window", () =>
+  Effect.gen(function* () {
+    const link = {
+      host: "github.com",
+      repository: "owner/repo",
+      number: 1,
+      url: "https://github.com/owner/repo/pull/1",
+      source: "manual",
+      state: "open",
+      watching: false,
+      watchStartedAt: null,
+    } as const;
+    const call = ((_tool: string, input: unknown) => {
+      const args = input as { afterPosition?: number; limit: number };
+      const first = args.afterPosition === undefined && args.limit === 1;
+      return Effect.succeed({
+        thread: {
+          itemCount: 200,
+          status: first ? "running" : "completed",
+          pullRequestCount: 1,
+          ...(first ? { pullRequests: [link], openPullRequestCount: 1 } : {}),
+        },
+        items: first ? [] : [{ position: 199, itemId: "message", type: "assistant_message" }],
+        nextPosition: 199,
+        hasMore: false,
+      });
+    }) as ThreadTools["call"];
+    const { thread } = yield* readLatestMessages({ call }, threadId, 1);
+    assert.strictEqual(thread.status, "completed");
+    assert.deepStrictEqual(thread.pullRequests, [link]);
+    assert.strictEqual(thread.openPullRequestCount, 1);
+  }),
+);
+
 it.effect("show reads the end of a long thread, not its whole history", () =>
   Effect.gen(function* () {
     const { tools, served, latest } = timelineTools([
