@@ -344,6 +344,41 @@ class GitHubFailure extends Schema.TaggedError<GitHubFailure>()("GitHubFailure",
 
 const failure = (detail: string, cause?: unknown) => new GitHubFailure({ detail, cause });
 
+class GitHubRepositoryNameRejectedError extends Schema.TaggedError<GitHubRepositoryNameRejectedError>()(
+  "GitHubRepositoryNameRejectedError",
+  {
+    repository: Schema.String,
+    taken: Schema.Boolean,
+    cause: Schema.Defect(),
+  },
+) {
+  get userFacingDetail(): string {
+    const repository = SourceControlProvider.transportSafeSourceControlErrorValue(this.repository);
+    return this.taken
+      ? `Cannot create "${repository}": a repository with this name already exists in this account. Choose another name and try again.`
+      : `Cannot create "${repository}": GitHub rejected this repository name. Choose another name and try again.`;
+  }
+
+  override get message(): string {
+    return this.userFacingDetail;
+  }
+}
+
+// GitHub prefixes repository field errors with the field, e.g. "name already exists on this account".
+function repositoryNameRejection(
+  error: GitHubRequestPolicy.GitHubApiError,
+  repository: string,
+): GitHubRepositoryNameRejectedError | undefined {
+  if (error._tag !== "GitHubApiResponseError" || error.status !== 422) return undefined;
+  const nameErrors = (error.githubErrors ?? []).filter((message) => /^name\b/iu.test(message));
+  if (nameErrors.length === 0) return undefined;
+  return new GitHubRepositoryNameRejectedError({
+    repository,
+    taken: nameErrors.some((message) => /already exists/iu.test(message)),
+    cause: error,
+  });
+}
+
 // A gh login confirms a GitHub Enterprise Server whose hostname does not identify its provider.
 const refineRepositoryIdentity: NonNullable<
   SourceControlProvider.SourceControlProvider["Service"]["refineRepositoryIdentity"]
@@ -1185,8 +1220,8 @@ export const make = Effect.gen(function* () {
         const name = locator?.name ?? input.repository.trim();
         const host = locator?.host ?? (environment.GH_HOST?.trim().toLowerCase() || "github.com");
         const isViewer = viewer !== null && owner?.toLowerCase() === viewer.toLowerCase();
-        const response = yield* rest(
-          {
+        const response = yield* api
+          .rest({
             host,
             operation: "createRepository",
             method: "POST",
@@ -1194,9 +1229,21 @@ export const make = Effect.gen(function* () {
             path:
               isViewer || owner === null ? "user/repos" : `orgs/${encodeURIComponent(owner)}/repos`,
             body: { name, private: input.visibility === "private" },
-          },
-          `No organization named ${owner ?? "that"} that this account can create repositories in.`,
-        );
+          })
+          .pipe(
+            Effect.mapError((error) => {
+              const rejection = repositoryNameRejection(
+                error,
+                owner === null ? name : `${owner}/${name}`,
+              );
+              return rejection === undefined
+                ? fromGitHubApiError(
+                    error,
+                    `No organization named ${owner ?? "that"} that this account can create repositories in.`,
+                  )
+                : failure(rejection.userFacingDetail, rejection);
+            }),
+          );
         const decoded = decodeRawRepository(response.body);
         if (Result.isFailure(decoded)) {
           return yield* failure("GitHub returned an invalid repository.", decoded.failure);
