@@ -2290,6 +2290,27 @@ effectIt.effect("refuses unsupported resume instead of manufacturing a user prom
 );
 
 effectIt.effect.each([
+  { contextRun: "current" },
+  { contextRun: "failed", switchedProvider: true },
+] as const)(
+  "a resume that carries pending context asks a provider without native resume to continue: %j",
+  (sideChat) =>
+    Effect.gen(function* () {
+      const harness = makeLocalCommandHarness({
+        text: "",
+        manualContinuation: true,
+        nativeResumeUnsupported: true,
+        sideChat,
+      });
+      yield* harness.start;
+      expect(harness.settledRuns).toEqual([]);
+      expect(harness.startTurn.mock.calls.map(([turn]) => turn.message.text)).toEqual([
+        withInlineContext("SIDE_CHAT_CONTEXT", "Continue where you left off."),
+      ]);
+    }),
+);
+
+effectIt.effect.each([
   { contextRun: "current", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   { contextRun: "failed", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
   { contextRun: "cancelled", runtimeMode: "full-access", context: "SIDE_CHAT_CONTEXT" },
@@ -2526,7 +2547,7 @@ effectIt.effect.each(
     { ...choice, resuming: true },
   ]),
 )(
-  "$goalDriver goal prompts defer switched-provider history only with native support: $nativeGoals, resuming: $resuming",
+  "$goalDriver goal prompts go verbatim whether or not goals are native: $nativeGoals, resuming: $resuming",
   ({ goalDriver, nativeGoals, resuming }) =>
     Effect.gen(function* () {
       const harness = makeLocalCommandHarness({
@@ -2549,11 +2570,7 @@ effectIt.effect.each(
       }
       harness.tryHandlePromptCommand.mockReturnValue(Effect.succeed(false));
       yield* harness.start;
-      expect(harness.startTurn.mock.calls[0]?.[0].message.text.includes("SIDE_CHAT_CONTEXT")).toBe(
-        !nativeGoals,
-      );
-      if (nativeGoals)
-        expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
+      expect(harness.startTurn.mock.calls[0]?.[0].message.text).toBe("/goal all tests pass");
     }),
 );
 
