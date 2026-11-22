@@ -1877,7 +1877,7 @@ describe("AcpRegistryDriver registry recovery", () => {
         const v3LiveConfigDuringFallback = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) =>
             snapshot.models.some((model) =>
-              model.capabilities?.optionDescriptors.some((opt) => opt.id === "fallback-effort"),
+              model.capabilities?.optionDescriptors?.some((opt) => opt.id === "fallback-effort"),
             ),
           ),
           Stream.runHead,
@@ -2947,7 +2947,7 @@ describe("AcpRegistryDriver registry recovery", () => {
         const v1NewerLiveApplied = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) =>
             snapshot.models.some((model) =>
-              model.capabilities?.optionDescriptors.some((opt) => opt.id === "v1-live-effort"),
+              model.capabilities?.optionDescriptors?.some((opt) => opt.id === "v1-live-effort"),
             ),
           ),
           Stream.runHead,
@@ -2978,7 +2978,7 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(v1AfterSuperseded.models.map((model) => model.slug)).toEqual(["default"]);
         expect(
           v1AfterSuperseded.models.some((model) =>
-            model.capabilities?.optionDescriptors.some((opt) => opt.id === "v1-live-effort"),
+            model.capabilities?.optionDescriptors?.some((opt) => opt.id === "v1-live-effort"),
           ),
         ).toBe(true);
         expect(

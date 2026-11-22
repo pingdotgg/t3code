@@ -1589,7 +1589,7 @@ describe("AcpRegistrySupport", () => {
         yield* Deferred.await(renameBlocked);
         // Age the lock past INSTALL_LOCK_STALE_MS so installer 2 takes over and publishes artifactRoot.
         const lockPath = path.join(raceToolsDir, "example-agent", "1.0.0", "linux-x86_64.lock");
-        yield* fileSystem.utimes(lockPath, new Date(0), new Date(0));
+        yield* fileSystem.utimes(lockPath, 0, 0);
         yield* TestClock.adjust("6 minutes");
         const installedBy2 = yield* raceInstaller2.resolve(settings(), "/workspace");
         yield* Deferred.succeed(releaseFirstRename, undefined);
