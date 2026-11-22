@@ -429,7 +429,7 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#BetaResponseCharLocationCitation":
   replacement: "Generated.BetaResponseCharLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#BetaResponseCitationsConfig":
   replacement: "Generated.BetaResponseCitationsConfig"
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -453,7 +453,7 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#BetaResponseContentBlockLocationCitation":
   replacement: "Generated.BetaResponseContentBlockLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#BetaResponseContextManagement":
   replacement: "Generated.BetaResponseContextManagement"
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -468,7 +468,7 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#BetaResponsePageLocationCitation":
   replacement: "Generated.BetaResponsePageLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#BetaResponseRedactedThinkingBlock":
   replacement: "Generated.BetaResponseRedactedThinkingBlock"
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -651,7 +651,7 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#Client":
   replacement: "Generated.AnthropicClient"
-  note: "Regenerated in v4 under this name; update the identifier and re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Renamed to `Generated.AnthropicClient<E, R>`. Endpoint effects include E alongside generated client errors and require R. E defaults to HttpClientError.HttpClientError and R to never; carry custom client error and context types through explicit annotations."
 "@effect/ai-anthropic/Generated#ClientError":
   replacement: "Generated.AnthropicClientError"
   note: "Regenerated in v4 under this name; update the identifier and re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -786,7 +786,7 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#make":
   replacement: "Generated.make"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "make now infers E and R from `HttpClient.With<E, R>` and returns `Generated.AnthropicClient<E, R>`. Preserve those type parameters in wrappers; endpoint effects include the supplied client error E and require R. transformClient must preserve the same E and R."
 "@effect/ai-anthropic/Generated#Message":
   replacement: "Generated.Message"
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
@@ -912,13 +912,13 @@
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
 "@effect/ai-anthropic/Generated#ResponseCharLocationCitation":
   replacement: "Generated.ResponseCharLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#ResponseContentBlockLocationCitation":
   replacement: "Generated.ResponseContentBlockLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#ResponsePageLocationCitation":
   replacement: "Generated.ResponsePageLocationCitation"
-  note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."
+  note: "Use the generated type and codec rather than a schema class. `file_id` is optional and nullable; decoding an omitted field leaves it absent instead of supplying the v3 `null` default. Handle `undefined` as well as `null`, or normalize with `citation.file_id ?? null` when the old default is needed."
 "@effect/ai-anthropic/Generated#ResponseRedactedThinkingBlock":
   replacement: "Generated.ResponseRedactedThinkingBlock"
   note: "Still generated in v4 from the current Anthropic specification; re-check the schema's Type/Encoded shape because the generated definition changed."

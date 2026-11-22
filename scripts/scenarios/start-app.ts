@@ -38,31 +38,31 @@ const REAL_PROVIDERS = [
   "antigravity",
 ];
 
-// The server labels its environment with the host's name, probed through these commands.
-// Captures must not depend on, or show, the machine that made them.
-const HOST_LABEL_SHIM = `#!/bin/sh
-case "$*" in
-  "--pretty" | "--get ComputerName") echo "Scenario" ;;
-  *) for real in /usr/bin /usr/sbin /bin; do
-       [ -x "$real/$(basename "$0")" ] && exec "$real/$(basename "$0")" "$@"
-     done
-     exit 127 ;;
-esac
-`;
+/** Captures must not depend on, or show, the machine that made them. */
+/** Where a scenario serves a fake Linear API; nothing listens there unless one does. */
+export const SCENARIO_LINEAR_PORT = 13_997;
+
+export const SCENARIO_MACHINE_ENV = {
+  T3CODE_ENVIRONMENT_LABEL: "Scenario",
+  T3CODE_ENVIRONMENT_MACHINE_KIND: "laptop",
+  T3CODE_LINEAR_API_URL: `http://127.0.0.1:${SCENARIO_LINEAR_PORT}/graphql`,
+};
 
 const encodeSettings = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
-const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
+export const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   yield* fs.remove(home, { recursive: true, force: true });
   yield* fs.makeDirectory(path.join(home, "userdata"), { recursive: true });
   yield* fs.makeDirectory(path.join(home, "bin"));
-  for (const command of ["hostnamectl", "scutil"]) {
-    const shim = path.join(home, "bin", command);
-    yield* fs.writeFileString(shim, HOST_LABEL_SHIM);
-    yield* fs.chmod(shim, 0o755);
-  }
+  // Editor discovery is cached, so the recording shim must exist before the server starts.
+  const editor = path.join(home, "bin", "cursor");
+  yield* fs.writeFileString(
+    editor,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > "$(dirname "$0")/../editor-args.txt"\n`,
+  );
+  yield* fs.chmod(editor, 0o755);
   const noModel = path.join(home, "bin/no-model");
   yield* fs.writeFileString(noModel, "#!/bin/sh\necho 'scenarios run no model' >&2\nexit 1\n");
   yield* fs.chmod(noModel, 0o755);
@@ -85,7 +85,7 @@ const prepareHome = Effect.fn("startApp.prepareHome")(function* (home: string) {
 });
 
 /** Starts a process in the caller's scope and hands each line it prints to `onLine`. */
-const start = Effect.fn("startApp.start")(function* (input: {
+export const start = Effect.fn("startApp.start")(function* (input: {
   readonly cwd: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
@@ -130,6 +130,7 @@ const startApp = Effect.fn("startApp")(function* (input: {
     ...hostEnvironment,
     PATH: `${path.join(input.home, "bin")}:${hostEnvironment.PATH ?? ""}`,
     T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "0",
+    ...SCENARIO_MACHINE_ENV,
   };
   const devRunner = (mode: string, args: ReadonlyArray<string>) => [
     "scripts/dev-runner.ts",

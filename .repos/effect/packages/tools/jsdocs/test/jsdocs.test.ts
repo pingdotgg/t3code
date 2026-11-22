@@ -1016,7 +1016,7 @@ export const makeValue = () => 1
     fs.writeFileSync(
       path.join(cwd, "tsconfig.json"),
       JSON.stringify({
-        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022", noLib: true },
         include: ["src/**/*.ts"]
       })
     )
@@ -1081,7 +1081,7 @@ export const makeValue = () => 1
     fs.writeFileSync(
       path.join(cwd, "tsconfig.json"),
       JSON.stringify({
-        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022", noLib: true },
         include: ["src/**/*.ts"]
       })
     )
@@ -1149,7 +1149,7 @@ export const useHidden = () => undefined
     fs.writeFileSync(
       path.join(cwd, "tsconfig.json"),
       JSON.stringify({
-        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022" },
+        compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022", noLib: true },
         include: ["src/**/*.ts"]
       })
     )

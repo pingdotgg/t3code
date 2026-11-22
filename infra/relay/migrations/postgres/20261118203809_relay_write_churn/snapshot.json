@@ -1,0 +1,36 @@
+{
+  "type": "diff",
+  "version": "9",
+  "dialect": "postgres",
+  "id": "4a3b409a-6315-41e4-bd97-a2659709bf35",
+  "prevIds": ["4413755a-63f1-4f93-bdc9-d1357283c23e"],
+  "footprints": [
+    {
+      "statementType": "drop_index",
+      "statementTarget": [
+        "index",
+        "public",
+        "relay_dpop_proofs",
+        "idx_relay_dpop_proofs_expires_at"
+      ],
+      "writes": [
+        "s|idx|public.idx_relay_dpop_proofs_expires_at",
+        "n|idx|public.idx_relay_dpop_proofs_expires_at",
+        "e|idx|public.idx_relay_dpop_proofs_expires_at",
+        "n|rel|public.idx_relay_dpop_proofs_expires_at"
+      ],
+      "reads": [
+        "e|tbl|public.relay_dpop_proofs",
+        "n|sch|public",
+        "e|col|public.relay_dpop_proofs.expires_at"
+      ],
+      "sharedWrites": []
+    }
+  ],
+  "deltas": [
+    {
+      "op": "drop",
+      "key": "indexes\u0000[\"public\",\"idx_relay_dpop_proofs_expires_at\"]"
+    }
+  ]
+}

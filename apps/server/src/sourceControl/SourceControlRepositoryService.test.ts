@@ -10,6 +10,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import { ChildProcessSpawner } from "effect/process";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -20,6 +21,7 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import type { GitCloneProgressLine } from "../project/gitCloneProgress.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -78,6 +80,7 @@ function layer(input: {
     Layer.provide(
       Layer.mock(GitVcsDriver.GitVcsDriver)({
         execute: () => Effect.succeed(processOutput()),
+        invalidateRefs: () => Effect.void,
         ensureRemote: () => Effect.succeed("origin"),
         pushCurrentBranch: () =>
           Effect.succeed({
@@ -220,7 +223,7 @@ it.effect.each(["--bare", "source.git"])(
         });
         assert.strictEqual(result.cwd, destinationPath);
         assert.isTrue(yield* fs.exists(path.join(destinationPath, ".git")));
-      }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+      }).pipe(Effect.provide(layer({ git })));
     }).pipe(
       Effect.provide(
         GitVcsDriver.layer.pipe(
@@ -233,6 +236,72 @@ it.effect.each(["--bare", "source.git"])(
         ),
       ),
     ),
+);
+
+it.effect.each([
+  { readsWhen: "before git creates the repository", readBeforeInit: true },
+  { readsWhen: "while HEAD is unborn", readBeforeInit: false },
+])("lists the cloned branches after a ref list was read $readsWhen", ({ readBeforeInit }) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-clone-refs-" });
+    const source = path.join(parent, "source");
+    const destinationPath = path.join(parent, "checkout");
+    const run = (cwd: string, args: ReadonlyArray<string>) =>
+      git.execute({ operation: "test.git", cwd, args });
+    yield* run(parent, ["init", "--initial-branch=staging", source]);
+    yield* run(source, [
+      "-c",
+      "user.name=Test",
+      "-c",
+      "user.email=test@example.com",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "init",
+    ]);
+    const refNames = git
+      .listRefs({ cwd: destinationPath })
+      .pipe(Effect.map((result) => result.refs.map((ref) => ref.name)));
+    let duringClone: ReadonlyArray<string> | null = null;
+    // Stands in for git clone so the read lands at a chosen point inside it.
+    const cloneInTwoSteps = Effect.gen(function* () {
+      yield* fs.makeDirectory(destinationPath).pipe(Effect.orDie);
+      if (readBeforeInit) duringClone = yield* refNames;
+      yield* run(parent, ["init", "--initial-branch=staging", destinationPath]);
+      if (!readBeforeInit) duringClone = yield* refNames;
+      return yield* run(destinationPath, ["pull", source, "staging"]);
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({ remoteUrl: source, destinationPath });
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            ...git,
+            execute: (input) => (input.args[0] === "clone" ? cloneInTwoSteps : git.execute(input)),
+          },
+        }),
+      ),
+    );
+
+    assert.deepStrictEqual(duringClone, []);
+    assert.deepStrictEqual(yield* refNames, ["staging"]);
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), {
+            prefix: "t3-clone-refs-config-",
+          }),
+        ),
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  ),
 );
 
 it.effect("reports clone progress from git's stderr and keeps its error text on failure", () =>
@@ -292,6 +361,84 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       error.detail,
       "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
+  }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("reports a Git LFS download as progress only while its partial files change", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-clone-lfs-" });
+    const destinationPath = path.join(parent, "t3code");
+    const incomplete = path.join(destinationPath, ".git", "lfs", "incomplete");
+    const progress = yield* Queue.unbounded<GitCloneProgressLine>();
+    const firstDownloading = yield* Deferred.make<void>();
+    const firstLanded = yield* Deferred.make<void>();
+    const secondDownloading = yield* Deferred.make<void>();
+    const secondLanded = yield* Deferred.make<void>();
+    const filtering = "Filtering content:  50% (1/2), 1.50 MiB | 1.00 MiB/s";
+
+    const clone = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.cloneRepository(
+        { remoteUrl: CLONE_URLS.url, destinationPath },
+        { onProgress: (line) => Queue.offer(progress, line), timeoutMs: null },
+      );
+    }).pipe(
+      Effect.provide(
+        layer({
+          git: {
+            execute: (input) =>
+              Effect.gen(function* () {
+                yield* (
+                  input.progress?.onStderrLine?.("Updating files: 100% (3/3), done.") ?? Effect.void
+                );
+                yield* fs.makeDirectory(incomplete, { recursive: true });
+                yield* fs.writeFile(path.join(incomplete, "a.part"), new Uint8Array(1536 * 1024));
+                yield* Deferred.succeed(firstDownloading, undefined);
+                yield* Deferred.await(firstLanded);
+                yield* fs.remove(path.join(incomplete, "a.part"));
+                yield* fs.writeFile(path.join(incomplete, "b.part"), new Uint8Array(512 * 1024));
+                yield* input.progress?.onStderrLine?.(filtering) ?? Effect.void;
+                yield* Deferred.succeed(secondDownloading, undefined);
+                yield* Deferred.await(secondLanded);
+                yield* fs.remove(path.join(incomplete, "b.part"));
+                return processOutput();
+              }).pipe(Effect.orDie),
+          },
+        }),
+      ),
+      Effect.forkChild,
+    );
+
+    yield* Deferred.await(firstDownloading);
+    yield* TestClock.adjust("2 seconds");
+    assert.deepStrictEqual(yield* Queue.takeN(progress, 2), [
+      { stage: "checkout", percent: 100, detail: null },
+      {
+        stage: "checkout",
+        percent: null,
+        detail: "Downloading Git LFS objects: 1.5 MiB in progress",
+      },
+    ]);
+
+    yield* Deferred.succeed(firstLanded, undefined);
+    yield* Deferred.await(secondDownloading);
+    yield* TestClock.adjust("2 seconds");
+    assert.deepStrictEqual(yield* Queue.takeN(progress, 2), [
+      { stage: "checkout", percent: 50, detail: "1.50 MiB | 1.00 MiB/s" },
+      {
+        stage: "checkout",
+        percent: 50,
+        detail: "Downloading Git LFS objects: 0.5 MiB in progress",
+      },
+    ]);
+
+    // The second object stops growing: a transfer that really stalled must stay silent.
+    yield* TestClock.adjust("2 seconds");
+    yield* Deferred.succeed(secondLanded, undefined);
+    yield* Fiber.join(clone);
+    assert.strictEqual(yield* Queue.size(progress), 0);
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
