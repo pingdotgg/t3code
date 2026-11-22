@@ -87,6 +87,7 @@ const decodeThreadSearchResult = Schema.decodeUnknownEffect(
 );
 
 const layerThreadToolkit = McpHttpServer.layerThreadToolkit.pipe(
+  Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
   Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
   Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
   Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
@@ -544,6 +545,85 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
   );
 });
 
+it.effect("t3_queue marks a held message and retry_setup retries the setup that holds it", () => {
+  const retried: Array<unknown> = [];
+  const projection = McpToolAccessTestkit.idleThreadProjection(
+    McpToolAccessTestkit.liveThreadShell(threadId),
+  );
+  const stoppedAt = DateTime.makeUnsafe("2026-11-22T00:00:00.000Z");
+  const runs = [
+    {
+      id: "run:older",
+      ordinal: 1,
+      status: "completed",
+      completedAt: DateTime.add(stoppedAt, { minutes: -5 }),
+    },
+    { id: "run:setup", ordinal: 2, status: "interrupted", completedAt: stoppedAt },
+    {
+      id: "run:held",
+      ordinal: 3,
+      status: "queued",
+      completedAt: null,
+      queueHeld: true,
+      userMessageId: "message:held",
+    },
+  ];
+  return Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const call = (args: Record<string, unknown>) =>
+      server
+        .callTool({ name: "t3_queue", arguments: args })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    const listed = yield* call({ action: "list" });
+    expect(listed.structuredContent).toMatchObject({
+      items: [{ queuedRunId: "run:held", held: true }],
+    });
+    const retry = yield* call({ action: "retry_setup" });
+    expect(retry.isError).not.toBe(true);
+    expect(retried).toMatchObject([{ threadId, runId: "run:setup" }]);
+  }).pipe(
+    Effect.provide(
+      McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(
+          Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+            retryPreparation: (input) =>
+              Effect.sync(() => retried.push(input)).pipe(Effect.as({ sequence: 2 } as never)),
+          }),
+        ),
+        Layer.provide(Layer.mock(ThreadSearch.ThreadSearch)({})),
+        Layer.provide(Layer.mock(ScheduledTaskService.ScheduledTaskService)({})),
+        Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
+        Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
+        Layer.provide(Layer.mock(PeerLinks.PeerLinks)({})),
+        Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+        Layer.provide(NodeCrypto.layer),
+        Layer.provide(
+          Layer.mock(ThreadManagement.ThreadManagementService)({
+            getThreadShell: (id) => Effect.succeed(McpToolAccessTestkit.liveThreadShell(id)),
+            getProjectThreadRecords: (_target, _fields, filter) =>
+              Effect.succeed({
+                ...projection,
+                runs:
+                  filter?.runStatuses === undefined
+                    ? runs
+                    : runs.filter((run) => filter.runStatuses?.includes(run.status as never)),
+              } as never),
+            getMessagesById: () =>
+              Effect.succeed(
+                new Map([
+                  ["message:held", { id: "message:held", text: "Sent after the stop" }],
+                ]) as never,
+              ),
+          }),
+        ),
+      ),
+    ),
+  );
+});
+
 it.effect("handoff analytics read only the caller's active run and its message", () => {
   const reads: Array<string> = [];
   const attachments = [{ type: "image", id: "shot", name: "shot.png" }];
@@ -896,6 +976,7 @@ it.effect("search names the calling thread, so an agent can tell its own match a
   }).pipe(
     Effect.provide(
       McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(McpToolAccessTestkit.liveThreadsLayer),
@@ -1137,6 +1218,7 @@ it.effect.each([
   }).pipe(
     Effect.provide(
       McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
@@ -1176,6 +1258,7 @@ it.effect("run_scheduled_task_now reports why a started run failed to dispatch",
   }).pipe(
     Effect.provide(
       McpHttpServer.layerThreadToolkit.pipe(
+        Layer.provide(Layer.mock(ThreadLaunchService.ThreadLaunchService)({})),
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
         Layer.provide(Layer.mock(ThreadManagement.ThreadManagementService)({})),
