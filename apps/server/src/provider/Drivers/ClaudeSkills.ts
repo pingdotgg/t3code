@@ -683,13 +683,7 @@ export const readClaudeSettingsEnv = Effect.fn("readClaudeSettingsEnv")(function
   const platform = yield* HostProcess.Platform;
   const configDirPath = yield* resolveClaudeConfigDirPath(config, environment, cwd);
   const settingsEnv: typeof SettingsEnv.Type = {};
-  for (const settingsPath of claudeSettingsPaths(
-    path,
-    configDirPath,
-    undefined,
-    platform,
-    environment,
-  )) {
+  for (const settingsPath of claudeSettingsPaths(path, configDirPath, cwd, platform, environment)) {
     const contents = yield* fileSystem
       .readFileString(settingsPath)
       .pipe(Effect.orElseSucceed(() => undefined));

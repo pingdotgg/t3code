@@ -4730,9 +4730,16 @@ it.layer(
         type: "customEndpoint",
         label: "Custom API endpoint",
       },
+      {
+        settings: { env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } },
+        baseUrl: "https://api.anthropic.com",
+        projectBaseUrl: "https://state-dir.example",
+        type: "customEndpoint",
+        label: "Custom API endpoint",
+      },
     ])(
       "uses the settings endpoint before the process endpoint: $type / $baseUrl",
-      ({ settings, baseUrl, type, label }) =>
+      ({ settings, baseUrl, projectBaseUrl, type, label }) =>
         Effect.gen(function* () {
           const fileSystem = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -4744,11 +4751,13 @@ it.layer(
             JSON.stringify(settings),
           );
           const stateDir = yield* fileSystem.makeTempDirectoryScoped();
-          yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
-          yield* fileSystem.writeFileString(
-            path.join(stateDir, ".claude", "settings.json"),
-            JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://state-dir.example" } }),
-          );
+          if (projectBaseUrl !== undefined) {
+            yield* fileSystem.makeDirectory(path.join(stateDir, ".claude"));
+            yield* fileSystem.writeFileString(
+              path.join(stateDir, ".claude", "settings.json"),
+              JSON.stringify({ env: { ANTHROPIC_BASE_URL: projectBaseUrl } }),
+            );
+          }
           const status = yield* checkClaudeProviderStatus(
             { ...defaultClaudeSettings, homePath: configDir },
             claudeCapabilities({
