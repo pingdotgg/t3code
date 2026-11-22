@@ -1703,10 +1703,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // creation, sign-out, or full cache clear), excluding invalidateCaches which preserves
     // coordinator state.
     const liveSessionResetRevision = yield* Ref.make(initialLiveSessionResetRevision);
-    // Tracks the last definitive signed-out state (unauthenticated probe or explicit sign-out)
-    // so readiness refreshes and the watcher both reject options-only updates until a ready probe
-    // or confirmed sign-in succeeds.
-    const lastProbeUnauthenticated = yield* Ref.make(false);
+    // Tracks signed-out state so readiness and the watcher reject options-only updates until a
+    // ready probe or sign-in succeeds. `epoch` advances on sign-out/cache resets so a ready probe
+    // losing a live-catalog race still reopens options replay unless superseded by a newer reset.
+    const signedOutState = yield* Ref.make({ signedOut: false, epoch: 0 });
+    const markSignedOut = Ref.update(signedOutState, (state) => ({
+      signedOut: true,
+      epoch: state.epoch + 1,
+    }));
+    const clearSignedOut = Ref.update(signedOutState, (state) =>
+      state.signedOut ? { ...state, signedOut: false } : state,
+    );
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
     const lastAppliedLiveRevision = yield* Ref.make(0);
@@ -2003,7 +2010,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           steps.push(liveConfiguration.catalog.value);
         }
         const hasNewCatalogStep = steps.length > 0;
-        if (!(yield* Ref.get(lastProbeUnauthenticated))) {
+        if (!(yield* Ref.get(signedOutState)).signedOut) {
           if (accepted.probeOptions !== null && !hasNewCatalogStep) {
             for (const entry of liveConfiguration.pendingOptions) {
               if (entry.revision > appliedRev) {
@@ -2085,22 +2092,44 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       baseSnapshot: ServerProvider,
     ) {
       const now = yield* Clock.currentTimeMillis;
-      const cacheState = yield* Ref.get(enrichmentCache);
-      const cached = cacheState.entry;
-      if (
-        cached !== null &&
-        isAcpRegistryCacheValid(
-          cached,
-          baseSnapshot.version,
-          effectiveConfig.source === "local",
-          now,
-        )
-      ) {
+      const startState = yield* liveSnapshotSemaphore.withPermit(
+        Effect.gen(function* () {
+          const cacheState = yield* Ref.get(enrichmentCache);
+          const cached = cacheState.entry;
+          if (
+            cached !== null &&
+            isAcpRegistryCacheValid(
+              cached,
+              baseSnapshot.version,
+              effectiveConfig.source === "local",
+              now,
+            )
+          ) {
+            return {
+              kind: "cached" as const,
+              cacheState,
+              cached,
+            };
+          }
+          const probeStartSignedOutEpoch = (yield* Ref.get(signedOutState)).epoch;
+          const probeStartLive = Option.isSome(runtimeCoordinator)
+            ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
+            : AcpRegistryRuntimeCoordinator.EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
+          return {
+            kind: "fresh" as const,
+            cacheState,
+            probeStartSignedOutEpoch,
+            probeStartLive,
+          };
+        }),
+      );
+      if (startState.kind === "cached") {
         return {
-          provider: { ...cached.provider, checkedAt: baseSnapshot.checkedAt },
-          generation: cacheState.generation,
+          provider: { ...startState.cached.provider, checkedAt: baseSnapshot.checkedAt },
+          generation: startState.cacheState.generation,
           fresh: false,
           probeStartCatalogRevision: 0,
+          probeStartSignedOutEpoch: 0,
           probedModels: [],
           probedConfigOptions: [],
           probedModelCount: 0,
@@ -2111,15 +2140,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           reasoningDisabledModelSlugs: EMPTY_SLUG_SET,
         };
       }
-      const probeStartLive = Option.isSome(runtimeCoordinator)
-        ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
-        : AcpRegistryRuntimeCoordinator.EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
       const enriched = yield* enrichProvider;
       return {
         provider: enriched.provider,
-        generation: cacheState.generation,
+        generation: startState.cacheState.generation,
         fresh: true,
-        probeStartCatalogRevision: probeStartLive.catalogRevision,
+        probeStartCatalogRevision: startState.probeStartLive.catalogRevision,
+        probeStartSignedOutEpoch: startState.probeStartSignedOutEpoch,
         probedModels: enriched.probedModels,
         probedConfigOptions: enriched.probedConfigOptions,
         probedModelCount: enriched.probedModelCount,
@@ -2152,6 +2179,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           generation,
           fresh,
           probeStartCatalogRevision,
+          probeStartSignedOutEpoch,
           probedModels,
           probedConfigOptions,
           probedModelCount,
@@ -2168,6 +2196,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 const liveSnapshot = Option.isSome(runtimeCoordinator)
                   ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
                   : AcpRegistryRuntimeCoordinator.EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
+                if (
+                  fresh &&
+                  provider.status === "ready" &&
+                  (yield* Ref.get(signedOutState)).epoch === probeStartSignedOutEpoch
+                ) {
+                  yield* clearSignedOut;
+                }
                 if (
                   current.generation !== generation ||
                   (fresh && liveSnapshot.catalogRevision !== probeStartCatalogRevision)
@@ -2190,7 +2225,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   };
                 }
                 if (fresh && provider.status === "ready") {
-                  yield* Ref.set(lastProbeUnauthenticated, false);
                   const accepted = yield* Ref.get(acceptedCatalog);
                   const liveCatalog = Option.filter(
                     Option.map(liveSnapshot.catalog, (entry) => entry.configuration),
@@ -2299,7 +2333,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   yield* clearLearnedModels;
                   yield* clearAcceptedCatalog;
                   yield* Ref.set(liveSessionResetRevision, clearedForSignOut.value);
-                  yield* Ref.set(lastProbeUnauthenticated, true);
+                  yield* markSignedOut;
                   yield* resetAppliedLiveRevisions;
                 }
                 const preserveTransientFailure =
@@ -2365,7 +2399,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       const rawCurrent = yield* getSnapshot;
                       if (
                         !rawCurrent.installed ||
-                        ((yield* Ref.get(lastProbeUnauthenticated)) &&
+                        ((yield* Ref.get(signedOutState)).signedOut &&
                           configuration.models.length === 0)
                       ) {
                         return;
@@ -2459,8 +2493,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.andThen(clearAcceptedCatalog),
             Effect.andThen(
               options?.markSignedOut === true
-                ? Ref.set(lastProbeUnauthenticated, true)
-                : Effect.void,
+                ? markSignedOut
+                : Ref.update(signedOutState, (state) => ({
+                    ...state,
+                    epoch: state.epoch + 1,
+                  })),
             ),
             Effect.andThen(resetAppliedLiveRevisions),
             Effect.andThen(
@@ -2500,8 +2537,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.andThen(
               authenticated
                 ? liveSnapshotSemaphore.withPermit(
-                    invalidateEnrichmentCache.pipe(
-                      Effect.andThen(Ref.set(lastProbeUnauthenticated, false)),
+                    Effect.uninterruptible(
+                      invalidateEnrichmentCache.pipe(Effect.andThen(clearSignedOut)),
                     ),
                   )
                 : clearSignedOutState,

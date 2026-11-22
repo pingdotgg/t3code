@@ -3911,15 +3911,17 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
     "seeds reset revision on rebuild, accepts live catalogs while unauthenticated, and clears accepted state on sign-out, invalidation, and provider disable",
     () =>
       Effect.gen(function* () {
-        const probeEntered = yield* Deferred.make<void>();
-        const releaseProbe = yield* Deferred.make<void>();
         const signOutRejected = yield* Deferred.make<void>();
         const readyRaceRejected = yield* Deferred.make<void>();
+        let pendingResolveGate: {
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let pendingCommitEntered: Deferred.Deferred<void> | null = null;
         let pendingLiveWatch: {
           readonly minRevision: number;
           readonly done: Deferred.Deferred<void>;
         } | null = null;
-        let gateNextResolve = false;
         let injectModeAfterInitialClear = true;
         let injectCatalogBeforeSignOutClear = false;
         let injectCatalogBeforeReadyClear = false;
@@ -3933,7 +3935,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             yield* publish;
             yield* Deferred.await(done);
           });
-        // A brand-new driver starts with lastProbeUnauthenticated = false, so pre-probe readiness
+        // A brand-new driver starts signed in (not signed out), so pre-probe readiness
         // replays options-only updates published while foreground startup blocks the first probe.
         yield* Effect.scoped(
           Effect.gen(function* () {
@@ -3989,6 +3991,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           initialModels: ["new-model", "old-model", "other-model"],
           wrapCoordinator: (base) => ({
             ...base,
+            getLiveConfigurationWithRevision: (instanceId) =>
+              base.getLiveConfigurationWithRevision(instanceId).pipe(
+                Effect.tap(() => {
+                  const done = pendingCommitEntered;
+                  if (done === null) return Effect.void;
+                  pendingCommitEntered = null;
+                  return Deferred.succeed(done, undefined).pipe(Effect.asVoid);
+                }),
+              ),
             watchLiveConfiguration: (instanceId, onUpdate, options) =>
               base.watchLiveConfiguration(
                 instanceId,
@@ -4069,13 +4080,27 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           }),
           onResolve: () =>
             Effect.gen(function* () {
-              if (gateNextResolve) {
-                gateNextResolve = false;
-                yield* Deferred.succeed(probeEntered, undefined);
-                yield* Deferred.await(releaseProbe);
+              const gate = pendingResolveGate;
+              if (gate !== null) {
+                pendingResolveGate = null;
+                yield* Deferred.succeed(gate.entered, undefined);
+                yield* Deferred.await(gate.release);
               }
             }),
         });
+        const runGatedProbe = <E>(duringProbe: Effect.Effect<void, E>) =>
+          Effect.gen(function* () {
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            pendingResolveGate = { entered, release };
+            yield* instance.snapshot.refresh;
+            yield* Deferred.await(entered);
+            yield* duringProbe;
+            const commitEntered = yield* Deferred.make<void>();
+            pendingCommitEntered = commitEntered;
+            yield* Deferred.succeed(release, undefined);
+            yield* Deferred.await(commitEntered);
+          });
 
         // Neither the prior instance's cleared state nor an options-only publish arriving right
         // after the clear should mark the rebuilt driver's first probe as superseding a live session.
@@ -4124,14 +4149,16 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         // status: warning, auth: unauthenticated, sign-in message, and models: ["default"].
         yield* writeModels({ fail: "Sign in required", code: -32000 });
         yield* TestClock.adjust("16 minutes");
-        gateNextResolve = true;
+        const authProbeEntered = yield* Deferred.make<void>();
+        const releaseAuthProbe = yield* Deferred.make<void>();
+        pendingResolveGate = { entered: authProbeEntered, release: releaseAuthProbe };
         const signedOutProbe = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) => snapshot.auth.status === "unauthenticated"),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.snapshot.refresh;
-        yield* Deferred.await(probeEntered);
+        yield* Deferred.await(authProbeEntered);
 
         const optionsDuringAuthProbe = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
@@ -4165,7 +4192,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         });
         yield* Fiber.join(optionsDuringAuthProbe);
 
-        yield* Deferred.succeed(releaseProbe, undefined);
+        yield* Deferred.succeed(releaseAuthProbe, undefined);
         const signedOut = Option.getOrThrow(yield* Fiber.join(signedOutProbe));
         expect(signedOut.status).toBe("warning");
         expect(signedOut.auth.status).toBe("unauthenticated");
@@ -4609,7 +4636,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(Option.isSome(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
           true,
         );
-        // The discarded sign-out probe must leave lastProbeUnauthenticated false, so an
+        // The discarded sign-out probe must not mark the driver signed out, so an
         // options-only update on the raced catalog is still applied by the watcher.
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
@@ -4662,7 +4689,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect((yield* instance.snapshot.getSnapshot).models).toEqual(unauthSnap.models);
 
         // A full live catalog arriving while unauthenticated must still apply and be saved to
-        // acceptedCatalog so a subsequent readiness refresh without live coordinator state keeps it.
+        // acceptedCatalog, and a follow-up non-replacing single-model update while auth status is
+        // still unauthenticated must also persist in acceptedCatalog across readiness refreshes.
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
             models: [
@@ -4678,10 +4706,33 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "unauth-live-a",
           "unauth-live-b",
         ]);
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [{ id: "unauth-live-a", name: "Unauth Live A", description: null }],
+            currentModelId: "unauth-live-a",
+            configOptions: [
+              {
+                id: "unauth-live-opt",
+                label: "Unauth Live Opt",
+                type: "boolean",
+                currentValue: true,
+              },
+            ],
+            modelOptionIds: ["unauth-live-opt"],
+            modelsFromModelSelect: false,
+          }),
+        );
+        const snapAfterNonReplacingUnauth = yield* instance.snapshot.getSnapshot;
+        expect(snapAfterNonReplacingUnauth.auth.status).toBe("unauthenticated");
+        expect(
+          snapAfterNonReplacingUnauth.models
+            .find((m) => m.slug === "unauth-live-a")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).toEqual(["unauth-live-opt"]);
         yield* coordinator.clearLiveConfiguration(identity.instanceId);
-        // Signed-out readiness must keep the saved catalog without replaying options-only updates,
-        // and the watcher must keep ignoring options-only updates even after readiness resets auth
-        // status to "unknown".
+        // Signed-out readiness must keep the saved catalog and its saved non-replacing update
+        // without replaying options-only updates, and the watcher must keep ignoring options-only
+        // updates even after readiness resets auth status to "unknown".
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
             models: [],
@@ -4712,9 +4763,13 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
               "unauth-live-b",
             ]);
             expect(
-              readinessWhileSignedOut.models.flatMap(
-                (m) => m.capabilities?.optionDescriptors ?? [],
-              ),
+              readinessWhileSignedOut.models
+                .find((m) => m.slug === "unauth-live-a")
+                ?.capabilities?.optionDescriptors?.map((d) => d.id),
+            ).toEqual(["unauth-live-opt"]);
+            expect(
+              readinessWhileSignedOut.models.find((m) => m.slug === "unauth-live-b")?.capabilities
+                ?.optionDescriptors ?? [],
             ).toEqual([]);
           }),
         );
@@ -4738,10 +4793,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             modelsFromModelSelect: false,
           }),
         );
+        const snapAfterBlockedWatcherOption = yield* instance.snapshot.getSnapshot;
         expect(
-          (yield* instance.snapshot.getSnapshot).models.flatMap(
-            (m) => m.capabilities?.optionDescriptors ?? [],
-          ),
+          snapAfterBlockedWatcherOption.models
+            .find((m) => m.slug === "unauth-live-a")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).toEqual(["unauth-live-opt"]);
+        expect(
+          snapAfterBlockedWatcherOption.models.find((m) => m.slug === "unauth-live-b")?.capabilities
+            ?.optionDescriptors ?? [],
         ).toEqual([]);
 
         // Confirmed sign-in (auth.onChanged(true)) clears the signed-out restriction so readiness
@@ -4808,7 +4868,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           }),
         );
 
-        // A ready probe clears lastProbeUnauthenticated before withLiveRuntimeState so compatible
+        // A ready probe reopens options replay before building the snapshot so compatible
         // options published while signed out are immediately replayed on the probe snapshot.
         yield* writeModels({
           models: ["new-model", "old-model"],
@@ -4847,9 +4907,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue,
         ).toBe("plan");
 
-        // Explicit management logout also marks signed out, and a ready probe that loses the
-        // catalog race still clears lastProbeUnauthenticated so follow-up options on the winning
-        // catalog are accepted.
+        // Explicit management logout also marks signed out, and a ready probe that loses a
+        // live-catalog race (either during commit or before the first revision check) keeps the
+        // newer catalog while reopening options replay, unless a newer sign-out or reset superseded it.
         yield* instance.acpSessionManagement!.logout(directory);
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
@@ -4872,7 +4932,6 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "new-model")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).not.toContain("blocked-after-mgmt-logout");
-        yield* TestClock.adjust("16 minutes");
         injectCatalogBeforeReadyClear = true;
         const racedReadyApplied = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
@@ -4906,6 +4965,121 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "raced-ready-b")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).toContain("after-raced-ready");
+
+        // Same ready-probe catalog race when the live catalog arrives mid-probe (before the
+        // commit's first revision check, advancing both cache generation and catalog revision).
+        yield* instance.acpSessionManagement!.logout(directory);
+        yield* runGatedProbe(
+          Effect.gen(function* () {
+            yield* awaitLiveWatchUpdate(
+              coordinator.publishLiveConfiguration(identity.instanceId, {
+                models: [
+                  { id: "mid-raced-a", name: "Mid Raced A", description: null },
+                  { id: "mid-raced-b", name: "Mid Raced B", description: null },
+                ],
+                currentModelId: "mid-raced-a",
+                configOptions: [],
+                modelsFromModelSelect: true,
+              }),
+            );
+            expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
+              "mid-raced-a",
+              "mid-raced-b",
+            ]);
+          }),
+        );
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: "mid-raced-b",
+            configOptions: [
+              {
+                id: "after-mid-raced-ready",
+                label: "After Mid Raced Ready",
+                type: "boolean",
+                currentValue: true,
+              },
+            ],
+            modelOptionIds: ["after-mid-raced-ready"],
+            modelsFromModelSelect: false,
+          }),
+        );
+        const snapAfterMidRace = yield* instance.snapshot.getSnapshot;
+        expect(snapAfterMidRace.models.map((m) => m.slug)).toEqual(["mid-raced-a", "mid-raced-b"]);
+        expect(
+          snapAfterMidRace.models
+            .find((m) => m.slug === "mid-raced-b")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).toContain("after-mid-raced-ready");
+
+        // An in-flight ready probe superseded by explicit sign-out must NOT reopen options replay.
+        yield* runGatedProbe(
+          Effect.gen(function* () {
+            yield* instance.acpSessionManagement!.logout(directory);
+            yield* awaitLiveWatchUpdate(
+              coordinator.publishLiveConfiguration(identity.instanceId, {
+                models: [
+                  { id: "post-logout-a", name: "Post Logout A", description: null },
+                  { id: "post-logout-b", name: "Post Logout B", description: null },
+                ],
+                currentModelId: "post-logout-a",
+                configOptions: [],
+                modelsFromModelSelect: true,
+              }),
+            );
+          }),
+        );
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: "post-logout-b",
+            configOptions: [
+              {
+                id: "blocked-after-raced-logout",
+                label: "Blocked After Raced Logout",
+                type: "boolean",
+                currentValue: true,
+              },
+            ],
+            modelOptionIds: ["blocked-after-raced-logout"],
+            modelsFromModelSelect: false,
+          }),
+        );
+        const snapAfterRacedLogout = yield* instance.snapshot.getSnapshot;
+        expect(snapAfterRacedLogout.models.map((m) => m.slug)).toEqual([
+          "post-logout-a",
+          "post-logout-b",
+        ]);
+        expect(
+          snapAfterRacedLogout.models
+            .find((m) => m.slug === "post-logout-b")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).not.toContain("blocked-after-raced-logout");
+
+        // An in-flight ready probe while signed out superseded by cache/auth reset must also
+        // keep options replay closed.
+        yield* runGatedProbe(instance.invalidateCaches!);
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: "post-logout-b",
+            configOptions: [
+              {
+                id: "blocked-after-raced-invalidate",
+                label: "Blocked After Raced Invalidate",
+                type: "boolean",
+                currentValue: true,
+              },
+            ],
+            modelOptionIds: ["blocked-after-raced-invalidate"],
+            modelsFromModelSelect: false,
+          }),
+        );
+        expect(
+          (yield* instance.snapshot.getSnapshot).models
+            .find((m) => m.slug === "post-logout-b")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).not.toContain("blocked-after-raced-invalidate");
       }),
   );
 
