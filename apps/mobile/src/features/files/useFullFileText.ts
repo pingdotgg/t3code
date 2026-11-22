@@ -27,9 +27,12 @@ export function useFullFileText(input: {
   );
   const assetUrl = useAssetUrlState(input.environmentId, resource, input.revision);
   const uri = resource !== null && assetUrl._tag === "Success" ? assetUrl.url : null;
-  const [result, setResult] = useState<{ readonly uri: string; readonly text: string } | null>(
-    null,
-  );
+  // A refresh can keep the URL, so a result counts only for the revision it was downloaded for.
+  const [result, setResult] = useState<{
+    readonly uri: string;
+    readonly revision: string;
+    readonly text: string;
+  } | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Owns the full-file download and cancels it when the URL changes or the screen closes.
   useEffect(() => {
     if (uri === null) return;
@@ -46,11 +49,12 @@ export function useFullFileText(input: {
         }
         return response.text();
       })
-      .then((text) => setResult({ uri, text }))
+      .then((text) => setResult({ uri, revision: input.revision, text }))
       // The caller keeps showing the 1 MB preview and its partial-file notice.
       .catch(() => undefined);
     return () => controller.abort();
-    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new revision can keep an unexpired URL; it must still download again.
   }, [uri, input.revision]);
-  return uri !== null && result?.uri === uri ? result.text : null;
+  return uri !== null && result?.uri === uri && result.revision === input.revision
+    ? result.text
+    : null;
 }

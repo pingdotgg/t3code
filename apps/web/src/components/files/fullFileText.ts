@@ -93,7 +93,8 @@ export async function downloadRest(input: {
   }
   // A file that grew since the preview was read must still stay within the main-thread ceiling.
   let bytes = resumed ? previewBytes.byteLength : 0;
-  const decoder = new TextDecoder();
+  // Only the file's own start may drop a BOM, as the preview read did; mid-file U+FEFF is text.
+  const decoder = new TextDecoder("utf-8", { ignoreBOM: resumed });
   let lines = countNewlines(text) + 1;
   let lastSwap = performance.now();
   for (let chunk: Uint8Array | null = pending; ; chunk = null) {

@@ -46,6 +46,13 @@ describe("downloadRest", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps a U+FEFF that starts the rest of the file", async () => {
+    const preview = "line one\n";
+    const whole = encoder.encode(`${preview}\uFEFFtail\n`);
+    using _fetch = vi.spyOn(globalThis, "fetch").mockImplementation(serve(whole));
+    expect(await download(preview, whole.byteLength)).toBe(`${preview}\uFEFFtail\n`);
+  });
+
   it("downloads the whole file again when it changed since the preview was read", async () => {
     // Same size, different content: only the overlap with the preview tells them apart.
     const whole = encoder.encode("BBBB\nBBBB\n");
