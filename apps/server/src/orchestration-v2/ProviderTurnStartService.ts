@@ -80,7 +80,9 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
+  pendingStoppedDelegatedTasks,
   restartCancelledBackgroundWorkNote,
+  stoppedDelegatedTasksNote,
 } from "./RestartBackgroundNote.ts";
 
 export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStartError>()(
@@ -408,12 +410,22 @@ export const layer: Layer.Layer<
       return {
         ...session,
         startTurn: (input: Parameters<typeof session.startTurn>[0]) => start(input),
-        ...(session.resumeTurn === undefined
-          ? {}
-          : {
-              resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
-                start(ProviderAdapter.resumeTurnInput(input)),
-            }),
+        // Pending context can prompt a resume, so even a session without native resume takes one.
+        resumeTurn: (input: ProviderAdapter.ProviderAdapterV2ResumeTurnInput) =>
+          session.resumeTurn === undefined && deliver === undefined
+            ? Effect.fail(
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: session.driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause: new ProviderAdapter.ProviderResumeUnsupportedError({
+                    driver: session.driver,
+                    providerThreadId: input.providerThread.id,
+                  }),
+                }),
+              )
+            : start(ProviderAdapter.resumeTurnInput(input)),
         ...(session.compactThread === undefined
           ? {}
           : {
@@ -1019,26 +1031,56 @@ export const layer: Layer.Layer<
         projection.providerTurns,
         projection.attempts,
       );
+      let compactionMessageIdSet: ReadonlySet<string> | undefined;
+      const compactionMessageIds = () =>
+        (compactionMessageIdSet ??= new Set(
+          projection.messages
+            .filter(
+              (candidate) =>
+                isCompactionCommandMessage(candidate) ||
+                (goalDriver && parseGoalCommand(candidate) !== null),
+            )
+            .map((candidate) => candidate.id),
+        ));
       const restartCancelledWork = pendingRestartCancelledBackgroundWork({
         runs: projection.runs,
         providerTurns: projection.providerTurns,
-        compactionMessageIds: () =>
-          new Set(
-            projection.messages
-              .filter(
-                (candidate) =>
-                  isCompactionCommandMessage(candidate) ||
-                  (goalDriver && parseGoalCommand(candidate) !== null),
-              )
-              .map((candidate) => candidate.id),
-          ),
+        compactionMessageIds,
         run,
         attempts: projection.attempts,
       });
-      const restartNote =
+      // The turn start context omits settled tasks, so read them only after a Stop disposed some.
+      // A failed read fails the start: a turn that ran without the note would count as telling it.
+      const stoppedRunIds = projection.runs
+        .filter(
+          (source) =>
+            source.providerThreadId === run.providerThreadId &&
+            source.delegatedCompletion?.disposition === "stopped",
+        )
+        .map((source) => source.id);
+      const stoppedTasks =
+        stoppedRunIds.length === 0 || compactionMessageIds().has(run.userMessageId)
+          ? []
+          : pendingStoppedDelegatedTasks({
+              providerThreadId: run.providerThreadId,
+              runs: projection.runs,
+              providerTurns: projection.providerTurns,
+              attempts: projection.attempts,
+              compactionMessageIds: compactionMessageIds(),
+              subagents: (yield* projectionStore.getThreadRecords(
+                projection.thread.id,
+                ["subagents"],
+                { subagentRunIds: stoppedRunIds },
+              )).subagents,
+            });
+      const restartNote = [
         restartCancelledWork.length === 0
           ? ""
-          : restartCancelledBackgroundWorkNote(restartCancelledWork);
+          : restartCancelledBackgroundWorkNote(restartCancelledWork),
+        stoppedTasks.length === 0 ? "" : stoppedDelegatedTasksNote(stoppedTasks),
+      ]
+        .filter((part) => part !== "")
+        .join("\n\n");
       const tokenCap = yield* handoffTokenCapConfig.pipe(
         Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
       );
@@ -1859,7 +1901,21 @@ export const layer: Layer.Layer<
         legacyInputRunIds,
         budget,
       } = handoffContext;
-      if (manualResume && unsentResumeMessage === undefined && session.resumeTurn === undefined) {
+      const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
+      const carriesPendingContext =
+        effectiveHandoffs.length > 0 ||
+        retryHandoff.handoffs.length > 0 ||
+        retryHandoff.attachments.length > 0 ||
+        sideChatHandoff !== undefined ||
+        restartNote !== "" ||
+        noteContinuation;
+      // Pending context turns the resume into a prompted turn, which needs no native resume.
+      if (
+        manualResume &&
+        unsentResumeMessage === undefined &&
+        session.resumeTurn === undefined &&
+        !carriesPendingContext
+      ) {
         yield* settleStartFailure({
           signal: "resume-unsupported",
           title: "Native resume is unavailable",
@@ -1870,7 +1926,6 @@ export const layer: Layer.Layer<
         });
         return;
       }
-      const retryHandoff = resumedRetryHandoff ?? (yield* prepareRetryHandoff(handoffContext));
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
         contextUsage: handoffUsage,
@@ -2100,8 +2155,14 @@ export const layer: Layer.Layer<
             turnInput.resume && prompted && userText === "" ? RESUME_PROMPT : userText;
           const text = goalCommand ? userText : withInlineContext(context, requestText);
           const operation =
-            turnInput.resume && !prompted && session.resumeTurn !== undefined
-              ? session.resumeTurn({ ...resumeInput, messageId: resumeMessage.messageId })
+            turnInput.resume && !prompted
+              ? (session.resumeTurn?.({ ...resumeInput, messageId: resumeMessage.messageId }) ??
+                Effect.fail(
+                  new ProviderAdapter.ProviderResumeUnsupportedError({
+                    driver: session.driver,
+                    providerThreadId: providerThread.id,
+                  }),
+                ))
               : start({
                   ...(prompted ? contextInput : startInput),
                   message: {
@@ -2176,15 +2237,9 @@ export const layer: Layer.Layer<
               }),
         ),
       );
-      const deliverySession =
-        effectiveHandoffs.length === 0 &&
-        retryHandoff.handoffs.length === 0 &&
-        retryHandoff.attachments.length === 0 &&
-        sideChatHandoff === undefined &&
-        restartNote === "" &&
-        !noteContinuation
-          ? session
-          : makeDeliverySession(session, startWithHandoffs);
+      const deliverySession = carriesPendingContext
+        ? makeDeliverySession(session, startWithHandoffs)
+        : session;
       return runExecution.startRootRun({
         commandId: CommandId.make(`command:effect:provider-turn.start:${run.id}`),
         appThread: projection.thread,
