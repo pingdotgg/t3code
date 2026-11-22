@@ -55,6 +55,7 @@ export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./workspaceFolders.ts";
 export * from "./filesystem.ts";
+export * from "./agentAlert.ts";
 export * from "./agentSessions.ts";
 export * from "./assets.ts";
 export * from "./review.ts";
