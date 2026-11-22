@@ -839,8 +839,12 @@ export const make = Effect.gen(function* () {
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function (input) {
       const fields = [
         ...(input.title === undefined ? [] : [AzureDevOpsCli.textOption("--title", input.title)]),
-        // cmd.exe ends a Windows az.cmd line at a newline, so the description goes over stdin.
-        ...(input.body === undefined ? [] : [{ arg: "--description=@-", stdin: input.body }]),
+        ...(input.body === undefined
+          ? []
+          : // cmd.exe ends a Windows az.cmd line at a newline; stdin keeps every line.
+            input.body.includes("\n")
+            ? [{ arg: "--description=@-", stdin: input.body }]
+            : [AzureDevOpsCli.textOption("--description", input.body)]),
       ];
       // az has one stdin, so each value read from it needs its own call.
       const batches =
