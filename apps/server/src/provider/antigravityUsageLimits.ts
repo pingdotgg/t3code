@@ -10,6 +10,8 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
 import {
@@ -227,6 +229,42 @@ export function readWindowsCliCredential(
   }
 }
 
+// go-keyring writes and updates the entry via /usr/bin/security (`apple-tool:` partition), which
+// resets the item's XARA partition list on every hourly OAuth refresh. Reading with
+// @napi-rs/keyring from T3 Code's process triggers a macOS Keychain prompt after every refresh;
+// reading back through /usr/bin/security stays in the same `apple-tool:` partition.
+const readMacOsCliCredential = Effect.fn("antigravityUsageLimits.readMacOsCliCredential")(
+  function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const child = yield* spawner.spawn(
+      ChildProcess.make(
+        "/usr/bin/security",
+        ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
+        { stdin: "ignore", stderr: "ignore" },
+      ),
+    );
+    const [stdout, exitCode] = yield* Effect.all(
+      [child.stdout.pipe(Stream.decodeText(), Stream.mkString), child.exitCode],
+      { concurrency: 2 },
+    );
+    const code = Number(exitCode);
+    // errSecItemNotFound
+    if (code === 44) return undefined;
+    if (code !== 0) {
+      return yield* new AntigravityKeyringError({
+        cause: `/usr/bin/security exited with status ${code}`,
+      });
+    }
+    const trimmed = stdout.trim();
+    return trimmed ? decodeGoKeyringSecret(new TextEncoder().encode(trimmed)) : undefined;
+  },
+  Effect.scoped,
+  Effect.timeout("5 seconds"),
+  Effect.mapError((cause) =>
+    cause._tag === "AntigravityKeyringError" ? cause : new AntigravityKeyringError({ cause }),
+  ),
+);
+
 // Loaded lazily: a native binding that fails to load must not take the provider down.
 const readCliKeyringSecret = (platform: NodeJS.Platform, architecture: NodeJS.Architecture) =>
   Effect.tryPromise({
@@ -328,13 +366,20 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
   const crypto = yield* Digest.Digest;
   const platform = yield* HostProcess.Platform;
   const architecture = yield* HostProcess.Architecture;
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const tokenPath = path.join(input.profileDirectory, "antigravity-acp", "acp_token.json");
   const cliTokenPath = path.join(
     input.profileDirectory,
     "antigravity-acp",
     "antigravity-oauth-token",
   );
-  const readKeyringSecret = input.readKeyringSecret ?? readCliKeyringSecret(platform, architecture);
+  const readKeyringSecret =
+    input.readKeyringSecret ??
+    (platform === "darwin"
+      ? readMacOsCliCredential().pipe(
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        )
+      : readCliKeyringSecret(platform, architecture));
   let cached:
     | { fingerprint: string; account: string; accessToken: string; expiresAt: number }
     | undefined;

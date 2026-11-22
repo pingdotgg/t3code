@@ -8,7 +8,10 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http";
 
 import {
@@ -724,6 +727,108 @@ describe("Antigravity subscription limits", () => {
       });
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
       expect(expired.requests).toEqual([]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.effect("reads macOS Gemini Enterprise keyring sign-ins via /usr/bin/security", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe("2026-10-09T12:00:00Z")));
+      const spawned: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+      const mockSecurity = (result: { stdout: string; exitCode: number }) =>
+        ChildProcessSpawner.make((command) => {
+          if (ChildProcess.isStandardCommand(command)) {
+            spawned.push({ command: command.command, args: command.args.map(String) });
+          }
+          return Effect.succeed(
+            ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
+              isRunning: Effect.succeed(false),
+              kill: () => Effect.void,
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.encodeText(Stream.make(result.stdout)),
+              stderr: Stream.empty,
+              all: Stream.empty,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            }),
+          );
+        });
+
+      const payload = JSON.stringify({
+        token: { access_token: "access-token", refresh_token: "r", expiry: "2026-10-09T14:00:00Z" },
+      });
+      const encoded = `go-keyring-base64:${Buffer.from(payload).toString("base64")}\n`;
+
+      const signedIn = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        userId: "google-user-1",
+        nativeKeyring: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          mockSecurity({ stdout: encoded, exitCode: 0 }),
+        ),
+      );
+      const limits = yield* signedIn.probe;
+      expect(limits.unavailable).toBeUndefined();
+      expect(limits.windows).toHaveLength(4);
+      expect(spawned).toEqual([
+        {
+          command: "/usr/bin/security",
+          args: ["find-generic-password", "-s", "gemini", "-a", "antigravity", "-w"],
+        },
+      ]);
+
+      // errSecItemNotFound (44) means no stored sign-in yet.
+      const missing = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        nativeKeyring: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          mockSecurity({ stdout: "", exitCode: 44 }),
+        ),
+      );
+      expect((yield* missing.probe).unavailable).toMatchObject({
+        reason: "unsupported",
+        message: "Sign in with Google to see Antigravity limits.",
+      });
+
+      // Other non-zero exit codes (e.g. locked keychain) surface as probeFailed.
+      const locked = yield* fixture({
+        authMethod: "oauth-business",
+        missingToken: true,
+        nativeKeyring: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          mockSecurity({ stdout: "", exitCode: 36 }),
+        ),
+      );
+      expect((yield* locked.probe).unavailable?.reason).toBe("probeFailed");
+
+      // Personal Google accounts never read the shared macOS Keychain entry.
+      spawned.length = 0;
+      const personal = yield* fixture({
+        authMethod: "oauth-personal",
+        missingToken: true,
+        nativeKeyring: true,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "darwin"),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          mockSecurity({ stdout: encoded, exitCode: 0 }),
+        ),
+      );
+      expect((yield* personal.probe).unavailable?.reason).toBe("unsupported");
+      expect(spawned).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
