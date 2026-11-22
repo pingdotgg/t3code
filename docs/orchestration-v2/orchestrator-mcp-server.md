@@ -450,6 +450,12 @@ Sends a message to any ordinary or delegated thread in the environment:
   applies: the provider cannot stop a turn, Stop has already reached the turn,
   or the turn or the new message is `/compact` or `/logout`.
 
+Only a send to the caller's own delegated child reports back: after the child's task
+completes it runs as a fresh task with a `taskId` whose completion wakes the caller.
+A send to any other thread records the caller as `senderThreadId` for attribution only;
+nothing is delivered to the caller when that run ends, so it follows up with
+`t3_thread_wait` or `t3_thread_read`.
+
 The target runtime and interaction modes may not be broader than the caller's.
 Stable command and message IDs are derived from `clientRequestId` for
 idempotent retries.
