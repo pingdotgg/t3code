@@ -69,6 +69,9 @@ on:
       - pnpm-workspace.yaml
       - .github/workflows/mobile-eas-production.yml
 
+permissions:
+  contents: read
+
 jobs:
   production:
     name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}

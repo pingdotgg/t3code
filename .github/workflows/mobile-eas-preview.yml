@@ -4,6 +4,9 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
 
+permissions:
+  contents: read
+
 jobs:
   ios:
     name: EAS Preview (iOS)
@@ -17,7 +20,6 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       group: ${{ steps.update.outputs.group }}
       client: ${{ steps.client.outputs.link }}
@@ -139,7 +141,6 @@ jobs:
       cancel-in-progress: true
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       group: ${{ steps.update.outputs.group }}
       client: ${{ steps.client.outputs.link }}
@@ -260,7 +261,6 @@ jobs:
       queue: max
     permissions:
       contents: write # pushes the build record tag
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link || steps.record.outputs.link }}
     env:
@@ -338,7 +338,6 @@ jobs:
       queue: max
     permissions:
       contents: write # pushes the build record tag
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link || steps.record.outputs.link }}
     env:

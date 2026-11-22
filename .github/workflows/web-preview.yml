@@ -21,7 +21,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write
 
 concurrency:
   group: web-preview-${{ github.event.pull_request.number }}
@@ -39,6 +38,9 @@ jobs:
       (github.event.action != 'labeled' || github.event.label.name == 'preview:web')
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}

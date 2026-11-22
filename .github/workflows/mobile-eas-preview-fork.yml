@@ -231,7 +231,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
@@ -295,7 +294,6 @@ jobs:
     timeout-minutes: 60
     permissions:
       contents: read
-      pull-requests: write
     outputs:
       client: ${{ steps.build.outputs.link }}
     env:
