@@ -37,7 +37,9 @@ const AccountRow = Schema.Struct({
 export class IssueTrackerBindingsRepository extends Context.Service<
   IssueTrackerBindingsRepository,
   {
-    readonly list: Effect.Effect<
+    readonly list: (
+      projectId?: ProjectId,
+    ) => Effect.Effect<
       ReadonlyMap<ProjectId, IssueTrackerProjectBinding>,
       IssueTrackerBindingsRepositoryError
     >;
@@ -85,15 +87,16 @@ function toSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
+  const select = sql`
+    SELECT project_id AS "projectId", tracker AS "tracker", account_id AS "accountId",
+      scope AS "scope", additional_scopes AS "additionalScopes"
+    FROM issue_tracker_bindings
+  `;
   const listRows = SqlSchema.findAll({
-    Request: Schema.Void,
+    Request: Schema.UndefinedOr(ProjectId),
     Result: BindingRow,
-    execute: () =>
-      sql`
-        SELECT project_id AS "projectId", tracker AS "tracker", account_id AS "accountId",
-          scope AS "scope", additional_scopes AS "additionalScopes"
-        FROM issue_tracker_bindings
-      `,
+    execute: (projectId) =>
+      projectId === undefined ? select : sql`${select} WHERE project_id = ${projectId}`,
   });
 
   const listAccountRows = SqlSchema.findAll({
@@ -108,24 +111,26 @@ const make = Effect.gen(function* () {
   });
 
   return IssueTrackerBindingsRepository.of({
-    list: listRows(undefined).pipe(
-      Effect.map(
-        (rows) =>
-          new Map(
-            rows.map(
-              ({ projectId, accountId, additionalScopes, ...binding }) =>
-                [
-                  projectId,
-                  {
-                    ...binding,
-                    ...(accountId === null ? {} : { accountId }),
-                    ...(additionalScopes.length === 0 ? {} : { additionalScopes }),
-                  },
-                ] as const,
+    list: Effect.fn("IssueTrackerBindingsRepository.list")((projectId?: ProjectId) =>
+      listRows(projectId).pipe(
+        Effect.map(
+          (rows) =>
+            new Map(
+              rows.map(
+                ({ projectId, accountId, additionalScopes, ...binding }) =>
+                  [
+                    projectId,
+                    {
+                      ...binding,
+                      ...(accountId === null ? {} : { accountId }),
+                      ...(additionalScopes.length === 0 ? {} : { additionalScopes }),
+                    },
+                  ] as const,
+              ),
             ),
-          ),
+        ),
+        Effect.mapError(toSqlOrDecodeError("listIssueTrackerBindings", "IssueTrackerBinding")),
       ),
-      Effect.mapError(toSqlOrDecodeError("listIssueTrackerBindings", "IssueTrackerBinding")),
     ),
     set: Effect.fn("IssueTrackerBindingsRepository.set")(
       function* (input) {

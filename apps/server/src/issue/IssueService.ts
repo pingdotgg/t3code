@@ -43,6 +43,7 @@ import {
   type IssueTrackerApi,
   type StandaloneIssueTrackerApi,
   type TrackerIssueDetail,
+  type TrackerIssueLink,
 } from "@t3tools/source-control-core/server/IssueTracker";
 import { asIssueTrackerAccount } from "@t3tools/source-control-core/server/IssueTrackerHost";
 import { parseUrl } from "@t3tools/shared/url";
@@ -164,6 +165,7 @@ export class IssueService extends Context.Service<
   {
     readonly list: (input: IssueListInput) => Effect.Effect<IssueListResult, IssueError>;
     readonly detail: (input: IssueRef) => Effect.Effect<IssueDetail, IssueError>;
+    readonly linkMetadata: (input: IssueRef) => Effect.Effect<TrackerIssueLink, IssueError>;
     readonly comments: (
       input: IssueCommentsPageInput,
     ) => Effect.Effect<IssueCommentsPage, IssueError>;
@@ -174,10 +176,13 @@ export class IssueService extends Context.Service<
     readonly update: (input: IssueUpdateInput) => Effect.Effect<void, IssueError>;
     readonly setState: (input: IssueSetStateInput) => Effect.Effect<void, IssueError>;
     readonly react: (input: IssueReactionInput) => Effect.Effect<void, IssueError>;
-    /** The tracker and container a project's own issues live in, or the one `key` names. */
+    /**
+     * The tracker and container a project's own issues live in: the bound `scope` when named, else
+     * the one `key`'s prefix names, else the project's default.
+     */
     readonly projectScope: (
       projectId: ProjectId,
-      key?: string,
+      select?: { readonly key?: string | undefined; readonly scope?: string | undefined },
     ) => Effect.Effect<IssueScopeRef & { readonly host: string }, IssueError>;
     /**
      * Resolve through a matching project, preferring `preferredProjectId`; other scopes are read-only.
@@ -264,7 +269,7 @@ const make = Effect.gen(function* () {
           );
           if (shells.length === 0) return [];
           // One read per listing, not per project, and never cached so Settings changes apply.
-          const bound = yield* bindings.list.pipe(
+          const bound = yield* bindings.list(filter.projectId).pipe(
             // A failed read is not an unbound project: that would list the git host's issues alone.
             Effect.mapError(
               (cause) =>
@@ -551,6 +556,22 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  const linkMetadata: IssueService["Service"]["linkMetadata"] = (input) =>
+    requireProject(input).pipe(
+      Effect.flatMap((project) => {
+        const read = project.api.getIssueLink ?? project.api.getIssue;
+        return read({
+          cwd: project.project.workspaceRoot,
+          host: project.host,
+          scope: project.scope,
+          key: input.key,
+        }).pipe(
+          Effect.map(({ title, url, displayKey }) => ({ title, url, displayKey })),
+          Effect.mapError(toIssueError("detail")),
+        );
+      }),
+    );
+
   const comments: IssueService["Service"]["comments"] = (input) =>
     requireProject(input).pipe(
       Effect.flatMap((project) =>
@@ -708,14 +729,24 @@ const make = Effect.gen(function* () {
 
   const projectScope: IssueService["Service"]["projectScope"] = Effect.fn(
     "IssueService.projectScope",
-  )(function* (projectId, key) {
+  )(function* (projectId, select) {
     const { supported } = yield* listProjects({ projectId });
-    const prefix = key?.toLowerCase();
-    const own =
-      supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
-      supported[0];
-    if (own === undefined) {
+    if (supported.length === 0) {
       return yield* new IssueUnavailableError({ reason: "tracker-unsupported" });
+    }
+    const named = select?.scope?.trim().toLowerCase();
+    const prefix = select?.key?.toLowerCase();
+    const own =
+      named === undefined
+        ? (supported.find((candidate) => prefix?.startsWith(`${candidate.scope.toLowerCase()}-`)) ??
+          supported[0])
+        : supported.find((candidate) => candidate.scope.toLowerCase() === named);
+    if (own === undefined) {
+      return yield* new IssueOperationError({
+        operation: "scope",
+        reason: "not-found",
+        detail: `This project does not track ${select?.scope?.trim()}. Use one of: ${[...new Set(supported.map((candidate) => candidate.scope))].join(", ")}.`,
+      });
     }
     return { projectId, tracker: own.tracker, host: own.host, scope: own.scope };
   });
@@ -847,6 +878,7 @@ const make = Effect.gen(function* () {
   return IssueService.of({
     list,
     detail: traced("detail", detail),
+    linkMetadata: traced("linkMetadata", linkMetadata),
     comments: traced("comments", comments),
     templates: traced("templates", templates),
     candidates: interactive(traced("candidates", candidates)),

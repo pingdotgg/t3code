@@ -2661,8 +2661,9 @@ private final class ReviewDiffContentView: UIView, UIGestureRecognizerDelegate {
       return
     }
 
+    // Source files hide the change bar (width 0); the selection marker still needs to show.
     theme.hunkText.withAlphaComponent(0.95).setFill()
-    context.fill(CGRect(x: 0, y: rect.minY, width: style.changeBarWidth, height: rect.height))
+    context.fill(CGRect(x: 0, y: rect.minY, width: max(style.changeBarWidth, 4), height: rect.height))
   }
 
   private func drawWordDiffRanges(

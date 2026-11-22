@@ -164,7 +164,7 @@ const make = Effect.gen(function* () {
         ),
       ),
     ),
-    bindings: bindings.list.pipe(
+    bindings: bindings.list().pipe(
       // No single tracker is at fault; the first registered one carries the report.
       Effect.mapError(secretFailure(anyTracker, "The project bindings could not be read.")),
     ),
