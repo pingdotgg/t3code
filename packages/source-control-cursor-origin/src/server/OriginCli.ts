@@ -64,21 +64,13 @@ const OriginAuthStatusSchema = Schema.Struct({
 });
 type OriginAuthStatus = typeof OriginAuthStatusSchema.Type;
 
-/** `origin` exits 1 on a bare `--json`, so this names the fields `OriginAuthStatusSchema` reads. */
-export const ORIGIN_AUTH_STATUS_ARGS = [
-  "auth",
-  "status",
-  "--json",
-  "authenticated,tokenValid,account",
-] as const;
-
 export function parseOriginAuthStatus(raw: string): OriginAuthStatus | null {
   const decoded = decodeJsonResult(OriginAuthStatusSchema)(raw);
   return Result.isSuccess(decoded) ? decoded.success : null;
 }
 
 /** The signed-in account's email, which is what `origin auth status` names it by. */
-export function originAccount(status: OriginAuthStatus | null): string | null {
+function originAccount(status: OriginAuthStatus | null): string | null {
   if (!status?.authenticated || status.tokenValid === false) return null;
   return status.account?.email?.trim() || null;
 }
@@ -227,7 +219,7 @@ export class OriginCli extends Context.Service<
   }
 >()("@t3tools/source-control-cursor-origin/server/OriginCli") {}
 
-const make = Effect.gen(function* () {
+export const make = Effect.gen(function* () {
   const host = yield* SourceControlHost.SourceControlHost;
   const httpClient = yield* HttpClient.HttpClient;
   const scope = yield* Effect.scope;
@@ -390,7 +382,11 @@ const make = Effect.gen(function* () {
   });
 
   const authStatus = (cwd: string) =>
-    run({ cwd, operation: "authStatus", args: ORIGIN_AUTH_STATUS_ARGS }).pipe(
+    run({
+      cwd,
+      operation: "authStatus",
+      args: ["auth", "status", "--json", "authenticated,tokenValid,account"],
+    }).pipe(
       Effect.flatMap((result) => {
         const status = parseOriginAuthStatus(result.stdout);
         if (status !== null) return Effect.succeed(status);
