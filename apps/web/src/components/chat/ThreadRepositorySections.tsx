@@ -21,15 +21,9 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  FolderGitIcon,
-  PinOffIcon,
-  PlusIcon,
-} from "lucide-react";
+import { FolderGitIcon, PinOffIcon, PlusIcon } from "lucide-react";
 import { msg, T, useGT } from "gt-react";
-import { memo, useState } from "react";
+import { memo, useRef, useState } from "react";
 
 import { m } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
@@ -43,9 +37,9 @@ import { useThreadRepositoryPins, useThreadRepositoryPinsStore } from "~/threadR
 import { GitActionsControl } from "../GitActionsControl";
 import { Menu, MenuItem, MenuItemLabel, MenuPopup, MenuTrigger } from "../ui/menu";
 import { stackedThreadToast, toastManager } from "../ui/toast";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import {
-  THREAD_DETAILS_PANEL_CHEVRON_CLASS,
   THREAD_DETAILS_PANEL_ICON_CLASS,
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
@@ -76,94 +70,150 @@ const RepositorySection = memo(function RepositorySection(props: {
   name: string;
   cwd: string;
   removable: boolean;
-  expanded: boolean;
   owner: { readonly threadId?: ThreadId; readonly projectId?: ProjectId };
   showActions: boolean;
-  onToggle: (key: string) => void;
   onRemove: (key: string) => void;
+  onRowElement: (key: string, element: HTMLButtonElement | null) => void;
 }) {
-  // Local status only: a remote read for every listed repository would fetch on a timer. The
-  // expanded section's actions hold the full subscription, and its remote updates land here too.
+  // Local status only: a remote read for every listed repository would fetch on a timer. Opening
+  // the row's actions menu refreshes remote status on demand, and updates land here too.
   const status = useEnvironmentQuery(
     vcsEnvironment.status({
       environmentId: props.threadRef.environmentId,
       input: { cwd: props.cwd, includeRemote: false },
     }),
   );
+  const refreshVcsStatus = useAtomCommand(vcsEnvironment.refreshStatus, {
+    reportFailure: false,
+  });
   const summary = repositorySectionSummary(status.data);
-  const Chevron = props.expanded ? ChevronDownIcon : ChevronRightIcon;
-  const bodyId = `thread-repository-${props.sectionKey}`;
+  const ignoreNextRowClickRef = useRef(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const gt = useGT();
+
+  const subtitle =
+    summary === null
+      ? (status.error ?? "")
+      : !summary.isRepository
+        ? gt("Not a Git repository")
+        : (summary.branch ?? gt("Detached HEAD"));
+  const hasDiff = summary?.isRepository === true && summary.changedFiles > 0;
+  const hasPr = summary?.isRepository === true && summary.pullRequest !== null;
+  const hasMenu = props.showActions || props.removable;
+  const rowAriaLabel = [
+    props.name,
+    subtitle,
+    hasPr && summary?.pullRequest ? `#${summary.pullRequest.number}` : null,
+    hasDiff && summary
+      ? `+${formatDiffCount(summary.insertions)} -${formatDiffCount(summary.deletions)}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
 
   return (
     <div
       role="group"
       aria-label={gt("Repository {name}", { name: props.name })}
-      className="flex flex-col"
+      className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center"
     >
-      <ThreadDetailsControl
-        size="sm"
-        variant="ghost"
-        part="row"
-        aria-expanded={props.expanded}
-        aria-controls={props.expanded ? bodyId : undefined}
-        onClick={() => props.onToggle(props.sectionKey)}
-      >
-        <Chevron className={THREAD_DETAILS_PANEL_CHEVRON_CLASS} aria-hidden />
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          <span className="max-w-2/3 shrink-0 truncate">{props.name}</span>
-          <span className="min-w-0 truncate text-body text-muted-foreground">
-            {summary === null
-              ? (status.error ?? "")
-              : !summary.isRepository
-                ? gt("Not a Git repository")
-                : (summary.branch ?? gt("Detached HEAD"))}
-          </span>
-          {summary?.isRepository ? (
-            <span className="ml-auto flex shrink-0 items-baseline gap-2 ps-2 font-mono tabular-nums">
-              {summary.pullRequest ? (
-                <span className="font-sans text-body text-muted-foreground">
-                  #{summary.pullRequest.number}
-                </span>
-              ) : null}
-              {summary.changedFiles > 0 ? (
-                <>
-                  <span className="text-diff-addition-foreground">
-                    +{formatDiffCount(summary.insertions)}
-                  </span>
-                  <span className="text-diff-deletion-foreground">
-                    -{formatDiffCount(summary.deletions)}
-                  </span>
-                </>
-              ) : null}
-            </span>
-          ) : null}
-        </span>
-      </ThreadDetailsControl>
-      {props.expanded ? (
-        <div id={bodyId} className="flex flex-col ps-4">
-          <GitActionsControl
-            target={{ key: props.sectionKey, cwd: props.cwd, name: props.name }}
-            threadRef={props.threadRef}
-            owner={props.owner}
-            showActions={props.showActions}
-            showChanges={false}
-          />
-          {props.removable ? (
+      <Tooltip>
+        <TooltipTrigger
+          delay={300}
+          render={
             <ThreadDetailsControl
+              ref={(element) => props.onRowElement(props.sectionKey, element)}
               size="sm"
               variant="ghost"
               part="row"
-              tone="muted"
-              onClick={() => props.onRemove(props.sectionKey)}
-            >
-              <PinOffIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
-              <span className={THREAD_DETAILS_PANEL_LABEL_CLASS}>
-                <T>Remove from this thread</T>
+              multiline
+              aria-label={rowAriaLabel}
+              aria-haspopup={hasMenu ? "menu" : undefined}
+              aria-expanded={hasMenu ? menuOpen : undefined}
+              onPointerDown={() => {
+                if (menuOpen) ignoreNextRowClickRef.current = true;
+              }}
+              onClick={() => {
+                if (ignoreNextRowClickRef.current) {
+                  ignoreNextRowClickRef.current = false;
+                  return;
+                }
+                if (!hasMenu) return;
+                const next = !menuOpen;
+                setMenuOpen(next);
+                if (next && summary?.isRepository && props.showActions) {
+                  void refreshVcsStatus({
+                    environmentId: props.threadRef.environmentId,
+                    input: { cwd: props.cwd },
+                  });
+                }
+              }}
+            />
+          }
+        >
+          <FolderGitIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} aria-hidden />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0 items-baseline gap-1.5 leading-4">
+              <span className="min-w-0 flex-1 truncate">{props.name}</span>
+              {hasDiff && summary ? (
+                <span className="flex shrink-0 items-baseline gap-1.5 font-mono tabular-nums">
+                  <span
+                    className={
+                      summary.insertions > 0 ? "text-diff-addition" : "text-muted-foreground"
+                    }
+                  >
+                    +{formatDiffCount(summary.insertions)}
+                  </span>
+                  <span
+                    className={
+                      summary.deletions > 0 ? "text-diff-deletion" : "text-muted-foreground"
+                    }
+                  >
+                    -{formatDiffCount(summary.deletions)}
+                  </span>
+                </span>
+              ) : null}
+            </span>
+            {subtitle || hasPr ? (
+              <span className="flex min-w-0 items-baseline gap-1.5 leading-4 text-muted-foreground">
+                <span className="min-w-0 truncate">{subtitle}</span>
+                {hasPr && summary?.pullRequest ? (
+                  <span className="ms-auto shrink-0 tabular-nums">
+                    #{summary.pullRequest.number}
+                  </span>
+                ) : null}
               </span>
-            </ThreadDetailsControl>
-          ) : null}
-        </div>
+            ) : null}
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="left">
+          <span className="block">{props.name}</span>
+          {subtitle ? <span className="block text-muted-foreground">{subtitle}</span> : null}
+        </TooltipPopup>
+      </Tooltip>
+      {hasMenu ? (
+        <GitActionsControl
+          displayMode="panel"
+          compactNonRepo
+          includeRemote={false}
+          target={{ key: props.sectionKey, cwd: props.cwd, name: props.name }}
+          threadRef={props.threadRef}
+          owner={props.owner}
+          showActions={props.showActions}
+          showChanges={false}
+          menuOpen={menuOpen}
+          onMenuOpenChange={setMenuOpen}
+          menuFooter={
+            props.removable ? (
+              <MenuItem onClick={() => props.onRemove(props.sectionKey)}>
+                <PinOffIcon />
+                <MenuItemLabel>
+                  <T>Remove from this thread</T>
+                </MenuItemLabel>
+              </MenuItem>
+            ) : undefined
+          }
+        />
       ) : null}
     </div>
   );
@@ -235,8 +285,10 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
   const unpin = useThreadRepositoryPinsStore((state) => state.unpin);
   const { canReadFiles } = useFilesystemReadAccess(props.environmentId);
   const [showAll, setShowAll] = useState(false);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const [isPickerOpen, setIsPickerOpen] = useState(false);
+  const rowRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+  const pickedKeyRef = useRef<string | null>(null);
+  const pendingMountFocusKeyRef = useRef<string | null>(null);
   const canAddWorktree = useAtomValue(
     filesystemEnvironment.addTaskFolderRepository.permissionAtom(props.environmentId),
   );
@@ -265,6 +317,9 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
     });
     setAddingName(null);
     if (result._tag === "Failure") {
+      if (pendingMountFocusKeyRef.current === repository.repositoryPath) {
+        pendingMountFocusKeyRef.current = null;
+      }
       if (isAtomCommandInterrupted(result)) return;
       const error = squashAtomCommandFailure(result);
       toastManager.add(
@@ -278,13 +333,22 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
     }
     props.onTaskFolderChange();
     setShowAll(true);
-    setExpandedKey(repository.repositoryPath);
   };
   const owner = props.isServerThread
     ? { threadId: props.threadId }
     : { projectId: props.projectId };
-  const toggle = (key: string) => setExpandedKey((current) => (current === key ? null : key));
   const remove = (key: string) => unpin(threadRef, key);
+  const handleRowElement = (key: string, element: HTMLButtonElement | null) => {
+    if (element) {
+      rowRefs.current.set(key, element);
+      if (pendingMountFocusKeyRef.current === key) {
+        pendingMountFocusKeyRef.current = null;
+        element.focus({ preventScroll: true });
+      }
+    } else {
+      rowRefs.current.delete(key);
+    }
+  };
   const renderSection = (section: ThreadRepositorySection) => (
     <RepositorySection
       key={section.key}
@@ -293,11 +357,10 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
       name={section.name}
       cwd={section.cwd}
       removable={section.origin === "pinned"}
-      expanded={expandedKey === section.key}
       owner={owner}
       showActions={props.showActions}
-      onToggle={toggle}
       onRemove={remove}
+      onRowElement={handleRowElement}
     />
   );
 
@@ -349,7 +412,18 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
                 : gt("Adding a worktree of {name}...", { name: addingName })}
             </span>
           </MenuTrigger>
-          <MenuPopup align="start">
+          <MenuPopup
+            align="start"
+            finalFocus={() => {
+              const key = pickedKeyRef.current;
+              if (key === null) return true;
+              pickedKeyRef.current = null;
+              const row = rowRefs.current.get(key);
+              if (row) return row;
+              pendingMountFocusKeyRef.current = key;
+              return false;
+            }}
+          >
             {isPickerOpen ? (
               <OtherRepositoryItems
                 environmentId={props.environmentId}
@@ -358,6 +432,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
                 taskFolder={taskFolder}
                 sections={sections}
                 onPick={(repository) => {
+                  pickedKeyRef.current = repository.repositoryPath;
                   if (taskFolder !== null) {
                     void addWorktree(repository);
                     return;
@@ -365,7 +440,6 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
                   pin(threadRef, repository);
                   // Pins beyond the visible few would land folded away, out of sight.
                   if (pinned.length >= THREAD_REPOSITORY_SECTIONS_VISIBLE) setShowAll(true);
-                  setExpandedKey(repository.repositoryPath);
                 }}
               />
             ) : null}

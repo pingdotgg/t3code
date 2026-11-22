@@ -182,6 +182,15 @@ interface GitActionsControlProps extends GitActionsViewProps {
   quietUntilWork?: boolean;
   /** The ref the Changes row compares against, when the viewer picked one. */
   changesBaseRef?: string | null;
+  /** Passive repository rows subscribe to local status and refresh remote status when their menu opens. */
+  includeRemote?: boolean;
+  /** Keep non-repository panel rows inside the trailing menu instead of expanding an inline Initialize Git row. */
+  compactNonRepo?: boolean;
+  /** Extra items appended to the panel options menu, such as removing a pinned repository. */
+  menuFooter?: ReactNode;
+  /** Controlled open state for the panel options menu when an adjacent row button also opens it. */
+  menuOpen?: boolean;
+  onMenuOpenChange?: (open: boolean) => void;
 }
 
 interface ThreadGitActionsControlProps extends GitActionsViewProps {
@@ -427,6 +436,11 @@ function CheckoutGitActionsControl({
   branchFollower,
   quietUntilWork = false,
   changesBaseRef = null,
+  includeRemote = true,
+  compactNonRepo = false,
+  menuFooter,
+  menuOpen,
+  onMenuOpenChange,
   showActions = true,
   showChanges = true,
   onOpenChanges,
@@ -467,7 +481,7 @@ function CheckoutGitActionsControl({
     activeEnvironmentId !== null && gitCwd !== null
       ? vcsEnvironment.status({
           environmentId: activeEnvironmentId,
-          input: { cwd: gitCwd },
+          input: includeRemote ? { cwd: gitCwd } : { cwd: gitCwd, includeRemote: false },
         })
       : null,
   );
@@ -605,7 +619,7 @@ function CheckoutGitActionsControl({
 
   useAtomMount(
     vcsStatusRevalidation(
-      activeEnvironmentId !== null && gitCwd !== null
+      includeRemote && activeEnvironmentId !== null && gitCwd !== null
         ? { environmentId: activeEnvironmentId, cwd: gitCwd }
         : null,
     ),
@@ -1071,7 +1085,7 @@ function CheckoutGitActionsControl({
               label: syncMenuItems.commitPush.label,
               disabled: syncMenuItems.commitPush.disabled,
               disabledReason: syncMenuItems.commitPush.disabledReason,
-              ...(commitPushShortcutLabel
+              ...(handlesCommitPushShortcut && commitPushShortcutLabel
                 ? { trailing: <MenuShortcut>{commitPushShortcutLabel}</MenuShortcut> }
                 : {}),
               onClick: () => runCommitPush(),
@@ -1178,8 +1192,9 @@ function CheckoutGitActionsControl({
 
   return (
     <>
-      {presentation === "shortcut" ? null : displayMode === "panel" && isRepo ? (
-        showActions ? (
+      {presentation === "shortcut" ? null : displayMode === "panel" &&
+        (isRepo || compactNonRepo) ? (
+        showActions || menuFooter ? (
           <div
             className="col-start-2 flex shrink-0 items-center pe-1"
             role="group"
@@ -1187,28 +1202,37 @@ function CheckoutGitActionsControl({
               target ? gt("Git actions for {name}", { name: target.name }) : gt("Git actions")
             }
           >
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <ThreadDetailsControl
-                    part="icon"
-                    aria-label={gt("Push branch")}
-                    disabled={
-                      !canWriteSourceControl || isGitActionRunning || !pushItem || pushItem.disabled
-                    }
-                    onClick={() => void runGitActionWithToast({ action: "push" })}
-                  />
-                }
-              >
-                {gitActionProgress ? <Spinner size="xs" /> : <ArrowUpFromLineIcon />}
-              </TooltipTrigger>
-              <TooltipPopup>
-                <T>Push branch</T>
-              </TooltipPopup>
-            </Tooltip>
+            {isRepo && showActions ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <ThreadDetailsControl
+                      part="icon"
+                      aria-label={gt("Push branch")}
+                      disabled={
+                        !canWriteSourceControl ||
+                        isGitActionRunning ||
+                        !pushItem ||
+                        pushItem.disabled
+                      }
+                      onClick={() => void runGitActionWithToast({ action: "push" })}
+                    />
+                  }
+                >
+                  {gitActionProgress ? <Spinner size="xs" /> : <ArrowUpFromLineIcon />}
+                </TooltipTrigger>
+                <TooltipPopup>
+                  <T>Push branch</T>
+                </TooltipPopup>
+              </Tooltip>
+            ) : null}
             <Menu
+              {...(menuOpen !== undefined ? { open: menuOpen } : {})}
               onOpenChange={(open) => {
-                if (open) requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                onMenuOpenChange?.(open);
+                if (open && isRepo && showActions) {
+                  requestVcsStatusRefresh(refreshVcsStatus, activeEnvironmentId, gitCwd);
+                }
               }}
             >
               <Tooltip>
@@ -1228,7 +1252,24 @@ function CheckoutGitActionsControl({
                 </TooltipPopup>
               </Tooltip>
               <MenuPopup side="bottom" align="end" width="wide">
-                {gitItems}
+                {showActions ? (
+                  isRepo ? (
+                    gitItems
+                  ) : (
+                    <MenuItem
+                      density={menuDensity}
+                      disabled={!canWriteSourceControl || initAction.isPending}
+                      onClick={initializeGit}
+                    >
+                      <GitBranchPlusIcon />
+                      <MenuItemLabel>
+                        {initAction.isPending ? <T>Initializing...</T> : <T>Initialize Git</T>}
+                      </MenuItemLabel>
+                    </MenuItem>
+                  )
+                ) : null}
+                {showActions && menuFooter ? <MenuSeparator /> : null}
+                {menuFooter}
               </MenuPopup>
             </Menu>
           </div>
