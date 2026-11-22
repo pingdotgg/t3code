@@ -7,6 +7,7 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type RuntimeMode,
   type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
@@ -16,6 +17,7 @@ import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as EffectAcpErrors from "effect-acp/errors";
 import type * as EffectAcpSchema from "effect-acp/compat";
 
@@ -46,7 +48,7 @@ const initializeResult = {
   agentInfo: {
     name: "antigravity-acp",
     title: "Google Antigravity",
-    version: "agy_acp_server_20260818_01_RC01",
+    version: "1.5.12",
   },
 } satisfies EffectAcpSchema.InitializeResponse;
 
@@ -112,20 +114,22 @@ const expectedCommands = [
   { name: "logout", description: "Sign out of Google" },
 ];
 
-const layerTest = ProviderHostLive.layer.pipe(
-  Layer.provideMerge(
-    Layer.mock(BackgroundPolicy.BackgroundPolicy)({
-      shouldRunScopeWork: () => Effect.succeed(false),
-    }),
-  ),
-  Layer.provideMerge(ServerSettings.layerTest()),
-  Layer.provideMerge(ServerSecretStore.layer),
-  Layer.provide(
-    ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
-      Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+const makeLayerTest = (runBackgroundWork: boolean) =>
+  ProviderHostLive.layer.pipe(
+    Layer.provideMerge(
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(runBackgroundWork),
+      }),
     ),
-  ),
-);
+    Layer.provideMerge(ServerSettings.layerTest()),
+    Layer.provideMerge(ServerSecretStore.layer),
+    Layer.provide(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3-antigravity-provider-test-" }).pipe(
+        Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+      ),
+    ),
+  );
+const layerTest = makeLayerTest(false);
 
 type ProbeError = EffectAcpErrors.AcpError | ProviderSetupError;
 
@@ -135,8 +139,10 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     readonly enabled?: boolean;
     readonly safe?: boolean;
     readonly probeUsage?: Effect.Effect<ServerProviderUsageLimits>;
+    readonly rememberedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   } = {},
 ) {
+  const savedRuntimeModes = yield* Ref.make<ReadonlyArray<ReadonlyArray<RuntimeMode>>>([]);
   const initialProbe = yield* Deferred.make<EffectAcpSchema.InitializeResponse, ProbeError>();
   const probeCalls = yield* Ref.make(0);
   const safetyCalls = yield* Ref.make(0);
@@ -150,6 +156,10 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
       stampIdentity: (snapshot) => Effect.succeed({ ...snapshot, instanceId, driver }),
       ...(options.auth ? { auth: options.auth } : {}),
       ...(options.probeUsage ? { probeUsage: options.probeUsage } : {}),
+      ...(options.rememberedRuntimeModes
+        ? { rememberedRuntimeModes: options.rememberedRuntimeModes }
+        : {}),
+      rememberRuntimeModes: (modes) => Ref.update(savedRuntimeModes, (saved) => [...saved, modes]),
       probe: Ref.update(probeCalls, (count) => count + 1).pipe(
         Effect.andThen(Ref.get(probe)),
         Effect.flatten,
@@ -184,6 +194,7 @@ const makeHarness = Effect.fn("makeAntigravityProviderHarness")(function* (
     initialUpdate,
     initialize,
     nextPublish,
+    savedRuntimeModes,
   };
 });
 
@@ -302,7 +313,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         models: [],
         setup: { canAuthenticate: true, canInstall: true },
         showInteractionModeToggle: false,
-        supportsConversationRollback: false,
+        supportsConversationRollback: true,
         supportsTextGeneration: false,
       });
       expect(yield* Ref.get(harness.probeCalls)).toBe(0);
@@ -331,7 +342,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expect(snapshot).toMatchObject({
           installed: true,
           status: "warning",
-          version: "agy_acp_server_20260818_01_RC01",
+          version: "1.5.12",
           auth: { status: "unknown", ...(auth ? { type: auth.type } : {}) },
           message:
             auth?.type === "gemini-api-key" || auth?.type === "agent-platform"
@@ -344,16 +355,59 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("does not offer Auto, so Auto threads fall back to Supervised", () =>
+  it.effect("offers Auto only while the signed-in session advertises agy's own Auto", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
-      // Antigravity has no automatic review; the shared ACP policy would approve every request.
-      expect((yield* harness.provider.snapshot.getSnapshot).supportedRuntimeModes).toEqual([
+      const supportedModes = harness.provider.snapshot.getSnapshot.pipe(
+        Effect.map((snapshot) => snapshot.supportedRuntimeModes),
+      );
+      const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
+      const startedWithAuto = {
+        ...started,
+        sessionSetupResult: {
+          ...sessionSetupResult,
+          modes: {
+            currentModeId: "default",
+            availableModes: [
+              { id: "default", name: "Default" },
+              { id: "auto", name: "Auto" },
+            ],
+          },
+        },
+      };
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
+      expect(yield* supportedModes).toEqual([
         "approval-required",
         "auto-accept-edits",
+        "auto",
         "full-access",
       ]);
+      yield* harness.provider.onSessionStarted(started);
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      yield* harness.provider.onSessionStarted(startedWithAuto);
+      yield* harness.provider.onSignedOut;
+      expect(yield* supportedModes).toEqual(withoutAuto);
+      const withAuto: ReadonlyArray<RuntimeMode> = [
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+        "full-access",
+      ];
+      expect(yield* Ref.get(harness.savedRuntimeModes)).toEqual([
+        withAuto,
+        withoutAuto,
+        withAuto,
+        withoutAuto,
+      ]);
+
+      // A restart offers what the last session advertised before any session starts.
+      const restarted = yield* makeHarness({ rememberedRuntimeModes: withAuto });
+      yield* restarted.initialize;
+      expect(yield* restarted.provider.snapshot.getSnapshot).toMatchObject({
+        supportedRuntimeModes: withAuto,
+      });
     }),
   );
 
@@ -383,6 +437,23 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         expectedCommands,
       );
       expect(yield* Ref.get(harness.probeCalls)).toBe(1);
+    }),
+  );
+
+  it.effect("keeps a workspace's native commands when the catalog reports its own", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      yield* harness.provider.onAvailableCommands(commands, "/workspace");
+      // The catalog probe runs in a scratch directory and reports no cwd.
+      yield* harness.provider.onAvailableCommands(commands.slice(1));
+      expect((yield* harness.provider.snapshotForCwd("/workspace")).slashCommands).toEqual(
+        expectedCommands,
+      );
+      expect((yield* harness.provider.snapshot.getSnapshot).slashCommands).toEqual(
+        expectedCommands.slice(1),
+      );
     }),
   );
 
@@ -475,7 +546,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         ...started,
         initializeResult: {
           ...initializeResult,
-          agentInfo: { ...initializeResult.agentInfo, version: "1.4.0" },
+          agentInfo: { ...initializeResult.agentInfo, version: "1.5.13" },
         },
       });
       yield* Ref.set(
@@ -485,7 +556,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           agentInfo: { ...initializeResult.agentInfo, version: "unknown" },
         }),
       );
-      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.4.0");
+      expect((yield* harness.provider.snapshot.refresh).version).toBe("1.5.13");
     }),
   );
 
@@ -550,6 +621,15 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
             instanceId,
             operation: "resolve",
             detail: "Antigravity is not installed.",
+          }),
+          installed: false,
+        },
+        {
+          error: new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail:
+              "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.",
           }),
           installed: false,
         },
@@ -804,6 +884,52 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
       expect((yield* harness.provider.snapshot.getSnapshot).usageLimits).toBeUndefined();
       yield* harness.provider.onSessionStarted(started);
       expect((yield* republished)?.usageLimits).toEqual(failed);
+    }),
+  );
+});
+
+it.layer(makeLayerTest(true))("Antigravity periodic health checks", (it) => {
+  it.effect("rechecks a ready provider after one failed periodic check before publishing it", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      yield* harness.initialize;
+      yield* harness.provider.onSessionStarted(started, "/workspace");
+      expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
+      const published = yield* Ref.make<ReadonlyArray<ServerProvider>>([]);
+      yield* harness.provider.snapshot.streamChanges.pipe(
+        Stream.runForEach((snapshot) => Ref.update(published, (all) => [...all, snapshot])),
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* Ref.set(
+        harness.probe,
+        Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+      );
+
+      yield* TestClock.adjust("5 minutes");
+
+      expect((yield* harness.provider.snapshot.getSnapshot).status).toBe("ready");
+      expect((yield* Ref.get(published)).map((snapshot) => snapshot.status)).not.toContain("error");
+
+      yield* Ref.set(harness.probe, Effect.succeed(initializeResult));
+      yield* TestClock.adjust("30 seconds");
+      const failProbe = yield* Deferred.make<void>();
+      yield* Ref.set(
+        harness.probe,
+        Deferred.await(failProbe).pipe(
+          Effect.andThen(
+            Effect.fail(EffectAcpErrors.AcpRequestError.internalError("probe failed")),
+          ),
+        ),
+      );
+      yield* TestClock.adjust("5 minutes");
+      yield* harness.provider.onSignedOut;
+      yield* Deferred.succeed(failProbe, undefined);
+      yield* TestClock.adjust("30 seconds");
+
+      const auth = (yield* Ref.get(published)).map((snapshot) => snapshot.auth.status);
+      expect(auth.slice(auth.indexOf("unauthenticated"))).not.toContain("authenticated");
+      expect(auth.at(-1)).toBe("unauthenticated");
     }),
   );
 });
