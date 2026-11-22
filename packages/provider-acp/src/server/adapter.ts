@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeCrypto from "node:crypto";
 
 import {
   type ChatAttachment,
@@ -2328,6 +2329,35 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >(null);
         const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
         const promptRuntimeInstructions = yield* Ref.make(new Map<string, string>());
+        const hashRuntimeInstructions = (text: string) =>
+          NodeCrypto.createHash("sha256").update(text).digest("hex");
+        const hydrateDeliveredInstructionsFromProviderThread = Effect.fnUntraced(function* (
+          sessionId: string,
+          providerThread: OrchestrationV2ProviderThread,
+        ) {
+          const delivered = providerThread.nativeMetadata?.acpDeliveredInstructions;
+          if (delivered == null) return;
+          if ((yield* Ref.get(compactionMarkers)).has(sessionId)) return;
+          yield* Ref.update(promptInstructionStates, (current) => {
+            if (current.has(sessionId)) return current;
+            const updated = new Map(current);
+            updated.set(sessionId, {
+              interactionMode: delivered.interactionMode,
+              hasT3Mcp: delivered.hasT3Mcp,
+              hasDeviceTools: delivered.hasDeviceTools,
+            });
+            return updated;
+          });
+          if (delivered.runtimeInstructionsDigest !== undefined) {
+            const digest = delivered.runtimeInstructionsDigest;
+            yield* Ref.update(promptRuntimeInstructions, (current) => {
+              if (current.has(sessionId)) return current;
+              const updated = new Map(current);
+              updated.set(sessionId, digest);
+              return updated;
+            });
+          }
+        });
         // Unique markers keep delayed prompt completions from clearing later compactions.
         const compactionMarkers = yield* Ref.make(new Map<string, symbol>());
         // ACP may patch a completed compaction again; each compaction id marks its session once.
@@ -2350,6 +2380,58 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* Ref.update(compactionMarkers, (current) =>
             new Map(current).set(sessionId, Symbol()),
           );
+          const clearedMetadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
+            const existing = current.get(sessionId);
+            if (existing?.acpDeliveredInstructions == null) return [undefined, current] as const;
+            const cleared: OrchestrationV2ProviderThreadNativeMetadata = {
+              ...existing,
+              acpDeliveredInstructions: null,
+            };
+            return [cleared, new Map(current).set(sessionId, cleared)] as const;
+          });
+          const active = yield* Ref.get(activeTurn);
+          if (active?.nativeThreadId === sessionId) {
+            if (clearedMetadata !== undefined) {
+              active.nativeMetadata = clearedMetadata;
+            } else if (active.nativeMetadata?.acpDeliveredInstructions != null) {
+              active.nativeMetadata = {
+                ...active.nativeMetadata,
+                acpDeliveredInstructions: null,
+              };
+            }
+          } else {
+            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+              sessionId,
+            );
+            if (
+              knownProviderThread !== undefined &&
+              (clearedMetadata !== undefined ||
+                knownProviderThread.nativeMetadata?.acpDeliveredInstructions != null)
+            ) {
+              const now = yield* DateTime.now;
+              const nextMetadata: OrchestrationV2ProviderThreadNativeMetadata = {
+                ...(clearedMetadata ?? knownProviderThread.nativeMetadata),
+                acpDeliveredInstructions: null,
+              };
+              const providerThread: OrchestrationV2ProviderThread = {
+                ...knownProviderThread,
+                nativeMetadata: nextMetadata,
+                updatedAt: now,
+              };
+              yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                new Map(current).set(sessionId, nextMetadata),
+              );
+              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                new Map(current).set(sessionId, providerThread),
+              );
+              yield* emitProviderEvent({
+                type: "provider_thread.updated",
+                driver,
+                providerThread,
+                sessionScoped: true,
+              });
+            }
+          }
         });
         const advertisedCommandNames = yield* SubscriptionRef.make(
           new Map<string, ReadonlySet<string>>(),
@@ -8146,11 +8228,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   (choice) => choice.value === requestedModel,
                 )
               ) {
-                yield* runtime
-                  .setConfigOption(modelOption.id, requestedModel, {
-                    resendCurrentValue: flavor.alwaysSetModel === true,
-                  })
-                  .pipe(Effect.mapError(rejectedModel));
+                if (flavor.alwaysSetModel === true || modelOption.currentValue !== requestedModel) {
+                  yield* runtime
+                    .setConfigOption(modelOption.id, requestedModel, {
+                      resendCurrentValue: flavor.alwaysSetModel === true,
+                    })
+                    .pipe(Effect.mapError(rejectedModel));
+                }
                 appliedModel = requestedModel;
               }
             } else if (
@@ -8258,10 +8342,18 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               option.type === "select" &&
               typeof selection.value === "string"
             ) {
+              if (option.currentValue === selection.value) continue;
               const advertisedValues = option.options.flatMap((entry) =>
                 "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
               );
               if (!advertisedValues.includes(selection.value)) continue;
+            } else if (
+              option !== undefined &&
+              option.type === "boolean" &&
+              typeof selection.value === "boolean" &&
+              option.currentValue === selection.value
+            ) {
+              continue;
             }
             yield* runtime.setConfigOption(selection.id, selection.value).pipe(
               Effect.catchTags({
@@ -8705,6 +8797,46 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             threadId: context.input.threadId,
             providerTurn: turn,
           });
+          const deliveredInstructionState = (yield* Ref.get(promptInstructionStates)).get(
+            context.nativeThreadId,
+          );
+          const deliveredRuntimeDigest = (yield* Ref.get(promptRuntimeInstructions)).get(
+            context.nativeThreadId,
+          );
+          const sessionPendingCompaction = (yield* Ref.get(compactionMarkers)).has(
+            context.nativeThreadId,
+          );
+          if (settledStatus === "completed" && !sessionPendingCompaction) {
+            if (deliveredInstructionState !== undefined) {
+              const nextNativeMetadata: OrchestrationV2ProviderThreadNativeMetadata = {
+                ...context.nativeMetadata,
+                acpDeliveredInstructions: {
+                  interactionMode: deliveredInstructionState.interactionMode,
+                  hasT3Mcp: deliveredInstructionState.hasT3Mcp,
+                  hasDeviceTools: deliveredInstructionState.hasDeviceTools,
+                  ...(deliveredRuntimeDigest === undefined
+                    ? {}
+                    : { runtimeInstructionsDigest: deliveredRuntimeDigest }),
+                },
+              };
+              context.nativeMetadata = nextNativeMetadata;
+              yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                new Map(current).set(context.nativeThreadId, nextNativeMetadata),
+              );
+            }
+          } else if (
+            sessionPendingCompaction &&
+            context.nativeMetadata?.acpDeliveredInstructions != null
+          ) {
+            const clearedMetadata: OrchestrationV2ProviderThreadNativeMetadata = {
+              ...context.nativeMetadata,
+              acpDeliveredInstructions: null,
+            };
+            context.nativeMetadata = clearedMetadata;
+            yield* Ref.update(nativeMetadataBySessionId, (current) =>
+              new Map(current).set(context.nativeThreadId, clearedMetadata),
+            );
+          }
           const updatedProviderThread: OrchestrationV2ProviderThread = {
             ...context.input.providerThread,
             providerSessionId: input.providerSessionId,
@@ -9048,11 +9180,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               sessionSetup === null ||
               flavor.sessionCarriesPullRequestLinking?.(sessionSetup.initializeResult) !== true,
           });
+          const runtimeInstructionsDigest = hashRuntimeInstructions(runtimeInstructions);
           // The agent keeps its own history, so resend only after compaction or when the text changes.
           const sendRuntimeInstructions =
             !isNativeSlashCommand &&
             (compactionMarker !== undefined ||
-              (yield* Ref.get(promptRuntimeInstructions)).get(sessionId) !== runtimeInstructions);
+              (yield* Ref.get(promptRuntimeInstructions)).get(sessionId) !==
+                runtimeInstructionsDigest);
           const promptText = flavor.buildAttachmentPrompt ? text.trim() : text;
           const prompt: Array<EffectAcpSchema.ContentBlock> =
             promptText.length > 0 ? [{ type: "text", text: promptText }] : [];
@@ -9069,7 +9203,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           return {
             prompt,
             instructionState: text === messageText ? undefined : instructionState,
-            runtimeInstructions: sendRuntimeInstructions ? runtimeInstructions : undefined,
+            runtimeInstructions: sendRuntimeInstructions ? runtimeInstructionsDigest : undefined,
             compactionMarker,
           };
         });
@@ -9447,6 +9581,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 yield* Ref.set(continuationRequested, false);
                 return wasRequested;
               }),
+            );
+            yield* hydrateDeliveredInstructionsFromProviderThread(
+              requestedSessionId,
+              turnInput.providerThread,
             );
             const promptParts = isContinuationTurn
               ? null
@@ -10066,6 +10204,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                     yield* Ref.set(activeSelection, nextSelection);
                     yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
                   }
+                  yield* hydrateDeliveredInstructionsFromProviderThread(
+                    sessionId,
+                    threadInput.providerThread,
+                  );
                   const now = yield* DateTime.now;
                   return {
                     ...threadInput.providerThread,
@@ -10681,6 +10823,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                       nativeMetadata: {
                         ...rollbackInput.providerThread.nativeMetadata,
                         itemIdentityVersion: 2 as const,
+                        acpDeliveredInstructions: null,
                       },
                       status: "idle" as const,
                       updatedAt: now,

@@ -321,6 +321,7 @@ export const applyAntigravityAcpModelSelection = Effect.fn("applyAntigravityAcpM
         ),
       );
     }
+    if (resolved === current) return resolved;
     yield* input.runtime.setModel(resolved).pipe(Effect.mapError(input.mapError));
     return resolved;
   },

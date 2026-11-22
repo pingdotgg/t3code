@@ -1182,6 +1182,15 @@ export const OrchestrationV2PendingBackgroundTask = kindUnionWithFallback(
 );
 export type OrchestrationV2PendingBackgroundTask = typeof OrchestrationV2PendingBackgroundTask.Type;
 
+export const OrchestrationV2AcpDeliveredInstructions = Schema.Struct({
+  interactionMode: ProviderInteractionMode,
+  hasT3Mcp: Schema.Boolean,
+  hasDeviceTools: Schema.Boolean,
+  runtimeInstructionsDigest: Schema.optional(TrimmedNonEmptyString),
+});
+export type OrchestrationV2AcpDeliveredInstructions =
+  typeof OrchestrationV2AcpDeliveredInstructions.Type;
+
 export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   cursorStoreCwd: Schema.optional(TrimmedNonEmptyString),
   modelSelection: Schema.optional(ModelSelection),
@@ -1192,6 +1201,7 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   claudeAttachmentBudget: Schema.optional(
     Schema.Struct({ bytesUsed: NonNegativeInt, pagesUsed: NonNegativeInt }),
   ),
+  acpDeliveredInstructions: Schema.optional(Schema.NullOr(OrchestrationV2AcpDeliveredInstructions)),
 });
 export type OrchestrationV2ProviderThreadNativeMetadata =
   typeof OrchestrationV2ProviderThreadNativeMetadata.Type;
