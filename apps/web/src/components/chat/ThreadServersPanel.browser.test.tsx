@@ -53,6 +53,10 @@ vi.mock(import("../../portDiscoveryState"), async (importOriginal) => ({
 import { render } from "../../../test/render";
 import { ThreadServersPanel } from "./ThreadServersPanel";
 
+const setup = (serverCount = 10) => {
+  state.serverCount = serverCount;
+};
+
 const panel = (threadId: string) => (
   <ThreadServersPanel
     environmentId={EnvironmentId.make("env")}
@@ -61,7 +65,7 @@ const panel = (threadId: string) => (
 );
 
 it("pages servers four at a time, collapses back, and resets on thread switch", async () => {
-  state.serverCount = 10;
+  setup();
   await using screen = await render(panel("a"));
   const count = (selector: string) => screen.container.querySelectorAll(selector).length;
   const expectRows = (rows: number) => vi.waitFor(() => expect(count("li")).toBe(rows));
@@ -84,7 +88,7 @@ it("pages servers four at a time, collapses back, and resets on thread switch", 
 });
 
 it('shows a lone fifth server instead of a "Show 1 more" row', async () => {
-  state.serverCount = 5;
+  setup(5);
   await using screen = await render(panel("a"));
   await vi.waitFor(() => expect(screen.container.querySelectorAll("li").length).toBe(5));
   expect(screen.container.querySelectorAll("[data-thread-details-server-overflow]").length).toBe(0);
@@ -92,7 +96,7 @@ it('shows a lone fifth server instead of a "Show 1 more" row', async () => {
 });
 
 it("labels a page by the rows it reveals, folding in a last lone server", async () => {
-  state.serverCount = 9;
+  setup(9);
   await using screen = await render(panel("a"));
   const count = (selector: string) => screen.container.querySelectorAll(selector).length;
   await vi.waitFor(() => expect(count("li")).toBe(4));
@@ -104,8 +108,8 @@ it("labels a page by the rows it reveals, folding in a last lone server", async 
 });
 
 it("opens a remote server in the system browser through the forward a modified click starts", async () => {
+  setup();
   shell.openExternal.mockClear();
-  state.serverCount = 10;
   await using _screen = await render(panel("a"));
   await page.getByText("localhost:3000", { exact: true }).click({ modifiers: ["ControlOrMeta"] });
   await vi.waitFor(() =>
