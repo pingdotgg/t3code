@@ -34,7 +34,6 @@ import {
   parseSessionModeState,
 } from "@t3tools/provider-acp/server/runtimeModel";
 import {
-  ACP_MAX_CATALOG_MODELS,
   acpProviderOptionDescriptors,
   flattenSelectChoices,
   isAcpThoughtLevelOption,
@@ -43,7 +42,7 @@ import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
 
 const MAX_AUTH_METHODS = 32;
-const MAX_MODELS = ACP_MAX_CATALOG_MODELS;
+const MAX_MODELS = 256;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
@@ -214,8 +213,8 @@ export interface AcpRegistryLiveConfiguration {
   // A single model from an explicit select is the agent's deliberate catalog
   // (e.g. an entitlement change), not a cold-start placeholder.
   readonly modelsFromModelSelect?: boolean;
-  // Carries explicit supportsReasoningEffort: false metadata on options-only updates.
-  readonly reasoningDisabledModelIds?: ReadonlyArray<string>;
+  // Set on retained post-probe overrides so probe-only options stay untouched.
+  readonly partialOptions?: boolean;
 }
 
 export function normalizeAcpRegistryLiveConfiguration(
@@ -268,9 +267,6 @@ export function normalizeAcpRegistryLiveConfiguration(
       .filter((option) => isAcpThoughtLevelOption(option) || option.category === "model_config")
       .map((option) => option.id),
   );
-  const reasoningDisabledModelIds = !includeCatalog
-    ? advertisedModels.filter((model) => model.reasoningEffort === null).map((model) => model.id)
-    : [];
   return {
     models: includeCatalog ? advertisedModels : [],
     currentModelId: currentModel === undefined ? null : currentModel.id,
@@ -279,8 +275,24 @@ export function normalizeAcpRegistryLiveConfiguration(
       .filter((descriptor) => modelOptionIds.has(descriptor.id))
       .map((descriptor) => descriptor.id),
     modelsFromModelSelect: includeCatalog && modelOption !== undefined,
-    ...(reasoningDisabledModelIds.length > 0 ? { reasoningDisabledModelIds } : {}),
   };
+}
+
+/**
+ * Stable key for the effective normalized model catalog advertised by a registry
+ * session, covering cap/overflow selection, names, provenance, and per-model reasoning.
+ */
+export function acpRegistrySessionCatalogKey(
+  configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+  modelState?: EffectAcpSchema.SessionModelState | null,
+): string {
+  const { models, modelsFromModelSelect } = normalizeAcpRegistryLiveConfiguration(
+    configOptions,
+    undefined,
+    modelState,
+    { includeCatalog: true },
+  );
+  return JSON.stringify([modelsFromModelSelect === true, models]);
 }
 
 const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({

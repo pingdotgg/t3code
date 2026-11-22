@@ -5269,7 +5269,7 @@ describe("AcpAdapterV2", () => {
   );
 
   it.effect(
-    "deduplicates unchanged config_option_update catalogs and re-advertises on changed choices or new sessions",
+    "deduplicates unchanged config_option_update catalogs and re-advertises on changed choices or active native session replacement",
     () =>
       Effect.gen(function* () {
         const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -5277,9 +5277,6 @@ describe("AcpAdapterV2", () => {
         const mockAgentPath = yield* bundledMockAgentPath;
         type Runtime = AcpSessionRuntime.AcpSessionRuntime["Service"];
         let sessionUpdate: Parameters<Runtime["handleSessionUpdate"]>[0] | undefined;
-        let activeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined;
-        const publications: Array<{ readonly includeCatalog: boolean | undefined }> = [];
-        const instanceId = ProviderInstanceId.make("acp-test-catalog-dedupe");
         const makeModelSelect = (
           currentValue: string,
           choices: ReadonlyArray<{ readonly value: string; readonly name: string }>,
@@ -5297,6 +5294,10 @@ describe("AcpAdapterV2", () => {
           { value: "default", name: "Default" },
           { value: "composer-2", name: "Composer 2" },
         ] as const;
+        let activeConfigOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption> =
+          makeModelSelect("default", initialChoices);
+        const publications: Array<{ readonly includeCatalog: boolean | undefined }> = [];
+        const instanceId = ProviderInstanceId.make("acp-test-catalog-dedupe");
         const adapter = yield* makeAcpAdapterV2({
           instanceId,
           flavor: {
@@ -5316,10 +5317,7 @@ describe("AcpAdapterV2", () => {
               mockAgentPath,
               wrapRuntime: (runtime) => ({
                 ...runtime,
-                getConfigOptions:
-                  activeConfigOptions === undefined
-                    ? runtime.getConfigOptions
-                    : Effect.sync(() => activeConfigOptions!),
+                getConfigOptions: Effect.sync(() => activeConfigOptions),
                 handleSessionUpdate: (next) =>
                   Effect.sync(() => {
                     sessionUpdate = next;
@@ -5329,21 +5327,28 @@ describe("AcpAdapterV2", () => {
           },
           selfInvocation,
         });
+        const threadId = ThreadId.make("thread-acp-catalog-dedupe");
         const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
           runtimeMode: "full-access",
           interactionMode: "default",
           cwd: process.cwd(),
         });
-        const open = (suffix: string) =>
-          adapter.openSession({
-            threadId: ThreadId.make(`thread-acp-catalog-dedupe-${suffix}`),
-            providerSessionId: ProviderSessionId.make(`provider-session-acp-dedupe-${suffix}`),
-            modelSelection: { instanceId, model: "default" },
-            runtimePolicy,
-          });
-
-        activeConfigOptions = makeModelSelect("default", initialChoices);
-        yield* open("first");
+        const modelSelection = { instanceId, model: "default" } as const;
+        const sessionRuntime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-acp-dedupe"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* sessionRuntime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const initialNativeId = providerThread.nativeThreadRef?.nativeId;
+        if (typeof initialNativeId !== "string") {
+          assert.fail("expected initial native thread id");
+        }
         assert.deepEqual(
           publications.map((entry) => entry.includeCatalog),
           [true],
@@ -5353,7 +5358,7 @@ describe("AcpAdapterV2", () => {
         // config_option_update with unchanged model choices sets includeCatalog: false.
         activeConfigOptions = makeModelSelect("composer-2", initialChoices);
         yield* sessionUpdate!({
-          sessionId: "mock-session-1",
+          sessionId: initialNativeId,
           update: { sessionUpdate: "config_option_update", configOptions: [] },
         });
         assert.deepEqual(
@@ -5367,7 +5372,7 @@ describe("AcpAdapterV2", () => {
           { value: "composer-3", name: "Composer 3" },
         ]);
         yield* sessionUpdate!({
-          sessionId: "mock-session-1",
+          sessionId: initialNativeId,
           update: { sessionUpdate: "config_option_update", configOptions: [] },
         });
         assert.deepEqual(
@@ -5375,8 +5380,26 @@ describe("AcpAdapterV2", () => {
           [true, false, true],
         );
 
-        // Opening a new session resets the deduplication key even when choices match.
-        yield* open("second");
+        // Replacing the active native session inside the same openSession (rollbackThread)
+        // resets lastPublishedCatalogKey so the first publication with identical choices
+        // sets includeCatalog: true again.
+        const rolledBack = yield* sessionRuntime.rollbackThread({
+          providerThread,
+          providerThreadTurns: [],
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("checkpoint-acp-catalog-dedupe"),
+            appRunOrdinal: 0,
+          },
+        });
+        const rolledBackNativeId = rolledBack.providerThread.nativeThreadRef?.nativeId;
+        if (typeof rolledBackNativeId !== "string") {
+          assert.fail("expected rolled-back native thread id");
+        }
+        yield* sessionUpdate!({
+          sessionId: rolledBackNativeId,
+          update: { sessionUpdate: "config_option_update", configOptions: [] },
+        });
         assert.deepEqual(
           publications.map((entry) => entry.includeCatalog),
           [true, false, true, true],

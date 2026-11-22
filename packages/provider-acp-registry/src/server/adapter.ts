@@ -41,6 +41,7 @@ import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderS
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import {
+  acpRegistrySessionCatalogKey,
   normalizeAcpRegistryCommands,
   normalizeAcpRegistryLiveConfiguration,
   normalizeAcpRegistryWebUrl,
@@ -374,6 +375,7 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
                   ),
               }
             : {}),
+          sessionCatalogKey: acpRegistrySessionCatalogKey,
           onSessionConfigurationUpdate: (configOptions, modeState, modelState, updateOptions) =>
             runtimeCoordinator.publishLiveConfiguration(
               options.instanceId,

@@ -284,24 +284,24 @@ function updateLearnedModelsFromLive(
   return changed ? Array.from(learnedBySlug.values()) : learned;
 }
 
-function overlayLiveOptionValue(
+function compatibleLiveOptionValue(
   probed: ProviderOptionDescriptor,
   live: ProviderOptionDescriptor | undefined,
-): ProviderOptionDescriptor {
+): Option.Option<ProviderOptionDescriptor> {
   if (live === undefined || live.type !== probed.type || live.currentValue === undefined) {
-    return probed;
+    return Option.none();
   }
   if (probed.type === "boolean") {
-    return { ...probed, currentValue: live.currentValue as boolean };
+    return Option.some({ ...probed, currentValue: live.currentValue as boolean });
   }
   return probed.options.some((option) => option.id === live.currentValue)
-    ? { ...probed, currentValue: live.currentValue as string }
-    : probed;
+    ? Option.some({ ...probed, currentValue: live.currentValue as string })
+    : Option.none();
 }
 
 /**
- * Keeps live session option values that still apply after a superseding probe replaces
- * the catalog, while dropping removed shared options and dropped/disabled model options.
+ * Keeps only compatible live session option overrides after a superseding probe replaces
+ * the catalog, leaving probe-only defaults out of coordinator state.
  */
 export function retainAcpRegistryLiveOptionsAfterProbe(
   live: AcpRegistryLiveConfiguration,
@@ -316,38 +316,31 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
   const liveById = new Map(live.configOptions.map((descriptor) => [descriptor.id, descriptor]));
   const liveModelOptionIds = new Set(live.modelOptionIds ?? []);
   const probedModelById = new Map(probe.models.map((model) => [model.id, model]));
-  const nextCurrentModelId =
-    live.currentModelId !== null && probedModelById.has(live.currentModelId)
-      ? live.currentModelId
-      : null;
   const currentProbedModel =
-    nextCurrentModelId === null ? undefined : probedModelById.get(nextCurrentModelId);
+    live.currentModelId === null ? undefined : probedModelById.get(live.currentModelId);
 
-  let preservedAnyLiveOption = false;
   const sharedDescriptors: Array<ProviderOptionDescriptor> = [];
   for (const descriptor of probe.configOptions) {
     if (isModelSpecificDescriptor(descriptor, probe.modelOptionIds)) continue;
-    const liveMatch = liveById.get(descriptor.id);
-    if (liveMatch !== undefined) preservedAnyLiveOption = true;
-    sharedDescriptors.push(overlayLiveOptionValue(descriptor, liveMatch));
+    const retained = compatibleLiveOptionValue(descriptor, liveById.get(descriptor.id));
+    if (Option.isSome(retained)) sharedDescriptors.push(retained.value);
   }
   const sharedIds = new Set(sharedDescriptors.map((descriptor) => descriptor.id));
 
   const modelDescriptors: Array<ProviderOptionDescriptor> = [];
-  if (nextCurrentModelId !== null) {
-    const reasoningDisabled = currentProbedModel?.reasoningEffort === null;
-    if (nextCurrentModelId === probe.currentModelId) {
+  if (currentProbedModel !== undefined) {
+    const reasoningDisabled = currentProbedModel.reasoningEffort === null;
+    if (currentProbedModel.id === probe.currentModelId) {
       for (const descriptor of probe.configOptions) {
         if (sharedIds.has(descriptor.id)) continue;
         if (reasoningDisabled && descriptor.type === "select" && descriptor.role === "reasoning") {
           continue;
         }
-        const liveMatch = liveById.get(descriptor.id);
-        if (liveMatch !== undefined) preservedAnyLiveOption = true;
-        modelDescriptors.push(overlayLiveOptionValue(descriptor, liveMatch));
+        const retained = compatibleLiveOptionValue(descriptor, liveById.get(descriptor.id));
+        if (Option.isSome(retained)) modelDescriptors.push(retained.value);
       }
     } else {
-      const advertisedReasoning = currentProbedModel?.reasoningEffort;
+      const advertisedReasoning = currentProbedModel.reasoningEffort;
       let addedAdvertisedReasoning = false;
       for (const descriptor of live.configOptions) {
         if (sharedIds.has(descriptor.id)) continue;
@@ -356,30 +349,31 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
           if (reasoningDisabled) continue;
           if (advertisedReasoning != null) {
             if (!addedAdvertisedReasoning) {
-              modelDescriptors.push(overlayLiveOptionValue(advertisedReasoning, descriptor));
-              addedAdvertisedReasoning = true;
-              preservedAnyLiveOption = true;
+              const retained = compatibleLiveOptionValue(advertisedReasoning, descriptor);
+              if (Option.isSome(retained)) {
+                modelDescriptors.push(retained.value);
+                addedAdvertisedReasoning = true;
+              }
             }
             continue;
           }
         }
         modelDescriptors.push(descriptor);
-        preservedAnyLiveOption = true;
-      }
-      if (advertisedReasoning != null && !addedAdvertisedReasoning) {
-        modelDescriptors.push(advertisedReasoning);
       }
     }
   }
 
   const configOptions = [...sharedDescriptors, ...modelDescriptors];
-  if (!preservedAnyLiveOption || configOptions.length === 0) return Option.none();
+  if (configOptions.length === 0) return Option.none();
   return Option.some({
     models: [],
-    currentModelId: nextCurrentModelId,
+    // Keep live.currentModelId even when removed upstream so overlay does not
+    // apply session options onto the probe's default model.
+    currentModelId: live.currentModelId,
     configOptions,
     modelOptionIds: modelDescriptors.map((descriptor) => descriptor.id),
     modelsFromModelSelect: false,
+    partialOptions: true,
   });
 }
 
@@ -700,6 +694,69 @@ function stripReasoningForDisabledModels(
   return changed ? next : models;
 }
 
+function overlayPartialLiveOptions(
+  models: ReadonlyArray<ServerProviderModel>,
+  configuration: AcpRegistryLiveConfiguration,
+  selectedProbedModelId: string | null,
+  disabledReasoningSlugs: ReadonlySet<string>,
+): ReadonlyArray<ServerProviderModel> {
+  const modelOptionIds = new Set(configuration.modelOptionIds ?? []);
+  const sharedOverrides = new Map<string, ProviderOptionDescriptor>();
+  const modelOverrides: Array<ProviderOptionDescriptor> = [];
+  for (const descriptor of configuration.configOptions) {
+    if (isModelSpecificDescriptor(descriptor, modelOptionIds)) {
+      modelOverrides.push(descriptor);
+    } else {
+      sharedOverrides.set(descriptor.id, descriptor);
+    }
+  }
+  const updated = models.map((model) => {
+    const existing = model.capabilities?.optionDescriptors ?? [];
+    const isCurrentModel =
+      !model.isCustom &&
+      configuration.currentModelId !== null &&
+      model.slug === configuration.currentModelId;
+    const reasoningDisabled = !model.isCustom && disabledReasoningSlugs.has(model.slug);
+    const nextDescriptors: Array<ProviderOptionDescriptor> = [];
+    for (const descriptor of existing) {
+      if (reasoningDisabled && descriptor.type === "select" && descriptor.role === "reasoning") {
+        continue;
+      }
+      const sharedOverride = sharedOverrides.get(descriptor.id);
+      if (sharedOverride !== undefined) {
+        const overlaid = compatibleLiveOptionValue(descriptor, sharedOverride);
+        nextDescriptors.push(Option.getOrElse(overlaid, () => descriptor));
+      } else {
+        nextDescriptors.push(descriptor);
+      }
+    }
+    if (isCurrentModel) {
+      for (const override of modelOverrides) {
+        if (reasoningDisabled && override.type === "select" && override.role === "reasoning") {
+          continue;
+        }
+        const existingIndex = nextDescriptors.findIndex((item) => item.id === override.id);
+        if (existingIndex >= 0) {
+          const currentDescriptor = nextDescriptors[existingIndex]!;
+          const overlaid = compatibleLiveOptionValue(currentDescriptor, override);
+          nextDescriptors[existingIndex] = Option.getOrElse(overlaid, () => currentDescriptor);
+        } else {
+          nextDescriptors.push(override);
+        }
+      }
+    }
+    if (Equal.equals(existing, nextDescriptors)) return model;
+    return {
+      ...model,
+      capabilities:
+        nextDescriptors.length === 0
+          ? EMPTY_CAPABILITIES
+          : createModelCapabilities({ optionDescriptors: nextDescriptors }),
+    };
+  });
+  return withAcpRegistryDefaultModel(updated, selectedProbedModelId);
+}
+
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
@@ -726,18 +783,25 @@ export function applyAcpRegistryLiveConfiguration(
     (configuration.models.length === 1 && !liveCatalogIsProvisional);
   const disabledReasoningSlugs: ReadonlySet<string> = useLiveCatalog
     ? EMPTY_SLUG_SET
-    : (configuration.reasoningDisabledModelIds?.length ?? 0) === 0
-      ? (options?.reasoningDisabledModelSlugs ?? EMPTY_SLUG_SET)
-      : new Set([
-          ...(options?.reasoningDisabledModelSlugs ?? []),
-          ...(configuration.reasoningDisabledModelIds ?? []),
-        ]);
+    : (options?.reasoningDisabledModelSlugs ?? EMPTY_SLUG_SET);
   const liveCurrentModelInProbed =
     configuration.currentModelId !== null &&
     probedModels.some((model) => model.slug === configuration.currentModelId);
   const selectedProbedModelId = liveCurrentModelInProbed
     ? configuration.currentModelId
     : (probedModels.find((model) => model.isDefault)?.slug ?? null);
+  if (!useLiveCatalog && configuration.partialOptions === true) {
+    return {
+      ...snapshot,
+      status: provider.enabled ? "ready" : provider.status,
+      models: overlayPartialLiveOptions(
+        provider.models,
+        configuration,
+        selectedProbedModelId,
+        disabledReasoningSlugs,
+      ),
+    };
+  }
   // When retaining the probed catalog for a live session running an absent
   // model (e.g. a cold-start placeholder), keep only shared options and leave
   // each retained model's own learned options untouched.
@@ -1156,14 +1220,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           const reasoningDisabledModelSlugs =
             options?.reasoningDisabledModelSlugs ?? accepted.reasoningDisabledModelSlugs;
           const disabledForLearning =
-            configuration.models.length > 0
-              ? EMPTY_SLUG_SET
-              : (configuration.reasoningDisabledModelIds?.length ?? 0) === 0
-                ? reasoningDisabledModelSlugs
-                : new Set([
-                    ...reasoningDisabledModelSlugs,
-                    ...(configuration.reasoningDisabledModelIds ?? []),
-                  ]);
+            configuration.models.length > 0 ? EMPTY_SLUG_SET : reasoningDisabledModelSlugs;
           return Ref.modify(learnedModels, (learned) => {
             const next = applyAcpRegistryLiveConfiguration(
               provider,
@@ -1338,9 +1395,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
         : AcpRegistryRuntimeCoordinator.EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
       const enriched = yield* enrichProvider;
-      if (effectiveConfig.source === "local" && enriched.provider.status === "ready") {
-        yield* Ref.set(reportedLocalVersion, enriched.provider.version);
-      }
       return {
         provider: enriched.provider,
         generation: cacheState.generation,
@@ -1402,6 +1456,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 }
                 let resolved = provider;
                 if (fresh && provider.status === "ready") {
+                  if (effectiveConfig.source === "local") {
+                    yield* Ref.set(reportedLocalVersion, provider.version);
+                  }
                   const accepted = yield* Ref.get(acceptedCatalog);
                   const liveCatalog = Option.filter(liveSnapshot.configuration, (configuration) =>
                     liveConfigurationReplacesAcceptedCatalog(configuration, accepted),
@@ -1430,7 +1487,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           probeStartLiveRevision,
                           {
                             catalogRevision: probeStartCatalogRevision,
-                            retainPreProbeConfiguration: (live) =>
+                            retainConfiguration: (live) =>
                               retainAcpRegistryLiveOptionsAfterProbe(live, {
                                 models: probedModels,
                                 currentModelId: probedCurrentModelId,
@@ -1608,12 +1665,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               .filter((model) => model.reasoningEffort === null)
                               .map((model) => model.id),
                           )
-                        : (configuration.reasoningDisabledModelIds?.length ?? 0) > 0
-                          ? new Set([
-                              ...acceptedBefore.reasoningDisabledModelSlugs,
-                              ...(configuration.reasoningDisabledModelIds ?? []),
-                            ])
-                          : acceptedBefore.reasoningDisabledModelSlugs;
+                        : acceptedBefore.reasoningDisabledModelSlugs;
                       if (current.auth.status !== "unauthenticated" || replacesCatalog) {
                         yield* Ref.update(acceptedCatalog, (previous) =>
                           replacesCatalog
@@ -1627,7 +1679,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               ? {
                                   ...previous,
                                   models: next.models,
-                                  reasoningDisabledModelSlugs: nextReasoningDisabled,
                                 }
                               : previous,
                         );

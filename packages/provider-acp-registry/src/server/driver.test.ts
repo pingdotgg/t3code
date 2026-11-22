@@ -40,6 +40,7 @@ import {
 import {
   acpRegistryAdvertisesModelCatalog,
   acpRegistryProbeResult,
+  acpRegistrySessionCatalogKey,
   normalizeAcpRegistryLiveConfiguration,
 } from "./probe.ts";
 
@@ -448,8 +449,28 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
     expect(optionsOnlyDisabled.configOptions).toEqual([]);
     expect(optionsOnlyDisabled.modelOptionIds).toEqual([]);
-    expect(optionsOnlyDisabled.reasoningDisabledModelIds).toEqual(["glm"]);
-    const providerWithEffortOnGlm = applyAcpRegistryLiveConfiguration(
+    const providerAfterCatalogDisable = applyAcpRegistryLiveConfiguration(
+      provider,
+      normalizeAcpRegistryLiveConfiguration([effort], undefined, {
+        currentModelId: "glm",
+        availableModels: [
+          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
+          { modelId: "opus", name: "Opus" },
+        ],
+      }),
+      [],
+    );
+    expect(
+      applyAcpRegistryLiveConfiguration(
+        providerAfterCatalogDisable,
+        optionsOnlyDisabled,
+        [],
+      ).models.map((model) => model.capabilities?.optionDescriptors ?? []),
+    ).toEqual([[], []]);
+
+    // An options-only update from an older session whose frozen _meta had supportsReasoningEffort: false
+    // for a non-current model must not undo reasoning that a newer probe re-enabled on that model.
+    const probeReenabledGlm = applyAcpRegistryLiveConfiguration(
       provider,
       normalizeAcpRegistryLiveConfiguration([effort], undefined, {
         currentModelId: "glm",
@@ -460,13 +481,27 @@ describe("acpRegistrySnapshotReadiness", () => {
       }),
       [],
     );
+    const staleSessionOptionsOnOpus = normalizeAcpRegistryLiveConfiguration(
+      [effort],
+      undefined,
+      {
+        currentModelId: "opus",
+        availableModels: [
+          { modelId: "glm", name: "GLM", _meta: { supportsReasoningEffort: false } },
+          { modelId: "opus", name: "Opus" },
+        ],
+      },
+      { includeCatalog: false },
+    );
     expect(
       applyAcpRegistryLiveConfiguration(
-        providerWithEffortOnGlm,
-        optionsOnlyDisabled,
+        probeReenabledGlm,
+        staleSessionOptionsOnOpus,
         [],
-      ).models.map((model) => model.capabilities?.optionDescriptors ?? []),
-    ).toEqual([[], []]);
+      ).models.map((model) =>
+        (model.capabilities?.optionDescriptors ?? []).map((descriptor) => descriptor.id),
+      ),
+    ).toEqual([["effort"], ["effort"]]);
 
     // Explicit probe-level reasoningDisabledModelSlugs keeps effort off a disabled model during
     // an options-only overlay while preserving unrelated options and allowing enabled models.
@@ -1194,8 +1229,8 @@ describe("acpRegistryEnrichmentCache", () => {
       }),
     ).toBe(true);
   });
-  it("retains valid live option values across a superseding probe while dropping removed or disabled options", () => {
-    const mode = (currentValue: "ask" | "code") => ({
+  it("retains only compatible live overrides across superseding probes without storing probe defaults or stripping default-model options", () => {
+    const mode = (currentValue: "ask" | "code" | "removed") => ({
       id: "mode",
       label: "Mode",
       type: "select" as const,
@@ -1205,16 +1240,16 @@ describe("acpRegistryEnrichmentCache", () => {
         { id: "code", label: "Code" },
       ],
     });
-    const effort = (currentValue: "low" | "high") => ({
+    const effort = (
+      currentValue: "low" | "high",
+      choices: ReadonlyArray<"low" | "high"> = ["low", "high"],
+    ) => ({
       id: "effort",
       label: "Effort",
       type: "select" as const,
       role: "reasoning" as const,
       currentValue,
-      options: [
-        { id: "low", label: "Low" },
-        { id: "high", label: "High" },
-      ],
+      options: choices.map((id) => ({ id, label: id === "low" ? "Low" : "High" })),
     });
     const legacy = {
       id: "legacy",
@@ -1223,7 +1258,12 @@ describe("acpRegistryEnrichmentCache", () => {
       currentValue: "on",
       options: [{ id: "on", label: "On" }],
     };
-    const fast = { id: "fast", label: "Fast", type: "boolean" as const, currentValue: false };
+    const fast = (currentValue: boolean) => ({
+      id: "fast",
+      label: "Fast",
+      type: "boolean" as const,
+      currentValue,
+    });
 
     const retained = retainAcpRegistryLiveOptionsAfterProbe(
       {
@@ -1239,17 +1279,160 @@ describe("acpRegistryEnrichmentCache", () => {
           { id: "old-model", name: "old-model", description: null },
         ],
         currentModelId: "new-model",
-        configOptions: [mode("ask"), fast, effort("high")],
+        configOptions: [mode("ask"), fast(false), effort("high")],
         modelOptionIds: new Set(["effort"]),
       },
     );
+    // Probe-only defaults (fast=false) must not be stored as live overrides.
     expect(retained).toEqual(
       Option.some({
         models: [],
         currentModelId: "old-model",
-        configOptions: [mode("code"), fast, effort("low")],
+        configOptions: [mode("code"), effort("low")],
         modelOptionIds: ["effort"],
         modelsFromModelSelect: false,
+        partialOptions: true,
+      }),
+    );
+
+    // Applying the retained override onto a later probe where fast=true preserves mode=code
+    // and keeps the new probe default fast=true instead of reverting it to false.
+    const probeWithFast = (fastDefault: boolean) =>
+      buildCheckedAcpRegistrySnapshot({
+        ...identity,
+        settings: decodeSettings({ agentId: "test-agent" }),
+        checkedAt: "2026-08-13T10:00:00.000Z",
+        inspection: {
+          status: "ready",
+          agentId: "test-agent",
+          version: "1.0.0",
+          distribution: "npx",
+        },
+        probe: {
+          probe: {
+            instanceId: identity.instanceId,
+            ready: true,
+            icon: null,
+            authMethods: [],
+            models: [
+              { id: "new-model", name: "new-model", description: null },
+              { id: "old-model", name: "old-model", description: null },
+            ],
+            currentModelId: "new-model",
+            configOptions: [mode("ask"), fast(fastDefault), effort("high")],
+            modelOptionIds: ["effort"],
+            sessionManagement: noSessionManagement,
+          },
+          slashCommands: [],
+          skills: [],
+        },
+      });
+    const appliedProbe2 = applyAcpRegistryLiveConfiguration(
+      probeWithFast(true),
+      Option.getOrThrow(retained),
+      [],
+    );
+    expect(
+      appliedProbe2.models
+        .find((m) => m.slug === "new-model")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["mode", "code"],
+      ["fast", true],
+      ["effort", "high"],
+    ]);
+    expect(
+      appliedProbe2.models
+        .find((m) => m.slug === "old-model")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["mode", "code"],
+      ["fast", true],
+      ["effort", "low"],
+    ]);
+
+    // When the live session's model was removed upstream, keep live.currentModelId so the
+    // probe's default model retains its own model-specific options (effort) alongside shared mode=code.
+    const retainedAfterRemovedModel = Option.getOrThrow(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "removed-model",
+          configOptions: [mode("code"), effort("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        },
+        {
+          models: [
+            { id: "new-model", name: "new-model", description: null },
+            { id: "old-model", name: "old-model", description: null },
+          ],
+          currentModelId: "new-model",
+          configOptions: [mode("ask"), fast(false), effort("high")],
+          modelOptionIds: new Set(["effort"]),
+        },
+      ),
+    );
+    expect(retainedAfterRemovedModel.currentModelId).toBe("removed-model");
+    const appliedRemovedModel = applyAcpRegistryLiveConfiguration(
+      probeWithFast(false),
+      retainedAfterRemovedModel,
+      [],
+    );
+    expect(appliedRemovedModel.models.find((m) => m.slug === "new-model")?.isDefault).toBe(true);
+    expect(
+      appliedRemovedModel.models
+        .find((m) => m.slug === "new-model")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["mode", "code"],
+      ["fast", false],
+      ["effort", "high"],
+    ]);
+
+    // Invalid or removed live values are dropped rather than storing probe fallbacks as overrides.
+    expect(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [mode("removed"), effort("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        },
+        {
+          models: [{ id: "old-model", name: "old-model", description: null }],
+          currentModelId: "old-model",
+          configOptions: [mode("ask"), effort("low", ["low"])],
+          modelOptionIds: new Set(["effort"]),
+        },
+      ),
+    ).toEqual(Option.none());
+    // Valid live values on the same model survive while removed values are dropped.
+    expect(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        {
+          models: [],
+          currentModelId: "old-model",
+          configOptions: [mode("code"), effort("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        },
+        {
+          models: [{ id: "old-model", name: "old-model", description: null }],
+          currentModelId: "old-model",
+          configOptions: [mode("ask"), effort("low", ["low"])],
+          modelOptionIds: new Set(["effort"]),
+        },
+      ),
+    ).toEqual(
+      Option.some({
+        models: [],
+        currentModelId: "old-model",
+        configOptions: [mode("code"), effort("low", ["low"])],
+        modelOptionIds: ["effort"],
+        modelsFromModelSelect: false,
+        partialOptions: true,
       }),
     );
 
@@ -1293,6 +1476,71 @@ describe("acpRegistryEnrichmentCache", () => {
         },
       ),
     ).toEqual(Option.none());
+  });
+});
+
+describe("acpRegistrySessionCatalogKey", () => {
+  it("ignores in-cap selection and effort value tweaks while detecting overflow selection, renames, and newly normalized per-model reasoning", () => {
+    const modelSelect = (
+      currentValue: string,
+      options: ReadonlyArray<{ value: string; name: string }>,
+    ) => [
+      {
+        id: "model",
+        name: "Model",
+        category: "model" as const,
+        type: "select" as const,
+        currentValue,
+        options: [...options],
+      },
+    ];
+    const choices = Array.from({ length: 257 }, (_, index) => ({
+      value: `m${index}`,
+      name: `Model ${index}`,
+    }));
+
+    const keyM0 = acpRegistrySessionCatalogKey(modelSelect("m0", choices));
+    expect(acpRegistrySessionCatalogKey(modelSelect("m1", choices))).toBe(keyM0);
+    expect(acpRegistrySessionCatalogKey(modelSelect("m256", choices))).not.toBe(keyM0);
+    expect(
+      acpRegistrySessionCatalogKey(
+        modelSelect("m0", [{ value: "m0", name: "Model 0 Renamed" }, ...choices.slice(1)]),
+      ),
+    ).not.toBe(keyM0);
+
+    // When a session initially omits the effort selector and later exposes it, another model's
+    // _meta.reasoningEfforts becomes normalizable and must change the catalog key, while changing
+    // only the active effort currentValue must not.
+    const modelState = {
+      currentModelId: "model-a",
+      availableModels: [
+        { modelId: "model-a", name: "Model A" },
+        {
+          modelId: "model-b",
+          name: "Model B",
+          _meta: {
+            reasoningEfforts: [{ value: "low", label: "Low" }],
+            reasoningEffort: "low",
+          },
+        },
+      ],
+    };
+    const effortSelect = (currentValue: "low" | "high") => ({
+      id: "effort",
+      name: "Effort",
+      category: "thought_level" as const,
+      type: "select" as const,
+      currentValue,
+      options: [
+        { value: "low", name: "Low" },
+        { value: "high", name: "High" },
+      ],
+    });
+    const withoutEffort = acpRegistrySessionCatalogKey([], modelState);
+    const withEffortHigh = acpRegistrySessionCatalogKey([effortSelect("high")], modelState);
+    const withEffortLow = acpRegistrySessionCatalogKey([effortSelect("low")], modelState);
+    expect(withEffortHigh).not.toBe(withoutEffort);
+    expect(withEffortLow).toBe(withEffortHigh);
   });
 });
 
@@ -2310,8 +2558,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           }),
         );
 
-        // Re-populate the catalog, then verify disableProvider clears acceptedCatalog so a
-        // provisional probe afterward does not stick to the disabled provider's models.
+        // Re-populate the catalog AND live coordinator state, then verify disableProvider clears
+        // both coordinator state and acceptedCatalog so a provisional probe does not retain old models.
         yield* writeModels(["new-model", "old-model", "other-model"]);
         const restored = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
@@ -2319,10 +2567,35 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         yield* Fiber.join(restored);
 
+        const liveBeforeDisable = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models.map((m) => m.slug).join() === "live-disable-a,live-disable-b",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "live-disable-a", name: "Live Disable A", description: null },
+            { id: "live-disable-b", name: "Live Disable B", description: null },
+          ],
+          currentModelId: "live-disable-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(liveBeforeDisable);
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
+          true,
+        );
+
         yield* instance.acpSessionManagement!.disableProvider({
           cwd: directory,
           providerId: "old-provider",
         });
+        expect(Option.isNone(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
+          true,
+        );
         yield* writeModels({ provisional: "placeholder" });
         const afterDisable = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
@@ -2332,7 +2605,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Option.getOrThrow(yield* Fiber.join(afterDisable)).models.map((model) => model.slug),
         ).toEqual(["placeholder"]);
 
-        // Re-populate, then verify invalidateCaches and auth.invalidate clear acceptedCatalog.
+        // Re-populate, then verify invalidateCaches and auth.invalidate clear both coordinator and acceptedCatalog.
         yield* writeModels(["new-model", "old-model", "other-model"]);
         yield* TestClock.adjust("1 minute");
         const restored2 = yield* waitForEnriched().pipe(
@@ -2362,9 +2635,32 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* instance.snapshot.refresh;
         yield* Fiber.join(restoredForAuthInvalidate);
+        const liveBeforeAuthInvalidate = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.models.map((m) => m.slug).join() === "live-auth-a,live-auth-b",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "live-auth-a", name: "Live Auth A", description: null },
+            { id: "live-auth-b", name: "Live Auth B", description: null },
+          ],
+          currentModelId: "live-auth-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(liveBeforeAuthInvalidate);
+        expect(Option.isSome(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
+          true,
+        );
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
             yield* instance.auth?.invalidate ?? Effect.void;
+            expect(
+              Option.isNone(yield* coordinator.getLiveConfiguration(identity.instanceId)),
+            ).toBe(true);
             expect((yield* instance.snapshot.getSnapshot).models.map((m) => m.slug)).toEqual([
               "default",
             ]);
@@ -2581,12 +2877,40 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         yield* Fiber.join(initial);
 
-        // Fresh probe disables reasoning on old-model while adding new-model.
-        yield* writeModels([
-          { modelId: "old-model", name: "old-model", _meta: { supportsReasoningEffort: false } },
-          "other-model",
-          "new-model",
-        ]);
+        // Fresh probe advertises mode=[code, plan], restricts effort on old-model to [low] only,
+        // and disables reasoning on other-model while adding new-model.
+        yield* writeModels({
+          models: [
+            "old-model",
+            {
+              modelId: "other-model",
+              name: "other-model",
+              _meta: { supportsReasoningEffort: false },
+            },
+            "new-model",
+          ],
+          configOptions: [
+            {
+              id: "mode",
+              name: "Mode",
+              category: "mode",
+              type: "select",
+              currentValue: "code",
+              options: [
+                { value: "code", name: "Code" },
+                { value: "plan", name: "Plan" },
+              ],
+            },
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "low",
+              options: [{ value: "low", name: "Low" }],
+            },
+          ],
+        });
         yield* TestClock.adjust("16 minutes");
         gateNextResolve = true;
         yield* instance.snapshot.refresh;
@@ -2603,6 +2927,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
+        // Live update sets mode=plan (still valid) and effort=high (removed by the probe).
         yield* coordinator.publishLiveConfiguration(identity.instanceId, {
           models: [],
           currentModelId: "old-model",
@@ -2622,7 +2947,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
               label: "Effort",
               type: "select",
               role: "reasoning",
-              currentValue: "low",
+              currentValue: "high",
               options: [
                 { id: "low", label: "Low" },
                 { id: "high", label: "High" },
@@ -2644,10 +2969,18 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "other-model",
           "new-model",
         ]);
-        // Unrelated live option (mode) stays applied while disabled reasoning (effort) stays stripped.
+        // Valid live option (mode=plan) survives while the removed choice (effort=high) is replaced by probe's low.
         expect(
           updated.models
             .find((model) => model.slug === "old-model")
+            ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
+        ).toEqual([
+          ["mode", "plan"],
+          ["effort", "low"],
+        ]);
+        expect(
+          updated.models
+            .find((model) => model.slug === "other-model")
             ?.capabilities?.optionDescriptors?.map((option) => [option.id, option.currentValue]),
         ).toEqual([["mode", "plan"]]);
 

@@ -112,7 +112,6 @@ import {
 import {
   ACP_EMPTY_OPTION_VALUE,
   ACP_SESSION_MODE_OPTION_ID,
-  acpSessionCatalogKey,
   flattenSelectChoices,
 } from "./sessionConfig.ts";
 import * as AcpSessionRuntime from "./AcpSessionRuntime.ts";
@@ -430,6 +429,10 @@ export interface AcpAdapterV2Flavor {
   readonly onAvailableCommandsUpdate?: (
     commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
   ) => Effect.Effect<void>;
+  readonly sessionCatalogKey?: (
+    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+    modelState: EffectAcpSchema.SessionModelState | null | undefined,
+  ) => string;
   readonly onSessionConfigurationUpdate?: (
     configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
     modeState: AcpSessionModeState | undefined,
@@ -2285,8 +2288,9 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         } | null>(null);
         const activeSessionSetup =
           yield* Ref.make<AcpSessionRuntime.AcpSessionRuntimeStartResult | null>(null);
-        // Track the model catalog last published for the active session so mid-session
-        // option updates do not re-advertise a frozen catalog over a newer periodic probe.
+        // Track the model catalog last published per session so mid-session option
+        // updates do not re-advertise a frozen catalog over a newer periodic probe;
+        // cache invalidation relies on the follow-up probe rather than session replay.
         const lastPublishedCatalogKey = yield* Ref.make<{
           readonly epoch: number;
           readonly key: string | null;
@@ -2295,19 +2299,45 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           epoch: current.epoch + 1,
           key: null,
         }));
+        const defaultSessionCatalogKey = (
+          configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+          modelState: EffectAcpSchema.SessionModelState | null | undefined,
+        ): string => {
+          const modelOption = findModelConfigOption(configOptions);
+          if (modelOption !== undefined) {
+            return JSON.stringify([
+              "select",
+              flattenSelectChoices(modelOption.options).map((choice) => [
+                choice.value,
+                choice.name,
+                choice.description ?? null,
+              ]),
+            ]);
+          }
+          return JSON.stringify([
+            "models",
+            (modelState?.availableModels ?? []).map((model) => [
+              model.modelId,
+              model.name,
+              model.description ?? null,
+            ]),
+          ]);
+        };
+        const computeSessionCatalogKey = flavor.sessionCatalogKey ?? defaultSessionCatalogKey;
         const sessionConfigurationPublishPermit = yield* Semaphore.make(1);
         const publishSessionConfiguration = Effect.fn("AcpAdapterV2.publishSessionConfiguration")(
           function* (targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"]) {
-            if (flavor.onSessionConfigurationUpdate === undefined) return;
+            const onSessionConfigurationUpdate = flavor.onSessionConfigurationUpdate;
+            if (onSessionConfigurationUpdate === undefined) return;
             yield* sessionConfigurationPublishPermit.withPermit(
               Effect.gen(function* () {
                 const { epoch, key } = yield* Ref.get(lastPublishedCatalogKey);
                 const configOptions = yield* targetRuntime.getConfigOptions;
                 const modeState = yield* targetRuntime.getModeState;
                 const modelState = (yield* Ref.get(activeSessionSetup))?.sessionSetupResult.models;
-                const catalogKey = acpSessionCatalogKey(configOptions, modelState);
+                const catalogKey = computeSessionCatalogKey(configOptions, modelState);
                 const includeCatalog = key !== catalogKey;
-                yield* flavor.onSessionConfigurationUpdate!(configOptions, modeState, modelState, {
+                yield* onSessionConfigurationUpdate(configOptions, modeState, modelState, {
                   includeCatalog,
                 });
                 yield* Ref.update(lastPublishedCatalogKey, (current) =>

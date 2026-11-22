@@ -258,67 +258,53 @@ describe("AcpRegistryRuntimeCoordinator", () => {
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
+  it.effect("skips stale live configuration revisions when watching after a revision", () =>
+    Effect.gen(function* () {
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const instanceId = ProviderInstanceId.make("acpRegistry_devin");
+      const configFor = (id: string) => ({
+        models: [{ id, name: id, description: null }],
+        currentModelId: id,
+        configOptions: [],
+        modelsFromModelSelect: true,
+      });
+
+      yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
+      const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+      expect(first.revision).toBeGreaterThan(0);
+
+      const received: Array<readonly [string | null, number]> = [];
+      const secondSeen = yield* Deferred.make<void>();
+      const watcher = yield* coordinator
+        .watchLiveConfiguration(
+          instanceId,
+          (configuration, revision) =>
+            Effect.sync(() => {
+              received.push([configuration.currentModelId, revision] as const);
+            }).pipe(Effect.andThen(Deferred.succeed(secondSeen, undefined)), Effect.asVoid),
+          { afterRevision: first.revision },
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
+      yield* Deferred.await(secondSeen);
+      yield* Fiber.interrupt(watcher);
+      const second = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+      expect(received).toEqual([["model-v2", second.revision]]);
+
+      // Publications on another instance must not advance this instance's revision or watermark.
+      const otherInstanceId = ProviderInstanceId.make("acpRegistry_kimi");
+      yield* coordinator.publishLiveConfiguration(otherInstanceId, configFor("kimi-v1"));
+      expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual(second);
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
+
   it.effect(
-    "tracks live configuration revisions so stale snapshots are neither replayed nor able to clear newer ones",
+    "preserves an unsuperseded catalog only for options-only updates targeting that catalog",
     () =>
       Effect.gen(function* () {
         const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
         const instanceId = ProviderInstanceId.make("acpRegistry_devin");
-        const configFor = (id: string) => ({
-          models: [{ id, name: id, description: null }],
-          currentModelId: id,
-          configOptions: [],
-          modelsFromModelSelect: true,
-        });
-
-        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
-        const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(first.revision).toBeGreaterThan(0);
-
-        // Watching past the already-observed revision skips the stale replay, then delivers newer updates with their revision.
-        const received: Array<readonly [string | null, number]> = [];
-        const secondSeen = yield* Deferred.make<void>();
-        const watcher = yield* coordinator
-          .watchLiveConfiguration(
-            instanceId,
-            (configuration, revision) =>
-              Effect.sync(() => {
-                received.push([configuration.currentModelId, revision] as const);
-              }).pipe(Effect.andThen(Deferred.succeed(secondSeen, undefined)), Effect.asVoid),
-            { afterRevision: first.revision },
-          )
-          .pipe(Effect.forkChild({ startImmediately: true }));
-
-        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
-        yield* Deferred.await(secondSeen);
-        yield* Fiber.interrupt(watcher);
-        const second = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(received).toEqual([["model-v2", second.revision]]);
-
-        // An outdated revision cannot clear a newer live configuration or advance clearedThroughRevision.
-        expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, first.revision),
-        ).toBe(false);
-        expect(Option.isSome(yield* coordinator.getLiveConfiguration(instanceId))).toBe(true);
-        expect(
-          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).clearedThroughRevision,
-        ).toBe(0);
-
-        expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, second.revision),
-        ).toBe(true);
-        const afterClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(Option.isNone(afterClear.configuration)).toBe(true);
-        expect(afterClear.clearedThroughRevision).toBe(second.revision);
-
-        // Publications on another instance must not advance this instance's revision or watermark.
-        const otherInstanceId = ProviderInstanceId.make("acpRegistry_kimi");
-        yield* coordinator.publishLiveConfiguration(otherInstanceId, configFor("kimi-v1"));
-        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual(afterClear);
-
-        // Options-only updates preserve any unsuperseded catalog in stored state while keeping
-        // catalogRevision unchanged, and a catalog-scoped clear strips only the catalog while
-        // preserving the newer options descriptor.
         const effortOption = {
           id: "effort",
           label: "Effort",
@@ -330,44 +316,128 @@ describe("AcpRegistryRuntimeCoordinator", () => {
             { id: "high", label: "High" },
           ],
         };
-        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v3"));
+        const catalogModels = [
+          { id: "model-b", name: "Model B", description: null },
+          { id: "model-c", name: "Model C", description: null },
+        ];
+
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: catalogModels,
+          currentModelId: "model-b",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
         const catalogSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+
+        // Options-only update targeting model-b keeps the active catalog in coordinator state.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [effortOption],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        const matchingOptionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(matchingOptionsSnap.revision).toBe(catalogSnap.revision + 1);
+        expect(matchingOptionsSnap.catalogRevision).toBe(catalogSnap.catalogRevision);
+        expect(matchingOptionsSnap.configuration).toEqual(
+          Option.some({
+            models: catalogModels,
+            currentModelId: "model-b",
+            configOptions: [effortOption],
+            modelOptionIds: ["effort"],
+            modelsFromModelSelect: true,
+          }),
+        );
+
+        // An options-only update from another session running an absent model stores raw
+        // so stored snapshots never lose the default marker compared to the PubSub stream.
+        const foreignOptionsOnly = {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [effortOption],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        };
+        yield* coordinator.publishLiveConfiguration(instanceId, foreignOptionsOnly);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).configuration,
+        ).toEqual(Option.some(foreignOptionsOnly));
+      }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
+
+  it.effect(
+    "clears live configuration conditionally by catalogRevision with retention and full-clear modes",
+    () =>
+      Effect.gen(function* () {
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acpRegistry_devin");
+        const effortOption = (currentValue: "low" | "high") => ({
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue,
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        });
+        const configFor = (id: string) => ({
+          models: [{ id, name: id, description: null }],
+          currentModelId: id,
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
+        const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
+        const second = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+
+        // Outdated catalogRevision cannot clear a newer catalog or advance clearedThroughRevision.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, first.revision, {
+            catalogRevision: first.catalogRevision,
+          }),
+        ).toBe(false);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).clearedThroughRevision,
+        ).toBe(0);
+
+        // Catalog-scoped clear validates newer in-flight options-only updates through retainConfiguration.
         const optionsOnlyConfig = {
           models: [],
-          currentModelId: "model-v3",
-          configOptions: [effortOption],
+          currentModelId: "model-v2",
+          configOptions: [effortOption("high")],
           modelOptionIds: ["effort"],
           modelsFromModelSelect: false,
         };
         yield* coordinator.publishLiveConfiguration(instanceId, optionsOnlyConfig);
         const optionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(optionsSnap.revision).toBe(catalogSnap.revision + 1);
-        expect(optionsSnap.catalogRevision).toBe(catalogSnap.catalogRevision);
-        expect(optionsSnap.configuration).toEqual(
-          Option.some({
-            ...optionsOnlyConfig,
-            models: configFor("model-v3").models,
-            modelsFromModelSelect: true,
-          }),
-        );
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, catalogSnap.revision, {
-            catalogRevision: catalogSnap.catalogRevision,
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, second.revision, {
+            catalogRevision: second.catalogRevision,
+            retainConfiguration: (live) =>
+              Option.some({
+                ...live,
+                configOptions: [effortOption("low")],
+              }),
           }),
         ).toBe(true);
-        const afterOptionsPreserved =
-          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        expect(afterOptionsPreserved).toEqual({
+        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...optionsSnap,
-          configuration: Option.some(optionsOnlyConfig),
-          clearedThroughRevision: catalogSnap.revision,
+          configuration: Option.some({
+            ...optionsOnlyConfig,
+            configOptions: [effortOption("low")],
+          }),
+          clearedThroughRevision: second.revision,
         });
 
-        // A catalog-scoped clear with clearOptions: true wipes both catalog and options
-        // (used by authoritative unauthenticated probes) and advances clearedThroughRevision.
+        // clearOptions: true wipes both catalog and options and advances clearedThroughRevision past optionsSnap.
         expect(
-          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, catalogSnap.revision, {
-            catalogRevision: catalogSnap.catalogRevision,
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, second.revision, {
+            catalogRevision: second.catalogRevision,
             clearOptions: true,
           }),
         ).toBe(true);
@@ -377,12 +447,31 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           clearedThroughRevision: optionsSnap.revision,
         });
 
-        // A catalog-scoped clear at the exact catalog revision strips models while keeping options.
+        // Without retainConfiguration, clearing strips models while preserving non-empty options and drops empty ones.
         yield* coordinator.publishLiveConfiguration(instanceId, {
-          ...configFor("model-v4"),
-          configOptions: [effortOption],
+          ...configFor("model-v3"),
+          configOptions: [effortOption("low")],
           modelOptionIds: ["effort"],
         });
+        const v3Snap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, v3Snap.revision, {
+            catalogRevision: v3Snap.catalogRevision,
+          }),
+        ).toBe(true);
+        expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
+          ...v3Snap,
+          configuration: Option.some({
+            models: [],
+            currentModelId: "model-v3",
+            configOptions: [effortOption("low")],
+            modelOptionIds: ["effort"],
+            modelsFromModelSelect: false,
+          }),
+          clearedThroughRevision: v3Snap.revision,
+        });
+
+        yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v4"));
         const v4Snap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, v4Snap.revision, {
@@ -391,15 +480,46 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...v4Snap,
-          configuration: Option.some({
-            models: [],
-            currentModelId: "model-v4",
-            configOptions: [effortOption],
-            modelOptionIds: ["effort"],
-            modelsFromModelSelect: false,
-          }),
+          configuration: Option.none(),
           clearedThroughRevision: v4Snap.revision,
         });
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
+
+  it.effect("delivers concurrent live configuration publications in strict revision order", () =>
+    Effect.gen(function* () {
+      const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+      const instanceId = ProviderInstanceId.make("acpRegistry_devin");
+      const receivedRevisions: Array<number> = [];
+      const allSeen = yield* Deferred.make<void>();
+      const watcher = yield* coordinator
+        .watchLiveConfiguration(instanceId, (_configuration, revision) =>
+          Effect.sync(() => {
+            receivedRevisions.push(revision);
+            return receivedRevisions.length;
+          }).pipe(
+            Effect.flatMap((count) =>
+              count === 4 ? Deferred.succeed(allSeen, undefined).pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
+        )
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      yield* Effect.forEach(
+        [1, 2, 3, 4],
+        (index) =>
+          coordinator.publishLiveConfiguration(instanceId, {
+            models:
+              index % 2 === 1 ? [{ id: `m${index}`, name: `m${index}`, description: null }] : [],
+            currentModelId: `m${index}`,
+            configOptions: [],
+            modelsFromModelSelect: index % 2 === 1,
+          }),
+        { concurrency: "unbounded", discard: true },
+      );
+      yield* Deferred.await(allSeen);
+      yield* Fiber.interrupt(watcher);
+      expect(receivedRevisions).toEqual([1, 2, 3, 4]);
+    }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });
