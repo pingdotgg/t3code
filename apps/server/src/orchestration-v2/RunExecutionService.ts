@@ -2161,7 +2161,9 @@ export const layer: Layer.Layer<
                       : null;
                   const latestItemOrdinal = yield* Ref.get(latestTurnItemOrdinal);
                   const openSubagents = yield* Ref.get(openRunOwnedSubagents);
-                  const droppedPrompt = (yield* Ref.get(terminalEvent))?.promptDropped === true;
+                  const droppedPrompt =
+                    (yield* Ref.get(terminalEvent))?.promptDropped === true ||
+                    rootProviderTurn?.promptDropped === true;
                   const recoveredHandoffs =
                     droppedPrompt && input.loadDroppedInlineHandoffs !== undefined
                       ? yield* input.loadDroppedInlineHandoffs()
