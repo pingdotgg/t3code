@@ -2,6 +2,7 @@ import {
   configuredSecretSources,
   secretRequestReference,
 } from "@t3tools/client-runtime/secret-request";
+import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { getCloudSpeechKeys, setCloudSpeechKey } from "@t3tools/client-runtime/voice-input";
 import {
   AuthOrchestrationOperateScope,
@@ -14,12 +15,11 @@ import {
   type SecretProviderId,
   type SettingsSecretValue,
 } from "@t3tools/contracts";
-import { T, useGT, Var } from "gt-react";
+import { T, useGT, useMessages, Var } from "gt-react";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult } from "effect/reactivity";
 import { useId, useState } from "react";
-import { isSecretsFeatureEnabled } from "../../env";
 import { runEnvironmentSpeech } from "../../speech/runEnvironmentSpeech";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
@@ -60,6 +60,7 @@ export function ReadAloudKeyDialog({
   const name = READ_ALOUD_LABELS[provider];
   const company = CLOUD_SPEECH_PROVIDER_NAMES[provider];
   const gt = useGT();
+  const messages = useMessages();
   const formId = useId();
   const prepared = Option.getOrNull(usePreparedConnection(id));
   const canUse = useEnvironmentScope(id, AuthOrchestrationOperateScope);
@@ -71,8 +72,9 @@ export function ReadAloudKeyDialog({
   const saved = AsyncResult.isSuccess(presence) ? presence.value?.[provider] : undefined;
   const existing = environment.serverConfig?.settings?.cloudSpeechCredentials?.[provider];
   const sources =
-    isSecretsFeatureEnabled && environment.serverConfig?.secretReferences
-      ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {})
+    hasFeatureFlag(environment.serverConfig, "secretProviders") &&
+    environment.serverConfig?.secretReferences
+      ? configuredSecretSources(environment.serverConfig.settings?.secretProviders ?? {}, messages)
       : [];
   const reference =
     isSecretReference(existing) && sources.some((s) => s.id === existing.provider)

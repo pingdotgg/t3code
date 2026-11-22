@@ -12,6 +12,7 @@ import {
 import type {
   CloudSpeechModelId,
   CloudSpeechProvider,
+  EnvironmentSpeechModelDownload,
   SettingsSecretValue,
   SpeechAcceleration,
   SpeechModelUnloadTimeout,
@@ -219,6 +220,25 @@ export const selectEnvironmentSpeechModel = (prepared: PreparedConnection, model
     path: (urls) => urls.selectModel(),
     run: ({ client, headers }) => client.selectModel({ headers, payload: { modelId } }),
   });
+
+export function getSpeechModelDownloadOutcome(
+  download: EnvironmentSpeechModelDownload,
+  modelId: string,
+) {
+  if (download.cancelled) return "incomplete";
+  const model = download.models.find(({ id }) => id === modelId);
+  if (model?.state !== "installed") return "incomplete";
+  return model.active ? "already-selected" : "needs-selection";
+}
+
+/** Downloads a model and makes it the environment's transcription model on completion. */
+export const installEnvironmentSpeechModel = Effect.fn(
+  "clientRuntime.voiceInput.installEnvironmentSpeechModel",
+)(function* (prepared: PreparedConnection, modelId: string) {
+  const downloaded = yield* downloadEnvironmentSpeechModel(prepared, modelId);
+  if (getSpeechModelDownloadOutcome(downloaded, modelId) !== "needs-selection") return downloaded;
+  return yield* selectEnvironmentSpeechModel(prepared, modelId);
+});
 
 export const cancelEnvironmentSpeechModelDownload = (
   prepared: PreparedConnection,

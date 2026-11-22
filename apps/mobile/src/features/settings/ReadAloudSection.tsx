@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import * as Option from "effect/Option";
 import * as Speech from "expo-speech";
@@ -21,7 +21,8 @@ import {
   removeSpeechSynthesisModel,
   setCloudSpeechKey,
 } from "@t3tools/client-runtime/voice-input";
-import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import { mobilePreferencesAtom, saveMobilePreferences } from "../../state/preferences";
+import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentScope, usePreparedConnection } from "../../state/session";
 import { AppText as Text } from "../../components/ui/AppText";
@@ -37,7 +38,7 @@ import { readAloudController } from "../read-aloud/playback";
 export function ReadAloudSection() {
   const gt = useGT();
   const preferences = useAtomValue(mobilePreferencesAtom);
-  const update = useAtomSet(updateMobilePreferencesAtom);
+  const savePreferences = useAtomCommand(saveMobilePreferences);
   const settings = AsyncResult.isSuccess(preferences)
     ? (preferences.value.readAloud ?? DEFAULT_READ_ALOUD_SETTINGS)
     : DEFAULT_READ_ALOUD_SETTINGS;
@@ -87,7 +88,7 @@ export function ReadAloudSection() {
       setKey("");
       setError("");
     }
-    update({ readAloud: { ...settings, ...patch } });
+    void savePreferences({ readAloud: { ...settings, ...patch } });
   };
   const cloud = catalog.apiKeyProvider !== null;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Read installed system voices from the native speech engine.

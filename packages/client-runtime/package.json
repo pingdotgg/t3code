@@ -60,6 +60,10 @@
       "types": "./src/imageAttachmentSize.ts",
       "default": "./src/imageAttachmentSize.ts"
     },
+    "./diff-file-order": {
+      "types": "./src/diffFileOrder.ts",
+      "default": "./src/diffFileOrder.ts"
+    },
     "./handoff": {
       "types": "./src/handoff.ts",
       "default": "./src/handoff.ts"
@@ -100,9 +104,21 @@
       "types": "./src/secretRequest.ts",
       "default": "./src/secretRequest.ts"
     },
+    "./link-batch": {
+      "types": "./src/linkBatch.ts",
+      "default": "./src/linkBatch.ts"
+    },
     "./link-request": {
       "types": "./src/linkRequest.ts",
       "default": "./src/linkRequest.ts"
+    },
+    "./linked-thread": {
+      "types": "./src/linkedThread.ts",
+      "default": "./src/linkedThread.ts"
+    },
+    "./side-thread": {
+      "types": "./src/sideThread.ts",
+      "default": "./src/sideThread.ts"
     },
     "./scheduled-task-webhook": {
       "types": "./src/scheduledTaskWebhook.ts",
@@ -111,6 +127,10 @@
     "./scheduled-task-time-zone": {
       "types": "./src/scheduledTaskTimeZone.ts",
       "default": "./src/scheduledTaskTimeZone.ts"
+    },
+    "./scheduled-task-worktree": {
+      "types": "./src/scheduledTaskWorktree.ts",
+      "default": "./src/scheduledTaskWorktree.ts"
     },
     "./connection": {
       "types": "./src/connection/index.ts",
@@ -167,6 +187,10 @@
     "./providerUpdateRequiredModels": {
       "types": "./src/providerUpdateRequiredModels.ts",
       "default": "./src/providerUpdateRequiredModels.ts"
+    },
+    "./providerSubProviders": {
+      "types": "./src/providerSubProviders.ts",
+      "default": "./src/providerSubProviders.ts"
     },
     "./voice-input": {
       "types": "./src/voice-input/index.ts",
@@ -248,6 +272,10 @@
       "types": "./src/state/orchestration.ts",
       "default": "./src/state/orchestration.ts"
     },
+    "./state/thread-stream": {
+      "types": "./src/state/threadStream.ts",
+      "default": "./src/state/threadStream.ts"
+    },
     "./state/thread-history-merge": {
       "types": "./src/state/threadHistoryMerge.ts",
       "default": "./src/state/threadHistoryMerge.ts"
@@ -267,6 +295,10 @@
     "./state/deviceHubAccess": {
       "types": "./src/state/deviceHubAccess.ts",
       "default": "./src/state/deviceHubAccess.ts"
+    },
+    "./state/previewTunnel": {
+      "types": "./src/state/previewTunnel.ts",
+      "default": "./src/state/previewTunnel.ts"
     },
     "./state/peerLinks": {
       "types": "./src/state/peerLinks.ts",
@@ -395,6 +427,10 @@
     "./state/thread-checkpoints": {
       "types": "./src/state/threadCheckpoints.ts",
       "default": "./src/state/threadCheckpoints.ts"
+    },
+    "./state/thread-repositories": {
+      "types": "./src/state/threadRepositories.ts",
+      "default": "./src/state/threadRepositories.ts"
     },
     "./state/thread-execution": {
       "types": "./src/state/threadExecution.ts",
@@ -619,6 +655,10 @@
     "./provider-instance-ids": {
       "types": "./src/providerInstanceIds.ts",
       "default": "./src/providerInstanceIds.ts"
+    },
+    "./pull-request-references": {
+      "types": "./src/pullRequestReferences.ts",
+      "default": "./src/pullRequestReferences.ts"
     }
   },
   "scripts": {
@@ -628,6 +668,7 @@
   "dependencies": {
     "@pierre/diffs": "catalog:",
     "@t3tools/contracts": "workspace:*",
+    "@t3tools/issue-tracker-linear": "workspace:*",
     "@t3tools/provider-acp-registry": "workspace:*",
     "@t3tools/provider-core": "workspace:*",
     "@t3tools/provider-cursor": "workspace:*",
@@ -644,16 +685,16 @@
     "effect": "catalog:",
     "gt-i18n": "1.0.40",
     "jszip": "3.10.1",
-    "remark-gfm": "catalog:",
-    "remark-parse": "catalog:",
     "three": "0.180.0",
-    "unbash": "^5.0.0",
-    "unified": "catalog:"
+    "unbash": "^5.0.0"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
     "@types/mdast": "^4.0.4",
     "@types/three": "0.180.0",
+    "remark-gfm": "catalog:",
+    "remark-parse": "catalog:",
+    "unified": "catalog:",
     "vite-plus": "catalog:"
   }
 }

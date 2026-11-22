@@ -49,12 +49,15 @@ it.effect.each(["openai", "xai", "elevenlabs"] as const)(
           ),
         ),
       );
+      // A full dictionary plus a hint still stays within xAI's 100-term limit.
+      const words = Array.from({ length: 99 }, (_, index) => `word${index}`);
       const transcribe = (pcm = new Uint8Array(new Float32Array([0, 0.5]).buffer)) =>
         service
           .transcribe(provider, pcm, {
             ...DEFAULT_SPEECH_TRANSCRIPTION_OPTIONS,
             speechLanguage: "en",
-            speechCustomWords: [{ term: "T3 Code", aliases: [] }],
+            speechCustomWords: ["T3 Code", ...words].map((term) => ({ term, aliases: [] })),
+            speechHints: ["Server"],
           })
           .pipe(Effect.provideService(FetchHttpClient.Fetch, upstream));
       yield* service.setKey(provider === "openai" ? "xai" : "openai", Redacted.make("other"));
@@ -92,7 +95,7 @@ it.effect.each(["openai", "xai", "elevenlabs"] as const)(
           provider
         ],
       );
-      expect(form.getAll(fields.keyterms)).toEqual(["T3 Code"]);
+      expect(form.getAll(fields.keyterms)).toEqual(["Server", "T3 Code", ...words.slice(0, 98)]);
       expect(form.get(fields.language)).toBe("en");
       expect([...form.keys()].at(-1)).toBe("file");
       const wav = new DataView(

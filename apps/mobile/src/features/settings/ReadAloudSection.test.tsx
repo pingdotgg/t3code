@@ -22,13 +22,15 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => AsyncResult.success({ readAloud: mocks.settings }),
-  useAtomSet: () => (patch: { readAloud: ReadAloudSettings }) => {
-    mocks.settings = patch.readAloud;
-  },
 }));
 vi.mock("../../state/preferences", () => ({
   mobilePreferencesAtom: {},
-  updateMobilePreferencesAtom: {},
+  saveMobilePreferences: {},
+}));
+vi.mock("../../state/use-atom-command", () => ({
+  useAtomCommand: () => async (patch: { readAloud: ReadAloudSettings }) => {
+    mocks.settings = patch.readAloud;
+  },
 }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: [{ environmentId: "voice-host", label: "Voice host" }] }),
