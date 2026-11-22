@@ -357,12 +357,20 @@ export const AntigravityDriver: ProviderDriver<
       });
       return {
         ...runtime,
-        setMode: (modeId: string) =>
-          runtime.getModeState.pipe(
+        setMode: (modeId: string) => {
+          const sessionMode = antigravitySessionMode(modeId);
+          if (sessionMode !== "auto") return runtime.setMode(sessionMode);
+          // agy lists Auto only where it can run it; asking anyway returns agy's reason.
+          return runtime.getModeState.pipe(
             Effect.flatMap((modeState) =>
-              runtime.setMode(antigravitySessionMode(modeId, modeState)),
+              modeState?.availableModes.some((mode) => mode.id === "auto") === true
+                ? runtime.setMode(sessionMode)
+                : runtime
+                    .setConfigOption("mode", sessionMode, { allowUnlistedValue: true })
+                    .pipe(Effect.as({})),
             ),
-          ),
+          );
+        },
         start: () =>
           startCompatible().pipe(
             Effect.tapError((cause): Effect.Effect<void> =>

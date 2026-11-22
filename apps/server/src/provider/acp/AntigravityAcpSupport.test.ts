@@ -91,14 +91,11 @@ describe("Antigravity release gates", () => {
 
 describe("Antigravity Auto", () => {
   it.each([
-    { offered: ["default", "accept-edits", "auto", "plan"], expected: "auto" },
-    { offered: ["default", "accept-edits", "plan"], expected: "default" },
-  ])("runs as $expected when the session offers $offered", ({ offered, expected }) => {
-    const modeState = {
-      currentModeId: "default",
-      availableModes: offered.map((id) => ({ id, name: id })),
-    };
-    expect(antigravitySessionMode("auto", modeState)).toBe(expected);
+    { requested: "auto", expected: "auto" },
+    { requested: "yolo", expected: "default" },
+    { requested: "auto_edit", expected: "default" },
+  ])("runs $requested as $expected", ({ requested, expected }) => {
+    expect(antigravitySessionMode(requested)).toBe(expected);
   });
 
   it.each(["execute", "read"] as const)("asks about the %s requests agy's Auto sends", (kind) => {
