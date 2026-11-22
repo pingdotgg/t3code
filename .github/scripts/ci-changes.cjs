@@ -13,6 +13,7 @@ const INERT = [
   // The Conn Server (Rust) has its own workflows (conn-server-*.yml); no Conn job reads it.
   /^apps\/conn-server\//,
   /^\.github\/workflows\/conn-server-/,
+  /^\.github\/scripts\/conn-server-checks-paths\.(cjs|d\.cts)$/,
   // The GPUI desktop client (Rust) checks itself with apps/conn-gpui/scripts/check.sh.
   /^apps\/conn-gpui\//,
   // The native SwiftUI iPhone app builds in Xcode, outside the pnpm workspace.
@@ -65,6 +66,14 @@ const TEST_ONLY_DEPS = {
     "@t3tools/provider-cursor",
   ],
 };
+// Tests that read files outside every package; they do not change what the packages ship.
+const TEST_ONLY_FILES = [
+  // scripts/conn-server-checks-paths.test.ts reads the checks' tools and their path list.
+  [
+    /^apps\/conn-server\/.*\.(mjs|cjs|js|ts|sh|py)$|^\.github\/(workflows\/conn-server-checks\.yml|scripts\/conn-server-checks-paths\.(cjs|d\.cts))$/,
+    "@t3tools/scripts",
+  ],
+];
 // The server bundles the web build without importing it.
 const BUILD_ONLY_DEPS = { t3: ["@t3tools/web"] };
 
@@ -180,6 +189,9 @@ function decide(files, packages, full) {
     scriptsChanged = affected.has("@t3tools/scripts");
     for (const [name, deps] of Object.entries(TEST_ONLY_DEPS)) {
       if (deps.some((dep) => affected.has(dep))) affected.add(name);
+    }
+    for (const [pattern, name] of TEST_ONLY_FILES) {
+      if (files.some((file) => pattern.test(file))) affected.add(name);
     }
   }
 

@@ -54,8 +54,14 @@ test("fan-out waits for selection, pins every checkout and keeps native PR, sync
   assert.match(workflow, /source_sha: \$\{\{ needs\.select\.outputs\.source_sha \}\}/);
   for (const file of ["conn-server-checks.yml", "conn-server-ci.yml"]) {
     const companion = workflowFile(file);
-    assert.match(companion, /pull_request:\n    paths: &paths/);
-    assert.match(companion, /push:\n    branches:\n      - "sync\/\*\*"\n    paths: \*paths/);
+    if (file === "conn-server-checks.yml") {
+      // Its `changes` job selects from the full diff instead of a `paths` filter.
+      assert.match(companion, /pull_request:\n  push:\n    branches:\n      - "sync\/\*\*"\n/);
+      assert.match(companion, /\n  changes:\n/);
+    } else {
+      assert.match(companion, /pull_request:\n    paths: &paths/);
+      assert.match(companion, /push:\n    branches:\n      - "sync\/\*\*"\n    paths: \*paths/);
+    }
     assert.match(companion, /workflow_dispatch:/);
     const group = companion.match(/^  group: (.+)$/m);
     assert.ok(group);

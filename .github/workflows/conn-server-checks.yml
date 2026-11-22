@@ -1,21 +1,16 @@
 name: Conn Server checks
 
-# Every model-free Conn Server check against this tree's server, web client and packages.
+# Every model-free Conn Server check against this tree's server, packages and client-runtime.
 # Main checks are called after CI. Generated drift fails the job on every trigger.
 
 on:
+  # Every PR and sync push starts the workflow; the `changes` job decides from the full diff
+  # (.github/scripts/conn-server-checks-paths.cjs) whether the checks run. GitHub's `paths`
+  # filter sees only the first 3,000 changed files, and a skipped run would report nothing.
   pull_request:
-    paths: &paths
-      - apps/conn-server/**
-      - apps/server/**
-      - apps/web/**
-      - packages/**
-      - .github/workflows/conn-server-checks.yml
-      - .github/workflows/conn-server-ci.yml
   push:
     branches:
       - "sync/**"
-    paths: *paths
   workflow_call:
     inputs:
       source_sha:
@@ -43,8 +38,58 @@ env:
   CARGO_PROFILE_DEV_DEBUG: "0"
 
 jobs:
+  changes:
+    name: Conn Server changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      run: ${{ steps.detect.outputs.run }}
+    steps:
+      # A pull request checks out GitHub's merge commit with fetch-depth: 2, so its first
+      # parent is the base branch and the diff is the PR's change.
+      - name: Checkout
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 2
+          sparse-checkout: |
+            /.github/scripts/conn-server-checks-paths.cjs
+          sparse-checkout-cone-mode: false
+
+      # Fails open: when the diff cannot be resolved, the checks run.
+      - name: Detect
+        id: detect
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -uo pipefail
+          run_all() {
+            echo "$* Running the checks."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+          case "$EVENT_NAME" in
+            pull_request) base=HEAD^1 ;;
+            push)
+              base=$BEFORE_SHA
+              [[ "$base" =~ ^0+$ ]] && run_all "New branch."
+              git fetch --quiet --no-tags --depth=1 --filter=blob:none origin "$base" \
+                || run_all "Could not fetch ${base}."
+              ;;
+            *) run_all "A ${EVENT_NAME} run always checks." ;;
+          esac
+          git diff -z --name-only --no-renames "$base" HEAD > "$RUNNER_TEMP/changed-paths" \
+            || run_all "Could not diff against ${base}."
+          node .github/scripts/conn-server-checks-paths.cjs "$RUNNER_TEMP/changed-paths" > "$RUNNER_TEMP/run" \
+            || run_all "Could not select."
+          cat "$RUNNER_TEMP/run" >> "$GITHUB_OUTPUT"
+
   build:
     name: Conn Server prerequisites (${{ matrix.profile }}/${{ matrix.package }})
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     strategy:
@@ -152,6 +197,8 @@ jobs:
 
   rust:
     name: Conn Server Rust checks
+    needs: changes
+    if: needs.changes.outputs.run == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
@@ -294,16 +341,22 @@ jobs:
           CONN_CHECK_BINARIES: ${{ github.workspace }}/apps/conn-server/target/check-binaries
         run: tools/check.sh --group ${{ matrix.group }}
 
+  # Reports on every run, so a change the checks do not read passes instead of waiting.
   checks:
     name: Conn Server checks
     if: always()
-    needs: [build, rust, compare]
+    needs: [changes, build, rust, compare]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: Require every group
         env:
+          CHANGES: ${{ needs.changes.result }}
+          RUN: ${{ needs.changes.outputs.run }}
           BUILD: ${{ needs.build.result }}
           RUST: ${{ needs.rust.result }}
           COMPARE: ${{ needs.compare.result }}
-        run: test "$BUILD" = success && test "$RUST" = success && test "$COMPARE" = success
+        run: |
+          test "$CHANGES" = success || exit 1
+          if [ "$RUN" = false ]; then echo "No file the checks read changed."; exit 0; fi
+          test "$BUILD" = success && test "$RUST" = success && test "$COMPARE" = success
