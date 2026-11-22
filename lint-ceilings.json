@@ -403,7 +403,7 @@
     "apps/web/src/components/settings/ConnectionsSettings.tsx": 1,
     "apps/web/src/components/settings/DeviceHostEditor.tsx": 1,
     "apps/web/src/components/settings/DeviceSourcesSettings.tsx": 2,
-    "apps/web/src/components/settings/DiagnosticsSettings.tsx": 17,
+    "apps/web/src/components/settings/DiagnosticsSettings.tsx": 14,
     "apps/web/src/components/settings/EnvironmentRoutesList.tsx": 4,
     "apps/web/src/components/settings/EnvironmentsMap.tsx": 10,
     "apps/web/src/components/settings/EnvironmentsMapDetails.tsx": 2,

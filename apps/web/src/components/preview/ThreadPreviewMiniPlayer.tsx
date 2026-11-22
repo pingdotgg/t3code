@@ -41,6 +41,7 @@ import {
   useServerPictureInPictureKey,
 } from "~/browser/serverPictureInPicture";
 import { Button } from "~/components/ui/button";
+import { StatusDot } from "~/components/ui/status-dot";
 import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
@@ -604,7 +605,7 @@ function MiniPlayerShell({
         <div className="pointer-events-none absolute right-0 top-0 flex h-8 cursor-grab items-center gap-0.5 rounded-control surface-popover p-0.5 opacity-0 transition-opacity group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 group-data-pill-open:pointer-events-auto group-data-pill-open:opacity-100 active:cursor-grabbing pointer-coarse:right-2.5 pointer-coarse:top-2.5">
           {recording ? (
             <span aria-hidden className="flex size-6 shrink-0 items-center justify-center">
-              <span className="size-2 rounded-full bg-destructive motion-safe:animate-status-pulse" />
+              <StatusDot size="md" tone="danger" pulse />
             </span>
           ) : null}
           <Tooltip>

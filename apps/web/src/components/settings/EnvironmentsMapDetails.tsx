@@ -20,6 +20,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import { accessConfig } from "../auth/ConnectAgentSurface";
 import { Button, ContentButton, InlineButton } from "../ui/button";
 import { Input } from "../ui/input";
+import { StatusDot } from "../ui/status-dot";
 import { formatAccessTimestamp } from "./ConnectionsSettings.logic";
 import { EnvironmentRow, EnvironmentTransportLabel } from "./EnvironmentRow";
 import {
@@ -104,7 +105,7 @@ export function HealthGlyph({ health }: { health: PeerLinkHealth }) {
     return <span aria-hidden className="size-2 rounded-full border border-muted-foreground" />;
   }
   return health.expiresInDays === null ? (
-    <span aria-hidden className="size-2 rounded-full bg-success forced-colors:border-4" />
+    <StatusDot size="md" tone="success" />
   ) : (
     <ClockAlertIcon aria-hidden className={cn("size-3", tone)} />
   );

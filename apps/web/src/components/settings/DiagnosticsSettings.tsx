@@ -42,6 +42,7 @@ import { serverEnvironment } from "../../state/server";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { Button } from "../ui/button";
 import { ScrollArea } from "../ui/scroll-area";
+import { StatusDot } from "../ui/status-dot";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
@@ -346,7 +347,7 @@ function ProcessNameCell({
       ) : (
         <span className="size-5 shrink-0" aria-hidden="true" />
       )}
-      <span className="size-1.5 shrink-0 rounded-full bg-success/80" />
+      <StatusDot tone="success" />
       <div className="min-w-0">
         <div className="truncate text-label text-strong-foreground">{name}</div>
         <Tooltip>
@@ -519,12 +520,7 @@ function ResourceHistoryProcessNameCell({
       }
     >
       <span className="size-5 shrink-0" aria-hidden="true" />
-      <span
-        className={cn(
-          "size-1.5 shrink-0 rounded-full",
-          process.isServerRoot ? "bg-warning/90" : "bg-success/80",
-        )}
-      />
+      <StatusDot tone={process.isServerRoot ? "warning" : "success"} />
       <div className="min-w-0">
         <div className="truncate text-label text-strong-foreground">{name}</div>
         <Tooltip>

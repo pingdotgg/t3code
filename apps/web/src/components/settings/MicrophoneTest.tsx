@@ -12,6 +12,7 @@ import { VoiceWaveform } from "../chat/VoiceInputPill";
 import { MediaScrubber } from "../media/MediaTransport";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { StatusDot } from "../ui/status-dot";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
 
@@ -230,7 +231,7 @@ export function MicrophoneTest({
     </span>
   ) : phase === "recording" ? (
     <>
-      <span aria-hidden className="size-1.5 shrink-0 rounded-full bg-destructive" />
+      <StatusDot tone="danger" />
       <div className="flex w-24 min-w-0">
         <VoiceWaveform level={level} />
       </div>
