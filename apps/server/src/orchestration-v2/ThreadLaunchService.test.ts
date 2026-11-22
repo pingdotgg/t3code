@@ -2180,9 +2180,11 @@ it.effect.each(["failed", "interrupted"] as const)(
       const retriedProjection = yield* threads.getThreadProjection(launched.threadId);
       assert.deepStrictEqual(
         retriedProjection.turnItems
-          .filter((item) => item.type === "run_interrupt_request")
+          .filter(
+            (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",
+          )
           .map((item) => item.status),
-        ending === "interrupted" ? ["cancelled"] : [],
+        ending === "interrupted" ? ["cancelled", "cancelled"] : [],
       );
     }).pipe(Effect.provide(harness.layer));
   },

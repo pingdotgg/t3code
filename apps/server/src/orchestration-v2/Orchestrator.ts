@@ -12811,7 +12811,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       command,
       ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
       {
-        turnItemTypes: ["command_execution", "error", "run_interrupt_request"],
+        turnItemTypes: [
+          "command_execution",
+          "error",
+          "run_interrupt_request",
+          "run_interrupt_result",
+        ],
         turnItemRunId: command.runId,
       },
     );
@@ -12858,9 +12863,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         payload: { ...failureItem, status: "cancelled", updatedAt: now },
       });
     }
-    // The Stop that ended the setup must not count as a Stop of the retried run.
+    // The Stop that ended the setup, and its result, must not count for the retried run.
     for (const item of projection.turnItems) {
-      if (item.type !== "run_interrupt_request" || item.status === "cancelled") continue;
+      if (
+        (item.type !== "run_interrupt_request" && item.type !== "run_interrupt_result") ||
+        item.status === "cancelled"
+      )
+        continue;
       yield* emitEvent({
         ...scope,
         type: "turn-item.updated",
@@ -13558,7 +13567,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         })
         .pipe(mapDispatchError(command));
       // A provider that stopped late already wrote the result; it needs no Force stop.
-      if (turnItems.some((item) => item.type === "run_interrupt_result")) return;
+      if (
+        turnItems.some(
+          (item) => item.type === "run_interrupt_result" && item.status !== "cancelled",
+        )
+      )
+        return;
       const request = turnItems.find((item) => item.type === "run_interrupt_request");
       if (request?.type !== "run_interrupt_request" || request.unresponsiveAt !== undefined) return;
       const now = yield* DateTime.now;
