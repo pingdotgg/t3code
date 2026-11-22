@@ -31,17 +31,21 @@ test(
     await t3.open(JSON.parse(started.stdout) as { threadId: string });
 
     const stop = screen.getByRole("button", "Stop generation");
-    await expect(stop).toBeVisible({ timeout: 60_000 });
+    await stop.waitFor({ timeout: 60_000 });
     await stop.tap();
-    await expect(stop).toBeHidden();
+    await stop.waitFor({ state: "hidden" });
 
     await browser.locator('[data-slot="combobox-trigger"][aria-label^="Branch:"]:visible').click();
     await screen.getByRole("option", /^main\b/).tap();
+    // The server has moved the thread to the project checkout before the send.
+    await browser
+      .locator('[aria-label^="Run context:"][aria-label$="Local checkout"]')
+      .waitFor({ timeout: 60_000 });
 
     await screen.getByRole("textbox").fill("Once more");
     await screen.getByRole("textbox").press("Enter");
-    await expect(screen.getByText("Once more").first()).toBeVisible();
-    await app.screenshot("sent-in-checkout");
+    await screen.getByText("Once more").first().waitFor();
     await expect(stop).toBeVisible({ timeout: 60_000 });
+    await app.screenshot("running-in-checkout");
   },
 );
