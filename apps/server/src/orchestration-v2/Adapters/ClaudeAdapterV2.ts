@@ -11885,11 +11885,21 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               updated.delete(message.task_id);
               return updated;
             });
-            yield* applyBackgroundTaskRosterMessage({
+            if (wasBackgroundTask) {
+              yield* clearOpaqueBackgroundTaskReplayTombstone(
+                liveQuery.nativeThreadId,
+                message.task_id,
+              );
+            }
+            const rosterEmitted = yield* applyBackgroundTaskRosterMessage({
               nativeThreadId: liveQuery.nativeThreadId,
               message,
               activeContext: context,
             });
+            // An idle exit already left Claude's roster, so only the cleared tombstone drops it here.
+            if (wasBackgroundTask && !rosterEmitted) {
+              yield* emitRosterUpdate(liveQuery.nativeThreadId, context);
+            }
             if (
               !wasBackgroundTask &&
               !context.ignoredTaskIds.has(message.task_id) &&
@@ -11909,12 +11919,6 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                       ? "cancelled"
                       : "failed",
               });
-            }
-            if (wasBackgroundTask) {
-              yield* clearOpaqueBackgroundTaskReplayTombstone(
-                liveQuery.nativeThreadId,
-                message.task_id,
-              );
             }
           }
 
