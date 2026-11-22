@@ -535,6 +535,22 @@ describe("Antigravity tool results", () => {
     );
   });
 
+  it("keeps the start of a long command line, where the program and target are", () => {
+    const head = "cat > notes.md <<'EOF'";
+    const commandLine = `${head}\n${"note line\n".repeat(1_000)}EOF`;
+    const toolCall = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandStarted,
+        update: { ...commandStarted.update, rawInput: { CommandLine: commandLine } },
+      }).toolCall,
+    );
+    expect(toolCall.command?.startsWith(head)).toBe(true);
+    expect(toolCall.command).not.toContain("[Earlier output truncated]");
+    expect((toolCall.data.rawInput as { CommandLine: string }).CommandLine.startsWith(head)).toBe(
+      true,
+    );
+  });
+
   it("keeps 1.5 command input and output valid Unicode when cut", () => {
     const tail = `${"x".repeat(7_982)}build completed\r\n`;
     const output = `Command output:\nprefix\r\n🚀${tail}`;
