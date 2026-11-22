@@ -4323,7 +4323,6 @@
   "e4e5cb6ab610e37d": "Demande d’autorisation",
   "9243d7a2b22d5f3d": "Approbation d’accès d’app",
   "847e5019e2ff249d": "Demande d’accès d’app",
-  "9c65d76ca030950f": "En attente d’approbation",
   "b7419ed1c775db7e": "Le processus du fournisseur n’existe plus. Interrompez ou redémarrez l’exécution pour répondre.",
   "87f63288c0f1ca07": "Texte collé",
   "c336d59042368fd6": "Fichier",
@@ -12449,5 +12448,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Affiche les conversations dans une seule liste avec les sections Actifs et Clos, au lieu de dossiers par projet.",
   "2d53d114bd476ced": "Barre latérale classique (liste unique)",
-  "06cb83c507ba9ad1": "bêta liste unique actifs clos dossiers projet arborescence barre latérale classique"
+  "06cb83c507ba9ad1": "bêta liste unique actifs clos dossiers projet arborescence barre latérale classique",
+  "8baf8bea22ea7642": "Approbation requise",
+  "32393efeccdbab9a": "Exécute une commande dans l’espace de travail",
+  "105662117ba549f3": "Modifie des fichiers de l’espace de travail",
+  "26db0b226248d366": "Lit un fichier de l’espace de travail",
+  "3aa325f821903367": "Change ce que l’agent peut faire",
+  "02c3655884511fbb": "Donne accès à une app"
 }

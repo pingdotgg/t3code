@@ -4325,7 +4325,6 @@
   "e4e5cb6ab610e37d": "Berechtigungsanfrage",
   "9243d7a2b22d5f3d": "Genehmigung des App-Zugriffs",
   "847e5019e2ff249d": "Anfrage für App-Zugriff",
-  "9c65d76ca030950f": "Wartet auf Genehmigung",
   "b7419ed1c775db7e": "Der Anbieterprozess ist beendet. Unterbrich den Lauf oder starte ihn neu, um zu antworten.",
   "87f63288c0f1ca07": "Eingefügter Text",
   "c336d59042368fd6": "Datei",
@@ -12449,5 +12448,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Zeigt Threads in einer einzigen Liste mit den Abschnitten Aktiv und Erledigt statt in Projektordnern.",
   "2d53d114bd476ced": "Klassische Seitenleiste (eine Liste)",
-  "06cb83c507ba9ad1": "beta flache liste aktiv erledigt ordner projekt baum klassische seitenleiste"
+  "06cb83c507ba9ad1": "beta flache liste aktiv erledigt ordner projekt baum klassische seitenleiste",
+  "8baf8bea22ea7642": "Freigabe erforderlich",
+  "32393efeccdbab9a": "Führt einen Befehl im Arbeitsbereich aus",
+  "105662117ba549f3": "Ändert Dateien im Arbeitsbereich",
+  "26db0b226248d366": "Liest eine Datei im Arbeitsbereich",
+  "3aa325f821903367": "Ändert, was der Agent darf",
+  "02c3655884511fbb": "Gewährt einer App Zugriff"
 }

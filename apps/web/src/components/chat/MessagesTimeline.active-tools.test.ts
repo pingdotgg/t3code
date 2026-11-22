@@ -45,6 +45,8 @@ describe("long active tool groups", () => {
         timelineEntries.map(({ entry }) => entry.id),
       );
       expect(live?.groupId).toBe("work-group:work-entry-0");
+      const working = rows.find((row) => row.kind === "working");
+      expect(working?.kind === "working" ? working.activeEntry?.id : null).toBe("work-999");
       const details = rows.filter((row) => row.kind === "work");
       expect(details).toHaveLength(expanded ? 1 : 0);
       if (expanded) {

@@ -4324,7 +4324,6 @@
   "e4e5cb6ab610e37d": "Permission request",
   "9243d7a2b22d5f3d": "App access approval",
   "847e5019e2ff249d": "App access request",
-  "9c65d76ca030950f": "Waiting for approval",
   "b7419ed1c775db7e": "Provider process is gone. Interrupt or restart the run to respond.",
   "87f63288c0f1ca07": "Pasted text",
   "c336d59042368fd6": "File",
@@ -12458,5 +12457,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Show threads in one flat list with Active and Settled sections instead of project folders.",
   "2d53d114bd476ced": "Classic sidebar (flat list)",
-  "06cb83c507ba9ad1": "beta flat list active settled folders project tree boring sidebar"
+  "06cb83c507ba9ad1": "beta flat list active settled folders project tree boring sidebar",
+  "8baf8bea22ea7642": "Approval required",
+  "32393efeccdbab9a": "Runs a command in the workspace",
+  "105662117ba549f3": "Changes files in the workspace",
+  "26db0b226248d366": "Reads a file in the workspace",
+  "3aa325f821903367": "Changes what the agent may do",
+  "02c3655884511fbb": "Gives an app access"
 }

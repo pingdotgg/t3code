@@ -2390,7 +2390,8 @@ it("keeps concurrent approvals actionable outside collapsed work and restores se
   expect(onRespondToApproval).toHaveBeenLastCalledWith(appRequest, "acceptAlways");
   await click(screen.buttons("More approval options")[0]!);
   await expect.element(page.getByRole("menuitem", { name: "Cancel", exact: true })).toBeVisible();
-  await page.getByRole("menuitem", { name: "Always allow this session" }).click();
+  await userEvent.keyboard("{Escape}");
+  await click(screen.button("Always allow this session"));
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "acceptForSession");
   await click(screen.button("Decline"));
   expect(onRespondToApproval).toHaveBeenLastCalledWith(commandRequest, "decline");

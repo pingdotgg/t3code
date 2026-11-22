@@ -1220,6 +1220,24 @@ describe("deriveMessagesTimelineRows", () => {
     expect(foldRow?.runId).toBe("turn-1");
     expect(foldRow?.expanded).toBe(false);
     expect(foldRow?.label).toBe("Worked for 22s");
+    const { read, edit, command, codeSearch, webSearch, other } = foldRow?.activity ?? {};
+    expect([read, edit, command, codeSearch, webSearch, other].reduce((a, b) => a! + b!, 0)).toBe(
+      1,
+    );
+    expect(foldRow?.diffStat).toBeUndefined();
+    const withCheckpoint = deriveMessagesTimelineRows({
+      timelineEntries,
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [
+        {
+          runId: "turn-1",
+          files: [{ path: "a.ts", additions: 118, deletions: 31 }],
+        } as never,
+      ],
+      supportsConversationRollback: false,
+    }).find((row) => row.kind === "turn-fold");
+    expect(withCheckpoint).toMatchObject({ diffStat: { additions: 118, deletions: 31 } });
     expect(collapsedRows.map((row) => row.id)).toEqual([
       "user-entry",
       "turn-fold:turn-1",

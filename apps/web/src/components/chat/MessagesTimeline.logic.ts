@@ -82,6 +82,15 @@ import {
   formatSearchToolLabel,
 } from "@t3tools/shared/toolActivityCopy";
 import { isHostPath } from "@t3tools/shared/path";
+import { checkpointFileTotals } from "@t3tools/client-runtime/state/thread-checkpoints";
+import {
+  diffStatEqual,
+  sumTurnItemDiffStat,
+  summarizeTurnActivity,
+  turnActivityEqual,
+  type TurnActivitySummary,
+  type TurnDiffStat,
+} from "./turnActivitySummary.logic";
 
 export function timelineEntryRunId(entry: TimelineEntry): RunId | null {
   if (entry.kind === "message") {
@@ -564,6 +573,8 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       /** A running compaction owns the working row, so its divider appears only once it ends. */
       compacting?: true;
+      /** The tool call running now, so the row can name it instead of saying "Working". */
+      activeEntry?: WorkLogEntry;
     }
   | {
       kind: "thinking";
@@ -603,6 +614,9 @@ type MessagesTimelineRowContent =
       runId: RunId;
       label: string;
       expanded: boolean;
+      /** Tool calls the fold hides, by kind; absent when the client holds only part of them. */
+      activity?: TurnActivitySummary;
+      diffStat?: TurnDiffStat;
     }
   | {
       kind: "attempt-fold";
@@ -1645,7 +1659,9 @@ export function deriveMessagesTimelineRows(
     );
   };
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
+  const turnDiffSummaryByRunId = new Map<RunId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
+    turnDiffSummaryByRunId.set(summary.runId, summary);
     if (summary.assistantMessageId) {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
@@ -1808,6 +1824,14 @@ export function deriveMessagesTimelineRows(
           };
         })()
       : null;
+  const runningToolEntry = activeWorkRow?.active ? latestRunningToolEntry?.entry : undefined;
+  const runningToolEntryForStatus =
+    runningToolEntry &&
+    runningToolEntry.itemType !== "reasoning" &&
+    runningToolEntry.itemType !== "approval_request" &&
+    workLogEntryIsToolLike(runningToolEntry)
+      ? runningToolEntry
+      : undefined;
   const activeWorkEntryIds = new Set(
     activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
   );
@@ -1900,6 +1924,7 @@ export function deriveMessagesTimelineRows(
         input.activeTurnStartedAt ??
         null,
       ...(activeCompactionRunId !== null ? { compacting: true as const } : {}),
+      ...(runningToolEntryForStatus ? { activeEntry: runningToolEntryForStatus } : {}),
     });
   };
   let hasActivityRow = false;
@@ -1963,6 +1988,19 @@ export function deriveMessagesTimelineRows(
           ? [String(entry.entry.projectedItem.sourceItemId)]
           : [];
       });
+      const foldWorkEntries = [...turnFold.entryIds].flatMap((entryId) => {
+        const entry = timelineEntryById.get(entryId);
+        return entry?.kind === "work" ? [entry.entry] : [];
+      });
+      const activity = summarizeTurnActivity(foldWorkEntries);
+      const checkpointSummary = turnDiffSummaryByRunId.get(turnFold.runId);
+      const checkpointTotals = checkpointSummary ? checkpointFileTotals(checkpointSummary) : null;
+      const diffStat =
+        checkpointTotals && (checkpointTotals.additions > 0 || checkpointTotals.deletions > 0)
+          ? { additions: checkpointTotals.additions, deletions: checkpointTotals.deletions }
+          : activity
+            ? sumTurnItemDiffStat(foldWorkEntries)
+            : null;
       nextRows.push({
         kind: "turn-fold",
         id: `turn-fold:${turnFold.runId}`,
@@ -1971,6 +2009,8 @@ export function deriveMessagesTimelineRows(
         runId: turnFold.runId,
         label: turnFold.label,
         expanded: input.expandedRunIds?.has(turnFold.runId) ?? false,
+        ...(activity ? { activity } : {}),
+        ...(diffStat ? { diffStat } : {}),
       });
     }
 
@@ -2770,7 +2810,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   switch (a.kind) {
     case "working":
       return (
-        a.createdAt === (b as typeof a).createdAt && a.compacting === (b as typeof a).compacting
+        a.createdAt === (b as typeof a).createdAt &&
+        a.compacting === (b as typeof a).compacting &&
+        a.activeEntry === (b as typeof a).activeEntry
       );
     case "thinking": {
       const bt = b as typeof a;
@@ -2804,6 +2846,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.createdAt === bf.createdAt &&
         a.label === bf.label &&
         a.expanded === bf.expanded &&
+        (a.kind !== "turn-fold" ||
+          bf.kind !== "turn-fold" ||
+          (turnActivityEqual(a.activity, bf.activity) && diffStatEqual(a.diffStat, bf.diffStat))) &&
         anchors.length === nextAnchors.length &&
         anchors.every((id, index) => id === nextAnchors[index])
       );

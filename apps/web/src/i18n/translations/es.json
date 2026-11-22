@@ -4322,7 +4322,6 @@
   "e4e5cb6ab610e37d": "Solicitud de permiso",
   "9243d7a2b22d5f3d": "Aprobación de acceso de app",
   "847e5019e2ff249d": "Solicitud de acceso de app",
-  "9c65d76ca030950f": "Esperando aprobación",
   "b7419ed1c775db7e": "El proceso del proveedor ya no existe. Interrumpe o reinicia la ejecución para responder.",
   "87f63288c0f1ca07": "Texto pegado",
   "c336d59042368fd6": "Archivo",
@@ -12444,5 +12443,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Muestra los hilos en una sola lista con secciones Activos y Resueltos, en lugar de carpetas por proyecto.",
   "2d53d114bd476ced": "Barra lateral clásica (lista única)",
-  "06cb83c507ba9ad1": "beta lista única activos resueltos carpetas proyecto árbol barra lateral clásica"
+  "06cb83c507ba9ad1": "beta lista única activos resueltos carpetas proyecto árbol barra lateral clásica",
+  "8baf8bea22ea7642": "Se necesita aprobación",
+  "32393efeccdbab9a": "Ejecuta un comando en el espacio de trabajo",
+  "105662117ba549f3": "Cambia archivos del espacio de trabajo",
+  "26db0b226248d366": "Lee un archivo del espacio de trabajo",
+  "3aa325f821903367": "Cambia lo que el agente puede hacer",
+  "02c3655884511fbb": "Da acceso a una app"
 }

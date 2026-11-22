@@ -12,7 +12,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface ComposerPendingApprovalActionsProps {
-  presentation?: "composer" | "inline";
+  /** `card` leads with the accept choices and keeps the session-wide one visible. */
+  presentation?: "composer" | "inline" | "card";
   requestId: RuntimeRequestId;
   isResponding: boolean;
   canRespond: boolean;
@@ -40,6 +41,12 @@ const DEFAULT_APPROVAL_OPTIONS = [
   },
 ] satisfies ReadonlyArray<ProviderApprovalOption>;
 
+const CARD_PRIMARY_DECISIONS: ReadonlyArray<ProviderApprovalDecision> = [
+  "accept",
+  "acceptForSession",
+  "decline",
+];
+
 export const ComposerPendingApprovalActions = memo(function ComposerPendingApprovalActions({
   presentation = "composer",
   requestId,
@@ -53,12 +60,15 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
   const m = useMessages();
   // Provider options carry server-authored labels; only the built-in defaults are translated.
   const optionLabel = (label: string) => (options === DEFAULT_APPROVAL_OPTIONS ? m(label) : label);
-  const primaryOptions = options.filter(
-    (option) => option.decision === "decline" || option.decision === "accept",
-  );
-  const moreOptions = options.filter(
-    (option) => option.decision !== "decline" && option.decision !== "accept",
-  );
+  const primaryDecisions: ReadonlyArray<ProviderApprovalDecision> =
+    presentation === "card" ? CARD_PRIMARY_DECISIONS : ["decline", "accept"];
+  const primaryOptions = options.filter((option) => primaryDecisions.includes(option.decision));
+  if (presentation === "card") {
+    primaryOptions.sort(
+      (a, b) => primaryDecisions.indexOf(a.decision) - primaryDecisions.indexOf(b.decision),
+    );
+  }
+  const moreOptions = options.filter((option) => !primaryDecisions.includes(option.decision));
 
   return (
     <>
@@ -75,7 +85,15 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
         const content = (
           <>
             {option.warning ? <TriangleAlertIcon className="size-3 shrink-0" /> : null}
-            <span className={presentation === "inline" ? "whitespace-normal" : "max-w-40 truncate"}>
+            <span
+              className={
+                presentation === "inline"
+                  ? "whitespace-normal"
+                  : presentation === "card"
+                    ? "whitespace-nowrap"
+                    : "max-w-40 truncate"
+              }
+            >
               {optionLabel(option.label)}
             </span>
           </>
@@ -93,7 +111,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             <Button
               key={option.decision}
               {...buttonProps}
-              size="xs"
+              size={presentation === "card" ? "sm" : "xs"}
               variant={option.decision === "accept" ? "default" : "outline"}
             >
               {content}
@@ -116,7 +134,11 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
               presentation === "inline" ? (
                 <InlineButton tone="muted" aria-label={gt("More approval options")} />
               ) : (
-                <Button size="icon-xs" variant="outline" aria-label={gt("More approval options")} />
+                <Button
+                  size={presentation === "card" ? "icon-sm" : "icon-xs"}
+                  variant="outline"
+                  aria-label={gt("More approval options")}
+                />
               )
             }
           >

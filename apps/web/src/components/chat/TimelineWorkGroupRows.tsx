@@ -351,12 +351,24 @@ const workEntryKey = (entry: TimelineWorkEntry) => entry.id;
 export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const { isCompacting, isPreparingWorktree, backgroundWorktreeSetup } =
     use(TimelineRowActivityCtx);
+  const { workspaceRoot } = use(TimelineRowCtx);
+  const m = useMessages();
   const compacting = row.compacting === true || isCompacting;
   const shimmer = isPreparingWorktree || compacting;
+  const activeEntry = row.activeEntry;
+  const activityLabel = activeEntry
+    ? liveWorkEntryLabel(activeEntry, workspaceRoot, true, m)
+    : null;
   const label = isPreparingWorktree ? (
     <T>Setting up worktree…</T>
   ) : compacting ? (
     <CompactingLabel createdAt={row.createdAt} />
+  ) : activityLabel ? (
+    <span className="inline-flex min-w-0 items-baseline gap-1.5">
+      <span className="min-w-0 truncate text-foreground/80">{activityLabel}</span>
+      <span aria-hidden="true">·</span>
+      {activeEntry ? <WorkingTimer createdAt={activeEntry.createdAt} /> : null}
+    </span>
   ) : row.createdAt ? (
     <T>
       Working for <WorkingTimer createdAt={row.createdAt} />
@@ -369,7 +381,10 @@ export function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: 
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
-          className="relative shrink-0 overflow-hidden whitespace-nowrap"
+          className={cn(
+            "relative overflow-hidden whitespace-nowrap",
+            activityLabel ? "min-w-0" : "shrink-0",
+          )}
         >
           {label}
           {shimmer ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}

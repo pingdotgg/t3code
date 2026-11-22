@@ -4322,7 +4322,6 @@
   "e4e5cb6ab610e37d": "Pedido de permissão",
   "9243d7a2b22d5f3d": "Aprovação de acesso do app",
   "847e5019e2ff249d": "Pedido de acesso do app",
-  "9c65d76ca030950f": "Aguardando aprovação",
   "b7419ed1c775db7e": "O processo do provedor não existe mais. Interrompa ou reinicie a execução para responder.",
   "87f63288c0f1ca07": "Texto colado",
   "c336d59042368fd6": "Arquivo",
@@ -12448,5 +12447,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Mostra as threads em uma lista única com as seções Ativas e Concluídas, em vez de pastas por projeto.",
   "2d53d114bd476ced": "Sidebar clássica (lista única)",
-  "06cb83c507ba9ad1": "beta lista única ativas concluídas pastas projeto árvore sidebar clássica"
+  "06cb83c507ba9ad1": "beta lista única ativas concluídas pastas projeto árvore sidebar clássica",
+  "8baf8bea22ea7642": "Aprovação necessária",
+  "32393efeccdbab9a": "Executa um comando no workspace",
+  "105662117ba549f3": "Altera arquivos no workspace",
+  "26db0b226248d366": "Lê um arquivo do workspace",
+  "3aa325f821903367": "Muda o que o agente pode fazer",
+  "02c3655884511fbb": "Dá acesso a um app"
 }

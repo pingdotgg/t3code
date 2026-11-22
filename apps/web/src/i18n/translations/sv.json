@@ -4323,7 +4323,6 @@
   "e4e5cb6ab610e37d": "Behörighetsbegäran",
   "9243d7a2b22d5f3d": "Godkännande av appåtkomst",
   "847e5019e2ff249d": "Begäran om appåtkomst",
-  "9c65d76ca030950f": "Väntar på godkännande",
   "b7419ed1c775db7e": "Leverantörsprocessen finns inte längre. Avbryt eller starta om körningen för att svara.",
   "87f63288c0f1ca07": "Inklistrad text",
   "c336d59042368fd6": "Fil",
@@ -12456,5 +12455,11 @@
   "67830a5b792776c2": "{title}, {reason}",
   "6267151da3c58f05": "Visar trådar i en enda lista med avsnitten Aktiva och Klara i stället för projektmappar.",
   "2d53d114bd476ced": "Klassiskt sidofält (en lista)",
-  "06cb83c507ba9ad1": "beta platt lista aktiva klara mappar projekt träd klassiskt sidofält"
+  "06cb83c507ba9ad1": "beta platt lista aktiva klara mappar projekt träd klassiskt sidofält",
+  "8baf8bea22ea7642": "Godkännande krävs",
+  "32393efeccdbab9a": "Kör ett kommando i arbetsytan",
+  "105662117ba549f3": "Ändrar filer i arbetsytan",
+  "26db0b226248d366": "Läser en fil i arbetsytan",
+  "3aa325f821903367": "Ändrar vad agenten får göra",
+  "02c3655884511fbb": "Ger en app åtkomst"
 }

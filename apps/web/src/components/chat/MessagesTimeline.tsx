@@ -1,4 +1,6 @@
 import { T, useGT, useMessages, Var } from "gt-react";
+import { DiffStatLabel } from "./DiffStatLabel";
+import { turnActivityClauses } from "./turnActivitySummary.logic";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
 import { threadEnvironment } from "../../state/threads";
@@ -1861,9 +1863,11 @@ function WorkHistorySkeleton() {
 
 function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-fold" }> }) {
   const ctx = use(TimelineRowCtx);
+  const messages = useMessages();
   const { loading, error, toggle } = useDeferredWorkLoading(row, () =>
     ctx.onToggleTurnFold(row.runId),
   );
+  const activityClauses = row.activity ? turnActivityClauses(row.activity, messages) : [];
 
   return (
     <div className="group/timeline-row border-b border-border/60 pb-2 pe-0.5 pt-1">
@@ -1874,16 +1878,25 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           data-scroll-anchor-ignore
           onClick={toggle}
           aria-busy={loading}
-          className="flex cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+          className="flex min-w-0 cursor-pointer select-none items-center gap-1 rounded-md px-1 text-sm leading-relaxed text-muted-foreground tabular-nums transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
         >
-          <span>
+          <span className="min-w-0 truncate">
             {row.label}
+            {activityClauses.map((clause) => ` · ${clause}`).join("")}
             {error ? ` · ${error}` : ""}
           </span>
+          {row.diffStat ? (
+            <DiffStatLabel
+              layout="inline"
+              additions={row.diffStat.additions}
+              deletions={row.diffStat.deletions}
+              className="ms-1 shrink-0 text-xs"
+            />
+          ) : null}
           {row.expanded ? (
-            <ChevronDownIcon className="size-3.5" />
+            <ChevronDownIcon className="size-3.5 shrink-0" />
           ) : (
-            <ChevronRightIcon className="size-3.5" />
+            <ChevronRightIcon className="size-3.5 shrink-0" />
           )}
         </button>
         <TimelineRowTimestamp
