@@ -429,6 +429,8 @@ class RegistryImpl implements AtomRegistry {
   }
 
   refresh = <A>(atom: Atom.Atom<A>): void => {
+    // Readers of a serialization key share the first node, including its refresh target.
+    if (SerializableTypeId in atom) atom = this.ensureNode(atom).atom
     if (atom.refresh !== undefined) {
       atom.refresh(this.refresh)
     } else {
@@ -515,6 +517,7 @@ class RegistryImpl implements AtomRegistry {
 
   invalidateAtom = <A>(atom: Atom.Atom<A>): void => {
     const node = this.ensureNode(atom)
+    if (node.skipInitialRun) node.preserveInitialValueOnBuild = false
     node.skipInitialRun = false
     node.invalidate()
   }
@@ -759,6 +762,14 @@ class NodeImpl<A> {
       }
     }
     if (this.lifetime === lifetime && (this.state & NodeFlags.waitingForValue) !== 0) {
+      if (
+        this.skipInitialRun && Result.isAsyncResult(this._value) && this._value.waiting &&
+        Result.isAsyncResult(value) && Result.isFailure(value)
+      ) {
+        // Runtime acquisition can fail before the effect consumes its seed.
+        this.preserveInitialValueOnBuild = false
+        this.skipInitialRun = false
+      }
       if (this.preserveInitialValueOnBuild) {
         this.preserveInitialValueOnBuild = false
         if (this.skipInitialRun) {
@@ -1014,6 +1025,11 @@ export const consumeSkipInitialRun = (ctx: Atom.AtomContext): boolean => {
   const keptParents = node.keptParents
   node.skipInitialRun = false
   node.keptParents = undefined
+  if (node._value.waiting) {
+    // No local request owns the seed; commit the replacement even if it completes synchronously.
+    node.preserveInitialValueOnBuild = false
+    return false
+  }
   return !lifetime.isFn && !Result.isInitial(node._value) &&
     (keptParents === undefined || keptParents.every(([parent, lifetime]) => parent.lifetime === lifetime))
 }

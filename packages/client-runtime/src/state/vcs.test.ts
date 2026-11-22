@@ -12,6 +12,7 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
@@ -383,13 +384,15 @@ describe("cached VCS refs", () => {
 
   it.effect("invalidates persisted refs when ref-affecting commands settle", () =>
     Effect.gen(function* () {
+      const refsDigest = yield* Ref.make("refs-a");
       const expectedError = new EnvironmentRpcUnavailableError({
         environmentId: TARGET.environmentId,
         message: "pull failed after fetching refs",
       });
       const client = {
         [WS_METHODS.vcsPull]: () => Effect.fail(expectedError),
-        [WS_METHODS.vcsRefreshStatus]: () => Effect.void,
+        [WS_METHODS.vcsRefreshStatus]: () =>
+          Ref.get(refsDigest).pipe(Effect.map((digest) => ({ refsDigest: digest }))),
         [WS_METHODS.gitPreparePullRequestThread]: () =>
           Effect.succeed({ branch: "feature/pr", worktreePath: null }),
       } as unknown as WsRpcProtocolClient;
@@ -426,38 +429,58 @@ describe("cached VCS refs", () => {
         Effect.sync(() => registry.dispose()),
       );
 
-      const result = yield* Effect.promise(() =>
+      const result = yield* Effect.exit(
         atoms.pull.run(registry, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo" },
         }),
       );
 
-      expect(AsyncResult.isFailure(result)).toBe(true);
+      expect(Exit.isFailure(result)).toBe(true);
       expect(yield* Ref.get(clears)).toBe(1);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(1);
 
-      const refreshResult = yield* Effect.promise(() =>
+      const refreshResult = yield* Effect.exit(
         atoms.refreshStatus.run(registry, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo" },
         }),
       );
 
-      expect(AsyncResult.isSuccess(refreshResult)).toBe(true);
+      expect(Exit.isSuccess(refreshResult)).toBe(true);
       expect(yield* Ref.get(clears)).toBe(2);
       expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
 
-      const prepareResult = yield* Effect.promise(() =>
+      const refreshStatus = atoms.refreshStatus.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { cwd: "/repo" },
+      });
+      yield* refreshStatus;
+      expect(yield* Ref.get(clears)).toBe(2);
+      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(2);
+
+      yield* Ref.set(refsDigest, "refs-b");
+      yield* refreshStatus;
+      expect(yield* Ref.get(clears)).toBe(3);
+      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
+      yield* atoms.refreshLocalStatusForPicker.run(registry, {
+        environmentId: TARGET.environmentId,
+        input: { cwd: "/repo" },
+      });
+      expect(yield* Ref.get(clears)).toBe(3);
+      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+
+      const prepareResult = yield* Effect.exit(
         createGitEnvironmentAtoms(runtime).preparePullRequestThread.run(registry, {
           environmentId: TARGET.environmentId,
           input: { cwd: "/repo", reference: "42", mode: "local" },
         }),
       );
 
-      expect(AsyncResult.isSuccess(prepareResult)).toBe(true);
-      expect(yield* Ref.get(clears)).toBe(3);
-      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(3);
+      expect(Exit.isSuccess(prepareResult)).toBe(true);
+      expect(yield* Ref.get(clears)).toBe(4);
+      expect(registry.get(vcsRefsCacheStateAtom(TARGET)).revision).toBe(4);
     }),
   );
 
@@ -466,9 +489,11 @@ describe("cached VCS refs", () => {
       const refreshStarted = yield* Deferred.make<void>();
       const releaseRefresh = yield* Deferred.make<void>();
       const client = {
-        [WS_METHODS.vcsRefreshStatus]: () =>
+        [WS_METHODS.vcsRefreshStatus]: (input: { cwd: string; localOnly?: boolean }) =>
           Deferred.succeed(refreshStarted, undefined).pipe(
+            Effect.tap(() => Effect.sync(() => expect(input.localOnly).toBe(true))),
             Effect.andThen(Deferred.await(releaseRefresh)),
+            Effect.as({}),
           ),
         [WS_METHODS.vcsSwitchRef]: () => Effect.succeed({ refName: "feature" }),
       } as unknown as WsRpcProtocolClient;
@@ -502,21 +527,21 @@ describe("cached VCS refs", () => {
       );
       const target = { environmentId: TARGET.environmentId, input: { cwd: "/repo" } };
 
-      const refresh = atoms.refreshLocalStatusForPicker.run(registry, {
-        ...target,
-        input: { cwd: "/repo", localOnly: true },
-      });
+      const refresh = yield* Effect.forkChild(
+        Effect.exit(atoms.refreshLocalStatusForPicker.run(registry, target)),
+        { startImmediately: true },
+      );
       yield* Deferred.await(refreshStarted);
-      const checkout = yield* Effect.promise(() =>
+      const checkout = yield* Effect.exit(
         atoms.switchRef.run(registry, {
           ...target,
           input: { cwd: "/repo", refName: "feature" },
         }),
       );
 
-      expect(AsyncResult.isSuccess(checkout)).toBe(true);
+      expect(Exit.isSuccess(checkout)).toBe(true);
       yield* Deferred.succeed(releaseRefresh, undefined);
-      expect(AsyncResult.isSuccess(yield* Effect.promise(() => refresh))).toBe(true);
+      expect(Exit.isSuccess(yield* Fiber.join(refresh))).toBe(true);
     }),
   );
 

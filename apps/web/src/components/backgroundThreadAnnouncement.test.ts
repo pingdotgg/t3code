@@ -7,6 +7,7 @@ import {
   type BackgroundThreadSnapshot,
   nextBackgroundThreadAnnouncement,
   resolveBackgroundThreadRequest,
+  resolveBackgroundThreadRunStatus,
 } from "./backgroundThreadAnnouncement";
 
 const firstRun = RunId.make("run-1");
@@ -185,5 +186,74 @@ describe("resolveBackgroundThreadRequest", () => {
         { threads: [login(childApproval(null))] },
       ]),
     ).toEqual(["Needs approval: Fix login redirect"]);
+  });
+});
+
+describe("resolveBackgroundThreadRunStatus", () => {
+  const threadStatus = (overrides?: {
+    readonly status?: "completed" | "failed" | "interrupted";
+    readonly pendingBackgroundTasks?: ReadonlyArray<{
+      readonly taskId: string;
+      readonly kind: "command" | "monitor" | "subagent" | "background_task";
+      readonly awaited?: true;
+    }>;
+    readonly latestRunBackgroundWake?: boolean;
+    readonly latestRunStopRequested?: boolean;
+  }) => {
+    const pendingBackgroundTasks = overrides?.pendingBackgroundTasks ?? [];
+    return resolveBackgroundThreadRunStatus({
+      latestRun: { status: overrides?.status ?? "completed" },
+      pendingBackgroundTasks,
+      source: {
+        pendingBackgroundTasks,
+        latestRunBackgroundWake: overrides?.latestRunBackgroundWake ?? false,
+        latestRunStopRequested: overrides?.latestRunStopRequested ?? false,
+      },
+    });
+  };
+
+  it("suppresses Done while awaited background work or a monitor wake holds completion, or when stop was requested", () => {
+    const heldCases = [
+      { latestRunStopRequested: true },
+      { pendingBackgroundTasks: [{ taskId: "sub-1", kind: "subagent" as const }] },
+      {
+        pendingBackgroundTasks: [
+          { taskId: "cmd-1", kind: "command" as const, awaited: true as const },
+        ],
+      },
+      {
+        latestRunBackgroundWake: true,
+        pendingBackgroundTasks: [{ taskId: "mon-1", kind: "monitor" as const }],
+      },
+    ];
+    for (const input of heldCases) {
+      expect(threadStatus(input)).toBeNull();
+    }
+  });
+
+  it("keeps Done for unawaited background work and keeps non-completed outcomes", () => {
+    expect(
+      threadStatus({
+        pendingBackgroundTasks: [{ taskId: "cmd-1", kind: "command" }],
+      }),
+    ).toBe("completed");
+    expect(
+      threadStatus({
+        latestRunBackgroundWake: false,
+        pendingBackgroundTasks: [{ taskId: "mon-1", kind: "monitor" }],
+      }),
+    ).toBe("completed");
+    expect(
+      threadStatus({
+        status: "failed",
+        pendingBackgroundTasks: [{ taskId: "sub-1", kind: "subagent" }],
+      }),
+    ).toBe("failed");
+    expect(
+      threadStatus({
+        status: "interrupted",
+        latestRunStopRequested: true,
+      }),
+    ).toBe("interrupted");
   });
 });

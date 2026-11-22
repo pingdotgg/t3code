@@ -7,10 +7,12 @@ import * as McpProtocol from "effect/ai/McpProtocol"
 import * as McpSchema from "effect/ai/McpSchema"
 import * as McpServer from "effect/ai/McpServer"
 import type * as Arr from "effect/Array"
+import * as Cause from "effect/Cause"
 import * as Clock from "effect/Clock"
 import * as Context from "effect/Context"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Fiber from "effect/Fiber"
 import * as Layer from "effect/Layer"
 import * as Predicate from "effect/Predicate"
@@ -408,6 +410,57 @@ export const suite = (protocol: McpProtocol.ProtocolAdapter, layer: McpConforman
             assertAcknowledged(yield* fixture.takeMessage, id, notifications)
             yield* request.cancel("test complete")
           }
+        }))
+
+      it.effect("should complete an open subscription and shut down on stdin EOF", () =>
+        Effect.gen(function*() {
+          const fixture = yield* makeMcpStdioHarness(protocol)
+          yield* fixture.initialize()
+          const id = "eof-subscription"
+          const request = yield* listen(fixture, id, { toolsListChanged: true })
+          assertAcknowledged(yield* fixture.takeMessage, id, {})
+
+          yield* fixture.close
+
+          const response = yield* request.response
+          const result = yield* Schema.decodeUnknownEffect(McpSchema2026.SubscriptionsListenResult)(response.result)
+          assert.strictEqual(result.resultType, "complete")
+          assert.strictEqual(result._meta?.[subscriptionIdKey], id)
+          const exit = yield* Fiber.await(fixture.serverFiber)
+          assert.isTrue(Exit.isSuccess(exit) || (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)))
+        }))
+
+      it.effect("should drain an accepted tool response with an open subscription on stdin EOF", () =>
+        Effect.gen(function*() {
+          const fixture = yield* makeMcpStdioHarness(protocol)
+          const started = yield* Deferred.make<void>()
+          const release = yield* Deferred.make<void>()
+          yield* fixture.server.addTool({
+            ...makeTool("eof-tool"),
+            handle: Effect.fnUntraced(function*() {
+              yield* Deferred.succeed(started, undefined)
+              yield* Deferred.await(release)
+              return new McpSchema.CallToolResult({ content: [{ type: "text", text: "drained" }] })
+            })
+          })
+          yield* fixture.initialize()
+          const id = "eof-drain-subscription"
+          const subscription = yield* listen(fixture, id, { toolsListChanged: true })
+          assertAcknowledged(yield* fixture.takeMessage, id, { toolsListChanged: true })
+          const tool = yield* fixture.startRequest("tools/call", { name: "eof-tool", arguments: {} })
+          yield* Deferred.await(started)
+
+          yield* fixture.close
+
+          // Keep the tool pending until the subscription confirms the server has observed EOF.
+          const response = yield* subscription.response
+          const result = yield* Schema.decodeUnknownEffect(McpSchema2026.SubscriptionsListenResult)(response.result)
+          assert.strictEqual(result.resultType, "complete")
+          assert.strictEqual(result._meta?.[subscriptionIdKey], id)
+          yield* Deferred.succeed(release, undefined)
+          assert.deepInclude((yield* tool.response).result, { content: [{ type: "text", text: "drained" }] })
+          const exit = yield* Fiber.await(fixture.serverFiber)
+          assert.isTrue(Exit.isSuccess(exit) || (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)))
         }))
 
       it.effect("should deliver a change notification when its kind is requested", () =>
