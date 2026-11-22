@@ -61,7 +61,8 @@ const handlers = {
         );
       }),
   ),
-  t3_background_wait: McpToolAccess.actsAsCaller((input) =>
+  // Claude can start a turn by itself before T3 starts its run, so a live-run check would refuse the mark.
+  t3_background_wait: McpToolAccess.readsAsCaller((input) =>
     Effect.gen(function* () {
       const { scope, threads } = yield* readCaller();
       const caller = yield* McpInvocationContext.requireThreadScope(scope, "t3_background_wait");
@@ -75,7 +76,10 @@ const handlers = {
           Effect.mapError(
             (cause) =>
               new OrchestratorMcpFailure({
-                code: cause.reason === "unsupported" ? "invalid_request" : "orchestration_error",
+                code:
+                  cause.reason === "unsupported" || cause.reason === "unmatched"
+                    ? "invalid_request"
+                    : "orchestration_error",
                 message: cause.message,
               }),
           ),

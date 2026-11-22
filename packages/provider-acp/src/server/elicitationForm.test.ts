@@ -92,6 +92,13 @@ describe("parseElicitationForm", () => {
       "Databases?",
     );
     assert(multi !== undefined);
+    assert.deepStrictEqual(
+      multi.questions.map((question) => [question.id, question.required]),
+      [
+        ["q0", undefined],
+        ["q0__other", false],
+      ],
+    );
     assert.deepStrictEqual(multi.content({ q0: ["Postgres"], q0__other: "SQLite" }), {
       q0: ["Postgres"],
       q0__other: "SQLite",

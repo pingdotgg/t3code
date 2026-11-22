@@ -410,7 +410,6 @@ describe("ACP Registry probe", () => {
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
-      Effect.scoped,
     );
   });
 
@@ -466,6 +465,65 @@ describe("ACP Registry probe", () => {
           expect.objectContaining({ params: { sessionId: "mock-session-1" } }),
         ]);
       }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+  );
+
+  it.live("keeps DeepSeek Harness probe history in a temporary directory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "acp-probe-dsh-" });
+      const launcher = NodePath.join(directory, "dsh-fixture.mjs");
+      const launchLog = NodePath.join(directory, "launch.json");
+      yield* fs.writeFileString(
+        launcher,
+        `
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+const [,, agentPath, logPath, ...args] = process.argv;
+const patchFlag = args.lastIndexOf("--patch");
+const patchPath = patchFlag === -1 ? null : args[patchFlag + 1];
+const patch = patchPath === null ? null : JSON.parse(readFileSync(patchPath, "utf8"));
+writeFileSync(logPath, JSON.stringify({ args, patch }));
+await import(pathToFileURL(agentPath).href);
+`,
+      );
+      const userPatch = NodePath.join(directory, "user-patch.json");
+      yield* fs.writeFileString(userPatch, "[]");
+      const commandArgs = ["--profile", "acp", "--patch", userPatch];
+      const catalog = AcpRegistrySupport.AcpRegistryCatalog.of({
+        search: () => Effect.die("unused search"),
+        prepare: () => Effect.die("unused prepare"),
+        inspect: () => Effect.die("unused inspect"),
+        uninstallManagedBinary: () => Effect.die("unused uninstall"),
+        resolve: () =>
+          Effect.succeed({
+            distribution: "local",
+            spawn: {
+              command: process.execPath,
+              args: [launcher, mockAgentPath, launchLog, ...commandArgs],
+            },
+          }),
+      });
+      const result = yield* probeAcpRegistryConfiguration({
+        instanceId,
+        settings: decodeSettings({ source: "local", commandPath: "dsh", commandArgs }),
+        cwd: directory,
+        environment: process.env,
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+      expect(result.probe.ready).toBe(true);
+      expect(result.probe.models.length).toBeGreaterThan(0);
+
+      const { args, patch } = JSON.parse(yield* fs.readFileString(launchLog));
+      expect(args).toEqual([...commandArgs, "--patch", expect.any(String)]);
+      const probeDirectory = NodePath.dirname(args.at(-1));
+      expect(patch).toEqual([
+        {
+          id: "session-persistence-jsonl",
+          config: { root: NodePath.join(probeDirectory, "sessions") },
+        },
+        { id: "session-projection-cache", disabled: true },
+      ]);
+      expect(yield* fs.exists(probeDirectory)).toBe(false);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
   it("distinguishes authentication failures from generic probe failures", () => {

@@ -9,7 +9,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -145,6 +145,12 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
+    readonly updateLiveActivityPreference: (input: {
+      readonly userId: string;
+      readonly environmentId: string;
+      readonly environmentPublicKey: string;
+      readonly liveActivitiesEnabled: boolean;
+    }) => Effect.Effect<boolean, EnvironmentLinkEnvironmentLookupPersistenceError>;
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
@@ -187,42 +193,62 @@ const make = Effect.gen(function* () {
           AND other.hold_webhooks_while_offline
       )`;
       const { endpoint } = input;
-      yield* db
-        .insert(relayEnvironmentLinks)
-        .values({
-          userId: input.userId,
-          environmentId,
-          holdWebhooksWhileOffline: inheritedHoldWebhooks,
-          environmentLabel: proof.descriptor.label,
-          environmentPublicKey: proof.environmentPublicKey,
-          endpointHttpBaseUrl: endpoint.httpBaseUrl,
-          endpointWsBaseUrl: endpoint.wsBaseUrl,
-          endpointProviderKind: endpoint.providerKind,
-          notificationsEnabled: request.notificationsEnabled,
-          liveActivitiesEnabled: request.liveActivitiesEnabled,
-          managedTunnelsEnabled: request.managedTunnelsEnabled,
-          createdByDeviceId: request.deviceId ?? null,
-          revokedAt: null,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
-          set: {
-            environmentPublicKey: proof.environmentPublicKey,
-            environmentLabel: proof.descriptor.label,
-            endpointHttpBaseUrl: endpoint.httpBaseUrl,
-            endpointWsBaseUrl: endpoint.wsBaseUrl,
-            endpointProviderKind: endpoint.providerKind,
-            notificationsEnabled: request.notificationsEnabled,
-            liveActivitiesEnabled: request.liveActivitiesEnabled,
-            managedTunnelsEnabled: request.managedTunnelsEnabled,
-            createdByDeviceId: request.deviceId ?? null,
-            revokedAt: null,
-            updatedAt: now,
-            holdWebhooksWhileOffline: inheritedHoldWebhooks,
-          },
-        })
+      yield* db.$client
+        .withTransaction(
+          Effect.gen(function* () {
+            // Serialize account switches for the same proven environment identity.
+            yield* db.execute(
+              sql`select pg_advisory_xact_lock(hashtext(${environmentId}), hashtext(${proof.environmentPublicKey}))`,
+            );
+            yield* db
+              .insert(relayEnvironmentLinks)
+              .values({
+                userId: input.userId,
+                environmentId,
+                holdWebhooksWhileOffline: inheritedHoldWebhooks,
+                environmentLabel: proof.descriptor.label,
+                environmentPublicKey: proof.environmentPublicKey,
+                endpointHttpBaseUrl: endpoint.httpBaseUrl,
+                endpointWsBaseUrl: endpoint.wsBaseUrl,
+                endpointProviderKind: endpoint.providerKind,
+                notificationsEnabled: request.notificationsEnabled,
+                liveActivitiesEnabled: request.liveActivitiesEnabled,
+                managedTunnelsEnabled: request.managedTunnelsEnabled,
+                createdByDeviceId: request.deviceId ?? null,
+                revokedAt: null,
+                createdAt: now,
+                updatedAt: now,
+              })
+              .onConflictDoUpdate({
+                target: [relayEnvironmentLinks.userId, relayEnvironmentLinks.environmentId],
+                set: {
+                  environmentPublicKey: proof.environmentPublicKey,
+                  environmentLabel: proof.descriptor.label,
+                  endpointHttpBaseUrl: endpoint.httpBaseUrl,
+                  endpointWsBaseUrl: endpoint.wsBaseUrl,
+                  endpointProviderKind: endpoint.providerKind,
+                  notificationsEnabled: request.notificationsEnabled,
+                  liveActivitiesEnabled: request.liveActivitiesEnabled,
+                  managedTunnelsEnabled: request.managedTunnelsEnabled,
+                  createdByDeviceId: request.deviceId ?? null,
+                  revokedAt: null,
+                  updatedAt: now,
+                  holdWebhooksWhileOffline: inheritedHoldWebhooks,
+                },
+              });
+            yield* db
+              .update(relayEnvironmentLinks)
+              .set({ revokedAt: now, updatedAt: now })
+              .where(
+                and(
+                  eq(relayEnvironmentLinks.environmentId, environmentId),
+                  eq(relayEnvironmentLinks.environmentPublicKey, proof.environmentPublicKey),
+                  ne(relayEnvironmentLinks.userId, input.userId),
+                  isNull(relayEnvironmentLinks.revokedAt),
+                ),
+              );
+          }),
+        )
         .pipe(
           Effect.mapError(
             (cause) =>
@@ -443,6 +469,36 @@ const make = Effect.gen(function* () {
               }),
           ),
         );
+    }),
+
+    updateLiveActivityPreference: Effect.fn(
+      "relay.environment_links.update_live_activity_preference",
+    )(function* (input) {
+      const rows = yield* db
+        .update(relayEnvironmentLinks)
+        .set({
+          liveActivitiesEnabled: input.liveActivitiesEnabled,
+          updatedAt: DateTime.formatIso(yield* DateTime.now),
+        })
+        .where(
+          and(
+            eq(relayEnvironmentLinks.userId, input.userId),
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, input.environmentPublicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
+          ),
+        )
+        .returning({ environmentId: relayEnvironmentLinks.environmentId })
+        .pipe(
+          Effect.mapError(
+            (cause) =>
+              new EnvironmentLinkEnvironmentLookupPersistenceError({
+                environmentId: input.environmentId,
+                cause,
+              }),
+          ),
+        );
+      return rows.length > 0;
     }),
 
     revokeForUser: Effect.fn("relay.environment_links.revoke_for_user")(function* (input) {

@@ -1,4 +1,5 @@
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { msg } from "gt-react";
 
 import { resolvePullRequestAuthorFilter } from "@t3tools/contracts";
 import type {
@@ -62,9 +63,9 @@ const pullRequestViewerKey = (entry: ScopedEntry): string =>
   `${entry.environmentId ?? ""} ${entry.host}`;
 
 const GROUP_LABELS: Record<PullRequestGroupKey, string> = {
-  reviewRequested: "Review requested",
-  authored: "Authored",
-  others: "Others",
+  reviewRequested: msg("Review requested"),
+  authored: msg("Authored"),
+  others: msg("Others"),
 };
 
 function normalize(value: string | null | undefined): string | null {
@@ -453,16 +454,16 @@ export function partitionPullRequestsWithPriority<Entry extends PullRequestListE
   authored: ReadonlyArray<Entry>,
   reviewRequested: ReadonlyArray<Entry>,
 ): ReadonlyArray<PullRequestGroup<Entry>> {
-  const authoredByKey = new Map(authored.map((entry) => [pullRequestEntryKey(entry), entry]));
+  // Matched by URL: each list may hold the pull request under a different environment.
+  const authoredByKey = new Map(authored.map((entry) => [entry.url, entry]));
   const reviewByKey = new Map(
-    reviewRequested.flatMap((entry) => {
-      const key = pullRequestEntryKey(entry);
-      return authoredByKey.has(key) ? [] : [[key, entry] as const];
-    }),
+    reviewRequested.flatMap((entry) =>
+      authoredByKey.has(entry.url) ? [] : [[entry.url, entry] as const],
+    ),
   );
   const others: Entry[] = [];
   for (const entry of entries) {
-    const key = pullRequestEntryKey(entry);
+    const key = entry.url;
     if (authoredByKey.has(key)) {
       authoredByKey.set(key, entry);
     } else if (reviewByKey.has(key)) {
@@ -561,10 +562,13 @@ export function mergePullRequestLists(
       );
     }
     for (const entry of answer.entries) {
-      const key = JSON.stringify([environmentId, entry.url]);
-      const held = entries.get(key);
-      if (held === undefined || entry.updatedAt > held.updatedAt) {
-        entries.set(key, { ...entry, environmentId });
+      const held = entries.get(entry.url);
+      // The first environment to answer keeps a pull request that several of them read.
+      if (
+        held === undefined ||
+        (held.environmentId === environmentId && entry.updatedAt > held.updatedAt)
+      ) {
+        entries.set(entry.url, { ...entry, environmentId });
       }
     }
     errors.push(...answer.errors.map((error) => ({ ...error, environmentId })));
@@ -652,7 +656,7 @@ export function scorePullRequestMatch(entry: PullRequestListEntry, query: string
   const needle = query.trim().toLowerCase();
   if (needle.length === 0) return 0;
   const number = needle.replace(/^#/u, "");
-  if (/^\d+$/u.test(number)) return String(entry.number) === number ? 100 : 0;
+  if (String(entry.number) === number) return 100;
 
   const title = entry.title.toLowerCase();
   const terms = needle.split(/\s+/u).filter((term) => term.length > 0);
