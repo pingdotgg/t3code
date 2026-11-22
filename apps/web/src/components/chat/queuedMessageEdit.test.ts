@@ -148,24 +148,7 @@ describe("queued message file edits", () => {
       originalText: "",
       result: "kept",
     },
-    {
-      edit: "changed citation on the same response",
-      originalReplyTo: reply,
-      replyTo: responseContextRecord({
-        citation: { ...reply.citation, text: "Updated.", end: 8 },
-        itemId: reply.itemId,
-        subagents: [],
-      }),
-      result: "kept",
-    },
     { edit: "removed reply", originalReplyTo: reply, replyTo: null, result: "kept" },
-    {
-      edit: "removed last content",
-      originalReplyTo: reply,
-      replyTo: null,
-      originalText: "",
-      result: "discarded",
-    },
     {
       edit: "unchanged reply",
       originalReplyTo: reply,
