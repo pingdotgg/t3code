@@ -18,8 +18,9 @@ use crate::header::details_card::{
 };
 use crate::header::{ChatHeaderProps, render_chat_header};
 use crate::shell::{CardJoin, inset_card, two_tone_divider};
+use crate::sidebar::hover_card_state::ThreadHoverState;
 use crate::sidebar::rail::render_workspace_rail;
-use crate::sidebar::thread_list::render_thread_sidebar;
+use crate::sidebar::thread_list::{ThreadHoverView, render_thread_sidebar};
 use crate::sidebar::thread_menu::{
     ThreadMenuAction, ThreadMenuAnchor, ThreadMenuState, build_thread_action_menu_items,
     render_thread_action_menu,
@@ -113,6 +114,8 @@ pub(crate) struct ConnApp {
     header_menu_generation: u64,
     /// Top-right Thread Details card.
     thread_details: ThreadDetailsState,
+    /// Sidebar thread hover flyout (`ThreadHoverCard`).
+    pub(crate) thread_hover: ThreadHoverState,
     /// Ticks relative times and live elapsed labels (`useNowSecond` / `useNowMinute`).
     _sidebar_clock: Option<gpui_kit::Task<()>>,
     /// Whether the sidebar project-scope filter popover is open.
@@ -411,6 +414,7 @@ impl ConnApp {
             _control_server: None,
             _activation_task: None,
             subscribed_thread_id: None,
+            thread_hover: ThreadHoverState::default(),
             perf_open: None,
             perf_open_pending_chat: false,
             subscribed_annotation_project: None,
@@ -2415,6 +2419,28 @@ impl ConnApp {
                 url_rx = next_url_rx;
                 control_rx = next_control_rx;
                 match ev {
+    /// Mirrors `Tooltip disabled={isRenaming || ...}`: no hover card while a thread menu is
+    /// open or a title is being renamed.
+    #[must_use]
+    pub(crate) fn thread_hover_suppressed(&self) -> bool {
+        self.thread_menu.is_some() || self.renaming_thread_id.is_some()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn open_thread_hover_for_test(
+        &mut self,
+        thread_id: &str,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let now = std::time::Instant::now();
+        if let crate::sidebar::hover_card_state::Entered::Wait(generation) =
+            self.thread_hover.enter(thread_id, now)
+        {
+            self.thread_hover.elapse(generation);
+        }
+        cx.notify();
+    }
+
                     Ev::Closed => break,
                     Ev::Url(url) => {
                         let ok = entity.update(cx, |app, cx| {
@@ -2790,6 +2816,7 @@ impl ConnApp {
                 .timer(crate::sidebar::thread_menu::SUBMENU_CLOSE_DELAY)
                 .await;
             let _ = this.update(cx, |app, cx| {
+        self.thread_hover.dismiss();
                 if app.thread_menu_copy_close_gen == generation
                     && let Some(menu) = &mut app.thread_menu
                     && menu.copy_open
@@ -3354,6 +3381,7 @@ impl ConnApp {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
+        self.thread_hover.dismiss();
         let Some(connection) = self.connection.clone() else {
             return;
         };
@@ -5125,6 +5153,14 @@ impl Render for ConnApp {
                                     if app.seam_drag.take().is_some() {
                                         cx.notify();
                                     }
+                    &ThreadHoverView {
+                        open_for: self
+                            .thread_hover
+                            .open_for()
+                            .filter(|_| !self.thread_hover_suppressed()),
+                        environment_label: self.server_label.as_deref(),
+                        rect: self.thread_hover.row_rect(),
+                    },
                                 });
                             },
                         );

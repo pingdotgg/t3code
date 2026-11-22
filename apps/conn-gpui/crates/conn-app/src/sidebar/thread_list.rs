@@ -36,6 +36,8 @@ use crate::app::ConnApp;
 use crate::icons;
 use crate::panels::chrome::ConnTooltipExt as _;
 use crate::shell::{CardJoin, MACOS_TRAFFIC_LIGHTS_INSET_PX, WORKSPACE_RAIL_WIDTH_PX, inset_card};
+use crate::sidebar::hover_card::render_thread_hover_card;
+use crate::sidebar::hover_card_state::RowRectCell;
 use crate::sidebar::{render_project_favicon, render_project_monogram};
 use crate::theme::{hsla, hsla_alpha};
 
@@ -87,6 +89,7 @@ pub(crate) fn render_thread_sidebar(
     renaming_thread_id: Option<&str>,
     rename_input: &Entity<InputState>,
     filter_menu_open: bool,
+    hover: &ThreadHoverView<'_>,
     tokens: &Tokens,
     geometry: &ShellGeometry,
     cx: &mut Context<'_, ConnApp>,
@@ -318,6 +321,9 @@ pub(crate) fn render_thread_sidebar(
             rename_input,
             now_secs,
             sidebar_width: layout.sidebar_width,
+            hover_open: hover.open_for == Some(thread.id.as_str()),
+            hover_rect: hover.rect,
+            environment_label: hover.environment_label,
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx));
@@ -344,6 +350,9 @@ pub(crate) fn render_thread_sidebar(
             rename_input,
             now_secs,
             sidebar_width: layout.sidebar_width,
+            hover_open: hover.open_for == Some(thread.id.as_str()),
+            hover_rect: hover.rect,
+            environment_label: hover.environment_label,
             tokens,
         };
         thread_rows.push(render_thread_card(&row, cx));
@@ -372,6 +381,8 @@ pub(crate) fn render_thread_sidebar(
         .flex_1()
         .min_h_0()
         .overflow_y_scroll()
+        // `TooltipScrollDismissArea`: scrolling the list closes the hover card.
+        .on_scroll(cx.listener(|app, _, _, cx| app.dismiss_thread_hover(cx)))
         .px(px(SIDEBAR_CONTENT_INSET_PX))
         .pb(px(SIDEBAR_CONTENT_INSET_PX))
         .gap(px(1.0))
@@ -453,6 +464,9 @@ pub(crate) fn render_thread_sidebar(
                 rename_input,
                 now_secs,
                 sidebar_width: layout.sidebar_width,
+                hover_open: hover.open_for == Some(thread.id.as_str()),
+                hover_rect: hover.rect,
+                environment_label: hover.environment_label,
                 tokens,
             };
             list_scroll = list_scroll.child(render_settled_row(&row, cx));
@@ -829,7 +843,20 @@ struct RowCtx<'a> {
     rename_input: &'a Entity<InputState>,
     now_secs: i64,
     sidebar_width: f32,
+    hover_rect: &'a RowRectCell,
+    /// This thread's hover flyout is open.
+    hover_open: bool,
+    environment_label: Option<&'a str>,
     tokens: &'a Tokens,
+}
+
+/// Sidebar hover flyout inputs from the app.
+pub(crate) struct ThreadHoverView<'a> {
+    /// Thread whose `ThreadHoverCard` is visible.
+    /// Painted bounds of the open row.
+    pub(crate) rect: &'a RowRectCell,
+    pub(crate) open_for: Option<&'a str>,
+    pub(crate) environment_label: Option<&'a str>,
 }
 
 /// Inline rename field (`ThreadRenameInput`): Enter and blur commit, Escape cancels.
@@ -855,17 +882,38 @@ fn render_rename_field(
         .into_any_element()
 }
 
-/// Right-click opens the Thread Actions menu; double-click starts inline rename.
+/// Right-click opens the Thread Actions menu; double-click starts inline rename; hovering opens
+/// the delayed `ThreadHoverCard` flyout and a press closes it.
 fn attach_row_interactions(
     row: gpui_kit::Stateful<gpui_kit::Div>,
-    thread: &ThreadShell,
-    is_renaming: bool,
+    ctx: &RowCtx<'_>,
     cx: &mut Context<'_, ConnApp>,
 ) -> gpui_kit::Stateful<gpui_kit::Div> {
+    let thread = ctx.thread;
+    let is_renaming = ctx.is_renaming;
     let select_id = thread.id.clone();
     let rename_id = thread.id.clone();
     let rename_title = thread.title.clone();
     let menu_id = thread.id.clone();
+    let hover_id = thread.id.clone();
+    let row = row
+        .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
+            app.thread_hover_changed(&hover_id, *hovered, cx);
+        }))
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|app, _, _, cx| app.dismiss_thread_hover(cx)),
+        )
+        .when(ctx.hover_open, |row| {
+            row.child(render_thread_hover_card(
+                thread,
+                ctx.hover_rect,
+                cx.entity().downgrade(),
+                ctx.project,
+                ctx.environment_label,
+                ctx.tokens,
+            ))
+        });
     row.on_click(
         cx.listener(move |app, event: &gpui_kit::ClickEvent, window, cx| {
             let modifiers = event.modifiers();
@@ -1157,7 +1205,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(line1)
         .child(line2);
 
-    card = attach_row_interactions(card, thread, row.is_renaming, cx);
+    card = attach_row_interactions(card, row, cx);
 
     // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)` (100%);
     // light mode adds `ring-1 ring-inset ring-sidebar-border/70`.
@@ -1306,7 +1354,7 @@ fn render_settled_row(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .child(favicon_slot)
         .child(title_el)
         .child(time_slot);
-    slim = attach_row_interactions(slim, thread, row.is_renaming, cx);
+    slim = attach_row_interactions(slim, row, cx);
     if row.selected {
         slim = slim
             .bg(active_bg)
