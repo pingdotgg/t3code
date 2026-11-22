@@ -1705,7 +1705,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const liveSessionResetRevision = yield* Ref.make(initialLiveSessionResetRevision);
     // Tracks signed-out state so readiness and the watcher reject options-only updates until a
     // ready probe or sign-in succeeds. `epoch` advances on sign-out/cache resets so a ready probe
-    // losing a live-catalog race still reopens options replay unless superseded by a newer reset.
+    // losing a live-catalog race still reopens replay of pending options unless superseded.
     const signedOutState = yield* Ref.make({ signedOut: false, epoch: 0 });
     const markSignedOut = Ref.update(signedOutState, (state) => ({
       signedOut: true,
@@ -2212,16 +2212,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   (fresh && liveSnapshot.catalogRevision !== probeStartCatalogRevision)
                 ) {
                   if (reopenedSignedOut) {
-                    const rawCurrent = yield* getSnapshot;
-                    if (rawCurrent.installed) {
-                      const replayed = yield* withLiveRuntimeState(rawCurrent, {
-                        fallbackToAcceptedModels: true,
-                        preserveStatus: rawCurrent.status !== "ready",
-                      });
-                      if (!Equal.equals(replayed, rawCurrent)) {
-                        yield* publishSnapshot(replayed);
-                      }
-                    }
+                    yield* getSnapshot.pipe(
+                      Effect.flatMap((currentSnapshot) => withLiveRuntimeState(currentSnapshot)),
+                      Effect.flatMap(publishSnapshot),
+                    );
                   }
                   return;
                 }
