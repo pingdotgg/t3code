@@ -10,6 +10,8 @@ import {
   type OrbitGatewayEnvironment,
   type OrbitGatewayOperation,
 } from "./client.ts";
+import { fakeOperationNotices } from "./fixtures/fakeOperationNotices.ts";
+import { OPERATION_LIVE_REREAD_MS } from "./operationNotices.ts";
 import {
   cancelOrbitCompletion,
   cancelOrbitCreate,
@@ -1428,6 +1430,41 @@ describe("runOrbitThreadStart", () => {
     const later = { ...second.ports, now: () => 500 };
     expect(await runOrbitThreadStart(renamed, later)).toBe(true);
     expect(second.saves.at(-1)).toMatchObject({ createStartedAt: 500, instanceName: "fix-two" });
+  });
+
+  it("reads the create and the pairing at each Reverb notice, with no timed polls", async () => {
+    const { client, calls } = gateway({ create: ["running", "running", "succeeded"] });
+    const notices = fakeOperationNotices();
+    const run = ports({ ...client, operationNotices: notices.operationNotices });
+    const reads: string[] = [];
+    // Only notices end a wait here; the fallback read never comes.
+    const sleeps: number[] = [];
+    const started = runOrbitThreadStart(fresh(), {
+      ...run.ports,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return new Promise(() => {});
+      },
+      onCreateOperation: (operation) => reads.push(operation.status),
+    });
+    await vi.waitFor(() => expect(notices.waiting(100)).toBe(true));
+    expect(reads).toEqual(["running"]);
+    notices.notify(100);
+    await vi.waitFor(() => expect(reads).toEqual(["running", "running"]));
+    notices.notify(100);
+    await vi.waitFor(() => expect(notices.waiting(200)).toBe(true));
+    expect(reads).toEqual(["running", "running", "succeeded"]);
+    notices.notify(200);
+    expect(await started).toBe(true);
+    expect(calls.filter((call) => call.startsWith("operation"))).toEqual([
+      "operation 100",
+      "operation 100",
+      "operation 100",
+      "operation 200",
+      "operation 200",
+    ]);
+    expect(sleeps.every((ms) => ms === OPERATION_LIVE_REREAD_MS)).toBe(true);
+    expect(notices.stopped).toEqual([100, 200]);
   });
 
   it("hands each read of the create Operation to the setup card", async () => {

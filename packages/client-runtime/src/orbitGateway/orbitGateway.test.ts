@@ -421,6 +421,7 @@ describe("createOrbitGatewayClient", () => {
       ]);
       const waits: number[] = [];
       const client = createOrbitGatewayClient(transport, {
+        realtime: false,
         sleep: async (ms) => {
           waits.push(ms);
         },
@@ -494,6 +495,7 @@ describe("createOrbitGatewayClient", () => {
       ]);
       const waits: number[] = [];
       const client = createOrbitGatewayClient(transport, {
+        realtime: false,
         sleep: async (ms) => {
           waits.push(ms);
         },
@@ -522,6 +524,7 @@ describe("createOrbitGatewayClient", () => {
       const client = createOrbitGatewayClient(
         async () => ({ status: 200, body: JSON.stringify({ data: operation("running") }) }),
         {
+          realtime: false,
           now: () => clock,
           sleep: async (ms) => {
             clock += ms;

@@ -7,6 +7,7 @@ import {
   type OrbitGatewayClient,
   type OrbitGatewayOperation,
 } from "./client.ts";
+import { waitForOperationRead } from "./operationNotices.ts";
 import {
   observeOrbitCompletionRows,
   reopenOrbitCompletionRows,
@@ -125,7 +126,7 @@ const FOLLOW_PASS_MS = 30 * 60_000;
 const ADMISSION_MS = 5 * 60_000;
 
 export interface OrbitCompletionPorts {
-  readonly client: Pick<OrbitGatewayClient, "operation" | "completeInstance">;
+  readonly client: Pick<OrbitGatewayClient, "operation" | "completeInstance" | "operationNotices">;
   /** The saved start, read fresh: another window may have retried or dismissed it. */
   readonly read: () => OrbitThreadStart | null;
   readonly save: (start: OrbitThreadStart) => void;
@@ -145,25 +146,36 @@ export async function followOrbitCompletion(
   if (operationId === null) return "stopped";
   const begin = ports.now();
   let outageSince: number | null = null;
-  for (;;) {
-    if (ports.read()?.completionOperationId !== operationId) return "stopped";
-    let operation: OrbitGatewayOperation | null;
-    try {
-      operation = await ports.client.operation(operationId);
-      outageSince = null;
-    } catch (error) {
-      outageSince ??= ports.now();
-      if (!isTransient(error) || ports.now() - outageSince >= READ_OUTAGE_MS) return "lost";
-      operation = null;
+  const notices = ports.client.operationNotices?.(operationId) ?? null;
+  try {
+    for (;;) {
+      if (ports.read()?.completionOperationId !== operationId) return "stopped";
+      let operation: OrbitGatewayOperation | null;
+      try {
+        operation = await ports.client.operation(operationId);
+        outageSince = null;
+      } catch (error) {
+        outageSince ??= ports.now();
+        if (!isTransient(error) || ports.now() - outageSince >= READ_OUTAGE_MS) return "lost";
+        operation = null;
+      }
+      if (operation !== null) {
+        const fresh = ports.read();
+        if (fresh?.completionOperationId !== operationId) return "stopped";
+        ports.save(applyOrbitCompletionRead(fresh, operation, ports.now()));
+        if (OPERATION_TERMINAL_STATUSES.has(operation.status)) return "ended";
+      }
+      if (ports.now() - begin >= FOLLOW_PASS_MS) return "lost";
+      await waitForOperationRead({
+        notices: operation === null ? null : notices,
+        sequence: operation?.sequence ?? null,
+        pollMs: operationPollDelayMs(operation?.pollAfterSeconds ?? null),
+        maxMs: begin + FOLLOW_PASS_MS - ports.now(),
+        sleep: ports.sleep,
+      });
     }
-    if (operation !== null) {
-      const fresh = ports.read();
-      if (fresh?.completionOperationId !== operationId) return "stopped";
-      ports.save(applyOrbitCompletionRead(fresh, operation, ports.now()));
-      if (OPERATION_TERMINAL_STATUSES.has(operation.status)) return "ended";
-    }
-    if (ports.now() - begin >= FOLLOW_PASS_MS) return "lost";
-    await ports.sleep(operationPollDelayMs(operation?.pollAfterSeconds ?? null));
+  } finally {
+    notices?.stop();
   }
 }
 

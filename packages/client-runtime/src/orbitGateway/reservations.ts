@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { waitForOperationRead, type OrbitOperationNotices } from "./operationNotices.ts";
 import {
   OrbitGatewayError,
   type OrbitGatewayClient,
@@ -14,8 +15,9 @@ import {
  */
 
 /**
- * Poll a preparing reservation, and a ready one still without its pairing link, every 500 ms (a
- * read is cheap); read a paired one every 60 s so it stays held.
+ * A preparing reservation is read at each notice of its create Operation over Reverb, or every
+ * 500 ms without them; a ready one still without its pairing link every 500 ms (a read is cheap);
+ * a paired one every 60 s so it stays held.
  */
 export const RESERVATION_PREPARING_POLL_MS = 500;
 export const RESERVATION_KEEPALIVE_MS = 60_000;
@@ -30,7 +32,7 @@ export const MAX_OPEN_RESERVATIONS = 3;
 
 export type OrbitReservationClient = Pick<
   OrbitGatewayClient,
-  "reserve" | "reservation" | "releaseReservation" | "pair"
+  "reserve" | "reservation" | "releaseReservation" | "pair" | "operationNotices"
 >;
 
 export interface OrbitReservationPorts {
@@ -73,6 +75,8 @@ interface Entry {
   readyWithoutPairingSince: number | null;
   /** Closed or taken: the loop stops; a reservation still being admitted is released when it arrives. */
   ended: "closed" | "taken" | null;
+  /** The create Operation's notices while the reservation prepares. */
+  notices: OrbitOperationNotices | null;
 }
 
 interface OwnedPairing {
@@ -246,7 +250,13 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
     }
   };
 
+  const stopNotices = (entry: Entry) => {
+    entry.notices?.stop();
+    entry.notices = null;
+  };
+
   const drop = (entry: Entry) => {
+    stopNotices(entry);
     if (entries.get(entry.projectId) === entry) entries.delete(entry.projectId);
     changed();
   };
@@ -347,21 +357,36 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
     changed();
     // An already-ready POST still needs its first GET before pairing.
     let readNow = reservation.state === "ready";
-    while (entries.get(entry.projectId) === entry) {
-      const current = entry.reservation;
-      if (!readNow) {
-        const ready =
-          current.state === "ready" &&
-          current.environmentId !== null &&
-          (entry.paired || waitedForIssuedPairing(entry, ports.now()));
-        await ports.sleep(ready ? RESERVATION_KEEPALIVE_MS : RESERVATION_PREPARING_POLL_MS);
+    try {
+      while (entries.get(entry.projectId) === entry) {
+        const current = entry.reservation;
+        if (!readNow) {
+          const ready =
+            current.state === "ready" &&
+            current.environmentId !== null &&
+            (entry.paired || waitedForIssuedPairing(entry, ports.now()));
+          if (current.state === "preparing" && current.createOperationId !== null) {
+            entry.notices ??= ports.client.operationNotices?.(current.createOperationId) ?? null;
+          } else {
+            stopNotices(entry);
+          }
+          await waitForOperationRead({
+            notices: entry.notices,
+            sequence: null,
+            pollMs: ready ? RESERVATION_KEEPALIVE_MS : RESERVATION_PREPARING_POLL_MS,
+            maxMs: Number.POSITIVE_INFINITY,
+            sleep: ports.sleep,
+          });
+        }
+        if (entry.ended !== null) return;
+        readNow = false;
+        const pending = refresh(entry, current);
+        entry.pending = pending;
+        await pending;
+        entry.pending = null;
       }
-      if (entry.ended !== null) return;
-      readNow = false;
-      const pending = refresh(entry, current);
-      entry.pending = pending;
-      await pending;
-      entry.pending = null;
+    } finally {
+      stopNotices(entry);
     }
   };
 
@@ -387,6 +412,7 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
         paired: false,
         readyWithoutPairingSince: null,
         ended: null,
+        notices: null,
       };
       entries.set(projectId, entry);
       void run(entry);
@@ -404,6 +430,7 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
         return null;
       }
       entry.ended = "taken";
+      stopNotices(entry);
       if (entry.pending !== null) {
         const pending = entry.pending;
         handedOff.set(reservation.id, pending);

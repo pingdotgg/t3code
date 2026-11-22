@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -26,6 +27,8 @@ import {
   type OrbitGatewayRequest,
   type OrbitGatewayReservation,
 } from "./client.ts";
+import { fakeOperationNotices } from "./fixtures/fakeOperationNotices.ts";
+import { OPERATION_LIVE_REREAD_MS } from "./operationNotices.ts";
 import {
   MAX_OPEN_RESERVATIONS,
   RESERVATION_KEEPALIVE_MS,
@@ -106,6 +109,7 @@ function harness(
     reserve?: (projectId: number) => Promise<OrbitGatewayReservation>;
     saved?: (environmentId: string) => boolean;
     stored?: string[];
+    notices?: ReturnType<typeof fakeOperationNotices>;
   } = {},
 ) {
   const calls: string[] = [];
@@ -135,6 +139,7 @@ function harness(
       calls.push(`pair ${environmentId}`);
       return { environmentId, pairingUrl: `https://pair/${environmentId}`, expiresAt: "" };
     },
+    ...(options.notices ? { operationNotices: options.notices.operationNotices } : {}),
   };
   let now = 0;
   const reservations = createOrbitReservations({
@@ -187,6 +192,31 @@ describe("createOrbitReservations", () => {
     await clock.tick();
     // Paired once; the keep-alive read only.
     expect(calls.slice(5)).toEqual(["read r78"]);
+  });
+
+  it("reads a preparing reservation at each notice of its create Operation, then pairs with the issued link", async () => {
+    const notices = fakeOperationNotices();
+    const { calls, clock, reservations } = harness({
+      notices,
+      reads: [
+        reservation("r78", "preparing"),
+        reservation("r78", "ready", { pairing: issued("env-r78") }),
+      ],
+    });
+    reservations.open(78);
+    await flush();
+    expect(notices.followed).toEqual([300]);
+    // Live: only Orbit's slow fallback read is timed.
+    expect(clock.sleeps.map((entry) => entry.ms)).toEqual([OPERATION_LIVE_REREAD_MS]);
+    notices.notify(300);
+    await flush();
+    expect(calls).toEqual(["reserve 78", "read r78"]);
+    notices.notify(300);
+    await flush();
+    expect(calls).toEqual(["reserve 78", "read r78", "read r78", "connect env-r78"]);
+    // Ready and paired: the notices end, and only the keep-alive read is left.
+    await vi.waitFor(() => expect(notices.stopped).toEqual([300]));
+    expect(clock.sleeps.at(-1)?.ms).toBe(RESERVATION_KEEPALIVE_MS);
   });
 
   it("pairs explicitly when the Gateway delivers no link for 4 s of ready reads", async () => {
@@ -706,6 +736,8 @@ function startHarness(script: {
   dismissed?: () => boolean;
   save?: (start: OrbitThreadStart) => void;
   connect?: (environmentId: string, pairingUrl: string) => Promise<void>;
+  /** Follows Operations by these notices; only they end a wait. */
+  notices?: ReturnType<typeof fakeOperationNotices>;
 }) {
   const calls: string[] = [];
   const reads = [...(script.reads ?? [])];
@@ -783,6 +815,7 @@ function startHarness(script: {
       pairingUrl: "u",
       expiresAt: "",
     }),
+    ...(script.notices ? { operationNotices: script.notices.operationNotices } : {}),
   };
   const saves: OrbitThreadStart[] = [];
   const sent: string[] = [];
@@ -803,6 +836,7 @@ function startHarness(script: {
         sleep: async (ms) => {
           if (calls.at(-1) === "operation 100") createWaits.push(ms);
           if (calls.at(-1) === "operation 900") finalizeWaits.push(ms);
+          if (script.notices) return new Promise<void>(() => {});
           clock += ms;
         },
         now: () => clock,
@@ -1162,6 +1196,28 @@ describe("runOrbitThreadStart with a reservation", () => {
     const harness = startHarness({ nameLimit: 20, nameFits: fits });
     expect(await harness.run({ ...reservedStart(), message, nameSuffix: "k3j9" })).toBe(true);
     expect(harness.calls).toContain("finalize r1 please-refac-k3j9");
+  });
+
+  it("waits on the create's and the finalize's notices, not on a timer", async () => {
+    const notices = fakeOperationNotices();
+    const harness = startHarness({
+      notices,
+      reads: [reservation("r1", "preparing"), reservation("r1", "ready")],
+      finalizeRunningReads: 1,
+    });
+    const started = harness.run(reservedStart(), () => false);
+    await flush();
+    expect(harness.calls).toEqual(["read r1"]);
+    expect(notices.waiting(300)).toBe(true);
+    notices.notify(300);
+    await vi.waitFor(() => expect(notices.waiting(900)).toBe(true));
+    expect(harness.calls).toEqual(["read r1", "read r1", "finalize r1 fix-login", "operation 900"]);
+    notices.notify(900);
+    expect(await started).toBe(true);
+    expect(harness.calls.filter((call) => call === "operation 900")).toHaveLength(2);
+    expect(harness.finalizeWaits).toEqual([OPERATION_LIVE_REREAD_MS]);
+    // The ordinary pairing that follows is followed by its notices too.
+    expect(notices.stopped).toEqual([300, 900, 200]);
   });
 
   it("reads a running finalize every 200 ms for its first 2 s", async () => {

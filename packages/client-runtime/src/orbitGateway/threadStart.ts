@@ -27,6 +27,7 @@ import {
   type OrbitGatewayOperation,
   type OrbitGatewayProject,
 } from "./client.ts";
+import { waitForOperationRead, type OrbitOperationNotices } from "./operationNotices.ts";
 import type { OrbitReservationPairing, TakenOrbitReservation } from "./reservations.ts";
 import {
   observeOrbitCreateRows,
@@ -857,37 +858,51 @@ export async function runOrbitThreadStart(
     const fastestUntil = ports.now() + FAST_POLL_WINDOW_MS;
     let outageSince: number | null = null;
     let lastHint: number | null = null;
-    for (;;) {
-      checkStopped();
-      await beforeRead?.();
-      let operation;
-      try {
-        operation = await ports.client.operation(operationId);
-        outageSince = null;
-        observe?.(operation);
-      } catch (error) {
-        // A create runs for minutes; a short Gateway outage must not stop it.
-        outageSince ??= ports.now();
-        if (!isTransient(error) || ports.now() - outageSince >= READ_OUTAGE_MS) throw error;
-        operation = null;
+    let sequence: number | null = null;
+    const notices = ports.client.operationNotices?.(operationId) ?? null;
+    try {
+      for (;;) {
+        checkStopped();
+        await beforeRead?.();
+        let operation;
+        try {
+          operation = await ports.client.operation(operationId);
+          outageSince = null;
+          sequence = operation.sequence ?? sequence;
+          observe?.(operation);
+        } catch (error) {
+          // A create runs for minutes; a short Gateway outage must not stop it.
+          outageSince ??= ports.now();
+          if (!isTransient(error) || ports.now() - outageSince >= READ_OUTAGE_MS) throw error;
+          operation = null;
+        }
+        if (operation?.status === "succeeded") return operation;
+        if (operation && OPERATION_TERMINAL_STATUSES.has(operation.status)) {
+          throw failed(
+            operation.errorCode ?? `operation.${operation.status}`,
+            operation.error?.detail ?? null,
+            operation,
+          );
+        }
+        if (ports.now() >= deadline) throw failed("operation.timeout", null, null);
+        if (operation !== null) lastHint = operation.pollAfterSeconds ?? lastHint;
+        // A failed read keeps the last hint, so a failing Gateway is not read faster.
+        const hinted = operationPollDelayMs(lastHint);
+        const waited =
+          fastPollMs !== undefined && ports.now() < fastestUntil ? fastPollMs : WAITED_POLL_MS;
+        const wait =
+          operation !== null && ports.now() < fastUntil ? Math.min(hinted, waited) : hinted;
+        // A failed read retries on the poll wait; the next notice may never come.
+        await waitForOperationRead({
+          notices: operation === null ? null : notices,
+          sequence,
+          pollMs: wait,
+          maxMs: deadline - ports.now(),
+          sleep: ports.sleep,
+        });
       }
-      if (operation?.status === "succeeded") return operation;
-      if (operation && OPERATION_TERMINAL_STATUSES.has(operation.status)) {
-        throw failed(
-          operation.errorCode ?? `operation.${operation.status}`,
-          operation.error?.detail ?? null,
-          operation,
-        );
-      }
-      if (ports.now() >= deadline) throw failed("operation.timeout", null, null);
-      if (operation !== null) lastHint = operation.pollAfterSeconds ?? lastHint;
-      // A failed read keeps the last hint, so a failing Gateway is not read faster.
-      const hinted = operationPollDelayMs(lastHint);
-      const waited =
-        fastPollMs !== undefined && ports.now() < fastestUntil ? fastPollMs : WAITED_POLL_MS;
-      const wait =
-        operation !== null && ports.now() < fastUntil ? Math.min(hinted, waited) : hinted;
-      await ports.sleep(Math.max(Math.min(wait, deadline - ports.now()), 0));
+    } finally {
+      notices?.stop();
     }
   };
 
@@ -994,55 +1009,71 @@ export async function runOrbitThreadStart(
       // Wait until the clone is ready; a reservation that cannot become ready soon falls back.
       const readyBy = Math.min(deadline, ports.now() + RESERVATION_WAIT_MS);
       let instanceId: number | null = null;
-      while (!pairedWhileTyping) {
-        checkStopped();
-        let reservation;
-        try {
-          reservation = await ports.client.reservation(reservationId);
-        } catch (error) {
-          if (isReservationGone(error) || !isTransient(error)) return null;
-          reservation = null;
-        }
-        if (reservation !== null) {
-          if (reservation.id !== reservationId || reservation.projectId !== current.projectId) {
-            return null;
+      // A preparing reservation is ready once its create Operation succeeds: wait on its notices.
+      let createNotices: OrbitOperationNotices | null = null;
+      try {
+        while (!pairedWhileTyping) {
+          checkStopped();
+          let reservation;
+          try {
+            reservation = await ports.client.reservation(reservationId);
+          } catch (error) {
+            if (isReservationGone(error) || !isTransient(error)) return null;
+            reservation = null;
           }
-          const replay = reservation.state === "finalized" && current.createKey != null;
-          if (reservation.state === "ready" || reservation.state === "finalizing" || replay) {
-            instanceId = reservation.instanceId;
-            checkStopped();
-            const { environmentId, pairing } = reservation;
-            if (environmentId !== null) update({ reservedEnvironmentId: environmentId });
-            checkStopped();
-            if (
-              reservation.state === "ready" &&
-              pairing !== null &&
-              environmentId === pairing.environmentId &&
-              !ports.isSaved(environmentId)
-            ) {
-              // GET hands out the link once. Install it in memory before continuing the start.
-              try {
-                const connect = (installId?: string) =>
-                  ports.connect(environmentId, pairing.pairingUrl, installId);
-                if (ports.reservationPairing) {
-                  await ports.reservationPairing.installPairing(
-                    reservationId,
-                    environmentId,
-                    connect,
-                  );
-                } else {
-                  await connect();
-                }
-              } catch {
-                // Pair explicitly after finalize if the server was not saved.
-              }
+          if (reservation !== null) {
+            if (reservation.id !== reservationId || reservation.projectId !== current.projectId) {
+              return null;
             }
-            break;
+            const replay = reservation.state === "finalized" && current.createKey != null;
+            if (reservation.state === "ready" || reservation.state === "finalizing" || replay) {
+              instanceId = reservation.instanceId;
+              checkStopped();
+              const { environmentId, pairing } = reservation;
+              if (environmentId !== null) update({ reservedEnvironmentId: environmentId });
+              checkStopped();
+              if (
+                reservation.state === "ready" &&
+                pairing !== null &&
+                environmentId === pairing.environmentId &&
+                !ports.isSaved(environmentId)
+              ) {
+                // GET hands out the link once. Install it in memory before continuing the start.
+                try {
+                  const connect = (installId?: string) =>
+                    ports.connect(environmentId, pairing.pairingUrl, installId);
+                  if (ports.reservationPairing) {
+                    await ports.reservationPairing.installPairing(
+                      reservationId,
+                      environmentId,
+                      connect,
+                    );
+                  } else {
+                    await connect();
+                  }
+                } catch {
+                  // Pair explicitly after finalize if the server was not saved.
+                }
+              }
+              break;
+            }
+            if (reservation.state !== "preparing") return null;
+            if (createNotices === null && reservation.createOperationId !== null) {
+              createNotices =
+                ports.client.operationNotices?.(reservation.createOperationId) ?? null;
+            }
           }
-          if (reservation.state !== "preparing") return null;
+          if (ports.now() >= readyBy) return null;
+          await waitForOperationRead({
+            notices: reservation === null ? null : createNotices,
+            sequence: null,
+            pollMs: RESERVATION_POLL_MS,
+            maxMs: readyBy - ports.now(),
+            sleep: ports.sleep,
+          });
         }
-        if (ports.now() >= readyBy) return null;
-        await ports.sleep(Math.max(Math.min(RESERVATION_POLL_MS, readyBy - ports.now()), 0));
+      } finally {
+        createNotices?.stop();
       }
       checkStopped();
       // A name made from the message fits Orbit's address limits, as for a create.

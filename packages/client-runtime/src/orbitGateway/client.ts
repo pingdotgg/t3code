@@ -1,6 +1,13 @@
 // @effect-diagnostics globalTimers:off - The Gateway client runs in the app, outside an Effect runtime.
 import * as Schema from "effect/Schema";
 
+import {
+  followOrbitOperationNotices,
+  waitForOperationRead,
+  type OrbitOperationNotices,
+} from "./operationNotices.ts";
+import type { OrbitRealtimeSocket } from "./realtimeSubscription.ts";
+
 /**
  * The Conn layer of the Orbit Gateway (`/api/v1/conn`, see Orbit's docs/reference/conn.md).
  *
@@ -347,6 +354,8 @@ export interface OrbitGatewayOperation {
   readonly errorCode: string | null;
   /** Seconds to wait before the next read, or null once the Operation ended. */
   readonly pollAfterSeconds: number | null;
+  /** Grows with each change; a Reverb notice at or below it is already read. Absent on older Gateways. */
+  readonly sequence?: number;
   /**
    * Step progress. Present only when the Gateway sends it; an Operation without it parses as
    * before, and a malformed step is dropped.
@@ -485,6 +494,8 @@ export interface OrbitGatewayClient {
   ) => Promise<OrbitGatewayOperation>;
   /** Reads an Operation this device started through the Conn layer. */
   readonly operation: (operationId: number) => Promise<OrbitGatewayOperation>;
+  /** Follows an Operation's Reverb notices, which say when to read it again. Stop it when done. */
+  readonly operationNotices?: (operationId: number) => OrbitOperationNotices;
   /** Asks Orbit to stop an Operation this device started; the stop may still be pending. */
   readonly cancelOperation: (operationId: number) => Promise<OrbitGatewayOperation>;
   /**
@@ -600,6 +611,10 @@ export interface OrbitGatewayClientOptions {
   /** Waits between Operation polls. Tests replace it. */
   readonly sleep?: (ms: number) => Promise<void>;
   readonly now?: () => number;
+  /** Opens the Reverb socket of `operationNotices`. Tests replace it. */
+  readonly realtimeSocket?: (url: string) => OrbitRealtimeSocket;
+  /** False: no `operationNotices`; Operations are polled. */
+  readonly realtime?: false;
 }
 
 export function createOrbitGatewayClient(
@@ -661,35 +676,56 @@ export function createOrbitGatewayClient(
   ): Promise<Record<string, unknown>> => {
     let operation = started;
     const deadline = now() + OPERATION_TIMEOUT_MS;
-    for (;;) {
-      if (typeof operation?.id !== "number" || typeof operation.status !== "string") {
-        throw invalid(path);
-      }
-      if (operation.status === "succeeded") return operation;
-      if (!OPEN_OPERATION_STATUSES.has(operation.status)) {
-        throw new OrbitGatewayError({
-          code:
-            typeof operation.error_code === "string" ? operation.error_code : "operation.failed",
-          message: `The Orbit Gateway could not finish ${path}: the Operation ${operation.status}.`,
-          status: 0,
-          details: { operation_id: operation.id },
+    let notices: OrbitOperationNotices | null = null;
+    try {
+      for (;;) {
+        if (typeof operation?.id !== "number" || typeof operation.status !== "string") {
+          throw invalid(path);
+        }
+        if (operation.status === "succeeded") return operation;
+        if (!OPEN_OPERATION_STATUSES.has(operation.status)) {
+          throw new OrbitGatewayError({
+            code:
+              typeof operation.error_code === "string" ? operation.error_code : "operation.failed",
+            message: `The Orbit Gateway could not finish ${path}: the Operation ${operation.status}.`,
+            status: 0,
+            details: { operation_id: operation.id },
+          });
+        }
+        if (now() >= deadline) {
+          throw new OrbitGatewayError({
+            code: "operation.timeout",
+            message: `The Orbit Gateway did not finish ${path} in time.`,
+            status: 0,
+            details: { operation_id: operation.id },
+          });
+        }
+        notices ??= operationNotices?.(operation.id) ?? null;
+        const wait = operationPollDelayMs(
+          typeof operation.poll_after_seconds === "number" ? operation.poll_after_seconds : null,
+        );
+        await waitForOperationRead({
+          notices,
+          sequence: typeof operation.sequence === "number" ? operation.sequence : null,
+          pollMs: wait,
+          maxMs: Math.max(deadline - now(), 0),
+          sleep,
         });
+        operation = record(await call({ method: "GET", path: `/operations/${operation.id}` }));
       }
-      if (now() >= deadline) {
-        throw new OrbitGatewayError({
-          code: "operation.timeout",
-          message: `The Orbit Gateway did not finish ${path} in time.`,
-          status: 0,
-          details: { operation_id: operation.id },
-        });
-      }
-      const wait = operationPollDelayMs(
-        typeof operation.poll_after_seconds === "number" ? operation.poll_after_seconds : null,
-      );
-      await sleep(Math.max(Math.min(wait, deadline - now()), 0));
-      operation = record(await call({ method: "GET", path: `/operations/${operation.id}` }));
+    } finally {
+      notices?.stop();
     }
   };
+  const operationNotices =
+    options.realtime === false
+      ? undefined
+      : (operationId: number) =>
+          followOrbitOperationNotices({
+            transport,
+            operationId,
+            ...(options.realtimeSocket ? { socket: options.realtimeSocket } : {}),
+          });
 
   return {
     me: async () => node(await call({ method: "GET", path: "/me" }), "/me"),
@@ -813,6 +849,7 @@ export function createOrbitGatewayClient(
         return read;
       }
     },
+    ...(operationNotices ? { operationNotices } : {}),
     cancelOperation: async (operationId) => {
       const path = `/operations/${operationId}/cancel`;
       return operation(await call({ method: "POST", path, body: {} }), path);
@@ -1000,6 +1037,7 @@ function operation(value: unknown, path: string): OrbitGatewayOperation {
     targetId: data.target_id,
     errorCode: typeof data.error_code === "string" ? data.error_code : null,
     pollAfterSeconds: typeof data.poll_after_seconds === "number" ? data.poll_after_seconds : null,
+    ...(typeof data.sequence === "number" ? { sequence: data.sequence } : {}),
     ...(Array.isArray(data.steps) ? { steps: data.steps.flatMap(operationStep) } : {}),
     ...("current_step" in data ? { currentStep: optionalText(data.current_step) } : {}),
     ...("current_step_started_at" in data

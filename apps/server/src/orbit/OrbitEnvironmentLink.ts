@@ -235,6 +235,8 @@ const make = Effect.gen(function* () {
       links,
       transport: (gatewayUrl) => orbitGatewayTransport(gateway.request, gatewayUrl, run),
       clientOptions: {
+        // The server follows the pairing by polling; Reverb notices are for the clients' launch UI.
+        realtime: false,
         sleep: (ms) => run(Effect.sleep(ms)),
         now: () => clock.currentTimeMillisUnsafe(),
       },

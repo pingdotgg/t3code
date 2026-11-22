@@ -27,13 +27,16 @@ const error = (status: number, code: string): OrbitGatewayResponse => ({
 function gateway(answers: Array<OrbitGatewayResponse | Error>) {
   const requests: OrbitGatewayRequest[] = [];
   let clock = 0;
-  const client = createOrbitGatewayClient(async (request) => {
-    requests.push(request);
-    const answer = answers.shift();
-    if (answer === undefined) throw new Error("no more answers");
-    if (answer instanceof Error) throw answer;
-    return answer;
-  });
+  const client = createOrbitGatewayClient(
+    async (request) => {
+      requests.push(request);
+      const answer = answers.shift();
+      if (answer === undefined) throw new Error("no more answers");
+      if (answer instanceof Error) throw answer;
+      return answer;
+    },
+    { realtime: false },
+  );
   const waker = createOrbitInstanceWaker({
     now: () => clock,
     sleep: async (ms) => {

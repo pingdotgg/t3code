@@ -7,6 +7,7 @@ import {
   type OrbitGatewayClient,
   type OrbitGatewayWakeOperation,
 } from "./client.ts";
+import { waitForOperationRead } from "./operationNotices.ts";
 
 /**
  * Conn: wakes an asleep Orbit Instance before Conn connects to its T3 server. A connect to a frozen
@@ -81,16 +82,29 @@ export function createOrbitInstanceWaker(
           throw error;
         }
       }
-      while (OPEN_STATUSES.has(operation.status)) {
-        if (now() >= deadline) {
-          return {
-            kind: "failed",
-            code: "operation.timeout",
-            message: `Orbit did not wake Instance ${instanceId} in time.`,
-          };
+      const notices = OPEN_STATUSES.has(operation.status)
+        ? (client.operationNotices?.(operation.id) ?? null)
+        : null;
+      try {
+        while (OPEN_STATUSES.has(operation.status)) {
+          if (now() >= deadline) {
+            return {
+              kind: "failed",
+              code: "operation.timeout",
+              message: `Orbit did not wake Instance ${instanceId} in time.`,
+            };
+          }
+          await waitForOperationRead({
+            notices,
+            sequence: null,
+            pollMs: operationPollDelayMs(operation.pollAfterSeconds),
+            maxMs: deadline - now(),
+            sleep,
+          });
+          operation = await client.wakeOperation(operation.id);
         }
-        await sleep(operationPollDelayMs(operation.pollAfterSeconds));
-        operation = await client.wakeOperation(operation.id);
+      } finally {
+        notices?.stop();
       }
       if (operation.status === "succeeded") return { kind: "awake" };
       return {

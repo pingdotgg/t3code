@@ -56,6 +56,7 @@ const run = (options: {
     const link = makeLink({
       transport: (gatewayUrl) => orbitGatewayTransport(request, gatewayUrl, Effect.runPromise),
       clientOptions: {
+        realtime: false,
         sleep: async (ms) => {
           now += ms;
         },
