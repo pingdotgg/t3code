@@ -4696,6 +4696,65 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  // regression: #27018 thread/unsubscribe leaves a thread's MCP servers running in a removed worktree
+  it.effect("stops the loaded threads of a removed workspace and no others", () =>
+    Effect.gen(function* () {
+      const exchange = (
+        id: number,
+        method: string,
+        params: unknown,
+        result: unknown,
+      ): ReadonlyArray<CodexReplay.CodexAppServerReplayEntry> => [
+        { type: "expect_outbound", label: `${method}-${id}`, frame: { id, method, params } },
+        { type: "emit_inbound", label: `${method}-${id}-result`, frame: { id, result } },
+      ];
+      const read = (id: number, threadId: string, cwd: string) =>
+        exchange(
+          id,
+          "thread/read",
+          { threadId, includeTurns: false },
+          { thread: { id: threadId, cwd } },
+        );
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "codex-unload-removed-workspace",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId: "kept-thread",
+              nativeTurnId: "unused-turn",
+              prompt: "unused-prompt",
+            }).slice(0, 5),
+            ...exchange(3, "thread/loaded/list", {}, { data: ["kept-thread"], nextCursor: "next" }),
+            ...exchange(4, "thread/loaded/list", { cursor: "next" }, { data: ["removed-thread"] }),
+            ...read(5, "kept-thread", "/repo"),
+            ...read(6, "removed-thread", "/worktrees/removed"),
+            ...exchange(7, "thread/archive", { threadId: "removed-thread" }, {}),
+            ...exchange(
+              8,
+              "thread/unarchive",
+              { threadId: "removed-thread" },
+              {
+                thread: { id: "removed-thread" },
+              },
+            ),
+          ],
+        }),
+      );
+      yield* harness.runtime.unloadThreadsIn!({
+        inWorkspace: (cwd) => cwd === "/worktrees/removed",
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
   // regression: #33747 Codex refuses thread/resume until an unsubscribed thread finishes closing
   it.effect.each([
     { name: "waits for thread/closed after a closing error", closedFirst: false },

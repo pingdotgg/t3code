@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
@@ -208,6 +209,12 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
+    // Windows frees a folder only once every process holding it has exited, and a stopped
+    // provider's children can take seconds. Up to ten seconds, the first retry at once.
+    Effect.retry({
+      schedule: Schedule.concat(Schedule.recurs(1), Schedule.spaced("500 millis")),
+      times: 21,
+    }),
     Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
     Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
   );

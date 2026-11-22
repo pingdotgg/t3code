@@ -3292,8 +3292,12 @@ export const layerWsRpc = (
             Effect.tap(() => refreshGitStatus(input.cwd)),
           ),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
+          // A provider process still exiting holds the folder open, which fails the removal on Windows.
           // A thread's worktree may be a task folder: its repositories' worktrees go with it.
-          taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }).pipe(
+          providerSessionManager.closeInWorkspace(input.path).pipe(
+            Effect.andThen(
+              taskFolders.removeIfTaskFolder({ path: input.path, force: input.force === true }),
+            ),
             Effect.mapError(
               (cause) =>
                 new GitCommandError({

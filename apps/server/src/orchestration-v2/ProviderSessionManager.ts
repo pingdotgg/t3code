@@ -1,4 +1,5 @@
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
@@ -35,6 +36,7 @@ import * as FiberSet from "effect/FiberSet";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
@@ -267,6 +269,11 @@ export interface ProviderSessionManagerV2Shape {
   readonly closeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /**
+   * Stops what providers run inside a folder that is about to be removed, and returns once
+   * their processes are gone. A session shared with other workspaces only unloads its threads.
+   */
+  readonly closeInWorkspace: (workspacePath: string) => Effect.Effect<void>;
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
@@ -447,6 +454,7 @@ export const layerWithOptions = (
   | FileSystem.FileSystem
   | IdAllocator.IdAllocatorV2
   | McpProviderSessions.McpProviderSessions
+  | Path.Path
   | McpSessionRegistry.McpSessionRegistry
   | ProjectionStore.ProjectionStoreV2
   | ProviderEventIngestor.ProviderEventIngestorV2
@@ -458,6 +466,7 @@ export const layerWithOptions = (
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
       const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const mcpSessionRegistry = yield* McpSessionRegistry.McpSessionRegistry;
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
       /** Unreadable settings must preserve explicit browser-access opt-outs. */
@@ -547,6 +556,8 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      /** Sessions being torn down, so a workspace removal can wait for their processes to exit. */
+      const releasing = new Set<{ readonly cwd: string; readonly done: Deferred.Deferred<void> }>();
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -1480,7 +1491,7 @@ export const layerWithOptions = (
         return closeExit;
       });
 
-      const releaseEntry = (input: {
+      const releaseLiveEntry = (input: {
         readonly providerSessionId: ProviderSessionId;
         readonly reason: ProviderSessionReleaseReason;
         readonly detail?: string;
@@ -1605,6 +1616,25 @@ export const layerWithOptions = (
             ),
           ),
         );
+
+      // Registered before the entry leaves `sessions`, so a session is always in one of the two.
+      const releaseEntry = Effect.fnUntraced(function* (
+        input: Parameters<typeof releaseLiveEntry>[0],
+      ) {
+        const cwd = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId))?.runtime
+          .providerSession.cwd;
+        if (cwd === undefined) return yield* releaseLiveEntry(input);
+        const pending = { cwd, done: yield* Deferred.make<void>() };
+        releasing.add(pending);
+        return yield* releaseLiveEntry(input).pipe(
+          Effect.ensuring(
+            Effect.suspend(() => {
+              releasing.delete(pending);
+              return Deferred.succeed(pending.done, undefined);
+            }),
+          ),
+        );
+      });
 
       const releaseIfStillIdle = Effect.fn("ProviderSessionManager.releaseIfStillIdle")(
         function* (input: {
@@ -3381,6 +3411,61 @@ export const layerWithOptions = (
             ),
         ),
         release: releaseEntry,
+        closeInWorkspace: Effect.fn("ProviderSessionManager.closeInWorkspace")(
+          function* (workspacePath) {
+            const isWindows = yield* HostProcess.isWindows;
+            const pathKey = (target: string) => {
+              const resolved = path.resolve(target);
+              return isWindows ? resolved.toLowerCase() : resolved;
+            };
+            const inWorkspace = (cwd: string) => {
+              const relative = path.relative(pathKey(workspacePath), pathKey(cwd));
+              return (
+                relative !== ".." &&
+                !relative.startsWith(`..${path.sep}`) &&
+                !path.isAbsolute(relative)
+              );
+            };
+            const logFailure =
+              (providerSessionId: ProviderSessionId) => (cause: Cause.Cause<unknown>) =>
+                Effect.logWarning("orchestration-v2.driver-session.workspace-close-failed", {
+                  providerSessionId,
+                  workspacePath,
+                  cause,
+                });
+            yield* Effect.forEach(
+              [...(yield* Ref.get(sessions)).values()],
+              (entry) => {
+                const providerSessionId = entry.runtime.providerSessionId;
+                if (entry.supportsMultipleProviderThreads) {
+                  // The process serves other workspaces too, so only this one's threads go.
+                  return (
+                    entry.runtime
+                      .unloadThreadsIn?.({ inWorkspace })
+                      .pipe(
+                        Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
+                        Effect.catchCause(logFailure(providerSessionId)),
+                      ) ?? Effect.void
+                  );
+                }
+                return inWorkspace(entry.runtime.providerSession.cwd)
+                  ? releaseEntry({
+                      providerSessionId,
+                      reason: "manual_shutdown",
+                      detail: "Workspace removed.",
+                    }).pipe(Effect.catchCause(logFailure(providerSessionId)))
+                  : Effect.void;
+              },
+              { concurrency: "unbounded", discard: true },
+            );
+            // Releases begun elsewhere, such as the deleted thread's own detach.
+            yield* Effect.forEach(
+              [...releasing].filter((pending) => inWorkspace(pending.cwd)),
+              (pending) => Deferred.await(pending.done),
+              { concurrency: "unbounded", discard: true },
+            );
+          },
+        ),
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {
           const key = sessionKey(input.providerSessionId);
           const before = (yield* Ref.get(sessions)).get(key);

@@ -8416,6 +8416,40 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 ),
               ),
           ),
+          // thread/unsubscribe leaves a thread and its MCP servers running until Codex's own
+          // idle unload. Archiving stops them before it replies; unarchiving at once keeps
+          // the thread listed in Codex's other clients without loading it again.
+          unloadThreadsIn: Effect.fn("CodexAdapterV2.unloadThreadsIn")(
+            function* ({ inWorkspace }) {
+              const loaded: Array<string> = [];
+              let cursor: string | null | undefined;
+              do {
+                const page = yield* client.request(
+                  "thread/loaded/list",
+                  cursor == null ? {} : { cursor },
+                );
+                loaded.push(...page.data);
+                cursor = page.nextCursor;
+              } while (cursor != null);
+              for (const threadId of loaded) {
+                const read = yield* client
+                  .request("thread/read", { threadId, includeTurns: false })
+                  .pipe(Effect.option);
+                if (Option.isNone(read) || !inWorkspace(read.value.thread.cwd)) continue;
+                sessionApprovals.delete(threadId);
+                yield* client.request("thread/archive", { threadId });
+                yield* client.request("thread/unarchive", { threadId });
+              }
+            },
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: CODEX_PROVIDER,
+                  detail: "Failed to unload the Codex threads of a removed workspace",
+                  cause,
+                }),
+            ),
+          ),
           interruptTurn: Effect.fn("CodexAdapterV2.interruptTurn")(
             function* (requestedInput) {
               const nativeThreadId = requestedInput.providerThread.nativeThreadRef?.nativeId;

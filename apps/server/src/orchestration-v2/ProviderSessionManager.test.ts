@@ -490,6 +490,8 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
     readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly interruptTurn?: Effect.Effect<void>;
     readonly beforeUnload?: Effect.Effect<void>;
+    readonly beforeClose?: Effect.Effect<void>;
+    readonly unloadThreadsIn?: (inWorkspace: (cwd: string) => boolean) => Effect.Effect<void>;
     readonly unloads?: Queue.Queue<string>;
     readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
     readonly spawnBeforeOpen?: boolean;
@@ -499,10 +501,13 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
 ) {
   const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
   const countClose = Effect.addFinalizer(() =>
-    Ref.update(state, (current) => ({
-      ...current,
-      closeCount: current.closeCount + 1,
-    })).pipe(
+    (options.beforeClose ?? Effect.void).pipe(
+      Effect.andThen(
+        Ref.update(state, (current) => ({
+          ...current,
+          closeCount: current.closeCount + 1,
+        })),
+      ),
       Effect.andThen(
         options.unloads === undefined ? Effect.void : Queue.offer(options.unloads, "close"),
       ),
@@ -638,6 +643,11 @@ const makeProviderAdapter = Effect.fnUntraced(function* (
               ),
               Effect.andThen(archive === true ? (options.archive ?? Effect.void) : Effect.void),
             ),
+          ...(options.unloadThreadsIn === undefined
+            ? {}
+            : {
+                unloadThreadsIn: ({ inWorkspace }) => options.unloadThreadsIn!(inWorkspace),
+              }),
           respondToRuntimeRequest: () => Effect.void,
           readThreadSnapshot: () => unimplemented("readThreadSnapshot unused in test"),
           rollbackThread: () => unimplemented("rollbackThread unused in test"),
@@ -678,6 +688,8 @@ function layerTest(input: {
   readonly startTurn?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly interruptTurn?: Effect.Effect<void>;
   readonly beforeUnload?: Effect.Effect<void>;
+  readonly beforeClose?: Effect.Effect<void>;
+  readonly unloadThreadsIn?: (inWorkspace: (cwd: string) => boolean) => Effect.Effect<void>;
   readonly unloads?: Queue.Queue<string>;
   readonly archive?: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
   readonly spawnBeforeOpen?: boolean;
@@ -730,6 +742,8 @@ function layerTest(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.interruptTurn === undefined ? {} : { interruptTurn: input.interruptTurn }),
       ...(input.beforeUnload === undefined ? {} : { beforeUnload: input.beforeUnload }),
+      ...(input.beforeClose === undefined ? {} : { beforeClose: input.beforeClose }),
+      ...(input.unloadThreadsIn === undefined ? {} : { unloadThreadsIn: input.unloadThreadsIn }),
       ...(input.unloads === undefined ? {} : { unloads: input.unloads }),
       ...(input.archive === undefined ? {} : { archive: input.archive }),
       ...(input.spawnBeforeOpen === undefined ? {} : { spawnBeforeOpen: input.spawnBeforeOpen }),
@@ -5916,4 +5930,99 @@ it.effect("ProviderSessionManagerV2 gives a delegated child its project's device
     });
     assert.isTrue(child?.capabilities?.has("device"));
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 clears a workspace of provider processes before its removal",
+  () =>
+    Effect.gen(function* () {
+      const openSession = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-workspace-close",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-workspace-close",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId, now: yield* DateTime.now }),
+          ],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        return { manager, threadId, providerSessionId };
+      });
+      const workspace = process.cwd();
+
+      // The deleted thread's own detach is still closing the process when the removal arrives.
+      const exclusiveState = yield* Ref.make(emptyState);
+      const closing = yield* Deferred.make<void>();
+      const exited = yield* Deferred.make<void>();
+      const order: Array<string> = [];
+      yield* Effect.gen(function* () {
+        const { manager, threadId, providerSessionId } = yield* openSession;
+        yield* manager.closeInWorkspace(`${workspace}-sibling`);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        const detach = yield* manager
+          .detach({ providerSessionId, threadId })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(closing);
+        const removal = yield* manager
+          .closeInWorkspace(workspace)
+          .pipe(
+            Effect.andThen(Effect.sync(() => order.push("workspace clear"))),
+            Effect.forkChild({ startImmediately: true }),
+          );
+        yield* Deferred.succeed(exited, undefined);
+        yield* Fiber.join(detach);
+        yield* Fiber.join(removal);
+        assert.deepEqual(order, ["process exit", "workspace clear"]);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state: exclusiveState,
+            idleTimeoutMs: 60_000,
+            capabilities: ExclusiveCapabilities,
+            beforeClose: Deferred.succeed(closing, undefined).pipe(
+              Effect.andThen(Deferred.await(exited)),
+              Effect.andThen(Effect.sync(() => order.push("process exit"))),
+            ),
+          }),
+        ),
+      );
+
+      // One still running there is stopped; a process shared with other workspaces stays up.
+      for (const shared of [false, true]) {
+        const state = yield* Ref.make(emptyState);
+        const unloaded: Array<ReadonlyArray<boolean>> = [];
+        yield* Effect.gen(function* () {
+          const { manager, providerSessionId } = yield* openSession;
+          yield* manager.closeInWorkspace(workspace);
+          assert.equal(yield* manager.isLive(providerSessionId), shared);
+          assert.equal((yield* Ref.get(state)).closeCount, shared ? 0 : 1);
+          assert.deepEqual(unloaded, shared ? [[true, true, false]] : []);
+        }).pipe(
+          Effect.provide(
+            layerTest({
+              state,
+              idleTimeoutMs: 60_000,
+              ...(shared ? {} : { capabilities: ExclusiveCapabilities }),
+              unloadThreadsIn: (inWorkspace) =>
+                Effect.sync(() => {
+                  unloaded.push(
+                    [workspace, `${workspace}/nested`, `${workspace}-sibling`].map(inWorkspace),
+                  );
+                }),
+            }),
+          ),
+        );
+      }
+    }),
 );
