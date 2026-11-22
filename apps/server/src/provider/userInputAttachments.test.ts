@@ -585,6 +585,28 @@ describe("question answer paths", () => {
           expected: ["Readable despite embedded media"],
           absent: ["[Extracted text truncated"],
         },
+        ...["/word/../word/document2.xml", "word/document2.xml"].map((target) => ({
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "_rels/.rels": `<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="${target}"/></Relationships>`,
+            "word/document.xml": "<document><p>Stale draft</p></document>",
+            "word/document2.xml": "<document><p>Launch moves to 3 March.</p></document>",
+          },
+          expected: ["Launch moves to 3 March."],
+          absent: ["Stale draft", "[Skipped document part"],
+        })),
+        {
+          ext: "docx",
+          bounded: true,
+          parts: {
+            "_rels/.rels":
+              '<Relationships><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/WORD/DOCUMENT.XML"/></Relationships>',
+            "word/document.xml": "<document><p>Launch moves to 3 March.</p></document>",
+          },
+          expected: ["Launch moves to 3 March."],
+          absent: ["[Skipped document part"],
+        },
         ...[false, true].map((deep) => ({
           ext: "docx",
           bounded: true,

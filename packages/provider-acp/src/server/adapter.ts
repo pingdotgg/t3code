@@ -637,6 +637,15 @@ export interface AcpAdapterV2Flavor {
    * tool ends. With `deferFinalizeForBackgroundWork`, the turn stays open until then.
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
+  /**
+   * Finalize a settled turn held only by running commands once the session has been silent for
+   * `timeout`, so a command that never reports back cannot leave the thread in Working forever.
+   * Other holds (questions, schedules, subagents) keep the turn open as before.
+   */
+  readonly postSettleCommandHold?: {
+    readonly timeout: Duration.Input;
+    readonly isCommand: (toolCall: AcpToolCallState) => boolean;
+  };
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
@@ -2305,6 +2314,24 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         });
         const activeSelection = yield* Ref.make<ModelSelection | null>(null);
         const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        // Mode values configureSession left the agent in; a later difference is the agent's own change.
+        const configuredModes = yield* Ref.make<ReadonlyMap<string, string>>(new Map());
+        const readModes = Effect.gen(function* () {
+          const modes = new Map<string, string>();
+          for (const option of yield* runtime.getConfigOptions) {
+            if (
+              option.type === "select" &&
+              (option.category === "mode" || option.category === "collaboration_mode")
+            ) {
+              modes.set(option.id, option.currentValue);
+            }
+          }
+          const modeId = (yield* runtime.getModeState)?.currentModeId;
+          if (modeId !== undefined && !modes.has(ACP_SESSION_MODE_OPTION_ID)) {
+            modes.set(ACP_SESSION_MODE_OPTION_ID, modeId);
+          }
+          return modes;
+        });
         const configuredRuntimeMode = yield* Ref.make<
           ProviderAdapter.ProviderAdapterV2RuntimePolicy["runtimeMode"] | null
         >(null);
@@ -2724,7 +2751,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const notePromptProgress =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (notification?: EffectAcpSchema.SessionNotification) {
-            if (promptInactivityTimeoutMillis === undefined) return;
+            if (
+              promptInactivityTimeoutMillis === undefined &&
+              flavor.postSettleCommandHold === undefined
+            ) {
+              return;
+            }
             if (
               notification !== undefined &&
               !ACP_PROMPT_ACTIVITY_UPDATES.has(notification.update.sessionUpdate)
@@ -4256,11 +4288,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const isMonitorEndNoticeText = (text: string): boolean =>
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
-        const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+        const hasDeferredBackgroundWork = (
+          context: ActiveAcpTurn,
+          ignoreTool?: (tool: AcpToolCallState) => boolean,
+        ): boolean => {
           if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
           if (flavor.toolOutlivesPrompt !== undefined) {
             // A tool that never started has nothing to report later.
             for (const tool of context.tools.values()) {
+              if (ignoreTool?.(tool) === true) continue;
               if (toolStatus(tool.status) === "running" && flavor.toolOutlivesPrompt(tool))
                 return true;
             }
@@ -8357,6 +8393,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             }
           }
           yield* validateModelSelection(modelSelection);
+          yield* Ref.set(configuredModes, yield* readModes);
           yield* Ref.set(configuredRuntimeMode, runtimePolicy.runtimeMode);
           yield* (
             flavor.onSessionConfigurationUpdate?.(
@@ -8545,6 +8582,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           );
         });
 
+        // Re-applying the thread's mode would undo a deliberate exit, such as leaving plan mode once
+        // the plan was approved. Report it instead, so picking the old mode again is a real change.
+        const reportAgentModeChanges = Effect.fnUntraced(function* (threadId: ThreadId) {
+          const selection = yield* Ref.get(activeSelection);
+          if (selection === null || selection.options === undefined) return;
+          const configured = yield* Ref.get(configuredModes);
+          const live = yield* readModes;
+          const changes: Array<{ id: string; from: string; to: string }> = [];
+          const options = selection.options.map((option) => {
+            const value = live.get(option.id);
+            if (
+              value === undefined ||
+              typeof option.value !== "string" ||
+              value === configured.get(option.id) ||
+              value === option.value
+            ) {
+              return option;
+            }
+            changes.push({ id: option.id, from: option.value, to: value });
+            return { ...option, value };
+          });
+          if (changes.length === 0) return;
+          yield* Ref.set(activeSelection, { ...selection, options });
+          yield* Ref.set(configuredModes, live);
+          yield* emitProviderEvent({
+            type: "thread_model_selection.updated",
+            driver,
+            threadId,
+            instanceId: selection.instanceId,
+            changes,
+          });
+        });
+
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           status: "completed" | "interrupted" | "failed" | "cancelled",
@@ -8640,6 +8710,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               },
             });
           }
+          yield* reportAgentModeChanges(context.input.threadId);
           const turn = providerTurnPayload(context, settledStatus, now);
           yield* Ref.update(providerTurns, (current) => {
             const updated = new Map(current);
@@ -8781,6 +8852,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
+
+        const schedulePostSettleHoldExpiry = Effect.fn("AcpAdapterV2.schedulePostSettleHoldExpiry")(
+          function* (context: ActiveAcpTurn) {
+            const hold = flavor.postSettleCommandHold;
+            if (hold === undefined) return;
+            if (!context.promptSettled || context.finalized) return;
+            const timeoutMillis = Duration.toMillis(hold.timeout);
+            const isRunningCommand = (tool: AcpToolCallState) =>
+              toolStatus(tool.status) === "running" && hold.isCommand(tool);
+            let quietSince = yield* Clock.currentTimeMillis;
+            // Armed even without a command yet: a pending reply can still start one.
+            yield* Effect.gen(function* () {
+              while (!context.finalized) {
+                quietSince = Math.max(quietSince, context.lastProgressAt);
+                const now = yield* Clock.currentTimeMillis;
+                const remaining = quietSince + timeoutMillis - now;
+                if (remaining > 0) {
+                  yield* Effect.sleep(Duration.millis(remaining));
+                  continue;
+                }
+                if (
+                  context.tools.values().some(isRunningCommand) &&
+                  !hasDeferredBackgroundWork(context, isRunningCommand)
+                ) {
+                  yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+                  return;
+                }
+                // Something else still holds the turn; count silence again once it clears.
+                quietSince = now;
+              }
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          },
+        );
 
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
@@ -8988,6 +9092,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           });
           const sessionSetup = yield* Ref.get(activeSessionSetup);
           const runtimeInstructions = buildRuntimeInstructions({
+            agentFeedback: instructionState.hasT3Mcp ? (turnInput.agentFeedback ?? "off") : "off",
             harness: flavor.runtimeHarness ?? driver,
             model: turnInput.modelSelection.model,
             runtimePolicy: turnInput.runtimePolicy,
@@ -9212,6 +9317,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (context.finalized) return;
                   if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
+                    yield* schedulePostSettleHoldExpiry(context);
                     if (pendingReply) {
                       context.replyOpen = true;
                       yield* scheduleDeferredFinalize(context);
@@ -9612,6 +9718,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return;
               }
               if (!context.finalized) {
+                yield* schedulePostSettleHoldExpiry(context);
                 if (hasDeferredBackgroundWork(context)) {
                   yield* rearmDeferredFinalize(context);
                 } else {
