@@ -174,7 +174,7 @@ it.effect("advertises the extension and lists each milestone type to outside cli
     });
 
     const { events } = (yield* call("events/list")).result!;
-    expect(events).toHaveLength(6);
+    expect(events).toHaveLength(11);
     const settledType = events.find(
       (event: { name: string }) => event.name === "thread.run_settled",
     );
@@ -185,6 +185,14 @@ it.effect("advertises the extension and lists each milestone type to outside cli
       "includeSubagentChildren",
     ]);
     expect(settledType.payloadSchema.properties.outcome).toBeDefined();
+    const workflowType = events.find(
+      (event: { name: string }) => event.name === "workflow.run_ended",
+    );
+    // A workflow run belongs to no project or thread, so it is picked by workflow and run.
+    expect(Object.keys(workflowType.inputSchema.properties)).toEqual([
+      "workflows",
+      "workflowRunIds",
+    ]);
     expect((yield* call("events/list", {}, { token: threadToken })).result!.events).toEqual([]);
   }).pipe(Effect.scoped, Effect.provide(layerTest)),
 );

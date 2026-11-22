@@ -1,4 +1,6 @@
 import {
+  type MilestoneEvent,
+  MilestoneId,
   type WorkflowCounts,
   WorkflowRun,
   type WorkflowRunReference,
@@ -10,9 +12,12 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+
+import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 
 export { WorkflowRun, WorkflowRunStatus, WorkflowStep };
 
@@ -99,6 +104,27 @@ export const jsonText = (value: Schema.Json): string => JSON.stringify(value);
 export const jsonValue = (text: string): Schema.Json => JSON.parse(text) as Schema.Json;
 
 const now = Effect.map(DateTime.now, DateTime.formatIso);
+
+type WorkflowMilestone = Extract<MilestoneEvent, { readonly workflowRunId: string }>;
+/** What a workflow milestone says beyond its envelope and its run. */
+type WorkflowMilestoneNews = WorkflowMilestone extends infer Event
+  ? Event extends WorkflowMilestone
+    ? Omit<
+        Event,
+        | "id"
+        | "occurredAt"
+        | "projectId"
+        | "threadId"
+        | "parentThreadId"
+        | "actor"
+        | "isSubagentChild"
+        | "workflowRunId"
+        | "workflow"
+        | "runTitle"
+        | "parentWorkflowRunId"
+      >
+    : never
+  : never;
 // A wake is one write away from its claim. A claim this old without its run moving had none.
 const WAKE_REDONE_AFTER = Duration.seconds(30);
 // Long enough for a sender's retries, short enough that the table stays small.
@@ -352,6 +378,65 @@ export const make = Effect.gen(function* () {
     effect.pipe(Effect.orDie, Effect.andThen(PubSub.publish(changes, runId)), Effect.asVoid);
   const waitColumns = sql`run_id, name, token, schema_json, request_json, watch_json, deadline, opened_at, woke_json`;
 
+  const hub = yield* Effect.serviceOption(MilestoneHub.MilestoneHub);
+  /** Tells the milestone hub of a transition this store just wrote, under an id stable for it. */
+  const tell = Effect.fn("WorkflowStore.tell")(function* (
+    runId: string,
+    key: string,
+    at: string,
+    news: WorkflowMilestoneNews,
+  ) {
+    if (Option.isNone(hub)) return;
+    const [run] = yield* sql<Pick<RunRow, "workflow" | "title" | "parent_run_id">>`
+      SELECT workflow, title, parent_run_id FROM workflow_runs WHERE run_id = ${runId}
+    `.pipe(Effect.orDie);
+    if (run === undefined) return;
+    yield* hub.value.publish({
+      id: MilestoneId.make(`${news.type}:${key}`),
+      occurredAt: at,
+      projectId: null,
+      threadId: null,
+      parentThreadId: null,
+      actor: { type: "system" },
+      isSubagentChild: false,
+      workflowRunId: runId,
+      workflow: run.workflow,
+      runTitle: run.title,
+      parentWorkflowRunId: run.parent_run_id,
+      ...news,
+    } as WorkflowMilestone);
+  });
+  const questionTitle = (wait: Pick<WaitRow, "name" | "request_json">) => {
+    const request = wait.request_json === null ? null : jsonValue(wait.request_json);
+    const title =
+      request !== null && typeof request === "object" && !Array.isArray(request)
+        ? (request as { readonly title?: unknown }).title
+        : undefined;
+    return typeof title === "string" && title.trim() !== "" ? title : wait.name;
+  };
+  /** A question claimed by an answer or its timeout is resolved, whichever claimed it. */
+  const questionClaimed = Effect.fn("WorkflowStore.questionClaimed")(function* (
+    runId: string,
+    name: string,
+    woke: Schema.Json,
+    at: string,
+  ) {
+    if (Option.isNone(hub)) return;
+    const [wait] = yield* sql<Pick<WaitRow, "request_json" | "opened_at">>`
+      SELECT request_json, opened_at FROM workflow_waits WHERE run_id = ${runId} AND name = ${name}
+    `.pipe(Effect.orDie);
+    if (wait === undefined || wait.request_json === null) return;
+    const expired =
+      woke !== null &&
+      typeof woke === "object" &&
+      (woke as { readonly expired?: unknown }).expired === true;
+    yield* tell(runId, `${runId}:${name}:${wait.opened_at}`, at, {
+      type: "workflow.input_resolved",
+      step: name,
+      resolution: expired ? "expired" : "answered",
+    });
+  });
+
   return WorkflowStore.of({
     changes,
     runStarted: Effect.fn("WorkflowStore.runStarted")(function* (run) {
@@ -370,7 +455,9 @@ export const make = Effect.gen(function* () {
           ON CONFLICT DO NOTHING
           RETURNING run_id
         `.pipe(Effect.orDie);
-      if (inserted.length > 0) yield* PubSub.publish(changes, run.runId);
+      if (inserted.length === 0) return;
+      yield* PubSub.publish(changes, run.runId);
+      yield* tell(run.runId, run.runId, at, { type: "workflow.run_started" });
     }),
     runStatus: Effect.fn("WorkflowStore.runStatus")(function* (runId, status, detail) {
       const at = yield* now;
@@ -406,15 +493,18 @@ export const make = Effect.gen(function* () {
     }),
     runPaused: Effect.fn("WorkflowStore.runPaused")(function* (runId, detail, held) {
       const at = yield* now;
-      yield* write(
-        runId,
-        sql`
-          UPDATE workflow_runs
-          SET status = 'paused', detail = ${detail.slice(0, 2000)}, pauses = pauses + 1,
-            held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
-          WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
-        `,
-      );
+      const reason = detail.slice(0, 2000);
+      const paused = yield* sql`
+        UPDATE workflow_runs
+        SET status = 'paused', detail = ${reason}, pauses = pauses + 1,
+          held = ${held === undefined ? sql`held` : held ? 1 : 0}, updated_at = ${at}
+        WHERE run_id = ${runId} AND ended_at IS NULL AND status != 'paused'
+        RETURNING run_id
+      `.pipe(Effect.orDie);
+      yield* PubSub.publish(changes, runId);
+      if (paused.length > 0) {
+        yield* tell(runId, `${runId}:${at}`, at, { type: "workflow.run_paused", reason });
+      }
     }),
     runUnpaused: Effect.fn("WorkflowStore.runUnpaused")(function* (runId, current) {
       const at = yield* now;
@@ -449,13 +539,26 @@ export const make = Effect.gen(function* () {
               WHERE run_id = ${runId} AND ended_at IS NULL
               RETURNING run_id
             `;
-            yield* sql`DELETE FROM workflow_waits WHERE run_id = ${runId}`;
-            return rows.length > 0;
+            const closed = yield* sql<Pick<WaitRow, "name" | "request_json" | "opened_at">>`
+              DELETE FROM workflow_waits WHERE run_id = ${runId}
+              RETURNING name, request_json, opened_at
+            `;
+            return { ended: rows.length > 0, closed };
           }),
         )
         .pipe(Effect.orDie);
       yield* PubSub.publish(changes, runId);
-      return ended;
+      if (!ended.ended) return false;
+      for (const wait of ended.closed) {
+        if (wait.request_json === null) continue;
+        yield* tell(runId, `${runId}:${wait.name}:${wait.opened_at}`, at, {
+          type: "workflow.input_resolved",
+          step: wait.name,
+          resolution: "cancelled",
+        });
+      }
+      yield* tell(runId, runId, at, { type: "workflow.run_ended", outcome: status, detail });
+      return true;
     }),
     runTitle: Effect.fn("WorkflowStore.runTitle")(function* (runId, title) {
       yield* write(
@@ -501,19 +604,24 @@ export const make = Effect.gen(function* () {
     }),
     waitOpened: Effect.fn("WorkflowStore.waitOpened")(function* (wait) {
       const at = yield* now;
-      yield* write(
-        wait.runId,
-        sql`
-          INSERT INTO workflow_waits (
-            run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
-            opened_at
-          ) VALUES (
-            ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
-            ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
-          )
-          ON CONFLICT (run_id, name) DO NOTHING
-        `,
-      );
+      const opened = yield* sql`
+        INSERT INTO workflow_waits (
+          run_id, name, workflow, token, key, schema_json, request_json, watch_json, deadline,
+          opened_at
+        ) VALUES (
+          ${wait.runId}, ${wait.name}, ${wait.workflow}, ${wait.token}, ${wait.key ?? null},
+          ${wait.schemaJson}, ${wait.requestJson}, ${wait.watchJson}, ${wait.deadline}, ${at}
+        )
+        ON CONFLICT (run_id, name) DO NOTHING
+        RETURNING name
+      `.pipe(Effect.orDie);
+      yield* PubSub.publish(changes, wait.runId);
+      if (opened.length === 0 || wait.requestJson === null) return;
+      yield* tell(wait.runId, `${wait.runId}:${wait.name}:${at}`, at, {
+        type: "workflow.needs_input",
+        step: wait.name,
+        question: questionTitle({ name: wait.name, request_json: wait.requestJson }),
+      });
     }),
     waitClosed: Effect.fn("WorkflowStore.waitClosed")(function* (runId, name) {
       yield* write(
@@ -552,13 +660,18 @@ export const make = Effect.gen(function* () {
         }
         return taken.length > 0;
       },
-      (effect) =>
+      (effect, runId, name, woke) =>
         sql.withTransaction(effect).pipe(
           Effect.catchIf(
             (error) => error === "seen",
             () => Effect.succeed(false),
           ),
           Effect.orDie,
+          Effect.tap((taken) =>
+            taken
+              ? Effect.flatMap(now, (at) => questionClaimed(runId, name, woke, at))
+              : Effect.void,
+          ),
         ),
     ),
     waitsToWake: Effect.gen(function* () {
@@ -578,7 +691,7 @@ export const make = Effect.gen(function* () {
     }),
     mailDeliver: Effect.fn("WorkflowStore.mailDeliver")(function* (signalId, runId, name, woke) {
       const at = yield* now;
-      return yield* sql
+      const outcome = yield* sql
         .withTransaction(
           Effect.gen(function* () {
             // A kept copy of an id that already woke a wait straight is spent: it is dropped, so
@@ -619,6 +732,8 @@ export const make = Effect.gen(function* () {
           ),
           Effect.orDie,
         );
+      if (outcome === "delivered") yield* questionClaimed(runId, name, woke, at);
+      return outcome;
     }),
     prunable: Effect.fn("WorkflowStore.prunable")(function* (before, limit) {
       return yield* sql<{ run_id: string; engine_tag: string }>`

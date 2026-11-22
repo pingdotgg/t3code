@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
+import type * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
 import Migration0100 from "../persistence/Migrations/109_Workflows.ts";
@@ -20,9 +21,12 @@ import Migration0108 from "../persistence/Migrations/117_WorkflowStepTurn.ts";
 import Migration0109 from "../persistence/Migrations/118_WorkflowRunKey.ts";
 import Migration0110 from "../persistence/Migrations/119_WorkflowRunReferences.ts";
 import Migration0111 from "../persistence/Migrations/120_WorkflowEnginePruned.ts";
+import * as MilestoneHub from "../milestones/MilestoneHub.ts";
 import * as WorkflowStore from "./WorkflowStore.ts";
 
-const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) =>
+const withStore = <A, E>(
+  use: Effect.Effect<A, E, WorkflowStore.WorkflowStore | MilestoneHub.MilestoneHub>,
+) =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -51,7 +55,10 @@ const withStore = <A, E>(use: Effect.Effect<A, E, WorkflowStore.WorkflowStore>) 
     );
     return yield* Effect.provide(
       use,
-      WorkflowStore.layer.pipe(Layer.provideMerge(migrated), Layer.provide(database)),
+      WorkflowStore.layer.pipe(
+        Layer.provideMerge(Layer.merge(migrated, MilestoneHub.layer)),
+        Layer.provide(database),
+      ),
     );
   }).pipe(Effect.provide(NodeServices.layer), Effect.scoped);
 
@@ -337,6 +344,91 @@ it.effect("one buffered signal goes to one wait, and a claimed wait keeps what w
       yield* TestClock.adjust("10 days");
       yield* store.mailExpire;
       assert.isTrue(yield* store.signalSeen("long"));
+    }),
+  ),
+);
+
+it.effect("tells the milestone hub of each run and question transition once", () =>
+  withStore(
+    Effect.gen(function* () {
+      const store = yield* WorkflowStore.WorkflowStore;
+      const hub = yield* MilestoneHub.MilestoneHub;
+      const start = {
+        runId: "r1",
+        workflow: "review",
+        version: 1,
+        engineTag: "review@1",
+        idempotencyKey: "k",
+        input: {},
+      };
+      const ask = (name: string, request: Schema.Json) =>
+        store.waitOpened({
+          runId: "r1",
+          name,
+          workflow: "review",
+          key: undefined,
+          token: `token-${name}`,
+          schemaJson: "{}",
+          requestJson: WorkflowStore.jsonText(request),
+          watchJson: null,
+          deadline: null,
+        });
+      yield* store.runStarted(start);
+      yield* store.runStarted(start);
+      yield* ask("approve", { title: "Ship it?" });
+      yield* ask("approve", { title: "Ship it?" });
+      // A wait nobody is asked is no question.
+      yield* store.waitOpened({
+        runId: "r1",
+        name: "checks",
+        workflow: "review",
+        key: undefined,
+        token: "token-checks",
+        schemaJson: "{}",
+        requestJson: null,
+        watchJson: null,
+        deadline: null,
+      });
+      yield* store.waitSignalled("r1", "approve", { expired: false, value: true });
+      yield* store.waitSignalled("r1", "approve", { expired: false, value: false });
+      yield* store.waitSignalled("r1", "checks", { expired: false, value: null });
+      yield* ask("later", {});
+      yield* store.waitSignalled("r1", "later", { expired: true, value: null });
+      yield* ask("last", { title: "Anything else?" });
+      yield* store.runPaused("r1", "agent failed");
+      yield* store.runPaused("r1", "agent failed again");
+      yield* store.runEnded("r1", "cancelled", "stopped by a person", null);
+      yield* store.runEnded("r1", "completed", null, null);
+
+      const { events } = yield* hub.recent();
+      assert.deepStrictEqual(
+        events.map((event): unknown => {
+          const { id: _id, occurredAt: _at, ...rest } = event;
+          return rest;
+        }),
+        [
+          { type: "workflow.run_started" },
+          { type: "workflow.needs_input", step: "approve", question: "Ship it?" },
+          { type: "workflow.input_resolved", step: "approve", resolution: "answered" },
+          { type: "workflow.needs_input", step: "later", question: "later" },
+          { type: "workflow.input_resolved", step: "later", resolution: "expired" },
+          { type: "workflow.needs_input", step: "last", question: "Anything else?" },
+          { type: "workflow.run_paused", reason: "agent failed" },
+          { type: "workflow.input_resolved", step: "last", resolution: "cancelled" },
+          { type: "workflow.run_ended", outcome: "cancelled", detail: "stopped by a person" },
+        ].map((news) => ({
+          projectId: null,
+          threadId: null,
+          parentThreadId: null,
+          actor: { type: "system" },
+          isSubagentChild: false,
+          workflowRunId: "r1",
+          workflow: "review",
+          runTitle: "review k",
+          parentWorkflowRunId: null,
+          ...news,
+        })),
+      );
     }),
   ),
 );

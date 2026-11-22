@@ -1505,7 +1505,11 @@ export const layerToolSearch = Layer.mergeAll(
 export const layerMilestoneEvents = Layer.effectDiscard(
   Effect.gen(function* () {
     const annotations = Context.make(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
-    for (const options of yield* MilestoneEvents.make) {
+    const events = yield* MilestoneEvents.make;
+    for (const options of events.threads) {
+      yield* McpServer.registerEvent({ ...options, annotations });
+    }
+    for (const options of events.workflows) {
       yield* McpServer.registerEvent({ ...options, annotations });
     }
   }),
