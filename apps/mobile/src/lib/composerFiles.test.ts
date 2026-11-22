@@ -717,9 +717,10 @@ describe("composer file attachments", () => {
 
     expect(result.error).toBeNull();
     expect(result.files.map((file) => file.name)).toEqual([name]);
-    const storedName = result.files[0]!.fileUri.split("/").at(-1)!;
-    expect(storedName).toHaveLength(255);
-    expect(storedName).toMatch(/^attachment-id-a+\.txt$/);
+    // The stored basename fills the 255-byte limit and keeps the extension.
+    expect(result.files[0]).toMatchObject({
+      fileUri: `${STORED}-${"a".repeat(237)}.txt`,
+    });
   });
 
   it("preserves Android picker metadata instead of using the content URI document id", async () => {
