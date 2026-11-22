@@ -459,7 +459,8 @@ export const readLatestMessages = Effect.fn("cli.thread.readLatestMessages")(fun
       );
       afterPosition = page.nextPosition ?? Number.POSITIVE_INFINITY;
     } while (page.hasMore && afterPosition < (end ?? Number.POSITIVE_INFINITY) - 1);
-    thread = page.thread;
+    // Only the first read carries pull request previews; later pages omit them.
+    thread = Object.assign({}, thread, page.thread);
     // A window can hold the whole --messages count, too many to spread as arguments.
     messages = window.concat(messages);
     before = start;
@@ -850,10 +851,12 @@ const threadListCommand = Command.make("list", {
         while (cursor !== null) {
           const page: OrchestratorMcpThreadListResult = yield* tools.call(
             "t3_thread_list",
-            { projectId: project.id, includeSubagents: false, limit: 100, cursor },
+            { projectId: project.id, includeSubagents: true, limit: 100, cursor },
             OrchestratorMcpThreadListResult,
           );
-          threads.push(...page.threads);
+          threads.push(
+            ...page.threads.filter((thread) => thread.relationshipToParent !== "subagent"),
+          );
           cursor = page.nextCursor;
         }
         if (flags.json) {
@@ -1021,7 +1024,12 @@ const threadShowCommand = Command.make("show", {
           const messages = yield* Effect.forEach(latest, (item) =>
             readFullText(tools, threadId, item).pipe(
               Effect.map((text) => ({
-                role: item.type === "user_message" ? "user" : "assistant",
+                role:
+                  item.type === "assistant_message"
+                    ? "assistant"
+                    : item.createdBy === "system"
+                      ? "system"
+                      : "user",
                 runId: item.runId,
                 text,
               })),
