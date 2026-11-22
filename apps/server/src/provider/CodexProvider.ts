@@ -146,9 +146,9 @@ const CODEX_CLIENT_NAME = "T3 Code";
 const CODEX_AUTH_PROBE_TIMEOUT_MS = 20_000;
 const CODEX_DISCOVERY_MARGIN_MS = 250;
 // `codex-cli 0.159.0`, `codex-cli 0.160.0-alpha.1` or the npm CLI's bare `0.1.4161006`.
-// Matches the whole output, so another binary's help or banner text cannot supply a version.
+// Matches a whole line, so another binary's `name v1.2.3` banner cannot supply a version.
 // Keep a prerelease suffix so compatibility stays unknown for it, as it does for `initialize`.
-const CODEX_CLI_VERSION_PATTERN = /^(?:codex-cli\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$/u;
+const CODEX_CLI_VERSION_PATTERN = /^(?:codex-cli\s+)?v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\r?$/mu;
 
 const CODEX_PRESENTATION = {
   displayName: "Codex",
@@ -852,7 +852,7 @@ const probeCodexCliVersion = Effect.fn("probeCodexCliVersion")(
       }),
     );
     if (result.code !== 0) return null;
-    return CODEX_CLI_VERSION_PATTERN.exec(result.stdout.trim())?.[1] ?? null;
+    return CODEX_CLI_VERSION_PATTERN.exec(result.stdout)?.[1] ?? null;
   },
   (effect, input) =>
     effect.pipe(
