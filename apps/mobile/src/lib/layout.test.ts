@@ -67,6 +67,7 @@ describe("native workspace sizing", () => {
       };
       const layout = deriveLayout({ ...size, nativeMetrics, nativeWorkspace });
       expect(layout.variant === "medium").toBe(overlay);
+      expect(layout.listPaneWidth).toBe(overlay ? 350 : size.width === 951 ? 304 : 280);
       for (const primarySidebarPreferredVisible of [true, false]) {
         expect(
           deriveWorkspacePaneLayout({

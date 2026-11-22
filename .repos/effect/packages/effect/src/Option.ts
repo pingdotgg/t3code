@@ -1649,6 +1649,9 @@ export const productMany: {
  * - Iterable input → `Option` of an `Array`
  * - Any `None` in the input → entire result is `None`
  *
+ * Struct inputs use own enumerable string and symbol properties.
+ * Non-enumerable and inherited properties are ignored.
+ *
  * **Example** (Combining a tuple and a struct)
  *
  * ```ts import.meta.vitest
@@ -1674,14 +1677,14 @@ export const productMany: {
  * @since 2.0.0
  */
 // @ts-expect-error
-export const all: <const I extends Iterable<Option<any>> | Record<string, Option<any>>>(
+export const all: <const I extends Iterable<Option<any>> | Record<PropertyKey, Option<any>>>(
   input: I
 ) => [I] extends [ReadonlyArray<Option<any>>] ? Option<
     { -readonly [K in keyof I]: [I[K]] extends [Option<infer A>] ? A : never }
   >
   : [I] extends [Iterable<Option<infer A>>] ? Option<Array<A>>
   : Option<{ -readonly [K in keyof I]: [I[K]] extends [Option<infer A>] ? A : never }> = (
-    input: Iterable<Option<any>> | Record<string, Option<any>>
+    input: Iterable<Option<any>> | Record<PropertyKey, Option<any>>
   ): Option<any> => {
     if (Symbol.iterator in input) {
       const out: Array<Option<any>> = []
@@ -1694,9 +1697,10 @@ export const all: <const I extends Iterable<Option<any>> | Record<string, Option
       return some(out)
     }
 
-    const out: Record<string, any> = {}
-    for (const key of Object.keys(input)) {
-      const o = input[key]
+    const fields = input as Record<PropertyKey, Option<any>>
+    const out: Record<PropertyKey, any> = {}
+    for (const key of InternalRecord.ownEnumerableKeys(fields)) {
+      const o = fields[key]
       if (isNone(o)) {
         return none()
       }

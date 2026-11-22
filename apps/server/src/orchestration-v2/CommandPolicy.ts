@@ -10,6 +10,8 @@ import {
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { isSlashCommand } from "@t3tools/shared/composerTrigger";
+import { latestExecutedRun } from "@t3tools/shared/orchestrationV2ThreadError";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -58,6 +60,17 @@ type MessageDispatchMode = Extract<
   { readonly type: "message.dispatch" }
 >["dispatchMode"];
 
+/**
+ * A message that signs a provider account out at turn start, as `providerAuthLogout` does.
+ * With attachments the same text is an ordinary prompt.
+ */
+export function isProviderSignOutPrompt(message: {
+  readonly text: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}): boolean {
+  return message.attachments.length === 0 && message.text.trim().toLowerCase() === "/logout";
+}
+
 export function isNativeMaintenanceCommand(message: {
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -89,6 +102,25 @@ export function goalCommandStopsActiveRun(
   }
 }
 
+export function resolveMessageDispatch(
+  projection: OrchestrationV2ThreadProjection,
+  message: Pick<
+    Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    "dispatchMode" | "deliveryIntent" | "text" | "attachments"
+  >,
+): MessageDispatchMode {
+  const mode = resolveMessageDispatchIntent(
+    projection,
+    message.dispatchMode,
+    message.deliveryIntent,
+  );
+  // A provider runs a steered command in place of the turn's task, so commands wait.
+  return mode.type === "steer_active" && isSlashCommand(message)
+    ? { type: "queue_after_active" }
+    : mode;
+}
+
+/** How a message joins active work when it is free to steer. */
 export function resolveMessageDispatchIntent(
   projection: OrchestrationV2ThreadProjection,
   requestedMode: MessageDispatchMode,
@@ -107,10 +139,7 @@ export function resolveMessageDispatchIntent(
     target === undefined || !isActiveRun(target)
       ? undefined
       : providerTurnCapabilities(projection, target);
-  return turns !== undefined &&
-    !turns.supportsActiveSteering &&
-    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart) &&
-    turns.supportsQueuedMessages
+  return turns !== undefined && !turns.supportsActiveSteering && providerSwitchWaitsForTurn(turns)
     ? { type: "queue_after_active" }
     : mode;
 }
@@ -125,7 +154,40 @@ export function isActiveRun(run: OrchestrationV2Run): boolean {
   );
 }
 
-function providerTurnCapabilities(
+/**
+ * Providers that key forks on native turn ids can only fork a busy source from a turn with one;
+ * a synthetic or missing boundary would fork the live conversation, including the running turn.
+ */
+export function canForkBusySourceNatively(
+  capabilities: OrchestrationV2ProviderCapabilities,
+  hasNativeTurnBoundary: boolean,
+): boolean {
+  return (
+    capabilities.threads.canForkWhileSourceRunning === true &&
+    (hasNativeTurnBoundary || !capabilities.turns.exposesNativeTurnId)
+  );
+}
+
+/** The run a follow-up to a finished child binds to: the latest active one, else the last that ran. */
+export function followUpOwnerRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+): OrchestrationV2Run | null {
+  return (
+    runs.filter(isActiveRun).toSorted((a, b) => b.ordinal - a.ordinal)[0] ?? latestExecutedRun(runs)
+  );
+}
+
+/** A provider that cannot restart its turn for new input runs a provider switch after the turn. */
+export function providerSwitchWaitsForTurn(
+  turns: OrchestrationV2ProviderCapabilities["turns"],
+): boolean {
+  return (
+    turns.supportsQueuedMessages &&
+    !(turns.supportsInterrupt && turns.supportsSteeringByInterruptRestart)
+  );
+}
+
+export function providerTurnCapabilities(
   projection: OrchestrationV2ThreadProjection,
   run: OrchestrationV2Run,
 ) {
@@ -209,9 +271,10 @@ export interface CommandPolicyV2Shape {
     input: CapabilityCheckInput & {
       readonly sameProvider: boolean;
       readonly hasStrongNativeSource: boolean;
+      readonly hasNativeTurnBoundary: boolean;
       readonly sourceRunStatus: OrchestrationV2Run["status"];
       readonly fromSpecificTurn: boolean;
-      /** Later source runs are still active; providers cannot fork a thread mid-turn. */
+      /** Later source runs are still active. */
       readonly sourceBusy: boolean;
     },
   ) => Effect.Effect<ForkExecutionPolicyV2, CommandPolicyV2Error>;
@@ -312,9 +375,11 @@ const ensureNativeFork: CommandPolicyV2Shape["ensureNativeFork"] = (input) => {
 };
 
 const ensureRollback: CommandPolicyV2Shape["ensureRollback"] = (input) => {
+  // Without native truncation, the next turn replays the kept conversation as a handoff.
   if (
     !input.capabilities.threads.canRollbackThread ||
-    !input.capabilities.checkpointing.providerCanRollbackConversation
+    (!input.capabilities.checkpointing.providerCanRollbackConversation &&
+      !input.capabilities.context.canConsumeHandoffSummaries)
   ) {
     return Effect.fail(
       unsupported(input, "rollback", "providerInstanceId conversation rollback is unavailable"),
@@ -376,7 +441,8 @@ const decideForkExecution: CommandPolicyV2Shape["decideForkExecution"] = (input)
     (input.sourceRunStatus === "completed" || input.sourceRunStatus === "waiting") &&
     input.sameProvider &&
     input.hasStrongNativeSource &&
-    !input.sourceBusy &&
+    (!input.sourceBusy ||
+      canForkBusySourceNatively(input.capabilities, input.hasNativeTurnBoundary)) &&
     input.capabilities.threads.canForkThread &&
     (!input.fromSpecificTurn || input.capabilities.threads.canForkFromTurn) &&
     input.capabilities.identity.nativeThreadIds === "strong";

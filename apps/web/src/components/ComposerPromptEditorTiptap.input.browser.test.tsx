@@ -7,23 +7,51 @@ import {
   useRetainedContextPayloads,
 } from "./chat/composerContextUndo";
 
-import type { ServerProviderSkill } from "@t3tools/contracts";
+import {
+  ComposerContextId,
+  type ComposerContextRecord,
+  EnvironmentId,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
+import {
+  COMPOSER_CONTEXT_CLIPBOARD_MIME,
+  encodeComposerContextFragment,
+} from "@t3tools/shared/composerContextClipboard";
+import { formatComposerContextReference } from "@t3tools/shared/composerContextReferences";
 import type { Editor } from "@tiptap/core";
 import { redoDepth, undoDepth } from "@tiptap/pm/history";
 import { NodeSelection } from "@tiptap/pm/state";
 import { createElement, createRef, useEffect, useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { cdp, userEvent } from "vite-plus/test/browser";
 
+import "~/index.css";
 import { act, fakeTimers, render } from "../../test/render";
 
 import { flatToMarkdown, pmToFlat, serializeEditorDoc } from "~/composer-rich-text-doc";
 import { isMacPlatform } from "~/lib/utils";
+import { registerCommands } from "~/shortcuts/dispatcher";
 import {
   ComposerPromptEditorTiptap as ComposerPromptEditor,
   type ComposerPromptEditorHandle,
   type ComposerPromptEditorProps,
 } from "./ComposerPromptEditorTiptap";
+
+vi.mock(import("../state/server"), async (original) => {
+  const { Atom } = await import("effect/reactivity");
+  const { compileResolvedKeybindingsConfig, DEFAULT_KEYBINDINGS } =
+    await import("@t3tools/shared/keybindings");
+  return {
+    ...(await original()),
+    primaryServerKeybindingsAtom: Atom.make(
+      compileResolvedKeybindingsConfig([
+        ...DEFAULT_KEYBINDINGS,
+        { key: "mod+arrowup", command: "thread.previous" },
+        { key: "mod+arrowdown", command: "thread.next" },
+      ]),
+    ),
+  };
+});
 
 const babysit: ServerProviderSkill = {
   name: "babysit",
@@ -36,11 +64,19 @@ function Composer({
   richTextEnabled,
   skills,
   onChange,
+  onCommandKeyDown = () => false,
+  importContextFragment,
+  literalText = false,
+  disabled = false,
 }: {
   value: string;
   richTextEnabled: boolean;
   skills: ReadonlyArray<ServerProviderSkill>;
   onChange?: ComposerPromptEditorProps["onChange"] | undefined;
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"] | undefined;
+  importContextFragment?: ComposerPromptEditorProps["importContextFragment"];
+  literalText?: boolean;
+  disabled?: boolean;
 }) {
   const [prompt, setPrompt] = useState({ value, cursor: value.length });
   return (
@@ -51,13 +87,16 @@ function Composer({
       richTextEnabled={richTextEnabled}
       contextRecords={new Map()}
       skills={skills}
-      disabled={false}
+      disabled={disabled}
       placeholder=""
       onChange={(...args) => {
         setPrompt({ value: args[0], cursor: args[1] });
         onChange?.(...args);
       }}
       onPaste={() => {}}
+      onCommandKeyDown={onCommandKeyDown}
+      importContextFragment={importContextFragment}
+      literalText={literalText}
     />
   );
 }
@@ -67,9 +106,16 @@ function composer(
   richTextEnabled = true,
   skills: ReadonlyArray<ServerProviderSkill> = [],
   onChange?: ComposerPromptEditorProps["onChange"],
+  onCommandKeyDown?: ComposerPromptEditorProps["onCommandKeyDown"],
 ) {
   return (
-    <Composer value={value} richTextEnabled={richTextEnabled} skills={skills} onChange={onChange} />
+    <Composer
+      value={value}
+      richTextEnabled={richTextEnabled}
+      skills={skills}
+      onChange={onChange}
+      onCommandKeyDown={onCommandKeyDown}
+    />
   );
 }
 
@@ -152,6 +198,57 @@ it.each([
 });
 
 it.each([
+  { mark: "bold", key: "b", marker: "**" },
+  { mark: "italic", key: "i", marker: "*" },
+])("toggles $mark with Mod+$key at a collapsed cursor", async ({ mark, key, marker }) => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  const chord = `{${mod}>}${key}{/${mod}}`;
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  await userEvent.keyboard(" ");
+  await userEvent.keyboard(chord);
+  await userEvent.keyboard("now");
+  await userEvent.keyboard(chord);
+  await userEvent.keyboard(" done");
+  await vi.waitFor(() =>
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(`ship it ${marker}now${marker} done`),
+  );
+  expect(textWithMark(editor, mark)).toEqual(["now"]);
+});
+
+it.each([
+  { key: "i", caret: 10, expected: "ship it **n*X*ow** done" },
+  { key: "i", caret: 9, expected: "ship it *X***now** done" },
+  { key: "e", caret: "{ArrowLeft>5/}", expected: "ship it **now**`X` done" },
+])(
+  "Mod+$key at $caret in a bold word styles the next typed text",
+  async ({ key, caret, expected }) => {
+    await using screen = await mountEditor("ship it **now** done");
+    const { editor } = screen;
+    const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    // ProseMirror rewrites the DOM caret 20ms after focus. Run that now, or it
+    // can undo the first arrow key before ProseMirror reads the native move.
+    {
+      using _timers = fakeTimers();
+      await act(async () => {
+        if (typeof caret === "number") editor.commands.focus(caret);
+        else editor.commands.focus("end");
+      });
+      await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+      vi.runOnlyPendingTimers();
+    }
+    if (typeof caret === "string") await userEvent.keyboard(caret);
+    await userEvent.keyboard(`{${mod}>}${key}{/${mod}}`);
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(expected));
+  },
+);
+
+it.each([
   { word: "ship", prefix: "", source: ["**ship**"] },
   { word: "path\\", prefix: "", source: [] },
   { word: "2*3", prefix: "", source: [] },
@@ -169,7 +266,7 @@ it.each([
     code: ["path\\"],
   },
 ])(
-  "bolds $word after '$prefix' with Mod+B only when text is selected",
+  "bolds $word after '$prefix' with Mod+B over a selection",
   async ({ word, prefix, prefixText = prefix, source, code = [] }) => {
     const value = `${prefix}${word} it`;
     await using screen = await mountEditor(value);
@@ -179,10 +276,6 @@ it.each([
       editor.commands.focus("end");
     });
     await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
-    await userEvent.keyboard(modB);
-    // Without the guard, Tiptap stores bold for the next typed text.
-    expect(editor.state.storedMarks).toBeNull();
-
     await act(async () => {
       editor.commands.setTextSelection({
         from: prefixText.length + 1,
@@ -210,6 +303,94 @@ it.each([
     // Whether the selection spans shown markers or not, Mod+B removes the bold.
     await userEvent.keyboard(modB);
     await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(value));
+  },
+);
+
+it("distinguishes text edits from caret moves in change notifications", async () => {
+  const onChange = vi.fn<ComposerPromptEditorProps["onChange"]>();
+  await using screen = await mountEditor("", true, [], onChange);
+  await act(async () => {
+    screen.editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(screen.editor.view.dom));
+  await userEvent.keyboard("/mod ab");
+  expect(onChange.mock.lastCall?.[0]).toBe("/mod ab");
+  expect(onChange.mock.lastCall?.[5]).toBe(true);
+
+  await userEvent.keyboard("{ArrowLeft}");
+  expect(onChange.mock.lastCall?.[0]).toBe("/mod ab");
+  expect(onChange.mock.lastCall?.[5]).toBe(false);
+});
+
+// The mocked server keybindings bind Command-Up and Command-Down to thread navigation.
+it("leaves Command-arrow thread navigation bindings to the app on macOS", async () => {
+  using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+  await using screen = await mountEditor("first\nsecond");
+  const { editor } = screen;
+  await act(async () => {
+    editor.commands.focus("end");
+  });
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  const reachedApp: string[] = [];
+  const onWindowKeyDown = (event: KeyboardEvent) => {
+    if (!event.defaultPrevented && event.key.startsWith("Arrow")) reachedApp.push(event.key);
+  };
+  window.addEventListener("keydown", onWindowKeyDown);
+  using _listener = {
+    [Symbol.dispose]: () => window.removeEventListener("keydown", onWindowKeyDown),
+  };
+
+  await userEvent.keyboard("{Meta>}{ArrowUp}{ArrowDown}{/Meta}");
+
+  expect(reachedApp).toEqual(["ArrowUp", "ArrowDown"]);
+});
+
+it.each([
+  ["e", false, false],
+  ["i", false, false],
+  ["e", true, false],
+  ["e", false, true],
+])(
+  "leaves Mod+%s to an app command bound to it instead of formatting (composer command: %s, declined capture command: %s)",
+  async (key, composerClaimsKey, declinedCapture) => {
+    const openUsage = vi.fn((event: KeyboardEvent) => {
+      if (declinedCapture) return false;
+      event.preventDefault();
+    });
+    using _commands = {
+      [Symbol.dispose]: registerCommands(
+        { "usage.open": openUsage },
+        {
+          keybindings: () => [
+            {
+              command: "usage.open",
+              shortcut: {
+                key,
+                metaKey: false,
+                ctrlKey: false,
+                shiftKey: false,
+                altKey: false,
+                modKey: true,
+              },
+            },
+          ],
+          capture: declinedCapture,
+        },
+      ),
+    };
+    const composerCommand = vi.fn(() => composerClaimsKey);
+    await using screen = await mountEditor("word", true, [], undefined, composerCommand);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus();
+      editor.commands.setTextSelection({ from: 1, to: 5 });
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}${key}{/${modifier}}`);
+    expect(composerCommand).toHaveBeenCalled();
+    expect(openUsage).toHaveBeenCalledTimes(composerClaimsKey ? 0 : 1);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(declinedCapture ? "`word`" : "word");
   },
 );
 
@@ -242,6 +423,50 @@ it("lets composition replace selected text without surrounding it", async () => 
     typeText(editor, 1, 5, '"');
   });
   expect(serializeEditorDoc(editor.state.doc).value).toBe('"');
+});
+
+// CDP drives Chrome's own IME path, which skips deleting a range bounded by an uneditable chip.
+describe("an IME composition over a selection with a chip", () => {
+  const chip = "[Seed · 2](t3-context://v1/thread/thread_seed)";
+  it.each([
+    { range: "text and the chip after it", anchor: 1, head: 6, composed: `あ ${chip} RIGHT` },
+    { range: "a chip and the text after it", anchor: 5, head: 7, composed: `LEFTあ${chip} RIGHT` },
+    {
+      range: "a chip and the text after it, backward",
+      anchor: 14,
+      head: 7,
+      composed: `LEFT${chip} あ`,
+    },
+  ])("replaces $range as typing would", async ({ anchor, head, composed }) => {
+    const value = `LEFT${chip} ${chip} RIGHT`;
+    await using screen = await mountEditor(`LEFT${chip} ${chip} `);
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    await userEvent.keyboard("RIGHT");
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    await act(async () => {
+      editor.commands.setTextSelection({ from: anchor, to: head });
+    });
+    await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+    const session = cdp();
+    for (const text of ["u", "u3", "u30", "u304", "u3042"]) {
+      await session.send("Input.imeSetComposition", {
+        text,
+        selectionStart: text.length,
+        selectionEnd: text.length,
+      });
+    }
+    await session.send("Input.insertText", { text: "あ" });
+    await vi.waitFor(() => expect(serializeEditorDoc(editor.state.doc).value).toBe(composed));
+    await act(async () => {
+      editor.commands.undo();
+    });
+    expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
+    expect(editor.state.selection.toJSON()).toEqual({ type: "text", anchor, head });
+  });
 });
 
 it.each([
@@ -321,6 +546,90 @@ it("keeps unknown dollar names editable when restoring and pasting a draft", asy
   expect(serializeEditorDoc(editor.state.doc).value).toBe(value);
 });
 
+// regression: #25180 Tiptap's paste rules styled the pasted text a second time
+it.each([
+  "Read https://example.com/_handle_/status/1 and open src/__test__.tsx",
+  "see `**x**` now",
+])("sends pasted %s as pasted", async (pasted) => {
+  await using screen = await mountEditor("");
+  const { editor } = screen;
+  await act(async () => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
+    editor.view.dom.dispatchEvent(new ClipboardEvent("paste", { clipboardData, cancelable: true }));
+  });
+  expect(serializeEditorDoc(editor.state.doc).value).toBe(pasted);
+});
+
+it.each([
+  { literalText: false, imports: 1 },
+  { literalText: true, imports: 0 },
+])(
+  "imports a copied snapshot's context over its image file: %o",
+  async ({ literalText, imports }) => {
+    const record = {
+      version: 1,
+      kind: "image",
+      contextId: ComposerContextId.make("image_snapshot"),
+      label: "shot.png",
+      attachmentId: "snapshot",
+      name: "shot.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+    } satisfies ComposerContextRecord;
+    const importContextFragment = vi.fn(() => new Map([[record.contextId, record.contextId]]));
+    await using screen = await render(
+      <Composer
+        value=""
+        richTextEnabled
+        skills={[]}
+        literalText={literalText}
+        importContextFragment={importContextFragment}
+      />,
+    );
+    const editor = editorIn(screen.container);
+    await act(async () => {
+      const clipboardData = new DataTransfer();
+      clipboardData.items.add(
+        new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" }),
+      );
+      clipboardData.setData("text/plain", formatComposerContextReference(record));
+      clipboardData.setData(
+        COMPOSER_CONTEXT_CLIPBOARD_MIME,
+        encodeComposerContextFragment({
+          version: 1,
+          source: { environmentId: EnvironmentId.make("snapshot-source") },
+          records: [record],
+        })!,
+      );
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    expect(importContextFragment).toHaveBeenCalledTimes(imports);
+  },
+);
+
+it.each(["x\r\n\r\ny", "x\r\ry"])(
+  "pastes %j with the same blank line as x\\n\\ny",
+  async (text) => {
+    await using screen = await mountEditor("");
+    const { editor } = screen;
+    await act(async () => {
+      editor.commands.focus("end");
+      const clipboardData = new DataTransfer();
+      clipboardData.setData("text/plain", text);
+      editor.view.dom.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData, cancelable: true }),
+      );
+    });
+    const paragraphs: string[] = [];
+    editor.state.doc.forEach((node) => paragraphs.push(node.textContent));
+    expect(paragraphs).toEqual(["x", "", "y"]);
+    expect(serializeEditorDoc(editor.state.doc).value).toBe("x\n\ny");
+  },
+);
+
 it("keeps the caret inside unknown dollar text across rich and plain remounts", async () => {
   const value = "echo $HOME now";
   await using screen = await mountEditor(value);
@@ -350,6 +659,35 @@ async function focusAt(editor: Editor, position: number | "end") {
   await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
   vi.runOnlyPendingTimers();
 }
+
+it("reopens a long draft scrolled to its caret without taking focus", async () => {
+  // App CSS is not loaded here; give the editor its own scroll box.
+  const style = document.head.appendChild(document.createElement("style"));
+  // The bottom padding stands in for space reserved under overlaid controls.
+  style.textContent =
+    ".composer-tiptap { max-height: 120px; overflow-y: auto; padding-bottom: 48px; }";
+  using _style = { [Symbol.dispose]: () => style.remove() };
+  const value = Array.from({ length: 40 }, (_, line) => `line ${line + 1}`).join("\n");
+  await using screen = await mountEditor(value);
+  const { editor } = screen;
+  const scroller = editor.view.dom;
+  await vi.waitFor(() => expect(scroller.scrollTop).toBeGreaterThan(0));
+  expect(document.activeElement).not.toBe(scroller);
+  const caret = editor.view.coordsAtPos(editor.state.selection.head);
+  expect(caret.bottom).toBeLessThanOrEqual(scroller.getBoundingClientRect().bottom - 48 + 1);
+});
+
+it("does not outline the line under a click made with the node-select modifier held", async () => {
+  await using screen = await mountEditor("ship it");
+  const { editor } = screen;
+  const paragraph = editor.view.dom.querySelector("p")!;
+  const mod = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+  await userEvent.keyboard(`{${mod}>}`);
+  await userEvent.click(paragraph);
+  await userEvent.keyboard(`{/${mod}}`);
+  await vi.waitFor(() => expect(document.activeElement).toBe(editor.view.dom));
+  expect(getComputedStyle(paragraph).outlineStyle).toBe("none");
+});
 
 describe("Markdown markers around styled text", () => {
   it.each([
@@ -432,6 +770,31 @@ describe("Markdown markers around styled text", () => {
       keys: "{Shift>}{Enter}{/Shift}",
       expected: "**bo**\n**ld** after",
       marks: { bold: ["bo", "ld"] },
+    },
+    {
+      name: "a line break after typed inline code leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "`Test`{Shift>}{Enter}{/Shift}f",
+      expected: "`Test`\nf",
+      marks: { code: ["Test"] },
+    },
+    {
+      name: "a line break after typed bold leaves the next line plain",
+      value: "",
+      caret: 1,
+      keys: "**Test**{Shift>}{Enter}{/Shift}f",
+      expected: "**Test**\nf",
+      marks: { bold: ["Test"] },
+    },
+    {
+      name: "bold turned on after typed bold carries across a line break",
+      value: "",
+      caret: 1,
+      keys: `**Test**${isMacPlatform(navigator.platform) ? "{Meta>}b{/Meta}" : "{Control>}b{/Control}"}{Shift>}{Enter}{/Shift}f`,
+      expected: "**Test**\n**f**",
+      // The caret beside f shows it as source.
+      marks: { bold: ["Test"] },
     },
     {
       name: "splitting a list item inside bold keeps both halves bold",
@@ -600,7 +963,7 @@ const file = {
 } satisfies ComposerFileAttachment;
 
 describe("composer context undo lifetime", () => {
-  async function mountComposer(destinationValue = "") {
+  async function mountComposer(destinationValue = "", disabled = false) {
     const initialValue = `Draft A ${formatInlineContextReference(fileContextReference(file))}`;
     const editorRef = createRef<ComposerPromptEditorHandle>();
     let current: { value: string; files: ComposerFileAttachment[] };
@@ -631,7 +994,7 @@ describe("composer context undo lifetime", () => {
           ]),
         ),
         skills: [],
-        disabled: false,
+        disabled,
         placeholder: "",
         onChange: (value, _cursor, _expandedCursor, _adjacent, contextIds) => {
           const changes = reconcileAttachmentContextReferences({
@@ -701,6 +1064,19 @@ describe("composer context undo lifetime", () => {
     await composer.unmount();
     expect(retained.files.size).toBe(0);
   });
+
+  it.each(["Backspace", "Delete"])(
+    "removes a focused chip with %s while dictation makes the composer read-only",
+    async (key) => {
+      await using composer = await mountComposer("", true);
+      composer
+        .getByRole("button", { name: /notes\.txt/ })
+        .element()
+        .focus();
+      await userEvent.keyboard(`{${key}}`);
+      expect(composer.draft()).toEqual({ value: "Draft A ", files: [] });
+    },
+  );
 
   it.each(["", "Draft B"])(
     "releases deleted payloads and prevents undo into the previous draft when switching to %j",
@@ -791,3 +1167,50 @@ describe("an Arabic line", () => {
     );
   });
 });
+
+it.each([true, false])(
+  "restores the caret after dictation unlocks the editor (rich text: %s)",
+  async (richTextEnabled) => {
+    const ui = (disabled: boolean) => (
+      <Composer value="Draft" richTextEnabled={richTextEnabled} skills={[]} disabled={disabled} />
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => {
+      editor.commands.setTextSelection(3);
+      editor.view.focus();
+    });
+    await screen.rerender(ui(true));
+    await screen.rerender(ui(false));
+    await vi.waitFor(() => {
+      expect(editor.view.hasFocus()).toBe(true);
+      expect(editor.view.dom.contains(window.getSelection()?.anchorNode ?? null)).toBe(true);
+    });
+    await userEvent.keyboard("X");
+    await vi.waitFor(() => expect(editor.getText()).toBe("DrXaft"));
+  },
+);
+
+it.each(["other field", "document body"])(
+  "does not reclaim focus when it moves away during dictation and ends on the %s",
+  async (focusTarget) => {
+    const ui = (disabled: boolean) => (
+      <>
+        <Composer value="Draft" richTextEnabled skills={[]} disabled={disabled} />
+        <input aria-label="Other field" />
+      </>
+    );
+    await using screen = await render(ui(false));
+    const editor = editorIn(screen.container);
+    await act(() => editor.view.focus());
+    await screen.rerender(ui(true));
+    const other = screen.container.querySelector("input")!;
+    other.focus();
+    await vi.waitFor(() => expect(document.activeElement).toBe(other));
+    if (focusTarget === "document body") other.blur();
+    await screen.rerender(ui(false));
+    await vi.waitFor(() =>
+      expect(document.activeElement).toBe(focusTarget === "document body" ? document.body : other),
+    );
+  },
+);

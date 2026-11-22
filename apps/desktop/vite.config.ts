@@ -1,4 +1,6 @@
 import "vite-plus/test/config";
+import * as NodeOS from "node:os";
+
 import { defaultInclude, defineConfig } from "vite-plus";
 
 import { isDesktopRuntimeExternalDependency } from "../../scripts/lib/desktop-external-packages.ts";
@@ -11,6 +13,13 @@ const domTests = ["src/preview/PickPreload.test.ts"];
 const isMainProcessExternal = (id: string) =>
   id === "electron" || id.startsWith("electron/") || isDesktopRuntimeExternalDependency(id);
 const shouldLaunchElectronAfterPack = process.env.T3CODE_DESKTOP_DEV === "1";
+// tsdown runs onSuccess through a shell. dash forks instead of exec'ing the last command, which
+// would leave an `sh` between `vp pack` and the supervisor and hide `vp pack` dying from it.
+const devElectronCommand =
+  // oxlint-disable-next-line t3code/no-global-process-runtime -- Build config has no Effect runtime.
+  NodeOS.platform() === "win32"
+    ? "node scripts/dev-electron.mjs"
+    : "exec node scripts/dev-electron.mjs";
 const publicConfigDefine = {
   __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: JSON.stringify(
     repoEnv.T3CODE_CLERK_PUBLISHABLE_KEY?.trim() ?? "",
@@ -22,7 +31,7 @@ export default defineConfig({
     tasks: {
       build: {
         command:
-          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
+          "node scripts/build-browser-secret.mjs && node scripts/build-apple-speech.mjs && node scripts/build-preview-annotation-css.mjs && vp pack",
         dependsOn: ["t3#build"],
         cache: false,
       },
@@ -34,13 +43,13 @@ export default defineConfig({
       },
       dev: {
         command:
-          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
+          "node scripts/build-browser-secret.mjs && node scripts/build-apple-speech.mjs && node scripts/build-preview-annotation-css.mjs && cross-env T3CODE_DESKTOP_DEV=1 vp pack --watch",
         dependsOn: ["t3#build"],
         cache: false,
       },
       "dev:bundle": {
         command:
-          "node scripts/build-browser-secret.mjs && node scripts/build-preview-annotation-css.mjs && vp pack --watch",
+          "node scripts/build-browser-secret.mjs && node scripts/build-apple-speech.mjs && node scripts/build-preview-annotation-css.mjs && vp pack --watch",
         cache: false,
       },
       "dev:electron": {
@@ -71,7 +80,7 @@ export default defineConfig({
         neverBundle: isMainProcessExternal,
         onlyBundle: false,
       },
-      ...(shouldLaunchElectronAfterPack ? { onSuccess: "node scripts/dev-electron.mjs" } : {}),
+      ...(shouldLaunchElectronAfterPack ? { onSuccess: devElectronCommand } : {}),
     },
     {
       format: "cjs",
@@ -155,6 +164,9 @@ export default defineConfig({
     // The Windows lane runs workspace suites concurrently; filesystem-heavy
     // desktop integration tests can exceed Vitest's 5 second default there.
     testTimeout: 15_000,
+    // `require("electron")` downloads a missing binary, so concurrent workers race to
+    // extract it into the same dist/. Install it once before any worker starts.
+    globalSetup: ["./scripts/ensure-electron-runtime.mjs"],
     projects: [
       {
         extends: true,
@@ -165,6 +177,7 @@ export default defineConfig({
           setupFiles: [
             "../../packages/shared/src/testing/longTempDir.ts",
             "../../packages/shared/src/testing/providerEnv.ts",
+            "../../packages/shared/src/testing/gitEnv.ts",
           ],
         },
       },
@@ -175,7 +188,10 @@ export default defineConfig({
           include: domTests,
           // Guest preloads run in the page; these tests drive them against a DOM.
           environment: "jsdom",
-          setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
+          setupFiles: [
+            "../../packages/shared/src/testing/providerEnv.ts",
+            "../../packages/shared/src/testing/gitEnv.ts",
+          ],
         },
       },
     ],

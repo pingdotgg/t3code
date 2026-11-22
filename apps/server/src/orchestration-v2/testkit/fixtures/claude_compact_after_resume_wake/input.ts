@@ -5,7 +5,7 @@ export function claudeCompactAfterResumeWakeInput(): OrchestratorFixtureInput {
   return {
     steps: [
       { type: "message", text: CLAUDE_COMPACT_FIRST_PROMPT },
-      { type: "advance_clock", duration: "31 minutes" },
+      { type: "advance_clock", duration: "31 minutes", releasesProviderSession: true },
       { type: "message", text: "/compact" },
     ],
   };

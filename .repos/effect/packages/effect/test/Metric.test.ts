@@ -829,6 +829,17 @@ describe("Metric", () => {
   })
 
   describe("Summary", () => {
+    it.effect("rejects NaN quantiles on first use", () =>
+      Effect.gen(function*() {
+        const summary = Metric.summary(nextId(), {
+          maxAge: "1 minute",
+          maxSize: 10,
+          quantiles: [Number.NaN]
+        })
+        const result = yield* Effect.exit(Metric.update(summary, 1))
+        assert.deepStrictEqual(result, Exit.die(new Error("Quantile must be between 0 and 1, found: NaN")))
+      }))
+
     it.effect("reports the maximum for negative-only observations", () =>
       Effect.gen(function*() {
         const summary = Metric.summary(nextId(), {
