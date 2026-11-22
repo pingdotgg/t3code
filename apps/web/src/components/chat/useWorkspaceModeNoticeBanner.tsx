@@ -1,5 +1,6 @@
 import type { EnvironmentId, ScopedProjectRef } from "@t3tools/contracts";
 import { FolderGit2Icon, TriangleAlertIcon } from "lucide-react";
+import { useGT } from "gt-react";
 
 import { useEnvironmentQuery } from "../../state/query";
 import { useSelectThreadShellsForProjectRefs } from "../../state/entities";
@@ -27,6 +28,7 @@ export function useWorkspaceModeNoticeBanner(input: {
   readonly branch: string | null;
   readonly onWorkspaceModeChange: (mode: WorkspaceMode) => void;
 }): ComposerBannerStackItem | null {
+  const gt = useGT();
   const { projectRoot, branch, mode } = input;
   const lookupBranch = input.enabled && mode === "open" && projectRoot !== null && branch !== null;
   // The server opens the local branch for a remote ref, so look that one up.
@@ -77,19 +79,19 @@ export function useWorkspaceModeNoticeBanner(input: {
         id: `workspace-mode:root:${notice.branch}`,
         variant: "error",
         icon: <TriangleAlertIcon />,
-        title: `${notice.branch} is checked out in the project folder`,
-        description: "Git can't check out one branch in two folders.",
+        title: gt("{branch} is checked out in the project folder", { branch: notice.branch }),
+        description: gt("Git can't check out one branch in two folders."),
         actions: (
           <>
             <Button size="xs" variant="ghost" onClick={() => input.onWorkspaceModeChange("switch")}>
-              Work in project folder
+              {gt("Work in project folder")}
             </Button>
             <Button
               size="xs"
               variant="ghost"
               onClick={() => input.onWorkspaceModeChange("branch-off")}
             >
-              Branch off instead
+              {gt("Branch off instead")}
             </Button>
           </>
         ),
@@ -99,11 +101,13 @@ export function useWorkspaceModeNoticeBanner(input: {
         id: `workspace-mode:join:${notice.worktreePath}`,
         variant: notice.runningThreadTitle === null ? "info" : "warning",
         icon: <FolderGit2Icon />,
-        title: `Opens the existing worktree for ${notice.branch}`,
+        title: gt("Opens the existing worktree for {branch}", { branch: notice.branch }),
         description:
           notice.runningThreadTitle === null
             ? notice.worktreePath
-            : `"${notice.runningThreadTitle}" is running there and shares its files.`,
+            : gt('"{title}" is running there and shares its files.', {
+                title: notice.runningThreadTitle,
+              }),
         ...(notice.runningThreadTitle === null
           ? {}
           : {
@@ -113,7 +117,7 @@ export function useWorkspaceModeNoticeBanner(input: {
                   variant="ghost"
                   onClick={() => input.onWorkspaceModeChange("branch-off")}
                 >
-                  Branch off instead
+                  {gt("Branch off instead")}
                 </Button>
               ),
             }),
@@ -123,14 +127,16 @@ export function useWorkspaceModeNoticeBanner(input: {
         id: "workspace-mode:root-busy",
         variant: "warning",
         icon: <TriangleAlertIcon />,
-        title: `"${notice.runningThreadTitle}" is running in the project folder`,
+        title: gt('"{title}" is running in the project folder', {
+          title: notice.runningThreadTitle,
+        }),
         actions: (
           <Button
             size="xs"
             variant="ghost"
             onClick={() => input.onWorkspaceModeChange("branch-off")}
           >
-            Branch off instead
+            {gt("Branch off instead")}
           </Button>
         ),
       };

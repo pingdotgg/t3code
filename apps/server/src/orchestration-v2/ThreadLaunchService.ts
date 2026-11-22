@@ -1816,7 +1816,8 @@ const make = Effect.gen(function* () {
               Option.isSome(launchReceipt) &&
               boundWorktreePath !== null &&
               (acceptedStrategy.type === "root" ||
-                (acceptedStrategy.type === "worktree" && acceptedStrategy.checkoutExisting === true))
+                (acceptedStrategy.type === "worktree" &&
+                  acceptedStrategy.checkoutExisting === true))
                 ? {
                     type: "existing_worktree",
                     worktreePath: boundWorktreePath,
