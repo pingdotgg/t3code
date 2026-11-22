@@ -328,7 +328,6 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
           }).pipe(Effect.withSpan(`AcpRegistryRuntimeCoordinator.${names.watch}.subscribe`));
           const snapshotRevision = snapshot.revision;
           const inst = snapshot.instances.get(instanceId);
-          const lastDeliveredByRuntime = new Map<string | undefined, number>();
           const metaFor = (
             runtimeIdentity: string | undefined,
             revision: number,
@@ -355,21 +354,15 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
                   )
                   .toSorted((left, right) => left.revision - right.revision);
           for (const entry of replayed) {
-            lastDeliveredByRuntime.set(entry.runtimeIdentity, entry.revision);
             yield* onUpdate(
               entry.value,
               metaFor(entry.runtimeIdentity, entry.revision, entry.lifetime),
             );
           }
           yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter((update) => {
-              if (update.instanceId !== instanceId) return false;
-              if (update.revision <= snapshotRevision) return false;
-              const lastDelivered = lastDeliveredByRuntime.get(update.runtimeIdentity) ?? 0;
-              if (update.revision <= lastDelivered) return false;
-              lastDeliveredByRuntime.set(update.runtimeIdentity, update.revision);
-              return true;
-            }),
+            Stream.filter(
+              (update) => update.instanceId === instanceId && update.revision > snapshotRevision,
+            ),
             Stream.runForEach((update) =>
               onUpdate(
                 update.value,
@@ -494,12 +487,9 @@ const make = Effect.gen(function* () {
               }
             }),
           );
-          const remaining = Duration.millis(
-            Math.max(0, DateTime.toEpochMillis(expiresAt) - DateTime.toEpochMillis(createdAt)),
-          );
           return yield* Deferred.await(consent).pipe(
             Effect.timeoutOrElse({
-              duration: remaining,
+              duration: URL_AUTH_ACTION_TTL,
               orElse: () => Effect.succeed(false),
             }),
           );

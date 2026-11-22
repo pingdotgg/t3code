@@ -13,6 +13,7 @@ import { AcpRegistrySettings } from "../settings.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import * as Clock from "effect/Clock";
+import * as Deferred from "effect/Deferred";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
@@ -1117,7 +1118,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     installed: true,
                     version: fallbackState.fallbackVersion,
                     status: withLocalVersion.enabled ? ("ready" as const) : ("disabled" as const),
-                    message: fallbackState.message,
                   },
                   launchIdentity: fallbackState.fallbackLaunchIdentity,
                   indexRevision,
@@ -1424,7 +1424,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       };
     });
     const reconcilingRuntimeIdentity = yield* Ref.make<string | null>(null);
-    let triggerSnapshotRefresh: Effect.Effect<void> = Effect.void;
+    const refreshTarget = yield* Deferred.make<Effect.Effect<void>>();
+    const triggerSnapshotRefresh = Deferred.await(refreshTarget).pipe(Effect.flatten);
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
@@ -2099,6 +2100,43 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             }
             return;
           }
+          const activeFallbackState = yield* Ref.get(activeFallback);
+          const now = yield* Clock.currentTimeMillis;
+          if (
+            activeFallbackState !== null &&
+            now >= activeFallbackState.failedAtMs &&
+            now - activeFallbackState.failedAtMs < FALLBACK_RETRY_BACKOFF_MS &&
+            rechecked.launchIdentity !== null &&
+            rechecked.launchIdentity === activeFallbackState.targetLaunchIdentity
+          ) {
+            // Unrelated agents or non-launch metadata changed while the failed target itself is
+            // unchanged; stay in backoff without re-probing while keeping displayed metadata fresh.
+            yield* liveSnapshotSemaphore.withPermit(
+              Effect.gen(function* () {
+                const liveFallback = yield* Ref.get(activeFallback);
+                if (
+                  liveFallback === null ||
+                  liveFallback.targetLaunchIdentity !== activeFallbackState.targetLaunchIdentity
+                ) {
+                  return;
+                }
+                yield* Ref.set(activeFallback, {
+                  ...liveFallback,
+                  targetIndexRevision: rechecked.indexRevision ?? revision,
+                });
+                const currentSnapshot = yield* getSnapshot;
+                if (!currentSnapshot.installed) return;
+                const withMetadata = applyRegistryReadinessMetadata(
+                  currentSnapshot,
+                  rechecked.snapshot,
+                );
+                if (!Equal.equals(withMetadata, currentSnapshot)) {
+                  yield* tryPublishSnapshot(withMetadata);
+                }
+              }),
+            );
+            return;
+          }
           if (
             !Equal.equals(
               installedRegistrySignature(rechecked),
@@ -2140,7 +2178,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }),
       ),
     );
-    triggerSnapshotRefresh = snapshot.refresh.pipe(Effect.asVoid);
+    yield* Deferred.succeed(refreshTarget, snapshot.refresh.pipe(Effect.asVoid));
 
     const provideAcpManagementServices = <A, E>(
       effect: Effect.Effect<

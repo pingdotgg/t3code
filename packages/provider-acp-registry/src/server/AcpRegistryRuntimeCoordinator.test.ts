@@ -246,15 +246,35 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(
         Option.isNone(yield* withDecoupledClock(coordinator.getUrlAuthAction(instanceId))),
       ).toBe(true);
+      expect(expiringRequest.pollUnsafe()).toBeUndefined();
       expect(
         yield* withDecoupledClock(
           coordinator.acceptUrlAuthentication({ instanceId, elicitationId: "login-expiring" }),
         ),
       ).toBe(false);
-      expect(expiringRequest.pollUnsafe()).toBeUndefined();
-      yield* TestClock.adjust("10 minutes");
       expect(yield* Fiber.join(expiringRequest)).toBe(false);
       yield* Fiber.interrupt(exactExpiryWatcher);
+
+      // An unaccepted request also expires cleanly when the timeout fires.
+      const timeoutSeen = yield* Deferred.make<void>();
+      const timeoutWatcher = yield* coordinator
+        .watchUrlAuthAction(instanceId, (current) =>
+          current?.elicitationId === "login-timeout"
+            ? Deferred.succeed(timeoutSeen, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        )
+        .pipe(Effect.forkChild);
+      const timeoutRequest = yield* coordinator
+        .requestUrlAuthentication(instanceId, {
+          ...action,
+          elicitationId: "login-timeout",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(timeoutSeen);
+      yield* TestClock.adjust("10 minutes");
+      expect(yield* Fiber.join(timeoutRequest)).toBe(false);
+      expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
+      yield* Fiber.interrupt(timeoutWatcher);
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
@@ -478,34 +498,31 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         );
         yield* Deferred.await(replayDone);
         expect(replayedNames).toEqual(["cmd-reused", "cmd-reused-c", "cmd-after-watch"]);
+        yield* Fiber.interrupt(secondWatcher);
 
         // 6. Concurrent publications for the same runtime are serialized so watchers always finish
         // on the exact latest committed state returned by get().
         const concurrentCount = 12;
-        const concurrentStartLength = replayedNames.length;
+        const concurrentNames: Array<string> = [];
+        const concurrentReady = yield* Deferred.make<void>();
         const concurrentDone = yield* Deferred.make<void>();
         const concurrentWatcher = yield* coordinator
           .watchAvailableCommands(instanceId, (commands) =>
             Effect.gen(function* () {
               const name = commands.slashCommands[0]?.name ?? "empty";
-              if (name.startsWith("concurrent-")) {
-                replayedNames.push(name);
-                if (replayedNames.length - concurrentStartLength >= concurrentCount) {
+              if (name === "cmd-after-watch") {
+                yield* Deferred.succeed(concurrentReady, undefined);
+              } else if (name.startsWith("concurrent-")) {
+                concurrentNames.push(name);
+                if (concurrentNames.length >= concurrentCount) {
                   yield* Deferred.succeed(concurrentDone, undefined);
                 }
               }
             }),
           )
           .pipe(Effect.forkChild);
-        // Wait for initial replay of concurrentWatcher before firing the concurrent batch.
-        const concurrentReady = yield* Deferred.make<void>();
-        const syncWatcher = yield* coordinator
-          .watchAvailableCommands(instanceId, () =>
-            Deferred.succeed(concurrentReady, undefined).pipe(Effect.asVoid),
-          )
-          .pipe(Effect.forkChild);
+        // Wait for concurrentWatcher itself to finish its initial replay before firing the batch.
         yield* Deferred.await(concurrentReady);
-        yield* Fiber.interrupt(syncWatcher);
         yield* Effect.all(
           Array.from({ length: concurrentCount }, (_, index) =>
             coordinator.publishAvailableCommands(
@@ -523,11 +540,10 @@ describe("AcpRegistryRuntimeCoordinator", () => {
             requireMatchingRuntimeIdentity: true,
           }),
         );
-        expect(replayedNames[replayedNames.length - 1]).toBe(
+        expect(concurrentNames[concurrentNames.length - 1]).toBe(
           committedLatest.slashCommands[0]?.name,
         );
         yield* Fiber.interrupt(concurrentWatcher);
-        yield* Fiber.interrupt(secondWatcher);
         yield* Fiber.interrupt(watcher);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );

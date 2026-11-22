@@ -1621,7 +1621,7 @@ describe("AcpRegistryDriver registry recovery", () => {
   );
 
   it.effect(
-    "publishes cold and cached probes immediately without waiting for a slow registry refresh",
+    "publishes cold and cached probes immediately while backing off and reconciling failed upgrade fallbacks",
     () =>
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;
@@ -1633,6 +1633,7 @@ describe("AcpRegistryDriver registry recovery", () => {
 
         let remoteVersion = "2.0.0";
         let remoteWebsite: string | undefined = undefined;
+        let remoteExtraAgentVersion: string | undefined = undefined;
         let failArchiveDownload = false;
         let probeResolveAttempts = 0;
         let onFallbackResolved: (() => Effect.Effect<void>) | null = null;
@@ -1672,11 +1673,12 @@ describe("AcpRegistryDriver registry recovery", () => {
                   request,
                   request.url === registryUrl
                     ? new Response(
-                        makeBinaryRegistry(
-                          remoteVersion,
-                          compatibleRegistryTarget,
-                          remoteWebsite ? { website: remoteWebsite } : undefined,
-                        ),
+                        makeBinaryRegistry(remoteVersion, compatibleRegistryTarget, {
+                          ...(remoteWebsite ? { website: remoteWebsite } : {}),
+                          ...(remoteExtraAgentVersion
+                            ? { extraAgentVersion: remoteExtraAgentVersion }
+                            : {}),
+                        }),
                       )
                     : failArchiveDownload
                       ? new Response("archive unavailable", { status: 503 })
@@ -1901,6 +1903,29 @@ describe("AcpRegistryDriver registry recovery", () => {
         );
         expect(liveFallbackSnapshot.message).toBe(fallbackSnapshot.message);
 
+        // Unrelated agent changes or non-launch metadata updates during fallback backoff must
+        // refresh displayed metadata without re-probing or resetting backoff.
+        remoteWebsite = "https://example.test/v4-updated-docs";
+        remoteExtraAgentVersion = "9.9.9";
+        yield* realCatalog.invalidateIndex();
+        const resolvesBeforeMetadataBackoff = probeResolveAttempts;
+        const metadataBackoffDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = (exit) => {
+          if (Exit.isSuccess(exit)) {
+            Deferred.doneUnsafe(metadataBackoffDone, Exit.void);
+          }
+        };
+        yield* instance.snapshot.refresh.pipe(Effect.provideService(Tracer.Tracer, testTracer));
+        yield* Deferred.await(metadataBackoffDone);
+        onEnrichmentEnd = null;
+        expect(probeResolveAttempts).toBe(resolvesBeforeMetadataBackoff);
+        const metadataBackoffSnapshot = yield* instance.snapshot.getSnapshot;
+        expect(metadataBackoffSnapshot.version).toBe("3.0.0");
+        expect(metadataBackoffSnapshot.setup?.documentationUrl).toBe(
+          "https://example.test/v4-updated-docs",
+        );
+        expect(metadataBackoffSnapshot.message).toBe(fallbackSnapshot.message);
+
         // Once backoff expires, recovering without invalidating the cached 4.0.0 index still upgrades
         // because fallback did not acknowledge the 4.0.0 revision.
         failArchiveDownload = false;
@@ -2003,10 +2028,13 @@ describe("AcpRegistryDriver registry recovery", () => {
         yield* Deferred.await(soloAfterInvalidateDone);
         onEnrichmentEnd = null;
         expect(probeResolveAttempts).toBe(resolvesBeforeSolo31s + 1);
+        const v5Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v5Inspection.status).toBe("ready");
+        const v5Identity = v5Inspection.status === "ready" ? v5Inspection.launchIdentity! : "";
 
         // When inspect() sees cached 5.0.0 while resolve() refreshes to failing 6.0.0 and falls back
-        // to 4.0.0, activeFallback records 6.0.0 (from resolved.failedTarget), stays in backoff for
-        // 6.0.0, and does NOT retire never-installed 6.0.0 so external 6.0.0 live state reconciles.
+        // to 4.0.0, activeFallback records 6.0.0 (from resolved.failedTarget) and external 6.0.0 live
+        // state reconciles freshInstance to 6.0.0.
         remoteVersion = "6.0.0";
         yield* realCatalog.invalidateIndex();
         const resolvesBeforeFreshFallback = probeResolveAttempts;
@@ -2057,6 +2085,31 @@ describe("AcpRegistryDriver registry recovery", () => {
         const reconciledV6Snapshot = Option.getOrThrow(yield* Fiber.join(freshReconciledToV6));
         expect(reconciledV6Snapshot.version).toBe("6.0.0");
         expect(reconciledV6Snapshot.message).toBeUndefined();
+
+        // On cold-start fallback where inspect() already seeded activeRuntimeIdentity to the failing
+        // target (5.0.0 on singleModelInstance), 5.0.0 was never successfully started and must not be
+        // retired, so external 5.0.0 live state still reconciles singleModelInstance once 5.0.0 recovers.
+        remoteVersion = "5.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const singleReconciledToV5 = yield* singleModelInstance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "5.0.0" &&
+              snapshot.nativeSessions !== undefined &&
+              snapshot.slashCommands.some((command) => command.name === "v5-external-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          singleModelInstanceId,
+          { slashCommands: [{ name: "v5-external-cmd" }], skills: [] },
+          v5Identity,
+        );
+        const reconciledV5Snapshot = Option.getOrThrow(yield* Fiber.join(singleReconciledToV5));
+        expect(reconciledV5Snapshot.version).toBe("5.0.0");
+        expect(reconciledV5Snapshot.message).toBeUndefined();
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 
