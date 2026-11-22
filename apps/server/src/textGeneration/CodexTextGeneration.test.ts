@@ -667,6 +667,7 @@ const PREFLIGHT_PRIMARY_STATES = [
   "cannot generate text",
   "model cannot generate text",
   "disabled",
+  "disabled, thread default model cannot generate text",
   "disabled, fallback disabled for project",
 ] as const;
 
@@ -728,7 +729,8 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
               ],
             }
           : {}),
-        ...(primaryState === "not installed, fallback model cannot generate text" &&
+        ...((primaryState === "not installed, fallback model cannot generate text" ||
+          primaryState === "disabled, thread default model cannot generate text") &&
         instanceId === fallback
           ? {
               models: [
@@ -813,7 +815,10 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
         cwd: "/tmp",
         message: "hello",
         linkedContext: "",
-        modelSelection: selection,
+        modelSelection:
+          primaryState === "disabled, thread default model cannot generate text"
+            ? threadDefault
+            : selection,
         projectId,
       })
       .pipe(Effect.exit);
@@ -829,7 +834,8 @@ it.effect.each(PREFLIGHT_PRIMARY_STATES)("text generation preflight: %s", (prima
       primaryState === "not installed, fallback disabled for project" ||
       primaryState === "signed out, fallback failed"
         ? selection
-        : primaryState === "not installed, fallback model cannot generate text"
+        : primaryState === "not installed, fallback model cannot generate text" ||
+            primaryState === "disabled, thread default model cannot generate text"
           ? {
               instanceId: fallback,
               model:

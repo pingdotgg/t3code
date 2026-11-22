@@ -126,13 +126,14 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
-      selection =
+      const rejected = selection;
+      const fallbackWhere = (sameInstance: boolean) =>
         fallbackTextGenerationModelSelection(
           settings.providerInstances,
           (instanceId, driver, model) => {
             const provider = snapshots.find((candidate) => candidate.instanceId === instanceId);
             return (
-              instanceId !== selection.instanceId &&
+              (sameInstance ? model !== rejected.model : instanceId !== rejected.instanceId) &&
               provider?.enabled === true &&
               resolveProjectProviderInstanceEnabled(settings, projectId ?? null, instanceId) &&
               provider.installed &&
@@ -147,7 +148,9 @@ export const make = Effect.gen(function* () {
             );
           },
           { defaultModelSelection: settings.defaultModelSelection },
-        ) ?? selection;
+        );
+      // Another instance first; the rejected instance's other models only when none qualifies.
+      selection = fallbackWhere(false) ?? fallbackWhere(true) ?? selection;
     }
     if (textGeneratorCannotRun && selection.instanceId === textGeneratorId) {
       return yield* new TextGenerationError({
