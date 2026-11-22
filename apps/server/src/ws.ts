@@ -3457,6 +3457,8 @@ export const layerWsRpc = (
             Effect.andThen(gitWorkflow.switchRef(input)),
             Effect.tap(() => vcsStatusBroadcaster.refreshAfterCheckout(input.cwd)),
           ),
+        [WS_METHODS.vcsSetPushRemote]: (input) =>
+          gitWorkflow.setPushRemote(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsInit]: (input) =>
           vcsProvisioning.initRepository(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.reviewGetBranchCommits]: (input) => review.getBranchCommits(input),

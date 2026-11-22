@@ -528,6 +528,7 @@ describe("vcsActionState", () => {
           {
             actionId: successfulActionId,
             action,
+            pushRemote: "fork",
             threadId,
             projectId,
           },
@@ -540,7 +541,14 @@ describe("vcsActionState", () => {
       expect(registry.get(state).revision).toBe(1);
       expect(removed).toEqual([`${environmentId}:*`]);
       expect(rpcInputs).toEqual([
-        { actionId: successfulTransportActionId, cwd, action, threadId, projectId },
+        {
+          actionId: successfulTransportActionId,
+          cwd,
+          action,
+          pushRemote: "fork",
+          threadId,
+          projectId,
+        },
       ]);
 
       const failedResult = yield* Effect.promise(() =>

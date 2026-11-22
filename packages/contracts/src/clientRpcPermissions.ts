@@ -76,6 +76,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.workspaceApproveLayoutCommands]: AuthTerminalOperateScope,
   [WS_METHODS.vcsCreateRef]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsSwitchRef]: AuthSourceControlWriteScope,
+  [WS_METHODS.vcsSetPushRemote]: AuthSourceControlWriteScope,
   [WS_METHODS.vcsInit]: AuthSourceControlWriteScope,
 
   // Starts an agent session on this environment that can read its logs and database.
