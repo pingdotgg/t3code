@@ -3354,6 +3354,11 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           );
           return result;
         });
+      const decodePersistedAuthState = Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({ binding: Schema.String, authenticated: Schema.Boolean }),
+        ),
+      );
       const readPersistedAuthConfirmed = () =>
         Effect.gen(function* () {
           const entries = yield* fileSystem.readDirectory(statusCacheDir);
@@ -3362,9 +3367,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           );
           if (authFile === undefined) return null;
           const contents = yield* fileSystem.readFileString(path.join(statusCacheDir, authFile));
-          return (
-            (JSON.parse(contents) as { readonly authenticated?: boolean }).authenticated ?? null
-          );
+          return (yield* decodePersistedAuthState(contents)).authenticated;
         });
       return {
         directory,
