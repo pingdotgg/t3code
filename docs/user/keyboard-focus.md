@@ -2,7 +2,7 @@
 
 The command palette keeps focus while open. Closing it returns focus to the composer in chat,
 or to the previous control on other pages. Choosing a workspace focus command moves to that
-area instead. Opening Pull Requests moves focus into that page.
+area instead. Opening Pull requests moves focus into that page.
 While the palette or model picker is open, number shortcuts select its entries instead of
 switching threads. Model shortcuts work in Settings as well as the composer.
 See [Keybindings](./keybindings.md) to customize these shortcuts.
@@ -14,7 +14,7 @@ becomes ready. Opening or switching to a terminal explicitly still focuses it.
 
 On web and desktop, press `F6` or `Shift+F6` to move between the Threads sidebar,
 conversation, message input, and visible panels. Navigation wraps around and restores
-the last focused control in each area. Pull Requests has a page content area. In Settings,
+the last focused control in each area. Pull requests has a page content area. In Settings,
 `F6` moves between the section list and the open section. Hidden areas are skipped. Other
 dialogs and form popups retain focus; a thread context menu closes when an area command
 moves focus away.
@@ -33,5 +33,5 @@ expand and collapse groups. `F2` renames the focused thread.
 Press `Shift+F10` or the Context Menu key to open the focused thread's menu. Use the arrow
 keys to move through it, Enter to choose, and Escape to close it.
 
-The Settings section list works the same way: Up and Down move between sections, and Enter
-opens one.
+The Settings section list works the same way: Tab moves through each section, Up and Down
+also move between sections without opening them, and Enter opens one.

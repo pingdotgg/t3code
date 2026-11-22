@@ -43,6 +43,12 @@ export * as AnthropicTool from "./AnthropicTool.ts"
 
 /**
  * @stability unstable
+ * @since 4.1.3
+ */
+export * as AnthropicWorkloadIdentity from "./AnthropicWorkloadIdentity.ts"
+
+/**
+ * @stability unstable
  * @since 4.0.0
  */
 export * as Generated from "./Generated.ts"

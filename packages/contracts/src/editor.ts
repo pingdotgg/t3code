@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { PositiveInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 export const EditorLaunchStyle = Schema.Literals(["direct-path", "goto", "line-column"]);
 export type EditorLaunchStyle = typeof EditorLaunchStyle.Type;
@@ -157,6 +157,15 @@ export type FileManagerRevealKind = typeof FileManagerRevealKind.Type;
 export const LaunchEditorInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   editor: EditorId,
+  /** When present, cwd is an exact path; {} opens it without a position. Omit for diagnostic suffix parsing. */
+  position: Schema.optional(
+    Schema.Struct({
+      line: Schema.optional(PositiveInt),
+      column: Schema.optional(PositiveInt),
+    }),
+  ),
+  /** Workspace the target belongs to; JetBrains IDEs open positioned files in this project. */
+  projectRoot: Schema.optional(TrimmedNonEmptyString),
   /** Only for file-manager; requires the server's shellRevealInFileManager capability. */
   reveal: Schema.optional(Schema.Boolean),
 });
@@ -227,7 +236,16 @@ export const buildRemoteOpenUrl = (input: {
     return `${scheme}://ssh/${zedDestination}${encodedZedPath}`;
   }
   const encodedPath = rootedPath.split("/").map(encodeURIComponent).join("/");
-  const destination = input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  const plainDestination =
+    input.username === undefined ? input.host : `${input.username}@${input.host}`;
+  // Remote-SSH splits the decoded authority on "+", so a destination containing one must use its
+  // hex-encoded JSON form instead.
+  const destination = plainDestination.includes("+")
+    ? Array.from(
+        new TextEncoder().encode(JSON.stringify({ hostName: input.host, user: input.username })),
+        (byte) => byte.toString(16).padStart(2, "0"),
+      ).join("")
+    : plainDestination;
   // VS Code opens a bare vscode-remote path as a folder; a trailing position makes it open the file.
   return `${scheme}://vscode-remote/ssh-remote+${encodeURIComponent(destination)}${encodedPath}${input.isFile ? ":1:1" : ""}`;
 };
@@ -287,6 +305,18 @@ export class ExternalLauncherUnsupportedTargetError extends Schema.TaggedError<E
   }
 }
 
+export class ExternalLauncherRevealTargetMissingError extends Schema.TaggedError<ExternalLauncherRevealTargetMissingError>()(
+  "ExternalLauncherRevealTargetMissingError",
+  {
+    editor: EditorId,
+    target: Schema.String,
+  },
+) {
+  override get message(): string {
+    return `No file or folder exists at ${this.target}`;
+  }
+}
+
 const ExternalLauncherSpawnFields = {
   command: Schema.String,
   args: Schema.Array(Schema.String),
@@ -323,6 +353,7 @@ export const ExternalLauncherError = Schema.Union([
   ExternalLauncherUnsupportedEditorError,
   ExternalLauncherCommandNotFoundError,
   ExternalLauncherUnsupportedTargetError,
+  ExternalLauncherRevealTargetMissingError,
   ExternalLauncherBrowserSpawnError,
   ExternalLauncherEditorSpawnError,
 ]);
