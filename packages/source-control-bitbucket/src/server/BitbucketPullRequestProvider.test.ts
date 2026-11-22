@@ -210,7 +210,8 @@ it.effect("rereads only the pull request when sync reads an unchanged pull reque
         }),
       ),
     );
-    const readSummary = provider.getChangeRequestSummary ?? provider.getChangeRequest;
+    const readSummary = provider.getChangeRequestSummary;
+    if (readSummary === undefined) return yield* Effect.die("summary reads missing");
     const input = { cwd: "/repo", repository: "acme/web", host: "bitbucket.org", number: 1 };
     const expected = { additions: 12, deletions: 3, changedFiles: 2, mergeability: "conflicting" };
 
