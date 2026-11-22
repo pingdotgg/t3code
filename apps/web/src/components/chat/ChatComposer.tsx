@@ -23,6 +23,7 @@ import {
 import type {
   KeybindingCommand,
   AssistantCitation,
+  ComposerContextId,
   ResponseContextRecord,
   ChatAttachment as ContractChatAttachment,
   ChatFileAttachment,
@@ -287,6 +288,7 @@ import { useComposerImageGroups } from "./useComposerImageGroups";
 import { useComposerStash } from "./useComposerStash";
 import { useComposerContextImport } from "./useComposerContextImport";
 import { useComposerAttachmentIntake } from "./useComposerAttachmentIntake";
+import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
 import {
   cancelHeldComposerSend,
   countPreparingComposerImages,
@@ -457,6 +459,7 @@ export interface ChatComposerProps {
   editingQueuedAttachments: ReadonlyArray<{
     readonly attachment: ContractChatAttachment;
     readonly url: string | null;
+    readonly contextIds?: ReadonlyArray<ComposerContextId> | undefined;
   }> | null;
   onRemoveEditingQueuedAttachment: (attachmentId: string) => void;
 
@@ -757,33 +760,55 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: gitCwd ?? undefined,
     projectId: activeProjectId ?? undefined,
     expandImage: (imageId: string) => {
-      const preview = buildExpandedImagePreview(
-        composerImages,
-        imageId,
-        copyComposerSnapshotStable,
-      );
+      const preview =
+        buildExpandedImagePreview(composerImages, imageId, copyComposerSnapshotStable) ??
+        buildExpandedImagePreview(
+          (editingQueuedAttachments ?? []).flatMap(({ attachment, url }) =>
+            isQueuedImageAttachment(attachment) && url ? [{ ...attachment, previewUrl: url }] : [],
+          ),
+          imageId,
+        );
       if (preview) onExpandImage(preview);
     },
-    openFile: setPreviewFileId,
+    openFile: (fileId: string) => {
+      if (composerFiles.some((file) => file.id === fileId)) {
+        setPreviewFileId(fileId);
+        return;
+      }
+      const queuedFile = editingQueuedAttachments?.find(
+        ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
+      )?.attachment;
+      if (queuedFile && isQueuedFileAttachment(queuedFile)) onFileOpen(queuedFile);
+    },
     openMention: (path: string) => useRightPanelStore.getState().openFile(routeThreadRef, path),
     expandVideo: (fileId: string) => {
       const file = composerFiles.find((candidate) => candidate.id === fileId);
-      if (!file || !isVideoAttachment(file)) return;
-      const localPreview = buildExpandedImagePreview([file], file.id);
-      if (localPreview) {
-        onExpandImage(localPreview);
+      if (file && isVideoAttachment(file)) {
+        const localPreview = buildExpandedImagePreview([file], file.id);
+        if (localPreview) {
+          onExpandImage(localPreview);
+          return;
+        }
+        if (file.uploadedAttachmentId === undefined || file.uploadEnvironmentId !== environmentId) {
+          return;
+        }
+        const persistedPreview = buildAttachmentVideoPreview(environmentId, {
+          type: "file",
+          id: file.uploadedAttachmentId,
+          name: file.name,
+          mimeType: file.mimeType,
+          sizeBytes: file.sizeBytes,
+        });
+        if (persistedPreview) onExpandImage(persistedPreview);
         return;
       }
-      if (file.uploadedAttachmentId === undefined || file.uploadEnvironmentId !== environmentId) {
+      const queuedFile = editingQueuedAttachments?.find(
+        ({ attachment }) => isQueuedFileAttachment(attachment) && attachment.id === fileId,
+      )?.attachment;
+      if (!queuedFile || !isQueuedFileAttachment(queuedFile) || !isVideoAttachment(queuedFile)) {
         return;
       }
-      const persistedPreview = buildAttachmentVideoPreview(environmentId, {
-        type: "file",
-        id: file.uploadedAttachmentId,
-        name: file.name,
-        mimeType: file.mimeType,
-        sizeBytes: file.sizeBytes,
-      });
+      const persistedPreview = buildAttachmentVideoPreview(environmentId, queuedFile);
       if (persistedPreview) onExpandImage(persistedPreview);
     },
     openPullRequest: (event: React.MouseEvent<HTMLElement>, url: string) => {
@@ -798,6 +823,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentContexts: composerEnvironmentContexts,
     images: composerImages,
     files: composerFiles,
+    existingAttachments: editingQueuedAttachments ?? undefined,
+    environmentId,
     uploadsByImageId,
   });
   const needsReattachFileCount = composerFiles.filter(composerFileNeedsReattach).length;
@@ -1399,6 +1426,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               : record,
           ];
         }),
+      ...(editingQueuedAttachments ?? []).flatMap(({ attachment, contextIds }) => {
+        if (!isQueuedImageAttachment(attachment) && !isQueuedFileAttachment(attachment)) return [];
+        return (contextIds ?? [])
+          .filter((contextId) => wanted.has(contextId))
+          .map((contextId) => {
+            const record = attachmentContextRecord({
+              attachment,
+              attachmentId: attachment.id,
+              contextId,
+            });
+            return record.kind === "image" &&
+              isQueuedImageAttachment(attachment) &&
+              attachment.source
+              ? { ...record, source: attachment.source }
+              : record;
+          });
+      }),
     ];
     if (records.length === 0) return null;
     const fragment = encodeComposerContextFragment({

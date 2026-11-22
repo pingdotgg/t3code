@@ -10,6 +10,7 @@ import {
 } from "../../composerDraftStore";
 import { readAttachmentUpload, useAttachmentUploadStore } from "../../lib/attachmentUploadQueue";
 import { environmentContextRecord, responseContextRecord } from "../../lib/composerContextRecords";
+import { formatInlineContextReference } from "../../lib/composerContextReferences";
 import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queuedMessageEdit";
 
 const environmentId = EnvironmentId.make("remote-environment");
@@ -188,6 +189,36 @@ describe("queued message file edits", () => {
         ...originalMessage,
         originalText: "",
         removedExistingAttachment: true,
+      }),
+    ).toBe("discarded");
+    expect(store.getComposerDraft(threadTarget)).toBeNull();
+  });
+
+  it("strips existing queued attachment references when recovering an edit into the thread draft", () => {
+    const store = useComposerDraftStore.getState();
+    const chip = formatInlineContextReference({
+      kind: "image",
+      contextId: "image_queued-1",
+      label: "image.png",
+    });
+    store.setPrompt(editTarget, `Check ${chip} closely`);
+    expect(
+      recoverQueuedMessageEdit({
+        ...originalMessage,
+        originalText: `Check ${chip}`,
+        existingAttachmentContextIds: ["image_queued-1"],
+      }),
+    ).toBe("kept");
+    expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Check closely");
+    expect(store.getComposerDraft(editTarget)).toBeNull();
+
+    store.clearComposerContent(threadTarget);
+    store.setPrompt(editTarget, chip);
+    expect(
+      recoverQueuedMessageEdit({
+        ...originalMessage,
+        originalText: `${chip} note`,
+        existingAttachmentContextIds: ["image_queued-1"],
       }),
     ).toBe("discarded");
     expect(store.getComposerDraft(threadTarget)).toBeNull();

@@ -2,6 +2,7 @@ import type { ThreadStructure } from "@t3tools/client-runtime/state/shell";
 import {
   EnvironmentId,
   ChatAttachmentId,
+  ComposerContextId,
   MessageId,
   RunId,
   ThreadId,
@@ -341,6 +342,47 @@ describe("useQueuedRunEdit", () => {
         }),
       }),
     );
+  });
+
+  it("binds existing attachment context ids for inline chips and strips them on removal", async () => {
+    const { hook } = setup();
+    const messageId = MessageId.make("message-1");
+    const attachmentId = ChatAttachmentId.make("server-image-1");
+    const contextId = ComposerContextId.make("image_local-image-1");
+    const attachment = {
+      type: "image" as const,
+      id: attachmentId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const chip = formatInlineContextReference({ kind: "image", contextId, label: "image.png" });
+    const text = `Check ${chip} map`;
+    const imageRecord = {
+      version: 1 as const,
+      kind: "image" as const,
+      contextId,
+      label: "image.png",
+      attachmentId,
+      name: "image.png",
+      mimeType: "image/png",
+      sizeBytes: 67,
+    };
+    const messages = [{ id: messageId, text, context: { version: 1, records: [imageRecord] } }];
+    await using _screen = await render(view(THREAD_A, "queued", hook, messages));
+
+    await act(() =>
+      requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [attachment] }),
+    );
+    expect(requireHook(hook).editingAttachments).toEqual([
+      expect.objectContaining({ attachment, contextIds: [contextId] }),
+    ]);
+
+    await act(() => requireHook(hook).removeEditingAttachment(attachmentId));
+    expect(requireHook(hook).editingAttachments).toEqual([]);
+    expect(
+      useComposerDraftStore.getState().getComposerDraft(requireHook(hook).draftTarget)?.prompt,
+    ).toBe("Check map");
   });
 
   it("opens an edit with only the thread and machine records its text still mentions", async () => {

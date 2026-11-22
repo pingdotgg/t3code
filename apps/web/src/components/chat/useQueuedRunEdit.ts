@@ -69,6 +69,7 @@ import type { ChatComposerHandle } from "./ChatComposer";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { composerDraftContentChanged } from "./composerSend.logic";
 import {
+  attachmentContextIdsForRecord,
   discardQueuedEditDraft,
   prepareQueuedEditAttachments,
   recoverQueuedMessageEdit,
@@ -244,6 +245,7 @@ export function useQueuedRunEdit(input: {
       : editing.existingAttachments.map((attachment) => ({
           attachment,
           url: urlByAttachmentId.get(attachment.id) ?? null,
+          contextIds: attachmentContextIdsForRecord(editing.context, attachment),
         }));
 
   const focusComposerSoon = () => {
@@ -314,6 +316,11 @@ export function useQueuedRunEdit(input: {
             originalText: edit.originalText,
             originalReplyTo: reply ?? null,
             removedExistingAttachment: edit.removedExistingAttachment === true,
+            existingAttachmentContextIds: (edit.context?.records ?? []).flatMap((record) =>
+              (record.kind === "image" || record.kind === "file") && "attachmentId" in record
+                ? [record.contextId]
+                : [],
+            ),
           });
           if (recovery === "clean") return;
           const title = appAtomRegistry.get(
@@ -345,6 +352,22 @@ export function useQueuedRunEdit(input: {
     focusComposerSoon();
   });
   const removeEditingAttachment = useStableCallback((attachmentId: string) => {
+    if (editing !== null) {
+      const removed = editing.existingAttachments.find(
+        (attachment) => attachment.id === attachmentId,
+      );
+      const contextIds = removed ? attachmentContextIdsForRecord(editing.context, removed) : [];
+      if (contextIds.length > 0) {
+        const target = queuedRunEditDraftId(routeThreadRef, editing.runId);
+        const store = useComposerDraftStore.getState();
+        const currentPrompt = store.getComposerDraft(target)?.prompt ?? "";
+        const nextPrompt = contextIds.reduce(
+          (prompt, contextId) => removeInlineContextReference(prompt, contextId).prompt,
+          currentPrompt,
+        );
+        if (nextPrompt !== currentPrompt) store.setPrompt(target, nextPrompt);
+      }
+    }
     queuedRunEdits.update(editKey, (current) => ({
       ...current,
       removedExistingAttachment: true,
