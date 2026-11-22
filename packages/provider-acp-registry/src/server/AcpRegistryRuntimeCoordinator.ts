@@ -378,11 +378,18 @@ const make = Effect.gen(function* () {
                 revision: entry.revision,
               });
             }
+            while (retained.size > MAX_TRACKED_MODEL_OPTIONS) {
+              const oldestKey = retained.keys().next().value;
+              if (oldestKey === undefined) break;
+              retained.delete(oldestKey);
+            }
             return retained.size === 0 ? EMPTY_OPTIONS_BY_MODEL : retained;
           })();
           const lastRetained = sortedPendingOptions(nextOptionsByModel).at(-1);
           const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> =
-            lastRetained === undefined ? Option.none() : Option.some(lastRetained.configuration);
+            lastRetained === undefined || lastRetained.configuration.preserveDefault === true
+              ? Option.none()
+              : Option.some(lastRetained.configuration);
           if (
             current.catalog === null &&
             Equal.equals(current.configuration, nextConfiguration) &&
@@ -428,9 +435,10 @@ const make = Effect.gen(function* () {
                   const updated = new Map(current.optionsByModel);
                   updated.delete(configuration.currentModelId);
                   updated.set(configuration.currentModelId, { configuration, revision });
-                  if (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
+                  while (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
                     const oldestKey = updated.keys().next().value;
-                    if (oldestKey !== undefined) updated.delete(oldestKey);
+                    if (oldestKey === undefined) break;
+                    updated.delete(oldestKey);
                   }
                   return updated;
                 })();

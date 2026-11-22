@@ -604,12 +604,22 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           clearedThroughRevision: optionsSnap.revision,
         });
 
-        // Per-model pending options are bounded at 256 models, evicting the oldest entry first.
+        // Per-model pending options are bounded at 256 models, evicting the oldest entry first
+        // even when clearLiveConfigurationIfRevision also includes catalog options.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [{ id: "catalog-model", name: "catalog-model", description: null }],
+          currentModelId: "catalog-model",
+          configOptions: [effortOption("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        const catalogForCap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         for (let index = 0; index < 257; index += 1) {
           yield* coordinator.publishLiveConfiguration(instanceId, {
             models: [],
             currentModelId: `m${index}`,
-            configOptions: [],
+            configOptions: [effortOption("high")],
+            modelOptionIds: ["effort"],
             modelsFromModelSelect: false,
           });
         }
@@ -617,6 +627,37 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         expect(bounded.pendingOptions).toHaveLength(256);
         expect(bounded.pendingOptions[0]?.configuration.currentModelId).toBe("m1");
         expect(bounded.pendingOptions.at(-1)?.configuration.currentModelId).toBe("m256");
+
+        // Clear retention caps pendingOptions at 256 even when catalog options plus 256
+        // per-model updates are all retained (evicting the oldest entry, catalog-model).
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: catalogForCap.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const clearedCap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(clearedCap.pendingOptions).toHaveLength(256);
+        expect(clearedCap.pendingOptions[0]?.configuration.currentModelId).toBe("m1");
+        expect(clearedCap.pendingOptions.at(-1)?.configuration.currentModelId).toBe("m256");
+
+        // When retain drops the newest update (m256) while earlier models survive with
+        // preserveDefault, getLiveConfiguration returns none so Copilot does not read an
+        // earlier model's effort.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: catalogForCap.catalogRevision,
+            retain: (live) =>
+              live.currentModelId === "m256"
+                ? Option.none()
+                : Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const clearedEarlierOnly = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(clearedEarlierOnly.configuration).toEqual(Option.none());
+        expect(clearedEarlierOnly.pendingOptions).toHaveLength(255);
+        expect(clearedEarlierOnly.pendingOptions.at(-1)?.configuration.currentModelId).toBe("m255");
+        expect(clearedEarlierOnly.pendingOptions.at(-1)?.configuration.preserveDefault).toBe(true);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

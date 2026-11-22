@@ -234,16 +234,15 @@ export interface AcpRegistryLiveConfiguration {
 }
 
 export function cappedAcpRegistryModelPrefixKey(
-  models: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+  modelIds: ReadonlyArray<string>,
 ): string | undefined {
-  if (models.length < ACP_REGISTRY_MAX_MODELS) return undefined;
-  return JSON.stringify(
-    models.slice(0, ACP_REGISTRY_MAX_MODELS - 1).map(({ id, name }) => [id, name]),
-  );
+  if (modelIds.length < ACP_REGISTRY_MAX_MODELS) return undefined;
+  return JSON.stringify(modelIds.slice(0, ACP_REGISTRY_MAX_MODELS - 1));
 }
 
 export interface PreparedAcpRegistryLiveConfiguration {
   readonly catalogKey: string;
+  readonly hasModelSelect: boolean;
   readonly toLiveConfiguration: (options?: {
     readonly includeCatalog?: boolean;
   }) => AcpRegistryLiveConfiguration;
@@ -302,23 +301,10 @@ export function prepareAcpRegistryLiveConfiguration(
     boundedCurrentModelId === null
       ? undefined
       : advertisedModels.find((model) => model.id === boundedCurrentModelId);
-  let hasOverflowCandidates = false;
-  if (
-    baseModels.length === ACP_REGISTRY_MAX_MODELS &&
-    candidates.length > ACP_REGISTRY_MAX_MODELS
-  ) {
-    const baseIds = new Set(baseModels.map((model) => model.id));
-    for (const candidate of candidates) {
-      const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
-      if (id !== undefined && !baseIds.has(id)) {
-        hasOverflowCandidates = true;
-        break;
-      }
-    }
-  }
-  const cappedLastModel = hasOverflowCandidates
-    ? advertisedModels[ACP_REGISTRY_MAX_MODELS - 1]
-    : undefined;
+  const cappedLastModel =
+    currentModel !== undefined && baseModels.length === ACP_REGISTRY_MAX_MODELS
+      ? advertisedModels[ACP_REGISTRY_MAX_MODELS - 1]
+      : undefined;
   const stripCurrentReasoning = currentModel?.reasoningEffort === null;
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
     (descriptor) =>
@@ -351,11 +337,14 @@ export function prepareAcpRegistryLiveConfiguration(
     baseModels.map(({ id, name, description }) => [id, name, description]),
   ]);
   const cappedPrefixKey =
-    cappedLastModel === undefined ? undefined : cappedAcpRegistryModelPrefixKey(baseModels);
+    cappedLastModel === undefined
+      ? undefined
+      : cappedAcpRegistryModelPrefixKey(baseModels.map((model) => model.id));
   return {
     // Key on the uncapped-selection catalog identity and provenance so neither effort
     // toggles nor selecting a model beyond ACP_REGISTRY_MAX_MODELS re-advertise a frozen list.
     catalogKey,
+    hasModelSelect,
     toLiveConfiguration: (options) => {
       const includeCatalog = options?.includeCatalog !== false;
       return {

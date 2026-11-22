@@ -1017,7 +1017,7 @@ describe("AcpRegistryAdapterV2", () => {
               { models: [], current: null },
               { models: ["default"], current: null },
               { models: [], current: null },
-              { models: ["hermes", "auto", "default"], current: "default" },
+              { models: [], current: "default" },
               { models: [], current: "hermes" },
             ],
           );

@@ -380,14 +380,18 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
               modeState,
               modelState,
             );
+            const lastCatalogKey = updateOptions?.lastCatalogKey ?? null;
+            // Only publish a replacement catalog on the first setup update or when an explicit
+            // model selector changes; losing a selector must not republish frozen setup fallback models.
+            const includeCatalog =
+              lastCatalogKey === null ||
+              (prepared.hasModelSelect && lastCatalogKey !== prepared.catalogKey);
             return runtimeCoordinator
               .publishLiveConfiguration(
                 options.instanceId,
-                prepared.toLiveConfiguration({
-                  includeCatalog: updateOptions?.lastCatalogKey !== prepared.catalogKey,
-                }),
+                prepared.toLiveConfiguration({ includeCatalog }),
               )
-              .pipe(Effect.as(prepared.catalogKey));
+              .pipe(Effect.as(includeCatalog ? prepared.catalogKey : lastCatalogKey));
           },
           onUrlElicitation: ({ elicitationId, url, message }) => {
             const normalizedUrl = normalizeAcpRegistryWebUrl(url);
