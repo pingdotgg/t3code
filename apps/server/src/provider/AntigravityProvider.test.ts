@@ -597,6 +597,15 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           }),
           installed: false,
         },
+        {
+          error: new ProviderSetupError({
+            instanceId,
+            operation: "resolve",
+            detail:
+              "The managed Antigravity runtime changed on disk. Reinstall it in Antigravity setup.",
+          }),
+          installed: false,
+        },
       ];
       for (const { error, installed } of failures) {
         yield* harness.provider.onSessionStarted(started, "/workspace");

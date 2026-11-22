@@ -64,7 +64,7 @@ export type TypeId = "~@effect/sql-sqlite-bun/SqliteClient"
  * @category services
  * @since 4.0.0
  */
-export interface SqliteClient extends Client.SqlClient {
+export interface SqliteClient extends Client.Base {
   readonly [TypeId]: TypeId
   readonly config: SqliteClientConfig
   readonly export: Effect.Effect<Uint8Array, SqlError>
@@ -85,7 +85,9 @@ export interface SqliteClient extends Client.SqlClient {
  * @category services
  * @since 4.0.0
  */
-export const SqliteClient = Context.Service<SqliteClient>("@effect/sql-sqlite-bun/Client")
+export const SqliteClient = Context.Service<SqliteClient, SqliteClient & Client.SqlClient>(
+  "@effect/sql-sqlite-bun/Client"
+)
 
 /**
  * Configuration for a Bun SQLite client, including filename, open mode flags, WAL and busy timeout behavior, span attributes, and query/result name transforms.
@@ -128,7 +130,7 @@ interface SqliteConnection extends Connection {
  */
 export const make = (
   options: SqliteClientConfig
-): Effect.Effect<SqliteClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
+): Effect.Effect<SqliteClient & Client.SqlClient, SqlError, Scope.Scope | Reactivity.Reactivity> =>
   Effect.gen(function*() {
     const compiler = Statement.makeCompilerSqlite(options.transformQueryNames)
     const transformRows = options.transformResultNames ?
@@ -269,7 +271,7 @@ export const make = (
       isTransaction: (conn) => conn.isTransaction()
     })
 
-    const client: SqliteClient = Object.assign(
+    const client: SqliteClient & Client.SqlClient = Object.assign(
       (yield* Client.make({
         driver: "sqlite-bun",
         acquirer,
@@ -285,15 +287,16 @@ export const make = (
           [ATTR_DB_SYSTEM_NAME, "sqlite"]
         ],
         transformRows
-      })) as SqliteClient,
+      })) as SqliteClient & Client.SqlClient,
       {
         [TypeId]: TypeId as TypeId,
         config: options,
-        export: Effect.withFiber((fiber) =>
-          Context.getOption(fiber.context, client.transactionService)._tag === "Some"
-            ? connection.export
+        export: Effect.withFiber((fiber) => {
+          const transaction = Context.getOrUndefined(fiber.context, client.transactionService)
+          return transaction !== undefined
+            ? Effect.andThen(Client.activeTransactionConnection(transaction), connection.export)
             : Effect.scoped(Effect.flatMap(acquirer, (_) => _.export))
-        ),
+        }),
         loadExtension: (path: string) => Effect.scoped(Effect.flatMap(acquirer, (_) => _.loadExtension(path)))
       }
     )

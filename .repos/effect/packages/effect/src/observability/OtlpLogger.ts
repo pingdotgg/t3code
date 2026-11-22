@@ -17,6 +17,7 @@ import * as Duration from "../Duration.ts"
 import * as Effect from "../Effect.ts"
 import type * as Headers from "../http/Headers.ts"
 import type * as HttpClient from "../http/HttpClient.ts"
+import { filterDisablePropagation } from "../internal/effect.ts"
 import * as Layer from "../Layer.ts"
 import * as Logger from "../Logger.ts"
 import type * as LogLevel from "../LogLevel.ts"
@@ -260,9 +261,10 @@ const makeLogRecord = (options: Logger.Options<unknown>, opts: {
     droppedAttributesCount: 0
   }
 
-  if (options.fiber.cache.span) {
-    logRecord.traceId = options.fiber.cache.span.traceId.padStart(32, "0")
-    logRecord.spanId = options.fiber.cache.span.spanId
+  const span = filterDisablePropagation(options.fiber.cache.span)
+  if (Option.isSome(span)) {
+    logRecord.traceId = span.value.traceId.padStart(32, "0")
+    logRecord.spanId = span.value.spanId
   }
 
   return logRecord
