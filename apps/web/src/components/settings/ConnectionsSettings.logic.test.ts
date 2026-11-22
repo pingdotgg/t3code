@@ -1,7 +1,11 @@
-import type { DesktopWslState } from "@t3tools/contracts";
+import { type DesktopWslState, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   applyWslEnableSelection,
+  isServerNetworkAccessible,
+  parseManualDesktopSshTarget,
+  resolveAccessEnvironmentId,
+  resolveCurrentOriginPairingUrl,
   resolveTailscaleServeBaseUrl,
   selectQrEndpointOption,
   togglePairingScopeSelection,
@@ -39,6 +43,26 @@ describe("togglePairingScopeSelection", () => {
     },
   ] as const)("$label", ({ current, scope, checked, expected }) => {
     expect(togglePairingScopeSelection(current, scope, checked)).toEqual(expected);
+  });
+});
+
+describe("parseManualDesktopSshTarget", () => {
+  it.each(["22.5", "1e3", "2222garbage"])("rejects explicit port %j", (port) => {
+    expect(() => parseManualDesktopSshTarget({ host: "devbox", username: "", port })).toThrow(
+      "SSH port must be between 1 and 65535.",
+    );
+  });
+});
+
+describe("resolveCurrentOriginPairingUrl", () => {
+  it.each([
+    ["t3code://app/settings/connections", null],
+    ["http://127.0.0.1:3774/settings", null],
+    ["http://localhost:5173/", null],
+    ["https://host.example.ts.net/settings", "https://host.example.ts.net/pair#token=abc"],
+    ["http://192.168.1.20:3773/", "http://192.168.1.20:3773/pair#token=abc"],
+  ])("from %s", (href, expected) => {
+    expect(resolveCurrentOriginPairingUrl("abc", href)).toBe(expected);
   });
 });
 
@@ -142,5 +166,74 @@ describe("selectQrEndpointOption", () => {
     expect(selectQrEndpointOption(options, "tailscale-ip:gone", "nope")?.id).toBe(
       "tailscale-ip:http://100.84.12.7:4780",
     );
+  });
+});
+
+describe("resolveAccessEnvironmentId", () => {
+  const primary = EnvironmentId.make("primary");
+  const service = EnvironmentId.make("service");
+  const laptop = EnvironmentId.make("laptop");
+  it.each([
+    {
+      label: "defaults to the primary environment",
+      primaryEnvironmentId: primary,
+      environments: [
+        { environmentId: primary, connected: true },
+        { environmentId: service, connected: true },
+      ],
+      selected: null,
+      expected: primary,
+    },
+    {
+      label: "falls back to a connected saved environment without a primary",
+      primaryEnvironmentId: null,
+      environments: [
+        { environmentId: laptop, connected: false },
+        { environmentId: service, connected: true },
+      ],
+      selected: null,
+      expected: service,
+    },
+    {
+      label: "keeps an explicit choice",
+      primaryEnvironmentId: primary,
+      environments: [
+        { environmentId: primary, connected: true },
+        { environmentId: laptop, connected: false },
+      ],
+      selected: laptop,
+      expected: laptop,
+    },
+    {
+      label: "drops a choice that is no longer listed",
+      primaryEnvironmentId: null,
+      environments: [{ environmentId: service, connected: true }],
+      selected: laptop,
+      expected: service,
+    },
+    {
+      label: "has nothing to show without environments",
+      primaryEnvironmentId: null,
+      environments: [],
+      selected: null,
+      expected: null,
+    },
+  ])("$label", ({ primaryEnvironmentId, environments, selected, expected }) => {
+    expect(resolveAccessEnvironmentId({ primaryEnvironmentId, environments, selected })).toBe(
+      expected,
+    );
+  });
+});
+
+describe("isServerNetworkAccessible", () => {
+  const served = [{ kind: "tailnet", httpBaseUrl: "https://host.example.ts.net:8443/" }] as const;
+  it.each([
+    { authPolicy: "remote-reachable", directEndpoints: undefined, expected: true },
+    { authPolicy: "loopback-browser", directEndpoints: undefined, expected: false },
+    { authPolicy: "loopback-browser", directEndpoints: [], expected: false },
+    { authPolicy: "loopback-browser", directEndpoints: served, expected: true },
+    { authPolicy: null, directEndpoints: served, expected: false },
+  ] as const)("$authPolicy with $directEndpoints.length endpoints", (row) => {
+    expect(isServerNetworkAccessible(row)).toBe(row.expected);
   });
 });

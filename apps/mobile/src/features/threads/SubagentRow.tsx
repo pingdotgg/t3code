@@ -4,8 +4,13 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import { resolveSubagentMetadata } from "@t3tools/client-runtime/state/subagent-display";
+import {
+  resolveSubagentMetadata,
+  subagentCardDetail,
+} from "@t3tools/client-runtime/state/subagent-display";
+import { formatSubagentEffort } from "@t3tools/client-runtime/state/thread-execution";
 import type { EnvironmentId, OrchestrationV2Subagent } from "@t3tools/contracts";
+import { msg, T, useMessages, Var } from "gt-react-native";
 import type { ReactNode } from "react";
 import { View } from "react-native";
 
@@ -14,7 +19,6 @@ import { SymbolView } from "../../components/ui/AppSymbol";
 import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { cn } from "../../lib/cn";
 import { useEnvironmentServerConfig, useProject, useThreadShell } from "../../state/entities";
-import { subagentCardDetail } from "./subagent-card-presentation";
 import { SUBAGENT_TONE_TEXT_CLASS, SubagentStatusDot } from "./SubagentStatusDot";
 import { resolveSubagentRowPresentation } from "./threadAgentsPresentation";
 
@@ -23,6 +27,7 @@ type SubagentRowSubagent = Pick<
   | "threadId"
   | "childThreadId"
   | "model"
+  | "modelSelection"
   | "driver"
   | "providerInstanceId"
   | "title"
@@ -40,7 +45,12 @@ export function SubagentRow(props: {
   /** The task runs in a linked environment this app is connected to. */
   readonly canOpenRemote?: boolean;
 }) {
-  const presentation = resolveSubagentRowPresentation(props.subagent, props.canOpenRemote);
+  const messages = useMessages();
+  const presentation = resolveSubagentRowPresentation(
+    props.subagent,
+    props.canOpenRemote,
+    messages,
+  );
   const detail = subagentCardDetail(presentation.detail);
   return (
     <View className="flex-row gap-3">
@@ -73,7 +83,9 @@ export function SubagentRow(props: {
             </Text>
             {presentation.runsOn !== null ? (
               <Text numberOfLines={1} className="shrink text-xs text-foreground-muted">
-                on {presentation.runsOn}
+                <T>
+                  on <Var>{presentation.runsOn}</Var>
+                </T>
               </Text>
             ) : null}
           </View>
@@ -104,6 +116,7 @@ function SubagentMetadata(props: {
   readonly subagent: SubagentRowSubagent;
 }) {
   const { environmentId, subagent } = props;
+  const messages = useMessages();
   // A task in a linked environment runs a provider instance of that environment.
   const config = useEnvironmentServerConfig(subagent.remoteChild?.environmentId ?? environmentId);
   const providers = (config?.providers ?? []).map((candidate) => {
@@ -124,6 +137,9 @@ function SubagentMetadata(props: {
     (candidate) => candidate.instanceId === subagent.providerInstanceId,
   );
   const showBadge = provider !== undefined && shouldShowInstanceBadge(provider, providers);
+  // A remote task's own driver is only a "remote" label.
+  const driver =
+    provider?.driver ?? (subagent.remoteChild === undefined ? subagent.driver : undefined);
   const parent = useThreadShell(scopeThreadRef(environmentId, subagent.threadId))?.source;
   const child = useThreadShell(
     subagent.childThreadId === null ? null : scopeThreadRef(environmentId, subagent.childThreadId),
@@ -132,14 +148,21 @@ function SubagentMetadata(props: {
     parent ? scopeProjectRef(environmentId, parent.projectId) : null,
   );
   const childProject = useProject(child ? scopeProjectRef(environmentId, child.projectId) : null);
-  const { modelLabel, workspace } = resolveSubagentMetadata({
-    model: subagent.model,
-    provider,
-    parentThread: parent,
-    childThread: child,
-    parentProject,
-    childProject,
-  });
+  const selection = subagent.modelSelection;
+  const { modelLabel, modelSlug, workspace } = resolveSubagentMetadata(
+    {
+      model: subagent.model,
+      modelSelection: selection,
+      provider,
+      parentThread: parent,
+      childThread: child,
+      parentProject,
+      childProject,
+    },
+    messages,
+  );
+  const branchLabel = messages(msg("Branch", { $context: "field label" }));
+  const effort = formatSubagentEffort({ modelSlug, modelSelection: selection, provider });
   return (
     <View className="min-w-0 flex-row items-center gap-1.5">
       {showBadge ? (
@@ -151,16 +174,15 @@ function SubagentMetadata(props: {
           accentColor={provider.accentColor}
           showBadge
         />
+      ) : driver === undefined ? (
+        <SymbolView name="robot" size={11} tintColorClassName="accent-icon-muted" />
       ) : (
-        <ProviderIcon
-          provider={provider?.driver ?? subagent.driver}
-          iconUrl={provider?.iconUrl}
-          size={12}
-        />
+        <ProviderIcon provider={driver} iconUrl={provider?.iconUrl} size={12} />
       )}
       <Text className="min-w-0 shrink text-xs text-foreground-muted" numberOfLines={1}>
         {provider ? `${resolveProviderInstanceDisplayName(provider)} · ` : ""}
         {modelLabel}
+        {effort ? ` · ${effort}` : ""}
       </Text>
       {workspace.map(({ label, value }) => (
         // Preserve the label against flattening without making it a separate accessibility stop.
@@ -172,7 +194,7 @@ function SubagentMetadata(props: {
         >
           <Text className="text-xs text-foreground-muted">·</Text>
           <SymbolView
-            name={label === "Branch" ? "arrow.triangle.branch" : "folder"}
+            name={label === branchLabel ? "arrow.triangle.branch" : "folder"}
             size={11}
             tintColorClassName="accent-icon-muted"
           />

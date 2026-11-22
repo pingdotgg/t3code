@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { ProviderInstanceId, ThreadId } from "@t3tools/contracts";
@@ -25,7 +26,8 @@ const childThreadId = ThreadId.make("thread-child");
 const launch = describeAntigravitySubagentLaunches([LAUNCH]);
 
 // A permission-prompt batch in session ROOT, plus an older batch with no launch text in `olderRun`.
-const records = (olderRun: string) => ({
+// `rootThreadSession` is where the root provider thread points now; a rollback moves it.
+const records = (olderRun: string, rootThreadSession: string) => ({
   thread: {
     id: childThreadId,
     creationSource: "provider",
@@ -56,12 +58,24 @@ const records = (olderRun: string) => ({
     },
   ],
   runs: [
-    { id: "run-root", providerThreadId: "provider-root" },
-    { id: "run-root-earlier", providerThreadId: "provider-root" },
-    { id: "run-other", providerThreadId: "provider-other" },
+    { id: "run-root", providerThreadId: "provider-root", activeAttemptId: "attempt-root" },
+    {
+      id: "run-root-earlier",
+      providerThreadId: "provider-root",
+      activeAttemptId: "attempt-root-earlier",
+    },
+    { id: "run-other", providerThreadId: "provider-other", activeAttemptId: null },
+  ],
+  attempts: [
+    { id: "attempt-root", nativeThreadId: ROOT },
+    { id: "attempt-root-earlier", nativeThreadId: ROOT },
   ],
   providerThreads: [
-    { id: "provider-root", providerInstanceId: instanceId, nativeThreadRef: { nativeId: ROOT } },
+    {
+      id: "provider-root",
+      providerInstanceId: instanceId,
+      nativeThreadRef: { nativeId: rootThreadSession },
+    },
     {
       id: "provider-other",
       providerInstanceId: instanceId,
@@ -70,7 +84,7 @@ const records = (olderRun: string) => ({
   ],
 });
 
-const readChildren = (olderRun: string) =>
+const readChildren = (olderRun: string, rootThreadSession = ROOT) =>
   Effect.gen(function* () {
     const query = yield* NativeChildWorkQuery.NativeChildWorkQuery;
     return (yield* query.getNativeChildWork({ threadId: childThreadId })).children;
@@ -79,7 +93,7 @@ const readChildren = (olderRun: string) =>
       NativeChildWorkQuery.layer.pipe(
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadRecords: () => Effect.succeed(records(olderRun) as never),
+            getThreadRecords: () => Effect.succeed(records(olderRun, rootThreadSession) as never),
           }),
         ),
       ),
@@ -89,8 +103,9 @@ const readChildren = (olderRun: string) =>
 it.layer(
   Layer.mergeAll(
     NodeServices.layer,
+    NodeCrypto.layer,
     ServerConfig.layerTest(process.cwd(), { prefix: "native-child-work-" }).pipe(
-      Layer.provide(NodeServices.layer),
+      Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     ),
   ),
 )("NativeChildWorkQuery", (it) => {
@@ -112,6 +127,12 @@ it.layer(
       expect(fromOtherSession.map((child) => child.conversationId)).toEqual([CHILD]);
       // An earlier run in the same session may own the only record.
       expect(yield* readChildren("run-root-earlier")).toEqual([]);
+      // After a rollback, kept batches still read the session they ran in.
+      const rolledBack = "1a7f8b0c-3c55-4c1e-9a43-5d0e2b6f9c11";
+      expect(
+        (yield* readChildren("run-other", rolledBack)).map((child) => child.conversationId),
+      ).toEqual([CHILD]);
+      expect(yield* readChildren("run-root-earlier", rolledBack)).toEqual([]);
     }),
   );
 });

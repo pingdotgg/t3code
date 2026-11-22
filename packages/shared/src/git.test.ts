@@ -7,6 +7,7 @@ import {
   formatGeneratedBranchName,
   buildTemporaryWorktreeBranchName,
   flattenTemporaryWorktreeBranchName,
+  isBareGitConfig,
   isTemporaryWorktreeBranch,
   normalizeGitRemoteUrl,
   parseOriginUrlFromGitConfig,
@@ -25,6 +26,28 @@ describe("normalizeGitRemoteUrl", () => {
     );
     expect(normalizeGitRemoteUrl("ssh://git@github.com/T3Tools/T3Code")).toBe(
       "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git?view=compact")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://github.com/T3Tools/T3Code.git#section")).toBe(
+      "github.com/t3tools/t3code",
+    );
+    expect(normalizeGitRemoteUrl("https://code.example.test/team/%C3%84pp.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:team/Äpp.git"),
+    );
+    expect(normalizeGitRemoteUrl("ssh://git@code.example.test/owner/repo.git.git")).toBe(
+      normalizeGitRemoteUrl("git@code.example.test:owner/repo.git.git"),
+    );
+  });
+
+  it.each([
+    "git@[2001:db8::1]:team/repo.git",
+    "[2001:db8::1]:team/repo.git",
+    "git@[2001:DB8:0::1]:team/repo.git",
+  ])("canonicalizes an IPv6 SCP remote like its SSH URL: %s", (remote) => {
+    expect(normalizeGitRemoteUrl(remote)).toBe(
+      normalizeGitRemoteUrl("ssh://git@[2001:db8::1]/team/repo.git"),
     );
   });
 
@@ -64,6 +87,58 @@ describe("normalizeGitRemoteUrl", () => {
   });
 });
 
+describe("isBareGitConfig", () => {
+  it("reads Git's numeric booleans without accepting invalid or overflowing values", () => {
+    for (const value of [
+      "true",
+      "yes",
+      "on",
+      "1",
+      "2",
+      "-1",
+      "+1",
+      "01",
+      "0x10",
+      "1k",
+      "1m",
+      "1g",
+      "2147483647",
+      "-2147483648",
+    ]) {
+      expect(isBareGitConfig(`[core]\nbare = ${value}\n`), value).toBe(true);
+    }
+    for (const value of [
+      "false",
+      "no",
+      "off",
+      "0",
+      "-0",
+      "00",
+      "0x0",
+      "0k",
+      "08",
+      "1.5",
+      "2no",
+      "2g",
+      "2147483648",
+      "-2147483649",
+    ]) {
+      expect(isBareGitConfig(`[core]\nbare = ${value}\n`), value).toBe(false);
+    }
+    expect(isBareGitConfig("[core]\nbare = 2\nbare = 0\n")).toBe(false);
+    expect(isBareGitConfig("[core]\nbare = false\nbare = -2\n")).toBe(true);
+  });
+
+  it("reads continued bare values after comments and at end of input", () => {
+    const config = ["[core] bare = false # ignored backslash \\", 'bare = "tr\\', 'ue"'].join("\n");
+
+    expect(isBareGitConfig(config)).toBe(true);
+    expect(isBareGitConfig("[core]\nbare = tr\\\nue\\")).toBe(true);
+    expect(isBareGitConfig('[core]\nbare = "true\\')).toBe(false);
+    expect(isBareGitConfig('[core]\nbare = "true\\\n')).toBe(false);
+  });
+});
+
 describe("parseOriginUrlFromGitConfig", () => {
   it("reads the origin url and ignores other remotes", () => {
     const config = [
@@ -89,6 +164,20 @@ describe("parseOriginUrlFromGitConfig", () => {
     expect(
       parseOriginUrlFromGitConfig('[remote "origin"]\n\turl = "git@github.com:acme/repo.git"\n'),
     ).toBe("git@github.com:acme/repo.git");
+    for (const newline of ["\n", "\r\n"]) {
+      for (const comment of ["#", ";"]) {
+        const config = [
+          '[remote "upstream"]',
+          `url = https://github.com/other/repo.git ${comment} ignored backslash \\`,
+          '[remote "origin"]',
+          `url = https://github.com/acme/repo.git ${comment} ignored backslash \\`,
+          `${comment} ignored backslash \\`,
+          '[remote "fork"]',
+          "url = https://github.com/me/repo.git",
+        ].join(newline);
+        expect(parseOriginUrlFromGitConfig(config)).toBe("https://github.com/acme/repo.git");
+      }
+    }
   });
 
   it("accepts legacy dotted headers, header comments, and line continuations", () => {
@@ -110,7 +199,7 @@ describe("parseOriginUrlFromGitConfig", () => {
       parseOriginUrlFromGitConfig(
         '[remote "origin"]\n\turl = https://github.com/acme/\\\n\t\trepo.git\n',
       ),
-    ).toBe("https://github.com/acme/repo.git");
+    ).toBe("https://github.com/acme/\t\trepo.git");
   });
 
   it("reads settings on the remote header line", () => {
@@ -272,6 +361,16 @@ describe("sanitizeFeatureBranchName", () => {
   it("keeps accented letters as their plain letters", () => {
     expect(sanitizeFeatureBranchName("fix/Añadir validación del café")).toBe(
       "fix/anadir-validacion-del-cafe",
+    );
+  });
+
+  it("keeps words with letters that have no Unicode decomposition whole", () => {
+    expect(sanitizeFeatureBranchName("Größe der Straße korrigieren")).toBe(
+      "feature/grosse-der-strasse-korrigieren",
+    );
+    expect(sanitizeFeatureBranchName("fix/Đặt tên")).toBe("fix/dat-ten");
+    expect(sanitizeFeatureBranchName("Napraw błąd w żółtym przycisku")).toBe(
+      "feature/napraw-blad-w-zoltym-przycisku",
     );
   });
 });

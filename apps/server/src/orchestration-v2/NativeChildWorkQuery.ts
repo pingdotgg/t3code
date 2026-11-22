@@ -5,7 +5,7 @@ import {
   type OrchestrationV2GetNativeChildWorkResult,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
-import * as Crypto from "effect/Crypto";
+import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -33,7 +33,7 @@ const NO_CHILDREN: OrchestrationV2GetNativeChildWorkResult = { children: [] };
 const make = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const { stateDir } = yield* ServerConfig.ServerConfig;
-  const crypto = yield* Crypto.Crypto;
+  const digest = yield* Digest.Digest;
   const path = yield* Path.Path;
 
   const getNativeChildWork = Effect.fn("NativeChildWorkQuery.getNativeChildWork")(
@@ -73,19 +73,30 @@ const make = Effect.gen(function* () {
         ["runs", "providerThreads"],
         { runIds: [subagent.runId, ...others.flatMap((other) => other.runId ?? [])] },
       );
+      const { attempts } = yield* threads.getThreadRecords(parentThreadId, ["attempts"], {
+        attemptIds: runs.flatMap((run) => run.activeAttemptId ?? []),
+      });
       const providerThreadOf = (runId: string | null) => {
         const providerThreadId = runs.find((run) => run.id === runId)?.providerThreadId;
         return providerThreads.find((candidate) => candidate.id === providerThreadId);
       };
+      // Rollback moves the provider thread to a fresh session; a batch's records stay where it ran.
+      const sessionOf = (runId: string | null) => {
+        const attemptId = runs.find((run) => run.id === runId)?.activeAttemptId;
+        return (
+          attempts.find((attempt) => attempt.id === attemptId)?.nativeThreadId ??
+          providerThreadOf(runId)?.nativeThreadRef?.nativeId
+        );
+      };
       const providerThread = providerThreadOf(subagent.runId);
-      const rootSessionId = providerThread?.nativeThreadRef?.nativeId;
+      const rootSessionId = sessionOf(subagent.runId);
       if (!rootSessionId || providerThread?.providerInstanceId !== subagent.providerInstanceId) {
         return NO_CHILDREN;
       }
       const directories = yield* resolveAntigravityInstanceDirectories(
         stateDir,
         subagent.providerInstanceId,
-      ).pipe(Effect.provideService(Crypto.Crypto, crypto), Effect.provideService(Path.Path, path));
+      ).pipe(Effect.provideService(Digest.Digest, digest), Effect.provideService(Path.Path, path));
       const children = yield* readAntigravityChildWork({
         profileDirectory: directories.profile,
         rootSessionId,
@@ -94,7 +105,7 @@ const make = Effect.gen(function* () {
         // Only batches from the same agent session can share its records.
         siblings: others.flatMap((other) => {
           const id = other.nativeTaskRef?.nativeId;
-          return id && providerThreadOf(other.runId)?.nativeThreadRef?.nativeId === rootSessionId
+          return id && sessionOf(other.runId) === rootSessionId
             ? [{ nativeTaskId: id, title: other.title, prompt: other.prompt }]
             : [];
         }),

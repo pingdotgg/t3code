@@ -1,3 +1,4 @@
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { EventId, ProviderDriverKind, type ProviderReplayEntry } from "@t3tools/contracts";
@@ -36,7 +37,7 @@ const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
   "Note: the T3 server restarted, and this background work was cancelled before it finished. It will not report back on its own, so resume or restart what you still need and wait for its result:",
-  "- subagent: Background subagent test (id a2995bfced8019363)",
+  "- subagent: Background subagent test (id a2995bfced8019363; resume it with SendMessage to 'a2995bfced8019363')",
 ].join("\n");
 
 const readRestartTranscript = Effect.fn("readRestartTranscript")(function* (
@@ -158,7 +159,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   const phase2Steps = materialized.steps.slice(firstIdle + 1);
   const { harness, assertComplete } = makeClaudeRestartReplayHarness(transcript);
   const layerDatabase = SqlitePersistence.layerFromPath(path.join(tempDir, "state.sqlite")).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const snapshotPath = path.join(tempDir, "restart-state.sqlite");
   const scenario = (name: string, steps: typeof materialized.steps) => ({
@@ -217,7 +218,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     ),
   );
   const snapshotDatabase = SqlitePersistence.layerFromPath(snapshotPath).pipe(
-    Layer.provide(NodeServices.layer),
+    Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
   );
   const settled = projectionFor(before, SCENARIO);
   assert.equal(settled.runs[0]?.status, "completed");
@@ -267,33 +268,53 @@ describe("restart-cancelled background work", () => {
   it.effect.each([false, true])(
     "keeps the thread settled and tells the next user turn once when continuation is %s",
     (continueThreadsAfterServerUpdate) =>
-      Effect.scoped(
-        Effect.gen(function* () {
-          const projection = yield* runRestart({
-            resumedPrompts: [
-              `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
-              SECOND_AFTER_RESTART,
-            ],
-            userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
-            continueThreadsAfterServerUpdate,
-          });
-          assert.deepEqual(
-            projection.runs.map((run) => run.status),
-            ["completed", "completed", "completed"],
-          );
-          assert.isFalse(
-            projection.runs.some((run) => run.restartContinuationOfRunId !== undefined),
-          );
-
-          assert.deepEqual(userTexts(projection), [
-            CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
-            FIRST_AFTER_RESTART,
+      Effect.gen(function* () {
+        const projection = yield* runRestart({
+          resumedPrompts: [
+            `${NOTE}\n\nUser message:\n${FIRST_AFTER_RESTART}`,
             SECOND_AFTER_RESTART,
-          ]);
-        }).pipe(
-          provideDeterministicTestRuntime,
-          Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer)),
+          ],
+          userMessagesAfterRestart: [FIRST_AFTER_RESTART, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+        assert.isFalse(projection.runs.some((run) => run.restartContinuationOfRunId !== undefined));
+
+        assert.deepEqual(userTexts(projection), [
+          CLAUDE_BACKGROUND_SUBAGENT_AFTER_ROOT_PROMPT,
+          FIRST_AFTER_RESTART,
+          SECOND_AFTER_RESTART,
+        ]);
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
         ),
       ),
+  );
+
+  it.effect("sends a slash command verbatim and tells the next user turn instead", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const slashCommand = "/review the diff";
+        const projection = yield* runRestart({
+          resumedPrompts: [slashCommand, `${NOTE}\n\nUser message:\n${SECOND_AFTER_RESTART}`],
+          userMessagesAfterRestart: [slashCommand, SECOND_AFTER_RESTART],
+          continueThreadsAfterServerUpdate: false,
+        });
+        assert.deepEqual(
+          projection.runs.map((run) => run.status),
+          ["completed", "completed", "completed"],
+        );
+      }).pipe(
+        provideDeterministicTestRuntime,
+        Effect.provide(
+          Layer.merge(IdAllocator.layer, Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+        ),
+      ),
+    ),
   );
 });

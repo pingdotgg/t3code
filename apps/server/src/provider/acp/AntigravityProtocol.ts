@@ -21,6 +21,7 @@ import {
 
 const TOOL_TEXT_LIMIT = 8_000;
 const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
+const COMMAND_LINE_TRUNCATED = "\n\n[Command truncated]";
 const QUESTION_LABEL_LIMIT = 512;
 
 const NativeToolFields = Schema.Struct({
@@ -44,6 +45,25 @@ const decodeSingleAnswer = Schema.decodeUnknownOption(
   Schema.Union([Schema.String, Schema.Tuple([Schema.String])]),
 );
 const decodeToolCallContent = Schema.decodeUnknownOption(AcpWireSchema.ToolCallContent);
+
+// agy keeps its own `schedule` call in progress until the wake fires, then replies by itself.
+const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]);
+
+/**
+ * The agent goes on running a command or a scheduled wake after its prompt ends, and replies by
+ * itself when it finishes. A daemon may never finish.
+ */
+export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
+  return antigravityCommandOutlivesPrompt(toolCall);
+}
+
+/** A non-daemon command the agent awaits; unlike a schedule, it reports progress while it runs. */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return false;
+  const input = toolCall.data.rawInput;
+  return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
+}
 
 /** Native questions share the permission method, but their choices are not approvals. */
 export function isAntigravityUserInputRequest(
@@ -170,6 +190,39 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+function boundCommandText(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + TOOL_TEXT_TRUNCATED.length && text.startsWith(TOOL_TEXT_TRUNCATED))
+  ) {
+    return text;
+  }
+  const tail = text.slice(-limit).replace(/^[\uDC00-\uDFFF]/u, "");
+  return copyBoundedText(`${TOOL_TEXT_TRUNCATED}${tail}`);
+}
+
+// A command line's program and target are at its start, so it keeps its head.
+function boundCommandLine(text: string, limit = TOOL_TEXT_LIMIT): string {
+  if (
+    text.length <= limit ||
+    (text.length <= limit + COMMAND_LINE_TRUNCATED.length && text.endsWith(COMMAND_LINE_TRUNCATED))
+  ) {
+    return text;
+  }
+  const head = text.slice(0, limit).replace(/[\uD800-\uDBFF]$/u, "");
+  return copyBoundedText(`${head}${COMMAND_LINE_TRUNCATED}`);
+}
+
+const COMMAND_LINE_FIELDS = new Set(["CommandLine", "command_line", "commandLine", "command"]);
+
+const COMMAND_TEXT_FIELDS = new Set([
+  "aggregatedOutput",
+  "combinedOutput",
+  "combined_output",
+  "output",
+  "text",
+]);
+
 /** Keeps the tail of long tool text, as every bounded tool payload does. */
 export { boundText as boundAntigravityToolText };
 
@@ -181,7 +234,12 @@ interface ToolPayloadBudget {
   text: number;
 }
 
-function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: number): unknown {
+function sanitizeToolValue(
+  value: unknown,
+  budget: ToolPayloadBudget,
+  depth: number,
+  field?: string,
+): unknown {
   if (depth > 12 || budget.nodes-- <= 0) {
     return undefined;
   }
@@ -189,7 +247,15 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     if (/^data:image\//i.test(value) || budget.text <= 0) {
       return undefined;
     }
-    const text = boundText(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
+    const bound =
+      field === undefined
+        ? boundText
+        : COMMAND_LINE_FIELDS.has(field)
+          ? boundCommandLine
+          : COMMAND_TEXT_FIELDS.has(field)
+            ? boundCommandText
+            : boundText;
+    const text = bound(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
     budget.text -= text.length;
     return text;
   }
@@ -218,7 +284,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     ) {
       continue;
     }
-    const sanitized = sanitizeToolValue(entry, budget, depth + 1);
+    const sanitized = sanitizeToolValue(entry, budget, depth + 1, key);
     if (sanitized !== undefined) entries.push([key, sanitized]);
   }
   return Object.fromEntries(entries);
@@ -425,7 +491,7 @@ export function normalizeAntigravityToolCall(
     output?.commandLine ??
     output?.command_line ??
     toolCall.command;
-  const command = nativeCommand?.trim() ? boundText(nativeCommand.trim()) : undefined;
+  const command = nativeCommand?.trim() ? boundCommandLine(nativeCommand.trim()) : undefined;
   const nativeCwd =
     input?.Cwd ??
     input?.WorkingDirectory ??
@@ -436,7 +502,7 @@ export function normalizeAntigravityToolCall(
     output?.working_dir;
   const cwd = nativeCwd?.trim() ? boundText(nativeCwd.trim()) : undefined;
   const nativeOutput = output?.combinedOutput ?? output?.combined_output;
-  const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
+  const aggregatedOutput = nativeOutput === undefined ? undefined : boundCommandText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
   const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
@@ -485,6 +551,8 @@ const ANTIGRAVITY_SUBAGENT_TITLES = new Set([
   "Run start_subagent?",
   "Running invoke_subagent",
   "Run invoke_subagent?",
+  // agy 1.5 auto-approved calls.
+  "Run invoke_subagent",
 ]);
 
 /** The ACP agent reports subagent calls as ordinary tools without child IDs or models. */

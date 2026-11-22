@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - CLI integration uses temporary Node paths.
 import * as NodePath from "node:path";
 
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as NetService from "@t3tools/shared/Net";
@@ -45,7 +46,7 @@ const layerCliRuntime = Layer.mergeAll(NodeServices.layer, NetService.layer);
 const runCli = (args: ReadonlyArray<string>) =>
   Command.runWith(cli, { version: "0.0.0" })(args).pipe(Effect.provide(layerCliRuntime));
 
-it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("CLI deferred imports", (it) => {
   it.effect("runs commands that do not need them without loading them", () =>
     Effect.gen(function* () {
       hooks.importsAttempted.length = 0;
@@ -79,13 +80,21 @@ it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
       const runtimeStatePath = NodePath.join(baseDir, "userdata", "server-runtime.json");
       yield* persistServerRuntimeState({
         path: runtimeStatePath,
-        state: yield* makePersistedServerRuntimeState({
-          config: { host: "127.0.0.1", devUrl: undefined },
-          port: 3_773,
-        }),
+        // An owner id skips the legacy liveness probe, so only the free lock decides.
+        state: {
+          ...(yield* makePersistedServerRuntimeState({
+            config: { host: "127.0.0.1", devUrl: undefined },
+            port: 3_773,
+          })),
+          ownerId: "dead-server",
+        },
       });
       const unreachable: typeof globalThis.fetch = () =>
-        Promise.reject(new Error("connection refused"));
+        Promise.reject(
+          new TypeError("fetch failed", {
+            cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }),
+          }),
+        );
 
       const exit = yield* runCli(["project", "add", root, "--base-dir", baseDir]).pipe(
         Effect.provideService(FetchHttpClient.Fetch, unreachable),
@@ -94,7 +103,6 @@ it.layer(NodeServices.layer)("CLI deferred imports", (it) => {
 
       assert.isTrue(Exit.hasDies(exit));
       assert.isTrue(yield* fs.exists(runtimeStatePath));
-      assert.isFalse(yield* fs.exists(NodePath.join(baseDir, "userdata", "server-owner.sqlite")));
     }),
   );
 

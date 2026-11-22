@@ -1,8 +1,12 @@
+import { msg, useMessages } from "gt-react-native";
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useMemo, useCallback, type Dispatch, type SetStateAction } from "react";
 
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigs, useThreadShell } from "../../state/entities";
+import { useEnvironmentQuery } from "../../state/query";
+import { threadFamilies } from "../../state/threads";
 import { createDraft, scheduledTaskDefaultModel } from "./scheduledTaskDraft";
 import { useSettingsEnvironmentFilter } from "./settings-environment-filter";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
@@ -10,11 +14,40 @@ import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import {
   scheduledTaskEditorHasChanges,
   scheduledTaskEditorSessionAtom,
+  setScheduledTaskEditorSaving,
   startScheduledTaskEditor,
   updateScheduledTaskEditor,
   readScheduledTaskEditor,
   type ScheduledTaskEditor,
 } from "./scheduled-task-editor-state";
+
+export const NEW_THREAD_DESTINATION_LABEL = msg("New thread each run");
+
+export function useScheduledTaskThread(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+) {
+  const ref =
+    environmentId === null || threadId === null ? null : scopeThreadRef(environmentId, threadId);
+  const shell = useThreadShell(ref);
+  // The shell can omit older settled threads; their family read still carries the row.
+  const family = useEnvironmentQuery(
+    ref !== null && shell === null
+      ? threadFamilies.familyAtom(ref.environmentId, ref.threadId)
+      : null,
+  );
+  return shell ?? family.data?.threads.find((row) => row.id === threadId) ?? null;
+}
+
+export function useScheduledTaskDestinationLabel(
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
+): string {
+  const m = useMessages();
+  const thread = useScheduledTaskThread(environmentId, threadId);
+  if (environmentId === null || threadId === null) return m(NEW_THREAD_DESTINATION_LABEL);
+  return thread?.title.trim() || m(msg("Thread {id}", { id: threadId }));
+}
 
 /** The form draft lives in an atom, so it survives while its native picker routes are on top. */
 export function useScheduledTaskEditor() {
@@ -66,6 +99,8 @@ export function useScheduledTaskEditor() {
   const editor = session ? session.current : defaultEditor;
   const initial = session ? session.initial : defaultEditor;
   const hasChanges = scheduledTaskEditorHasChanges(initial, editor);
+  const saving = session?.saving ?? false;
+  const setSaving = (next: boolean) => setScheduledTaskEditorSaving(next, defaultEditor);
   const setEditor: Dispatch<SetStateAction<ScheduledTaskEditor | null>> = (update) => {
     updateScheduledTaskEditor(update, defaultEditor);
   };
@@ -79,6 +114,8 @@ export function useScheduledTaskEditor() {
     setEditor,
     startEditor,
     hasChanges,
+    saving,
+    setSaving,
     resetEditor,
     draftForEnvironment,
   };
