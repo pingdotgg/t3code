@@ -1164,8 +1164,16 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   // True after an incomplete tools-directory scan or disk-index read error during baseline
   // discovery; requires positive baseline provenance before reusing unreceipted legacy installs.
   let legacyBaselineDiscoveryIncomplete = false;
-  // In-memory mirror of last-resolved binary launch options when updating .t3-artifact.json fails.
-  const syncedLaunchOptionsBySlotRoot = new Map<string, AcpRegistryBinaryArtifactReceipt>();
+  // In-memory mirror of uncommitted binary launch options when durable writes fail or cannot read
+  // the sidecar; tracked separately from committed revisions so failed writes never outrank later
+  // durable updates from another catalog.
+  const pendingLaunchOptionsBySlotRoot = new Map<
+    string,
+    {
+      readonly baseDurableRevision: number;
+      readonly receipt: AcpRegistryBinaryArtifactReceipt;
+    }
+  >();
 
   const runtimeTempDir = input.runtimeTempDir;
   if (runtimeTempDir !== undefined) {
@@ -2733,14 +2741,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const hasSidecar = yield* fileSystem
         .exists(binaryLaunchOptionsPath)
         .pipe(Effect.orElseSucceed(() => false));
-      const memoryEntry = syncedLaunchOptionsBySlotRoot.get(slot.root);
-      const memoryStored = receiptMatchesInstall(memoryEntry, initialReceipt)
-        ? memoryEntry
-        : undefined;
+      const pendingEntry = pendingLaunchOptionsBySlotRoot.get(slot.root);
+      const hasMatchingPending =
+        pendingEntry !== undefined && receiptMatchesInstall(pendingEntry.receipt, initialReceipt);
       const receiptRev = initialReceipt.launchOptionsRevision ?? 0;
-      const memoryRev = memoryStored?.launchOptionsRevision ?? 0;
+      let observedDiskRev = 0;
       if (!hasSidecar) {
-        if (receiptMatchesLaunchOptions(initialReceipt, target) && memoryRev <= receiptRev) {
+        if (!hasMatchingPending && receiptMatchesLaunchOptions(initialReceipt, target)) {
           return;
         }
       } else {
@@ -2748,15 +2755,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         if (diskResult.status === "ok") {
           const diskStored = diskResult.entries[slot.root];
           const diskMatches = receiptMatchesInstall(diskStored, initialReceipt);
-          const diskRev = diskMatches ? (diskStored.launchOptionsRevision ?? 0) : 0;
-          const durableRev = Math.max(receiptRev, diskRev);
-          if (memoryRev <= durableRev) {
+          observedDiskRev = diskMatches ? (diskStored.launchOptionsRevision ?? 0) : 0;
+          if (!hasMatchingPending) {
             if (diskStored === undefined && receiptMatchesLaunchOptions(initialReceipt, target)) {
               return;
             }
             if (
               diskMatches &&
-              diskRev > receiptRev &&
+              observedDiskRev > receiptRev &&
               receiptMatchesLaunchOptions(diskStored, target)
             ) {
               return;
@@ -2766,9 +2772,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       }
 
       const receiptPath = path.join(slot.root, BINARY_ARTIFACT_RECEIPT_FILENAME);
-      const buildUpdatedReceipt = (
+      const buildLaunchOptionsReceipt = (
         baseReceipt: AcpRegistryBinaryArtifactReceipt,
-        revision: number,
+        revision?: number,
       ): AcpRegistryBinaryArtifactReceipt => ({
         version: agent.version,
         archive: target.archive,
@@ -2776,9 +2782,18 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         sha256: target.sha256 ?? null,
         ...(target.args && target.args.length > 0 ? { args: [...target.args] } : {}),
         ...(target.env && Object.keys(target.env).length > 0 ? { env: { ...target.env } } : {}),
-        launchOptionsRevision: revision,
+        ...(revision !== undefined ? { launchOptionsRevision: revision } : {}),
         ...(baseReceipt.installId !== undefined ? { installId: baseReceipt.installId } : {}),
       });
+      const recordPending = (
+        baseReceipt: AcpRegistryBinaryArtifactReceipt,
+        baseDurableRevision: number,
+      ) => {
+        pendingLaunchOptionsBySlotRoot.set(slot.root, {
+          baseDurableRevision,
+          receipt: buildLaunchOptionsReceipt(baseReceipt),
+        });
+      };
       yield* withBinaryLaunchOptionsLock((isLockOwned) =>
         Effect.gen(function* () {
           const rawFreshReceipt = yield* fileSystem.readFileString(receiptPath).pipe(Effect.option);
@@ -2787,6 +2802,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             Option.isNone(decodedFreshReceipt) ||
             !receiptMatchesInstall(decodedFreshReceipt.value, initialReceipt)
           ) {
+            pendingLaunchOptionsBySlotRoot.delete(slot.root);
             return;
           }
           const freshReceipt = decodedFreshReceipt.value;
@@ -2795,9 +2811,19 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             fileSystem,
             binaryLaunchOptionsPath,
           );
+          if (diskResult.status === "io_error") {
+            // Do not rewrite a matching receipt or allocate a revision below an unreadable sidecar;
+            // keep launch usable via pending options and retry once sidecar reads recover.
+            if (receiptMatchesLaunchOptions(freshReceipt, target)) {
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
+            } else {
+              recordPending(freshReceipt, Math.max(freshReceiptRev, observedDiskRev));
+            }
+            return;
+          }
           const isCorrupt = diskResult.status === "corrupt";
-          const diskEntries = diskResult.status === "ok" ? diskResult.entries : {};
-          const diskStored = diskResult.status === "ok" ? diskEntries[slot.root] : undefined;
+          const diskEntries = isCorrupt ? {} : diskResult.entries;
+          const diskStored = diskEntries[slot.root];
           const diskMatches = receiptMatchesInstall(diskStored, freshReceipt);
           const freshDiskRev = diskMatches ? (diskStored.launchOptionsRevision ?? 0) : 0;
           if (receiptMatchesLaunchOptions(freshReceipt, target)) {
@@ -2807,40 +2833,36 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 .copyFile(binaryLaunchOptionsPath, `${binaryLaunchOptionsPath}.corrupt`)
                 .pipe(Effect.ignore);
               yield* writeJsonFileAtomically(binaryLaunchOptionsPath, {}).pipe(Effect.ignore);
-              syncedLaunchOptionsBySlotRoot.set(slot.root, freshReceipt);
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
               return;
             }
-            if (diskResult.status === "ok") {
-              if (diskStored === undefined) {
-                syncedLaunchOptionsBySlotRoot.set(slot.root, freshReceipt);
-                return;
-              }
-              if (!diskMatches || freshDiskRev <= freshReceiptRev) {
-                if (!(yield* isLockOwned)) return;
-                const { [slot.root]: _removed, ...rest } = diskEntries;
-                yield* writeJsonFileAtomically(binaryLaunchOptionsPath, rest).pipe(Effect.ignore);
-                syncedLaunchOptionsBySlotRoot.set(slot.root, freshReceipt);
-                return;
-              }
+            if (diskStored === undefined) {
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
+              return;
+            }
+            if (freshDiskRev <= freshReceiptRev) {
+              if (!(yield* isLockOwned)) return;
+              const { [slot.root]: _removed, ...rest } = diskEntries;
+              yield* writeJsonFileAtomically(binaryLaunchOptionsPath, rest).pipe(Effect.ignore);
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
+              return;
             }
           }
           if (
-            diskResult.status === "ok" &&
             diskMatches &&
             freshDiskRev > freshReceiptRev &&
             receiptMatchesLaunchOptions(diskStored, target)
           ) {
-            syncedLaunchOptionsBySlotRoot.set(slot.root, diskStored);
+            pendingLaunchOptionsBySlotRoot.delete(slot.root);
             return;
           }
-          const rawMemory = syncedLaunchOptionsBySlotRoot.get(slot.root);
-          const freshMemoryRev = receiptMatchesInstall(rawMemory, freshReceipt)
-            ? (rawMemory.launchOptionsRevision ?? 0)
-            : 0;
-          const nextRevision = Math.max(freshReceiptRev, freshDiskRev, freshMemoryRev) + 1;
-          const updatedReceipt = buildUpdatedReceipt(freshReceipt, nextRevision);
-          syncedLaunchOptionsBySlotRoot.set(slot.root, updatedReceipt);
-          if (!(yield* isLockOwned)) return;
+          const committedBaseRev = Math.max(freshReceiptRev, freshDiskRev);
+          const nextRevision = committedBaseRev + 1;
+          const updatedReceipt = buildLaunchOptionsReceipt(freshReceipt, nextRevision);
+          if (!(yield* isLockOwned)) {
+            recordPending(freshReceipt, committedBaseRev);
+            return;
+          }
           const receiptWrite = yield* Effect.result(
             random.uuidV4().pipe(
               Effect.flatMap((id) => {
@@ -2865,7 +2887,8 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             ),
           );
           if (Result.isSuccess(receiptWrite)) {
-            if (isCorrupt || (diskResult.status === "ok" && diskStored !== undefined)) {
+            pendingLaunchOptionsBySlotRoot.delete(slot.root);
+            if (isCorrupt || diskStored !== undefined) {
               if (!(yield* isLockOwned)) return;
               if (isCorrupt) {
                 yield* fileSystem
@@ -2880,25 +2903,31 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           // If updating the receipt inside tools/ failed (e.g., read-only install directory or file
           // lock), persist the updated launch options in registry cache storage so fallback still
           // restores the last-resolved args and env even across restarts.
-          if (diskResult.status === "io_error") return;
-          if (!(yield* isLockOwned)) return;
+          if (!(yield* isLockOwned)) {
+            recordPending(freshReceipt, committedBaseRev);
+            return;
+          }
           if (isCorrupt) {
             yield* fileSystem
               .copyFile(binaryLaunchOptionsPath, `${binaryLaunchOptionsPath}.corrupt`)
               .pipe(Effect.ignore);
           }
-          yield* writeJsonFileAtomically(binaryLaunchOptionsPath, {
-            ...diskEntries,
-            [slot.root]: updatedReceipt,
-          }).pipe(Effect.ignore);
+          const sidecarWrite = yield* Effect.result(
+            writeJsonFileAtomically(binaryLaunchOptionsPath, {
+              ...diskEntries,
+              [slot.root]: updatedReceipt,
+            }),
+          );
+          if (Result.isSuccess(sidecarWrite)) {
+            pendingLaunchOptionsBySlotRoot.delete(slot.root);
+          } else {
+            recordPending(freshReceipt, committedBaseRev);
+          }
         }),
       ).pipe(
         Effect.catch(() =>
           Effect.sync(() => {
-            syncedLaunchOptionsBySlotRoot.set(
-              slot.root,
-              buildUpdatedReceipt(initialReceipt, Math.max(receiptRev, memoryRev) + 1),
-            );
+            recordPending(initialReceipt, Math.max(receiptRev, observedDiskRev));
           }),
         ),
       );
@@ -3607,19 +3636,20 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 Effect.option,
               );
               if (Option.isNone(validated)) continue;
-              const memoryOverride = syncedLaunchOptionsBySlotRoot.get(dir);
               const diskOverride =
                 diskOverrideResult.status === "ok" ? diskOverrideResult.entries[dir] : undefined;
-              let effectiveReceipt = receipt;
-              for (const candidate of [diskOverride, memoryOverride]) {
-                if (
-                  receiptMatchesInstall(candidate, receipt) &&
-                  (candidate.launchOptionsRevision ?? 0) >
-                    (effectiveReceipt.launchOptionsRevision ?? 0)
-                ) {
-                  effectiveReceipt = candidate;
-                }
-              }
+              const durableReceipt =
+                receiptMatchesInstall(diskOverride, receipt) &&
+                (diskOverride.launchOptionsRevision ?? 0) > (receipt.launchOptionsRevision ?? 0)
+                  ? diskOverride
+                  : receipt;
+              const pendingOverride = pendingLaunchOptionsBySlotRoot.get(dir);
+              const effectiveReceipt =
+                pendingOverride !== undefined &&
+                receiptMatchesInstall(pendingOverride.receipt, receipt) &&
+                (durableReceipt.launchOptionsRevision ?? 0) <= pendingOverride.baseDurableRevision
+                  ? pendingOverride.receipt
+                  : durableReceipt;
               const fallbackVersion = effectiveReceipt.version ?? safeDecodeVersionDir(versionDir);
               const fallbackArgs = effectiveReceipt.args ?? [];
               const fallbackEnv = effectiveReceipt.env ?? {};
@@ -3938,9 +3968,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 }
               }
               const agentRootPrefix = `${agentRoot}${path.sep}`;
-              for (const slotRoot of syncedLaunchOptionsBySlotRoot.keys()) {
+              for (const slotRoot of pendingLaunchOptionsBySlotRoot.keys()) {
                 if (slotRoot === agentRoot || slotRoot.startsWith(agentRootPrefix)) {
-                  syncedLaunchOptionsBySlotRoot.delete(slotRoot);
+                  pendingLaunchOptionsBySlotRoot.delete(slotRoot);
                 }
               }
               // Finish durable metadata cleanup before releasing the agent permit so a concurrent

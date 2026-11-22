@@ -1013,6 +1013,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       readonly identity: string;
       readonly provider: ServerProvider;
     } | null>(null);
+    // Tracks the latest accepted auth result per runtime separately from lastSuccessfulRuntime
+    // capabilities so a failure on B neither clears A's confirmation nor restores lost confirmation.
+    const latestAcceptedAuth = yield* Ref.make<{
+      readonly identity: string;
+      readonly auth: ServerProvider["auth"];
+    } | null>(null);
     const failedUpgradeTarget = yield* Ref.make<FailedUpgradeTargetState | null>(null);
     const clearLiveState = (
       options?: AcpRegistryRuntimeCoordinator.AcpRegistryClearLiveStateOptions,
@@ -1030,9 +1036,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         Effect.andThen(
           options?.preserveRuntimeIdentity === undefined
             ? Ref.set(lastSuccessfulRuntime, null).pipe(
+                Effect.andThen(Ref.set(latestAcceptedAuth, null)),
                 Effect.andThen(Ref.set(failedUpgradeTarget, null)),
               )
-            : Effect.void,
+            : Ref.update(latestAcceptedAuth, (current) =>
+                current !== null && current.identity === options.preserveRuntimeIdentity
+                  ? current
+                  : null,
+              ),
         ),
       );
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
@@ -1043,10 +1054,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         readonly requireMatchingRuntimeIdentity?: boolean;
         readonly useLearnedModels?: boolean;
         readonly persistLearnedModels?: boolean;
+        readonly clearConfirmedAuthentication?: boolean;
       },
     ) {
       if (!input.installed) return { provider: input, appliedLiveConfiguration: false };
-      if (input.auth.status === "unauthenticated") yield* confirmedAuthentication.set(false);
+      if (
+        input.auth.status === "unauthenticated" &&
+        options?.clearConfirmedAuthentication !== false
+      ) {
+        yield* confirmedAuthentication.set(false);
+      }
       const provider =
         input.enabled &&
         input.installed &&
@@ -1131,87 +1148,104 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             fallbackState: Ref.get(activeFallback),
             failedUpgrade: Ref.get(failedUpgradeTarget),
             lastRuntime: Ref.get(lastSuccessfulRuntime),
+            acceptedAuth: Ref.get(latestAcceptedAuth),
             activeIdentity: Ref.get(activeRuntimeIdentity),
           }).pipe(
-            Effect.map(({ version, fallbackState, failedUpgrade, lastRuntime, activeIdentity }) => {
-              const withLocalVersion =
-                snapshot.installed && snapshot.version === null && version !== null
-                  ? { ...snapshot, version }
-                  : snapshot;
-              if (
-                options?.preserveActiveFallback === true &&
-                fallbackState !== null &&
-                withLocalVersion.installed &&
-                launchIdentity !== null &&
-                launchIdentity === fallbackState.targetLaunchIdentity
-              ) {
-                const preservedBase =
+            Effect.map(
+              ({
+                version,
+                fallbackState,
+                failedUpgrade,
+                lastRuntime,
+                acceptedAuth,
+                activeIdentity,
+              }) => {
+                const withLocalVersion =
+                  snapshot.installed && snapshot.version === null && version !== null
+                    ? { ...snapshot, version }
+                    : snapshot;
+                if (
+                  options?.preserveActiveFallback === true &&
+                  fallbackState !== null &&
+                  withLocalVersion.installed &&
+                  launchIdentity !== null &&
+                  launchIdentity === fallbackState.targetLaunchIdentity
+                ) {
+                  const preservedBase =
+                    lastRuntime !== null &&
+                    fallbackState.fallbackLaunchIdentity !== null &&
+                    lastRuntime.identity === fallbackState.fallbackLaunchIdentity
+                      ? applyRegistryReadinessMetadata(lastRuntime.provider, withLocalVersion)
+                      : withLocalVersion;
+                  return {
+                    snapshot: {
+                      ...preservedBase,
+                      checkedAt: withLocalVersion.checkedAt,
+                      installed: true,
+                      version: fallbackState.fallbackVersion,
+                      status: withLocalVersion.enabled ? ("ready" as const) : ("disabled" as const),
+                    },
+                    launchIdentity: fallbackState.fallbackLaunchIdentity,
+                    indexRevision,
+                    fallback: true as const,
+                    fallbackTargetIndexRevision: fallbackState.targetIndexRevision,
+                    retryFailedUpgrade: false as const,
+                    preserveStatus: undefined as ServerProvider["status"] | undefined,
+                    preserveMessage: fallbackState.message as string | undefined,
+                  };
+                }
+                if (
+                  options?.preserveActiveFallback === true &&
+                  failedUpgrade !== null &&
                   lastRuntime !== null &&
-                  fallbackState.fallbackLaunchIdentity !== null &&
-                  lastRuntime.identity === fallbackState.fallbackLaunchIdentity
-                    ? applyRegistryReadinessMetadata(lastRuntime.provider, withLocalVersion)
-                    : withLocalVersion;
+                  activeIdentity !== null &&
+                  lastRuntime.identity === activeIdentity &&
+                  withLocalVersion.installed &&
+                  launchIdentity !== null &&
+                  launchIdentity === failedUpgrade.targetLaunchIdentity
+                ) {
+                  const { message: _previousMessage, ...lastProviderWithoutMessage } =
+                    lastRuntime.provider;
+                  const preservedAuth =
+                    acceptedAuth !== null && acceptedAuth.identity === lastRuntime.identity
+                      ? acceptedAuth.auth
+                      : lastProviderWithoutMessage.auth;
+                  return {
+                    snapshot: {
+                      ...lastProviderWithoutMessage,
+                      auth: preservedAuth,
+                      checkedAt: withLocalVersion.checkedAt,
+                      installed: true,
+                      status: withLocalVersion.enabled
+                        ? failedUpgrade.status
+                        : ("disabled" as const),
+                      ...(failedUpgrade.message !== undefined
+                        ? { message: failedUpgrade.message }
+                        : {}),
+                    },
+                    launchIdentity: lastRuntime.identity,
+                    indexRevision,
+                    fallback: false as const,
+                    fallbackTargetIndexRevision: null as number | null,
+                    retryFailedUpgrade: true as const,
+                    preserveStatus: (withLocalVersion.enabled
+                      ? failedUpgrade.status
+                      : "disabled") as ServerProvider["status"] | undefined,
+                    preserveMessage: failedUpgrade.message,
+                  };
+                }
                 return {
-                  snapshot: {
-                    ...preservedBase,
-                    checkedAt: withLocalVersion.checkedAt,
-                    installed: true,
-                    version: fallbackState.fallbackVersion,
-                    status: withLocalVersion.enabled ? ("ready" as const) : ("disabled" as const),
-                  },
-                  launchIdentity: fallbackState.fallbackLaunchIdentity,
-                  indexRevision,
-                  fallback: true as const,
-                  fallbackTargetIndexRevision: fallbackState.targetIndexRevision,
-                  retryFailedUpgrade: false as const,
-                  preserveStatus: undefined as ServerProvider["status"] | undefined,
-                  preserveMessage: fallbackState.message as string | undefined,
-                };
-              }
-              if (
-                options?.preserveActiveFallback === true &&
-                failedUpgrade !== null &&
-                lastRuntime !== null &&
-                activeIdentity !== null &&
-                lastRuntime.identity === activeIdentity &&
-                withLocalVersion.installed &&
-                launchIdentity !== null &&
-                launchIdentity === failedUpgrade.targetLaunchIdentity
-              ) {
-                const { message: _previousMessage, ...lastProviderWithoutMessage } =
-                  lastRuntime.provider;
-                return {
-                  snapshot: {
-                    ...lastProviderWithoutMessage,
-                    checkedAt: withLocalVersion.checkedAt,
-                    installed: true,
-                    status: withLocalVersion.enabled ? failedUpgrade.status : ("disabled" as const),
-                    ...(failedUpgrade.message !== undefined
-                      ? { message: failedUpgrade.message }
-                      : {}),
-                  },
-                  launchIdentity: lastRuntime.identity,
+                  snapshot: withLocalVersion,
+                  launchIdentity,
                   indexRevision,
                   fallback: false as const,
                   fallbackTargetIndexRevision: null as number | null,
-                  retryFailedUpgrade: true as const,
-                  preserveStatus: (withLocalVersion.enabled ? failedUpgrade.status : "disabled") as
-                    | ServerProvider["status"]
-                    | undefined,
-                  preserveMessage: failedUpgrade.message,
+                  retryFailedUpgrade: false as const,
+                  preserveStatus: undefined as ServerProvider["status"] | undefined,
+                  preserveMessage: undefined as string | undefined,
                 };
-              }
-              return {
-                snapshot: withLocalVersion,
-                launchIdentity,
-                indexRevision,
-                fallback: false as const,
-                fallbackTargetIndexRevision: null as number | null,
-                retryFailedUpgrade: false as const,
-                preserveStatus: undefined as ServerProvider["status"] | undefined,
-                preserveMessage: undefined as string | undefined,
-              };
-            }),
+              },
+            ),
           ),
         ),
         Effect.flatMap(
@@ -1720,15 +1754,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           failedTargetLaunchIdentity !== previousIdentity;
                         if (lastRuntime !== null && lastRuntime.identity === previousIdentity) {
                           const { message: _previousMessage, ...base } = lastRuntime.provider;
+                          const acceptedAuth = yield* Ref.get(latestAcceptedAuth);
+                          const retainedAuth =
+                            acceptedAuth !== null && acceptedAuth.identity === previousIdentity
+                              ? acceptedAuth.auth
+                              : base.auth;
+                          const activeRuntimeUnauthenticated =
+                            !isProbedDifferentRuntime && provider.auth.status === "unauthenticated";
                           const preservedBase: ServerProvider = {
                             ...base,
                             checkedAt: provider.checkedAt,
                             status: provider.status,
-                            auth:
-                              !isProbedDifferentRuntime &&
-                              provider.auth.status === "unauthenticated"
-                                ? provider.auth
-                                : base.auth,
+                            auth: activeRuntimeUnauthenticated ? provider.auth : retainedAuth,
                             ...(provider.message !== undefined
                               ? { message: provider.message }
                               : {}),
@@ -1740,6 +1777,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                               requireMatchingRuntimeIdentity: false,
                               useLearnedModels: true,
                               persistLearnedModels: false,
+                              clearConfirmedAuthentication: false,
                             },
                           );
                           const preserveProbeFailure =
@@ -1755,6 +1793,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             : nextSnapshotRaw;
                           const published = yield* tryPublishSnapshot(nextSnapshot);
                           if (published) {
+                            if (activeRuntimeUnauthenticated) {
+                              yield* confirmedAuthentication.set(false);
+                              yield* Ref.set(activeFallback, null);
+                              yield* Ref.set(latestAcceptedAuth, {
+                                identity: previousIdentity,
+                                auth: provider.auth,
+                              });
+                            }
                             yield* Ref.set(expectedRuntimeIdentity, previousIdentity);
                             yield* Ref.set(
                               failedUpgradeTarget,
@@ -1789,6 +1835,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           probedLaunchIdentity ?? failedTargetLaunchIdentity,
                         );
                         if (published) {
+                          if (
+                            !isProbedDifferentRuntime &&
+                            provider.auth.status === "unauthenticated"
+                          ) {
+                            yield* confirmedAuthentication.set(false);
+                            if (failedIdentity !== null) {
+                              yield* Ref.set(latestAcceptedAuth, {
+                                identity: failedIdentity,
+                                auth: provider.auth,
+                              });
+                            }
+                          }
                           if (failedIdentity !== null && failedIdentity !== previousIdentity) {
                             yield* clearLiveState({ preserveRuntimeIdentity: failedIdentity });
                           }
@@ -1833,6 +1891,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           requireMatchingRuntimeIdentity: runtimeChanged,
                           useLearnedModels: !runtimeChanged,
                           persistLearnedModels: false,
+                          clearConfirmedAuthentication: false,
                         });
                       const nextSnapshot =
                         fallback && effectiveMessage !== undefined
@@ -1844,6 +1903,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           yield* Ref.set(activeFallback, null);
                           yield* Ref.set(failedUpgradeTarget, null);
                           yield* Ref.set(lastSuccessfulRuntime, null);
+                          yield* Ref.set(latestAcceptedAuth, null);
                           if (previousIdentity !== null || current.entry !== null) {
                             yield* clearLiveState();
                             yield* invalidateEnrichmentCache;
@@ -1851,6 +1911,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           yield* Ref.set(expectedRuntimeIdentity, null);
                         } else {
                           const previousLastSuccessful = yield* Ref.get(lastSuccessfulRuntime);
+                          if (nextSnapshot.auth.status === "unauthenticated") {
+                            yield* confirmedAuthentication.set(false);
+                            const unauthIdentity =
+                              resolvedIdentity ??
+                              runtimeIdentityFor(providerToPublish, probedLaunchIdentity);
+                            if (unauthIdentity !== null) {
+                              yield* Ref.set(latestAcceptedAuth, {
+                                identity: unauthIdentity,
+                                auth: nextSnapshot.auth,
+                              });
+                            }
+                          }
                           if (!probeFailed) {
                             yield* Ref.set(failedUpgradeTarget, null);
                           }
@@ -1919,6 +1991,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             yield* Ref.set(lastSuccessfulRuntime, {
                               identity: resolvedIdentity,
                               provider: fallback ? cleanProvider : nextSnapshotRaw,
+                            });
+                            yield* Ref.set(latestAcceptedAuth, {
+                              identity: resolvedIdentity,
+                              auth: nextSnapshot.auth,
                             });
                           }
                         }
@@ -2037,35 +2113,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     const fallbackState = yield* Ref.get(activeFallback);
                     const failedUpgrade = yield* Ref.get(failedUpgradeTarget);
                     const effectiveIdentity = meta.runtimeIdentity ?? activeId ?? gate.expected;
+                    const preserveUnauthenticated = current.auth.status === "unauthenticated";
                     const preserveFallbackMessage =
+                      !preserveUnauthenticated &&
                       fallbackState !== null &&
                       fallbackState.fallbackLaunchIdentity !== null &&
                       effectiveIdentity === fallbackState.fallbackLaunchIdentity;
                     const preserveUpgradeFailure =
+                      !preserveUnauthenticated &&
                       !preserveFallbackMessage &&
                       failedUpgrade !== null &&
                       activeId !== null &&
                       failedUpgrade.targetLaunchIdentity !== activeId;
-                    const preserveUnauthenticated =
-                      !preserveFallbackMessage &&
-                      !preserveUpgradeFailure &&
-                      current.auth.status === "unauthenticated";
-                    const next = preserveFallbackMessage
-                      ? { ...applied, message: fallbackState.message }
-                      : preserveUpgradeFailure
-                        ? {
-                            ...applied,
-                            status: applied.enabled ? failedUpgrade.status : applied.status,
-                            ...(failedUpgrade.message !== undefined
-                              ? { message: failedUpgrade.message }
-                              : {}),
-                          }
-                        : preserveUnauthenticated
+                    const next = preserveUnauthenticated
+                      ? {
+                          ...applied,
+                          status: applied.enabled ? current.status : applied.status,
+                          ...(current.message !== undefined ? { message: current.message } : {}),
+                        }
+                      : preserveFallbackMessage
+                        ? { ...applied, message: fallbackState.message }
+                        : preserveUpgradeFailure
                           ? {
                               ...applied,
-                              status: applied.enabled ? current.status : applied.status,
-                              ...(current.message !== undefined
-                                ? { message: current.message }
+                              status: applied.enabled ? failedUpgrade.status : applied.status,
+                              ...(failedUpgrade.message !== undefined
+                                ? { message: failedUpgrade.message }
                                 : {}),
                             }
                           : applied;
@@ -2401,7 +2474,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         confirmedAuthentication
           .set(authenticated)
           .pipe(
-            Effect.andThen(authenticated ? Effect.void : clearLiveState()),
+            Effect.andThen(authenticated ? Ref.set(latestAcceptedAuth, null) : clearLiveState()),
             Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
@@ -2508,6 +2581,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(SecureRandom.SecureRandom, random),
             Effect.tap(() => confirmedAuthentication.set(false)),
+            Effect.tap(() => Ref.set(latestAcceptedAuth, null)),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
                 invalidateEnrichmentCache.pipe(

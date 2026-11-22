@@ -8,6 +8,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { toCustomModelSetting } from "@t3tools/shared/model";
@@ -30,6 +31,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 
+import * as AcpRegistryAuthenticationState from "./authenticationState.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
 import * as AcpRegistrySupport from "./AcpRegistrySupport.ts";
 import {
@@ -3623,6 +3625,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         let failProbeExit = false;
         let probeResolveCount = 0;
         let defectInspectCount = 0;
+        let interruptInspectOnce = false;
         let inspectCalls = 0;
         let onRefreshIndex: (() => Effect.Effect<void>) | null = null;
         let onBeforeProbeResolve: (() => Effect.Effect<void>) | null = null;
@@ -3741,6 +3744,16 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           inspect: (settings, environment) =>
             Effect.gen(function* () {
               inspectCalls += 1;
+              if (interruptInspectOnce) {
+                interruptInspectOnce = false;
+                if (inspectGate !== null) {
+                  const gate = inspectGate;
+                  inspectGate = null;
+                  yield* Deferred.succeed(gate.started, undefined);
+                  yield* Deferred.await(gate.release);
+                }
+                return yield* Effect.interrupt;
+              }
               if (defectInspectCount > 0) {
                 defectInspectCount -= 1;
                 if (inspectGate !== null) {
@@ -4078,7 +4091,8 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         const fallbackExitSnapshot = yield* fgConfigInstance.snapshot.getSnapshot;
         expect(fallbackExitSnapshot.version).toBe("1.0.0");
         expect(fallbackExitSnapshot.status).toBe("warning");
-        expect(fallbackExitSnapshot.auth.status).toBe("unknown");
+        // Retains step (b)'s auth rejection rather than clearing it on a startup crash.
+        expect(fallbackExitSnapshot.auth.status).toBe("unauthenticated");
         expect(fallbackExitSnapshot.message).toBeDefined();
         expect(fallbackExitSnapshot.message).not.toContain("API key");
         const exitLiveUpdated = yield* fgConfigInstance.snapshot.streamChanges.pipe(
@@ -4102,6 +4116,88 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         expect(exitWithE.message).toBeDefined();
         expect(exitWithE.message).not.toContain("API key");
         failProbeExit = false;
+
+        // (e) Non-upgrade same-runtime auth failure clears failedUpgradeTarget and preserves
+        //     warning + unauthenticated + sign-in message across live config updates via
+        //     preserveUnauthenticated (without failedUpgradeTarget or activeFallback).
+        failArchiveVersions = new Set();
+        remoteVersion = "1.0.0";
+        failProbeAuth = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const directUnauthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(directUnauthDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(directUnauthDone);
+        const directUnauthLive = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "fg-v1-f")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgConfigOnlyId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-f",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-f", name: "fg-v1-f" },
+            ],
+          }),
+          v1Identity,
+        );
+        const directUnauthWithF = Option.getOrThrow(yield* Fiber.join(directUnauthLive));
+        expect(directUnauthWithF.status).toBe("warning");
+        expect(directUnauthWithF.auth.status).toBe("unauthenticated");
+        expect(directUnauthWithF.message).toContain("API key");
+
+        // (f) After a successful fallback sets activeFallback, a subsequent auth rejection on the
+        //     fallback runtime preserves the auth warning across live config updates (taking
+        //     precedence over activeFallback's install notice) and clears activeFallback so
+        //     subsequent refreshes don't mask it behind backoff.
+        failProbeAuth = false;
+        remoteVersion = "2.0.0";
+        failArchiveVersions = new Set(["2.0.0"]);
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const activeFbReadyDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(activeFbReadyDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(activeFbReadyDone);
+        expect((yield* fgConfigInstance.snapshot.getSnapshot).status).toBe("ready");
+        expect((yield* fgConfigInstance.snapshot.getSnapshot).message).toContain("2.0.0");
+        yield* TestClock.adjust("61 seconds");
+        failProbeAuth = true;
+        const activeFbUnauthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(activeFbUnauthDone, Exit.void);
+        yield* fgConfigInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(activeFbUnauthDone);
+        const activeFbUnauthLive = yield* fgConfigInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((model) => model.slug === "fg-v1-g")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          fgConfigOnlyId,
+          normalizeAcpRegistryLiveConfiguration([], undefined, {
+            currentModelId: "fg-v1-g",
+            availableModels: [
+              { modelId: "fg-v1-a", name: "fg-v1-a" },
+              { modelId: "fg-v1-g", name: "fg-v1-g" },
+            ],
+          }),
+          v1Identity,
+        );
+        const activeFbWithG = Option.getOrThrow(yield* Fiber.join(activeFbUnauthLive));
+        expect(activeFbWithG.status).toBe("warning");
+        expect(activeFbWithG.auth.status).toBe("unauthenticated");
+        expect(activeFbWithG.message).toContain("API key");
+        failProbeAuth = false;
         failArchiveVersions = new Set();
         remoteVersion = "2.0.0";
         yield* realCatalog.invalidateIndex();
@@ -4124,7 +4220,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         yield* Deferred.await(fgSwitchedDone);
         expect(fgSwitchedSnapshot.version).toBe("1.0.0");
         expect(fgSwitchedSnapshot.message).not.toContain("API key");
-        expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-e");
+        expect(fgSwitchedSnapshot.models.map((model) => model.slug)).toContain("fg-v1-g");
 
         // 2. When no snapshot was ever accepted for 1.0.0 (neither probe nor live session), a failed
         // 2.0.0 probe discovered via recheck (with expectedRuntimeIdentity still on 1.0.0!) publishes
@@ -4519,35 +4615,17 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         controlledDispatcher.flush();
         expect(inspectCalls).toBe(inspectsBeforeNoPending + 1);
 
-        const interruptScope = yield* Scope.make();
-        const interruptId = ProviderInstanceId.make("acpRegistry_interrupt_reconcile");
-        const interruptStartupDone = yield* Deferred.make<void>();
-        onEnrichmentEnd = () => Deferred.doneUnsafe(interruptStartupDone, Exit.void);
-        yield* AcpRegistryDriver.create({
-          instanceId: interruptId,
-          displayName: "Interrupt Reconcile",
-          enabled: true,
-          environment: [{ name: "MISE_OFFLINE", value: "0", sensitive: false }],
-          config: decodeSettings({ agentId: "test-agent" }),
-        }).pipe(
-          Scope.provide(interruptScope),
-          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
-          Effect.provideService(
-            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
-            coordinator,
-          ),
-          Effect.provideService(Tracer.Tracer, enrichmentTracer),
-          Effect.provideService(Scheduler.Scheduler, controlledScheduler),
-        );
-        yield* Deferred.await(interruptStartupDone);
+        // Interruption of a reconciliation fiber while driverScope is still OPEN (with a parked
+        // event) must NOT replay (!Cause.hasInterruptsOnly).
         const interruptGate = {
           started: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
         };
         inspectGate = interruptGate;
+        interruptInspectOnce = true;
         const inspectsBeforeInterrupt = inspectCalls;
         yield* coordinator.publishAvailableCommands(
-          interruptId,
+          fallbackRetireId,
           { slashCommands: [{ name: "v2-interrupt-1" }], skills: [] },
           v2Identity,
         );
@@ -4555,14 +4633,160 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         const interruptParked = yield* Deferred.make<void>();
         onCommandHandled = { matchName: "v2-interrupt-2", done: interruptParked };
         yield* coordinator.publishAvailableCommands(
-          interruptId,
+          fallbackRetireId,
           { slashCommands: [{ name: "v2-interrupt-2" }], skills: [] },
           v2Identity,
         );
         yield* Deferred.await(interruptParked);
-        yield* Scope.close(interruptScope, Exit.void);
+        const interruptSpanDone = yield* Deferred.make<void>();
+        onReconcileEnd = () => Deferred.doneUnsafe(interruptSpanDone, Exit.void);
+        yield* Deferred.succeed(interruptGate.release, undefined);
+        yield* Deferred.await(interruptSpanDone);
         controlledDispatcher.flush();
         expect(inspectCalls).toBe(inspectsBeforeInterrupt + 1);
+
+        // 5. Saved sign-in confirmation: first-probe auth rejection clears it without
+        //    lastSuccessfulRuntime, rejected publications keep it, and a later failure on B
+        //    never restores confirmation after A rejected auth.
+        const host = yield* ProviderHost.ProviderHost;
+        const authConfirmId = ProviderInstanceId.make("acpRegistry_confirmed_auth_edge");
+        const authConfirmEnv = [{ name: "MISE_OFFLINE", value: "0", sensitive: false }] as const;
+        const authConfirmSettings = decodeSettings({ agentId: "test-agent" });
+        const seedConfirmedAuth = () =>
+          AcpRegistryAuthenticationState.makeAcpRegistryAuthenticationState({
+            cacheDir: host.paths.providerStatusCacheDir,
+            instanceId: authConfirmId,
+            settings: authConfirmSettings,
+            environment: authConfirmEnv,
+            processEnvironment: process.env,
+          });
+        remoteVersion = "1.0.0";
+        failProbeSpawn = false;
+        failProbeExit = false;
+        failProbeAuth = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* (yield* seedConfirmedAuth()).set(true);
+        const firstRejectScope = yield* Scope.make();
+        yield* Effect.addFinalizer(() => Scope.close(firstRejectScope, Exit.void));
+        const firstRejectStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(firstRejectStartupDone, Exit.void);
+        const firstRejectInstance = yield* AcpRegistryDriver.create({
+          instanceId: authConfirmId,
+          displayName: "Confirmed Auth Edge",
+          enabled: true,
+          environment: authConfirmEnv,
+          config: authConfirmSettings,
+        }).pipe(
+          Scope.provide(firstRejectScope),
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(firstRejectStartupDone);
+        expect((yield* firstRejectInstance.snapshot.getSnapshot).auth.status).toBe(
+          "unauthenticated",
+        );
+        expect(yield* (yield* seedConfirmedAuth()).get).toBe(false);
+        yield* Scope.close(firstRejectScope, Exit.void);
+
+        // (b) & (c): Re-seed saved confirmation, verify stale rejected publication leaves it intact,
+        //            verify B's auth failure preserves A's authenticated state, then A's own auth
+        //            rejection clears it and a later B failure never restores old confirmation.
+        yield* (yield* seedConfirmedAuth()).set(true);
+        failProbeAuth = false;
+        const authRetainStartupDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(authRetainStartupDone, Exit.void);
+        const authRetainInstance = yield* AcpRegistryDriver.create({
+          instanceId: authConfirmId,
+          displayName: "Confirmed Auth Retain",
+          enabled: true,
+          environment: authConfirmEnv,
+          config: authConfirmSettings,
+        }).pipe(
+          Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
+          Effect.provideService(
+            AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+            coordinator,
+          ),
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(authRetainStartupDone);
+        expect((yield* authRetainInstance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+
+        // Start a probe of 1.0.0 that will fail auth, pause it at resolveGate, supersede it with
+        // a newer refresh (succeeding auth), then release the stale probe -> saved confirmation stays true.
+        yield* authRetainInstance.invalidateCaches ?? Effect.void;
+        const staleUnauthGate = {
+          matchVersion: "1.0.0",
+          started: yield* Deferred.make<void>(),
+          release: yield* Deferred.make<void>(),
+        };
+        resolveGate = staleUnauthGate;
+        failProbeAuth = true;
+        yield* authRetainInstance.snapshot.refresh;
+        yield* Deferred.await(staleUnauthGate.started);
+        failProbeAuth = false;
+        const supersedingRefreshDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(supersedingRefreshDone, Exit.void);
+        yield* authRetainInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(supersedingRefreshDone);
+        yield* Deferred.succeed(staleUnauthGate.release, undefined);
+        expect(yield* (yield* seedConfirmedAuth()).get).toBe(true);
+        expect((yield* authRetainInstance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+
+        // B fails auth -> retained A keeps authenticated.
+        remoteVersion = "2.0.0";
+        failProbeAuth = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const bFailKeepAuthDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(bFailKeepAuthDone, Exit.void);
+        yield* authRetainInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(bFailKeepAuthDone);
+        expect((yield* authRetainInstance.snapshot.getSnapshot).auth.status).toBe("authenticated");
+
+        // Now A itself rejects auth (after 15m probe cache TTL expires) -> A becomes
+        // unauthenticated and clears saved confirmation.
+        yield* TestClock.adjust("16 minutes");
+        remoteVersion = "1.0.0";
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const aRejectDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(aRejectDone, Exit.void);
+        yield* authRetainInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(aRejectDone);
+        expect((yield* authRetainInstance.snapshot.getSnapshot).auth.status).toBe(
+          "unauthenticated",
+        );
+        expect(yield* (yield* seedConfirmedAuth()).get).toBe(false);
+
+        // Now B fails without launching A -> retained A MUST stay unauthenticated (never restoring
+        // A's old authenticated state from lastSuccessfulRuntime).
+        remoteVersion = "2.0.0";
+        failProbeAuth = false;
+        failProbeSpawn = true;
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const bFailAfterARejectDone = yield* Deferred.make<void>();
+        onEnrichmentEnd = () => Deferred.doneUnsafe(bFailAfterARejectDone, Exit.void);
+        yield* authRetainInstance.snapshot.refresh.pipe(
+          Effect.provideService(Tracer.Tracer, enrichmentTracer),
+        );
+        yield* Deferred.await(bFailAfterARejectDone);
+        expect((yield* authRetainInstance.snapshot.getSnapshot).version).toBe("1.0.0");
+        expect((yield* authRetainInstance.snapshot.getSnapshot).auth.status).toBe(
+          "unauthenticated",
+        );
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });
