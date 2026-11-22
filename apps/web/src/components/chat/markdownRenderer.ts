@@ -3,18 +3,13 @@ import { toJsxRuntime, type Components } from "hast-util-to-jsx-runtime";
 import { urlAttributes } from "html-url-attributes";
 import type { ReactElement } from "react";
 import { Fragment, jsx, jsxs } from "react/jsx-runtime";
-import remarkParse from "remark-parse";
-import remarkRehype from "remark-rehype";
-import { type PluggableList, unified } from "unified";
-import { VFile } from "vfile";
 
-import { remarkParseWithoutUnusedSyntax } from "./markdownSyntaxGates";
+import { wordsHast, type WordsHastOptions } from "../../markdown/wordsHast";
 
 export type MarkdownUrlTransform = (url: string, key: string, node: Element) => string;
 
 interface MarkdownRendererOptions {
-  readonly remarkPlugins: PluggableList;
-  readonly rehypePlugins: PluggableList;
+  readonly markdown: WordsHastOptions;
   readonly components: Partial<Components>;
   readonly urlTransform: MarkdownUrlTransform;
 }
@@ -23,7 +18,11 @@ interface MarkdownRendererOptions {
 // reuses one instead of parsing again. Parsing is most of the cost of rendering markdown.
 // An element and the hast it keeps hold about 20 bytes per source character, so ~10 MB.
 const MAX_CACHED_CHARS = 500_000;
-const rendered = new Map<string, ReactElement>();
+interface Rendered {
+  readonly tree: Root;
+  element?: ReactElement;
+}
+const rendered = new Map<string, Rendered>();
 let cachedChars = 0;
 let nextRendererId = 0;
 
@@ -31,10 +30,10 @@ let nextRendererId = 0;
 const ENTRY_OVERHEAD_CHARS = 200;
 const entrySize = (key: string) => key.length + ENTRY_OVERHEAD_CHARS;
 
-function remember(key: string, element: ReactElement) {
+function remember(key: string, entry: Rendered) {
   // One huge message would otherwise evict everything else.
   if (entrySize(key) > MAX_CACHED_CHARS / 4) return;
-  rendered.set(key, element);
+  rendered.set(key, entry);
   cachedChars += entrySize(key);
   for (const oldest of rendered.keys()) {
     if (cachedChars <= MAX_CACHED_CHARS) break;
@@ -43,32 +42,18 @@ function remember(key: string, element: ReactElement) {
   }
 }
 
-/** Renders markdown as react-markdown does, with one processor per plugin set. */
+/** Renders markdown with Words, keeping one parse cache per option set. */
 export function createMarkdownRenderer({
-  remarkPlugins,
-  rehypePlugins,
+  markdown,
   components,
   urlTransform,
 }: MarkdownRendererOptions) {
-  const processor = unified()
-    .use(remarkParse)
-    .use(remarkParseWithoutUnusedSyntax)
-    .use(remarkPlugins)
-    .use(remarkRehype, { allowDangerousHtml: true })
-    .use(rehypePlugins)
-    .freeze();
   const keyPrefix = `${nextRendererId++}\u0000`;
 
-  // Literal raw HTML that survived the rehype plugins, and URL attributes, as react-markdown treats them.
+  // URL attributes, as react-markdown transformed them.
   const prepare = (node: Nodes) => {
     if (!("children" in node)) return;
-    const { children } = node;
-    for (let index = 0; index < children.length; index++) {
-      const child = children[index]!;
-      if (child.type === "raw") {
-        children[index] = { type: "text", value: child.value };
-        continue;
-      }
+    for (const child of node.children) {
       if (child.type !== "element") continue;
       const { properties } = child;
       for (const key in properties) {
@@ -82,7 +67,7 @@ export function createMarkdownRenderer({
     }
   };
 
-  const render = (text: string): ReactElement => {
+  const parse = (text: string): Rendered => {
     const key = keyPrefix + text;
     const cached = rendered.get(key);
     if (cached !== undefined) {
@@ -91,24 +76,27 @@ export function createMarkdownRenderer({
       rendered.set(key, cached);
       return cached;
     }
-    const file = new VFile(text);
-    const tree = processor.runSync(processor.parse(file), file) as Root;
+    const tree = wordsHast(text, markdown);
     prepare(tree);
-    return toJsxRuntime(tree, {
-      Fragment,
-      components,
-      ignoreInvalidStyle: true,
-      jsx,
-      jsxs,
-      passKeys: true,
-      passNode: true,
-    });
+    return { tree };
   };
 
-  return Object.assign(render, {
-    remember(text: string, element: ReactElement) {
+  return {
+    /** A cached entry, or a fresh one that `remember` can keep. Cached trees are shared, so callers must not change them. */
+    parse,
+    element: (entry: Rendered): ReactElement =>
+      (entry.element ??= toJsxRuntime(entry.tree, {
+        Fragment,
+        components,
+        ignoreInvalidStyle: true,
+        jsx,
+        jsxs,
+        passKeys: true,
+        passNode: true,
+      })),
+    remember(text: string, entry: Rendered) {
       const key = keyPrefix + text;
-      if (!rendered.has(key)) remember(key, element);
+      if (!rendered.has(key)) remember(key, entry);
     },
-  });
+  };
 }
