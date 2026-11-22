@@ -266,8 +266,12 @@ export function resolveSidebarDropTarget(
   const over = items[overIndex];
   if (over?.kind === "marker" && over.marker === "input-header") return null;
   const moved = items.filter((_, index) => index !== activeIndex);
-  moved.splice(overIndex, 0, items[activeIndex]!);
-  const section = sectionAtSidebarSlot(moved, overIndex);
+  const slot =
+    over?.kind === "marker" && over.marker === "settled-header" && activeIndex > overIndex
+      ? overIndex + 1
+      : overIndex;
+  moved.splice(slot, 0, items[activeIndex]!);
+  const section = sectionAtSidebarSlot(moved, slot);
   if (section === "input" || section === "working" || section === "snoozed") return null;
   const pinnedOrder: string[] = [];
   const activeOrder: string[] = [];

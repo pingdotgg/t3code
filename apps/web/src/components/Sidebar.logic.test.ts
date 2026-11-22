@@ -84,18 +84,21 @@ describe("sidebar Input grouping", () => {
     },
   );
 
-  it.each(["completed", "failed", "running"] as const)(
-    "groups only actionable plans after a successful run, not %s work",
-    (status) => {
+  it.each([
+    { status: "completed", visitedMinute: "04", expected: "input" },
+    { status: "failed", visitedMinute: "04", expected: "active" },
+    { status: "failed", visitedMinute: "06", expected: "input" },
+    { status: "running", visitedMinute: "04", expected: "active" },
+  ] as const)(
+    "puts an actionable plan with a $status run and visit at 10:$visitedMinute in $expected",
+    ({ status, visitedMinute, expected }) => {
       const thread = makeThreadFixture({
         interactionMode: "plan",
         hasActionableProposedPlan: true,
         latestRun: { ...makeLatestRun(), status },
-        lastVisitedAt: "2026-03-09T10:04:00.000Z",
+        lastVisitedAt: `2026-03-09T10:${visitedMinute}:00.000Z`,
       });
-      expect(resolveSidebarInboxSection(thread, true, false)).toBe(
-        status === "completed" ? "input" : "active",
-      );
+      expect(resolveSidebarInboxSection(thread, true, false)).toBe(expected);
     },
   );
 
@@ -1238,6 +1241,18 @@ describe("Working shelf (beta)", () => {
       marker("settled-header"),
       row("s1", "settled"),
     ];
+
+    it.each([false, true])("settles a Snoozed row on the Settled header (fixed=%s)", (fixed) => {
+      const snoozed = [marker("snoozed-header"), row("z1", "snoozed")];
+      const settled = items.slice(-2);
+      const layout = [
+        ...items.slice(0, fixed ? -2 : 5),
+        ...(fixed ? [...snoozed, ...settled] : [...settled, ...items.slice(5, -2), ...snoozed]),
+      ];
+      expect(
+        resolveSidebarDropTarget(layout, "z1", sidebarListItemId(marker("settled-header"))),
+      ).toEqual({ section: "settled", pinnedOrder: ["p1"], activeOrder: ["a1", "a2"] });
+    });
 
     it("never drops into the Working shelf, and keeps it out of the inbox order", () => {
       expect(resolveSidebarDropTarget(items, "a1", "w1")).toBeNull();
