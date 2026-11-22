@@ -1,4 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -15,6 +16,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 import "~/index.css";
 import { act, render } from "../../../test/render";
 import { ScheduledTasksSettings } from "./ScheduledTasksSettings";
+import { ConfirmDialogHost } from "../ConfirmDialogHost";
 
 const environmentId = EnvironmentId.make("laptop");
 const projectId = ProjectId.make("project");
@@ -44,16 +46,28 @@ const task: ScheduledTask = {
 // Stands in for the thread family read the editor makes when the shell lacks the bound thread.
 const threadFamilyRead = {
   snapshotSequence: 1,
-  threads: [{ id: task.threadId, title: "Fix login bug" }],
+  threads: [
+    {
+      id: task.threadId,
+      title: "Fix login bug",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    },
+  ],
 };
 
-const state = vi.hoisted(() => ({ connected: true, tasksLoaded: true, secondary: false }));
+const state = vi.hoisted(() => ({
+  connected: true,
+  tasksLoaded: true,
+  secondary: false,
+  remove: vi.fn(),
+}));
 const secondaryId = EnvironmentId.make("secondary");
 const permissions = new Map<string, Atom.Writable<boolean>>();
 
 function setup() {
   state.connected = true;
   state.tasksLoaded = true;
+  state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.secondary = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -64,6 +78,11 @@ function setup() {
 function secondaryEnvironment() {
   return { ...environment(), environmentId: secondaryId, label: "Secondary" };
 }
+
+vi.mock(import("../../state/session"), async (original) => ({
+  ...(await original()),
+  readEnvironmentScope: () => true,
+}));
 
 function environment() {
   return {
@@ -104,6 +123,10 @@ vi.mock(import("../../state/server"), async (original) => {
     ...actual,
     serverEnvironment: {
       ...actual.serverEnvironment,
+      deleteScheduledTask: {
+        ...actual.serverEnvironment.deleteScheduledTask,
+        run: state.remove,
+      },
       upsertScheduledTask: {
         ...actual.serverEnvironment.upsertScheduledTask,
         permissionAtom: (id: string | null) => permissions.get(id ?? "")!,
@@ -146,6 +169,34 @@ vi.mock(import("../../hooks/useSettings"), async (original) => ({
 }));
 
 describe("ScheduledTasksSettings", () => {
+  it("only deletes a scheduled task after confirmation, including after cancelling", async () => {
+    setup();
+    await using screen = await render(
+      <>
+        <ScheduledTasksSettings />
+        <ConfirmDialogHost />
+      </>,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+    expect(state.remove).not.toHaveBeenCalled();
+    await userEvent.click(page.getByRole("button", { name: "Cancel", exact: true }));
+    expect(state.remove).not.toHaveBeenCalled();
+    await expect
+      .element(screen.getByRole("button", { name: "Actions for Review issues" }))
+      .toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Actions for Review issues" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Delete", exact: true }));
+    await userEvent.click(page.getByRole("button", { name: "Confirm", exact: true }));
+    await vi.waitFor(() =>
+      expect(state.remove).toHaveBeenCalledExactlyOnceWith(expect.anything(), {
+        environmentId,
+        input: { id: task.id },
+      }),
+    );
+  });
+
   it("creates on a permitted secondary and reacts to permission changes", async () => {
     setup();
     state.secondary = true;
@@ -200,6 +251,19 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(name).toHaveValue("Review stale issues");
   });
 
+  it("offers no model choice for a task bound to a thread, whose runs use the thread's model", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
+    const enabledPicker = document.querySelector(
+      '[role="dialog"] [data-chat-provider-model-picker]:not(:disabled)',
+    );
+    expect(enabledPicker).toBeNull();
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "gpt-5.5", exact: true }))
+      .toBeDisabled();
+  });
+
   it("keeps an editor the user opened when the linked task loads later", async () => {
     setup();
     state.tasksLoaded = false;
@@ -213,6 +277,20 @@ describe("ScheduledTasksSettings", () => {
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
+    await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("keeps a new task's draft when the user clicks outside the editor", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings />);
+    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    const dialog = page.getByRole("dialog");
+    const name = dialog.getByRole("textbox", { name: "Name" });
+    await userEvent.fill(name, "My draft");
+
+    await userEvent.click(document.body, { position: { x: 1, y: 1 } });
+
+    await expect.element(dialog).toHaveAttribute("data-open");
     await expect.element(name).toHaveValue("My draft");
   });
 });

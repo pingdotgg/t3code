@@ -10,9 +10,10 @@ it.each([
   { platform: "freebsd", hostArch: "x64", arch: 1, reason: "unsupported target freebsd" },
   { platform: "linux", hostArch: "x64", arch: 3, reason: "unexecutable target linux/arm64" },
   { platform: "linux", hostArch: "arm64", arch: 1, reason: "unexecutable target linux/x64" },
+  { platform: "darwin", hostArch: "arm64", arch: 3, reason: "untrusted bundle", untrusted: true },
 ])(
-  "skips unsupported $platform/$hostArch cache generation",
-  async ({ platform, hostArch, arch, reason }) => {
+  "skips cache generation for $reason",
+  async ({ platform, hostArch, arch, reason, untrusted }) => {
     const { spawnSync } = await import("node:child_process");
     const hook = NodeURL.fileURLToPath(
       new URL("../prepare-server-compile-cache.cjs", import.meta.url),
@@ -25,7 +26,10 @@ it.each([
        Object.defineProperty(process, "arch", { value: ${JSON.stringify(hostArch)} });
        require(${JSON.stringify(hook)})({ electronPlatformName: ${JSON.stringify(platform)}, arch: ${arch} }).catch(error => { console.error(error); process.exitCode = 1; });`,
       ],
-      { encoding: "utf8" },
+      {
+        encoding: "utf8",
+        env: { ...process.env, T3CODE_DESKTOP_UNTRUSTED_BUNDLE: untrusted ? "true" : "" },
+      },
     );
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain(`Skipping ${reason}`);
