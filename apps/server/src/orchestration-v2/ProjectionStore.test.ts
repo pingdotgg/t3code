@@ -3197,6 +3197,14 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     yield* createThread({ name: "archived-child", parent: "root", root: "root", archived: true });
     yield* createThread({ name: "other", worktreePath: "/repo" });
     yield* createThread({ name: "other-child", parent: "other", root: "other", worktreePath });
+    yield* createThread({
+      name: "aliased-child",
+      parent: "other",
+      root: "other",
+      worktreePath: `${worktreePath}/`,
+    });
+    yield* createThread({ name: "cased", worktreePath: worktreePath.toUpperCase() });
+    yield* createThread({ name: "windows", worktreePath: "C:\\Répo\\WT" });
 
     const family = (threadId: ThreadId) =>
       store
@@ -3208,26 +3216,39 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
     assert.sameMembers([...(yield* family(id("grandchild")))], tree);
     assert.deepEqual([...(yield* family(id("missing")))], []);
 
-    // Includes another root's idle child on the same path, which a shell may leave out.
+    // Includes another root's idle child on the same path, which a shell may leave out, under any
+    // spelling of that path. POSIX paths keep their case.
     const { statements, tracer } = traceSqlStatements();
     const onWorktree = yield* store
       .getShellSnapshot({ location: "active", worktreePath })
       .pipe(Effect.withTracer(tracer));
     assert.sameMembers(
       onWorktree.threads.map((thread) => thread.id),
-      [id("root"), id("child"), id("other-child")],
+      [id("root"), id("child"), id("other-child"), id("aliased-child")],
     );
-    // A path names a few threads; scanning every thread parses every payload.
+    const onWindowsWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath: "c:/Répo/wt/" })
+      .pipe(Effect.withTracer(tracer));
+    assert.deepEqual(
+      onWindowsWorktree.threads.map((thread) => thread.id),
+      [id("windows")],
+    );
+    // A path, ASCII or not, names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;
-    const threadQuery = statements.find((statement) =>
+    const threadQueries = statements.filter((statement) =>
       statement.includes("AS latest_run_stop_requested"),
     );
-    assert.isDefined(threadQuery);
-    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${threadQuery}`,
-      [],
-    )).map((row) => row.detail);
-    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
+    assert.lengthOf(threadQueries, 2);
+    for (const threadQuery of threadQueries) {
+      const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+        [],
+      )).map((row) => row.detail);
+      assert.isFalse(
+        threadPlan.some((detail) => detail.startsWith("SCAN t ")),
+        threadPlan.join("\n"),
+      );
+    }
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),
@@ -7614,6 +7635,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
           [
             "message:turn-start-commands:compact",
             "message:turn-start-commands:goal",
+            "message:turn-start-commands:later",
             "message:turn-start-commands:rolled-back",
           ],
         );
