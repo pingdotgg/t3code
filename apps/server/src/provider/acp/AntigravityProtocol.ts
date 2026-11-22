@@ -55,6 +55,12 @@ const ANTIGRAVITY_SCHEDULE_TITLES = new Set(["Run schedule", "Running schedule"]
  */
 export function antigravityToolOutlivesPrompt(toolCall: AcpToolCallState): boolean {
   if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return true;
+  return antigravityCommandOutlivesPrompt(toolCall);
+}
+
+/** A non-daemon command the agent awaits; unlike a schedule, it reports progress while it runs. */
+export function antigravityCommandOutlivesPrompt(toolCall: AcpToolCallState): boolean {
+  if (toolCall.title !== undefined && ANTIGRAVITY_SCHEDULE_TITLES.has(toolCall.title)) return false;
   const input = toolCall.data.rawInput;
   return toolCall.kind === "execute" && !(Predicate.isObject(input) && input.IsDaemon === true);
 }

@@ -1431,7 +1431,9 @@ function isSameAttachment(a: DraftComposerAttachment, b: DraftComposerAttachment
     a.mimeType === b.mimeType &&
     a.sizeBytes === b.sizeBytes &&
     a.name === b.name &&
-    (a.type !== "image" || b.type !== "image" || a.dataUrl === b.dataUrl)
+    (a.type !== "image" ||
+      b.type !== "image" ||
+      (a.dataUrl === b.dataUrl && a.fileUri === b.fileUri))
   );
 }
 
