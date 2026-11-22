@@ -29,7 +29,7 @@ vi.mock("expo-image", () => ({
   },
 }));
 vi.mock("expo-crypto", () => ({
-  randomUUID: () => globalThis.crypto.randomUUID(),
+  randomUUID: () => "ab74bbb8-c8aa-4b3a-a2d1-91cfb7688a85",
 }));
 vi.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
