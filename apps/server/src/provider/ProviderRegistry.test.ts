@@ -4773,6 +4773,27 @@ it.layer(
         ),
     );
 
+    it.effect("keeps the endpoint marker when Bedrock auth wins over customEndpoint", () =>
+      Effect.gen(function* () {
+        const status = yield* checkClaudeProviderStatus(
+          defaultClaudeSettings,
+          claudeCapabilities({ apiProvider: "bedrock" }),
+          { ANTHROPIC_BASE_URL: "https://gateway.example.com" },
+        );
+        assert.strictEqual(status.status, "ready");
+        assert.strictEqual(status.auth.type, "bedrock");
+        assert.strictEqual(status.auth.endpoint, "https://gateway.example.com");
+      }).pipe(
+        Effect.provide(
+          layerMockSpawner((args) => {
+            const joined = args.join(" ");
+            if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+            throw new Error(`Unexpected args: ${joined}`);
+          }),
+        ),
+      ),
+    );
+
     it.effect.each([
       "https://api.anthropic.com",
       "https://api.anthropic.com:443",
