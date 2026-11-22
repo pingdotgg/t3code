@@ -40,7 +40,9 @@ thinking picker marks the discovered active model's configured level as its defa
 overriding it. Other models keep their Pi defaults when no level is selected. A model that lists
 `serviceTiers` (for example `[{ "id": "priority", "name": "Fast" }]`) in its Pi definition gets
 a speed picker with Standard plus those tiers. A chosen tier is sent as the request's
-`service_tier`; Standard sends none and leaves the endpoint's default. Threads
+`service_tier`; Standard sends none and leaves the endpoint's default. Anthropic's Claude Fable 5.2,
+Claude Mythos 5.2, and Claude Opus 5.5 get a Fast option without any Pi definition, and Fast is sent
+as Anthropic's `speed` field. Threads
 use Pi's native session files for resume, rollback, and forks within the same Pi instance. Forks
 preserve the native conversation through the selected turn in the destination workspace.
 Switching providers uses portable conversation context. Extension

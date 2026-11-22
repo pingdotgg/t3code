@@ -64,10 +64,22 @@ function thinkingDescriptor(
   };
 }
 
-// Pi has no service tier concept; provider extensions advertise `serviceTiers` on a model,
-// and T3's injected extension sends the chosen id as the request's `service_tier`.
+// Anthropic fast mode without a beta header; Pi's catalog advertises no tiers for these.
+const ANTHROPIC_FAST_MODE_MODELS = new Set([
+  "claude-fable-5-2",
+  "claude-mythos-5-2",
+  "claude-opus-5-5",
+]);
+
+// Pi has no service tier concept; provider extensions advertise `serviceTiers` on a model.
+// T3's injected extension sends the chosen id as `service_tier`, or Anthropic's Fast as `speed`.
 function serviceTierDescriptor(model: unknown): ProviderOptionDescriptor | undefined {
-  const tiers = recordField(model, "serviceTiers");
+  const tiers =
+    recordField(model, "serviceTiers") ??
+    (recordField(model, "api") === "anthropic-messages" &&
+    ANTHROPIC_FAST_MODE_MODELS.has(String(recordField(model, "id")))
+      ? [{ id: "fast", name: "Fast" }]
+      : undefined);
   if (!Array.isArray(tiers)) return undefined;
   const seen = new Set<string>([PI_STANDARD_SERVICE_TIER]);
   const options: Array<ProviderOptionChoice> = [];

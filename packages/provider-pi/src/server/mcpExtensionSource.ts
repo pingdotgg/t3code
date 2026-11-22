@@ -301,7 +301,9 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
 
   // Pi has no service tier setting, so T3 sets one through this command before each turn.
   // Only a tier the active model advertises is sent; Standard sends none.
+  // Anthropic's fast mode is the \`speed\` field; its \`service_tier\` is Priority Tier.
   let serviceTier: string | undefined;
+  const ANTHROPIC_FAST_MODE_MODELS = ["claude-fable-5-2", "claude-mythos-5-2", "claude-opus-5-5"];
   pi.registerCommand(SERVICE_TIER_COMMAND, {
     description: "Set the service tier T3 Code sends with provider requests",
     handler: async (args) => {
@@ -329,11 +331,20 @@ export default async function t3McpExtension(pi: ExtensionAPI) {
       }
     }
     const tiers = (ctx.model as { serviceTiers?: unknown } | undefined)?.serviceTiers;
-    if (
+    const advertised =
       serviceTier !== undefined &&
       Array.isArray(tiers) &&
-      tiers.some((tier) => tier?.id === serviceTier)
+      tiers.some((tier) => tier?.id === serviceTier);
+    // Fast is Anthropic's built-in \`speed\` on the models that support it, unless Pi advertises a Fast tier.
+    if (
+      serviceTier === "fast" &&
+      !advertised &&
+      ctx.model?.api === "anthropic-messages" &&
+      ANTHROPIC_FAST_MODE_MODELS.includes(ctx.model.id)
     ) {
+      replacement.speed = "fast";
+      changed = true;
+    } else if (advertised) {
       replacement.service_tier = serviceTier;
       changed = true;
     }

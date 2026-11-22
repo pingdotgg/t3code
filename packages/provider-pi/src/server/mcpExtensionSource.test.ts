@@ -12,7 +12,14 @@ import { loadMcpBridge } from "./mcpBridge.testkit.ts";
 
 type RequestHook = (
   event: { payload: unknown },
-  ctx: { model: { provider: string; serviceTiers?: ReadonlyArray<{ id: string }> } },
+  ctx: {
+    model: {
+      provider: string;
+      id?: string;
+      api?: string;
+      serviceTiers?: ReadonlyArray<{ id: string }>;
+    };
+  },
 ) => Record<string, unknown> | undefined;
 
 type CommandHandler = (args: string) => Promise<void>;
@@ -584,8 +591,23 @@ describe("Pi service tier", () => {
     assert.isUndefined(hook({ payload }, { model: fastOnly }));
     assert.isUndefined(hook({ payload }, { model: { provider: "anthropic" } }));
 
+    await hook.setServiceTier("fast");
+    const opus = { provider: "anthropic", id: "claude-opus-5-5", api: "anthropic-messages" };
+    assert.deepEqual(hook({ payload }, { model: opus }), { ...payload, speed: "fast" });
+    const sonnet = { provider: "anthropic", id: "claude-sonnet-4", api: "anthropic-messages" };
+    assert.isUndefined(hook({ payload }, { model: sonnet }));
+    const gpt = { provider: "openai", id: "gpt-6.1-sol", api: "openai-responses" };
+    assert.isUndefined(hook({ payload }, { model: gpt }));
+    const gateway = {
+      provider: "gateway",
+      api: "anthropic-messages",
+      serviceTiers: [{ id: "fast" }],
+    };
+    assert.deepEqual(hook({ payload }, { model: gateway }), { ...payload, service_tier: "fast" });
+
     await hook.setServiceTier("");
     assert.isUndefined(hook({ payload }, { model: sol }));
+    assert.isUndefined(hook({ payload }, { model: opus }));
   });
 });
 
