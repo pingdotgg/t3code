@@ -6,11 +6,11 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeVM from "node:vm";
 import * as NodeModule from "node:module";
-import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
+import { AGENT_DEVICE_VERSION, DEVICE_HUB_VERSION } from "./DeviceToolchain.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
 const require = NodeModule.createRequire(import.meta.url);
@@ -161,6 +161,7 @@ it.each([
     const owner = "test-owner";
     const state = NodePath.join(home, ".t3/device/hosts", owner);
     const tools = NodePath.join(home, ".t3/device/tools");
+    const sdk = NodePath.join(home, "sdk");
     const messages: Array<string> = [];
     const errors: Array<string> = [];
     let launches = 0;
@@ -209,7 +210,9 @@ it.each([
                 return {
                   status:
                     command === "xcrun" ||
-                    (worker && scenario === "worker failure" && command === "adb")
+                    (worker &&
+                      scenario === "worker failure" &&
+                      command === NodePath.join(sdk, "platform-tools", "adb"))
                       ? 1
                       : 0,
                   stdout: command === "powershell.exe" ? "[]" : "",
@@ -224,7 +227,7 @@ it.each([
           execPath,
           pid: worker ? 1234 : 5678,
           versions: process.versions,
-          env: {},
+          env: { ANDROID_HOME: sdk },
           cwd: () => home,
           kill: () => {
             if (scenario === "worker exit") throw Object.assign(Error("exited"), { code: "ESRCH" });
@@ -248,6 +251,7 @@ it.each([
     };
     try {
       await NodeFSP.mkdir(state, { recursive: true });
+      await completeSdk(sdk);
       const isolated = platform === "win32" && (mode === "start" || mode === "agent-start");
       if (isolated) {
         const abandoned = NodePath.join(state, ".bootstrap-abandoned");
@@ -293,7 +297,7 @@ it.each([
         expect(messages).toEqual([]);
         expect(errors).toEqual([
           expect.stringContaining(
-            scenario === "worker exit" ? "exited without a response" : "Android SDK missing",
+            scenario === "worker exit" ? "exited without a response" : "failed to run",
           ),
         ]);
       } else {
