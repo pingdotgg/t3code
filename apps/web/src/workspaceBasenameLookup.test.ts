@@ -129,6 +129,42 @@ describe("chat file links into another project", () => {
     ).toBeNull();
   });
 
+  it.each([
+    {
+      winnerRoot: "/reports",
+      winnerPath: "notes/HANDOFF.txt",
+      ambiguousFirst: false,
+    },
+    {
+      winnerRoot: "/reports",
+      winnerPath: "notes/handoff.txt",
+      ambiguousFirst: true,
+    },
+    {
+      winnerRoot: "/support/current",
+      winnerPath: "Handoff.txt",
+      ambiguousFirst: false,
+    },
+  ])(
+    "opens nothing when an ambiguous project also matches $winnerRoot/$winnerPath",
+    ({ winnerRoot, winnerPath, ambiguousFirst }) => {
+      const ambiguous = {
+        root: "/support",
+        entries: [
+          { path: "current/Handoff.txt", kind: "file" as const },
+          { path: "archive/HANDOFF.txt", kind: "file" as const },
+        ],
+      };
+      const winner = { root: winnerRoot, entries: [{ path: winnerPath, kind: "file" as const }] };
+      expect(
+        pickProjectLinkMatch(
+          "handoff.txt",
+          ambiguousFirst ? [ambiguous, winner] : [winner, ambiguous],
+        ),
+      ).toBeNull();
+    },
+  );
+
   it("opens nothing when overlapping projects also list a second suffix match", () => {
     expect(
       pickProjectLinkMatch("docs/handoff.txt", [
