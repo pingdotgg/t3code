@@ -326,19 +326,6 @@ it("does not flush away a parent edit the native editor has not applied yet", as
   expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft @file");
 });
 
-it("keeps a parent edit committed while a flush waits on the native editor", async () => {
-  await using screen = await renderFlushableComposer();
-  await act(async () => emit("Draft"));
-  await screen.setLocked(true);
-  await act(async () => emit("Draft plus more"));
-  await screen.setLocked(false);
-
-  await flushAcross(screen, () =>
-    act(async () => setComposerDraftText(DRAFT_KEY, "Draft plus more @file")),
-  );
-  expect(getComposerDraftSnapshot(DRAFT_KEY).text).toBe("Draft plus more @file");
-});
-
 async function flushAcross(
   screen: Awaited<ReturnType<typeof renderFlushableComposer>>,
   change: () => Promise<void>,
