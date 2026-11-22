@@ -98,4 +98,34 @@ it("reports an attach failure that leaves the output unchanged", () => {
   expect(terminal.getSelection).not.toHaveBeenCalled();
   expect(terminal.getSelectionCellCount).not.toHaveBeenCalled();
   expect(terminal.clearSelection).not.toHaveBeenCalled();
+
+  const snapshot = {
+    threadId: "thread",
+    terminalId: "term-1",
+    cwd: "/repo",
+    worktreePath: null,
+    status: "error" as const,
+    pid: null,
+    history: "",
+    exitCode: null,
+    exitSignal: null,
+    label: "Terminal",
+    updatedAt: "2026-11-15T00:00:00.000Z",
+    error: "Terminal attach failed",
+  };
+  const attached = applyTerminalAttachStreamEvent(nextTerminalAttachSeedState(), {
+    type: "snapshot",
+    snapshot,
+  });
+  const cursor = synchronizeTerminalSession(
+    terminal,
+    failed,
+    attached,
+    INITIAL_TERMINAL_OUTPUT_CURSOR,
+  );
+  terminal.write.mockClear();
+  const reconnected = applyTerminalAttachStreamEvent(attached, { type: "snapshot", snapshot });
+  synchronizeTerminalSession(terminal, attached, reconnected, cursor);
+  expect(terminal.resetAndWrite).toHaveBeenLastCalledWith("");
+  expect(terminal.write).toHaveBeenCalledWith("\r\n[terminal] Terminal attach failed\r\n");
 });

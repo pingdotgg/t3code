@@ -92,6 +92,7 @@ import {
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   composerFileNeedsReattach,
+  hydrateImagesFromPersisted,
   partializeComposerDraftStoreState,
   useComposerDraftStore,
   DraftId,
@@ -261,29 +262,28 @@ describe("composerDraftStore addImages", () => {
     expect(revokeSpy).not.toHaveBeenCalled();
   });
 
-  it("deduplicates against existing images across calls by file signature", () => {
-    const first = makeImage({
-      id: "img-a",
-      previewUrl: "blob:a",
+  it("deduplicates byte-identical images across calls and keeps distinct bytes", () => {
+    // Hydrated copies get fresh lastModified values, like a restored stash or draft.
+    const persisted = (id: string, fill: number) => ({
+      id,
       name: "same.png",
       mimeType: "image/png",
       sizeBytes: 9,
-      lastModified: 777,
+      dataUrl: `data:image/png;base64,${btoa(String.fromCharCode(...new Uint8Array(9).fill(fill)))}`,
     });
-    const duplicateLater = makeImage({
-      id: "img-b",
-      previewUrl: "blob:b",
-      name: "same.png",
-      mimeType: "image/png",
-      sizeBytes: 9,
-      lastModified: 999,
-    });
+    const [first, repeat, different] = hydrateImagesFromPersisted([
+      persisted("img-a", 1),
+      persisted("img-b", 1),
+      persisted("img-c", 2),
+    ]);
+    const store = useComposerDraftStore.getState();
 
-    expect(useComposerDraftStore.getState().addImage(threadRef, first)).toBe(true);
-    expect(useComposerDraftStore.getState().addImage(threadRef, duplicateLater)).toBe(false);
+    expect(store.addImage(threadRef, first!)).toBe(true);
+    expect(store.addImage(threadRef, { ...repeat!, previewUrl: "blob:b" })).toBe(false);
+    expect(store.addImage(threadRef, different!)).toBe(true);
 
     const draft = draftFor(threadId, TEST_ENVIRONMENT_ID);
-    expect(draft?.images.map((image) => image.id)).toEqual(["img-a"]);
+    expect(draft?.images.map((image) => image.id)).toEqual(["img-a", "img-c"]);
     expect(revokeSpy).toHaveBeenCalledWith("blob:b");
   });
 });
@@ -2674,9 +2674,7 @@ describe("composerDraftStore attachment references", () => {
     const image = makeImage({ id: "img-1", previewUrl: "blob:img-1", name: "shot.png" });
     expect(store.addImages(threadRef, [image])).toEqual(["img-1"]);
     expect(
-      store.addImages(threadRef, [
-        makeImage({ id: "img-2", previewUrl: "blob:img-2", name: "shot.png" }),
-      ]),
+      store.addImages(threadRef, [{ ...image, id: "img-2", previewUrl: "blob:img-2" }]),
     ).toEqual([]);
   });
 
@@ -2899,9 +2897,19 @@ describe("composerDraftStore checkout pull request", () => {
     store().setDraftThreadContext(draftId, { checkoutPullRequest: null });
     expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
 
-    store().setDraftThreadContext(draftId, { checkoutPullRequest: checkout });
+    store().setDraftThreadContext(draftId, {
+      checkoutPullRequest: checkout,
+      worktreeRepositories: ["/work/api"],
+    });
+    // An unrelated change keeps the repository choice; an empty choice is still a choice.
+    store().setDraftThreadContext(draftId, { envMode: "worktree" });
+    expect(store().getDraftSession(draftId)?.worktreeRepositories).toEqual(["/work/api"]);
+    store().setDraftThreadContext(draftId, { worktreeRepositories: [] });
+    expect(store().getDraftSession(draftId)?.worktreeRepositories).toEqual([]);
+
     store().setDraftThreadContext(draftId, { projectRef: otherProjectRef });
     expect(store().getDraftSession(draftId)?.checkoutPullRequest).toBeUndefined();
+    expect(store().getDraftSession(draftId)?.worktreeRepositories).toBeUndefined();
   });
 
   it("persists the pull request and still restores drafts saved without one", async () => {
@@ -2930,7 +2938,11 @@ describe("composerDraftStore checkout pull request", () => {
         state: {
           draftsByThreadKey: {},
           draftThreadsByThreadKey: {
-            [draftId]: { ...persistedDraftThread(threadId), checkoutPullRequest: checkout },
+            [draftId]: {
+              ...persistedDraftThread(threadId),
+              checkoutPullRequest: checkout,
+              worktreeRepositories: ["/work/api"],
+            },
             [legacyDraftId]: persistedDraftThread(ThreadId.make("thread-legacy")),
           },
           logicalProjectDraftThreadKeyByLogicalProjectKey: {
@@ -2948,7 +2960,8 @@ describe("composerDraftStore checkout pull request", () => {
       expect(checkoutPullRequestUrlToLink(legacy)).toBeNull();
       expect(
         partializeComposerDraftStoreState(store()).draftThreadsByThreadKey[draftId],
-      ).toMatchObject({ checkoutPullRequest: checkout });
+      ).toMatchObject({ checkoutPullRequest: checkout, worktreeRepositories: ["/work/api"] });
+      expect(legacy).not.toHaveProperty("worktreeRepositories");
     } finally {
       await useComposerDraftStore.persist.clearStorage();
       vi.useRealTimers();
