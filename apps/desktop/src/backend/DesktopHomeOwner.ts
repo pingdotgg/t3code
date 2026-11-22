@@ -64,7 +64,6 @@ const isHomeOwnershipLocked = Effect.fn("DesktopHomeOwner.isHomeOwnershipLocked"
 const HOME_OWNERSHIP_RELEASE_GRACE = Duration.sum(BACKEND_QUIT_STOP_TIMEOUT, Duration.seconds(3));
 const HOME_OWNERSHIP_RELEASE_POLL_INTERVAL = Duration.millis(250);
 
-/** Whether the ownership lock is free, or frees within the grace a shutting-down server needs. */
 const awaitHomeOwnershipFree = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipFree")(function* () {
   while (yield* isHomeOwnershipLocked()) {
     yield* Effect.sleep(HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);

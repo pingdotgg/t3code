@@ -95,7 +95,10 @@ export class ElectronDialog extends Context.Service<
     readonly pickFiles: (
       input: ElectronDialogPickFilesInput,
     ) => Effect.Effect<readonly string[], ElectronDialogPickFilesError>;
-    /** Pass `owner` to attach the box to that window so it cannot fall behind it. Interruption closes the box. */
+    /**
+     * Pass `owner` to attach the box to that window so it cannot fall behind it. Interruption
+     * closes the box, except an ownerless box on macOS, which Electron shows synchronously.
+     */
     readonly showMessageBox: (
       options: Electron.MessageBoxOptions,
       owner?: Electron.BrowserWindow,
@@ -168,7 +171,6 @@ export const make = ElectronDialog.of({
   }),
   showMessageBox: Effect.fn("ElectronDialog.showMessageBox")(function (options, owner) {
     return Effect.tryPromise({
-      // Interrupting the effect closes the box.
       try: (signal) =>
         owner === undefined
           ? Electron.dialog.showMessageBox({ ...options, signal })
