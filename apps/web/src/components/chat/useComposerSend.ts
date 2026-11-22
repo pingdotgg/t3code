@@ -599,11 +599,12 @@ export function useComposerSend(input: ComposerSendInput) {
           .getState()
           .getComposerDraft(composerDraftTarget);
         if (!draftAfterHold) return;
-        promptAtSend = draftAfterHold.prompt;
+        // A dictation sent after leaving the thread carries its transcript outside the draft.
+        promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
         if (sendCtx) {
           sendCtx = {
             ...sendCtx,
-            prompt: draftAfterHold.prompt,
+            prompt: promptAtSend,
             images: draftAfterHold.images,
             files: draftAfterHold.files,
             terminalContexts: draftAfterHold.terminalContexts,

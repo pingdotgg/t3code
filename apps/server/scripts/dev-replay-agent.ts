@@ -284,7 +284,7 @@ function runAgent(): void {
           protocolVersion: 1,
           agentCapabilities: {
             loadSession: true,
-            promptCapabilities: { image: true, audio: false, embeddedContext: true },
+            promptCapabilities: { image: false, audio: false, embeddedContext: true },
           },
           authMethods: [],
           agentInfo: { name: "t3-dev-replay", version: "1" },
