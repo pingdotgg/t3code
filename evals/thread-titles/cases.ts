@@ -2,6 +2,34 @@ import type { ThreadTitleMessage } from "@t3tools/provider-core/server/threadTit
 
 export const threadTitleEvaluationCases = [
   {
+    id: "referenced-thread-startup",
+    source: "Maintainer report of chart thread references overriding a startup question",
+    request: "Explain why one example thread failed to start and another needed a retry.",
+    previousTitle: "Fix Chart Formatting",
+    messages: [
+      {
+        role: "user",
+        text: "[xlsx: chart data labels use the cells' number format](t3-context://v1/thread/thread_labels) why could this thread not start up? [Run chart format tests on external target](t3-context://v1/thread/thread_tests) why did i have to say it like this over here to get it working?",
+      },
+    ],
+    rubric:
+      "Name thread startup or prompt/retry behavior. Chart formatting and tests are titles of example threads, not the requested work. Replace the inaccurate previous title.",
+  },
+  {
+    id: "referenced-thread-subject",
+    source: "Control for maintainer report of referenced thread titles overriding the request",
+    request: "Continue the actual chart formatting work in a referenced thread.",
+    previousTitle: "Chart Label Number Formats",
+    messages: [
+      {
+        role: "user",
+        text: "Continue [xlsx: chart data labels use the cells' number format](t3-context://v1/thread/thread_labels). Make the chart labels inherit the cells' number formats.",
+      },
+    ],
+    rubric:
+      "Name chart label number formatting. Referenced titles can supply the subject when the user explicitly continues that work.",
+  },
+  {
     id: "linked-reset-credits",
     source: "https://github.com/pingdotgg/t3code/pull/10462",
     request: "Review the reset credit routing change.",
@@ -124,12 +152,28 @@ export const threadTitleEvaluationCases = [
     ],
     rubric: "Name the default config on init. Leave out Hyperdrive, the project name.",
   },
+  {
+    id: "custom-title-scheme",
+    source: "https://github.com/pingdotgg/t3code/pull/37565",
+    request: "Relay chat to the lead agent, titled with the user's naming scheme.",
+    previousTitle: "Relay chat to lead agent",
+    instructions: 'Title every thread "Owner: what it does (model effort)".',
+    messages: [
+      {
+        role: "user",
+        text: "Make the relay forward every chat message to the lead agent so reviewers can see questions from subagents.",
+      },
+    ],
+    rubric:
+      'Use the user\'s "Owner: what it does (model effort)" shape with all three parts, even past the default 8-word, 40-character limit. A bare short title fails.',
+  },
 ] satisfies ReadonlyArray<{
   id: string;
   source: string;
   request: string;
   projectTitle?: string;
   previousTitle: string;
+  instructions?: string;
   messages: ReadonlyArray<ThreadTitleMessage>;
   rubric: string;
 }>;
