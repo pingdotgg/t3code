@@ -121,6 +121,8 @@ export interface AcpClientTerminals {
     terminalId: string,
   ) => AcpTerminalOutputSnapshot | undefined;
   readonly readCommandLine: (terminalId: string) => string | undefined;
+  /** Stop ends the stopped turn's commands; agents may answer session/cancel without killing them. */
+  readonly killAndAwait: (terminalIds: Iterable<string>) => Effect.Effect<void>;
   readonly disposeAll: Effect.Effect<void>;
 }
 
@@ -411,6 +413,17 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
   const readCommandLine: AcpClientTerminals["readCommandLine"] = (terminalId) =>
     terminals.get(terminalId)?.commandLine;
 
+  const killAndAwait: AcpClientTerminals["killAndAwait"] = (terminalIds) =>
+    Effect.forEach(
+      Array.from(terminalIds),
+      (terminalId) => {
+        const terminal = terminals.get(terminalId);
+        if (terminal === undefined || terminal.released) return Effect.void;
+        return terminal.kill.pipe(Effect.andThen(Deferred.await(terminal.exit)));
+      },
+      { concurrency: "unbounded", discard: true },
+    );
+
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
     Effect.suspend(() =>
       Effect.forEach(
@@ -447,6 +460,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     release: logged("terminal/release", release),
     readOutputSnapshot,
     readCommandLine,
+    killAndAwait,
     disposeAll,
   };
 });
