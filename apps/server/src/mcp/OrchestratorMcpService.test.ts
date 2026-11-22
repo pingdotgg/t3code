@@ -617,6 +617,7 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-next-child");
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
+      let firstRun = false;
       let pendingRequest: "live" | "message" | null = null;
       const parentProjection = () =>
         ({
@@ -640,12 +641,17 @@ describe("OrchestratorMcpService", () => {
       const childRun = () => ({
         id: RunId.make("run:mcp-next-child"),
         ordinal: 1,
-        status: finished ? ("completed" as const) : ("running" as const),
-        delegatedTaskId: taskId,
+        status: finished && !firstRun ? ("completed" as const) : ("running" as const),
+        // A task's first run is untagged; the child's fork node names the task.
+        ...(firstRun ? {} : { delegatedTaskId: taskId }),
       });
       const childProjection = () =>
         ({
-          thread: { id: childThreadId, title: "Child task" },
+          thread: {
+            id: childThreadId,
+            title: "Child task",
+            forkedFrom: { type: "node", nodeId: taskId },
+          },
           runs: [childRun()],
           contextTransfers: [],
           messages: [],
@@ -677,7 +683,7 @@ describe("OrchestratorMcpService", () => {
             Effect.succeed({
               threadId: childThreadId,
               run: childRun() as unknown as OrchestrationV2ThreadProjection["runs"][number],
-              timedOut: !finished,
+              timedOut: !finished || firstRun,
             }),
           dispatch: () => Effect.succeed({} as never),
         }),
@@ -725,7 +731,17 @@ describe("OrchestratorMcpService", () => {
         assert.equal(working.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
         pendingRequest = null;
 
+        firstRun = true;
+        const first = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.equal(first.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+
+        // An untagged run after the task has its result is no longer that task.
         finished = true;
+        const followUp = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.isTrue(followUp.timedOut);
+        assert.notProperty(followUp, "next");
+        firstRun = false;
+
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
         assert.notProperty(completed, "next");
@@ -5702,122 +5718,6 @@ describe("OrchestratorMcpService thread stop", () => {
             );
         assert.deepEqual(yield* interruptMessages(threadId), [stop.message]);
         assert.deepEqual(yield* interruptMessages(childThreadId), [stop.message]);
-      }).pipe(Effect.provide(layerTest));
-    }),
-  );
-
-  it.effect("t3_thread_wait tells the parent to end its turn while a task's first run works", () =>
-    Effect.gen(function* () {
-      const cwd = yield* checkpointWorkspace("mcp-thread-wait-next");
-      const layerAdapters = ProviderAdapterRegistry.layerSingle(liveAdapter(cwd));
-      const layerDatabase = SqlitePersistence.layerMemory;
-      const layerOrchestrator = ProviderReplayHarness.layerWithRegistry(
-        { name: "mcp-thread-wait-next" },
-        layerAdapters,
-        { databaseLayer: layerDatabase, runEffectWorker: false },
-      );
-      const layerThreads = ThreadManagementService.layer.pipe(
-        Layer.provideMerge(layerOrchestrator),
-        Layer.provide(ServerSettings.layerTest()),
-        Layer.provide(CommandReceiptStore.layer.pipe(Layer.provide(layerDatabase))),
-      );
-      const layerTest = layerOrchestratorService.pipe(
-        Layer.provideMerge(layerThreads),
-        Layer.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            NodeCrypto.layer,
-            layerAdapters,
-            ServerSettings.layerTest(),
-            Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
-            Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeedNone }),
-            Layer.mock(SecretRequests.SecretRequests)({}),
-            Layer.mock(RemoteDelegation.RemoteDelegation)({}),
-            Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-          ),
-        ),
-      );
-      yield* Effect.gen(function* () {
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-        const turnRunning = (inParent: boolean) =>
-          orchestrator.streamDomainEvents.pipe(
-            Stream.filter(
-              (event) =>
-                event.type === "provider-turn.updated" &&
-                (event.threadId === threadId) === inParent &&
-                event.payload.status === "running",
-            ),
-            Stream.take(1),
-            Stream.runDrain,
-            Effect.forkScoped,
-          );
-        yield* orchestrator.dispatch({
-          type: "thread.create",
-          commandId: CommandId.make("create"),
-          threadId,
-          projectId: ProjectId.make("project:mcp-wait"),
-          title: "Parent",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          branch: null,
-          worktreePath: cwd,
-          createdBy: "user",
-          creationSource: "web",
-        });
-        const parentRunning = yield* turnRunning(true);
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("send:work"),
-          threadId,
-          messageId: MessageId.make("message:work"),
-          text: "work",
-          attachments: [],
-          dispatchMode: { type: "start_immediately" },
-          createdBy: "user",
-          creationSource: "web",
-        });
-        yield* worker.drain();
-        yield* Fiber.join(parentRunning);
-        const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-        const childRunning = yield* turnRunning(false);
-        yield* orchestrator.dispatch({
-          type: "delegated_task.request",
-          commandId: CommandId.make("delegate"),
-          parentThreadId: threadId,
-          parentRunId: parentRun.id,
-          parentNodeId: parentRun.rootNodeId!,
-          task: "child work",
-          modelSelection,
-          runtimeMode: "full-access",
-          interactionMode: "default",
-          completionWake: "always",
-          createdBy: "agent",
-          creationSource: "mcp",
-        });
-        yield* worker.drain();
-        yield* Fiber.join(childRunning);
-        const childThreadId = (yield* orchestrator.getThreadProjection(threadId)).subagents[0]!
-          .childThreadId!;
-
-        const parent: McpInvocationScope = {
-          ...client,
-          thread: {
-            threadId,
-            providerSessionId: "provider-session:mcp-wait",
-            providerInstanceId: instanceId,
-          },
-          client: undefined,
-        };
-        const waiting = yield* service
-          .waitForThread(parent, { threadId: childThreadId, timeoutMs: 1_000 })
-          .pipe(Effect.forkScoped);
-        yield* TestClock.adjust("1 second");
-        const waited = yield* Fiber.join(waiting);
-        assert.isTrue(waited.timedOut);
-        assert.equal(waited.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
       }).pipe(Effect.provide(layerTest));
     }),
   );
