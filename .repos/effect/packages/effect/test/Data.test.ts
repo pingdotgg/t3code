@@ -178,6 +178,9 @@ export const TE = Data.taggedEnum<TEDefinition>()
               declaration: true,
               declarationMap: false,
               emitDeclarationOnly: true,
+              // Only the emitted declarations are under test; skipping the
+              // whole-program check makes the compile roughly 4x faster.
+              noCheck: true,
               sourceMap: false,
               rootDir: packageRoot,
               outDir: join(directory, "out"),
