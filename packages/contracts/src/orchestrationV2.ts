@@ -3442,8 +3442,10 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     ...ThreadPullRequestKey.fields,
-    snapshot: ThreadPullRequestSnapshot,
+    /** Null only with `unavailableReason`, for a link the host cannot be asked about. */
+    snapshot: Schema.NullOr(ThreadPullRequestSnapshot),
     stack: Schema.NullOr(ThreadPullRequestStack),
+    unavailableReason: Schema.optional(TrimmedNonEmptyString),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.issue.link"),

@@ -7,6 +7,13 @@ export function visibleThreadPullRequests(
   return links.filter((link) => link.source !== "stack-dismissed");
 }
 
+/** Open on the host, or not read yet; a link the server cannot read is neither. */
+export function isOpenThreadPullRequest(link: ThreadPullRequestLink): boolean {
+  return link.snapshot === null
+    ? link.unavailableReason === undefined
+    : link.snapshot.state === "open";
+}
+
 export function threadPullRequestUpdatedAtMs(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
   const ms = Date.parse(value);

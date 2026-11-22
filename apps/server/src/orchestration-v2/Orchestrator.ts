@@ -5247,11 +5247,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               : links.filter((link) => link !== existing);
           } else {
             if (!existing) return thread;
-            pullRequests = links.map((link) =>
-              link === existing
-                ? { ...link, snapshot: command.snapshot, stack: command.stack }
-                : link,
-            );
+            const { snapshot, unavailableReason } = command;
+            const { unavailableReason: previousReason, ...rest } = existing;
+            let synced: ThreadPullRequestLink;
+            if (snapshot !== null) {
+              synced = { ...rest, snapshot, stack: command.stack };
+            } else if (
+              // A link read once keeps its last snapshot rather than a reason it cannot be read now.
+              existing.snapshot === null &&
+              unavailableReason !== undefined &&
+              unavailableReason !== previousReason
+            ) {
+              synced = { ...rest, unavailableReason };
+            } else {
+              return thread;
+            }
+            pullRequests = links.map((link) => (link === existing ? synced : link));
           }
           return {
             ...thread,

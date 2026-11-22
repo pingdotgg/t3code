@@ -13087,6 +13087,21 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
         number: 2,
         watching: true,
       });
+      const markUnavailable = (commandId: string) =>
+        orchestrator.dispatch({
+          type: "thread.pull-request-link.sync",
+          commandId: CommandId.make(commandId),
+          threadId,
+          ...key,
+          number: 2,
+          snapshot: null,
+          stack: null,
+          unavailableReason: "Not a project",
+        });
+      yield* markUnavailable("compact-pr-unavailable");
+      const unreadable = (yield* orchestrator.getThreadShell(threadId))?.pullRequests?.[1];
+      assert.isNull(unreadable?.snapshot);
+      assert.propertyVal(unreadable, "unavailableReason", "Not a project");
       const before = yield* orchestrator.getThreadShell(threadId);
       yield* orchestrator.dispatch({
         type: "thread.pull-request-link.sync",
@@ -13128,6 +13143,10 @@ it.layer(Layer.fresh(layerSharedApplicationDataPlaneTest))("PR link events", (it
       assert.equal(after?.pullRequests?.[1]?.stack?.id, "updated");
       assert.propertyVal(after?.pullRequests?.[1], "repositoryWebUrl", repositoryWebUrl);
       assert.deepInclude(after?.pullRequests?.[2], watchedLink);
+      assert.notProperty(after?.pullRequests?.[1], "unavailableReason");
+      // A link read once keeps its snapshot when a later read cannot reach the host.
+      const ignored = yield* markUnavailable("compact-pr-unavailable-after-read").pipe(Effect.flip);
+      assert.equal(ignored._tag, "OrchestratorDispatchError");
       assert.isTrue((yield* maintenance.rebuild).valid);
       assert.deepEqual(
         (yield* orchestrator.getThreadShell(threadId))?.pullRequests,

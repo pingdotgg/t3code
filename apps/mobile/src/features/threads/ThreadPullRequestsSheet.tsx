@@ -2,6 +2,7 @@ import { useNavigation, type StaticScreenProps } from "@react-navigation/native"
 import { LegendList } from "@legendapp/list/react-native";
 import { useGT } from "gt-react-native";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
+import { isOpenThreadPullRequest } from "@t3tools/client-runtime/thread-pull-requests";
 import { useMemo } from "react";
 import { View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,9 +29,7 @@ export function ThreadPullRequestsSheet(
     useThreadSelection();
   const lines = useLinkedPullRequestLines(selectedThread, selectedEnvironmentRuntime);
   const openCount = useMemo(
-    () =>
-      lines.filter((line) => line.link.snapshot === null || line.link.snapshot.state === "open")
-        .length,
+    () => lines.filter((line) => isOpenThreadPullRequest(line.link)).length,
     [lines],
   );
   const openPullRequest = useOpenPullRequest({

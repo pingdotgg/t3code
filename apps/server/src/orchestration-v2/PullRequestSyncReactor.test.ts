@@ -428,9 +428,11 @@ function applySync(
         const command = commands.findLast(
           (candidate) => candidate.threadId === thread.id && candidate.number === link.number,
         );
-        return command === undefined
-          ? link
-          : { ...link, snapshot: command.snapshot, stack: command.stack };
+        if (command === undefined) return link;
+        const { unavailableReason: _previous, ...rest } = link;
+        return command.snapshot === null
+          ? { ...rest, unavailableReason: command.unavailableReason }
+          : { ...rest, snapshot: command.snapshot, stack: command.stack };
       }),
     })),
   };
@@ -794,7 +796,7 @@ describe("PullRequestSyncReactor", () => {
           assert.sameDeepMembers(
             commands.map((command) => [
               command.threadId,
-              command.snapshot.title,
+              command.snapshot?.title,
               command.stack?.id,
             ]),
             [
@@ -817,7 +819,7 @@ describe("PullRequestSyncReactor", () => {
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).at(-1)?.projectId, PROJECT_ID);
           const retried = (yield* Ref.get(fixture.syncCommands)).at(-1);
           assert.strictEqual(retried?.threadId, ThreadId.make("failing"));
-          assert.strictEqual(retried?.snapshot.title, PROJECT_ID);
+          assert.strictEqual(retried?.snapshot?.title, PROJECT_ID);
           assert.strictEqual(retried?.stack?.id, PROJECT_ID);
         }).pipe(Effect.provide(fixture.layer));
       }),
@@ -901,7 +903,7 @@ describe("PullRequestSyncReactor", () => {
 
         const commands = yield* Ref.get(fixture.syncCommands);
         assert.deepStrictEqual(
-          commands.map((command) => command.snapshot.mergeability),
+          commands.map((command) => command.snapshot?.mergeability),
           ["mergeable"],
         );
       }).pipe(Effect.provide(fixture.layer));
@@ -933,7 +935,7 @@ describe("PullRequestSyncReactor", () => {
         yield* startAndSweep(fixture);
         const commands = yield* Ref.get(fixture.syncCommands);
         assert.deepStrictEqual(
-          commands.map((command) => command.snapshot.mergeability),
+          commands.map((command) => command.snapshot?.mergeability),
           ["unknown"],
         );
       }).pipe(Effect.provide(fixture.layer));
@@ -1088,7 +1090,7 @@ describe("PullRequestSyncReactor", () => {
         const reactor = yield* startAndSweep(fixture);
         const firstSweep = yield* Ref.get(fixture.syncCommands);
         assert.deepStrictEqual(yield* Ref.get(invalidated), [1]);
-        assert.strictEqual(firstSweep.at(-1)?.snapshot.mergedAt, "2026-08-27T00:00:00.000Z");
+        assert.strictEqual(firstSweep.at(-1)?.snapshot?.mergedAt, "2026-08-27T00:00:00.000Z");
         yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, firstSweep));
 
         for (let index = 0; index < 15; index += 1) yield* sweepAgain(fixture, reactor);
@@ -1130,7 +1132,7 @@ describe("PullRequestSyncReactor", () => {
 
         assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
         assert.deepStrictEqual(
-          (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.state),
+          (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot?.state),
           ["merged"],
         );
       }).pipe(Effect.provide(fixture.layer));
@@ -1167,7 +1169,7 @@ describe("PullRequestSyncReactor", () => {
 
           assert.deepStrictEqual(yield* Ref.get(invalidated), [7]);
           assert.deepStrictEqual(
-            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot.isDraft),
+            (yield* Ref.get(fixture.syncCommands)).map((command) => command.snapshot?.isDraft),
             [isDraft],
           );
         }).pipe(Effect.provide(fixture.layer));
@@ -1207,7 +1209,7 @@ describe("PullRequestSyncReactor", () => {
         yield* Deferred.succeed(release, undefined);
         yield* reactor.drain;
         assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
-        assert.strictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.snapshot.state, "open");
+        assert.strictEqual((yield* Ref.get(fixture.syncCommands)).at(-1)?.snapshot?.state, "open");
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -1769,20 +1771,37 @@ describe("PullRequestSyncReactor", () => {
         yield* Effect.gen(function* () {
           const reactor = yield* startAndSweep(fixture);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
+          // Only the link with no snapshot records why it cannot be read, and only once.
+          const unavailable = yield* Ref.get(fixture.syncCommands);
+          assert.deepStrictEqual(
+            unavailable.map(({ number, snapshot, unavailableReason }) => ({
+              number,
+              snapshot,
+              unavailableReason,
+            })),
+            [
+              {
+                number: 9,
+                snapshot: null,
+                unavailableReason: "Pull request operation summary failed: Pull request not found",
+              },
+            ],
+          );
+          yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, unavailable));
           for (let index = 0; index < 14; index += 1) yield* sweepAgain(fixture, reactor);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 2);
           yield* sweepAgain(fixture, reactor);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 4);
-          assert.deepStrictEqual(yield* Ref.get(fixture.syncCommands), []);
+          assert.strictEqual((yield* Ref.get(fixture.syncCommands)).length, 1);
 
           yield* Ref.set(found, true);
           for (let index = 0; index < 14; index += 1) yield* sweepAgain(fixture, reactor);
           assert.strictEqual((yield* Ref.get(fixture.summaryCalls)).length, 4);
           yield* sweepAgain(fixture, reactor);
-          const commands = yield* Ref.get(fixture.syncCommands);
+          const commands = (yield* Ref.get(fixture.syncCommands)).slice(1);
           assert.deepStrictEqual(
-            commands.map((command) => command.number),
-            [9],
+            commands.map((command) => [command.number, command.snapshot?.state]),
+            [[9, "open"]],
           );
           yield* Ref.update(fixture.snapshots, (snapshot) => applySync(snapshot, commands));
           // Recovered quiet open pull requests return to the five-minute cadence.
@@ -1865,7 +1884,7 @@ describe("PullRequestSyncReactor", () => {
           const afterSiblingSync = yield* missingReads;
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => command.number),
-            [8],
+            [9, 8],
           );
 
           yield* Queue.offer(fixture.domainEvents, {
@@ -2045,7 +2064,7 @@ describe("PullRequestSyncReactor", () => {
         assert.deepStrictEqual(
           (yield* Ref.get(fixture.syncCommands)).map((command) => [
             command.number,
-            command.snapshot.state,
+            command.snapshot?.state,
           ]),
           [[7, "merged"]],
         );
@@ -2137,7 +2156,7 @@ describe("PullRequestSyncReactor", () => {
         assert.deepStrictEqual(
           (yield* Ref.get(fixture.syncCommands)).map((command) => [
             command.number,
-            command.snapshot.state,
+            command.snapshot?.state,
           ]),
           [[7, "merged"]],
         );
@@ -2186,7 +2205,7 @@ describe("PullRequestSyncReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.syncCommands)).map((command) => [
               command.number,
-              command.snapshot.state,
+              command.snapshot?.state,
             ]),
             [[7, "merged"]],
           );

@@ -2,6 +2,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import {
+  isOpenThreadPullRequest,
   pullRequestListLines,
   resolveThreadPullRequestChains,
   threadPullRequestKeyOf,
@@ -41,14 +42,10 @@ export function useLinkedPullRequestLines(
   const pullRequests = thread?.pullRequests;
   return useMemo(() => {
     const chains = resolveThreadPullRequestChains(supported ? (pullRequests ?? []) : []);
-    const open = chains.filter((chain) => chain.layers.some(isOpenLink));
-    const done = chains.filter((chain) => !chain.layers.some(isOpenLink));
+    const open = chains.filter((chain) => chain.layers.some(isOpenThreadPullRequest));
+    const done = chains.filter((chain) => !chain.layers.some(isOpenThreadPullRequest));
     return [...pullRequestListLines(open), ...pullRequestListLines(done)];
   }, [pullRequests, supported]);
-}
-
-function isOpenLink(link: PullRequestListLine["link"]) {
-  return link.snapshot === null || link.snapshot.state === "open";
 }
 
 export function linkedPullRequestKey(line: PullRequestListLine) {
@@ -68,7 +65,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
   const snapshot = link.snapshot;
   const status = snapshot === null ? null : pullRequestStatus(snapshot, messages);
   const conflict = snapshot === null ? null : pullRequestConflict(snapshot, messages);
-  const open = snapshot === null || snapshot.state === "open";
+  const open = isOpenThreadPullRequest(link);
   const checks =
     open && snapshot?.checksState ? pullRequestChecksStatus(snapshot.checksState) : null;
   const review =
@@ -207,7 +204,7 @@ export const LinkedPullRequestRow = memo(function LinkedPullRequestRow(props: {
           numberOfLines={2}
           ellipsizeMode="tail"
         >
-          {snapshot?.title ?? gt("Waiting for host state")}
+          {snapshot?.title ?? link.unavailableReason ?? gt("Waiting for host state")}
         </Text>
       </View>
     </Pressable>

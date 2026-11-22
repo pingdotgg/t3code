@@ -5,7 +5,10 @@ import type {
   ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import { canonicalRepositoryPath } from "@t3tools/shared/git";
-import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import {
+  isOpenThreadPullRequest,
+  visibleThreadPullRequests,
+} from "@t3tools/shared/threadPullRequests";
 
 import type { SourceControlDefinitionRegistry } from "./definition.ts";
 
@@ -13,10 +16,6 @@ type ThreadPullRequestKeySource = ThreadPullRequestKey & {
   readonly authority?: string;
   readonly url?: string;
 };
-
-function isOpen(link: ThreadPullRequestLink): boolean {
-  return link.snapshot === null || link.snapshot.state === "open";
-}
 
 function latestUpdatedAt(link: ThreadPullRequestLink): number {
   const value = link.snapshot?.updatedAt ?? link.linkedAt;
@@ -147,12 +146,12 @@ export function makeThreadPullRequests(
   ): ThreadCurrentPullRequest | null {
     const visible = visibleThreadPullRequests(links);
     if (visible.length === 0) return null;
-    const open = visible.filter(isOpen);
+    const open = visible.filter(isOpenThreadPullRequest);
     if (open.length === 1) return { kind: "single", link: open[0]! };
     const chains = resolveThreadPullRequestChains(visible);
     if (open.length > 1) {
       const openChains = chains
-        .map((chain) => layersFromTop(chain).filter(isOpen))
+        .map((chain) => layersFromTop(chain).filter(isOpenThreadPullRequest))
         .filter((layers) => layers.length > 0);
       const ordered =
         openChains.length === 1

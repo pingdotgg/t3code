@@ -508,6 +508,38 @@ export const make = Effect.gen(function* () {
       }
     }, Effect.withSpan("PullRequestSyncReactor.syncEntry"));
 
+    // Clients and settlement read a link with neither snapshot nor reason as still loading.
+    const recordUnavailable = (key: string, entries: ReadonlyArray<LinkEntry>, message: string) => {
+      const reason = message.trim();
+      return Effect.forEach(
+        entries.filter(
+          ({ link }) =>
+            reason !== "" && link.snapshot === null && link.unavailableReason !== reason,
+        ),
+        ({ thread, link }) =>
+          random.uuidV4().pipe(
+            Effect.flatMap((uuid) =>
+              engine.dispatch({
+                type: "thread.pull-request-link.sync",
+                commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
+                threadId: thread.id,
+                host: normalizeThreadPullRequestKey(link).host,
+                repository: link.repository,
+                number: link.number,
+                snapshot: null,
+                stack: link.stack,
+                unavailableReason: reason,
+              }),
+            ),
+            persistence.withPermits(1),
+            Effect.catchCause(
+              logSkipped("pull request sync skipped", { threadId: thread.id, key }),
+            ),
+          ),
+        { discard: true },
+      );
+    };
+
     const syncGroup = Effect.fnUntraced(function* (key: string, entries: ReadonlyArray<LinkEntry>) {
       const first = entries[0]!;
       const ref = referenceOf(first);
@@ -529,7 +561,7 @@ export const make = Effect.gen(function* () {
                 missing.add(key);
                 lastSyncedAt.set(key, nowMs);
                 requested.delete(key);
-              })
+              }).pipe(Effect.andThen(recordUnavailable(key, entries, error.message)))
             : Effect.void,
         ),
       );

@@ -17,6 +17,7 @@ import {
   planThreadPullRequestMutation,
 } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import { isOpenThreadPullRequest } from "@t3tools/client-runtime/thread-pull-requests";
 import { changeRequestTermKind } from "../../lib/changeRequestTerm";
 import { AuthOrchestrationOperateScope, type ThreadPullRequestLink } from "@t3tools/contracts";
 import * as Clipboard from "expo-clipboard";
@@ -147,7 +148,7 @@ export function useLinkedPullRequestActions(input: {
   };
 
   const menuActions = (link: ThreadPullRequestLink): MenuAction[] => {
-    const open = link.snapshot === null || link.snapshot.state === "open";
+    const open = isOpenThreadPullRequest(link);
     const watching = link.watch !== undefined;
     return [
       { id: "copy", title: gt("Copy link"), image: "link" },

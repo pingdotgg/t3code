@@ -278,20 +278,30 @@ describe("resolveAutoSettlementAt", () => {
     ).toBeNull();
   });
 
-  it("keeps an idle thread whose persisted link was never synced", () => {
+  it("keeps an idle thread whose persisted link was never synced, unless it cannot be read", () => {
+    const input = {
+      thread: shell({
+        latestUserMessageAt: at(-4 * DAY_MS),
+        pullRequests: [persistedLink(null, at(-5 * DAY_MS))],
+      }),
+      pullRequest: null,
+      nowMs: NOW_MS,
+      autoSettleAfterDays: 3,
+      autoSettleOnMerge: true,
+      autoSettleKeepPullRequests: true,
+    };
+    expect(ThreadSettlementService.resolveAutoSettlementAt(input)).toBeNull();
     expect(
       ThreadSettlementService.resolveAutoSettlementAt({
+        ...input,
         thread: shell({
           latestUserMessageAt: at(-4 * DAY_MS),
-          pullRequests: [persistedLink(null, at(-5 * DAY_MS))],
+          pullRequests: [
+            { ...persistedLink(null, at(-5 * DAY_MS)), unavailableReason: "Not a project" },
+          ],
         }),
-        pullRequest: null,
-        nowMs: NOW_MS,
-        autoSettleAfterDays: 3,
-        autoSettleOnMerge: true,
-        autoSettleKeepPullRequests: false,
       }),
-    ).toBeNull();
+    ).toEqual(at(-4 * DAY_MS));
   });
 
   it("uses the latest activity time when the inactivity window elapses", () => {
