@@ -378,4 +378,35 @@ describe("WorkspaceColumns collapsed split selection", () => {
       columns.unmount();
     }
   });
+
+  it("reconciles back to primary when a pending detail push is cleared before didAppear", () => {
+    const columns = mountColumns({ routes: [home], usesSplitView: false });
+    try {
+      fireScreen(home.key, "onDidAppear");
+
+      // User opens a thread and UIKit begins pushing the secondary column.
+      const first = threadRoute("thread-1", "thread-a");
+      columns.renderWith({ routes: [home, first] });
+      expect(harness.show).toHaveBeenLastCalledWith("secondary");
+      fireScreen(first.key, "onWillAppear");
+      harness.show.mockClear();
+
+      // Keyboard Back or reselecting the Threads tab clears activeDetail mid-push.
+      columns.renderWith({ routes: [home] });
+      expect(harness.show).toHaveBeenCalledWith("primary");
+
+      // Even if UIKit ignored show("primary") mid-transition and finished the push,
+      // the detail's didAppear must still reconcile back to primary.
+      harness.show.mockClear();
+      fireScreen(first.key, "onDidAppear");
+      expect(harness.show).toHaveBeenCalledWith("primary");
+
+      // Once primary settles, no extra show command fires.
+      harness.show.mockClear();
+      fireScreen(home.key, "onDidAppear");
+      expect(harness.show).not.toHaveBeenCalled();
+    } finally {
+      columns.unmount();
+    }
+  });
 });

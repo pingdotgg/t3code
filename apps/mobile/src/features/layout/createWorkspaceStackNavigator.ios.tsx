@@ -390,13 +390,15 @@ export function WorkspaceColumns(
       props.navigation.dispatch(transition.pop);
       return;
     }
-    // Primary settled while a detail is selected (e.g. cold link or a row tapped mid-Back): show it now.
-    if (
-      type === "didAppear" &&
-      key === props.primary.key &&
-      liveHasWorkspaceDetail(state, props.descriptors)
-    ) {
-      hostRef.current?.show("secondary");
+    // Reconcile if the column that settled no longer matches the live destination
+    // (e.g. cold link, a row tapped mid-Back, or a detail cleared before its push finished).
+    if (type === "didAppear") {
+      const expectedColumn = liveHasWorkspaceDetail(state, props.descriptors)
+        ? "secondary"
+        : "primary";
+      if (nextColumn.visible !== expectedColumn) {
+        hostRef.current?.show(expectedColumn);
+      }
     }
   };
 
@@ -406,6 +408,10 @@ export function WorkspaceColumns(
     previousUsesSplitView.current = layout.usesSplitView;
     if (layout.usesSplitView) {
       collapsed.current = false;
+      if (collapsedColumn.current.leaving) {
+        setNativelyPoppingWorkspaceRoute(null);
+      }
+      collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
       return;
     }
     // An inactive tab misses onCollapse while off-window; sync its collapsed flag when the layout folds.
@@ -415,6 +421,8 @@ export function WorkspaceColumns(
         collapsedColumn.current = { visible: "primary", leaving: null, entering: null };
       } else if (!primaryPresented.current && presentedDetails.current.size > 0) {
         collapsedColumn.current = { visible: "secondary", leaving: null, entering: null };
+      } else {
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
       }
     }
     if (!tabActive || headerOnly) {
@@ -425,10 +433,8 @@ export function WorkspaceColumns(
       return;
     }
     const targetColumn = activeDetail ? "secondary" : "primary";
-    if (
-      collapsedColumn.current.visible === targetColumn ||
-      collapsedColumn.current.entering === targetColumn
-    ) {
+    const activeColumn = collapsedColumn.current.entering ?? collapsedColumn.current.visible;
+    if (activeColumn === targetColumn) {
       return;
     }
     hostRef.current?.show(targetColumn);
@@ -466,6 +472,7 @@ export function WorkspaceColumns(
       }}
       onExpand={() => {
         collapsed.current = false;
+        collapsedColumn.current = { ...collapsedColumn.current, leaving: null, entering: null };
         setNativelyPoppingWorkspaceRoute(null);
         if (tabActivity?.isActive() === false || headerOnly) return;
         // Native callbacks can outlive the render that created them, so decide from the live
