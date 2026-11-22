@@ -3068,12 +3068,13 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                       return;
                     }
                     if (!item) return;
+                    const isMac = isMacPlatform(navigator.platform);
+                    const isModClick =
+                      eventDetails.event instanceof MouseEvent &&
+                      (isMac ? eventDetails.event.metaKey : eventDetails.event.ctrlKey);
                     if (item.value === "all") {
                       setProjectScopeKeys([]);
-                    } else if (
-                      eventDetails.event instanceof MouseEvent &&
-                      eventDetails.event.shiftKey
-                    ) {
+                    } else if (isModClick) {
                       // Canceling skips Base UI's commit, which would freeze the search query, and its close.
                       eventDetails.cancel();
                       toggleProjectScopeKey(item.value);

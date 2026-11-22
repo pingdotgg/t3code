@@ -462,3 +462,78 @@ describe("sidebar settled pagination", () => {
     expect(screen.container.querySelectorAll("[data-thread-item]")).toHaveLength(loadedRows);
   });
 });
+
+// regression: #40367 the project filter followed Shift-click instead of the desktop Mod-click convention
+describe("sidebar project filter", () => {
+  it("toggles a project with Mod-click and keeps the menu open", async () => {
+    using stack = new DisposableStack();
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({
+      ...DEFAULT_CLIENT_SETTINGS,
+      boringSidebarEnabled: false,
+    });
+    const projects = [project("alpha"), project("beta"), project("gamma")];
+    vi.mocked(useProjects).mockReturnValue(projects);
+    vi.mocked(useQuietThreadShells).mockReturnValue([]);
+    vi.mocked(useServerConfigs).mockReturnValue(new Map());
+    vi.mocked(useThreadRouteTarget).mockReturnValue(null);
+    vi.mocked(useHandleNewThread).mockReturnValue({
+      activeDraftThread: null,
+      activeThread: null,
+      defaultProjectRef: {
+        environmentId: projects[0]!.environmentId,
+        projectId: projects[0]!.id,
+      },
+      defaultProjectFallbackReady: true,
+      handleNewThread: vi.fn().mockResolvedValue(null),
+      routeDraftId: null,
+      routeThreadRef: null,
+    });
+    await using screen = await render(
+      <SidebarProvider>
+        <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+      </SidebarProvider>,
+    );
+
+    const options = () => [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    const optionNamed = (name: string) => {
+      const option = options().find((candidate) => candidate.textContent?.includes(name));
+      expect(option, `missing project option ${name}`).toBeDefined();
+      return option!;
+    };
+    const press = (option: HTMLElement, modifier: boolean) =>
+      act(() =>
+        option.dispatchEvent(
+          new MouseEvent("click", {
+            bubbles: true,
+            cancelable: true,
+            ctrlKey: modifier && !isMacPlatform(navigator.platform),
+            metaKey: modifier && isMacPlatform(navigator.platform),
+          }),
+        ),
+      );
+    const openMenu = async () => {
+      const trigger = screen.container.querySelector<HTMLElement>(
+        'button[aria-label^="Filter threads by project"]',
+      );
+      expect(trigger).not.toBeNull();
+      await act(() => trigger!.click());
+      await expect.poll(() => options().length).toBeGreaterThan(1);
+    };
+
+    await openMenu();
+    await press(optionNamed("alpha"), false);
+    await expect.poll(() => options().length).toBe(0);
+
+    await openMenu();
+    expect(optionNamed("alpha").getAttribute("aria-selected")).toBe("true");
+    await press(optionNamed("beta"), true);
+    expect(optionNamed("beta").getAttribute("aria-selected")).toBe("true");
+    expect(optionNamed("alpha").getAttribute("aria-selected")).toBe("true");
+
+    await press(optionNamed("beta"), true);
+    expect(optionNamed("beta").getAttribute("aria-selected")).toBe("false");
+    expect(optionNamed("alpha").getAttribute("aria-selected")).toBe("true");
+  });
+});
