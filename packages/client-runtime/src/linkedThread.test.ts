@@ -20,7 +20,7 @@ import {
   LINKED_THREAD_RETRY_MS,
   type LinkedThreadView,
 } from "./linkedThread.ts";
-import { v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
+import { v2MessageRow, v2Now, v2Projection } from "./state/orchestrationV2TestFixtures.ts";
 
 const snapshot = (
   snapshotSequence: number,
@@ -160,6 +160,83 @@ it.effect("loads the turns before a snapshot's window once per request", () =>
     // Nothing is left to load.
     loaded.loadEarlier();
     expect(asked).toEqual(["cursor-1"]);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("brings back the turns a closed view had loaded when it opens again", () =>
+  Effect.gen(function* () {
+    const older = v2MessageRow("Older", 1);
+    const recent = v2MessageRow("Recent", 2);
+    const latest = v2MessageRow("Latest", 3);
+    const window = (
+      snapshotSequence: number,
+      historyCursor: string,
+      row: typeof recent,
+    ): OrchestrationV2ThreadStreamItem => ({
+      kind: "snapshot",
+      snapshotSequence,
+      projection: { ...v2Projection, turnItems: [row.item], visibleTurnItems: [row] },
+      historyCursor,
+      hasMoreHistory: true,
+    });
+    const pages: Record<string, Pick<OrchestrationV2ThreadHistoryPage, "items" | "nextCursor">> = {
+      "before-recent": { items: [older], nextCursor: "before-older" },
+      "before-latest": { items: [recent], nextCursor: "before-recent" },
+    };
+    const asked: string[] = [];
+    const follow = (
+      items: ReadonlyArray<OrchestrationV2ThreadStreamItem>,
+      previous: LinkedThreadView | null,
+    ) =>
+      Effect.gen(function* () {
+        const views = yield* Queue.unbounded<LinkedThreadView>();
+        yield* followLinkedThread({
+          items: Stream.fromIterable(items).pipe(Stream.concat(Stream.never)),
+          historyPage: (cursor) =>
+            Effect.sync(() => {
+              asked.push(cursor);
+              return { ...pages[cursor]!, snapshotSequence: 3, hasMoreHistory: true };
+            }),
+          previous,
+        }).pipe(
+          Stream.runForEach((view) => Queue.offer(views, view)),
+          Effect.forkScoped,
+        );
+        return views;
+      });
+    const settled = Effect.fnUntraced(function* (views: Queue.Queue<LinkedThreadView>) {
+      let view = yield* Queue.take(views);
+      while (view.history.loading) view = yield* Queue.take(views);
+      return view;
+    });
+    const rows = (view: LinkedThreadView) =>
+      view.thread.projection?.visibleTurnItems.map((row) => row.sourceItemId);
+
+    const first = yield* follow([window(1, "before-recent", recent), retitled(2, "Renamed")], null);
+    (yield* Queue.take(first)).loadEarlier();
+    yield* Queue.take(first); // Loading.
+    yield* Queue.take(first); // The earlier page.
+    const closed = yield* Queue.take(first);
+    expect([rows(closed), closed.thread.sequence]).toEqual([
+      [older.sourceItemId, recent.sourceItemId],
+      2,
+    ]);
+
+    // Nothing changed while the view was closed: the rows it held are shown as they were.
+    const same = yield* settled(yield* follow([window(2, "before-recent", recent)], closed));
+    expect([rows(same), same.thread.historyCursor]).toEqual([
+      [older.sourceItemId, recent.sourceItemId],
+      "before-older",
+    ]);
+    expect(asked).toEqual(["before-recent"]);
+
+    // The thread moved on: pages are read again until the oldest row it showed is back.
+    const moved = yield* settled(yield* follow([window(3, "before-latest", latest)], closed));
+    expect([rows(moved), moved.thread.historyCursor]).toEqual([
+      [older.sourceItemId, recent.sourceItemId, latest.sourceItemId],
+      "before-older",
+    ]);
+    expect(asked).toEqual(["before-recent", "before-latest", "before-recent"]);
   }).pipe(Effect.scoped),
 );
 
