@@ -10,8 +10,15 @@
 //!   provider icon + model name (`28px` height), microphone button (`28px`, button only),
 //!   and `32px` round send button (or destructive stop button while working).
 
+mod actions;
+mod context_meter;
+mod footer;
 mod menus;
 mod model_picker;
+mod stash;
+
+pub(crate) use self::actions::{FollowUpBehavior, SendDispatch};
+pub(crate) use self::context_meter::ContextWindowSnapshot;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -35,11 +42,18 @@ use gpui_kit::{
     Subscription, Window, deferred, div, px,
 };
 
-use self::menus::{
-    ComposerTrigger, ComposerTriggerKind, FileMentionEntry, detect_trigger, filter_slash_commands,
-    render_command_menu, replace_trigger,
+use self::actions::{PrimaryActionInput, resolve_dispatch_mode, resolve_primary_action};
+use self::footer::{
+    FOOTER_CONTROL_HEIGHT_PX, compatible_runtime_modes, footer_permissions_visible,
+    render_interaction_mode_toggle, render_permissions_chip, render_permissions_section,
+    runtime_mode_option,
 };
-use self::model_picker::{ModelCatalog, ModelPickerView, render_model_picker};
+use self::menus::{
+    ComposerTrigger, ComposerTriggerKind, FileMentionEntry, SkillEntry, detect_trigger,
+    filter_skills, filter_slash_commands, render_command_menu, replace_trigger,
+};
+use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_model_picker};
+use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
 use super::icons;
 use crate::a11y::ConnA11yExt as _;
@@ -51,10 +65,6 @@ pub(super) const COMPOSER_MAX_LINES: usize = 8;
 
 /// Composer card corner radius matching Conn's `rounded-2xl` (`16px`).
 const COMPOSER_RADIUS_PX: f32 = 16.0;
-/// Footer control height matching `ComposerControl` `size="sm"` (`h-7` = `28px`).
-const FOOTER_CONTROL_HEIGHT_PX: f32 = 28.0;
-/// Primary send/stop button size matching `sm:h-8 sm:w-8` (`32px`).
-const PRIMARY_ACTION_SIZE_PX: f32 = 32.0;
 /// Maximum width of the model name label in the trigger (`max-w-56` = `224px`).
 const MODEL_LABEL_MAX_WIDTH_PX: f32 = 224.0;
 /// Maximum file mention results requested from `projects.searchEntries`.
@@ -64,6 +74,10 @@ const FILE_SEARCH_LIMIT: i64 = 25;
 const ICON_MICROPHONE: &str = "superhero/microphone.svg";
 /// Superheroicons 16/solid path for the attach-files button (`Paperclip` -> `attach`).
 const ICON_ATTACH: &str = "superhero/attach.svg";
+/// `PLAN_IMPLEMENTATION_PROMPT_PREFIX` in `proposedPlan.ts`.
+const PLAN_IMPLEMENTATION_PROMPT_PREFIX: &str = "PLEASE IMPLEMENT THIS PLAN:\n";
+/// `modelPicker.toggle` shortcut label.
+const MODEL_PICKER_SHORTCUT_LABEL: &str = "⌘⇧M";
 
 /// State of one staged file/image attachment in the composer strip.
 #[derive(Clone, Debug)]
@@ -124,6 +138,14 @@ pub(crate) enum ComposerEvent {
     Send {
         text: String,
         attachments: Vec<ChatAttachment>,
+        /// Steer or queue while a turn runs (`resolveComposerDispatchMode`).
+        dispatch: SendDispatch,
+    },
+    /// `Resume thread`: continue an interrupted thread (`useComposerResume`).
+    Resume,
+    /// `Implement in a new thread` from the plan follow-up split button.
+    ImplementPlanInNewThread {
+        text: String,
     },
     /// Save an edit to an existing server-backed queued message (`queued-run.edit`).
     EditQueuedMessage {
@@ -156,9 +178,27 @@ pub(crate) struct Composer {
     is_draft: bool,
     submitting: bool,
     runtime_mode: String,
+    /// The user's default permission mode; the footer chip hides while the thread matches it.
+    default_runtime_mode: String,
     interaction_mode: String,
-    runtime_menu_open: bool,
     working: bool,
+    follow_up: FollowUpBehavior,
+    /// True while `⌘`/`Ctrl` is held (morphs the send button between steer and queue).
+    alternate_modifier: bool,
+    /// Latest proposed plan markdown while the plan follow-up prompt shows.
+    plan_follow_up: Option<String>,
+    can_resume: bool,
+    send_disabled_reason: Option<String>,
+    environment_unavailable: bool,
+    preparing_worktree: bool,
+    context_window: Option<ContextWindowSnapshot>,
+    context_meter_open: bool,
+    footer_permissions_open: bool,
+    picker_permissions_open: bool,
+    strip_permissions_open: bool,
+    permission_preview: Option<&'static str>,
+    implement_menu_open: bool,
+    stash: PromptStash,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
     catalog: ModelCatalog,
@@ -169,7 +209,6 @@ pub(crate) struct Composer {
     selected_model: String,
     selected_options: Option<serde_json::Map<String, serde_json::Value>>,
     model_picker_open: bool,
-    effort_menu_open: bool,
     picker_provider_filter: Option<String>,
     picker_highlighted_index: usize,
     active_trigger: Option<ComposerTrigger>,
@@ -230,11 +269,17 @@ impl Composer {
             &textarea,
             window,
             |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::PressEnter { shift: false, .. } => {
-                    if this.active_trigger.is_some() {
+                InputEvent::PressEnter {
+                    shift: false,
+                    secondary,
+                } => {
+                    if this.stash.menu_open {
+                        this.restore_highlighted_stash_entry(window, cx);
+                    } else if this.active_trigger.is_some() {
                         this.confirm_active_menu(window, cx);
                     } else {
-                        this.submit(window, cx);
+                        // `⌘Enter` (`composer.sendAlternate`) flips steer and queue.
+                        this.submit_with_dispatch(Some(*secondary), window, cx);
                     }
                 }
                 InputEvent::Change => {
@@ -268,9 +313,24 @@ impl Composer {
             is_draft: false,
             submitting: false,
             runtime_mode: "full-access".to_owned(),
+            default_runtime_mode: "full-access".to_owned(),
             interaction_mode: "default".to_owned(),
-            runtime_menu_open: false,
             working: false,
+            follow_up: FollowUpBehavior::default(),
+            alternate_modifier: false,
+            plan_follow_up: None,
+            can_resume: false,
+            send_disabled_reason: None,
+            environment_unavailable: false,
+            preparing_worktree: false,
+            context_window: None,
+            context_meter_open: false,
+            footer_permissions_open: false,
+            picker_permissions_open: false,
+            strip_permissions_open: false,
+            permission_preview: None,
+            implement_menu_open: false,
+            stash: PromptStash::default(),
             textarea,
             model_search_input,
             catalog: ModelCatalog::default(),
@@ -281,7 +341,6 @@ impl Composer {
             selected_model: "Default model".to_owned(),
             selected_options: None,
             model_picker_open: false,
-            effort_menu_open: false,
             picker_provider_filter: None,
             picker_highlighted_index: 0,
             active_trigger: None,
@@ -366,6 +425,82 @@ impl Composer {
         }
         self.working = working;
         cx.notify();
+    }
+
+    /// Sets the user's default permission mode (`settings.defaultRuntimeMode`).
+    pub(crate) fn set_default_runtime_mode(&mut self, mode: String, cx: &mut Context<'_, Self>) {
+        if self.default_runtime_mode != mode {
+            self.default_runtime_mode = mode;
+            cx.notify();
+        }
+    }
+
+    /// Sets the follow-up behavior used while a turn runs (`settings.followUpBehavior`).
+    pub(crate) fn set_follow_up_behavior(
+        &mut self,
+        behavior: FollowUpBehavior,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.follow_up != behavior {
+            self.follow_up = behavior;
+            cx.notify();
+        }
+    }
+
+    /// Shows the plan follow-up actions (`Refine` / `Implement`) for `plan_markdown`.
+    pub(crate) fn set_plan_follow_up(
+        &mut self,
+        plan_markdown: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.plan_follow_up != plan_markdown {
+            self.plan_follow_up = plan_markdown;
+            self.implement_menu_open = false;
+            cx.notify();
+        }
+    }
+
+    /// Sets whether an empty draft shows `Resume thread`.
+    pub(crate) fn set_can_resume(&mut self, can_resume: bool, cx: &mut Context<'_, Self>) {
+        if self.can_resume != can_resume {
+            self.can_resume = can_resume;
+            cx.notify();
+        }
+    }
+
+    /// Sets the send-blocking status shown on the disabled send button.
+    pub(crate) fn set_send_status(
+        &mut self,
+        environment_unavailable: bool,
+        preparing_worktree: bool,
+        send_disabled_reason: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.environment_unavailable == environment_unavailable
+            && self.preparing_worktree == preparing_worktree
+            && self.send_disabled_reason == send_disabled_reason
+        {
+            return;
+        }
+        self.environment_unavailable = environment_unavailable;
+        self.preparing_worktree = preparing_worktree;
+        self.send_disabled_reason = send_disabled_reason;
+        cx.notify();
+    }
+
+    /// Sets the active thread's context window usage (shows the footer meter when present).
+    pub(crate) fn set_context_window(
+        &mut self,
+        usage: Option<ContextWindowSnapshot>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.context_window != usage {
+            if usage.is_none() {
+                self.context_meter_open = false;
+            }
+            self.context_window = usage;
+            cx.notify();
+        }
     }
 
     /// Marks whether the composer is currently composing a new-thread draft and whether launch is
@@ -598,8 +733,13 @@ impl Composer {
     /// Toggles the floating model picker popup.
     pub(crate) fn toggle_model_picker(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
         self.model_picker_open = !self.model_picker_open;
+        self.picker_permissions_open = false;
+        self.permission_preview = None;
         if self.model_picker_open {
             self.active_trigger = None;
+            self.footer_permissions_open = false;
+            self.strip_permissions_open = false;
+            self.stash.menu_open = false;
             self.picker_provider_filter = self.selected_instance_id.clone();
             self.picker_highlighted_index = 0;
             self.model_search_input.update(cx, |input, cx| {
@@ -620,14 +760,20 @@ impl Composer {
             self.model_picker_open = false;
             changed = true;
         }
-        if self.effort_menu_open {
-            self.effort_menu_open = false;
-            changed = true;
+        for open in [
+            &mut self.footer_permissions_open,
+            &mut self.picker_permissions_open,
+            &mut self.strip_permissions_open,
+            &mut self.implement_menu_open,
+            &mut self.context_meter_open,
+            &mut self.stash.menu_open,
+        ] {
+            if *open {
+                *open = false;
+                changed = true;
+            }
         }
-        if self.runtime_menu_open {
-            self.runtime_menu_open = false;
-            changed = true;
-        }
+        self.permission_preview = None;
         if self.active_trigger.take().is_some() {
             let text = self.textarea.read(cx).value().to_string();
             self.dismissed_trigger_text = Some(text);
@@ -636,6 +782,18 @@ impl Composer {
         if changed {
             cx.notify();
         }
+    }
+
+    /// True while any composer popup, menu, or drawer is open.
+    fn any_overlay_open(&self) -> bool {
+        self.model_picker_open
+            || self.footer_permissions_open
+            || self.picker_permissions_open
+            || self.strip_permissions_open
+            || self.implement_menu_open
+            || self.context_meter_open
+            || self.stash.menu_open
+            || self.active_trigger.is_some()
     }
 
     /// Opens the native file picker to attach one or more files or images to the draft.
@@ -1017,9 +1175,23 @@ impl Composer {
         }
     }
 
+    /// Submits the current draft with the default dispatch (Enter or the send button).
+    pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        self.submit_with_dispatch(None, window, cx);
+    }
+
     /// Submits the current non-empty draft (and any uploaded attachments) via [`ComposerEvent::Send`],
     /// or saves an edited queued message via [`ComposerEvent::EditQueuedMessage`].
-    pub(crate) fn submit(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+    ///
+    /// `alternate` is the `⌘`/`Ctrl` state of the click or `⌘Enter`; `None` uses the held modifier.
+    /// With the plan follow-up prompt showing, an empty draft implements the plan (switching back
+    /// to build mode) and text refines it (`resolvePlanFollowUpSubmission`).
+    pub(crate) fn submit_with_dispatch(
+        &mut self,
+        alternate: Option<bool>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         if self.submitting {
             return;
         }
@@ -1069,9 +1241,25 @@ impl Composer {
             return;
         }
 
-        if trimmed.is_empty() && ready_attachments.is_empty() {
+        let text = match self.plan_follow_up.as_deref() {
+            Some(plan) if trimmed.is_empty() && ready_attachments.is_empty() => {
+                if self.interaction_mode != "default" {
+                    self.interaction_mode = "default".to_owned();
+                    cx.emit(ComposerEvent::InteractionModeSelected("default".to_owned()));
+                }
+                format!("{PLAN_IMPLEMENTATION_PROMPT_PREFIX}{}", plan.trim())
+            }
+            _ => trimmed,
+        };
+        if text.is_empty() && ready_attachments.is_empty() {
             return;
         }
+        let dispatch = resolve_dispatch_mode(
+            self.working,
+            self.follow_up,
+            true,
+            alternate.unwrap_or(self.alternate_modifier),
+        );
         self.textarea.update(cx, |input, cx| {
             input.set_value("", window, cx);
         });
@@ -1079,11 +1267,267 @@ impl Composer {
         self.active_trigger = None;
         self.dismissed_trigger_text = None;
         self.model_picker_open = false;
+        self.implement_menu_open = false;
         cx.emit(ComposerEvent::Send {
-            text: trimmed,
+            text,
             attachments: ready_attachments,
+            dispatch,
         });
         cx.notify();
+    }
+
+    /// `Resume thread`: asks the host to continue the interrupted thread.
+    pub(super) fn resume_thread(&mut self, cx: &mut Context<'_, Self>) {
+        cx.emit(ComposerEvent::Resume);
+    }
+
+    /// `Implement in a new thread` (plan follow-up split menu).
+    pub(super) fn implement_in_new_thread(&mut self, cx: &mut Context<'_, Self>) {
+        self.implement_menu_open = false;
+        let Some(plan) = self.plan_follow_up.as_deref() else {
+            cx.notify();
+            return;
+        };
+        cx.emit(ComposerEvent::ImplementPlanInNewThread {
+            text: format!("{PLAN_IMPLEMENTATION_PROMPT_PREFIX}{}", plan.trim()),
+        });
+        cx.notify();
+    }
+
+    /// Plan / Build toggle (and `Shift+Tab`).
+    pub(super) fn toggle_interaction_mode(&mut self, cx: &mut Context<'_, Self>) {
+        let next = if self.interaction_mode == "plan" {
+            "default"
+        } else {
+            "plan"
+        };
+        self.interaction_mode = next.to_owned();
+        cx.emit(ComposerEvent::InteractionModeSelected(next.to_owned()));
+        cx.notify();
+    }
+
+    pub(super) fn toggle_footer_permissions_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.footer_permissions_open = !self.footer_permissions_open;
+        self.permission_preview = None;
+        if self.footer_permissions_open {
+            self.model_picker_open = false;
+            self.strip_permissions_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn toggle_picker_permissions_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.picker_permissions_open = !self.picker_permissions_open;
+        self.permission_preview = None;
+        cx.notify();
+    }
+
+    fn toggle_strip_permissions_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.strip_permissions_open = !self.strip_permissions_open;
+        self.permission_preview = None;
+        if self.strip_permissions_open {
+            self.model_picker_open = false;
+            self.footer_permissions_open = false;
+        }
+        cx.notify();
+    }
+
+    /// Hover preview inside `ComposerPermissionsSection`.
+    pub(super) fn preview_permission(
+        &mut self,
+        mode: &'static str,
+        hovered: bool,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let next = if hovered {
+            Some(mode)
+        } else if self.permission_preview == Some(mode) {
+            None
+        } else {
+            self.permission_preview
+        };
+        if next != self.permission_preview {
+            self.permission_preview = next;
+            cx.notify();
+        }
+    }
+
+    /// Picks a permission mode; the radio item closes its menu (`closeOnClick`).
+    pub(super) fn pick_runtime_mode(&mut self, mode: &'static str, cx: &mut Context<'_, Self>) {
+        self.footer_permissions_open = false;
+        self.picker_permissions_open = false;
+        self.strip_permissions_open = false;
+        self.permission_preview = None;
+        if self.runtime_mode != mode {
+            self.runtime_mode = mode.to_owned();
+            cx.emit(ComposerEvent::RuntimeModeSelected(mode.to_owned()));
+        }
+        cx.notify();
+    }
+
+    pub(super) fn set_context_meter_open(&mut self, open: bool, cx: &mut Context<'_, Self>) {
+        if self.context_meter_open != open {
+            self.context_meter_open = open;
+            cx.notify();
+        }
+    }
+
+    /// The selected model from the catalog, when known.
+    fn selected_model_option(&self) -> Option<&ModelOption> {
+        self.catalog
+            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
+    }
+
+    /// The selected provider's catalog group.
+    fn selected_provider_group(&self) -> Option<&model_picker::ProviderGroup> {
+        let instance = self
+            .selected_model_option()
+            .map(|m| m.instance_id.as_str())
+            .or(self.selected_instance_id.as_deref())?;
+        self.catalog
+            .providers
+            .iter()
+            .find(|p| p.instance_id == instance)
+    }
+
+    /// Skills of the selected provider for the `$` menu.
+    fn selected_provider_skills(&self) -> &[SkillEntry] {
+        self.selected_provider_group()
+            .map_or(&[], |group| group.skills.as_slice())
+    }
+
+    /// Sets one model option (effort level, speed, or another trait) on the selected model.
+    pub(super) fn set_model_option(
+        &mut self,
+        option_id: String,
+        value: serde_json::Value,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(opt) = self.selected_model_option() else {
+            return;
+        };
+        let instance_id = opt.instance_id.clone();
+        let model = opt.slug.clone();
+        let mut opts = self.selected_options.clone().unwrap_or_default();
+        opts.insert(option_id, value);
+        self.selected_options = Some(opts.clone());
+        cx.emit(ComposerEvent::ModelSelected {
+            instance_id,
+            model,
+            options: Some(opts),
+        });
+        cx.notify();
+    }
+
+    /// `⌘S`: stashes a non-empty draft, or toggles the stash drawer when the draft is empty.
+    pub(super) fn stash_or_toggle(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if self.editing_queued.is_some() {
+            return;
+        }
+        let text = self.textarea.read(cx).value().to_string();
+        let ready: Vec<ChatAttachment> = self
+            .attachments
+            .iter()
+            .filter_map(|a| match &a.status {
+                AttachmentUploadStatus::Ready(att) => Some(att.clone()),
+                _ => None,
+            })
+            .collect();
+        if text.trim().is_empty() && ready.is_empty() {
+            self.toggle_stash_menu(cx);
+            return;
+        }
+        self.stash.push(text, ready, stash::now_ms());
+        self.attachments.clear();
+        self.active_trigger = None;
+        self.dismissed_trigger_text = None;
+        self.textarea.update(cx, |input, cx| {
+            input.set_value("", window, cx);
+            input.focus(window, cx);
+        });
+        cx.notify();
+    }
+
+    pub(super) fn toggle_stash_menu(&mut self, cx: &mut Context<'_, Self>) {
+        self.stash.menu_open = !self.stash.menu_open;
+        if self.stash.menu_open {
+            self.stash.highlighted = 0;
+            self.model_picker_open = false;
+            self.active_trigger = None;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn close_stash_menu(&mut self, cx: &mut Context<'_, Self>) {
+        if self.stash.menu_open {
+            self.stash.menu_open = false;
+            cx.notify();
+        }
+    }
+
+    pub(super) fn delete_stash_entry(&mut self, id: u64, cx: &mut Context<'_, Self>) {
+        self.stash.delete(id);
+        if self.stash.entries().is_empty() {
+            self.stash.menu_open = false;
+        }
+        cx.notify();
+    }
+
+    pub(super) fn highlight_stash_entry(&mut self, index: usize, cx: &mut Context<'_, Self>) {
+        if self.stash.highlighted != index {
+            self.stash.highlighted = index;
+            cx.notify();
+        }
+    }
+
+    /// Restores a stashed draft; a non-empty current draft swaps into the stash.
+    pub(super) fn restore_stash_entry(
+        &mut self,
+        id: u64,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        let Some(entry) = self.stash.take(id) else {
+            return;
+        };
+        let current = self.textarea.read(cx).value().to_string();
+        let current_ready: Vec<ChatAttachment> = self
+            .attachments
+            .iter()
+            .filter_map(|a| match &a.status {
+                AttachmentUploadStatus::Ready(att) => Some(att.clone()),
+                _ => None,
+            })
+            .collect();
+        if !current.trim().is_empty() || !current_ready.is_empty() {
+            self.stash.push(current, current_ready, stash::now_ms());
+        }
+        self.attachments = entry
+            .attachments
+            .into_iter()
+            .map(|att| {
+                let local_id = self.next_attachment_id;
+                self.next_attachment_id = self.next_attachment_id.wrapping_add(1);
+                PendingAttachment {
+                    local_id,
+                    name: chat_attachment_name(&att).to_owned(),
+                    size_bytes: chat_attachment_size(&att),
+                    status: AttachmentUploadStatus::Ready(att),
+                }
+            })
+            .collect();
+        self.stash.menu_open = false;
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(entry.prompt, window, cx);
+            input.focus(window, cx);
+        });
+        self.on_draft_changed(cx);
+    }
+
+    fn restore_highlighted_stash_entry(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) {
+        if let Some(id) = self.stash.highlighted_id() {
+            self.restore_stash_entry(id, window, cx);
+        }
     }
 
     pub(super) fn select_picker_provider(
@@ -1105,38 +1549,39 @@ impl Composer {
         if let Some(opt) = self.catalog.find_model(Some(&instance_id), &model) {
             self.selected_driver = Some(opt.driver.clone());
         }
+        let same_model = self.selected_instance_id.as_deref() == Some(instance_id.as_str())
+            && self.selected_model == model;
         self.selected_instance_id = Some(instance_id.clone());
         self.selected_model = model.clone();
-        self.selected_options = None;
-        self.model_picker_open = false;
-        self.effort_menu_open = false;
+        if !same_model {
+            self.selected_options = None;
+        }
+        // Docked: the popup stays open so the effort column can take the next pick.
         cx.emit(ComposerEvent::ModelSelected {
             instance_id,
             model,
-            options: None,
+            options: self.selected_options.clone(),
         });
         cx.notify();
     }
 
-    fn pick_effort(&mut self, option_id: String, value: String, cx: &mut Context<'_, Self>) {
-        let Some(opt) = self
-            .catalog
-            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
-        else {
-            return;
-        };
-        let instance_id = opt.instance_id.clone();
-        let model = opt.slug.clone();
-        let mut opts = self.selected_options.clone().unwrap_or_default();
-        opts.insert(option_id, serde_json::Value::String(value));
-        self.selected_options = Some(opts.clone());
-        self.effort_menu_open = false;
-        cx.emit(ComposerEvent::ModelSelected {
-            instance_id,
-            model,
-            options: Some(opts),
-        });
-        cx.notify();
+    /// Replaces the active trigger range with `replacement` and moves the caret after it.
+    fn replace_active_trigger(
+        &mut self,
+        replacement: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(trigger) = self.active_trigger.take() {
+            let current = self.textarea.read(cx).value().to_string();
+            let (next, caret) = replace_trigger(&current, &trigger, replacement);
+            self.textarea.update(cx, |input, cx| {
+                input.set_value(next, window, cx);
+                input.set_selected_range(caret..caret, cx);
+                input.focus(window, cx);
+            });
+        }
+        self.dismissed_trigger_text = None;
     }
 
     pub(super) fn apply_slash_command(
@@ -1145,19 +1590,12 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(trigger) = self.active_trigger.take() {
-            let current = self.textarea.read(cx).value().to_string();
-            let replacement = if command == "model" {
-                String::new()
-            } else {
-                format!("/{command} ")
-            };
-            let next = replace_trigger(&current, &trigger, &replacement);
-            self.textarea.update(cx, |input, cx| {
-                input.set_value(next, window, cx);
-            });
-        }
-        self.dismissed_trigger_text = None;
+        // `/model` and `/plan` clear their token; other commands stay in the draft.
+        let replacement = match command {
+            "model" | "plan" => String::new(),
+            other => format!("/{other} "),
+        };
+        self.replace_active_trigger(&replacement, window, cx);
         if command == "model" {
             self.toggle_model_picker(window, cx);
             return;
@@ -1172,26 +1610,33 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<'_, Self>,
     ) {
-        if let Some(trigger) = self.active_trigger.take() {
-            let current = self.textarea.read(cx).value().to_string();
-            let next = replace_trigger(&current, &trigger, &format!("@{path} "));
-            self.textarea.update(cx, |input, cx| {
-                input.set_value(next, window, cx);
-            });
-        }
-        self.dismissed_trigger_text = None;
+        self.replace_active_trigger(&format!("@{path} "), window, cx);
+        cx.notify();
+    }
+
+    /// Inserts `$<skill.name> ` for the picked `$` menu entry.
+    pub(super) fn apply_skill(
+        &mut self,
+        name: &str,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.replace_active_trigger(&format!("${name} "), window, cx);
         cx.notify();
     }
 
     fn on_draft_changed(&mut self, cx: &mut Context<'_, Self>) {
-        let text = self.textarea.read(cx).value().to_string();
+        let (text, cursor) = {
+            let input = self.textarea.read(cx);
+            (input.value().to_string(), input.cursor())
+        };
         if self.dismissed_trigger_text.as_deref() == Some(text.as_str()) {
             cx.notify();
             return;
         }
         self.dismissed_trigger_text = None;
 
-        let next_trigger = detect_trigger(&text);
+        let next_trigger = detect_trigger(&text, cursor);
         let query_changed = next_trigger != self.active_trigger;
         self.active_trigger = next_trigger.clone();
 
@@ -1282,6 +1727,9 @@ impl Composer {
             let count = match trigger.kind {
                 ComposerTriggerKind::Command => filter_slash_commands(&trigger.query).len(),
                 ComposerTriggerKind::FileMention => self.file_mentions.len(),
+                ComposerTriggerKind::Skill => {
+                    filter_skills(self.selected_provider_skills(), &trigger.query).len()
+                }
             };
             if count > 0 {
                 self.menu_highlighted_index = step_index(self.menu_highlighted_index, delta, count);
@@ -1332,27 +1780,31 @@ impl Composer {
                     self.apply_file_mention(&path, window, cx);
                 }
             }
+            ComposerTriggerKind::Skill => {
+                let name = filter_skills(self.selected_provider_skills(), &trigger.query)
+                    .get(self.menu_highlighted_index)
+                    .map(|skill| skill.name.clone());
+                if let Some(name) = name {
+                    self.apply_skill(&name, window, cx);
+                }
+            }
         }
     }
 
     fn display_model_and_driver(&self) -> (String, Option<&str>) {
-        if let Some(opt) = self
-            .catalog
-            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
-        {
-            return (opt.trigger_label().to_owned(), Some(opt.driver.as_str()));
+        if let Some(opt) = self.selected_model_option() {
+            return (opt.trigger_label(), Some(opt.driver.as_str()));
         }
         (self.selected_model.clone(), self.selected_driver.as_deref())
     }
 
     /// Renders Conn's `BranchToolbar` / `ComposerSurface.ContextStrip` under the composer card:
-    /// worktree/local indicator + branch name on the left; Plan mode toggle + runtime permission
-    /// selector on the right.
+    /// worktree/local indicator + branch name on the left; on new-thread drafts, the trailing
+    /// permissions control (`ComposerContextPermissions`).
     fn render_context_strip(&self, tokens: &Tokens, cx: &mut Context<'_, Self>) -> AnyElement {
         let fg = hsla(tokens.foreground);
         let muted = hsla(tokens.muted_foreground);
         let hover_bg = hsla(tokens.shell_highlight);
-        let plan_active = self.interaction_mode == "plan";
 
         let mut left = div()
             .flex()
@@ -1436,132 +1888,63 @@ impl Composer {
             );
         }
 
-        let plan_btn = div()
-            .id("composer-plan-mode-toggle")
-            .a11y_button(
-                "composer.plan-mode",
-                if plan_active {
-                    "Plan mode (enabled)"
-                } else {
-                    "Toggle Plan mode"
-                },
-            )
-            .aria_selected(plan_active)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(4.0))
-            .h(px(22.0))
-            .px(px(6.0))
-            .rounded(px(6.0))
-            .cursor_pointer()
-            .text_color(if plan_active { fg } else { muted })
-            .when(plan_active, |el| el.bg(hover_bg))
-            .hover(move |s| s.bg(hover_bg).text_color(fg))
-            .on_click(cx.listener(|composer, _, _, cx| {
-                let next = if composer.interaction_mode == "plan" {
-                    "default"
-                } else {
-                    "plan"
-                };
-                composer.interaction_mode = next.to_owned();
-                cx.emit(ComposerEvent::InteractionModeSelected(next.to_owned()));
-                cx.notify();
-            }))
-            .conn_tooltip("Toggle Plan mode", tokens)
-            .child(icons::icon(
-                "superhero/checklist.svg",
-                12.0,
-                if plan_active { fg } else { muted },
-            ))
-            .child("Plan");
-
-        let mut runtime_slot = div().relative().child(
-            div()
-                .id("composer-runtime-mode-trigger")
-                .a11y_button(
-                    "composer.runtime-mode",
-                    format!(
-                        "Runtime permissions: {}",
-                        runtime_mode_label(&self.runtime_mode)
-                    ),
-                )
-                .aria_expanded(self.runtime_menu_open)
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.0))
-                .h(px(22.0))
-                .px(px(6.0))
-                .rounded(px(6.0))
-                .cursor_pointer()
-                .text_color(if self.runtime_menu_open { fg } else { muted })
-                .when(self.runtime_menu_open, |el| el.bg(hover_bg))
-                .hover(move |s| s.bg(hover_bg).text_color(fg))
-                .on_click(cx.listener(|composer, _, _, cx| {
-                    composer.runtime_menu_open = !composer.runtime_menu_open;
-                    if composer.runtime_menu_open {
-                        composer.model_picker_open = false;
-                    }
-                    cx.notify();
-                }))
-                .conn_tooltip("Runtime permissions", tokens)
-                .child(icons::icon("superhero/shield.svg", 12.0, muted))
-                .child(runtime_mode_label(&self.runtime_mode))
-                .child(icons::icon("superhero/chevron-down.svg", 11.0, muted)),
-        );
-
-        if self.runtime_menu_open {
-            let pop_fg = hsla(tokens.popover_foreground);
-            let mut menu = div()
-                .id("composer-runtime-mode-menu")
-                .absolute()
-                .bottom_full()
-                .right_0()
-                .mb(px(4.0))
-                .w(px(176.0))
-                .rounded(px(8.0))
-                .bg(hsla(tokens.popover))
-                .border_1()
-                .border_color(hsla(tokens.shell_inner_border))
-                .shadow_md()
-                .p(px(4.0))
-                .flex()
-                .flex_col()
-                .gap(px(2.0));
-            for &(mode, label) in RUNTIME_MODES {
-                let active = self.runtime_mode == mode;
-                menu = menu.child(
-                    div()
-                        .id(SharedString::from(format!("composer-rm-{mode}")))
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(6.0))
-                        .h(px(26.0))
-                        .px(px(8.0))
-                        .rounded(px(5.0))
-                        .cursor_pointer()
-                        .text_size(px(12.0))
-                        .line_height(px(16.0))
-                        .text_color(if active { pop_fg } else { muted })
-                        .hover(move |s| s.bg(hover_bg).text_color(pop_fg))
-                        .on_click(cx.listener(move |composer, _, _, cx| {
-                            composer.runtime_menu_open = false;
-                            if composer.runtime_mode != mode {
-                                composer.runtime_mode = mode.to_owned();
-                                cx.emit(ComposerEvent::RuntimeModeSelected(mode.to_owned()));
-                            }
-                            cx.notify();
-                        }))
-                        .child(div().flex_1().child(label))
-                        .when(active, |el| {
-                            el.child(icons::icon("superhero/check.svg", 12.0, pop_fg))
-                        }),
+        // New-thread drafts name the permissions at the strip's trailing end
+        // (`ComposerContextPermissions`); started threads keep them in the footer and picker.
+        let trailing: Option<AnyElement> = self.is_draft.then(|| {
+            let option = runtime_mode_option(&self.runtime_mode);
+            let open = self.strip_permissions_open;
+            let mut slot = div().relative().child(
+                div()
+                    .id("composer-context-permissions")
+                    .a11y_button(
+                        "composer.context-permissions",
+                        format!("Permissions: {}", option.label),
+                    )
+                    .aria_expanded(open)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .h(px(22.0))
+                    .px(px(6.0))
+                    .rounded(px(6.0))
+                    .cursor_pointer()
+                    .text_color(if open { fg } else { muted })
+                    .when(open, |el| el.bg(hover_bg))
+                    .hover(move |s| s.bg(hover_bg).text_color(fg))
+                    .on_click(cx.listener(|composer, _, _, cx| {
+                        composer.toggle_strip_permissions_menu(cx);
+                    }))
+                    .conn_tooltip("Permissions · ⌘⇧A", tokens)
+                    .child(icons::icon(
+                        option.icon,
+                        12.0,
+                        if open { fg } else { muted },
+                    ))
+                    .child(option.label),
+            );
+            if open {
+                let options = self.runtime_mode_options();
+                let section = render_permissions_section(
+                    &self.runtime_mode,
+                    &options,
+                    self.permission_preview,
+                    "strip",
+                    tokens,
+                    cx,
+                );
+                slot = slot.child(
+                    deferred(
+                        div().absolute().bottom_full().right_0().mb(px(4.0)).child(
+                            footer::popover_surface("composer-strip-permissions-popup", tokens)
+                                .child(section),
+                        ),
+                    )
+                    .with_priority(3),
                 );
             }
-            runtime_slot = runtime_slot.child(deferred(menu).with_priority(3));
-        }
+            slot.into_any_element()
+        });
 
         div()
             .id("composer-context-strip")
@@ -1582,32 +1965,19 @@ impl Composer {
             .line_height(px(16.0))
             .text_color(muted)
             .child(left)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .flex_shrink_0()
-                    .child(plan_btn)
-                    .child(runtime_slot),
-            )
+            .when_some(trailing, |el, trailing| {
+                el.child(div().flex_none().ml_auto().child(trailing))
+            })
             .into_any_element()
     }
-}
 
-const RUNTIME_MODES: &[(&str, &str)] = &[
-    ("full-access", "Full access"),
-    ("auto", "Auto"),
-    ("auto-accept-edits", "Accept edits"),
-    ("approval-required", "Supervised"),
-];
-
-fn runtime_mode_label(mode: &str) -> &'static str {
-    RUNTIME_MODES
-        .iter()
-        .find(|&&(id, _)| id == mode)
-        .map_or("Full access", |&(_, label)| label)
+    /// Permission modes the selected provider supports.
+    fn runtime_mode_options(&self) -> Vec<footer::RuntimeModeOption> {
+        compatible_runtime_modes(
+            self.selected_provider_group()
+                .map_or(&[], |group| group.supported_runtime_modes.as_slice()),
+        )
+    }
 }
 
 impl Render for Composer {
@@ -1623,9 +1993,19 @@ impl Render for Composer {
             .any(|a| matches!(a.status, AttachmentUploadStatus::Uploading));
         let has_non_empty_text = !self.textarea.read(cx).value().trim().is_empty();
         let has_sendable = if is_editing_queued {
-            has_non_empty_text && !is_uploading && !self.submitting
+            has_non_empty_text && !is_uploading
         } else {
-            (has_non_empty_text || has_ready_attachments) && !is_uploading && !self.submitting
+            (has_non_empty_text || has_ready_attachments) && !is_uploading
+        };
+        let uploading_count = self
+            .attachments
+            .iter()
+            .filter(|a| matches!(a.status, AttachmentUploadStatus::Uploading))
+            .count();
+        let attachment_block_reason = match uploading_count {
+            0 => None,
+            1 => Some("Attachment still uploading".to_owned()),
+            _ => Some("Attachments still uploading".to_owned()),
         };
         let (model_label, driver) = self.display_model_and_driver();
         let tokens = self.tokens.clone();
@@ -1635,153 +2015,156 @@ impl Render for Composer {
         let fg = hsla(tokens.foreground);
         let muted = hsla(tokens.muted_foreground);
 
+        // Unified Model + Effort trigger (`ProviderModelPicker` trigger + `describeComposerEffort`).
+        let selected_model = self.selected_model_option().cloned();
+        let effort = selected_model
+            .as_ref()
+            .map(|m| m.effort_summary(self.selected_options.as_ref()))
+            .unwrap_or_default();
+        let full_label = selected_model
+            .as_ref()
+            .map_or_else(|| model_label.clone(), ModelOption::display_label);
+        let trigger_aria = [Some(full_label.clone()), effort.detail.clone()]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(", ");
+        let trigger_tooltip = [Some(full_label), effort.detail.clone()]
+            .into_iter()
+            .flatten()
+            .chain(std::iter::once(MODEL_PICKER_SHORTCUT_LABEL.to_owned()))
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let picker_open = self.model_picker_open;
+        let suffix_color = if picker_open { fg } else { muted };
+        let mut suffix = div()
+            .flex()
+            .flex_none()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .ml(px(-2.0))
+            .text_color(suffix_color);
+        let has_suffix =
+            effort.word.is_some() || effort.speed.is_some() || effort.context_window.is_some();
+        if let Some(word) = effort.word.clone() {
+            suffix = suffix.child(div().max_w(px(96.0)).truncate().child(word));
+        }
+        if effort.speed.is_some() {
+            suffix = suffix.child(icons::icon("superhero/fast.svg", 12.0, suffix_color));
+        }
+        if let Some(window_label) = effort.context_window {
+            suffix = suffix.child(
+                div()
+                    .max_w(px(96.0))
+                    .truncate()
+                    .text_size(px(12.0))
+                    .child(window_label),
+            );
+        }
         let model_trigger = div()
             .id("chat-composer-model-picker")
-            .a11y_button(
-                "composer.model-picker",
-                format!("Select model: {model_label}"),
-            )
-            .aria_expanded(self.model_picker_open)
+            .a11y_button("composer.model-picker", trigger_aria)
+            .aria_expanded(picker_open)
             .flex()
             .flex_row()
             .items_center()
             .gap(px(6.0))
+            .min_w_0()
             .h(px(FOOTER_CONTROL_HEIGHT_PX))
-            .px(px(8.0))
+            .pl(px(8.0))
+            .pr(px(6.0))
             .rounded(px(8.0))
             .cursor_pointer()
-            .text_size(px(14.0))
+            .text_size(px(13.0))
             .line_height(px(20.0))
             .font_weight(FontWeight::MEDIUM)
-            .text_color(if self.model_picker_open {
+            .text_color(if picker_open {
                 fg
             } else {
                 hsla_alpha(tokens.foreground, 0.80)
             })
-            .when(self.model_picker_open, |s| s.bg(highlight_bg))
+            .when(picker_open, |s| s.bg(highlight_bg))
             .hover(move |s| s.bg(highlight_bg).text_color(fg))
             .on_click(cx.listener(|composer, _, window, cx| {
                 composer.toggle_model_picker(window, cx);
             }))
+            .conn_tooltip(trigger_tooltip, &tokens)
             .child(crate::icons::provider_mark(
                 driver
                     .filter(|d| !d.is_empty())
                     .unwrap_or(model_label.as_str()),
                 16.0,
-                if self.model_picker_open { fg } else { muted },
+                if picker_open { fg } else { muted },
             ))
             .child(
                 div()
+                    .min_w_0()
                     .max_w(px(MODEL_LABEL_MAX_WIDTH_PX))
                     .truncate()
                     .child(model_label),
-            );
+            )
+            .when(has_suffix, |el| el.child(suffix));
 
-        let effort_picker: Option<AnyElement> = self
-            .catalog
-            .find_model(self.selected_instance_id.as_deref(), &self.selected_model)
-            .and_then(|m| m.reasoning.as_ref())
-            .map(|reasoning| {
-                let current_id = self
-                    .selected_options
-                    .as_ref()
-                    .and_then(|opts| opts.get(&reasoning.option_id))
-                    .and_then(serde_json::Value::as_str)
-                    .or(reasoning.default_value.as_deref())
-                    .unwrap_or_default();
-                let current_label = reasoning
-                    .choices
-                    .iter()
-                    .find(|(id, _)| id == current_id)
-                    .map_or("Effort", |(_, label)| label.as_str());
-                let mut slot = div().relative().child(
-                    div()
-                        .id("chat-composer-effort-picker")
-                        .a11y_button(
-                            "composer.effort-picker",
-                            format!("{}: {current_label}", reasoning.label),
-                        )
-                        .aria_expanded(self.effort_menu_open)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(4.0))
-                        .h(px(FOOTER_CONTROL_HEIGHT_PX))
-                        .px(px(8.0))
-                        .rounded(px(8.0))
-                        .cursor_pointer()
-                        .text_size(px(13.0))
-                        .line_height(px(20.0))
-                        .font_weight(FontWeight::MEDIUM)
-                        .text_color(if self.effort_menu_open { fg } else { muted })
-                        .when(self.effort_menu_open, |s| s.bg(highlight_bg))
-                        .hover(move |s| s.bg(highlight_bg).text_color(fg))
-                        .on_click(cx.listener(|composer, _, _, cx| {
-                            composer.effort_menu_open = !composer.effort_menu_open;
-                            if composer.effort_menu_open {
-                                composer.model_picker_open = false;
-                                composer.runtime_menu_open = false;
-                            }
-                            cx.notify();
-                        }))
-                        .conn_tooltip(reasoning.label.clone(), &tokens)
-                        .child(icons::icon(
-                            "superhero/thinking.svg",
-                            13.0,
-                            if self.effort_menu_open { fg } else { muted },
-                        ))
-                        .child(current_label.to_owned()),
-                );
-                if self.effort_menu_open {
-                    let pop_fg = hsla(tokens.popover_foreground);
-                    let mut menu = div()
-                        .id("chat-composer-effort-menu")
-                        .absolute()
-                        .bottom_full()
-                        .right_0()
-                        .mb(px(4.0))
-                        .w(px(164.0))
-                        .rounded(px(8.0))
-                        .bg(hsla(tokens.popover))
-                        .border_1()
-                        .border_color(hsla(tokens.shell_inner_border))
-                        .shadow_md()
-                        .p(px(4.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(2.0));
-                    for (choice_id, choice_label) in &reasoning.choices {
-                        let active = choice_id == current_id;
-                        let opt_id = reasoning.option_id.clone();
-                        let val = choice_id.clone();
-                        menu = menu.child(
-                            div()
-                                .id(SharedString::from(format!("composer-effort-{choice_id}")))
-                                .flex()
-                                .flex_row()
-                                .items_center()
-                                .gap(px(6.0))
-                                .h(px(26.0))
-                                .px(px(8.0))
-                                .rounded(px(5.0))
-                                .cursor_pointer()
-                                .text_size(px(12.0))
-                                .line_height(px(16.0))
-                                .text_color(if active { pop_fg } else { muted })
-                                .hover(move |s| s.bg(highlight_bg).text_color(pop_fg))
-                                .on_click(cx.listener(move |composer, _, _, cx| {
-                                    composer.pick_effort(opt_id.clone(), val.clone(), cx);
-                                }))
-                                .child(div().flex_1().child(choice_label.clone()))
-                                .when(active, |el| {
-                                    el.child(icons::icon("superhero/check.svg", 12.0, pop_fg))
-                                }),
-                        );
-                    }
-                    slot = slot.child(deferred(menu).with_priority(3));
-                }
-                slot.into_any_element()
-            });
+        // Footer mode block: conditional permissions chip + Plan / Build toggle.
+        let runtime_options = self.runtime_mode_options();
+        let show_footer_permissions = footer_permissions_visible(
+            &self.runtime_mode,
+            &self.default_runtime_mode,
+            self.is_draft,
+        );
+        let permissions_chip = show_footer_permissions.then(|| {
+            render_permissions_chip(
+                &self.runtime_mode,
+                self.footer_permissions_open,
+                &runtime_options,
+                self.permission_preview,
+                &tokens,
+                cx,
+            )
+        });
+        let mode_toggle =
+            render_interaction_mode_toggle(self.interaction_mode == "plan", &tokens, cx);
+
+        // Context window meter (only when the thread reports usage).
+        let supports_compact = self
+            .selected_provider_group()
+            .is_some_and(|group| group.supports_compact);
+        let meter_model_name = selected_model.as_ref().map(ModelOption::display_label);
+        let context_meter = self.context_window.clone().map(|usage| {
+            context_meter::render_context_meter(
+                &usage,
+                meter_model_name.as_deref(),
+                supports_compact && !self.is_draft,
+                self.context_meter_open,
+                &tokens,
+                cx,
+            )
+        });
+
+        // Primary action state machine (`ComposerPrimaryActions`).
+        let primary = resolve_primary_action(&PrimaryActionInput {
+            can_operate_thread: true,
+            is_running: self.working && !self.is_draft,
+            can_interrupt: self.working && !self.is_draft,
+            follow_up: self.follow_up,
+            can_steer: true,
+            alternate_modifier: self.alternate_modifier,
+            show_plan_follow_up: self.plan_follow_up.is_some() && !is_editing_queued,
+            prompt_has_text: has_non_empty_text,
+            is_send_busy: self.submitting,
+            send_disabled_reason: self
+                .send_disabled_reason
+                .clone()
+                .or(attachment_block_reason),
+            environment_unavailable: self.environment_unavailable || self.connection.is_none(),
+            preparing_worktree: self.preparing_worktree,
+            has_sendable_content: has_sendable,
+            can_resume: self.can_resume && !self.working,
+            editing_queued: is_editing_queued,
+        });
+        let action_btn =
+            actions::render_primary_action(&primary, self.implement_menu_open, &tokens, cx);
 
         let attach_btn = div()
             .id("chat-composer-attach")
@@ -1856,19 +2239,6 @@ impl Render for Composer {
                     .into_any_element()
             }),
         };
-
-        let action_btn = render_primary_action_button(
-            self.working,
-            has_sendable,
-            is_editing_queued,
-            &tokens,
-            cx.listener(|_composer, _, _, cx| {
-                cx.emit(ComposerEvent::Stop);
-            }),
-            cx.listener(|composer, _, window, cx| {
-                composer.submit(window, cx);
-            }),
-        );
 
         let mut card = div()
             .id("chat-composer-card")
@@ -2122,12 +2492,16 @@ impl Render for Composer {
                             .flex()
                             .flex_row()
                             .items_center()
-                            .gap(px(6.0))
+                            .justify_end()
+                            .gap(px(4.0))
+                            .min_w_0()
                             .child(model_trigger)
-                            .when_some(effort_picker, |el, picker| el.child(picker))
+                            .when_some(permissions_chip, |el, chip| el.child(chip))
+                            .child(mode_toggle)
+                            .when_some(context_meter, |el, meter| el.child(meter))
                             .when_some(dictation_badge, |el, badge| el.child(badge))
                             .child(mic_btn)
-                            .child(action_btn),
+                            .child(div().ml(px(4.0)).child(action_btn)),
                     ),
             );
 
@@ -2152,11 +2526,7 @@ impl Render for Composer {
                     cx.stop_propagation();
                     return;
                 }
-                if composer.model_picker_open
-                    || composer.effort_menu_open
-                    || composer.runtime_menu_open
-                    || composer.active_trigger.is_some()
-                {
+                if composer.any_overlay_open() {
                     composer.close_overlays(cx);
                     cx.stop_propagation();
                     return;
@@ -2167,19 +2537,30 @@ impl Render for Composer {
                 }
             }))
             .capture_action(cx.listener(|composer, _: &MoveUp, _window, cx| {
-                if composer.model_picker_open || composer.active_trigger.is_some() {
+                if composer.stash.menu_open {
+                    composer.stash.move_highlight(-1);
+                    cx.notify();
+                    cx.stop_propagation();
+                } else if composer.model_picker_open || composer.active_trigger.is_some() {
                     composer.move_overlay_selection(-1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|composer, _: &MoveDown, _window, cx| {
-                if composer.model_picker_open || composer.active_trigger.is_some() {
+                if composer.stash.menu_open {
+                    composer.stash.move_highlight(1);
+                    cx.notify();
+                    cx.stop_propagation();
+                } else if composer.model_picker_open || composer.active_trigger.is_some() {
                     composer.move_overlay_selection(1, cx);
                     cx.stop_propagation();
                 }
             }))
             .capture_action(cx.listener(|composer, _: &Enter, window, cx| {
-                if composer.model_picker_open {
+                if composer.stash.menu_open {
+                    composer.restore_highlighted_stash_entry(window, cx);
+                    cx.stop_propagation();
+                } else if composer.model_picker_open {
                     composer.confirm_highlighted_model(cx);
                     cx.stop_propagation();
                 } else if composer.active_trigger.is_some() {
@@ -2187,6 +2568,60 @@ impl Render for Composer {
                     cx.stop_propagation();
                 }
             }))
+            .on_modifiers_changed(cx.listener(
+                |composer, event: &gpui_kit::ModifiersChangedEvent, _, cx| {
+                    let held = event.modifiers.platform || event.modifiers.control;
+                    if composer.alternate_modifier != held {
+                        composer.alternate_modifier = held;
+                        cx.notify();
+                    }
+                },
+            ))
+            .capture_key_down(cx.listener(
+                |composer, event: &gpui_kit::KeyDownEvent, window, cx| {
+                    let keystroke = &event.keystroke;
+                    let m = keystroke.modifiers;
+                    // `⌘S` (`composer.stash`).
+                    if keystroke.key == "s" && m.platform && !m.shift && !m.alt && !m.control {
+                        composer.stash_or_toggle(window, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // `⌘Backspace` deletes the highlighted stash entry while the drawer is open.
+                    if composer.stash.menu_open && keystroke.key == "backspace" && m.platform {
+                        if let Some(id) = composer.stash.highlighted_id() {
+                            composer.delete_stash_entry(id, cx);
+                        }
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // `Shift+Tab` toggles Plan / Build when no menu needs the key.
+                    if keystroke.key == "tab"
+                        && m.shift
+                        && !m.platform
+                        && !m.control
+                        && !m.alt
+                        && !composer.any_overlay_open()
+                    {
+                        composer.toggle_interaction_mode(cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                    // `⌘⇧M` toggles the model picker (`modelPicker.toggle`).
+                    if keystroke.key == "m" && m.platform && m.shift && !m.alt && !m.control {
+                        composer.toggle_model_picker(window, cx);
+                        cx.stop_propagation();
+                    }
+                },
+            ))
+            .when_some(
+                if self.stash.menu_open {
+                    Some(render_stash_menu(&self.stash, &tokens, cx))
+                } else {
+                    render_stash_badge(&self.stash, &tokens, cx)
+                },
+                |el, surface| el.child(surface),
+            )
             .child(card)
             .child(self.render_context_strip(&tokens, cx));
 
@@ -2195,6 +2630,7 @@ impl Render for Composer {
                 &trigger,
                 &self.file_mentions,
                 self.file_mentions_loading,
+                self.selected_provider_skills(),
                 self.menu_highlighted_index,
                 &tokens,
                 cx,
@@ -2225,6 +2661,13 @@ impl Render for Composer {
                     query: &query,
                     highlighted_index: self.picker_highlighted_index,
                     tokens: &tokens,
+                    selected: selected_model.as_ref(),
+                    selected_options: self.selected_options.as_ref(),
+                    runtime_mode: &self.runtime_mode,
+                    runtime_options: &runtime_options,
+                    permissions_open: self.picker_permissions_open,
+                    permission_preview: self.permission_preview,
+                    follow_up: self.follow_up,
                 },
                 cx,
             );
@@ -2310,106 +2753,21 @@ where
     btn.into_any_element()
 }
 
-/// Round send / stop / save-edit primary button matching `ComposerPrimaryActions.tsx`.
-fn render_primary_action_button<FStop, FSend>(
-    working: bool,
-    has_text: bool,
-    is_editing_queued: bool,
-    tokens: &Tokens,
-    on_stop: FStop,
-    on_send: FSend,
-) -> AnyElement
-where
-    FStop: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
-    FSend: Fn(&gpui_kit::ClickEvent, &mut Window, &mut gpui_kit::App) + 'static,
-{
-    if working && !has_text && !is_editing_queued {
-        div()
-            .id("chat-composer-stop")
-            .a11y_button("composer.stop", "Stop generation")
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(PRIMARY_ACTION_SIZE_PX))
-            .rounded_full()
-            .cursor_pointer()
-            .bg(hsla_alpha(tokens.destructive, 0.90))
-            .hover(|s| s.bg(hsla(tokens.destructive)))
-            .on_click(on_stop)
-            .conn_tooltip("Interrupt", tokens)
-            .child(icons::icon(
-                icons::SQUARE,
-                12.0,
-                hsla(tokens.destructive_foreground),
-            ))
-            .into_any_element()
-    } else if has_text {
-        // Conn `ComposerPrimaryActions`:
-        // - Editing queued message: `CheckIcon` (`check.svg`), "Update queued message".
-        // - Running with sendable content: `CornerUpRight` (`forward.svg`), "Queue message".
-        // - Idle: `ArrowUp` (`arrow-up.svg`), "Submit message".
-        let (icon_path, icon_size, label, tooltip) = if is_editing_queued {
-            (
-                icons::CHECK,
-                16.0,
-                "Update queued message",
-                "Update queued message",
-            )
-        } else if working {
-            (icons::FORWARD, 16.0, "Queue message", "Queue message")
-        } else {
-            (icons::ARROW_UP, 14.0, "Send message", "Submit message")
-        };
-        div()
-            .id("chat-composer-send")
-            .a11y_button("composer.send", label)
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(PRIMARY_ACTION_SIZE_PX))
-            .rounded_full()
-            .cursor_pointer()
-            .bg(hsla(tokens.primary))
-            .hover(|s| s.bg(hsla_alpha(tokens.primary, 0.88)))
-            .on_click(on_send)
-            .conn_tooltip(tooltip, tokens)
-            .child(icons::icon(
-                icon_path,
-                icon_size,
-                hsla(tokens.primary_foreground),
-            ))
-            .into_any_element()
-    } else {
-        // Conn: `disabled:bg-foreground/12 disabled:text-muted-foreground`.
-        let (icon_path, icon_size, label) = if is_editing_queued {
-            (icons::CHECK, 16.0, "Update queued message (disabled)")
-        } else {
-            (icons::ARROW_UP, 14.0, "Send message (disabled)")
-        };
-        div()
-            .id("chat-composer-send-disabled")
-            .a11y_button("composer.send", label)
-            .flex()
-            .items_center()
-            .justify_center()
-            .size(px(PRIMARY_ACTION_SIZE_PX))
-            .rounded_full()
-            .bg(hsla_alpha(tokens.foreground, 0.12))
-            .child(icons::icon(
-                icon_path,
-                icon_size,
-                hsla(tokens.muted_foreground),
-            ))
-            .into_any_element()
-    }
-}
-
 fn chat_attachment_id(att: &ChatAttachment) -> &str {
     match att {
         ChatAttachment::Image(a) => &a.id,
         ChatAttachment::File(a) => &a.id,
         ChatAttachment::Unknown(a) => &a.id,
     }
+}
+
+fn chat_attachment_size(att: &ChatAttachment) -> usize {
+    let bytes = match att {
+        ChatAttachment::Image(a) => a.size_bytes,
+        ChatAttachment::File(a) => a.size_bytes,
+        ChatAttachment::Unknown(a) => a.size_bytes,
+    };
+    usize::try_from(bytes).unwrap_or(0)
 }
 
 fn chat_attachment_name(att: &ChatAttachment) -> &str {

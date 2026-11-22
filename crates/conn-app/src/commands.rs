@@ -18,17 +18,18 @@ fn new_id(kind: &str) -> String {
 }
 
 /// `message.dispatch`: send `text` and `attachments` to `thread_id`. While a turn runs, the
-/// message queues after it (Conn's default when you press Enter on a working thread).
+/// message steers it when `steer_target_run_id` is set, else queues after it.
 pub(crate) fn send_message(
     thread_id: &str,
     text: &str,
     attachments: &[ChatAttachment],
     working: bool,
+    steer_target_run_id: Option<&str>,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
-    let mode = if working {
-        "queue_after_active"
-    } else {
-        "start_immediately"
+    let dispatch_mode = match steer_target_run_id {
+        Some(target) if working => json!({ "type": "steer_active", "targetRunId": target }),
+        _ if working => json!({ "type": "queue_after_active" }),
+        _ => json!({ "type": "start_immediately" }),
     };
     let attachments_json: Vec<serde_json::Value> =
         attachments.iter().map(conn_contract::to_json).collect();
@@ -41,7 +42,7 @@ pub(crate) fn send_message(
         "messageId": new_id("msg"),
         "text": text,
         "attachments": attachments_json,
-        "dispatchMode": { "type": mode },
+        "dispatchMode": dispatch_mode,
     }))
 }
 
@@ -436,12 +437,23 @@ mod tests {
             source: None,
         });
         assert!(
-            send_message("t1", "hi", &[], false).is_ok(),
+            send_message("t1", "hi", &[], false, None).is_ok(),
             "message.dispatch decodes"
         );
         assert!(
-            send_message("t1", "hi", std::slice::from_ref(&sample_attachment), true).is_ok(),
+            send_message(
+                "t1",
+                "hi",
+                std::slice::from_ref(&sample_attachment),
+                true,
+                None
+            )
+            .is_ok(),
             "queued dispatch with attachment decodes"
+        );
+        assert!(
+            send_message("t1", "hi", &[], true, Some("run-active")).is_ok(),
+            "steer_active dispatch decodes"
         );
         assert!(stop_thread("t1").is_ok(), "thread.stop decodes");
         assert!(

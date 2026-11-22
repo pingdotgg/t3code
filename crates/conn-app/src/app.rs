@@ -179,10 +179,32 @@ impl ConnApp {
             &chat,
             window,
             |app, _chat, event: &crate::chat::ChatEvent, window, cx| match event {
-                crate::chat::ChatEvent::Send { text, attachments } => {
+                crate::chat::ChatEvent::Send {
+                    text,
+                    attachments,
+                    dispatch,
+                } => {
                     app.send_prompt_with_attachments(
                         text.clone(),
                         attachments.clone(),
+                        *dispatch,
+                        Some(window),
+                        cx,
+                    );
+                }
+                crate::chat::ChatEvent::Resume => {
+                    // `useComposerResume`: continue the interrupted run.
+                    app.send_prompt("Continue where you left off.".to_owned(), cx);
+                }
+                crate::chat::ChatEvent::ImplementPlanInNewThread { text } => {
+                    app.start_new_thread(None, Some(window), cx);
+                    if let Some(draft) = app.draft.as_mut() {
+                        draft.interaction_mode = "default".to_owned();
+                    }
+                    app.send_prompt_with_attachments(
+                        text.clone(),
+                        Vec::new(),
+                        crate::chat::SendDispatch::Auto,
                         Some(window),
                         cx,
                     );
@@ -1451,7 +1473,13 @@ impl ConnApp {
 
     /// Sends `text` (without attachments) to the selected thread (or launches the active draft).
     pub(crate) fn send_prompt(&mut self, text: String, cx: &mut Context<'_, Self>) {
-        self.send_prompt_with_attachments(text, Vec::new(), None, cx);
+        self.send_prompt_with_attachments(
+            text,
+            Vec::new(),
+            crate::chat::SendDispatch::Auto,
+            None,
+            cx,
+        );
     }
 
     /// Sends `text` and `attachments` to the selected thread over `orchestration.dispatchCommand`,
@@ -1460,6 +1488,7 @@ impl ConnApp {
         &mut self,
         text: String,
         attachments: Vec<conn_contract::ChatAttachment>,
+        dispatch: crate::chat::SendDispatch,
         window: Option<&mut Window>,
         cx: &mut Context<'_, Self>,
     ) {
@@ -1473,9 +1502,21 @@ impl ConnApp {
         ) else {
             return;
         };
-        let working = self.threads.get(&thread_id).is_some_and(|t| t.working);
-        let command = match crate::commands::send_message(&thread_id, &text, &attachments, working)
-        {
+        let thread = self.threads.get(&thread_id);
+        let working = thread.is_some_and(|t| t.working);
+        // Steer the running turn when asked (`steer_active`); otherwise queue after it.
+        let steer_target = if working && dispatch == crate::chat::SendDispatch::Steer {
+            thread.and_then(|t| t.active_run_id().map(str::to_owned))
+        } else {
+            None
+        };
+        let command = match crate::commands::send_message(
+            &thread_id,
+            &text,
+            &attachments,
+            working,
+            steer_target.as_deref(),
+        ) {
             Ok(command) => command,
             Err(e) => {
                 eprintln!("send: could not build message.dispatch: {e}");

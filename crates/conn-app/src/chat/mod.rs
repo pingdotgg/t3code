@@ -31,6 +31,7 @@ use gpui_kit::{
 
 use self::cache::{CachedRow, RowCache, VirtualItem};
 use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
+pub(crate) use self::composer::SendDispatch;
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::{SHIMMER_STEP_INTERVAL, TurningArc, shimmer_text};
 use crate::a11y::ConnA11yExt as _;
@@ -89,6 +90,14 @@ pub(crate) enum ChatEvent {
     Send {
         text: String,
         attachments: Vec<conn_contract::ChatAttachment>,
+        /// Steer or queue while a turn runs.
+        dispatch: SendDispatch,
+    },
+    /// Continue an interrupted thread (`Resume thread`).
+    Resume,
+    /// Start a new thread that implements the proposed plan.
+    ImplementPlanInNewThread {
+        text: String,
     },
     Stop,
     /// Answer an approval row: `decision` is `accept` or `decline`.
@@ -261,13 +270,22 @@ impl ChatView {
         let input_sub = cx.subscribe(
             &composer,
             |this, _, event: &ComposerEvent, cx| match event {
-                ComposerEvent::Send { text, attachments } => {
+                ComposerEvent::Send {
+                    text,
+                    attachments,
+                    dispatch,
+                } => {
                     this.scroll_to_latest(cx);
                     cx.emit(ChatEvent::Send {
                         text: text.clone(),
                         attachments: attachments.clone(),
+                        dispatch: *dispatch,
                     });
                     cx.notify();
+                }
+                ComposerEvent::Resume => cx.emit(ChatEvent::Resume),
+                ComposerEvent::ImplementPlanInNewThread { text } => {
+                    cx.emit(ChatEvent::ImplementPlanInNewThread { text: text.clone() });
                 }
                 ComposerEvent::EditQueuedMessage {
                     run_id,
