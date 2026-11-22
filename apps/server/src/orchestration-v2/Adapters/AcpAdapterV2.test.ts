@@ -946,11 +946,12 @@ function assertReinjectedInstructions(
   assert.include(blocks[1]?.text ?? "", "<runtime_info>");
 }
 
-// With `hydration`, an outputless task_completed meets a TaskOutput result in `order`.
+// task_completed carries output unless `outputless` or `hydration`, which adds TaskOutput results in `order`.
 const runGrokMonitorEndingMidTurn = Effect.fnUntraced(function* (input: {
   readonly hydration?: "completed" | "failed";
   readonly order?: "hydration-last" | "hydration-first";
   readonly hydrations?: number;
+  readonly outputless?: boolean;
 }) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1121,7 +1122,7 @@ const runGrokMonitorEndingMidTurn = Effect.fnUntraced(function* (input: {
       task_id: taskId,
       command,
       display_command: "[monitor] Watch job1 done file",
-      ...(input.hydration === undefined ? { output: "job1 finished\n" } : {}),
+      ...(input.hydration === undefined && !input.outputless ? { output: "job1 finished\n" } : {}),
     },
   });
   const hydration = input.hydration;
@@ -11753,20 +11754,22 @@ describe("AcpAdapterV2", () => {
       }).pipe(Effect.provide(layerTest)),
   );
 
-  it.effect("finalizes the root turn when a Grok monitor completes before the prompt settles", () =>
-    Effect.gen(function* () {
-      const { monitorStatuses, terminalStatus } = yield* runGrokMonitorEndingMidTurn({});
-      assert.equal(
-        monitorStatuses.at(-1),
-        "completed",
-        "a monitor whose task_completed arrived before the prompt settled must not stay running",
-      );
-      assert.deepEqual(
-        terminalStatus,
-        Option.some("completed"),
-        "the root turn must finalize after end_turn once its only monitor has completed",
-      );
-    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  it.effect.each([{ outputless: false }, { outputless: true }])(
+    "finalizes the root turn when a Grok monitor completes before the prompt settles (outputless: $outputless)",
+    (input) =>
+      Effect.gen(function* () {
+        const { monitorStatuses, terminalStatus } = yield* runGrokMonitorEndingMidTurn(input);
+        assert.equal(
+          monitorStatuses.at(-1),
+          "completed",
+          "a monitor whose task_completed arrived before the prompt settled must not stay running",
+        );
+        assert.deepEqual(
+          terminalStatus,
+          Option.some("completed"),
+          "the root turn must finalize after end_turn once its only monitor has completed",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
   it.effect.each([
