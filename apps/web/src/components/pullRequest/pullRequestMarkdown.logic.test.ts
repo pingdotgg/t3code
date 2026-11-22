@@ -46,6 +46,27 @@ describe("pullRequestMarkdownExtensions", () => {
       ["#13", "https://example.com", undefined],
     ]);
   });
+  it("renders GitHub emoji shortcodes in prose and leaves code literal", () => {
+    const extensions = pullRequestMarkdownExtensions({
+      provider: "github",
+      url: "https://github.com/team/repo/pull/8",
+    });
+    const tree = wordsHast("Ship it :tada: :+1: `:tada:`", {
+      math: false,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions,
+    });
+    const text = (node: Root | Element | Root["children"][number]): string => {
+      if (node.type === "text") return node.value;
+      if (node.type === "element" && node.tagName === "code") {
+        return `\`${node.children.map(text).join("")}\``;
+      }
+      return "children" in node ? node.children.map(text).join("") : "";
+    };
+    expect(text(tree)).toBe("Ship it 🎉 👍 `:tada:`");
+  });
 });
 
 describe("pullRequestCommentPreview", () => {
@@ -71,7 +92,9 @@ describe("pullRequestCommentPreview", () => {
       "Review :codex-file-citation{purpose='output'} safely.",
     ],
     [":codex-followup[Prepare **print** version]", ":codex-followup[Prepare **print** version]"],
-  ])("extracts readable text from %s", (body, expected) => {
-    expect(pullRequestCommentPreview(body)).toBe(expected);
+    ["Approved :thumbsup: `:warning:`", "Approved 👍 :warning:"],
+    ["Approved :thumbsup:", "Approved :thumbsup:", "gitlab"],
+  ])("extracts readable text from %s", (body, expected, provider = "github") => {
+    expect(pullRequestCommentPreview(body, provider)).toBe(expected);
   });
 });

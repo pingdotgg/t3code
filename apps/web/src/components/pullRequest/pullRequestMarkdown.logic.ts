@@ -40,6 +40,7 @@ export function pullRequestMarkdownExtensions(
         repositoryUrl,
         autolinks: changeRequestReferenceAutolinker(changeRequest),
       },
+      githubEmoji: changeRequest.provider === "github",
     };
     markdownExtensions.set(key, extensions);
   }
@@ -52,6 +53,10 @@ const PREVIEW_MARKDOWN = {
   escapeHtml: false,
   insights: false,
   extensions: NO_EXTENSIONS,
+};
+const GITHUB_PREVIEW_MARKDOWN = {
+  ...PREVIEW_MARKDOWN,
+  extensions: { githubEmoji: true },
 };
 
 const PREVIEW_BLOCK_TAGS = new Set([
@@ -91,6 +96,7 @@ function commentPreviewText(node: Nodes): string {
   return node.type === "element" && PREVIEW_BLOCK_TAGS.has(node.tagName) ? ` ${text} ` : text;
 }
 
-export function pullRequestCommentPreview(body: string): string {
-  return commentPreviewText(wordsHast(body, PREVIEW_MARKDOWN)).replace(/\s+/gu, " ").trim();
+export function pullRequestCommentPreview(body: string, provider: string): string {
+  const options = provider === "github" ? GITHUB_PREVIEW_MARKDOWN : PREVIEW_MARKDOWN;
+  return commentPreviewText(wordsHast(body, options)).replace(/\s+/gu, " ").trim();
 }

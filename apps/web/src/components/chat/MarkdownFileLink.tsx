@@ -398,7 +398,7 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
   return (
     <Tooltip>
       <TooltipTrigger render={chip} />
-      <TooltipPopup side="top" variant="code">
+      <TooltipPopup side="top" variant="code" className="pointer-events-auto">
         {tooltipContent}
       </TooltipPopup>
     </Tooltip>

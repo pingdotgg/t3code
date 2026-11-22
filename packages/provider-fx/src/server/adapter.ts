@@ -21,6 +21,7 @@ import {
   FX_DRIVER_KIND,
   FX_SESSION_META,
   fxPermissionDisposition,
+  type FxModelChoice,
   FX_MODE_CONFIG_ID,
   fxToolCallWasCancelled,
   fxSessionModeForPolicy,
@@ -178,8 +179,8 @@ export interface FxAdapterV2Options {
   readonly settings: FxSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly selfInvocation: SelfInvocation;
-  /** fx's id for "Default", the model the provider snapshot read from `fx status`. */
-  readonly defaultModel?: Effect.Effect<string | undefined>;
+  /** The backend and model "Default" runs in a folder, which `fx status` reports there. */
+  readonly defaultChoice?: (cwd: string) => Effect.Effect<FxModelChoice | undefined>;
   readonly nativeLogging?: Parameters<typeof makeAcpAdapterV2>[0]["nativeLogging"];
   readonly testHooks?: Parameters<typeof makeAcpAdapterV2>[0]["testHooks"];
   /** Replaces the `fx acp` launch (replay tests). fx's session setup still applies. */
@@ -202,6 +203,8 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
         fxSettings: options.settings,
         environment: { ...options.environment, ...processEnvironment },
       }));
+  // A runtime serves one folder; "Default" resolves there.
+  const runtimeCwds = new WeakMap<AcpSessionRuntime.AcpSessionRuntime["Service"], string>();
   return {
     driver: FX_DRIVER_KIND,
     runtimeHarness: "fx",
@@ -209,11 +212,16 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
     makeRuntime: (input) =>
       makeRuntime({ ...input, sessionMeta: () => FX_SESSION_META }).pipe(
         Effect.map(withFxSessionMode),
+        Effect.tap((runtime) => Effect.sync(() => runtimeCwds.set(runtime, input.cwd))),
       ),
-    applyModelSelection: ({ runtime, modelSelection }) =>
-      applyFxModelSelection(runtime, modelSelection, options.defaultModel).pipe(
-        Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)),
-      ),
+    applyModelSelection: ({ runtime, modelSelection }) => {
+      const cwd = runtimeCwds.get(runtime);
+      return applyFxModelSelection(
+        runtime,
+        modelSelection,
+        cwd === undefined ? undefined : options.defaultChoice?.(cwd),
+      ).pipe(Effect.tap(() => applyFxEffortDefault(runtime, modelSelection)));
+    },
     ownedModelOptionIds: [FX_MODE_CONFIG_ID],
     lockSessionModeToPolicy: true,
     sessionModeForPolicy: fxSessionModeForPolicy,
@@ -246,9 +254,8 @@ export type FxAdapterV2DriverEnv =
   | ProviderEventLoggers.ProviderEventLoggers
   | ProviderHost.ProviderHost;
 
-/** `defaultModel` reads fx's id for "Default" from the provider snapshot. */
 export const makeFxAdapterV2Driver = (
-  defaultModel: Effect.Effect<string | undefined>,
+  defaultChoice: (cwd: string) => Effect.Effect<FxModelChoice | undefined>,
 ): ProviderAdapterDriver<FxSettings, FxAdapterV2DriverEnv> => ({
   driverKind: FX_DRIVER_KIND,
   configSchema: FxSettings,
@@ -264,7 +271,7 @@ export const makeFxAdapterV2Driver = (
         settings: { ...input.config, enabled: input.enabled },
         environment: yield* mergeProviderInstanceEnvironment(input.environment, hostEnvironment),
         selfInvocation,
-        defaultModel,
+        defaultChoice,
         nativeLogging: (threadId) =>
           makeNativeLogger({
             nativeEventLogger: providerEventLoggers.native,

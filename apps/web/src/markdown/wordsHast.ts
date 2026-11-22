@@ -8,6 +8,7 @@ import { find, html as htmlSchema, svg as svgSchema } from "property-information
 import { resolveCodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { resolveCodexFileCitationLink } from "@t3tools/shared/codexFileCitations";
 import type { ReferenceAutolink } from "@t3tools/client-runtime/source-control-clients";
+import { expandGithubEmojiAliases } from "@t3tools/client-runtime/pull-request-markdown";
 import { resolveChangeRequestMediaUrl } from "@t3tools/client-runtime/pull-request-references";
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
@@ -39,6 +40,8 @@ export interface MarkdownExtensions {
     readonly repositoryUrl: string;
     readonly autolinks: ((text: string) => ReadonlyArray<ReferenceAutolink>) | null;
   };
+  /** Expand GitHub `:alias:` emoji shortcodes in prose outside code. */
+  readonly githubEmoji?: boolean;
 }
 
 export interface WordsHastOptions {
@@ -599,7 +602,11 @@ function transform(node: Root | Element, walk: Walk, inLink: boolean, inCode: bo
   for (let index = 0; index < children.length; index++) {
     const child = children[index]!;
     if (child.type === "text") {
-      if (inLink || inCode) continue;
+      if (inCode) continue;
+      if (walk.options.extensions.githubEmoji && child.value.includes(":")) {
+        child.value = expandGithubEmojiAliases(child.value);
+      }
+      if (inLink) continue;
       const parts = linkText(child.value, walk);
       if (!parts) continue;
       children.splice(index, 1, ...parts);

@@ -3,7 +3,7 @@ import type { Root } from "hast";
 import { defaultSchema, sanitize, type Schema } from "hast-util-sanitize";
 
 import { CODEX_ARTIFACT_TEMPLATE_HAST_PROPERTIES } from "./codexArtifactTemplates.ts";
-import { isWindowsDrivePathHref } from "./markdownLinks.ts";
+import { isWindowsDrivePathHref, normalizeMarkdownLinkDestination } from "./markdownLinks.ts";
 import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 
 type MarkdownImageHastNode = {
@@ -178,3 +178,34 @@ export const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 /** Sanitizes one tree with the chat's schema, as the last rehype plugin does. */
 export const sanitizeChatHast = (tree: Root): Root =>
   sanitize(tree, CHAT_MARKDOWN_SANITIZE_SCHEMA) as Root;
+
+export type ChatMarkdownImageProperties = {
+  readonly src?: unknown;
+  readonly dataLocalSrc?: unknown;
+  readonly dataDarkSrc?: unknown;
+  readonly dataLightSrc?: unknown;
+};
+
+/** Keep the authored path for file links and normalize Windows separators for classification. */
+export function chatMarkdownImageSource(
+  properties?: ChatMarkdownImageProperties,
+  theme?: "dark" | "light",
+) {
+  const themeSrc =
+    theme === undefined
+      ? undefined
+      : properties?.[theme === "dark" ? "dataDarkSrc" : "dataLightSrc"];
+  const localSrc = typeof themeSrc === "string" ? undefined : properties?.dataLocalSrc;
+  const source =
+    typeof themeSrc === "string"
+      ? themeSrc
+      : typeof localSrc === "string"
+        ? localSrc
+        : properties?.src;
+  if (typeof source !== "string") return null;
+  const authoredSrc = normalizeMarkdownLinkDestination(source);
+  return {
+    authoredSrc,
+    classifiedSrc: typeof localSrc === "string" ? authoredSrc.replaceAll("\\", "/") : authoredSrc,
+  };
+}

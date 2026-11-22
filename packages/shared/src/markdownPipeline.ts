@@ -29,9 +29,13 @@ import { absoluteFilePathMatches, normalizeMarkdownLinkDestination } from "./mar
 import { isWindowsAbsolutePath } from "./path.ts";
 import {
   CHAT_MARKDOWN_SANITIZE_SCHEMA,
+  chatMarkdownImageSource,
   rehypeNormalizeLocalEditorLinks,
   rehypePreserveImageSourceMeta,
+  type ChatMarkdownImageProperties,
 } from "./markdownHast.ts";
+
+export { chatMarkdownImageSource, type ChatMarkdownImageProperties };
 
 export { remarkEnableOrderedListNumbers } from "./markdownOrderedListNumbers.ts";
 
@@ -682,33 +686,27 @@ const imageSourceProcessor = unified()
 interface ImageSourceNode {
   readonly type: string;
   readonly tagName?: string;
-  readonly properties?: {
-    readonly src?: unknown;
-    readonly dataLocalSrc?: unknown;
-    readonly dataDarkSrc?: unknown;
-    readonly dataLightSrc?: unknown;
-  };
+  readonly properties?: ChatMarkdownImageProperties;
   readonly children?: ReadonlyArray<ImageSourceNode>;
 }
 
 /**
- * The sources of the images chat markdown shows, read as ChatMarkdown's `img` renderer reads
- * them. Code, comments, and plain links show no image, so they add none.
+ * Collect the fallback and every theme variant so images are available to all viewers.
  */
 export function chatMarkdownImageSources(markdown: string): Array<string> {
   const sources: Array<string> = [];
   const visit = (node: ImageSourceNode) => {
     if (node.type === "element" && node.tagName === "img") {
-      const { src, dataLocalSrc, dataDarkSrc, dataLightSrc } = node.properties ?? {};
-      // The sanitizer drops a Windows drive path from `src`; the renderer reads it from here.
-      if (typeof dataLocalSrc === "string") {
-        sources.push(normalizeMarkdownLinkDestination(dataLocalSrc).replaceAll("\\", "/"));
-      } else if (typeof src === "string") {
-        sources.push(normalizeMarkdownLinkDestination(src));
-      }
-      // A `<picture>` shows one of these instead, by the viewer's theme.
-      for (const variant of [dataDarkSrc, dataLightSrc]) {
-        if (typeof variant === "string") sources.push(normalizeMarkdownLinkDestination(variant));
+      const properties = node.properties;
+      const fallback = chatMarkdownImageSource(properties);
+      if (fallback) sources.push(fallback.classifiedSrc);
+      for (const [theme, variant] of [
+        ["dark", properties?.dataDarkSrc],
+        ["light", properties?.dataLightSrc],
+      ] as const) {
+        if (typeof variant !== "string") continue;
+        const source = chatMarkdownImageSource(properties, theme);
+        if (source) sources.push(source.classifiedSrc);
       }
     }
     node.children?.forEach(visit);

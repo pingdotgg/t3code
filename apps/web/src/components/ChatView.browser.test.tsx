@@ -85,6 +85,9 @@ function acceptAttachmentUploads(): Disposable {
   };
 }
 
+// One input event, where typing a key at a time takes seconds on a loaded CI runner.
+const insertText = (text: string) => cdp().send("Input.insertText", { text });
+
 /** Holds every call to `method` until `release`, then ends it with `end`, until disposed. */
 function holdRpc<Input>(method: string, end: Effect.Effect<never, Error>) {
   let release = () => {};
@@ -136,15 +139,30 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     displayKey: issueRef.key,
     title: "Add keyboard support",
   };
-  using _environment = installFakeEnvironment([first, { ...linked, issues: [issue] }]);
+  const completed = {
+    ...issue,
+    key: "WEB-124",
+    displayKey: "WEB-124",
+    url: "https://linear.app/example/issue/WEB-124/keep-tabs-visible",
+    title: "Keep tabs visible",
+  };
+  const grouped = threadWithHistory("issue-grouped", 1);
+  using _environment = installFakeEnvironment([
+    first,
+    { ...linked, issues: [issue] },
+    { ...grouped, issues: [completed, issue] },
+  ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
   using _detail = answerRpc(WS_METHODS.issuesDetail, (input: IssueRef) => {
-    expect(input).toEqual(issueRef);
+    const isCompleted = input.key === completed.key;
+    expect(input).toEqual({ ...issueRef, key: isCompleted ? completed.key : issue.key });
     return Effect.succeed({
-      ...issue,
-      title: liveTitle,
+      ...(isCompleted ? completed : issue),
+      title: isCompleted ? completed.title : liveTitle,
       author: { login: "sam", name: null, avatarUrl: null },
-      state: { category: "open", name: "Open" },
+      state: isCompleted
+        ? { category: "closed", closeReason: "completed", name: "Done" }
+        : { category: "open", name: "Open" },
       createdAt: issue.linkedAt,
       updatedAt: issue.linkedAt,
       closedAt: null,
@@ -199,6 +217,10 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   });
   await expect.element(badge).toBeVisible();
   expect(badge.element().querySelector("svg")).toHaveClass(/text-emerald-600/);
+  const groupedBadge = page.getByRole("button", { name: "2 linked issues" });
+  await vi.waitFor(() =>
+    expect(groupedBadge.element().querySelector("svg")).toHaveClass(/text-emerald-600/),
+  );
   await userEvent.hover(badge);
   const issueName = `Issue ${issue.displayKey}: ${liveTitle}`;
   const previewLink = page.getByRole("link", { name: issueName });
@@ -752,8 +774,8 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
-  useRightPanelStore.getState().openSideChat(parentRef, otherSide.id);
-  useRightPanelStore.getState().openSideChat(parentRef, side.id);
+  useRightPanelStore.getState().openThread(parentRef, otherSide.id);
+  useRightPanelStore.getState().openThread(parentRef, side.id);
   const router = getRouter(
     createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
   );
@@ -781,6 +803,42 @@ it("selecting a side-chat tab focuses that side chat's composer", async () => {
   await userEvent.click(screen.getByRole("button", { name: side.title, exact: true }));
   await expect.element(sideEditor).toHaveFocus();
   await expect.element(mainEditor).toHaveTextContent("main draft");
+});
+
+it("a subagent tab shows its read-only bar under no header of its own", async () => {
+  const parent = threadWithHistory("subagent-parent", 1);
+  const subagent = {
+    ...threadWithHistory("subagent-child", 1),
+    providerSubagentOf: parent.id,
+    olderSettled: true as const,
+  };
+  await page.viewport(1400, 900);
+  using _environment = installFakeEnvironment([parent, subagent]);
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
+  });
+  const parentRef = scopeThreadRef(ENVIRONMENT_ID, parent.id);
+  useRightPanelStore.getState().openThread(parentRef, subagent.id);
+  const router = getRouter(
+    createMemoryHistory({ initialEntries: [`/${ENVIRONMENT_ID}/${parent.id}`] }),
+  );
+  await router.load();
+  await using screen = await render(<AppRoot router={router} />, {
+    // AppRoot brings its own router.
+    router: false,
+  });
+  const pane = screen.getByTestId("side-thread-pane");
+  // No header of its own: the tab names it, and only a side chat has actions to put in one.
+  await expect.element(pane.getByRole("heading", { name: subagent.title })).not.toBeInTheDocument();
+  await expect.element(pane.getByText("Runs on its own")).toBeVisible();
+  await expect.element(pane.getByRole("button", { name: "Add to chat" })).not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${subagent.title}`, exact: true }))
+    .not.toBeInTheDocument();
+  await expect
+    .element(screen.getByRole("textbox", { name: `Message ${parent.title}`, exact: true }))
+    .toBeVisible();
 });
 
 it("/side sends the draft's attachments and context, and keeps them when it does not start", async () => {
@@ -818,38 +876,52 @@ it("/side sends the draft's attachments and context, and keeps them when it does
         new ClipboardEvent("paste", { clipboardData, bubbles: true, cancelable: true }),
       );
     await expect.element(image).toBeVisible();
-    await userEvent.keyboard("/side what is this?{Enter}");
+    await insertText("/side what is this?");
+    await userEvent.keyboard("{Enter}");
     await expect.element(image).not.toBeInTheDocument();
   };
-  const sentMessage = (fields: Record<string, unknown>) =>
-    vi.waitFor(() =>
+  // The tab opens once the start finished; until then `/side` refuses another side chat.
+  const sideChatTabs = page.getByRole("button", { name: "Side chat", exact: true });
+  const sentMessage = async (fields: Record<string, unknown>, openTabs: number) => {
+    await vi.waitFor(() =>
       expect(dispatchedCommands()).toContainEqual(
         expect.objectContaining({ type: "message.dispatch", ...fields }),
       ),
     );
+    await expect.element(sideChatTabs).toHaveLength(openTabs);
+  };
 
   await sendImageToSideChat();
-  await sentMessage({
-    text: "what is this?",
-    attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
-    context: {
-      version: 1,
-      records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+  await sentMessage(
+    {
+      text: "what is this?",
+      attachments: [expect.objectContaining({ type: "image", id: "upload-1" })],
+      context: {
+        version: 1,
+        records: [expect.objectContaining({ kind: "image", attachmentId: "upload-1" })],
+      },
     },
-  });
+    1,
+  );
 
   // A reply alone is enough to send.
   await page.getByRole("button", { name: "Reply to this response" }).first().click();
   await userEvent.click(editor);
-  await userEvent.keyboard("/side {Enter}");
-  await sentMessage({
-    context: expect.objectContaining({ records: [expect.objectContaining({ kind: "response" })] }),
-  });
+  await insertText("/side ");
+  await userEvent.keyboard("{Enter}");
+  await sentMessage(
+    {
+      context: expect.objectContaining({
+        records: [expect.objectContaining({ kind: "response" })],
+      }),
+    },
+    2,
+  );
 
   // A failed start puts the message back after the draft typed meanwhile.
   holdFork = true;
   await sendImageToSideChat();
-  await userEvent.keyboard("next draft");
+  await insertText("next draft");
   await vi.waitFor(() =>
     expect(dispatchedCommands().filter((command) => command.type === "thread.fork")).toHaveLength(
       3,
