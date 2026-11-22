@@ -1828,8 +1828,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (attachmentChanges.filesToRestore.length > 0) {
       addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
     }
-    for (const fileId of attachmentChanges.queuedFileIdsToRemove) {
-      onRemoveEditingQueuedAttachment(fileId);
+    for (const attachmentId of attachmentChanges.queuedAttachmentIdsToRemove) {
+      onRemoveEditingQueuedAttachment(attachmentId);
     }
     for (const attachment of attachmentChanges.queuedAttachmentsToRestore) {
       onRestoreEditingQueuedAttachment?.(attachment);

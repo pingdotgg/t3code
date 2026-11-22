@@ -4,6 +4,8 @@ import type {
   ChatFileAttachment,
   ChatImageAttachment,
   ComposerContextId,
+  ComposerContextRecord,
+  EnvironmentId,
   OrchestrationMessageContext,
   ResponseContextRecord,
 } from "@t3tools/contracts";
@@ -18,6 +20,10 @@ import {
 import { msg } from "gt-react";
 import { m } from "../../i18n/messages";
 import { releaseDraftAttachments } from "../../lib/attachmentUploadQueue";
+import {
+  attachmentContextRecord,
+  isSameComposerContextPayload,
+} from "../../lib/composerContextRecords";
 import { removeInlineContextReference } from "../../lib/composerContextReferences";
 
 export function isQueuedImageAttachment(
@@ -43,6 +49,38 @@ export function attachmentContextIdsForRecord(
       ? [record.contextId]
       : [],
   );
+}
+
+export function matchRestorableQueuedAttachment(input: {
+  readonly environmentId: EnvironmentId;
+  readonly sourceEnvironmentId: EnvironmentId | null;
+  readonly record: Extract<ComposerContextRecord, { kind: "image" | "file" }>;
+  readonly removedQueuedAttachments: ReadonlyArray<{
+    readonly attachment: ChatAttachment;
+    readonly contextIds: ReadonlyArray<ComposerContextId>;
+  }>;
+}): { readonly attachment: ChatAttachment; readonly contextId: ComposerContextId } | null {
+  if (input.sourceEnvironmentId !== input.environmentId) return null;
+  const match = input.removedQueuedAttachments.find(
+    ({ attachment, contextIds }) =>
+      (isQueuedImageAttachment(attachment) || isQueuedFileAttachment(attachment)) &&
+      attachment.type === input.record.kind &&
+      contextIds.some((contextId) =>
+        isSameComposerContextPayload(
+          attachmentContextRecord({
+            attachment,
+            attachmentId: attachment.id,
+            contextId,
+          }),
+          input.record,
+        ),
+      ),
+  );
+  if (!match || match.contextIds.length === 0) return null;
+  const contextId =
+    match.contextIds.find((candidate) => candidate === input.record.contextId) ??
+    match.contextIds[0]!;
+  return { attachment: match.attachment, contextId };
 }
 
 /** Staged attachments upload as soon as they are added, so a dropped edit must release them. */

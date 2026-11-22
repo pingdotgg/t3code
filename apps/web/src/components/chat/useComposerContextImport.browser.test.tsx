@@ -291,7 +291,9 @@ it("restores a cut queued file chip in the same edit without downloading or remi
     sizeBytes: 12,
   };
   const onRestoreQueuedAttachment = vi.fn();
+  const beginWorkSpy = vi.spyOn(pendingDraftWork, "begin");
   const fetchSpy = vi.fn();
+  using _begin = { [Symbol.dispose]: () => beginWorkSpy.mockRestore() };
   using _fetch = stubGlobal("fetch", fetchSpy);
   let importer!: Importer;
   await using _screen = await render(
@@ -333,12 +335,15 @@ it("restores a cut queued file chip in the same edit without downloading or remi
   } satisfies ComposerContextRecord;
 
   let remapped!: ReadonlyMap<string, string>;
-  await act(() => {
+  await act(async () => {
     remapped = importer.importContextRecords([record], environmentId);
+    await Promise.resolve();
+    await Promise.resolve();
   });
 
   expect(remapped.get(contextId)).toBe(contextId);
   expect(onRestoreQueuedAttachment).toHaveBeenCalledExactlyOnceWith(removedAttachment);
+  expect(beginWorkSpy).not.toHaveBeenCalled();
   expect(fetchSpy).not.toHaveBeenCalled();
   expect(pendingDraftWork.has(target)).toBe(false);
   expect(store.getComposerDraft(target)?.files ?? []).toEqual([]);

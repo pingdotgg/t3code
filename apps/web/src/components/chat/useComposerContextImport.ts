@@ -27,7 +27,6 @@ import {
 import { type PendingUserInput } from "../../session-logic";
 import {
   asKnownContextRecord,
-  attachmentContextRecord,
   composerContextImportLookupIds,
   isSameComposerContextPayload,
   previewAnnotationContextId,
@@ -62,7 +61,7 @@ import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { countPreparingComposerImages } from "./preparingComposerImages";
 import type { QueuedAttachmentContextBinding } from "./composerContextUndo";
-import { isQueuedFileAttachment, isQueuedImageAttachment } from "./queuedMessageEdit";
+import { matchRestorableQueuedAttachment } from "./queuedMessageEdit";
 
 const isUnreachable = Schema.is(
   Schema.Union([ConnectionTransientError, ConnectionBlockedError, EnvironmentRpcUnavailableError]),
@@ -441,28 +440,16 @@ export function useComposerContextImport(input: {
         case "image":
         case "file": {
           if (skippedDependentAttachmentIds.has(record.contextId)) break;
-          if (sourceEnvironmentId === environmentId && !conflicts) {
-            const restorable = (removedQueuedAttachments ?? []).find(
-              ({ attachment, contextIds }) =>
-                (isQueuedImageAttachment(attachment) || isQueuedFileAttachment(attachment)) &&
-                attachment.type === record.kind &&
-                contextIds.some((contextId) =>
-                  isSameComposerContextPayload(
-                    attachmentContextRecord({
-                      attachment,
-                      attachmentId: attachment.id,
-                      contextId,
-                    }),
-                    record,
-                  ),
-                ),
-            );
-            if (restorable) {
-              const restoredContextId =
-                restorable.contextIds.find((contextId) => contextId === record.contextId) ??
-                restorable.contextIds[0]!;
-              onRestoreQueuedAttachment?.(restorable.attachment);
-              rewritten.set(record.contextId, restoredContextId);
+          if (!conflicts) {
+            const restored = matchRestorableQueuedAttachment({
+              environmentId,
+              sourceEnvironmentId,
+              record,
+              removedQueuedAttachments: removedQueuedAttachments ?? [],
+            });
+            if (restored) {
+              onRestoreQueuedAttachment?.(restored.attachment);
+              rewritten.set(record.contextId, restored.contextId);
               break;
             }
           }
