@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
@@ -35,14 +36,13 @@ export function ownedAgentSlice(stateDir: string): string {
 const GiB = 1024 ** 3;
 
 /**
- * Agents together leave about 6 GB free before they are throttled and 4 GB
- * before the kernel kills one, so the server, sshd, and tailscaled keep
- * working. Small machines still give agents at least half of RAM before
- * throttling and three quarters before a kill.
+ * Agents leave about 6 GB free before throttling and 4 GB before an OOM kill (at
+ * least half and three quarters of RAM go to agents) so the server and sshd keep
+ * working. Without swap, MemoryHigh stalls every agent and never reaches the kill.
  */
-function agentSliceMemoryLimits(totalBytes: number) {
+function agentSliceMemoryLimits(totalBytes: number, hasSwap: boolean) {
   return {
-    high: Math.max(totalBytes - 6 * GiB, Math.floor(totalBytes / 2)),
+    high: hasSwap ? Math.max(totalBytes - 6 * GiB, Math.floor(totalBytes / 2)) : "infinity",
     max: Math.max(totalBytes - 4 * GiB, Math.floor(totalBytes * 0.75)),
   };
 }
@@ -193,20 +193,52 @@ export const make = Effect.gen(function* () {
           slice,
           ...properties,
         ]);
-        if (result._tag === "None" || result.value.code !== 0) {
-          yield* Effect.logWarning("Could not set resource limits on an agents slice", {
-            slice,
-            properties,
-            stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
-          });
-        }
+        if (result._tag === "Some" && result.value.code === 0) return true;
+        yield* Effect.logWarning("Could not set resource limits on an agents slice", {
+          slice,
+          properties,
+          stderr: result._tag === "Some" ? result.value.stderr.trim() : undefined,
+        });
+        return false;
       });
-      const limits = agentSliceMemoryLimits(NodeOS.totalmem());
-      yield* setProperties(AGENT_SLICE, [`MemoryHigh=${limits.high}`, `MemoryMax=${limits.max}`]);
+      // VMs and containers can resize RAM live, so each launch re-checks the total
+      // the limits came from. A failed update is retried by the next launch.
+      // An unreadable meminfo keeps the throttle, as before swap was checked.
+      const readHasSwap = fileSystem.readFileString("/proc/meminfo").pipe(
+        Effect.map((text) => /^SwapTotal:\s*0 kB$/m.exec(text) === null),
+        Effect.orElseSucceed(() => true),
+      );
+      let appliedTotal: number | undefined;
+      let appliedHasSwap: boolean | undefined;
+      const memoryLimitsLock = yield* Semaphore.make(1);
+      const applyMemoryLimits = memoryLimitsLock.withPermits(1)(
+        Effect.gen(function* () {
+          const total = NodeOS.totalmem();
+          const hasSwap = yield* readHasSwap;
+          if (total === appliedTotal && hasSwap === appliedHasSwap) return;
+          const limits = agentSliceMemoryLimits(total, hasSwap);
+          const applied = yield* setProperties(AGENT_SLICE, [
+            `MemoryHigh=${limits.high}`,
+            `MemoryMax=${limits.max}`,
+          ]);
+          if (!applied) return;
+          if (appliedTotal !== undefined) {
+            yield* Effect.logInfo("Agent memory limits follow a memory change", {
+              slice: AGENT_SLICE,
+              previousTotal: appliedTotal,
+              total,
+              ...limits,
+            });
+          }
+          appliedTotal = total;
+          appliedHasSwap = hasSwap;
+        }),
+      );
+      yield* applyMemoryLimits;
       yield* setProperties(AGENTS_PARENT_SLICE, AGENTS_PARENT_PROPERTIES);
       yield* Effect.logInfo("Agent scopes are on", {
         slice: AGENT_SLICE,
-        ...limits,
+        ...agentSliceMemoryLimits(NodeOS.totalmem(), yield* readHasSwap),
         oomPolicy: supportsOomPolicy,
       });
       return {
@@ -214,6 +246,7 @@ export const make = Effect.gen(function* () {
         systemctl,
         runtimeDir,
         supportsOomPolicy,
+        applyMemoryLimits,
       };
     }),
   );
@@ -403,6 +436,7 @@ export const make = Effect.gen(function* () {
       if (resolved === null) return { command, args };
       const scope = yield* systemd;
       if (scope === undefined) return agentScopeCommand({ command: resolved, args });
+      yield* scope.applyMemoryLimits;
       const unit = `t3code-${name}-${NodeCrypto.randomUUID().slice(0, 8)}.scope`;
       // A continuing shared scope cannot attribute a tool's OOM to one thread.
       // Clear the launch thread's previous scope instead.
