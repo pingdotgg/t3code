@@ -235,6 +235,8 @@ interface MessagesTimelineProps {
   ) => boolean;
   onReplyToResponse?: TimelineRowSharedState["onReplyToResponse"];
   isWorking: boolean;
+  /** Expand incoming Gemini reasoning while it streams, without unfolding completed history. */
+  showLiveReasoning?: boolean;
   /** The thread is catching up from a cached copy, whose working state may be stale. */
   syncing?: boolean;
   runlessWorkActive?: boolean;
@@ -358,6 +360,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   onCiteAssistantText,
   onReplyToResponse,
   isWorking,
+  showLiveReasoning = false,
   syncing = false,
   runlessWorkActive = false,
   activeTurnStartedAt = null,
@@ -753,6 +756,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     expandedAttemptIds: visibleExpandedAttemptIds,
     expandedWorkGroupIds,
     isWorking,
+    showLiveReasoning,
     runlessWorkActive,
     activeTurnStartedAt,
     turnDiffSummaries,

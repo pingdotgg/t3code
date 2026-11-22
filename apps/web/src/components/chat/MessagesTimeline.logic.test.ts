@@ -1943,7 +1943,7 @@ describe("deriveMessagesTimelineRows", () => {
       createdAt: at,
       entry: { id, createdAt: at, runId: "turn-1" as never, label: id, ...fields },
     });
-    const rows = deriveMessagesTimelineRows({
+    const input = {
       timelineEntries: [
         work("old-thought", "2026-01-01T00:00:01Z", {
           itemType: "reasoning",
@@ -1974,12 +1974,34 @@ describe("deriveMessagesTimelineRows", () => {
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
       supportsConversationRollback: false,
-    });
+    } satisfies Parameters<typeof deriveMessagesTimelineRows>[0];
+    const rows = deriveMessagesTimelineRows(input);
 
     expect(rows.find((row) => row.kind === "work-live")).toMatchObject({
       entry: { id: "running-command" },
       thought: { id: "new-thought" },
+      expanded: false,
     });
+    const streamingRows = deriveMessagesTimelineRows({ ...input, showLiveReasoning: true });
+    expect(streamingRows.find((row) => row.kind === "work-live")).toMatchObject({
+      expanded: true,
+    });
+    expect(streamingRows.some((row) => row.kind === "work" && row.isExpandedToolGroup)).toBe(
+      true,
+    );
+    const finishedRows = deriveMessagesTimelineRows({
+      ...input,
+      showLiveReasoning: true,
+      isWorking: false,
+      latestRun: {
+        ...input.latestRun,
+        status: "completed",
+        completedAt: "2026-01-01T00:00:04Z",
+      },
+    });
+    expect(finishedRows.some((row) => row.kind === "work" && row.isExpandedToolGroup)).toBe(
+      false,
+    );
   });
 
   it("keeps an actually running tool in the shared activity row", () => {

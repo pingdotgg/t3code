@@ -3573,6 +3573,10 @@ export default function ChatView(props: ChatViewProps) {
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
+                  showLiveReasoning={
+                    activeProviderInstanceId === "antigravityCodex" &&
+                    activeUsageModel?.toLowerCase().includes("gemini") === true
+                  }
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}

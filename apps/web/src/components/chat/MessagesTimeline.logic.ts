@@ -1617,6 +1617,8 @@ export function deriveMessagesTimelineRows(
     expandedAttemptIds?: ReadonlySet<RunAttemptId>;
     expandedWorkGroupIds?: ReadonlySet<string>;
     isWorking: boolean;
+    /** Show complete incoming reasoning for Gemini in the Antigravity Codex provider. */
+    showLiveReasoning?: boolean;
     /** Native subagent work has no app run; runless entries form the live response. */
     runlessWorkActive?: boolean;
     activeTurnStartedAt?: string | null;
@@ -1802,7 +1804,9 @@ export function deriveMessagesTimelineRows(
             entry: (latestRunningToolEntry ?? latestVisibleToolEntry).entry,
             groupedEntries: visibleActiveToolEntries.map((entry) => entry.entry),
             groupId,
-            expanded: input.expandedWorkGroupIds?.has(groupId) ?? false,
+            expanded:
+              input.expandedWorkGroupIds?.has(groupId) === true ||
+              (input.showLiveReasoning === true && latestThoughtEntry !== undefined),
             active: latestToolKeepsActivityLive,
             ...(latestThoughtEntry ? { thought: latestThoughtEntry.entry } : {}),
           };
@@ -2110,7 +2114,10 @@ export function deriveMessagesTimelineRows(
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
         if (activeInProgressToolEntries.length > 0) {
           const groupId = workGroupId(timelineEntry.id);
-          const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
+          const expanded =
+            input.expandedWorkGroupIds?.has(groupId) === true ||
+            (input.showLiveReasoning === true &&
+              visibleGroupedEntries.some((entry) => entry.itemType === "reasoning"));
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
           nextRows.push({
             kind: "work-live",
