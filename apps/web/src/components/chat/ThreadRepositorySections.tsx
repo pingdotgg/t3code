@@ -301,9 +301,17 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
     />
   );
 
+  const offersPicker =
+    props.reachesTracked &&
+    canReadFiles &&
+    (taskFolder === null || (props.isServerThread && canAddWorktree));
+
   return (
     <>
-      {sections.visible.length === 0 && props.explainsEmpty && props.reachesTracked ? (
+      {sections.visible.length === 0 &&
+      props.explainsEmpty &&
+      props.reachesTracked &&
+      !offersPicker ? (
         <p className="px-2.5 py-1.5 text-meta text-muted-foreground">
           {taskFolder === null
             ? gt("Repositories appear here once this thread changes them.")
@@ -328,9 +336,7 @@ export function ThreadRepositorySections(props: ThreadRepositorySectionsProps) {
           </span>
         </ThreadDetailsControl>
       ) : null}
-      {props.reachesTracked &&
-      canReadFiles &&
-      (taskFolder === null || (props.isServerThread && canAddWorktree)) ? (
+      {offersPicker ? (
         <Menu open={isPickerOpen} onOpenChange={setIsPickerOpen}>
           <MenuTrigger
             render={<ThreadDetailsControl size="sm" variant="ghost" part="row" tone="muted" />}
