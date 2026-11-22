@@ -426,6 +426,7 @@ export const make = Effect.gen(function* () {
                 },
               }
             : {}),
+          ...Json.visibilityOf(pull),
           baseBranch: pull.base,
           headRepositoryNameWithOwner: pull.headRepo,
           reviewRequestLogins: pull.reviewRequests ?? [],

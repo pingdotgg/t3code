@@ -395,6 +395,18 @@ export const make = Effect.gen(function* () {
       },
     ),
     createsDraftChangeRequests: true,
+    privateChangeRequestRemote: Effect.fn(
+      "TanStackSourceSourceControlProvider.privateChangeRequestRemote",
+    )(function* (input) {
+      const target = yield* resolveTarget("privateChangeRequestRemote", input);
+      const companion = yield* read(
+        "privateChangeRequestRemote",
+        input.cwd,
+        { host: target.host, method: "POST", path: `/repos/${target.repository}/private-remote` },
+        Repository,
+      );
+      return { url: companion.cloneUrl, repository: `${companion.owner}/${companion.name}` };
+    }),
     createChangeRequest: Effect.fn("TanStackSourceSourceControlProvider.createChangeRequest")(
       function* (input) {
         const target = yield* resolveTarget("createChangeRequest", {
@@ -437,6 +449,7 @@ export const make = Effect.gen(function* () {
               base: input.target?.refName ?? input.baseRefName,
               ...(body.trim().length === 0 ? {} : { body }),
               ...(input.draft === true ? { draft: true } : {}),
+              ...(input.private === true ? { private: true } : {}),
             },
           })
           .pipe(

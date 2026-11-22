@@ -639,6 +639,10 @@ export const PullRequestMergeQueueRemoval = Schema.Struct({
 });
 export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
 
+/** Who can read a pull request on a host that can hide one in a public repository. */
+export const PullRequestVisibility = Schema.Literals(["public", "private"]);
+export type PullRequestVisibility = typeof PullRequestVisibility.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -684,6 +688,8 @@ export const PullRequestDetail = Schema.Struct({
   /** Absent where the host has no merge queue or does not report one. */
   mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
+  /** Absent where the host has no private pull requests or names no visibility. */
+  visibility: Schema.optional(PullRequestVisibility),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 

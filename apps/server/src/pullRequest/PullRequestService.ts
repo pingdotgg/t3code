@@ -1993,6 +1993,9 @@ export const make = Effect.gen(function* () {
             ...(changeRequest.mergeQueueRemoval === undefined
               ? {}
               : { mergeQueueRemoval: changeRequest.mergeQueueRemoval }),
+            ...(changeRequest.visibility === undefined
+              ? {}
+              : { visibility: changeRequest.visibility }),
           })),
         ),
       ),

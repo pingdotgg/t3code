@@ -130,3 +130,62 @@ describe("TanStackSourceSourceControlProvider.checkoutChangeRequest", () => {
     });
   });
 });
+
+describe("TanStackSourceSourceControlProvider private pull requests", () => {
+  it.effect("asks Source for the companion and opens the pull request as private", () => {
+    const requests: Array<{ method: string; path: string; body: unknown }> = [];
+    const api = TanStackSourceApi.TanStackSourceApi.of({
+      request: (input) => {
+        requests.push({ method: input.method ?? "GET", path: input.path, body: input.body });
+        return Effect.succeed(
+          JSON.stringify({
+            owner: "acme",
+            name: "web.private",
+            defaultBranch: null,
+            cloneUrl: "https://source.tanstack.com/@acme/web.private.git",
+          }),
+        );
+      },
+      response: () => Effect.die("unexpected response read"),
+    });
+    const files = FileSystem.layerNoop({ readFileString: () => Effect.succeed("Body") });
+    return Effect.gen(function* () {
+      const provider = yield* TanStackSourceSourceControlProvider.make;
+      const companion = provider.privateChangeRequestRemote;
+      assert.isDefined(companion);
+      assert.deepStrictEqual(yield* companion({ cwd: "/repo" }), {
+        url: "https://source.tanstack.com/@acme/web.private.git",
+        repository: "acme/web.private",
+      });
+      yield* provider.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "sec/fix",
+        title: "Fix",
+        bodyFile: "/tmp/body.md",
+        private: true,
+      });
+      assert.deepStrictEqual(requests, [
+        { method: "POST", path: "/repos/acme/web/private-remote", body: undefined },
+        {
+          method: "POST",
+          path: "/repos/acme/web/pulls",
+          body: { title: "Fix", head: "sec/fix", base: "main", body: "Body", private: true },
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(TanStackSourceApi.TanStackSourceApi, api),
+      Effect.provide(
+        Layer.merge(
+          TestSourceControlHost.layer({
+            git: {
+              resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+              readConfigValue: () => Effect.succeed(REMOTE),
+            },
+          }),
+          files,
+        ),
+      ),
+    );
+  });
+});

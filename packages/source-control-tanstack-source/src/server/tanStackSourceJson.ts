@@ -16,6 +16,8 @@ import type {
 import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
+import { withoutOwnerMark } from "../shared/definition.ts";
+
 /** Source sends times as epoch milliseconds. */
 const EpochMillis = Schema.Finite;
 const Login = Schema.String;
@@ -29,6 +31,7 @@ export const SourcePull = Schema.Struct({
   labels: Schema.optional(Schema.Array(Schema.String)),
   head: Schema.String,
   createdAt: EpochMillis,
+  visibility: Schema.optional(Schema.String),
 });
 export type SourcePull = typeof SourcePull.Type;
 
@@ -239,10 +242,20 @@ export const SourceUser = Schema.Struct({ username: Schema.String });
 export const iso = (millis: number) => DateTime.formatIso(DateTime.makeUnsafe(millis));
 
 export const pullUrl = (host: string, repository: string, number: number) =>
-  `https://${host}/@${repository}/pull/${number}`;
+  `https://${host}/@${withoutOwnerMark(repository)}/pull/${number}`;
 
-/** A GitHub-synced pull request from a fork names its head only by its pull ref. */
-export const headBranchName = (head: string) => head.replace(/^refs\/heads\//u, "");
+/**
+ * A GitHub-synced pull request from a fork names its head only by its pull ref, and a private
+ * one as `owner:branch`. A branch name holds no colon, so the owner is all that one can precede.
+ */
+export const headBranchName = (head: string) =>
+  head.replace(/^refs\/heads\//u, "").replace(/^[^/:]+:/u, "");
+
+/** Absent when Source names no visibility, so a reader tells unknown from public. */
+export const visibilityOf = (pull: Pick<SourcePull, "visibility">) =>
+  pull.visibility === "private" || pull.visibility === "public"
+    ? { visibility: pull.visibility }
+    : {};
 
 export function toActor(login: string | null, host: string): PullRequestActor | null {
   if (login === null || login.trim() === "") return null;
