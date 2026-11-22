@@ -148,10 +148,14 @@ const makeOpenCode2ProjectInstance = (
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(JSON.stringify({ location: { directory }, data }), {
-            status: unavailable ? 503 : 200,
-            headers: { "content-type": "application/json" },
-          }),
+          // An external server without a requested location answers for its own default.
+          new Response(
+            JSON.stringify({ location: { directory: directory ?? "/srv/remote" }, data }),
+            {
+              status: unavailable ? 503 : 200,
+              headers: { "content-type": "application/json" },
+            },
+          ),
         ),
       );
     });
@@ -736,6 +740,97 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 
+  it.effect("lists models from an external server that lacks the host's directory", () =>
+    Effect.gen(function* () {
+      const replay = replayOpenCodeServer(OPENCODE_2_RESPONSES, "secret");
+      const catalog = (directory: string | undefined) => ({
+        location: { directory: directory ?? "/srv/remote" },
+        data: [
+          {
+            id: "big-pickle",
+            modelID: "big-pickle",
+            providerID: "opencode",
+            name: "Big Pickle",
+            package: "@opencode/ai/providers/openai-compatible",
+            settings: {},
+            compatibility: {},
+            capabilities: { tools: true, input: ["text"], output: ["text"] },
+            variants: [],
+            time: { released: 1789516800000 },
+            cost: [{ input: 0, output: 0, cache: { read: 0, write: 0 } }],
+            status: "active",
+            enabled: true,
+            limit: { context: 1000000, output: 65536 },
+          },
+        ],
+      });
+      // Like a real remote OpenCode 2 server: a directory it does not have is a 404.
+      const server = HttpClient.make((request) => {
+        const url = new URL(request.url);
+        if (url.pathname !== "/api/model" && url.pathname !== "/api/provider") {
+          return replay.execute(request);
+        }
+        const directory = Option.getOrUndefined(
+          UrlParams.getFirst(request.urlParams, "location[directory]"),
+        );
+        const known = directory === undefined || directory === "/srv/remote";
+        const body = known
+          ? url.pathname === "/api/model"
+            ? catalog(directory)
+            : {
+                location: { directory: directory ?? "/srv/remote" },
+                data: [
+                  {
+                    id: "opencode",
+                    integrationID: "opencode",
+                    name: "OpenCode Zen",
+                    activation: "enabled",
+                    package: "@opencode/ai/providers/openai-compatible",
+                    settings: {},
+                  },
+                ],
+              }
+          : {
+              _tag: "LocationNotFoundError",
+              message: `Location not found: ${directory}`,
+            };
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(JSON.stringify(body), {
+              status: known ? 200 : 404,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
+        );
+      });
+      const instance = yield* create(
+        { serverUrl: "http://127.0.0.1:4096", serverPassword: "secret" },
+        server,
+      );
+      const settled = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot.installed && (snapshot.status === "ready" || snapshot.status === "error"),
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(settled));
+      assert.deepStrictEqual(
+        { status: snapshot?.status, message: snapshot?.message },
+        { status: "ready", message: "OpenCode 2.0.18 lists 1 model." },
+      );
+      assert.deepStrictEqual(
+        snapshot?.models.map((model) => [model.slug, model.subProvider]),
+        [["opencode/big-pickle", "OpenCode Zen"]],
+      );
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
   it.effect("lists a project's own opencode.jsonc models in that project's snapshot", () =>
     Effect.gen(function* () {
       const snapshotFor = yield* makeOpenCode2ProjectInstance("listed");
@@ -1051,6 +1146,85 @@ it.layer(layer)("OpenCodeDriver runtime selection", (it) => {
       assert.strictEqual(usageReads, expectedReads);
       assert.strictEqual(modelReads, catalogReads);
       assert.strictEqual(serverStarts, starts);
+    }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("reads Go usage from a stored key when the local server has no Console workspace", () =>
+    Effect.gen(function* () {
+      let goUsageReads = 0;
+      const usageStarted = yield* Deferred.make<void>();
+      const server = HttpClient.make((request) => {
+        if (request.url === "https://opencode.ai/zen/go/v1/usage") {
+          goUsageReads += 1;
+          assert.strictEqual(request.headers.authorization, "Bearer test-go-key");
+          const window = { percent: 10, resetsAt: "2026-11-01T00:00:00.000Z" };
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({ usage: { rolling: window, weekly: window, monthly: window } }),
+            ),
+          );
+        }
+        const path = new URL(request.url).pathname;
+        if (path === "/api/experimental/usage/limits") {
+          const response = HttpClientResponse.fromWeb(
+            request,
+            Response.json({ location: { directory: "/work" }, data: null }),
+          );
+          return Deferred.succeed(usageStarted, undefined).pipe(Effect.as(response));
+        }
+        const body =
+          path === "/api/info"
+            ? JSON.parse(OPENCODE_2_RESPONSES["/api/info"].body)
+            : { location: { directory: "/work" }, data: [] };
+        return Effect.succeed(HttpClientResponse.fromWeb(request, Response.json(body)));
+      });
+      const runtime = {
+        ...openCode2Runtime,
+        startOpenCodeServerProcess: ({
+          verify,
+        }: Parameters<
+          OpenCodeRuntime.OpenCodeRuntime["Service"]["startOpenCodeServerProcess"]
+        >[0]) =>
+          Effect.gen(function* () {
+            const url = "http://127.0.0.1:4096";
+            const version = verify ? yield* verify(url) : "2.0.18";
+            return { url, version, isRunning: Effect.succeed(true), exitCode: Effect.never };
+          }),
+      };
+      const instance = yield* OpenCodeDriver.create({
+        instanceId: ProviderInstanceId.make("opencode-go-key-only"),
+        displayName: undefined,
+        environment: [
+          {
+            name: "OPENCODE_AUTH_CONTENT",
+            sensitive: true,
+            value: JSON.stringify({ "opencode-go": { type: "api", key: "test-go-key" } }),
+          },
+          { name: "OPENCODE_API_KEY", sensitive: true, value: "" },
+        ],
+        enabled: true,
+        config: OpenCodeDriver.defaultConfig(),
+      }).pipe(
+        Effect.provide(TestProviderHost.layer()),
+        Effect.provideService(HttpClient.HttpClient, server),
+        Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, runtime),
+      );
+      const initial = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((entry) => entry.usageLimits !== undefined),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Deferred.await(usageStarted);
+      yield* TestClock.adjust("5 seconds");
+      const [snapshot] = Array.from(yield* Fiber.join(initial));
+      assert.strictEqual(snapshot?.usageLimits?.unavailable, undefined);
+      assert.deepStrictEqual(
+        snapshot?.usageLimits?.windows.map((window) => window.kind),
+        ["session", "weekly", "monthly"],
+      );
+      assert.strictEqual(goUsageReads, 1);
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
   );
 });

@@ -15,6 +15,27 @@ import { prepareQueuedEditAttachments, recoverQueuedMessageEdit } from "./queued
 const environmentId = EnvironmentId.make("remote-environment");
 const threadTarget = scopeThreadRef(environmentId, ThreadId.make("thread:edit"));
 const editTarget = DraftId.make("queued-edit:test");
+const originalMessage = {
+  editTarget,
+  threadTarget,
+  originalText: "Original message",
+  originalReplyTo: null,
+};
+const reply = responseContextRecord({
+  citation: {
+    version: 1,
+    environmentId,
+    threadId: ThreadId.make("thread:edit"),
+    messageId: MessageId.make("message:answer"),
+    text: "Done.",
+    start: 0,
+    end: 5,
+    prefix: "",
+    suffix: "",
+  },
+  itemId: TurnItemId.make("item:answer"),
+  subagents: [],
+});
 const file: ComposerFileAttachment = {
   type: "file",
   id: "file:report",
@@ -89,9 +110,7 @@ describe("queued message file edits", () => {
       uploadEnvironmentId: EnvironmentId.make("other-environment"),
     };
     store.addFiles(editTarget, [file, elsewhere]);
-    expect(
-      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
-    ).toBe("kept");
+    expect(recoverQueuedMessageEdit(originalMessage)).toBe("kept");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Original message");
     // An upload this environment cannot reach comes back as a file to reattach, not a dropped chip.
     const { uploadedAttachmentId: _id, uploadEnvironmentId: _env, ...reattach } = elsewhere;
@@ -107,28 +126,11 @@ describe("queued message file edits", () => {
       "Other",
     );
     const machine = environmentContextRecord(EnvironmentId.make("environment-vps"), "vps");
-    const reply = responseContextRecord({
-      citation: {
-        version: 1,
-        environmentId,
-        threadId: ThreadId.make("thread:edit"),
-        messageId: MessageId.make("message:answer"),
-        text: "Done.",
-        start: 0,
-        end: 5,
-        prefix: "",
-        suffix: "",
-      },
-      itemId: TurnItemId.make("item:answer"),
-      subagents: [],
-    });
     store.addThreadContexts(editTarget, [thread]);
     store.addEnvironmentContexts(editTarget, [machine]);
     store.setReplyTo(editTarget, reply);
     const editedPrompt = store.getComposerDraft(editTarget)!.prompt;
-    expect(
-      recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "Original message" }),
-    ).toBe("kept");
+    expect(recoverQueuedMessageEdit(originalMessage)).toBe("kept");
     expect(store.getComposerDraft(editTarget)).toBeNull();
     expect(store.getComposerDraft(threadTarget)).toMatchObject({
       prompt: editedPrompt,
@@ -138,14 +140,43 @@ describe("queued message file edits", () => {
     });
   });
 
+  it.each([
+    {
+      edit: "added reply",
+      originalReplyTo: null,
+      replyTo: reply,
+      originalText: "",
+      result: "kept",
+    },
+    { edit: "removed reply", originalReplyTo: reply, replyTo: null, result: "kept" },
+    {
+      edit: "unchanged reply",
+      originalReplyTo: reply,
+      replyTo: structuredClone(reply),
+      result: "clean",
+    },
+  ])(
+    "reports $result for a queued edit with $edit",
+    ({ originalReplyTo, replyTo, originalText = "Original message", result }) => {
+      const store = useComposerDraftStore.getState();
+      store.setPrompt(editTarget, originalText);
+      store.setReplyTo(editTarget, replyTo);
+      expect(
+        recoverQueuedMessageEdit({ editTarget, threadTarget, originalText, originalReplyTo }),
+      ).toBe(result);
+      expect(store.getComposerDraft(editTarget)).toBeNull();
+      expect(store.getComposerDraft(threadTarget)).toEqual(
+        result === "kept" ? expect.objectContaining({ prompt: originalText, replyTo }) : null,
+      );
+    },
+  );
+
   it("reports a removed queued attachment as an edit when the run leaves", () => {
     const store = useComposerDraftStore.getState();
     store.setPrompt(editTarget, "Original message");
     expect(
       recoverQueuedMessageEdit({
-        editTarget,
-        threadTarget,
-        originalText: "Original message",
+        ...originalMessage,
         removedExistingAttachment: true,
       }),
     ).toBe("kept");
@@ -154,8 +185,7 @@ describe("queued message file edits", () => {
     // An attachment-only message leaves nothing to put back in the composer.
     expect(
       recoverQueuedMessageEdit({
-        editTarget,
-        threadTarget,
+        ...originalMessage,
         originalText: "",
         removedExistingAttachment: true,
       }),
@@ -172,9 +202,7 @@ describe("queued message file edits", () => {
         [file.id]: { status: "ready", environmentId, attachmentId: uploadedFile.id },
       },
     });
-    expect(recoverQueuedMessageEdit({ editTarget, threadTarget, originalText: "" })).toBe(
-      "discarded",
-    );
+    expect(recoverQueuedMessageEdit({ ...originalMessage, originalText: "" })).toBe("discarded");
     expect(store.getComposerDraft(threadTarget)?.prompt).toBe("Separate draft");
     expect(store.getComposerDraft(editTarget)).toBeNull();
     expect(readAttachmentUpload(file.id)).toBeUndefined();

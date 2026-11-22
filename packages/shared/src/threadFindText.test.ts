@@ -29,6 +29,23 @@ it("indexes single tildes in user paths as typed", () => {
   ).toBe("Drop old");
 });
 
+it("indexes the spaces typed at the start of a user's lines, as the bubble shows them", () => {
+  const text = "Plan\n   Step one\n\tDetail";
+  // Each line ending reads as one space, as the text after a rendered line break does.
+  expect(searchableMessageSegments({ role: "user", text, streaming: false })).toEqual([
+    "Plan",
+    "    Step one",
+    " \tDetail",
+  ]);
+  const indexed = (text: string) =>
+    searchableMessageSegments({ role: "user", text, streaming: false });
+  // A task's checkbox does not move where its continuation lines start.
+  expect(indexed("- [ ] task\n    detail")).toEqual([" task", "   detail"]);
+  // A space or tab written as a character reference is dropped there, as without the indentation.
+  expect(indexed("a\n &#32;b")).toEqual(["a", "  b"]);
+  expect(indexed("a  \n\t&Tab;b")).toEqual(["a", " \tb"]);
+});
+
 it("excludes structured context chips without joining text across them", () => {
   expect(
     searchableMessageSegments({
@@ -131,6 +148,50 @@ it("keeps fence paths literal and indexes file-chip labels in user messages", ()
   ).toEqual(["file.ts · L42"]);
 });
 
+it.each([
+  {
+    source: "user",
+    cwd: "/workspace/repo",
+    text: "See [src/notes.ts](src/notes.ts#L42-L64) and [src/notes.ts](src/notes.ts#L42-L70)",
+    expected: ["See notes.ts · L42–64 and notes.ts · L42–70"],
+  },
+  {
+    source: "assistant",
+    cwd: "/workspace/repo",
+    text: "[Read notes](src/notes.ts:42-64) and `test/notes.ts:42-64`",
+    expected: ["Read notes notes.ts · repo/src · L42–64 and notes.ts · repo/test · L42–64"],
+  },
+  {
+    source: "assistant",
+    cwd: undefined,
+    text: [
+      "[notes.ts](file:///tmp/notes.ts#L42-64) [relative](src/notes.ts#L42-L64)",
+      "[web](https://example.com/notes.ts#L42-L64) [reverse](/tmp/notes.ts#L64-L42)",
+      "`port:42-64`",
+      "\n```text\n/tmp/notes.ts:42-64\n```",
+    ].join(" "),
+    expected: [
+      "notes.ts · L42–64 relative web reverse notes.ts · L64 port:42-64",
+      "/tmp/notes.ts:42-64\n",
+    ],
+  },
+  {
+    source: "plan",
+    cwd: String.raw`\\server\share\repo`,
+    text: "[notes.ts](file://server/share/repo/notes.ts#L42-L64) [other](file://other/share/notes.ts#L42-L64)",
+    expected: ["Proposed plan", "notes.ts · L42–64 other"],
+  },
+] as const)(
+  "indexes the displayed file range in $source text",
+  ({ source, cwd, text, expected }) => {
+    const segments =
+      source === "plan"
+        ? searchablePlanSegments(text, cwd)
+        : searchableMessageSegments({ role: source, text, streaming: false }, cwd);
+    expect(segments).toEqual(expected);
+  },
+);
+
 it("indexes nested disclosure summaries and bodies in rendered order", () => {
   expect(
     assistantSegments(
@@ -170,4 +231,13 @@ it("indexes insight bodies without hidden fences and keeps user and plan text li
   );
   expect(searchablePlanSegments(text).join("\n")).toContain("★ Insight");
   expect(assistantSegments(`\`\`\`text\n${text}\n\`\`\``)?.join("\n")).toContain("★ Insight");
+});
+
+it("indexes image destinations rendered as file chips", () => {
+  expect(
+    assistantSegments(
+      "![note](src/notes.ts#L42-L64) ![screenshot](src/screenshot.png#L42-L64)",
+      "/workspace/repo",
+    ),
+  ).toEqual(["notes.ts · L42–64 "]);
 });
