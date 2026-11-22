@@ -1,4 +1,4 @@
-import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindText";
+import { THREAD_FIND_BLOCK_TAGS } from "@t3tools/shared/threadFindBlockTags";
 import { findThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 
 const MATCH_HIGHLIGHT = "t3-markdown-find";

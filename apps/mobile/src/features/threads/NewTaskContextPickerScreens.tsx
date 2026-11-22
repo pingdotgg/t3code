@@ -36,6 +36,7 @@ import { cn } from "../../lib/cn";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { vcsEnvironment } from "../../state/vcs";
+import { useRefreshBranchesOnFocus } from "./use-refresh-branches-on-focus";
 import { useSearchToolbarInset } from "../../components/ui/useBarInset";
 import type { AppBarSearch } from "../../components/ui/AppBar";
 import { branchBadgeLabel, useNewTaskFlow } from "./new-task-flow-provider";
@@ -344,6 +345,104 @@ export function NewTaskBranchPickerRouteScreen() {
   );
 }
 
+export function NewTaskRepositoriesPickerRouteScreen() {
+  const gt = useGT();
+  const flow = useNewTaskFlow();
+  const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
+  const choices = flow.worktreeRepositoryChoices;
+  const selection = flow.worktreeRepositorySelection;
+  const selected = new Set(selection.selected);
+  const toggle = (repositoryPath: string) => {
+    if (choices === null) return;
+    void Haptics.selectionAsync();
+    flow.setWorktreeRepositories(
+      choices.flatMap((choice) =>
+        (choice.repositoryPath === repositoryPath) !== selected.has(choice.repositoryPath)
+          ? [choice.repositoryPath]
+          : [],
+      ),
+    );
+  };
+  const header =
+    choices === null || choices.length === 0 ? null : (
+      <View className="gap-3 pb-3">
+        <Text textRole="footnote" className="px-1 text-foreground-muted">
+          {selection.needsChoice
+            ? gt("Choose the repositories this thread works on.")
+            : gt("Each gets its own worktree on the thread's branch.")}
+        </Text>
+        <View className="flex-row gap-2">
+          <Button
+            label={gt("Select all")}
+            size="compact"
+            disabled={selected.size === choices.length}
+            onPress={() =>
+              flow.setWorktreeRepositories(choices.map((choice) => choice.repositoryPath))
+            }
+          />
+          <Button
+            label={gt("Select none")}
+            size="compact"
+            disabled={!selection.needsChoice && selected.size === 0}
+            onPress={() => flow.setWorktreeRepositories([])}
+          />
+        </View>
+      </View>
+    );
+  return (
+    <View className="flex-1 bg-sheet" collapsable={false}>
+      <AppBar title={gt("Repositories")} hideBottomBorder onBack={() => navigation.goBack()} />
+      <ScreenContent>
+        {choices === null || choices.length === 0 ? (
+          <View className="flex-1 items-center justify-center gap-3 px-4">
+            {choices === null ? <AppActivityIndicator /> : null}
+            <Text className="text-center text-sm text-foreground-muted">
+              {choices === null
+                ? gt("Loading repositories…")
+                : gt("This project tracks no repositories")}
+            </Text>
+          </View>
+        ) : (
+          <LegendList
+            renderScrollComponent={NativeScrollView}
+            alwaysBounceVertical={false}
+            automaticallyAdjustsScrollIndicatorInsets
+            className="flex-1 bg-sheet android:bg-sheet-solid"
+            contentInsetAdjustmentBehavior="automatic"
+            contentContainerStyle={{
+              paddingBottom: Math.max(insets.bottom, 16) + 16,
+              paddingHorizontal: 16,
+              paddingTop: 16,
+            }}
+            data={choices}
+            extraData={selection.selected}
+            keyExtractor={(choice) => choice.repositoryPath}
+            ListHeaderComponent={header}
+            renderItem={({ item, index }) => (
+              <SelectionRow
+                icon="folder"
+                role="checkbox"
+                isFirst={index === 0}
+                isLast={index === choices.length - 1}
+                onPress={() => toggle(item.repositoryPath)}
+                selected={selected.has(item.repositoryPath)}
+                subtitle={
+                  item.relativePath !== undefined && item.relativePath !== item.name
+                    ? item.relativePath
+                    : undefined
+                }
+                title={item.name}
+              />
+            )}
+            showsVerticalScrollIndicator={false}
+          />
+        )}
+      </ScreenContent>
+    </View>
+  );
+}
+
 export function BranchPickerScreen(props: {
   readonly title: string;
   readonly project: EnvironmentProject | null;
@@ -368,6 +467,7 @@ export function BranchPickerScreen(props: {
   const m = useMessages();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
+  useRefreshBranchesOnFocus(props.project?.environmentId, props.project?.workspaceRoot);
   const search: AppBarSearch = {
     value: props.query,
     onChangeText: props.onQueryChange,

@@ -235,7 +235,6 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       title: "test page",
       loading: false,
       visibleText: "delete",
-      interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
     locator: vi.fn((): unknown => {
@@ -2111,6 +2110,40 @@ it.effect(
     ).pipe(Effect.provide(layer)),
 );
 
+it.effect("a request whose frame is not available yet is not a main navigation", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const { broker, tabId } = yield* ready;
+      const page = contexts[0]!.page;
+      const frameless = {
+        url: () => "https://example.com/early",
+        method: () => "GET",
+        isNavigationRequest: () => true,
+        frame: () => {
+          throw new Error("Frame for this navigation request is not available");
+        },
+        failure: () => ({ errorText: "net::ERR_CONNECTION_REFUSED" }),
+      };
+      expect(() => page.emit("request", frameless)).not.toThrow();
+      const statusAfterRequest = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(statusAfterRequest.loading).toBe(false);
+      expect(() => page.emit("requestfailed", frameless)).not.toThrow();
+      const status = yield* broker.invoke<PreviewAutomationStatus>({
+        scope,
+        tabId,
+        operation: "status",
+        input: {},
+      });
+      expect(status.loading).toBe(false);
+    }),
+  ).pipe(Effect.provide(layer)),
+);
+
 it.effect.each(["before", "during"] as const)(
   "a navigation that fails while a load reads its title keeps its failure (request %s read)",
   (requestTiming) =>
@@ -3013,6 +3046,11 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
       expect(
         yield* resize({ mode: "freeform", width: 900, height: 600 }, 900, 600),
       ).toBeUndefined();
+      // A hidden guest takes the new size only while the desktop paints it, which a capture asks for.
+      expect(cdp.send).toHaveBeenCalledWith(
+        "Page.captureScreenshot",
+        expect.objectContaining({ clip: expect.anything() }),
+      );
       desktopSizeAnswer = null;
       expect(yield* resize({ mode: "freeform", width: 1280, height: 760 }, 1280, 760)).toEqual({
         width: 1280,
@@ -3030,6 +3068,55 @@ it.effect("a desktop tab reports the size the desktop draws after a resize", () 
         height: 760,
       });
       expect(yield* status).toEqual({ width: 560, height: 760 });
+      const unpainted = Promise.withResolvers<void>();
+      heldStill = () => unpainted.promise;
+      // Fill asks for no size, so a page that keeps its size without a resize is not undrawn.
+      const kept = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "fill" },
+        })
+        .pipe(Effect.forkScoped);
+      let keptEvent = yield* PubSub.take(events);
+      while (keptEvent.type !== "resized" || keptEvent.tabId !== tabId) {
+        keptEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect((yield* Fiber.join(kept)).viewport).toEqual({ width: 560, height: 760 });
+      // A desktop that never draws the new size, such as a minimized window, fails the resize.
+      const undrawn = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let undrawnEvent = yield* PubSub.take(events);
+      while (undrawnEvent.type !== "resized" || undrawnEvent.tabId !== tabId) {
+        undrawnEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(undrawn))).toBe(true);
+      // The same size again still waits for a draw rather than reporting the old size.
+      const retried = yield* broker
+        .invoke<PreviewAutomationResizeResult>({
+          scope,
+          tabId,
+          operation: "resize",
+          input: { mode: "freeform", width: 1440, height: 900 },
+        })
+        .pipe(Effect.exit, Effect.forkScoped);
+      let retriedEvent = yield* PubSub.take(events);
+      while (retriedEvent.type !== "resized" || retriedEvent.tabId !== tabId) {
+        retriedEvent = yield* PubSub.take(events);
+      }
+      yield* TestClock.adjust("1 second");
+      expect(Exit.isFailure(yield* Fiber.join(retried))).toBe(true);
+      heldStill = null;
+      unpainted.resolve();
       expect(yield* resize({ mode: "fill" }, 1234, 700)).toEqual({ width: 1234, height: 700 });
       // No page resize or load since that read, so status answers without reading again.
       let reads = 0;

@@ -343,19 +343,18 @@ function CloudEnvironmentRowShell(props: {
         : { text: measuredErrorText, lineCount: nextLineCount },
     );
   };
+  const rowActionLabel = props.onOpen
+    ? gt("Manage {environment}", { environment: props.label })
+    : props.onRemove
+      ? gt("Remove {environment} from this device", { environment: props.label })
+      : undefined;
   return (
     <View collapsable={false} className="flex-row items-center gap-3 bg-grouped-card px-4 py-3.5">
       <ContentContainer
-        className="min-w-0 flex-1 gap-0.5"
+        className="min-w-0 flex-1 gap-0.5 active:opacity-70"
         accessibilityHint={props.onRemove ? gt("Long press to remove from this device") : undefined}
         accessibilityRole={props.onOpen ? "button" : undefined}
-        accessibilityLabel={
-          props.onOpen
-            ? gt("Manage {environment}", { environment: props.label })
-            : props.onRemove
-              ? gt("Remove {environment} from this device", { environment: props.label })
-              : undefined
-        }
+        accessibilityLabel={rowActionLabel}
         onPress={props.onOpen}
         onLongPress={props.onRemove}
       >
@@ -376,6 +375,7 @@ function CloudEnvironmentRowShell(props: {
         {props.connectionError ? (
           <Text
             aria-hidden
+            pointerEvents="none"
             onTextLayout={onMeasuredErrorTextLayout}
             className={cn("absolute inset-x-0 -z-[1] text-xs opacity-0", statusClassName)}
           >
@@ -428,17 +428,9 @@ function CloudEnvironmentRowShell(props: {
       />
       {props.opensDetails || props.showChevron ? (
         <ChevronContainer
-          accessibilityRole={props.onOpen ? "button" : undefined}
-          accessibilityLabel={
-            props.onOpen
-              ? gt("Manage {environment}", { environment: props.label })
-              : props.onRemove
-                ? gt("Remove {environment} from this device", { environment: props.label })
-                : undefined
-          }
-          accessibilityHint={
-            props.onRemove ? gt("Long press to remove from this device") : undefined
-          }
+          accessible={false}
+          accessibilityElementsHidden
+          importantForAccessibility="no-hide-descendants"
           onPress={props.onOpen}
           onLongPress={props.onRemove}
           style={{

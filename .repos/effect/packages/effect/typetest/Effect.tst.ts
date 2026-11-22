@@ -1117,6 +1117,37 @@ describe("Unify.unify", () => {
 })
 
 describe("all", () => {
+  it("checks symbol fields and accepts object type aliases", () => {
+    const key = Symbol()
+    type Fields = {
+      text: typeof string
+      [key]: typeof number
+    }
+    const fields: Fields = { text: string, [key]: number }
+    expect(Effect.all(fields)).type.toBe<
+      Effect.Effect<{ text: string; [key]: number }, "err-1" | "err-2", "dep-1" | "dep-2">
+    >()
+    expect(Effect.all(fields, { mode: "result" })).type.toBe<
+      Effect.Effect<
+        { text: Result.Result<string, "err-1">; [key]: Result.Result<number, "err-2"> },
+        never,
+        "dep-1" | "dep-2"
+      >
+    >()
+    expect(Effect.all(fields, { discard: true })).type.toBe<
+      Effect.Effect<void, "err-1" | "err-2", "dep-1" | "dep-2">
+    >()
+    type IndexedFields = {
+      [key: string]: typeof number
+    }
+    const indexed: IndexedFields = { value: number }
+    expect(Effect.all(indexed)).type.toBe<Effect.Effect<{ [key: string]: number }, "err-2", "dep-2">>()
+    expect(Effect.all).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Effect.all).type.not.toBeCallableWith(42)
+    expect(Effect.all).type.not.toBeCallableWith("value")
+    expect(Effect.all).type.not.toBeCallableWith({ text: string, [key]: 42 }, { discard: true })
+  })
+
   it("tuple", () => {
     expect(Effect.all([string, number])).type.toBe<
       Effect.Effect<[string, number], "err-1" | "err-2", "dep-1" | "dep-2">
