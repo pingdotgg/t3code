@@ -219,7 +219,8 @@ export function workflowMemberMetadata(
   const effortChoice = provider?.models
     .find((candidate) => candidate.slug === slug)
     ?.capabilities?.optionDescriptors?.flatMap((descriptor) =>
-      descriptor.type === "select" && REASONING_EFFORT_OPTION_IDS.includes(descriptor.id)
+      descriptor.type === "select" &&
+      (descriptor.role === "reasoning" || REASONING_EFFORT_OPTION_IDS.includes(descriptor.id))
         ? descriptor.options
         : [],
     )
