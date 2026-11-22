@@ -140,6 +140,8 @@ export const make = Effect.gen(function* () {
               provider.status !== "error" &&
               isProviderAvailable(provider) &&
               isProviderTextGenerationCapable(provider) &&
+              provider.models.find((candidate) => candidate.slug === model)
+                ?.supportsTextGeneration !== false &&
               (operation !== "generateReviewGuide" || INVESTIGATING_DRIVERS.has(driver)) &&
               !exhaustedUsageWindow(provider, now, model)
             );
