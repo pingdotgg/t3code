@@ -55,6 +55,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import androidx.compose.ui.unit.sp
@@ -69,6 +70,15 @@ class T3WorkspaceNavigationModule : Module() {
     Name("T3WorkspaceNavigation")
     View(T3WorkspaceNavigationView::class) {
       Prop("tabs") { view: T3WorkspaceNavigationView, value: List<String> -> view.tabs = value }
+      Prop("tabLabels") { view: T3WorkspaceNavigationView, value: Map<String, String> ->
+        view.tabLabels = value
+      }
+      Prop("expandedTabLabels") { view: T3WorkspaceNavigationView, value: Map<String, String> ->
+        view.expandedTabLabels = value
+      }
+      Prop("newThreadLabel") { view: T3WorkspaceNavigationView, value: String ->
+        if (value.isNotEmpty()) view.newThreadLabel = value
+      }
       Prop("selectedTab") { view: T3WorkspaceNavigationView, value: String ->
         view.selectedTab = value
       }
@@ -127,6 +137,9 @@ class T3WorkspaceNavigationView(
   private val onNewThread by EventDispatcher()
   private val onOverlayChange by EventDispatcher()
   var tabs by mutableStateOf(listOf("threads", "pullRequests", "issues", "usage", "settings"))
+  var tabLabels by mutableStateOf<Map<String, String>>(emptyMap())
+  var expandedTabLabels by mutableStateOf<Map<String, String>>(emptyMap())
+  var newThreadLabel by mutableStateOf("New thread")
   var selectedTab by mutableStateOf("threads")
   var rail by mutableStateOf(false)
   var floating by mutableStateOf(false)
@@ -190,7 +203,14 @@ class T3WorkspaceNavigationView(
                     selected = selectedTab == tab,
                     onClick = { onTabSelected(mapOf("tab" to tab)) },
                     icon = { Icon(tabIconPainter(tab), contentDescription = null) },
-                    label = { Text(tabTitle(tab), fontSize = (12 * textScale).sp) },
+                    label = {
+                      Text(
+                        tabTitle(tab),
+                        fontSize = (12 * textScale).sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                      )
+                    },
                     colors = NavigationBarItemDefaults.colors(
                       selectedIconColor = Color(selectedColor),
                       selectedTextColor = Color(selectedColor),
@@ -356,7 +376,7 @@ class T3WorkspaceNavigationView(
         .height(FAB_SIZE)
         .width(lerp(FAB_SIZE, EXPANDED_RAIL_WIDTH - RAIL_INSET * 2, fraction))
         .alpha(if (newEnabled) 1f else DISABLED_ALPHA)
-        .semantics { contentDescription = "New thread" },
+        .semantics { contentDescription = newThreadLabel },
     ) {
       Row(
         Modifier.padding(start = (FAB_SIZE - ICON_SIZE) / 2).clipToBounds(),
@@ -364,7 +384,7 @@ class T3WorkspaceNavigationView(
       ) {
         Icon(painterResource(R.drawable.t3_new_thread), contentDescription = null)
         Text(
-          "New thread",
+          newThreadLabel,
           Modifier.padding(start = 12.dp).alpha(labelAlpha(fraction)).clearAndSetSemantics {},
           style = MaterialTheme.typography.labelLarge,
           fontSize = (14 * textScale).sp,
@@ -412,7 +432,7 @@ class T3WorkspaceNavigationView(
     }
   }
 
-  private fun tabTitle(tab: String) = when (tab) {
+  private fun tabTitle(tab: String) = tabLabels[tab]?.takeIf { it.isNotEmpty() } ?: when (tab) {
     "threads" -> "Chats"
     "pullRequests" -> "Pulls"
     "issues" -> "Issues"
@@ -421,7 +441,8 @@ class T3WorkspaceNavigationView(
   }
 
   private fun expandedTabTitle(tab: String) =
-    if (tab == "pullRequests") "Pull requests" else tabTitle(tab)
+    expandedTabLabels[tab]?.takeIf { it.isNotEmpty() }
+      ?: if (tab == "pullRequests") "Pull requests" else tabTitle(tab)
 
   @Composable
   private fun tabIconPainter(tab: String) = painterResource(
