@@ -1,9 +1,18 @@
-import type { GitStatusEntry } from "@pierre/trees";
+import type { FileTreeRowDecorationContext, GitStatusEntry } from "@pierre/trees";
 import { FileTree, useFileTree } from "@pierre/trees/react";
 import { T, useGT } from "gt-react";
-import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
-import { useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ChevronsDownUpIcon, ChevronsUpDownIcon, ListIcon, ListTreeIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
+import {
+  type PointerEvent,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 import { useStableCallback } from "~/hooks/useStableCallback";
 import { useTheme } from "~/hooks/useTheme";
 import { cn } from "~/lib/utils";
@@ -24,10 +33,14 @@ import {
   buildDiffFileTreeUpdates,
   compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  diffFileListModel,
   diffFileTreeModel,
   type DiffFileTreeEntry,
 } from "./diffFileTree.logic";
-import { diffFileTreePositions } from "@t3tools/client-runtime/diff-file-order";
+import {
+  diffFileTreePositions,
+  orderDiffFilesLikeTree,
+} from "@t3tools/client-runtime/diff-file-order";
 
 export type { DiffFileTreeEntry } from "./diffFileTree.logic";
 
@@ -42,6 +55,15 @@ interface DiffFileTreeProps {
   readonly className?: string;
 }
 
+const DIFF_FILE_LIST_VIEW_STORAGE_KEY = "t3code.diffFileListView";
+
+// List rows read as the file's name followed by its dimmed folder; tree rows have no decoration.
+const DIFF_FILE_TREE_UNSAFE_CSS = `${PIERRE_TREE_UNSAFE_CSS}
+  [data-item-section='decoration'],
+  [data-item-section='decoration'] > span { justify-content: flex-start; text-align: start; }
+  [data-item-section='decoration'] > span { padding-inline-start: 0.5em; }
+`;
+
 export function DiffFileTree({
   entries,
   onSelectFile,
@@ -52,14 +74,26 @@ export function DiffFileTree({
   footer,
   className,
 }: DiffFileTreeProps) {
+  const [listView, setListView] = useLocalStorage(
+    DIFF_FILE_LIST_VIEW_STORAGE_KEY,
+    false,
+    Schema.Boolean,
+  );
   const gt = useGT();
   const { resolvedTheme } = useTheme();
   const paths = entries.map((entry) => entry.path);
-  const presented = diffFileTreeModel(paths);
+  const presented = listView ? diffFileListModel(paths) : diffFileTreeModel(paths);
   const modelPaths = presented.paths;
   const icons = presented.icons;
   const directoryPaths = collectDirectoryPaths(modelPaths);
-  const positions = diffFileTreePositions(modelPaths);
+  const positions = listView
+    ? new Map(
+        orderDiffFilesLikeTree(paths, (path) => path).map((path, index) => [
+          presented.modelPath(path) ?? path,
+          index,
+        ]),
+      )
+    : diffFileTreePositions(modelPaths);
   const [ordering] = useState(() => {
     let currentPositions: ReadonlyMap<string, number> = new Map();
     return {
@@ -70,7 +104,7 @@ export function DiffFileTree({
     };
   });
   const gitStatus: ReadonlyArray<GitStatusEntry> = entries.map((entry) => ({
-    path: presented.modelPath(entry.path),
+    path: presented.modelPath(entry.path) ?? entry.path,
     status: entry.status,
   }));
   const syncingSelectionRef = useRef(false);
@@ -78,7 +112,9 @@ export function DiffFileTree({
     path: string;
     revealRequestId: number;
   } | null>(null);
-  const mountedPresentationRef = useRef<ReturnType<typeof diffFileTreeModel> | null>(null);
+  const mountedPresentationRef = useRef<typeof presented | null>(null);
+  // A list has no folders, so the tree's collapsed folders wait here for the tree to return.
+  const collapsedTreeDirectoriesRef = useRef<ReadonlySet<string>>(new Set());
 
   // The tree model keeps the first selection handler it was given.
   const handleSelectionChange = useStableCallback((selectedPaths: ReadonlyArray<string>) => {
@@ -87,6 +123,27 @@ export function DiffFileTree({
     if (modelPath && modelPaths.includes(modelPath)) {
       onSelectFile(presented.selectionPath(modelPath));
     }
+  });
+
+  // A list row may clip its name or folder, so hovering it shows the file's full path.
+  const titleListRow = useStableCallback((event: PointerEvent<HTMLElement>) => {
+    const row = event.nativeEvent
+      .composedPath()
+      .find(
+        (node): node is HTMLElement =>
+          node instanceof HTMLElement && node.matches("button[data-type='item']"),
+      );
+    const modelPath = row?.getAttribute("data-item-path");
+    if (!row || !modelPath) return;
+    const path = presented.selectionPath(modelPath);
+    if (row.title !== path) row.title = path;
+  });
+
+  const renderListRowDecoration = useStableCallback(({ item }: FileTreeRowDecorationContext) => {
+    if (!listView) return null;
+    const path = presented.selectionPath(item.path);
+    const folderEnd = path.lastIndexOf("/");
+    return folderEnd > 0 ? { text: path.slice(0, folderEnd), title: path } : null;
   });
 
   const { model } = useFileTree({
@@ -98,7 +155,8 @@ export function DiffFileTree({
     paths: [],
     search: false,
     sort: ordering.sort,
-    unsafeCSS: PIERRE_TREE_UNSAFE_CSS,
+    renderRowDecoration: renderListRowDecoration,
+    unsafeCSS: DIFF_FILE_TREE_UNSAFE_CSS,
   });
   const allDirectoriesExpanded = useSyncExternalStore(
     (listener) => subscribeOncePerTask(model, listener),
@@ -118,7 +176,14 @@ export function DiffFileTree({
     mountedPresentationRef.current = presented;
     if (mounted === null) {
       model.resetPaths(modelPaths);
-    } else if (mounted.paths.every((path, index) => modelPaths[index] === path)) {
+    } else if (
+      mounted.paths.every(
+        (path, index) =>
+          modelPaths[index] === path &&
+          // A list alias can move to another file when a same-named file is added before it.
+          presented.selectionPath(path) === mounted.selectionPath(path),
+      )
+    ) {
       const updates = buildDiffFileTreeUpdates(mounted.paths, modelPaths);
       if (updates.length > 0) model.batch(updates);
     } else {
@@ -126,15 +191,25 @@ export function DiffFileTree({
       // through real paths so paging keeps the same file without revealing it again.
       const focusedPath = model.getFocusedPath();
       const nextFocusedPath =
-        focusedPath === null ? null : presented.modelPath(mounted.selectionPath(focusedPath));
+        focusedPath === null
+          ? null
+          : (presented.modelPath(mounted.selectionPath(focusedPath)) ?? null);
       const selectedPaths = model
         .getSelectedPaths()
-        .map((path) => presented.modelPath(mounted.selectionPath(path)))
+        .flatMap((path) => presented.modelPath(mounted.selectionPath(path)) ?? [])
         .filter((path) => path.endsWith("/") || modelPaths.includes(path));
-      const collapsedDirectories = directoryPaths.filter((path) => {
-        const directory = model.getItem(path);
-        return directory !== null && "isExpanded" in directory && !directory.isExpanded();
-      });
+      const mountedDirectories = collectDirectoryPaths(mounted.paths);
+      if (mountedDirectories.length > 0) {
+        collapsedTreeDirectoriesRef.current = new Set(
+          mountedDirectories.filter((path) => {
+            const directory = model.getItem(path);
+            return directory !== null && "isExpanded" in directory && !directory.isExpanded();
+          }),
+        );
+      }
+      const collapsedDirectories = directoryPaths.filter((path) =>
+        collapsedTreeDirectoriesRef.current.has(path),
+      );
       syncingSelectionRef.current = true;
       model.resetPaths(modelPaths);
       for (const path of model.getSelectedPaths()) model.getItem(path)?.deselect();
@@ -163,8 +238,8 @@ export function DiffFileTree({
       return;
     }
     const modelPath = presented.modelPath(selectedPath);
-    const item = model.getItem(modelPath);
-    if (item === null || item.isDirectory()) {
+    const item = modelPath === undefined ? null : model.getItem(modelPath);
+    if (modelPath === undefined || item === null || item.isDirectory()) {
       handledRevealRef.current = null;
       return;
     }
@@ -191,16 +266,32 @@ export function DiffFileTree({
   }, [model, presented, revealRequestId, selectedPath]);
 
   return (
-    <div className={cn("flex min-h-0 flex-1 flex-col bg-background", className)}>
+    <div className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", className)}>
       <div
         className="flex h-10 min-h-10 shrink-0 items-center gap-1 border-b border-border/60 bg-background px-2 text-xs text-muted-foreground in-data-[preview-panel-mode=inline]:mb-3 in-data-[preview-panel-mode=inline]:h-7 in-data-[preview-panel-mode=inline]:min-h-7 in-data-[preview-panel-mode=inline]:border-b-transparent"
         data-surface-subheader
       >
-        <span className="px-1 font-medium text-foreground">
+        <span className="min-w-0 truncate px-1 font-medium text-foreground">
           <T>Files</T>
         </span>
         <span className="ml-auto tabular-nums">{entries.length}</span>
         {headerAccessory}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={listView ? gt("View as tree") : gt("View as list")}
+                onClick={() => setListView(!listView)}
+              />
+            }
+          >
+            {listView ? <ListTreeIcon className="size-3.5" /> : <ListIcon className="size-3.5" />}
+          </TooltipTrigger>
+          <TooltipPopup>{listView ? gt("View as tree") : gt("View as list")}</TooltipPopup>
+        </Tooltip>
         {directoryPaths.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
@@ -257,7 +348,10 @@ export function DiffFileTree({
         }}
         className="min-h-0 flex-1 overflow-hidden"
         style={pierreTreeStyle(resolvedTheme)}
-        onPointerOver={titleClippedPierreTreeRow}
+        // Moving between rows stays inside Pierre's shadow root, where no pointerover reaches here.
+        {...(listView
+          ? { onPointerMove: titleListRow }
+          : { onPointerOver: titleClippedPierreTreeRow })}
       />
       {footer}
     </div>

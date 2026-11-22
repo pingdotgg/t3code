@@ -211,7 +211,11 @@ export function diffFileTreePositions(paths: ReadonlyArray<string>): ReadonlyMap
   return positions;
 }
 
-function orderLikeTree<F>(files: ReadonlyArray<F>, pathOf: (file: F) => string): ReadonlyArray<F> {
+/** Files in the order a tree built from `diffFileTreePositions` lists them. */
+export function orderDiffFilesLikeTree<F>(
+  files: ReadonlyArray<F>,
+  pathOf: (file: F) => string,
+): ReadonlyArray<F> {
   const paths = files.map(pathOf);
   const positions = diffFileTreePositions(paths);
   const keys = paths.map((path) => {
@@ -246,5 +250,5 @@ export function orderDiffFilesForReview<F extends OrderableDiffFile>(
   files: ReadonlyArray<F>,
   pathOf: (file: F) => string,
 ): ReadonlyArray<F> {
-  return orderLikeTree(orderByImportsAndTier(files, pathOf), pathOf);
+  return orderDiffFilesLikeTree(orderByImportsAndTier(files, pathOf), pathOf);
 }

@@ -1297,6 +1297,7 @@ export default function FilePreviewPanel({
   const m = useMessages();
   const { resolvedTheme } = useTheme();
   const defaultWordWrap = useClientSettings((settings) => settings.wordWrap);
+  const fileTreeSide = useClientSettings((settings) => settings.fileTreeSide);
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? defaultWordWrap;
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
@@ -1615,6 +1616,42 @@ export default function FilePreviewPanel({
     );
   }
 
+  const explorerPane = showExplorer ? (
+    <FileExplorerPane resizable={Boolean(previewPath)} side={fileTreeSide}>
+      <div
+        className="contents"
+        onClick={focusEditorOnTreeRowClickOrEnter}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
+        }}
+      >
+        <FileBrowserPanel
+          key={`${environmentId}:${hostFolderPath ?? cwd}`}
+          environmentId={environmentId}
+          cwd={hostFolderPath ?? cwd}
+          projectName={hostFolderPath ?? projectName}
+          hostFolder={hostFolderPath !== null}
+          selectedPath={
+            hostFolderPath === null
+              ? relativePath
+              : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
+          }
+          selectedPathRevealId={revealRequestId}
+          onOpenFile={onOpenFile}
+          answersPanelFind={!previewPath}
+          workspaceMutationId={workspaceMutationId}
+          {...(previewPath && !isMedia && !isPdf
+            ? {
+                onRefreshSelectedFile: () => {
+                  if (!isDocument) file.refresh();
+                  setFileRefreshRevision((value) => value + 1);
+                },
+              }
+            : {})}
+        />
+      </div>
+    </FileExplorerPane>
+  ) : null;
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background">
       {breadcrumbPath !== null && breadcrumbTrail !== null ? (
@@ -1743,6 +1780,7 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
+        {fileTreeSide === "left" ? explorerPane : null}
         <div
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
         >
@@ -1937,42 +1975,7 @@ export default function FilePreviewPanel({
             )
           ) : null}
         </div>
-        {showExplorer ? (
-          <FileExplorerPane resizable={Boolean(previewPath)}>
-            <div
-              className="contents"
-              onClick={focusEditorOnTreeRowClickOrEnter}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") focusEditorOnTreeRowClickOrEnter(event);
-              }}
-            >
-              <FileBrowserPanel
-                key={`${environmentId}:${hostFolderPath ?? cwd}`}
-                environmentId={environmentId}
-                cwd={hostFolderPath ?? cwd}
-                projectName={hostFolderPath ?? projectName}
-                hostFolder={hostFolderPath !== null}
-                selectedPath={
-                  hostFolderPath === null
-                    ? relativePath
-                    : trailChildOf(hostFolderPath, breadcrumbTrail ?? hostFolderPath)
-                }
-                selectedPathRevealId={revealRequestId}
-                onOpenFile={onOpenFile}
-                answersPanelFind={!previewPath}
-                workspaceMutationId={workspaceMutationId}
-                {...(previewPath && !isMedia && !isPdf
-                  ? {
-                      onRefreshSelectedFile: () => {
-                        if (!isDocument) file.refresh();
-                        setFileRefreshRevision((value) => value + 1);
-                      },
-                    }
-                  : {})}
-              />
-            </div>
-          </FileExplorerPane>
-        ) : null}
+        {fileTreeSide === "right" ? explorerPane : null}
       </div>
     </div>
   );

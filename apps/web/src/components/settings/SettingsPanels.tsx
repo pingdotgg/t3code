@@ -18,7 +18,9 @@ import {
 } from "@t3tools/contracts";
 import {
   DEFAULT_UNIFIED_SETTINGS,
+  type DiffFileView,
   type DiffLayout,
+  type FileTreeSide,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   type ResponseStreamingMode,
@@ -158,6 +160,16 @@ const TIMESTAMP_FORMAT_LABELS = {
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: msg("Stacked", { $context: "diff layout" }),
   split: msg("Split", { $context: "diff layout" }),
+};
+
+const DIFF_FILE_VIEW_LABELS: Record<DiffFileView, string> = {
+  all: msg("All files", { $context: "changes view" }),
+  single: msg("One file", { $context: "changes view" }),
+};
+
+const FILE_TREE_SIDE_LABELS: Record<FileTreeSide, string> = {
+  left: msg("Left", { $context: "file tree side" }),
+  right: msg("Right", { $context: "file tree side" }),
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -564,6 +576,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       ? [gt("Diff whitespace changes")]
       : []),
     ...(settings.diffLayout !== DEFAULT_UNIFIED_SETTINGS.diffLayout ? [gt("Diff layout")] : []),
+    ...(settings.diffFileView !== DEFAULT_UNIFIED_SETTINGS.diffFileView
+      ? [gt("Changes view")]
+      : []),
+    ...(settings.fileTreeSide !== DEFAULT_UNIFIED_SETTINGS.fileTreeSide
+      ? [gt("File tree side")]
+      : []),
     ...(settings.proactivePanelsEnabled !== DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled
       ? [gt("Open pull requests and changes panels proactively")]
       : []),
@@ -708,6 +726,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffFilesCollapsed: DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed,
       diffIgnoreWhitespace: DEFAULT_UNIFIED_SETTINGS.diffIgnoreWhitespace,
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
+      diffFileView: DEFAULT_UNIFIED_SETTINGS.diffFileView,
+      fileTreeSide: DEFAULT_UNIFIED_SETTINGS.fileTreeSide,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
@@ -1722,6 +1742,82 @@ export function DiffsSettingsPanel() {
                 </SelectItem>
                 <SelectItem hideIndicator value="split">
                   {messages(DIFF_LAYOUT_LABELS.split)}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...setting("changes-view")}
+          description={gt(
+            "Show every changed file stacked, or one file at a time picked from the file list. The toggle in the Changes file list changes this too.",
+          )}
+          resetAction={
+            settings.diffFileView !== DEFAULT_UNIFIED_SETTINGS.diffFileView ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset changes view to default")}
+                onClick={() =>
+                  updateSettings({ diffFileView: DEFAULT_UNIFIED_SETTINGS.diffFileView })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.diffFileView}
+              onValueChange={(value) => {
+                if (value === "all" || value === "single") {
+                  updateSettings({ diffFileView: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("Changes view")}>
+                <SelectValue>{messages(DIFF_FILE_VIEW_LABELS[settings.diffFileView])}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="all">
+                  {messages(DIFF_FILE_VIEW_LABELS.all)}
+                </SelectItem>
+                <SelectItem hideIndicator value="single">
+                  {messages(DIFF_FILE_VIEW_LABELS.single)}
+                </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+        <SettingsRow
+          {...setting("file-tree-side")}
+          description={gt(
+            "Place the file tree on the left or right of the Files, Changes and pull request Code panels.",
+          )}
+          resetAction={
+            settings.fileTreeSide !== DEFAULT_UNIFIED_SETTINGS.fileTreeSide ? (
+              <SettingResetButton
+                ariaLabel={gt("Reset file tree side to default")}
+                onClick={() =>
+                  updateSettings({ fileTreeSide: DEFAULT_UNIFIED_SETTINGS.fileTreeSide })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.fileTreeSide}
+              onValueChange={(value) => {
+                if (value === "left" || value === "right") {
+                  updateSettings({ fileTreeSide: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label={gt("File tree side")}>
+                <SelectValue>{messages(FILE_TREE_SIDE_LABELS[settings.fileTreeSide])}</SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem hideIndicator value="left">
+                  {messages(FILE_TREE_SIDE_LABELS.left)}
+                </SelectItem>
+                <SelectItem hideIndicator value="right">
+                  {messages(FILE_TREE_SIDE_LABELS.right)}
                 </SelectItem>
               </SelectPopup>
             </Select>

@@ -30,9 +30,17 @@ export type DiffPanelSelection =
 
 const DEFAULT_SELECTION: DiffPanelSelection = { kind: "branch", baseRef: null };
 
+/** The file the one-file view shows; it holds only for the diff it was picked in. */
+export interface FocusedDiffFile {
+  readonly scope: string;
+  readonly path: string;
+}
+
 interface DiffPanelStoreState {
   byThreadKey: Record<string, DiffPanelSelection>;
   branchBaseRefByThreadKey: Record<string, string | null>;
+  focusedFileByThreadKey: Record<string, FocusedDiffFile>;
+  focusFile: (ref: ScopedThreadRef, file: FocusedDiffFile) => void;
   selectGitScope: (ref: ScopedThreadRef, scope: "branch" | "unstaged") => void;
   selectBranchBaseRef: (ref: ScopedThreadRef, baseRef: string | null) => void;
   selectToolCall: (ref: ScopedThreadRef, target: ToolCallDiffTarget) => void;
@@ -63,6 +71,14 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
     (set) => ({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      focusedFileByThreadKey: {},
+      focusFile: (ref, file) =>
+        set((state) => ({
+          focusedFileByThreadKey: {
+            ...state.focusedFileByThreadKey,
+            [scopedThreadKey(ref)]: file,
+          },
+        })),
       selectGitScope: (ref, scope) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
@@ -110,7 +126,11 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
           const previous = state.byThreadKey[threadKey];
           // Git reports paths with their edge whitespace; only a blank one means no file.
           const requestedPath = filePath !== undefined && filePath.trim() !== "" ? filePath : null;
+          // A requested file replaces the one picked in the file list.
+          const { [threadKey]: _replacedFocus, ...focusedFileByThreadKey } =
+            state.focusedFileByThreadKey;
           return {
+            ...(requestedPath === null ? {} : { focusedFileByThreadKey }),
             byThreadKey: {
               ...state.byThreadKey,
               [threadKey]: {
@@ -179,13 +199,19 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       removeThread: (ref) =>
         set((state) => {
           const threadKey = scopedThreadKey(ref);
-          if (!(threadKey in state.byThreadKey) && !(threadKey in state.branchBaseRefByThreadKey)) {
+          if (
+            !(threadKey in state.byThreadKey) &&
+            !(threadKey in state.branchBaseRefByThreadKey) &&
+            !(threadKey in state.focusedFileByThreadKey)
+          ) {
             return state;
           }
           const { [threadKey]: _removed, ...byThreadKey } = state.byThreadKey;
           const { [threadKey]: _removedBaseRef, ...branchBaseRefByThreadKey } =
             state.branchBaseRefByThreadKey;
-          return { byThreadKey, branchBaseRefByThreadKey };
+          const { [threadKey]: _removedFocus, ...focusedFileByThreadKey } =
+            state.focusedFileByThreadKey;
+          return { byThreadKey, branchBaseRefByThreadKey, focusedFileByThreadKey };
         }),
     }),
     {
@@ -197,6 +223,7 @@ export const useDiffPanelStore = create<DiffPanelStoreState>()(
       partialize: (state) => ({
         byThreadKey: state.byThreadKey,
         branchBaseRefByThreadKey: state.branchBaseRefByThreadKey,
+        focusedFileByThreadKey: state.focusedFileByThreadKey,
       }),
     },
   ),
@@ -237,6 +264,13 @@ export function selectThreadDiffPanelSelection(
 ): DiffPanelSelection {
   if (!ref) return DEFAULT_SELECTION;
   return byThreadKey[scopedThreadKey(ref)] ?? DEFAULT_SELECTION;
+}
+
+export function selectThreadFocusedDiffFile(
+  state: Pick<DiffPanelStoreState, "focusedFileByThreadKey">,
+  ref: ScopedThreadRef | null | undefined,
+): FocusedDiffFile | null {
+  return ref ? (state.focusedFileByThreadKey[scopedThreadKey(ref)] ?? null) : null;
 }
 
 export function selectThreadBranchBaseRef(

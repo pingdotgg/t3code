@@ -72,6 +72,54 @@ export function diffFileTreeModel(paths: ReadonlyArray<string>) {
   };
 }
 
+const INVISIBLE_DIGITS = ["\u200b", "\u200c"] as const;
+
+function invisibleNumber(value: number): string {
+  let digits = "";
+  let rest = value;
+  do {
+    digits = INVISIBLE_DIGITS[rest % 2] + digits;
+    rest = Math.floor(rest / 2);
+  } while (rest > 0);
+  return digits;
+}
+
+// A list row shows only a file's name, so a repeated name takes an invisible numbered suffix.
+export function diffFileListModel(paths: ReadonlyArray<string>) {
+  const realNames = new Set(paths.map((path) => basenameOfPath(path).toLowerCase()));
+  const usedNames = new Set<string>();
+  const repeats = new Map<string, number>();
+  const selectionByModelPath = new Map<string, string>();
+  const modelBySelectionPath = new Map<string, string>();
+  const byFileName: FileTreeIconConfig["byFileName"] = { ...T3_PIERRE_ICONS.byFileName };
+  const modelPaths = paths.map((path) => {
+    const name = basenameOfPath(path);
+    const key = name.toLowerCase();
+    let modelPath = name;
+    if (usedNames.has(key)) {
+      let repeat = repeats.get(key) ?? 0;
+      do {
+        repeat += 1;
+        modelPath = `${name}\u2060${invisibleNumber(repeat)}`;
+      } while (realNames.has(modelPath.toLowerCase()) || usedNames.has(modelPath.toLowerCase()));
+      repeats.set(key, repeat);
+      const icon = resolvePierreIconForEntry(path, "file");
+      if (icon !== null) byFileName[modelPath] = icon;
+    }
+    usedNames.add(modelPath.toLowerCase());
+    selectionByModelPath.set(modelPath, path);
+    modelBySelectionPath.set(path, modelPath);
+    return modelPath;
+  });
+  return {
+    paths: modelPaths,
+    selectionPath: (modelPath: string) => selectionByModelPath.get(modelPath) ?? modelPath,
+    // A file missing from the list has no row; its bare name may be another file's row.
+    modelPath: (path: string): string | undefined => modelBySelectionPath.get(path),
+    icons: { ...T3_PIERRE_ICONS, byFileName },
+  };
+}
+
 export function collectDirectoryPaths(paths: ReadonlyArray<string>): ReadonlyArray<string> {
   const directories = new Set<string>();
   for (const path of paths) {

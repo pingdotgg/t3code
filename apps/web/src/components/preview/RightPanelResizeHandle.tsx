@@ -9,9 +9,17 @@ interface Props extends Pick<
   handlers: ResizableWidthHandlers;
   className?: string;
   label?: string;
+  /** The panel edge the handle sits on. */
+  edge?: "left" | "right";
 }
 
-export function RightPanelResizeHandle({ handlers, className, label, ...separatorProps }: Props) {
+export function RightPanelResizeHandle({
+  handlers,
+  className,
+  label,
+  edge = "left",
+  ...separatorProps
+}: Props) {
   return (
     <div
       role="separator"
@@ -19,14 +27,22 @@ export function RightPanelResizeHandle({ handlers, className, label, ...separato
       aria-orientation="vertical"
       {...separatorProps}
       className={cn(
-        "group absolute inset-y-0 left-0 z-40 w-1 cursor-col-resize touch-none select-none any-pointer-coarse:-left-2 any-pointer-coarse:w-4",
+        "group absolute inset-y-0 z-40 w-1 cursor-col-resize touch-none select-none any-pointer-coarse:w-4",
+        edge === "left"
+          ? "left-0 any-pointer-coarse:-left-2"
+          : "right-0 any-pointer-coarse:-right-2",
         className,
       )}
       {...handlers}
     >
       <span
         aria-hidden
-        className="pointer-events-none absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60 any-pointer-coarse:left-2"
+        className={cn(
+          "pointer-events-none absolute inset-y-0 w-px bg-transparent transition-colors duration-150 group-hover:bg-border group-focus-visible:bg-primary/60 group-active:bg-primary/60",
+          edge === "left"
+            ? "left-0 -translate-x-1/2 any-pointer-coarse:left-2"
+            : "right-0 translate-x-1/2 any-pointer-coarse:right-2",
+        )}
       />
     </div>
   );

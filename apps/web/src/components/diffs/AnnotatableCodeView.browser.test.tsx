@@ -21,30 +21,34 @@ type ViewerProps = Omit<ComponentProps<typeof StyledDiffCodeView<unknown>>, "opt
 
 // Replace only the virtualized viewer; comment editing and submission use the real components.
 vi.mock("./StyledDiffCodeView", () => ({
-  StyledDiffCodeView: (props: ViewerProps) =>
-    props.items
-      ?.filter((item) => item.type === "diff")
-      .map((item) => (
-        <section key={item.id}>
-          <button
-            disabled={!props.options?.enableLineSelection || !props.options?.enableGutterUtility}
-            onClick={() => {
-              props.onSelectedLinesChange?.({ id: item.id, range });
-              props.options?.onGutterUtilityClick?.(range, { item });
-            }}
-          >
-            Comment on {item.fileDiff.name}
-          </button>
-          {props.selectedLines?.id === item.id ? (
-            <mark>Line {props.selectedLines.range.start}</mark>
-          ) : null}
-          {item.annotations?.map((annotation) => (
-            <div key={`${annotation.side}:${annotation.lineNumber}`}>
-              {props.renderAnnotation?.(annotation, item.fileDiff, item)}
-            </div>
-          ))}
-        </section>
-      )),
+  StyledDiffCodeView: (props: ViewerProps) => (
+    <>
+      {props.renderCodeViewHeader?.()}
+      {props.items
+        ?.filter((item) => item.type === "diff")
+        .map((item) => (
+          <section key={item.id}>
+            <button
+              disabled={!props.options?.enableLineSelection || !props.options?.enableGutterUtility}
+              onClick={() => {
+                props.onSelectedLinesChange?.({ id: item.id, range });
+                props.options?.onGutterUtilityClick?.(range, { item });
+              }}
+            >
+              Comment on {item.fileDiff.name}
+            </button>
+            {props.selectedLines?.id === item.id ? (
+              <mark>Line {props.selectedLines.range.start}</mark>
+            ) : null}
+            {item.annotations?.map((annotation) => (
+              <div key={`${annotation.side}:${annotation.lineNumber}`}>
+                {props.renderAnnotation?.(annotation, item.fileDiff, item)}
+              </div>
+            ))}
+          </section>
+        ))}
+    </>
+  ),
 }));
 
 import { AnnotatableCodeView } from "./AnnotatableCodeView";
@@ -79,6 +83,8 @@ function view(
   files: ReturnType<typeof file>[],
   codeViewKey = "initial",
   pendingFiles: FileDiffMetadata[] = [],
+  hiddenFileKeys?: ReadonlySet<string>,
+  onShowHiddenDraft?: (filePath: string) => void,
 ) {
   return (
     <StrictMode>
@@ -86,6 +92,8 @@ function view(
         codeViewKey={codeViewKey}
         files={files}
         pendingFiles={pendingFiles}
+        {...(hiddenFileKeys ? { hiddenFileKeys } : {})}
+        {...(onShowHiddenDraft ? { onShowHiddenDraft } : {})}
         sectionId="unstaged"
         sectionTitle="Uncommitted"
         composerDraftTarget={target}
@@ -159,5 +167,25 @@ describe("diff comment drafts", () => {
       }),
     ]);
     expect(container.querySelector("p")?.textContent).toBe("Keep this draft");
+  });
+
+  it("keeps a draft on a file the one-file view hides until it shows the file again", async () => {
+    using _drafts = setup();
+    const first = file("first.ts");
+    const second = file("second.ts");
+    const hidden = new Set([first.fileKey, second.fileKey]);
+    const shown: string[] = [];
+    const show = (filePath: string) => shown.push(filePath);
+    await using screen = await render(view([first], "first", [], hidden, show), { container });
+    await click("Comment on first.ts");
+    await typeComment("Unfinished thought");
+    await screen.rerender(view([second], "second", [], hidden, show));
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.textContent).toContain("Unfinished comment on first.ts");
+    await click("Show");
+    expect(shown).toEqual(["first.ts"]);
+    await screen.rerender(view([first], "first", [], hidden, show));
+    expect(container.textContent).not.toContain("Unfinished comment on");
+    expect(editor().value).toBe("Unfinished thought");
   });
 });

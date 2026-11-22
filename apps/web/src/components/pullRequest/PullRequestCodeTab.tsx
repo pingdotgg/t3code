@@ -458,6 +458,7 @@ function PullRequestCodeTab({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
+    fileTreeSide: settings.fileTreeSide,
     wordWrap: settings.wordWrap,
   }));
   const [folds, setFolds] = useState(EMPTY_PULL_REQUEST_DIFF_FOLDS);
@@ -1893,6 +1894,49 @@ function PullRequestCodeTab({
     else orphanFiles.set(thread.path, [thread]);
   }
 
+  const fileTreePane = fileTreeOpen ? (
+    <FileExplorerPane
+      resizable
+      side={settings.fileTreeSide}
+      storageKey="t3code:diff-file-tree-width"
+      defaultWidth={320}
+      defaultWidthFraction={0.4}
+      minWidth={192}
+      resizeLabel={gt("Resize PR Code files")}
+    >
+      <DiffFileTree
+        ariaLabel={gt(
+          "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} files",
+          {
+            term,
+            number: detail.number,
+          },
+        )}
+        entries={fileTreeEntries}
+        onSelectFile={revealFile}
+        footer={
+          nextCursor === null ? null : (
+            <div className="shrink-0 border-t border-border/60 p-2">
+              <Button
+                type="button"
+                size="xs"
+                variant="outline"
+                className="w-full"
+                disabled={diffQuery.isPending}
+                onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
+              >
+                {diffQuery.error !== null
+                  ? gt("Retry")
+                  : diffQuery.isPending
+                    ? gt("Loading more files...")
+                    : gt("Load more files")}
+              </Button>
+            </div>
+          )
+        }
+      />
+    </FileExplorerPane>
+  ) : null;
   return (
     <div className="flex h-full min-h-0 flex-col">
       {toolbar}
@@ -1954,6 +1998,7 @@ function PullRequestCodeTab({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
+        {settings.fileTreeSide === "left" ? fileTreePane : null}
         <div
           className="relative min-h-0 min-w-0 flex-1"
           onWheelCapture={codeViewReveal.cancel}
@@ -2003,48 +2048,7 @@ function PullRequestCodeTab({
             />
           </FileViewedToggleContext>
         </div>
-        {fileTreeOpen ? (
-          <FileExplorerPane
-            resizable
-            storageKey="t3code:diff-file-tree-width"
-            defaultWidth={320}
-            defaultWidthFraction={0.4}
-            minWidth={192}
-            resizeLabel={gt("Resize PR Code files")}
-          >
-            <DiffFileTree
-              ariaLabel={gt(
-                "{term, select, mr {Merge request} cr {Change request} other {Pull request}} #{number} files",
-                {
-                  term,
-                  number: detail.number,
-                },
-              )}
-              entries={fileTreeEntries}
-              onSelectFile={revealFile}
-              footer={
-                nextCursor === null ? null : (
-                  <div className="shrink-0 border-t border-border/60 p-2">
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      className="w-full"
-                      disabled={diffQuery.isPending}
-                      onClick={diffQuery.error !== null ? () => diffQuery.refresh() : loadNextSlice}
-                    >
-                      {diffQuery.error !== null
-                        ? gt("Retry")
-                        : diffQuery.isPending
-                          ? gt("Loading more files...")
-                          : gt("Load more files")}
-                    </Button>
-                  </div>
-                )
-              }
-            />
-          </FileExplorerPane>
-        ) : null}
+        {settings.fileTreeSide === "right" ? fileTreePane : null}
       </div>
       {unstructured}
     </div>

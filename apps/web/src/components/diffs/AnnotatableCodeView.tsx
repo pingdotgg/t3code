@@ -8,10 +8,12 @@ import type {
 } from "@pierre/diffs";
 import type { CodeViewHandle, CodeViewProps } from "@pierre/diffs/react";
 import type { EnvironmentId, ProjectId, ScopedThreadRef } from "@t3tools/contracts";
+import { useGT } from "gt-react";
 import { useState, type ReactNode, type Ref } from "react";
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { fnv1a32, resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
+import { basenameOfPath } from "~/pierre-icons";
 import {
   buildDiffReviewComment,
   restoreDiffReviewCommentRange,
@@ -19,6 +21,7 @@ import {
 } from "~/reviewCommentContext";
 
 import { nextFileCommentId } from "../files/fileCommentAnnotations";
+import { Button } from "../ui/button";
 import { DiffCommentAnnotation } from "./DiffCommentAnnotation";
 import { StyledDiffCodeView, type StyledDiffCodeViewOptions } from "./StyledDiffCodeView";
 
@@ -83,6 +86,10 @@ interface AnnotatableCodeViewProps {
     collapsed: boolean;
   }>;
   pendingFiles: ReadonlyArray<FileDiffMetadata>;
+  /** Files in the diff but not shown now; an unfinished comment on one stays for its return. */
+  hiddenFileKeys?: ReadonlySet<string>;
+  /** Shows the file an unfinished comment is on, when that file is hidden. */
+  onShowHiddenDraft?: (filePath: string) => void;
   sectionId: string;
   sectionTitle: string;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -112,6 +119,8 @@ export function AnnotatableCodeView({
   codeViewKey,
   files,
   pendingFiles,
+  hiddenFileKeys,
+  onShowHiddenDraft,
   sectionId,
   sectionTitle,
   composerDraftTarget,
@@ -142,11 +151,13 @@ export function AnnotatableCodeView({
     annotation: DiffCommentLineAnnotation;
   } | null>(null);
   const [draftText, setDraftText] = useState("");
+  const gt = useGT();
 
   const filesByKey = new Map(files.map((file) => [file.fileKey, file]));
   if (
     draft !== null &&
     !filesByKey.has(draft.fileKey) &&
+    hiddenFileKeys?.has(draft.fileKey) !== true &&
     // Lazy placeholders have provisional change types, so match both paths instead.
     !pendingFiles.some(
       (file) =>
@@ -158,6 +169,7 @@ export function AnnotatableCodeView({
     setDraftText("");
     setSelectedLines(null);
   }
+  const hiddenDraftPath = draft !== null && !filesByKey.has(draft.fileKey) ? draft.filePath : null;
   const items: CodeViewDiffItem<DiffCommentAnnotationGroup>[] = files.map(
     ({ fileDiff, filePath, fileKey, fileVersion, collapsed }) => {
       const persisted = reviewComments
@@ -272,6 +284,26 @@ export function AnnotatableCodeView({
           }
         : {})}
       {...(renderCodeViewFooter ? { renderCodeViewFooter } : {})}
+      {...(hiddenDraftPath !== null && onShowHiddenDraft
+        ? {
+            renderCodeViewHeader: () => (
+              <div className="flex items-center gap-2 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
+                <span className="min-w-0 truncate">
+                  {gt("Unfinished comment on {file}", { file: basenameOfPath(hiddenDraftPath) })}
+                </span>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  className="ms-auto shrink-0"
+                  onClick={() => onShowHiddenDraft(hiddenDraftPath)}
+                >
+                  {gt("Show", { $context: "show the file an unfinished comment is on" })}
+                </Button>
+              </div>
+            ),
+          }
+        : {})}
       items={items}
       selectedLines={selectedLines}
       onSelectedLinesChange={setSelectedLines}

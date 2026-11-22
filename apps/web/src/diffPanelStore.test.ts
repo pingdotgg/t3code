@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
   resolveToolCallDiffTarget,
+  selectThreadFocusedDiffFile,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "./diffPanelStore";
@@ -14,6 +15,7 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      focusedFileByThreadKey: {},
     });
     useDiffPanelSessionStore.setState({ collapsedFileKeysByScopeKey: {} });
   });
@@ -83,6 +85,20 @@ describe("diffPanelStore", () => {
       resolveToolCallDiffTarget(target, [{ ...completed, sourceThreadId: ThreadId.make("other") }]),
     ).toBe(target);
     expect(resolveToolCallDiffTarget(target, [])).toBe(target);
+  });
+
+  it("drops a thread's one-file pick for a requested file and with the thread", () => {
+    const ref = { environmentId: EnvironmentId.make("env"), threadId: ThreadId.make("thread") };
+    const focus = { scope: "turn:run-1", path: "src/b.ts" };
+    const store = useDiffPanelStore.getState();
+    store.focusFile(ref, focus);
+    store.selectTurn(ref, RunId.make("run-1"));
+    expect(selectThreadFocusedDiffFile(useDiffPanelStore.getState(), ref)).toEqual(focus);
+    store.selectTurn(ref, RunId.make("run-1"), "src/a.ts");
+    expect(selectThreadFocusedDiffFile(useDiffPanelStore.getState(), ref)).toBeNull();
+    store.focusFile(ref, focus);
+    store.removeThread(ref);
+    expect(selectThreadFocusedDiffFile(useDiffPanelStore.getState(), ref)).toBeNull();
   });
 
   it("retains fold choices when a panel consumer returns with fresh defaults", () => {

@@ -72,6 +72,14 @@ export const DiffLayout = Schema.Literals(["stacked", "split"]);
 export type DiffLayout = typeof DiffLayout.Type;
 const DEFAULT_DIFF_LAYOUT: DiffLayout = "stacked";
 
+export const DiffFileView = Schema.Literals(["all", "single"]);
+export type DiffFileView = typeof DiffFileView.Type;
+const DEFAULT_DIFF_FILE_VIEW: DiffFileView = "all";
+
+export const FileTreeSide = Schema.Literals(["left", "right"]);
+export type FileTreeSide = typeof FileTreeSide.Type;
+const DEFAULT_FILE_TREE_SIDE: FileTreeSide = "right";
+
 export const SidebarProjectSortOrder = Schema.Literals(["updated_at", "created_at", "manual"]);
 export type SidebarProjectSortOrder = typeof SidebarProjectSortOrder.Type;
 export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
@@ -482,6 +490,12 @@ export const ClientSettingsSchema = Schema.Struct({
   diffFilesCollapsed: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffIgnoreWhitespace: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   diffLayout: DiffLayout.pipe(Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_LAYOUT))),
+  diffFileView: DiffFileView.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_DIFF_FILE_VIEW)),
+  ),
+  fileTreeSide: FileTreeSide.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_FILE_TREE_SIDE)),
+  ),
   environmentIdentificationMode: EnvironmentIdentificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_ENVIRONMENT_IDENTIFICATION_MODE)),
   ),
@@ -2097,6 +2111,8 @@ export const ClientSettingsPatch = Schema.Struct({
   diffFilesCollapsed: Schema.optionalKey(Schema.Boolean),
   diffIgnoreWhitespace: Schema.optionalKey(Schema.Boolean),
   diffLayout: Schema.optionalKey(DiffLayout),
+  diffFileView: Schema.optionalKey(DiffFileView),
+  fileTreeSide: Schema.optionalKey(FileTreeSide),
   environmentIdentificationMode: Schema.optionalKey(EnvironmentIdentificationMode),
   glassOpacity: Schema.optionalKey(GlassOpacity),
   onboardingCompletedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),

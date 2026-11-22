@@ -1,4 +1,5 @@
 import { useGT } from "gt-react";
+import type { FileTreeSide } from "@t3tools/contracts";
 import { type CSSProperties, type ReactNode, useState } from "react";
 
 import { RightPanelResizeHandle } from "~/components/preview/RightPanelResizeHandle";
@@ -13,9 +14,11 @@ const FILE_CONTENT_MIN_WIDTH = 256;
 /** A persisted, resizable file-tree column; fills the row when resizing is disabled.
  * Callers can retain a responsive initial width via defaultWidthFraction (a fraction of the row),
  * and use a separate saved width, minimum and resize label. A chosen width overrides the default.
+ * `side` is where the column sits in its row; the caller renders it first or last to match.
  */
 export function FileExplorerPane({
   resizable,
+  side = "right",
   children,
   storageKey = "t3code.fileExplorerWidth",
   defaultWidth = 256,
@@ -24,6 +27,7 @@ export function FileExplorerPane({
   resizeLabel,
 }: {
   resizable: boolean;
+  side?: FileTreeSide;
   children: ReactNode;
   storageKey?: string;
   defaultWidth?: number;
@@ -39,8 +43,10 @@ export function FileExplorerPane({
     defaultWidth: responsiveDefaultWidth,
     minWidth,
     maxWidth,
-    edge: "left",
+    edge: side === "right" ? "left" : "right",
   });
+  const growKey = side === "right" ? "ArrowLeft" : "ArrowRight";
+  const shrinkKey = side === "right" ? "ArrowRight" : "ArrowLeft";
 
   return (
     <aside
@@ -66,7 +72,11 @@ export function FileExplorerPane({
       aria-label={gt("File explorer")}
       className={cn(
         "relative flex min-h-0 min-w-0 shrink-0 bg-background",
-        resizable ? "border-l border-border/60" : "flex-1",
+        resizable
+          ? side === "right"
+            ? "border-l border-border/60"
+            : "border-r border-border/60"
+          : "flex-1",
       )}
       style={
         resizable
@@ -80,6 +90,7 @@ export function FileExplorerPane({
       {resizable ? (
         <RightPanelResizeHandle
           handlers={handlers}
+          edge={side === "right" ? "left" : "right"}
           label={resizeLabel ?? gt("Resize file explorer")}
           tabIndex={0}
           aria-valuenow={width}
@@ -89,10 +100,10 @@ export function FileExplorerPane({
             if (event.altKey || event.ctrlKey || event.metaKey) return;
             let nextWidth: number;
             switch (event.key) {
-              case "ArrowLeft":
+              case growKey:
                 nextWidth = width + 16;
                 break;
-              case "ArrowRight":
+              case shrinkKey:
                 nextWidth = width - 16;
                 break;
               case "Home":

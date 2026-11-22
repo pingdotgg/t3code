@@ -14,11 +14,14 @@ import {
   type RunId,
 } from "@t3tools/contracts";
 import {
+  ArrowDownIcon,
   ArrowRightIcon,
+  ArrowUpIcon,
   CheckIcon,
   ChevronDownIcon,
   Columns2Icon,
   FlaskConicalOffIcon,
+  FileDiffIcon,
   FolderTreeIcon,
   PilcrowIcon,
   Rows3Icon,
@@ -45,11 +48,13 @@ import {
   resolveToolCallDiffTarget,
   selectThreadBranchBaseRef,
   selectThreadDiffPanelSelection,
+  selectThreadFocusedDiffFile,
   useDiffPanelSessionStore,
   useDiffPanelStore,
 } from "../diffPanelStore";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { isTestChangedFile } from "@t3tools/shared/changedFileKind";
+import { orderDiffFilesLikeTree } from "@t3tools/client-runtime/diff-file-order";
 import { useHideTestFiles } from "./diffs/useHideTestFiles";
 import { useRenderedAppearance } from "../hooks/useTheme";
 import { useStableCallback } from "../hooks/useStableCallback";
@@ -197,6 +202,17 @@ function DiffFileCollapseToggle({
   );
 }
 
+function PendingDiffFileLoader({ load }: { load: () => void }) {
+  return (
+    <span
+      aria-hidden
+      ref={(node) => {
+        if (node) load();
+      }}
+    />
+  );
+}
+
 function DiffFileHeaderSuffix({
   filePath,
   workspaceRoot,
@@ -244,10 +260,13 @@ export default function DiffPanel({
     diffFilesCollapsed: settings.diffFilesCollapsed,
     diffIgnoreWhitespace: settings.diffIgnoreWhitespace,
     diffLayout: settings.diffLayout,
+    diffFileView: settings.diffFileView,
+    fileTreeSide: settings.fileTreeSide,
     timestampFormat: settings.timestampFormat,
     wordWrap: settings.wordWrap,
   }));
   const diffLayout = settings.diffLayout;
+  const singleFileView = settings.diffFileView === "single";
   const [wordWrapOverride, setWordWrapOverride] = useState<boolean | null>(null);
   const wordWrap = wordWrapOverride ?? settings.wordWrap;
   const diffIgnoreWhitespace =
@@ -420,6 +439,9 @@ export default function DiffPanel({
     ? `${routeThreadRef.environmentId}:${routeThreadRef.threadId}:${reviewSectionId}`
     : null;
   const codeViewMountKey = collapseScopeKey ?? reviewSectionId;
+  const storedFocusedFile = useDiffPanelStore((state) =>
+    selectThreadFocusedDiffFile(state, routeThreadRef),
+  );
   const selectedCheckpointRange =
     typeof selectedCheckpointTurnCount === "number"
       ? {
@@ -764,6 +786,50 @@ export default function DiffPanel({
   };
   const shownFileEntries = renderableFileEntries.filter(({ fileDiff }) => isFileShown(fileDiff));
   const shownFileKeys = shownFileEntries.map((file) => file.fileKey);
+  // Previous and next follow the file list, which orders files as its tree does.
+  const shownFilePathsInListOrder = singleFileView
+    ? orderDiffFilesLikeTree(
+        [...new Set(shownFileEntries.map(({ fileDiff }) => resolveFileDiffPath(fileDiff)))],
+        (path) => path,
+      )
+    : [];
+  // A file picked in one comparison means nothing in another, even of the same scope.
+  const focusScope = JSON.stringify([
+    reviewSectionId,
+    selectedBaseRef,
+    gitCwd ?? null,
+    repositoryFilter,
+  ]);
+  const focusedFilePath =
+    storedFocusedFile !== null && storedFocusedFile.scope === focusScope
+      ? storedFocusedFile.path
+      : selectedFilePath;
+  const findShownFileEntry = (path: string | null | undefined) =>
+    shownFileEntries.find(({ fileDiff }) => resolveFileDiffPath(fileDiff) === path);
+  const focusedFileEntry = singleFileView
+    ? (findShownFileEntry(focusedFilePath) ?? findShownFileEntry(shownFilePathsInListOrder[0]))
+    : undefined;
+  const treeSelectedPath = focusedFileEntry
+    ? resolveFileDiffPath(focusedFileEntry.fileDiff)
+    : selectedFilePath;
+  const focusedFileIndex =
+    treeSelectedPath === null ? -1 : shownFilePathsInListOrder.indexOf(treeSelectedPath);
+  const previousFilePath =
+    focusedFileEntry && focusedFileIndex > 0
+      ? shownFilePathsInListOrder[focusedFileIndex - 1]
+      : undefined;
+  const nextFilePath =
+    focusedFileEntry && focusedFileIndex >= 0
+      ? shownFilePathsInListOrder[focusedFileIndex + 1]
+      : undefined;
+  // A type change, such as a file replaced by a link, is two patches for one path.
+  const viewedFileEntries = singleFileView
+    ? shownFileEntries.filter(({ fileDiff }) => resolveFileDiffPath(fileDiff) === treeSelectedPath)
+    : shownFileEntries;
+  const viewScopeKey =
+    focusedFileEntry && collapseScopeKey !== null
+      ? `${collapseScopeKey}:file:${focusedFileEntry.fileKey}`
+      : collapseScopeKey;
   const defaultCollapsedDiffFileKeys = settings.diffFilesCollapsed
     ? new Set(diffFileKeys)
     : EMPTY_COLLAPSED_DIFF_FILE_KEYS;
@@ -783,14 +849,16 @@ export default function DiffPanel({
     remainingFileCount > 0 ? (
       <DiffFileLoadingBoundary load={loadNextFiles} count={remainingFileCount} />
     ) : null;
-  const codeViewFiles = shownFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
+  const codeViewFiles = viewedFileEntries.map(({ fileDiff, fileKey, fileVersion }) => ({
     fileDiff,
     filePath: resolveFileDiffPath(fileDiff),
     fileKey,
     fileVersion,
     collapsed:
-      collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
+      (!singleFileView && collapsedDiffFileKeys.has(fileKey)) ||
+      fileDiff.cacheKey?.endsWith(":pending") === true,
   }));
+  // Every pending file, shown or not: a draft on one survives its patch reloading.
   const pendingFiles = renderableFiles.filter(
     (file) => file.cacheKey?.endsWith(":pending") && isFileShown(file),
   );
@@ -800,9 +868,9 @@ export default function DiffPanel({
   const codeViewReveal = useCodeViewFileReveal();
   // Lazy files that sat above the saved position load again only when asked for.
   const codeViewScroll = useCodeViewScrollRestore(
-    collapseScopeKey,
-    !isRefreshingDiff && remainingFileCount === 0,
-    remainingFileCount > 0 ? loadNextFiles : null,
+    viewScopeKey,
+    !isRefreshingDiff && (singleFileView || remainingFileCount === 0),
+    !singleFileView && remainingFileCount > 0 ? loadNextFiles : null,
   );
   const attachCodeView = useStableCallback((handle: AnnotatableCodeViewHandle | null) => {
     codeViewScroll.attach(handle);
@@ -827,6 +895,12 @@ export default function DiffPanel({
     if (lazySource) requestFile(filePath);
     codeViewReveal.request(file.fileKey);
     return true;
+  };
+  const selectTreeFile = (filePath: string) => {
+    if (!singleFileView) revealDiffFile(filePath);
+    else if (lazySource) requestFile(filePath);
+    if (!routeThreadRef) return;
+    useDiffPanelStore.getState().focusFile(routeThreadRef, { scope: focusScope, path: filePath });
   };
 
   // A file another view asked to reveal (a chat diff link): retried as the diff loads until it
@@ -976,8 +1050,9 @@ export default function DiffPanel({
   };
 
   // Two pickers leave no room for these in a phone-width panel, where a split view cannot fit anyway.
+  // The one-file view's previous and next buttons need the same room.
   const narrowHeaderHidden =
-    repositorySections.length > 0 ? "@max-[30rem]/diff-header:hidden" : undefined;
+    repositorySections.length > 0 || singleFileView ? "@max-[30rem]/diff-header:hidden" : undefined;
   const headerRow = (
     <>
       <div className="@container/diff-refs flex min-w-0 flex-1 items-center gap-3 [-webkit-app-region:no-drag]">
@@ -1432,7 +1507,49 @@ export default function DiffPanel({
             </TooltipPopup>
           </Tooltip>
         )}
-        {diffFileKeys.length > 0 && (
+        {singleFileView && shownFilePathsInListOrder.length > 1 ? (
+          <>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={gt("Previous file")}
+                    disabled={previousFilePath === undefined}
+                    onClick={() => {
+                      if (previousFilePath !== undefined) selectTreeFile(previousFilePath);
+                    }}
+                  />
+                }
+              >
+                <ArrowUpIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{gt("Previous file")}</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    aria-label={gt("Next file")}
+                    disabled={nextFilePath === undefined}
+                    onClick={() => {
+                      if (nextFilePath !== undefined) selectTreeFile(nextFilePath);
+                    }}
+                  />
+                }
+              >
+                <ArrowDownIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="top">{gt("Next file")}</TooltipPopup>
+            </Tooltip>
+          </>
+        ) : null}
+        {diffFileKeys.length > 0 && !singleFileView && (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1574,6 +1691,46 @@ export default function DiffPanel({
     </>
   );
 
+  const fileTreePane = fileTreeOpen ? (
+    <FileExplorerPane
+      resizable
+      side={settings.fileTreeSide}
+      storageKey="t3code:diff-file-tree-width"
+      defaultWidthFraction={0.4}
+      resizeLabel={gt("Resize Changes files")}
+    >
+      <DiffFileTree
+        ariaLabel={gt("{section} files", { section: reviewSectionTitle })}
+        entries={fileTreeEntries}
+        selectedPath={treeSelectedPath}
+        revealRequestId={selectedFileRevealRequestId}
+        onSelectFile={selectTreeFile}
+        headerAccessory={
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  aria-label={gt("Show one file at a time")}
+                  variant="ghost"
+                  size="xs"
+                  pressed={singleFileView}
+                  onPressedChange={(pressed) => {
+                    updateClientSettings({ diffFileView: pressed ? "single" : "all" });
+                  }}
+                />
+              }
+            >
+              <FileDiffIcon className="size-3.5" />
+            </TooltipTrigger>
+            <TooltipPopup side="top">
+              {singleFileView ? gt("Show all files") : gt("Show one file at a time")}
+            </TooltipPopup>
+          </Tooltip>
+        }
+      />
+    </FileExplorerPane>
+  ) : null;
+
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
@@ -1678,12 +1835,15 @@ export default function DiffPanel({
               )
             ) : lazySource || renderablePatch?.kind === "files" ? (
               <div className="flex min-h-0 flex-1 overflow-hidden">
+                {settings.fileTreeSide === "left" ? fileTreePane : null}
                 <div
                   className="min-h-0 min-w-0 flex-1"
                   onClickCapture={(event) => {
                     const action = getDiffHeaderClickAction(event.nativeEvent);
                     if (action?.type === "open") openDiffFile(action.filePath);
-                    else if (action?.type === "toggle") toggleDiffFileCollapsed(action.fileKey);
+                    else if (action?.type === "toggle" && !singleFileView) {
+                      toggleDiffFileCollapsed(action.fileKey);
+                    }
                   }}
                   onContextMenuCapture={(event) => {
                     const composedPath = event.nativeEvent.composedPath?.() ?? [];
@@ -1718,11 +1878,17 @@ export default function DiffPanel({
                     projectId={activeThread?.projectId}
                     viewerRef={attachCodeView}
                     onScroll={codeViewScroll.onScroll}
-                    codeViewKey={codeViewMountKey}
+                    codeViewKey={viewScopeKey ?? codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
                     pendingFiles={pendingFiles}
-                    renderCodeViewFooter={renderLoadingBoundary}
+                    {...(singleFileView
+                      ? {
+                          hiddenFileKeys: new Set(shownFileKeys),
+                          onShowHiddenDraft: selectTreeFile,
+                        }
+                      : {})}
+                    {...(singleFileView ? {} : { renderCodeViewFooter: renderLoadingBoundary })}
                     sectionId={reviewSectionId}
                     sectionTitle={reviewSectionTitle}
                     composerDraftTarget={composerDraftTarget}
@@ -1757,6 +1923,13 @@ export default function DiffPanel({
                       : {})}
                     onFileCollapsedChange={setDiffFileCollapsed}
                     renderHeaderPrefix={(fileDiff, fileKey, collapsed) => {
+                      if (singleFileView) {
+                        return fileDiff.cacheKey?.endsWith(":pending") ? (
+                          <PendingDiffFileLoader
+                            load={() => requestFile(resolveFileDiffPath(fileDiff))}
+                          />
+                        ) : null;
+                      }
                       return (
                         <DiffFileCollapseToggle
                           filePath={resolveFileDiffPath(fileDiff)}
@@ -1785,22 +1958,7 @@ export default function DiffPanel({
                     }}
                   />
                 </div>
-                {fileTreeOpen ? (
-                  <FileExplorerPane
-                    resizable
-                    storageKey="t3code:diff-file-tree-width"
-                    defaultWidthFraction={0.4}
-                    resizeLabel={gt("Resize Changes files")}
-                  >
-                    <DiffFileTree
-                      ariaLabel={gt("{section} files", { section: reviewSectionTitle })}
-                      entries={fileTreeEntries}
-                      selectedPath={selectedFilePath}
-                      revealRequestId={selectedFileRevealRequestId}
-                      onSelectFile={revealDiffFile}
-                    />
-                  </FileExplorerPane>
-                ) : null}
+                {settings.fileTreeSide === "right" ? fileTreePane : null}
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-auto p-2">

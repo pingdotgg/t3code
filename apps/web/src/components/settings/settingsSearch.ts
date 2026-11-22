@@ -788,6 +788,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("stacked split side by side unified inline view")],
   },
   {
+    id: "changes-view",
+    title: msg("Changes view"),
+    to: "/settings/diffs",
+    searchTerms: [msg("diff one file single file all files stacked list focus review")],
+  },
+  {
+    id: "file-tree-side",
+    title: msg("File tree side"),
+    to: "/settings/diffs",
+    searchTerms: [msg("file tree explorer left right side flip swap position dock changes files")],
+  },
+  {
     id: "proactive-panels",
     title: msg("Open pull requests and changes panels proactively"),
     to: "/settings/diffs",
