@@ -1036,8 +1036,8 @@ it.effect("a fork cannot send a message under an id its parent already owns", ()
         creationSource: "web",
       })
       .pipe(Effect.flip);
-    assert.instanceOf(rejected, Orchestrator.OrchestratorDispatchError);
-    assert.include(String(rejected.cause), "already belongs to another thread");
+    assert.instanceOf(rejected, Orchestrator.OrchestratorCommandPreviouslyRejectedError);
+    assert.include(rejected.detail, "already belongs to another thread");
     const parent = yield* orchestrator.getThreadProjection(parentId);
     assert.deepEqual(
       parent.turnItems.flatMap((item) => (item.id === itemId ? [item.threadId] : [])),
