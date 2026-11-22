@@ -102,21 +102,14 @@ describe("HTML in native Markdown", () => {
     expect(icon("first&#10;---")).toBe("first ---");
   });
 
-  it("turns reference-style SVG images in tables into their alt text", () => {
-    const markdown = [
-      "| Check |",
-      "| --- |",
-      "| ![Passed][badge] |",
-      "",
-      "[badge]: https://example.com/status.svg",
-    ].join("\n");
-    const result = markdownForNativeRendering(markdown, ENRICHED_INLINE_FILE_LINK_REGEX);
-    expect(result).toContain("| Passed |");
-    expect(result).not.toContain("![Passed]");
-  });
-
-  it("keeps the spaces that separate a replaced image from its neighbors", () => {
+  it("keeps spacing, emphasis and links around a replaced SVG image", () => {
     const svg = "[badge]: https://example.com/status.svg";
+    const table = markdownForNativeRendering(
+      `| Check |\n| --- |\n| ![Passed][badge] |\n\n${svg}`,
+      ENRICHED_INLINE_FILE_LINK_REGEX,
+    );
+    expect(table).toContain("| Passed |");
+    expect(table).not.toContain("![Passed]");
     expect(
       markdownForNativeRendering(`a![ b ][badge]c\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
     ).toContain("a b c");
@@ -126,9 +119,6 @@ describe("HTML in native Markdown", () => {
         ENRICHED_INLINE_FILE_LINK_REGEX,
       ),
     ).toBe("foo\\_ bar");
-  });
-
-  it("keeps a space after a closing delimiter and a link after a replaced image", () => {
     expect(
       markdownForNativeRendering(
         "**Done**![](https://example.com/icon.svg) next",
@@ -141,12 +131,8 @@ describe("HTML in native Markdown", () => {
         ENRICHED_INLINE_FILE_LINK_REGEX,
       ),
     ).toBe("\\![Details](https://example.com)");
-  });
-
-  it("keeps emphasis around an SVG image that is removed", () => {
-    const svg = "[icon]: https://example.com/icon.svg";
     expect(
-      markdownForNativeRendering(`**![][icon] Title**\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
+      markdownForNativeRendering(`**![][badge] Title**\n\n${svg}`, ENRICHED_INLINE_FILE_LINK_REGEX),
     ).toContain("**Title**");
     expect(
       markdownForNativeRendering(
