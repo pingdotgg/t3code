@@ -467,6 +467,16 @@ describe("OpenCode2Client usage limits", () => {
           "unsupported",
         ],
         [503, {}, "probeFailed"],
+        [
+          503,
+          {
+            _tag: "ServiceUnavailableError",
+            message:
+              "OpenCode Console budgets are unavailable: StatusCode: non 2xx status code (401 GET https://opencode.ai/console/api/policies/current-budgets)",
+            service: "opencode",
+          },
+          "probeFailed",
+        ],
         [401, {}, "probeFailed"],
         [200, { data: { workspace: {} } }, "probeFailed"],
       ] as const) {
@@ -487,6 +497,8 @@ describe("OpenCode2Client usage limits", () => {
         else assert.strictEqual(result?.unavailable?.reason, reason);
         if ("data" in body && body.data === null)
           assert.include(result?.unavailable?.message ?? "", "signed in");
+        if ("message" in body)
+          assert.include(result?.unavailable?.message ?? "", "OpenCode Console budgets");
       }
     }),
   );

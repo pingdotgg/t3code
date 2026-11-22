@@ -505,6 +505,13 @@ describe("GitHubSourceControlProvider change request lookups by head", () => {
         ["open", "closed"],
       );
       assert.include(paths[0], "repos/acme/web/pulls?head=me%3Amain");
+      yield* gh.listChangeRequests({
+        cwd: "/repo",
+        headSelector: "me:main",
+        state: "open",
+        repository: "me/web",
+      });
+      assert.include(paths[2], "repos/me/web/pulls?head=me%3Amain");
       assert.lengthOf(graphqlCalls, 0);
     }).pipe(Effect.provide(layer));
   });
@@ -612,6 +619,15 @@ describe("GitHubSourceControlProvider writes", () => {
         body: "Body",
         maintainer_can_modify: true,
       });
+      yield* gh.createChangeRequest({
+        cwd: "/repo",
+        baseRefName: "main",
+        headSelector: "me:feature",
+        title: "Title",
+        bodyFile,
+        draft: true,
+      });
+      assert.strictEqual((requests[1]!.body as { draft?: unknown }).draft, true);
     }).pipe(Effect.provide(Layer.merge(layer, NodeServices.layer)));
   });
 

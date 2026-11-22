@@ -207,6 +207,23 @@ const openOwnershipLock = (stateDir: string) =>
         : new ServerOwnershipError({ stateDir, cause }),
   });
 
+/** Whether a running server holds the ownership lock. Read-only, so it never creates the lock file. */
+export const isServerOwnershipHeld = (statePath: string): boolean => {
+  let db: NodeSqlite.DatabaseSync | undefined;
+  try {
+    db = new NodeSqlite.DatabaseSync(ownershipLockPath(NodePath.dirname(statePath)), {
+      readOnly: true,
+      timeout: 0,
+    });
+    db.prepare("SELECT 1 FROM sqlite_schema").get();
+    return false;
+  } catch (cause) {
+    return isSqliteBusy(cause);
+  } finally {
+    db?.close();
+  }
+};
+
 /** Hold only the ownership lock until the scope closes, without claiming the runtime state. */
 export const holdServerOwnershipLock = Effect.fn("holdServerOwnershipLock")(function* (
   statePath: string,

@@ -38,7 +38,7 @@ import {
 } from "./WorkspaceTabsContext";
 import { WorkspaceToolbar } from "./WorkspaceToolbar";
 import { WORKSPACE_DOCK, workspaceDockBottomClearance } from "./workspace-tabs-state";
-import { WorkspaceSidebarTabs } from "./WorkspaceSidebarTabs";
+import { WorkspaceTabDock } from "./WorkspaceTabDock";
 import {
   useCompactWorkspaceTabs,
   useSidebarWorkspaceTabs,
@@ -187,7 +187,7 @@ function WorkspaceRootContent() {
           )}
         </SafeAreaInsetsContext>
         {deviceType !== "pad" && deviceType !== "phone" && sidebarPicker ? (
-          <WorkspaceSidebarTabs />
+          <WorkspaceTabDock placement="column" />
         ) : null}
         {enabled.length === 0 && !settingsOpen ? null : settingsOpen ||
           state.selectedTab !== "usage" ? (
