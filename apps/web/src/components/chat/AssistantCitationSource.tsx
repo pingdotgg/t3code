@@ -1,10 +1,12 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import type { AssistantCitation, MessageId, ScopedThreadRef } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import {
   resolveAssistantCitationRange,
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
+import { m } from "~/i18n/messages";
 import { toastManager } from "../ui/toast";
 import { observeResize } from "~/lib/observeResize";
 
@@ -194,8 +196,8 @@ function observeAssistantCitationSource({
             request.onComplete();
             toastManager.add({
               type: "warning",
-              title: "Could not open the cited response",
-              description: "Click the citation to try again.",
+              title: m(msg("Could not open the cited response")),
+              description: m(msg("Click the citation to try again.")),
             });
           },
         );
@@ -204,11 +206,19 @@ function observeAssistantCitationSource({
       if (rect.bottom <= scrollRect.top || rect.top >= scrollRect.bottom) return;
       activation.scrolled = true;
       request.onComplete();
+      // Screen readers follow focus, not scroll; leave someone already typing alone.
+      const active = root.ownerDocument.activeElement;
+      if (
+        !(active instanceof HTMLElement) ||
+        !(active.isContentEditable || active.matches("input, textarea, select"))
+      ) {
+        root.focus({ preventScroll: true });
+      }
       if (!range) {
         toastManager.add({
           type: "warning",
-          title: "The quoted text has changed",
-          description: "Showing the source response. The saved quote is unchanged.",
+          title: m(msg("The quoted text has changed")),
+          description: m(msg("Showing the source response. The saved quote is unchanged.")),
         });
       }
     }
@@ -359,6 +369,8 @@ export function AssistantCitationSource({
   return (
     <div
       ref={rootRef}
+      tabIndex={-1}
+      className="outline-none"
       data-assistant-citation-source={messageId}
       data-assistant-citation-environment={threadRef?.environmentId}
       data-assistant-citation-thread={threadRef?.threadId}

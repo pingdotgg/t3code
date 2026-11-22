@@ -78,6 +78,15 @@ describe("cloneUrlForProtocol", () => {
     );
   });
 
+  it("switches Bitbucket Cloud between its SSH and HTTPS hosts", () => {
+    expect(cloneUrlForProtocol("https://bitbucket.org/workspace/repo.git", "ssh")).toBe(
+      "git@ssh.bitbucket.org:workspace/repo.git",
+    );
+    expect(cloneUrlForProtocol("git@ssh.bitbucket.org:workspace/repo.git", "https")).toBe(
+      "https://bitbucket.org/workspace/repo.git",
+    );
+  });
+
   it("preserves encoded Azure repository components and same-protocol URLs", () => {
     const ssh = "git@ssh.dev.azure.com:v3/Fabrikam/Project%20One/fab%20repo";
     const https = "https://dev.azure.com/Fabrikam/Project%20One/_git/fab%20repo";
@@ -175,7 +184,7 @@ describe("cloneUrlForProtocol", () => {
 });
 
 describe("cloneUrlRepositoryPath", () => {
-  it("rejects Windows device names and trailing dots or spaces in every folder", () => {
+  it("derives portable clone folders from URI and SCP paths", () => {
     for (const segment of [
       "CON",
       "nul.txt",
@@ -197,5 +206,19 @@ describe("cloneUrlRepositoryPath", () => {
       "gitlab.com/group/sub/repo",
     );
     expect(cloneUrlRepositoryPath("C:/repos/project.git")).toBeNull();
+    for (const prefix of ["https://host.example/", "ssh://git@host.example/"]) {
+      expect(cloneUrlRepositoryPath(`${prefix}Research%20Tools/r%C3%A9sum%C3%A9.git`)).toBe(
+        "host.example/Research Tools/résumé",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%2520name.git`)).toBe(
+        "host.example/team/repo%20name",
+      );
+      expect(cloneUrlRepositoryPath(`${prefix}team/%2e%2e/repo.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/repo%20.git`)).toBeNull();
+      expect(cloneUrlRepositoryPath(`${prefix}team/bad%FF.git`)).toBeNull();
+    }
+    expect(cloneUrlRepositoryPath("git@host.example:team/repo%20name.git")).toBe(
+      "host.example/team/repo%20name",
+    );
   });
 });

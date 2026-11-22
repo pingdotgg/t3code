@@ -116,7 +116,8 @@ vi.mock("expo-file-system", () => ({
 vi.mock("./ui/Dialog", () => ({ alert: vi.fn() }));
 vi.mock("./ui/AppText", () => ({ AppText: ({ children }: { children?: ReactNode }) => children }));
 vi.mock("./ComposerContextSheet", () => ({ ComposerContextSheet: () => null }));
-vi.mock("../features/threads/useOpenLinkedThread", () => ({ useOpenLinkedThread: () => vi.fn() }));
+vi.mock("./AssistantCitationSheet", () => ({ AssistantCitationSheet: () => null }));
+vi.mock("../features/threads/useOpenThreadLink", () => ({ useOpenThreadLink: () => vi.fn() }));
 vi.mock("../state/peerLinks", () => ({ useLinkedEnvironments: () => [] }));
 vi.mock("../state/model-mentions", () => ({ useModelMentions: () => [] }));
 vi.mock("../state/preferences", async () => {
@@ -128,7 +129,7 @@ vi.mock("../lib/useUniwindTheme", () => ({ useUniwindTheme: () => ({}) }));
 vi.mock("../lib/nativeComposerTheme", () => ({ createNativeComposerTheme: () => ({}) }));
 vi.mock("../lib/contextChipIconSource", () => ({ contextChipIconUri: () => "" }));
 vi.mock("../features/settings/appearance/useScaledTextRole", () => ({
-  useScaledTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
+  useComposerTextRole: () => ({ fontSize: 16, lineHeight: 22 }),
 }));
 vi.mock("../lib/uuid", () => ({ uuidv4: () => "uuid", randomHex: () => "0000" }));
 vi.mock("../state/assets", () => ({ assetEnvironment: {} }));
