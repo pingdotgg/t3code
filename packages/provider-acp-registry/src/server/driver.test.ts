@@ -771,12 +771,41 @@ describe("acpRegistrySnapshotReadiness", () => {
       "auto",
     );
 
+    const entitledEffort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      currentValue: "high",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+    };
+    const placeholderEffort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      currentValue: "on",
+      options: [
+        { id: "off", label: "Off" },
+        { id: "on", label: "On" },
+      ],
+    };
+    const sharedMode = {
+      id: "mode",
+      label: "Mode",
+      type: "select" as const,
+      currentValue: "code",
+      options: [{ id: "code", label: "Code" }],
+    };
+
     const entitled = applyAcpRegistryLiveConfiguration(
       provider,
       {
         models: [{ id: "gmodel", name: "GPT-Pro", description: null }],
         currentModelId: "gmodel",
-        configOptions: [],
+        configOptions: [entitledEffort],
+        modelOptionIds: ["effort"],
         modelsFromModelSelect: true,
       },
       [],
@@ -789,7 +818,8 @@ describe("acpRegistrySnapshotReadiness", () => {
       {
         models: [{ id: "placeholder", name: "Placeholder", description: null }],
         currentModelId: "placeholder",
-        configOptions: [],
+        configOptions: [placeholderEffort, sharedMode],
+        modelOptionIds: ["effort"],
         modelsFromModelSelect: false,
       },
       [],
@@ -798,6 +828,24 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
     expect(afterProvisional.models.map((m) => m.slug)).toEqual(["gmodel"]);
     expect(afterProvisional.models.find((m) => m.slug === "gmodel")?.isDefault).toBe(true);
+    expect(
+      afterProvisional.models.find((m) => m.slug === "gmodel")?.capabilities?.optionDescriptors,
+    ).toEqual([sharedMode, entitledEffort]);
+
+    const afterProvisionalModelOnly = applyAcpRegistryLiveConfiguration(
+      entitled,
+      {
+        models: [{ id: "placeholder", name: "Placeholder", description: null }],
+        currentModelId: "placeholder",
+        configOptions: [placeholderEffort],
+        modelOptionIds: ["effort"],
+        modelsFromModelSelect: false,
+      },
+      [],
+      entitled.models,
+      { preserveSingleModelCatalog: true },
+    );
+    expect(afterProvisionalModelOnly.models).toBe(entitled.models);
 
     const replacedExplicit = applyAcpRegistryLiveConfiguration(
       entitled,
@@ -1710,7 +1758,19 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       yield* coordinator.publishLiveConfiguration(identity.instanceId, {
         models: [{ id: "entitled-model", name: "Entitled", description: null }],
         currentModelId: "entitled-model",
-        configOptions: [],
+        configOptions: [
+          {
+            id: "effort",
+            label: "Effort",
+            type: "select",
+            currentValue: "high",
+            options: [
+              { id: "low", label: "Low" },
+              { id: "high", label: "High" },
+            ],
+          },
+        ],
+        modelOptionIds: ["effort"],
         modelsFromModelSelect: true,
       });
       yield* Fiber.join(liveApplied);
@@ -1730,13 +1790,13 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       ).toEqual(Option.some("entitled-model"));
 
       // A subsequent provisional single-model live update must not replace the explicit singleton
-      // catalog or downgrade its provenance.
+      // catalog, overwrite its model-specific options, or downgrade its provenance.
       const provisionalProcessed = yield* instance.snapshot.streamChanges.pipe(
         Stream.filter(
           (snapshot) =>
             snapshot.models
               .find((model) => model.slug === "entitled-model")
-              ?.capabilities?.optionDescriptors?.some((option) => option.id === "effort") === true,
+              ?.capabilities?.optionDescriptors?.some((option) => option.id === "mode") === true,
         ),
         Stream.runHead,
         Effect.forkScoped({ startImmediately: true }),
@@ -1746,23 +1806,40 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         currentModelId: "live-placeholder",
         configOptions: [
           {
+            id: "mode",
+            label: "Mode",
+            type: "select",
+            currentValue: "code",
+            options: [{ id: "code", label: "Code" }],
+          },
+          {
             id: "effort",
             label: "Effort",
             type: "select",
-            currentValue: "high",
+            currentValue: "on",
             options: [
-              { id: "low", label: "Low" },
-              { id: "high", label: "High" },
+              { id: "off", label: "Off" },
+              { id: "on", label: "On" },
             ],
           },
         ],
+        modelOptionIds: ["effort"],
         modelsFromModelSelect: false,
       });
+      const retainedAfterProvisional = Option.getOrThrow(yield* Fiber.join(provisionalProcessed));
+      expect(retainedAfterProvisional.models.map((model) => model.slug)).toEqual([
+        "entitled-model",
+      ]);
       expect(
-        Option.getOrThrow(yield* Fiber.join(provisionalProcessed)).models.map(
-          (model) => model.slug,
-        ),
-      ).toEqual(["entitled-model"]);
+        retainedAfterProvisional.models
+          .find((model) => model.slug === "entitled-model")
+          ?.capabilities?.optionDescriptors?.find((option) => option.id === "effort"),
+      ).toMatchObject({
+        options: [
+          { id: "low", label: "Low" },
+          { id: "high", label: "High" },
+        ],
+      });
 
       yield* fileSystem.writeFileString(modelsPath, JSON.stringify({ provisional: "placeholder" }));
       yield* TestClock.adjust("16 minutes");

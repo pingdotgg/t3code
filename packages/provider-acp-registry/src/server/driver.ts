@@ -455,11 +455,26 @@ export function applyAcpRegistryLiveConfiguration(
   const useLiveCatalog =
     configuration.models.length > 1 ||
     (configuration.models.length === 1 && !liveCatalogIsProvisional);
-  const selectedProbedModelId =
+  const liveCurrentModelInProbed =
     configuration.currentModelId !== null &&
-    probedModels.some((model) => model.slug === configuration.currentModelId)
-      ? configuration.currentModelId
-      : (probedModels.find((model) => model.isDefault)?.slug ?? null);
+    probedModels.some((model) => model.slug === configuration.currentModelId);
+  const selectedProbedModelId = liveCurrentModelInProbed
+    ? configuration.currentModelId
+    : (probedModels.find((model) => model.isDefault)?.slug ?? null);
+  // When retaining the probed catalog for a live session running an absent
+  // model (e.g. a cold-start placeholder), keep only shared options and leave
+  // each retained model's own learned options untouched.
+  const dropUnmatchedModelOptions =
+    !useLiveCatalog && configuration.currentModelId !== null && !liveCurrentModelInProbed;
+  const unmatchedModelOptionIds = dropUnmatchedModelOptions
+    ? new Set(configuration.modelOptionIds ?? [])
+    : EMPTY_SLUG_SET;
+  const effectiveConfigOptions =
+    unmatchedModelOptionIds.size === 0
+      ? configuration.configOptions
+      : configuration.configOptions.filter(
+          (descriptor) => !unmatchedModelOptionIds.has(descriptor.id),
+        );
   const discovery = useLiveCatalog
     ? configuration
     : {
@@ -469,19 +484,26 @@ export function applyAcpRegistryLiveConfiguration(
           name: model.name,
           description: null,
         })),
-        currentModelId: selectedProbedModelId,
+        currentModelId: dropUnmatchedModelOptions
+          ? configuration.currentModelId
+          : selectedProbedModelId,
+        configOptions: effectiveConfigOptions,
       };
+  const nextModels =
+    !useLiveCatalog && effectiveConfigOptions.length === 0
+      ? withAcpRegistryDefaultModel(provider.models, selectedProbedModelId)
+      : modelsFromDiscovery(
+          discovery,
+          customModels,
+          previousModels.filter((model) => !model.isCustom),
+        );
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
     models:
-      !useLiveCatalog && configuration.configOptions.length === 0
-        ? withAcpRegistryDefaultModel(provider.models, selectedProbedModelId)
-        : modelsFromDiscovery(
-            discovery,
-            customModels,
-            previousModels.filter((model) => !model.isCustom),
-          ),
+      dropUnmatchedModelOptions && effectiveConfigOptions.length > 0
+        ? withAcpRegistryDefaultModel(nextModels, selectedProbedModelId)
+        : nextModels,
   };
 }
 
