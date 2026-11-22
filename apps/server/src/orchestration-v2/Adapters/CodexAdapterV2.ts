@@ -39,6 +39,7 @@ import {
   OrchestrationV2ProviderGoal,
   parseGoalCommand,
   ProviderDriverKind,
+  ProviderMcpSignInError,
   ProviderSetupError,
   type ServerProviderCompatibilityAdvisory,
   type ServerProviderModel,
@@ -57,6 +58,7 @@ import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3too
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
+import { oauthCallbackUrl } from "@t3tools/shared/oauthCallback";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
@@ -105,6 +107,7 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { FetchHttpClient, HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
@@ -162,6 +165,7 @@ import {
 } from "@t3tools/provider-core/server/subagentProjection";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
+import { buildWorkspaceInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 
 const CODEX_PROVIDER = ProviderDriverKind.make("codex");
 const CODEX_CAPACITY_MAX_RETRIES = 5;
@@ -173,6 +177,35 @@ export const CODEX_DEFAULT_INSTANCE_ID = defaultInstanceIdForDriver(CODEX_DRIVER
 type CodexFileChangeKinds = Readonly<
   Record<string, CodexSchema.V2ItemStartedNotification__PatchChangeKind>
 >;
+
+// Diff parsers split at Git headers once one exists, so each file of a multi-file patch needs its own.
+function codexMultiFilePatch(
+  changes: ReadonlyArray<CodexSchema.V2ItemCompletedNotification__FileUpdateChange>,
+): string {
+  return changes
+    .map(({ path, kind, diff }) => {
+      const oldPath = path;
+      const newPath = (kind.type === "update" && kind.move_path) || path;
+      const git = `diff --git ${JSON.stringify(`a/${oldPath}`)} ${JSON.stringify(`b/${newPath}`)}\n`;
+      if (kind.type === "update" && diff.startsWith("diff --git ")) return diff;
+      if (kind.type === "update" && diff.startsWith("--- ")) return `${git}${diff}`;
+      let hunks = diff;
+      // Codex records added and deleted files as their raw contents.
+      if (kind.type !== "update") {
+        const lines = diff.split("\n");
+        const hasFinalNewline = diff.endsWith("\n");
+        if (hasFinalNewline) lines.pop();
+        const added = kind.type === "add";
+        const range = `1,${lines.length}`;
+        hunks = `@@ -${added ? "0,0" : range} +${added ? range : "0,0"} @@\n${lines.map((line) => `${added ? "+" : "-"}${line}`).join("\n")}\n${hasFinalNewline ? "" : "\\ No newline at end of file\n"}`;
+      }
+      const before = kind.type === "add" ? "/dev/null" : JSON.stringify(`a/${oldPath}`);
+      const after = kind.type === "delete" ? "/dev/null" : JSON.stringify(`b/${newPath}`);
+      return `${git}--- ${before}\n+++ ${after}\n${hunks}`;
+    })
+    .map((section) => (section.endsWith("\n") ? section : `${section}\n`))
+    .join("");
+}
 
 function codexFileChangeApprovalPrompt(input: {
   readonly reason?: string | null;
@@ -537,6 +570,26 @@ function codexMcpToolOutput(
 
 // A hung MCP resource read must not hold run ingestion open.
 const MCP_APP_CAPTURE_TIMEOUT = "20 seconds";
+// Session setup and turn start requests answer promptly; silence this long means a wedged app-server.
+const CODEX_APP_SERVER_REQUEST_DEADLINE = "2 minutes";
+
+class CodexAppServerUnresponsiveError extends Schema.TaggedError<CodexAppServerUnresponsiveError>()(
+  "CodexAppServerUnresponsiveError",
+  { method: Schema.String },
+) {
+  override get message() {
+    return `Codex app-server did not answer ${this.method} within ${CODEX_APP_SERVER_REQUEST_DEADLINE}.`;
+  }
+}
+
+class CodexAppServerRetiredError extends Schema.TaggedError<CodexAppServerRetiredError>()(
+  "CodexAppServerRetiredError",
+  {},
+) {
+  override get message() {
+    return "Codex app-server was retired and accepts no new work.";
+  }
+}
 
 function codexMcpAppResourceUri(item: CodexDynamicToolItem): string | undefined {
   if (item.type !== "mcpToolCall") return undefined;
@@ -739,6 +792,7 @@ const decodeTurnReasoningEffort = Schema.decodeUnknownEffect(
 
 type CodexTurnStartParams = typeof CodexClient.V2TurnStartParams.Type;
 const decodeCodexTurnStartParams = Schema.decodeUnknownEffect(CodexClient.V2TurnStartParams);
+const isProviderMcpSignInError = Schema.is(ProviderMcpSignInError);
 const isProviderAdapterRuntimeRequestResponseError = Schema.is(
   ProviderAdapter.ProviderAdapterRuntimeRequestResponseError,
 );
@@ -827,10 +881,20 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
       input.runtimePolicy.approvalPolicy === undefined
         ? runtimeModeDefaults.approvalPolicy
         : yield* decodeTurnApprovalPolicy(input.runtimePolicy.approvalPolicy);
-    const sandboxPolicy =
+    const baseSandboxPolicy =
       input.runtimePolicy.sandboxPolicy === undefined
         ? runtimeModeDefaults.sandboxPolicy
         : yield* decodeTurnSandboxPolicy(input.runtimePolicy.sandboxPolicy);
+    const extraRoots = input.runtimePolicy.workspace?.extraRoots ?? [];
+    const sandboxPolicy =
+      baseSandboxPolicy?.type === "workspaceWrite" && extraRoots.length > 0
+        ? {
+            ...baseSandboxPolicy,
+            writableRoots: [
+              ...new Set([...(baseSandboxPolicy.writableRoots ?? []), ...extraRoots]),
+            ],
+          }
+        : baseSandboxPolicy;
     const selectedEffort =
       getModelSelectionStringOptionValue(input.modelSelection, "reasoningEffort") ??
       codexDefaultReasoningEffortOverride(input.modelSelection.model);
@@ -865,10 +929,18 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
             },
           )
         : undefined;
-    const additionalContext =
-      t3Context === undefined && Object.keys(appContext).length === 0
+    // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
+    const workspaceInstructions = buildWorkspaceInstructions(input.runtimePolicy);
+    const workspaceContext =
+      workspaceInstructions === ""
         ? undefined
-        : { ...t3Context, ...appContext };
+        : { t3_code_workspace: { kind: "application" as const, value: workspaceInstructions } };
+    const additionalContext =
+      t3Context === undefined &&
+      workspaceContext === undefined &&
+      Object.keys(appContext).length === 0
+        ? undefined
+        : { ...t3Context, ...workspaceContext, ...appContext };
     return yield* decodeCodexTurnStartParams({
       threadId: input.nativeThreadId,
       input: input.codexInput,
@@ -918,6 +990,28 @@ function providerSession(input: {
     lastError: null,
   };
 }
+
+interface CodexMcpStartupFailure {
+  readonly message: string;
+  readonly signIn: boolean;
+}
+
+/** Codex names an expired sign-in, but a missing one only in text that says to run `codex mcp login`. */
+const codexMcpStartupNeedsSignIn = (payload: {
+  readonly failureReason?: string | null;
+  readonly error?: string | null;
+}) =>
+  payload.failureReason === "reauthenticationRequired" ||
+  (payload.error ?? "").includes("mcp login");
+
+/** A sign-in Codex started, waiting for its callback page on this machine to be opened. */
+interface CodexMcpSignIn {
+  readonly redirectUri: string;
+  readonly state: string;
+  readonly succeeded: Deferred.Deferred<boolean>;
+}
+
+const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "localhost", "[::1]"]);
 
 const getNativeThreadId = Effect.fn("CodexAdapterV2.getNativeThreadId")(function* (
   providerThread: OrchestrationV2ProviderThread,
@@ -1252,9 +1346,8 @@ function codexTerminalErrorNeedsEvidence(
 }
 
 /**
- * ChatGPT sharing reports its own reason inside Codex's generic turn error, so
- * the code it names replaces Codex's, and clients pick a recovery from it. Its
- * allowance limits get the usage-limit recovery; other sharing failures keep their class.
+ * Codex wraps structured service failures in generic turn errors. Preserve the
+ * inner code and safe message; sharing allowance limits also change the class.
  */
 function withCodexManagedFailure(
   failure: OrchestrationV2ProviderFailure,
@@ -2096,6 +2189,39 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         );
         // A failed open is discarded, so the next turn spawns the updated binary.
         if (adapterOptions.compatibility !== undefined) yield* ensureInitialized;
+        // Failing the event stream makes the session manager release this app-server.
+        // Queue.fail lets readers take items already buffered before they see the failure.
+        // Buffered events drain before the session manager drops this runtime; refuse work meanwhile.
+        let retired = false;
+        const retireAppServer = (cause: unknown) =>
+          Effect.suspend(() => {
+            retired = true;
+            return Queue.fail(
+              events,
+              new ProviderAdapter.ProviderAdapterEventStreamError({
+                driver: CODEX_PROVIDER,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+            );
+          });
+        const rejectIfRetired = Effect.suspend(() =>
+          retired ? Effect.fail(new CodexAppServerRetiredError()) : Effect.void,
+        );
+        yield* client.awaitTermination.pipe(Effect.catch(retireAppServer), Effect.forkScoped);
+        // The outcome of an unanswered request is unknown, so it fails rather than retries.
+        const withAppServerDeadline =
+          (method: string) =>
+          <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            effect.pipe(
+              Effect.timeoutOrElse({
+                duration: CODEX_APP_SERVER_REQUEST_DEADLINE,
+                orElse: () => {
+                  const error = new CodexAppServerUnresponsiveError({ method });
+                  return retireAppServer(error).pipe(Effect.andThen(Effect.fail(error)));
+                },
+              }),
+            );
         // Read per thread: a workspace's project config can add its own servers.
         const readStdioMcpServers = (cwd: string | null | undefined) =>
           ensureInitialized.pipe(
@@ -2111,6 +2237,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.as<ReadonlyArray<string>>([]),
               ),
             ),
+            withAppServerDeadline("config/read"),
           );
         const now = yield* DateTime.now;
         const session = providerSession({
@@ -2120,28 +2247,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           model: input.modelSelection.model,
           now,
         });
-        // Drain final notifications before the session manager retires the dead process.
-        // Queue.fail lets readers take items already buffered before they see the failure.
-        yield* client.awaitTermination.pipe(
-          Effect.catch((cause) =>
-            Queue.fail(
-              events,
-              new ProviderAdapter.ProviderAdapterEventStreamError({
-                driver: CODEX_PROVIDER,
-                providerSessionId: input.providerSessionId,
-                cause,
-              }),
-            ),
-          ),
-          Effect.forkScoped,
-        );
         const rateLimitSnapshot = yield* Ref.make<CodexRateLimitSnapshot | undefined>(undefined);
         const limitedTurnItems = yield* Ref.make(
           new Map<ProviderThreadId, Extract<OrchestrationV2TurnItem, { type: "error" }>>(),
         );
         const activeTurns = yield* Ref.make(new Map<string, ActiveCodexTurnContext>());
         // Codex reports MCP startup on thread start, usually before the turn context exists.
-        const mcpStartupFailures = new Map<string, Map<string, string>>();
+        const mcpStartupFailures = new Map<string, Map<string, CodexMcpStartupFailure>>();
+        // By server name: the shared app-server signs a server in for every thread at once.
+        const mcpSignIns = new Map<string, CodexMcpSignIn>();
         const turnTokenUsageByThread = new Map<string, CodexTurnTokenUsageState>();
         const usageStateForThread = (nativeThreadId: string) => {
           let state = turnTokenUsageByThread.get(nativeThreadId);
@@ -2437,7 +2551,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const failures = mcpStartupFailures.get(nativeThreadId);
             if (failures === undefined) return;
             mcpStartupFailures.delete(nativeThreadId);
-            for (const [name, message] of failures) {
+            for (const [name, failure] of failures) {
               const nativeItemId = `mcp-startup-failed:${context.providerTurnId}:${name}`;
               const { ordinal, startedAt } = yield* resolveItemPosition(context, nativeItemId);
               yield* emitProviderEvent({
@@ -2459,7 +2573,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   type: "system_notice",
                   status: "completed",
                   title: `MCP server ${name} failed to start`,
-                  message,
+                  message: failure.message,
+                  ...(failure.signIn ? { mcpSignIn: { server: name } } : {}),
                   startedAt,
                   completedAt: startedAt,
                   updatedAt: startedAt,
@@ -4199,7 +4314,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               updatedAt,
               type: "file_change",
               fileName: firstChange.path,
-              diffStr: firstChange.diff,
+              diffStr:
+                item.changes.length > 1 ? codexMultiFilePatch(item.changes) : firstChange.diff,
               changes: item.changes.map((change) => {
                 const movePath = change.kind.type === "update" ? change.kind.move_path : undefined;
                 return movePath
@@ -5105,12 +5221,13 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         yield* client.handleServerNotification("mcpServer/startupStatus/updated", (payload) =>
           Effect.gen(function* () {
             if (payload.threadId == null) return;
-            const failures = mcpStartupFailures.get(payload.threadId) ?? new Map<string, string>();
+            const failures =
+              mcpStartupFailures.get(payload.threadId) ?? new Map<string, CodexMcpStartupFailure>();
             if (payload.status === "failed") {
-              failures.set(
-                payload.name,
-                payload.error?.trim() || `MCP server ${payload.name} failed to start.`,
-              );
+              failures.set(payload.name, {
+                message: payload.error?.trim() || `MCP server ${payload.name} failed to start.`,
+                signIn: codexMcpStartupNeedsSignIn(payload),
+              });
               mcpStartupFailures.set(payload.threadId, failures);
             } else {
               failures.delete(payload.name);
@@ -5119,6 +5236,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const context = yield* findActiveTurnByNativeThreadId(payload.threadId);
             if (context !== undefined) yield* emitMcpStartupFailures(context);
+          }),
+        );
+
+        yield* client.handleServerNotification("mcpServer/oauthLogin/completed", (payload) =>
+          Effect.suspend(() => {
+            const signIn = mcpSignIns.get(payload.name);
+            return signIn === undefined
+              ? Effect.void
+              : Deferred.succeed(signIn.succeeded, payload.success).pipe(Effect.asVoid);
           }),
         );
 
@@ -7620,6 +7746,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 Effect.catch(() =>
                   Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
                 ),
+                withAppServerDeadline("config/read"),
               );
             const turnStartParams = yield* buildCodexTurnStartParams({
               cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
@@ -7651,7 +7778,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ...(yield* Ref.get(settledTurns)),
               ...(yield* Ref.get(activeTurns)),
             ]);
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* client
+              .request("turn/start", turnStartParams)
+              .pipe(withAppServerDeadline("turn/start"));
             const previousTurn =
               previousTurns.get(started.turn.id) ??
               (yield* Ref.get(activeTurns)).get(started.turn.id);
@@ -7741,6 +7870,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
             command: OrchestrationV2GoalCommand,
           ) {
+            yield* rejectIfRetired;
             if (command.type === "set") yield* validateCodexGoalObjective(command.objective);
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             rootProviderThreads.set(threadId, turnInput.providerThread);
@@ -7969,6 +8099,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
           normalizeThreadLoadModelSelection: normalizeCodexThreadLoadModelSelection,
+          // Exec sessions, background terminals and subagents all live in the app-server process.
+          backgroundTasksEndWithProcess: true,
           // Idle release can beat delayed subagent resumes: Codex reports them completed between turns with no resume-expected signal.
           hasPendingBackgroundWork: Effect.gen(function* () {
             for (const items of (yield* Ref.get(runningCommandItemsByTurn)).values()) {
@@ -8016,7 +8148,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             return false;
           }),
           ensureThread: (threadInput) =>
-            ensureInitialized.pipe(
+            rejectIfRetired.pipe(
+              Effect.andThen(ensureInitialized),
               Effect.andThen(
                 Effect.all([
                   mcpSessions.read(threadInput.threadId),
@@ -8048,6 +8181,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   thread: response.thread,
                 }),
               ),
+              withAppServerDeadline("thread/start"),
               Effect.mapError(
                 (cause) =>
                   new ProviderAdapter.ProviderAdapterEnsureThreadError({
@@ -8059,6 +8193,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           resumeThread: Effect.fn("CodexAdapterV2.resumeThread")(
             function* (threadInput) {
+              yield* rejectIfRetired;
               const nativeThreadId = yield* getNativeThreadId(threadInput.providerThread);
               const appThreadId = threadInput.threadId ?? threadInput.providerThread.appThreadId;
               const resume = resumeNativeThread(nativeThreadId, {
@@ -8081,6 +8216,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               goalUpdatesHeld.add(nativeThreadId);
               const response = yield* ensureInitialized.pipe(
                 Effect.andThen(resume),
+                withAppServerDeadline("thread/resume"),
                 Effect.flatMap(decodeCodexResumeMetadata),
                 // Stay registered: a lost or undecodable response may still have resumed the thread.
                 Effect.onError(() =>
@@ -8193,6 +8329,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (goalCommand !== null) return runGoalCommand(turnInput, goalCommand);
             const nativeThreadId = turnInput.providerThread.nativeThreadRef?.nativeId;
             return Effect.gen(function* () {
+              yield* rejectIfRetired;
               if (
                 !continuation &&
                 nativeThreadId != null &&
@@ -8891,6 +9028,120 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             ),
           ),
           mcpApps,
+          mcpSignIn: {
+            start: Effect.fn("CodexAdapterV2.mcpSignIn.start")(
+              function* ({ providerThread, server }) {
+                const threadId = yield* getNativeThreadId(providerThread);
+                // A notice can outlive its problem, as when another client signed the server in.
+                const status = yield* ensureInitialized.pipe(
+                  Effect.andThen(
+                    withLoadedThread(
+                      providerThread,
+                      threadId,
+                      client.request("mcpServerStatus/list", {
+                        serverName: server,
+                        threadId,
+                        detail: "toolsAndAuthOnly",
+                      }),
+                    ),
+                  ),
+                  Effect.orElseSucceed(() => ({ data: [] })),
+                );
+                if (status.data.some((entry) => entry.runtimeStatus === "connected")) {
+                  return { authorizationUrl: null };
+                }
+                // With the thread, Codex reconnects the server there once the sign-in succeeds.
+                const { authorizationUrl } = yield* ensureInitialized.pipe(
+                  Effect.andThen(
+                    withLoadedThread(
+                      providerThread,
+                      threadId,
+                      client.request("mcpServer/oauth/login", { name: server, threadId }),
+                    ),
+                  ),
+                );
+                const params = yield* Effect.try({
+                  try: () => new URL(authorizationUrl).searchParams,
+                  catch: () =>
+                    new ProviderMcpSignInError({
+                      server,
+                      detail: `Codex returned a sign-in page for ${server} that T3 Code can't open.`,
+                    }),
+                });
+                const redirectUri = params.get("redirect_uri");
+                const state = params.get("state");
+                if (redirectUri !== null && state !== null) {
+                  mcpSignIns.set(server, {
+                    redirectUri,
+                    state,
+                    succeeded: yield* Deferred.make<boolean>(),
+                  });
+                }
+                return { authorizationUrl };
+              },
+              Effect.mapError((cause) =>
+                isProviderMcpSignInError(cause)
+                  ? cause
+                  : new ProviderAdapter.ProviderAdapterProtocolError({
+                      driver: CODEX_PROVIDER,
+                      detail: "Failed to start a Codex MCP sign-in.",
+                      payload: cause,
+                    }),
+              ),
+            ),
+            complete: Effect.fn("CodexAdapterV2.mcpSignIn.complete")(function* ({
+              server,
+              callbackUrl,
+            }) {
+              const fail = (detail: string) => new ProviderMcpSignInError({ server, detail });
+              const signIn = mcpSignIns.get(server);
+              if (signIn === undefined) return yield* fail(`Start the sign-in to ${server} again.`);
+              // A browser on this machine may already have opened Codex's callback page.
+              let delivered = true;
+              if (!(yield* Deferred.isDone(signIn.succeeded))) {
+                const callback = yield* Effect.try({
+                  try: () => oauthCallbackUrl(callbackUrl, signIn.redirectUri, signIn.state),
+                  catch: () =>
+                    fail(
+                      "That address isn't from this sign-in. Paste the address your browser went to after you approved.",
+                    ),
+                });
+                if (!LOOPBACK_HOSTNAMES.has(callback.hostname)) {
+                  return yield* fail(
+                    `Codex takes this sign-in at ${callback.host}. Finish it in a browser that can reach that address.`,
+                  );
+                }
+                // Codex listens on the machine it runs on, which may not be the browser's. Its
+                // listener closes once a browser reached it, so a refused request can still win.
+                delivered = yield* HttpClient.get(callback).pipe(
+                  Effect.provide(FetchHttpClient.layer),
+                  Effect.provideService(FetchHttpClient.RequestInit, { redirect: "manual" }),
+                  Effect.provideService(HttpClient.TracerPropagationEnabled, false),
+                  Effect.timeout("10 seconds"),
+                  Effect.as(true),
+                  Effect.orElseSucceed(() => false),
+                );
+              }
+              const succeeded = yield* Deferred.await(signIn.succeeded).pipe(
+                Effect.timeoutOrElse({
+                  duration: delivered ? "30 seconds" : "2 seconds",
+                  orElse: () =>
+                    Effect.fail(
+                      fail(
+                        delivered
+                          ? `Codex didn't finish the sign-in to ${server}. Start again.`
+                          : `Codex didn't take the sign-in to ${server}. Start again.`,
+                      ),
+                    ),
+                }),
+              );
+              // A newer start may have replaced this sign-in while it finished.
+              if (mcpSignIns.get(server) === signIn) mcpSignIns.delete(server);
+              if (!succeeded) {
+                return yield* fail(`${server} didn't accept the sign-in. Start again.`);
+              }
+            }),
+          },
           readThreadSnapshot: Effect.fn("CodexAdapterV2.readThreadSnapshot")(
             function* (threadInput) {
               const threadId = yield* getNativeThreadId(threadInput.providerThread);

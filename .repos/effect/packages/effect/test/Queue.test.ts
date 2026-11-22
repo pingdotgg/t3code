@@ -34,6 +34,19 @@ describe("Queue", () => {
       }))
   })
 
+  it.effect("the final take delivers before a closing queue notifies its awaiters", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.bounded<number, Cause.Done>(1)
+      const worker = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+      const awaiter = yield* Effect.forkChild(Queue.await(queue).pipe(Effect.andThen(Fiber.interrupt(worker))), {
+        startImmediately: true
+      })
+      yield* Queue.offer(queue, 41)
+      yield* Queue.end(queue)
+      yield* Fiber.join(awaiter)
+      assert.deepStrictEqual(yield* Fiber.await(worker), Exit.succeed(41))
+    }))
+
   it.effect("isEnqueue type guard", () =>
     Effect.gen(function*() {
       const queue = yield* Queue.bounded<number>(10)
@@ -434,6 +447,38 @@ describe("Queue", () => {
       assert.deepStrictEqual(yield* Queue.takeAll(queue), [4, 5])
     }))
 
+  it.effect("offer sliding with zero capacity only hands off to waiting takers", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.sliding<number>(0)
+      assert.isTrue(yield* Queue.offer(queue, 0))
+      assert.strictEqual(yield* Queue.size(queue), 0)
+      const taker = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+      assert.isTrue(yield* Queue.offer(queue, 1))
+      assert.strictEqual(yield* Fiber.join(taker), 1)
+    }))
+
+  it.effect("offerAll sliding with zero capacity hands the newest messages to waiting takers", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.sliding<number>(0)
+      const taker = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+      assert.deepStrictEqual(yield* Queue.offerAll(queue, [1, 2]), [])
+      assert.isTrue(yield* Queue.offer(queue, 3))
+      assert.strictEqual(yield* Fiber.join(taker), 3)
+      assert.strictEqual(yield* Queue.size(queue), 0)
+    }))
+
+  it.effect("offer sliding with zero capacity trims to the takers left after an interruption", () =>
+    Effect.gen(function*() {
+      const queue = yield* Queue.sliding<number>(0)
+      const taker = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+      const interrupted = yield* Effect.forkChild(Queue.take(queue), { startImmediately: true })
+      assert.deepStrictEqual(yield* Queue.offerAll(queue, [1, 2]), [])
+      yield* Fiber.interrupt(interrupted)
+      assert.isTrue(yield* Queue.offer(queue, 3))
+      assert.strictEqual(yield* Fiber.join(taker), 3)
+      assert.strictEqual(yield* Queue.size(queue), 0)
+    }))
+
   it.effect("offerAll can be interrupted", () =>
     Effect.gen(function*() {
       const queue = yield* Queue.bounded<number>(2)
@@ -545,6 +590,7 @@ describe("Queue", () => {
       assert.deepStrictEqual(items, [1, 2, 3, 4, 5, 6, 7, 8, 9])
       assert.strictEqual(yield* Queue.await(queue), void 0)
       assert.strictEqual(yield* Queue.offer(queue, 10), false)
+      assert.deepStrictEqual(yield* Queue.offerAll(queue, [10, 11]), [10, 11])
     }))
 
   it.effect("end with take", () =>
@@ -896,6 +942,25 @@ describe("Queue", () => {
       result = yield* Fiber.join(fiber)
       assert.strictEqual(result, 2)
     }))
+
+  it.effect.each(["offer", "offerAll"] as const)(
+    "zero-capacity %s after offerAll waits for another taker",
+    (method) =>
+      Effect.gen(function*() {
+        const queue = yield* Queue.bounded<number>(0)
+        const taker = yield* Queue.take(queue).pipe(Effect.forkChild({ startImmediately: true }))
+        assert.deepStrictEqual(yield* Queue.offerAll(queue, [1]), [])
+        const producer = yield* Effect.forkChild(
+          method === "offer" ? Queue.offer(queue, 2) : Queue.offerAll(queue, [2]),
+          { startImmediately: true }
+        )
+
+        assert.strictEqual(yield* Fiber.join(taker), 1)
+        assert.isUndefined(producer.pollUnsafe())
+        assert.strictEqual(yield* Queue.take(queue), 2)
+        assert.isDefined(producer.pollUnsafe())
+      })
+  )
 
   it.effect("zero-capacity takeAll consumes buffered messages before pending offers", () =>
     Effect.gen(function*() {

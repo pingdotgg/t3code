@@ -27,6 +27,7 @@ const reactTests = [
   "src/components/ui/ListToggleRow.test.tsx",
   "src/features/pull-requests/usePullRequestList.test.tsx",
   "src/components/ui/AppBar.android.test.tsx",
+  "src/components/ui/AndroidAnchoredMenu.android.test.tsx",
   "src/features/files/ZipArchiveView.test.tsx",
   "src/features/pull-requests/guide/useReviewGuide.test.tsx",
   "src/features/settings/SettingsServerControlsRouteScreen.test.tsx",

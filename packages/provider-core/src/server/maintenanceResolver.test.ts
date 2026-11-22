@@ -1510,6 +1510,82 @@ it.layer(
     { skip: !symlinksSupported || windowsHost },
   );
 
+  it.effect(
+    "asks npm about every provider package installed into the same global prefix",
+    () =>
+      Effect.gen(function* () {
+        const tempDir = yield* makeTempDir("t3-npm-latest-shared");
+        const npmBinDir = NodePath.join(tempDir, "npm-bin");
+        writeExecutable(NodePath.join(npmBinDir, "npm"));
+        const binaryPath = linkIntoPackage(tempDir, "package-tool", [
+          "lib",
+          "node_modules",
+          "@example",
+          "package-tool",
+        ]);
+        const otherToolDir = NodePath.join(
+          tempDir,
+          "lib",
+          "node_modules",
+          "@example",
+          "other-tool",
+        );
+        NodeFS.mkdirSync(otherToolDir, { recursive: true });
+        NodeFS.writeFileSync(NodePath.join(otherToolDir, "package.json"), "{}");
+        // Registers a second provider package; the others this file registers are not installed.
+        makePackageManagedProviderMaintenanceResolver({
+          provider: driver("otherTool"),
+          npmPackageName: "@example/other-tool",
+          nativeUpdate: null,
+        });
+        const spawned: Array<ReadonlyArray<string>> = [];
+        const latestVersion = yield* resolveProviderMaintenanceCapabilitiesEffect(
+          packageToolUpdate,
+          { binaryPath, env: { PATH: npmBinDir } },
+        ).pipe(
+          Effect.flatMap(resolveLatestProviderVersion),
+          Effect.provideService(HostProcess.Environment, { PATH: "" }),
+          Effect.provideService(
+            ChildProcessSpawner.ChildProcessSpawner,
+            stdoutSpawner(
+              (_command, args) => {
+                spawned.push(args);
+                return JSON.stringify(
+                  args[0] === "outdated"
+                    ? { "@example/other-tool": { current: "1.0.0", latest: "1.1.0" } }
+                    : { dependencies: { "@example/package-tool": { version: "1.0.0" } } },
+                );
+              },
+              (args) => (args[0] === "outdated" ? 1 : 0),
+            ),
+          ),
+          Effect.provideServiceEffect(
+            ProviderLatestVersions.ProviderLatestVersions,
+            ProviderLatestVersions.make(),
+          ),
+          Effect.provideService(
+            HttpClient.HttpClient,
+            HttpClient.make(() => Effect.die("npm answers for the package")),
+          ),
+        );
+
+        expect(latestVersion).toBe("1.0.0");
+        expect(spawned).toEqual([
+          [
+            "outdated",
+            "-g",
+            "--prefix",
+            tempDir,
+            "--json",
+            "@example/package-tool",
+            "@example/other-tool",
+          ],
+          ["ls", "-g", "--prefix", tempDir, "--depth", "0", "--json", "@example/package-tool"],
+        ]);
+      }),
+    { skip: !symlinksSupported || windowsHost },
+  );
+
   it.effect.each([
     {
       case: "the eligible release under minimumReleaseAge",
