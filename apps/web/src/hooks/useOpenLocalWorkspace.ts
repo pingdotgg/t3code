@@ -3,12 +3,16 @@ import {
   findProjectByPath,
   inferProjectTitleFromPath,
 } from "@t3tools/client-runtime/state/projects";
+import { useAtomValue } from "@effect/atom-react";
 import type { DesktopAppActivationRequest } from "@t3tools/contracts";
+import { msg } from "gt-react";
 
 import { handleDesktopAppActivationRequest } from "../desktopAppActivation";
+import { m } from "../i18n/messages";
 import { newProjectId } from "../lib/utils";
 import { readProjects, waitForProject } from "../state/entities";
-import { usePrimaryEnvironment } from "../state/environments";
+import { useEnvironment } from "../state/environments";
+import { localEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentShellHasSnapshot } from "../state/shell";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -17,38 +21,36 @@ import { reportProjectFailure } from "./useProjectGroupUpdate";
 import { useNewThreadHandler } from "./useHandleNewThread";
 
 /**
- * Opens a folder on this computer as a project in the primary environment: an
+ * Opens a folder on this computer as a project in this computer's environment: an
  * existing project opens (and unarchives), a new one is added. Used by `t3 <dir>`
- * activations and folders dropped on the sidebar. `ready` is false until the
- * primary environment's projects have loaded, so a known folder is not added twice.
+ * activations and folders dropped on the sidebar. `ready` is false until that
+ * environment's projects have loaded, so a known folder is not added twice.
  */
 export function useOpenLocalWorkspace() {
-  const primaryEnvironment = usePrimaryEnvironment();
+  const localEnvironment = useEnvironment(useAtomValue(localEnvironmentIdAtom));
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
   const updateProject = useOrchestrationCommand(projectEnvironment.update, {
     label: "project unarchive",
   });
   const openThread = useNewThreadHandler();
-  const shellHasSnapshot = useEnvironmentShellHasSnapshot(
-    primaryEnvironment?.environmentId ?? null,
-  );
+  const shellHasSnapshot = useEnvironmentShellHasSnapshot(localEnvironment?.environmentId ?? null);
   const ready =
-    primaryEnvironment?.connection.phase === "connected" &&
-    primaryEnvironment.serverConfig !== null &&
+    localEnvironment?.connection.phase === "connected" &&
+    localEnvironment.serverConfig !== null &&
     shellHasSnapshot;
 
   const open = (request: DesktopAppActivationRequest) =>
     handleDesktopAppActivationRequest(request, {
       getTarget: () => {
         if (
-          primaryEnvironment?.connection.phase !== "connected" ||
-          primaryEnvironment.serverConfig === null
+          localEnvironment?.connection.phase !== "connected" ||
+          localEnvironment.serverConfig === null
         ) {
           return null;
         }
         return {
-          environmentId: primaryEnvironment.environmentId,
-          platform: primaryEnvironment.serverConfig.environment.platform.os,
+          environmentId: localEnvironment.environmentId,
+          platform: localEnvironment.serverConfig.environment.platform.os,
         };
       },
       findProject: (environmentId, workspaceRoot) =>
@@ -70,7 +72,9 @@ export function useOpenLocalWorkspace() {
         });
         if (result._tag === "Failure") {
           const error = squashAtomCommandFailure(result);
-          throw error instanceof Error ? error : new Error("T3 Code could not add the project.");
+          throw error instanceof Error
+            ? error
+            : new Error(m(msg("T3 Code could not add the project.")));
         }
         return projectId;
       },
@@ -88,7 +92,7 @@ export function useOpenLocalWorkspace() {
           void updateProject({
             environmentId: projectRef.environmentId,
             input: { projectId: projectRef.projectId, archived: false },
-          }).then((result) => reportProjectFailure("Failed to unarchive project", result));
+          }).then((result) => reportProjectFailure(m(msg("Failed to unarchive project")), result));
         }
         return openThread(projectRef);
       },

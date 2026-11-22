@@ -95,6 +95,8 @@ interface HubProcess {
   readonly origin: string;
   readonly startedAtMillis: number;
   readonly sdkRoot: string | null;
+  readonly emulatorExtraArgs: string | undefined;
+  readonly emulatorStamp: string | undefined;
 }
 
 interface RunningHost {
@@ -134,7 +136,9 @@ const androidSdk = Effect.gen(function* () {
   const platform = yield* HostProcess.Platform;
   const windows = platform === "win32";
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
-  const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
+  const explicit = [environment.ANDROID_HOME?.trim(), environment.ANDROID_SDK_ROOT?.trim()].filter(
+    (root): root is string => !!root,
+  );
   const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   const adbBinary = windows ? "adb.exe" : "adb";
   const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
@@ -143,7 +147,6 @@ const androidSdk = Effect.gen(function* () {
     const emulator = yield* exists(
       path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
     );
-    if (!explicit && !adb && !emulator) return null;
     const avdmanager = yield* exists(
       path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
     );
@@ -151,33 +154,28 @@ const androidSdk = Effect.gen(function* () {
       !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
     return { root, adb, emulator, avdmanager, legacyAvdmanager };
   });
-  const candidates = explicit
-    ? [explicit]
-    : [
-        path.join(home, "Library", "Android", "sdk"),
-        path.join(home, "Android", "Sdk"),
-        path.join(
-          environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"),
-          "Android",
-          "Sdk",
-        ),
-      ];
+  const candidates = [
+    ...explicit,
+    path.join(home, "Library", "Android", "sdk"),
+    path.join(home, "Android", "Sdk"),
+    path.join(environment.LOCALAPPDATA ?? path.join(home, "AppData", "Local"), "Android", "Sdk"),
+  ];
   for (const root of candidates) {
     const sdk = yield* inspect(root);
-    if (sdk) return sdk;
+    if (sdk.adb || sdk.emulator) return sdk;
   }
   // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
-  if (!explicit) {
-    const searchPath = environment.PATH ?? environment.Path ?? "";
-    for (const directory of searchPath.split(windows ? ";" : ":")) {
-      if (!directory) continue;
-      const adb = path.join(directory, adbBinary);
-      if (!(yield* exists(adb))) continue;
-      const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
-      const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
-      if (sdk) return sdk;
-    }
+  const searchPath = environment.PATH ?? environment.Path ?? "";
+  for (const directory of searchPath.split(windows ? ";" : ":")) {
+    if (!directory) continue;
+    const adb = path.join(directory, adbBinary);
+    if (!(yield* exists(adb))) continue;
+    const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
+    const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
+    if (sdk.adb || sdk.emulator) return sdk;
   }
+  // No real SDK anywhere: report what the configured root is missing.
+  if (explicit[0]) return yield* inspect(explicit[0]);
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
 });
 
@@ -271,16 +269,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const environment = yield* HostProcess.Environment;
   const workingDirectory = yield* HostProcess.WorkingDirectory;
   const hostPlatform = yield* HostProcess.Platform;
-  // Resolved per use: the Android SDK may be installed while the server runs.
-  const hostEnvironment = androidSdk.pipe(
-    Effect.map((sdk) => ({
-      sdkRoot: sdk.root,
-      env: deviceHostEnvironment(environment, sdk.root, hostPlatform, path),
-    })),
+  // Resolved per use: the desktop shell snapshot can select another SDK after the host exists.
+  const currentSdk = androidSdk.pipe(
     Effect.provideService(FileSystem.FileSystem, fs),
     Effect.provideService(Path.Path, path),
     Effect.provideService(HostProcess.Environment, environment),
     Effect.provideService(HostProcess.Platform, hostPlatform),
+  );
+  const currentHostEnvironment = currentSdk.pipe(
+    Effect.map((sdk) => deviceHostEnvironment(environment, sdk.root, hostPlatform, path)),
   );
   const startLock = yield* Semaphore.make(1);
   const runningRef = yield* Ref.make<RunningHost | null>(null);
@@ -401,11 +398,37 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.ignore,
     );
 
+  const currentHubEnvironment = Effect.gen(function* () {
+    return yield* hubEnvironment(yield* currentHostEnvironment).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(ProcessRunner.ProcessRunner, runner),
+      Effect.provideService(HostProcess.Platform, hostPlatform),
+    );
+  });
+
+  // The camera probe spawns the emulator; re-run it for a live hub only after the binary changes.
+  const emulatorStamp = Effect.gen(function* () {
+    const sdk = yield* currentSdk;
+    if (!sdk.root) return undefined;
+    const binary = path.join(
+      sdk.root,
+      "emulator",
+      hostPlatform === "win32" ? "emulator.exe" : "emulator",
+    );
+    const info = yield* fs.stat(binary).pipe(Effect.option);
+    if (Option.isNone(info)) return undefined;
+    return `${Option.getOrUndefined(info.value.mtime)?.getTime()}:${info.value.size}`;
+  });
+
   const spawnHub = Effect.fn("LocalDeviceHost.spawnHub")(function* (
     hubTool: DeviceToolPaths,
     nodePath: string,
+    env: NodeJS.ProcessEnv,
   ): Effect.fn.Return<HubProcess, DeviceHost.DeviceHostError> {
     yield* reapStaleHub;
+    const sdk = yield* currentSdk;
+    const stamp = yield* emulatorStamp;
     yield* fs
       .makeDirectory(agentDeviceStateDir(path, config.stateDir), { recursive: true })
       .pipe(Effect.ignore);
@@ -420,7 +443,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     );
     const origin = `http://127.0.0.1:${port}`;
-    const host = yield* hostEnvironment;
     const scope = yield* Scope.make("sequential");
     // The hub is not recorded yet; stop it on failure or interruption from spawn onward.
     return yield* Effect.gen(function* () {
@@ -444,12 +466,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               shell: false,
               stdout: "pipe",
               stderr: "pipe",
-              env: yield* hubEnvironment(host.env).pipe(
-                Effect.provideService(FileSystem.FileSystem, fs),
-                Effect.provideService(Path.Path, path),
-                Effect.provideService(ProcessRunner.ProcessRunner, runner),
-                Effect.provideService(HostProcess.Platform, hostPlatform),
-              ),
+              env,
             },
           ),
         )
@@ -471,7 +488,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         origin,
         startedAtMillis,
         nodePath,
-        sdkRoot: host.sdkRoot,
+        sdkRoot: sdk.root,
+        emulatorExtraArgs: env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS,
+        emulatorStamp: stamp,
       };
       yield* Effect.forkIn(observeHubOutput(hub), scope);
       yield* waitForHttpReady({
@@ -525,7 +544,11 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           Effect.gen(function* () {
             const current = yield* Ref.get(runningRef);
             if (current?.hub.child.pid !== hub.child.pid) return;
-            const replacement = yield* spawnHub(hubTool, hub.nodePath);
+            const replacement = yield* spawnHub(
+              hubTool,
+              hub.nodePath,
+              yield* currentHubEnvironment,
+            );
             yield* Ref.set(runningRef, { ...current, hub: replacement });
             yield* Effect.forkDetach(superviseHub(replacement, hubTool));
           }),
@@ -554,7 +577,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
     const existing = yield* readDaemonFile().pipe(Effect.option);
     const daemonEnvironment: NodeJS.ProcessEnv = {
-      ...(yield* hostEnvironment).env,
+      ...(yield* currentHostEnvironment),
       AGENT_DEVICE_STATE_DIR: stateDir,
       AGENT_DEVICE_DAEMON_SERVER_MODE: "http",
       // Disable the five-minute idle timeout; the server owns shutdown.
@@ -661,8 +684,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       AGENT_DEVICE_VERSION,
     ]);
     if (!entryPath) return;
-    const { env } = yield* hostEnvironment;
-    const nodePath = yield* resolveNodeExecutable("Local device support", env).pipe(
+    const hostEnvironment = yield* currentHostEnvironment;
+    const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
       Effect.provideService(HostProcess.Platform, hostPlatform),
     );
     yield* runner.run({
@@ -674,7 +697,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         "--state-dir",
         agentDeviceStateDir(path, config.stateDir),
       ],
-      env: { ...env, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
+      env: { ...hostEnvironment, AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1" },
       timeout: Duration.seconds(10),
       timeoutBehavior: "timedOutResult",
     });
@@ -688,16 +711,29 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     onPhase: (phase: "installing" | "starting", detail?: string) => Effect.Effect<void>,
   ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError | NodeRuntimeUnavailableError> {
     const running = yield* Ref.get(runningRef);
-    const host = yield* hostEnvironment;
+    let env: NodeJS.ProcessEnv | undefined;
     // A dead hub's record stays until a replacement is published: the agent
     // daemon outlives the hub, and close needs its endpoint if the restart fails.
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
-      if (alive && running.hub.sdkRoot === host.sdkRoot) return running;
-      // The hub's vendored tools spawn adb from the PATH it started with.
+      // The hub's vendored tools spawn adb from the PATH it started with, so a new SDK needs a new hub.
+      if (alive && (yield* currentSdk).root === running.hub.sdkRoot) {
+        const stamp = yield* emulatorStamp;
+        if (stamp === running.hub.emulatorStamp) return running;
+        // An updated emulator can change the camera overrides; replace the hub only if they did.
+        env = yield* currentHubEnvironment;
+        if (env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS === running.hub.emulatorExtraArgs) {
+          const next = { ...running, hub: { ...running.hub, emulatorStamp: stamp } };
+          yield* Ref.set(runningRef, next);
+          return next;
+        }
+      }
       if (alive) yield* stopHub(running.hub);
     }
-    const nodePath = yield* resolveNodeExecutable("Local device support", host.env).pipe(
+    const nodePath = yield* resolveNodeExecutable(
+      "Local device support",
+      yield* currentHostEnvironment,
+    ).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcess.Platform, hostPlatform),
@@ -724,7 +760,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     );
     yield* onPhase("starting");
-    const hub = yield* spawnHub(hubTool, nodePath);
+    const hub = yield* spawnHub(hubTool, nodePath, env ?? (yield* currentHubEnvironment));
     const next = yield* Effect.gen(function* () {
       yield* pruneLocalDeviceTools(config.baseDir, nodePath, "hub").pipe(
         Effect.provideService(Path.Path, path),
@@ -829,20 +865,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   };
 
   const run: DeviceHost.DeviceHostReady["run"] = (command, args, options) =>
-    hostEnvironment.pipe(
-      Effect.flatMap(({ sdkRoot, env }) =>
+    currentSdk.pipe(
+      Effect.flatMap((sdk) =>
         runner.run({
           command:
-            command === "emulator" && sdkRoot
+            command === "emulator" && sdk.root
               ? path.join(
-                  sdkRoot,
+                  sdk.root,
                   "emulator",
                   hostPlatform === "win32" ? "emulator.exe" : "emulator",
                 )
               : command,
           args,
           cwd: workingDirectory,
-          env,
+          env: deviceHostEnvironment(environment, sdk.root, hostPlatform, path),
           timeout: Duration.millis(options?.timeoutMs ?? 20_000),
           timeoutBehavior: "timedOutResult",
           ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
