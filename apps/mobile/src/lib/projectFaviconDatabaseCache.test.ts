@@ -7,6 +7,7 @@ import * as NodeFSP from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const native = vi.hoisted(() => ({
+  platform: { OS: "ios" },
   uuid: vi.fn(() => "ab74bbb8-c8aa-4b3a-a2d1-91cfb7688a85"),
   load: vi.fn(
     async (
@@ -23,6 +24,7 @@ const native = vi.hoisted(() => ({
   read: vi.fn(),
   remove: vi.fn(),
 }));
+vi.mock("react-native", () => ({ Platform: native.platform }));
 vi.mock("expo-image", () => ({
   Image: {
     loadAsync: native.load,
@@ -60,6 +62,7 @@ const image = { url: "https://remote/icon.png", bytes: Uint8Array.from([137, 80,
 
 beforeEach(() => {
   vi.clearAllMocks();
+  native.platform.OS = "ios";
   native.read.mockReset().mockResolvedValue(png);
   native.load.mockReset().mockImplementation(async (_url, { maxWidth }) => ({
     width: maxWidth,
@@ -134,6 +137,40 @@ describe("mobile project icon thumbnails", () => {
     expect(repeated).not.toMatchObject({ uri: first.uri });
     expect(changed).toMatchObject({ cacheKey: expect.any(String) });
     expect(changed).not.toMatchObject({ cacheKey: first.cacheKey });
+  });
+
+  it("reuses the Android decode URI and keeps the source staged while a decode is pending", async () => {
+    native.platform.OS = "android";
+    using writeSource = vi.spyOn(File.prototype, "write");
+    const started = Promise.withResolvers<string | undefined>();
+    const finish = Promise.withResolvers<void>();
+    const decode = native.load.getMockImplementation()!;
+    native.load.mockImplementationOnce(async (source, options) => {
+      started.resolve(typeof source === "string" ? source : source.uri);
+      await finish.promise;
+      return decode(source, options);
+    });
+    native.uuid
+      .mockReturnValueOnce("c276136f-2c37-4abf-82a1-90af524a2352")
+      .mockReturnValueOnce("6921e15a-429d-45dc-81f9-c98bfd295433");
+    const signal = new AbortController().signal;
+    const pending = downscaleProjectFavicon(image, signal);
+    const uri = await started.promise;
+    try {
+      await downscaleProjectFavicon(image, signal);
+      expect(native.load.mock.calls[1]?.[0]).toMatchObject({ uri });
+      expect(writeSource).toHaveBeenCalledOnce();
+      expect(native.remove.mock.contexts).not.toContainEqual(expect.objectContaining({ uri }));
+    } finally {
+      finish.resolve();
+      await pending;
+    }
+    expect(native.remove.mock.contexts).toContainEqual(expect.objectContaining({ uri }));
+
+    await downscaleProjectFavicon(image, signal);
+    await downscaleProjectFavicon({ ...image, bytes: Uint8Array.from([137, 80, 78, 72]) }, signal);
+    expect(native.load.mock.calls[2]?.[0]).toMatchObject({ uri });
+    expect(native.load.mock.calls[3]?.[0]).not.toMatchObject({ uri });
   });
 
   it("releases a decoded image when its request was canceled", async () => {

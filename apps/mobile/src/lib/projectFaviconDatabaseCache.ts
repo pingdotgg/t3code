@@ -7,11 +7,14 @@ import {
 } from "@t3tools/client-runtime/project-favicon-cache";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
+import { Platform } from "react-native";
 
 import * as MobileDatabase from "../persistence/mobile-database";
 
 const CACHE_KIND = "project-favicon";
 const CACHE_SCHEMA_VERSION = 1;
+
+const stagedSources = new Map<string, { written: Promise<void>; users: number }>();
 
 let database: MobileDatabase.MobileDatabase["Service"] | undefined;
 
@@ -37,16 +40,23 @@ export async function downscaleProjectFavicon(
     import("expo-crypto"),
   ]);
   signal.throwIfAborted();
-  // iOS caches the original bytes under this key, regardless of the temporary file name.
   const digest = await Crypto.digest(Crypto.CryptoDigestAlgorithm.SHA256, image.bytes);
-  const sourceCacheKey = `t3-favicon-source:${Hex.encode(new Uint8Array(digest))}`;
+  const contentHash = Hex.encode(new Uint8Array(digest));
   signal.throwIfAborted();
   const requestId = Crypto.randomUUID();
-  const source = new File(Paths.cache, `t3-favicon-source-${requestId}`);
-  const sourceImage = { uri: source.uri, cacheKey: sourceCacheKey };
-  source.create();
+  // Glide keys local images by URI, while SDWebImage honors the explicit cache key.
+  const android = Platform.OS === "android";
+  const source = new File(Paths.cache, `t3-favicon-source-${android ? contentHash : requestId}`);
+  const sourceImage = { uri: source.uri, cacheKey: `t3-favicon-source:${contentHash}` };
+  let staged = stagedSources.get(source.uri);
+  if (!staged) {
+    source.create({ overwrite: android });
+    staged = { written: Promise.resolve().then(() => source.write(image.bytes)), users: 0 };
+    stagedSources.set(source.uri, staged);
+  }
+  staged.users += 1;
   try {
-    await source.write(image.bytes);
+    await staged.written;
     for (const size of [PROJECT_FAVICON_THUMBNAIL_SIZE, PROJECT_FAVICON_THUMBNAIL_SIZE / 2]) {
       signal.throwIfAborted();
       const decoded = await Image.loadAsync(sourceImage, { maxWidth: size, maxHeight: size });
@@ -80,7 +90,11 @@ export async function downscaleProjectFavicon(
       }
     }
   } finally {
-    source.delete();
+    staged.users -= 1;
+    if (staged.users === 0) {
+      stagedSources.delete(source.uri);
+      source.delete();
+    }
   }
   throw new Error("Project icon thumbnail exceeds the cache limit.");
 }
