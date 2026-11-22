@@ -8,6 +8,7 @@ import {
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
+import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
@@ -3284,7 +3285,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const host = yield* ProviderHost.ProviderHost;
       const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: options.prefix });
+      const statusCacheDir = path.join(directory, "status-cache");
       const agentPath = path.join(directory, "agent.mjs");
       const modelsPath = path.join(directory, "models.json");
       yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
@@ -3301,6 +3304,13 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         environment: [],
         config: decodeSettings({ agentId: "test-agent" }),
       }).pipe(
+        Effect.provideService(ProviderHost.ProviderHost, {
+          ...host,
+          paths: {
+            ...host.paths,
+            providerStatusCacheDir: statusCacheDir,
+          },
+        }),
         Effect.provideService(FileSystem.FileSystem, effectiveFileSystem),
         Effect.provideService(
           AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
@@ -3343,6 +3353,18 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           );
           return result;
         });
+      const readPersistedAuthConfirmed = () =>
+        Effect.gen(function* () {
+          const entries = yield* fileSystem.readDirectory(statusCacheDir);
+          const authFile = entries.find(
+            (entry) => entry.startsWith("acp-auth-") && entry.endsWith(".json"),
+          );
+          if (authFile === undefined) return null;
+          const contents = yield* fileSystem.readFileString(path.join(statusCacheDir, authFile));
+          return (
+            (JSON.parse(contents) as { readonly authenticated?: boolean }).authenticated ?? null
+          );
+        });
       return {
         directory,
         coordinator,
@@ -3350,6 +3372,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         waitForEnriched,
         writeModels,
         withBlockedForegroundStartup,
+        readPersistedAuthConfirmed,
       };
     });
 
@@ -4798,7 +4821,6 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
     () =>
       Effect.gen(function* () {
         const readyRaceRejected = yield* Deferred.make<void>();
-        let lastPersistedAuthConfirmed: boolean | null = null;
         let pendingResolveGate: {
           readonly entered: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
@@ -4821,6 +4843,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           waitForEnriched,
           writeModels,
           withBlockedForegroundStartup,
+          readPersistedAuthConfirmed,
         } = yield* setupPeriodicDriver({
           prefix: "acp-driver-auth-reopen-",
           initialModels: ["new-model", "old-model"],
@@ -4828,14 +4851,10 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ...base,
             rename: (oldPath, newPath) =>
               Effect.gen(function* () {
-                if (newPath.includes("acp-auth-")) {
+                const gate = pendingAuthPersistGate;
+                if (gate !== null && newPath.includes("acp-auth-")) {
                   const contents = yield* base.readFileString(oldPath);
-                  const parsed = JSON.parse(contents) as { readonly authenticated?: boolean };
-                  if (typeof parsed.authenticated === "boolean") {
-                    lastPersistedAuthConfirmed = parsed.authenticated;
-                  }
-                  const gate = pendingAuthPersistGate;
-                  if (gate !== null && parsed.authenticated === true) {
+                  if (contents.includes('"authenticated":true')) {
                     pendingAuthPersistGate = null;
                     yield* Deferred.succeed(gate.entered, undefined);
                     yield* Deferred.await(gate.release);
@@ -4930,7 +4949,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.snapshot.refresh;
-        yield* Fiber.join(initial);
+        expect(Option.getOrThrow(yield* Fiber.join(initial)).auth.status).toBe("unknown");
 
         // Confirmed sign-in invalidates a still-valid enrichment cache so the post-sign-in refresh
         // probes newly available models instead of serving stale cached entries, and persists
@@ -4948,14 +4967,14 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           "post-signin-b",
         ]);
         expect(postCacheInvalidatingSnap.auth.status).toBe("authenticated");
-        expect(lastPersistedAuthConfirmed).toBe(true);
+        expect(yield* readPersistedAuthConfirmed()).toBe(true);
 
         // auth.invalidate clears persisted sign-in confirmation so readiness falls back to unknown.
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
             yield* instance.auth!.invalidate!;
             expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unknown");
-            expect(lastPersistedAuthConfirmed).toBe(false);
+            expect(yield* readPersistedAuthConfirmed()).toBe(false);
           }),
         );
 
@@ -4989,7 +5008,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(Option.getOrThrow(yield* Fiber.join(sawSerializedSignIn)).auth.status).toBe(
           "authenticated",
         );
-        expect(lastPersistedAuthConfirmed).toBe(true);
+        expect(yield* readPersistedAuthConfirmed()).toBe(true);
 
         // Explicit sign-out (auth.logout -> onChanged(false)) atomically clears sign-in
         // confirmation and marks signed out without waiting for a failing probe, blocking
@@ -4998,7 +5017,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Effect.gen(function* () {
             yield* instance.auth!.logout!(Effect.void);
             expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unknown");
-            expect(lastPersistedAuthConfirmed).toBe(false);
+            expect(yield* readPersistedAuthConfirmed()).toBe(false);
             yield* awaitLiveWatchUpdate(
               coordinator.publishLiveConfiguration(identity.instanceId, {
                 models: [],
@@ -5084,9 +5103,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(Option.getOrThrow(yield* Fiber.join(postReconfirmEnriched)).auth.status).toBe(
           "authenticated",
         );
-        expect(lastPersistedAuthConfirmed).toBe(true);
+        expect(yield* readPersistedAuthConfirmed()).toBe(true);
         yield* instance.acpSessionManagement!.logout(directory);
-        expect(lastPersistedAuthConfirmed).toBe(false);
+        expect(yield* readPersistedAuthConfirmed()).toBe(false);
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
             models: [],
