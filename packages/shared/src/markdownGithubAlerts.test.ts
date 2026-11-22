@@ -1,14 +1,21 @@
-import { renderToStaticMarkup } from "react-dom/server";
-import ReactMarkdown from "react-markdown";
+import { toHtml } from "hast-util-to-html";
 import remarkGfm from "remark-gfm";
+import remarkParse from "remark-parse";
+import remarkRehype from "remark-rehype";
+import { type PluggableList, unified } from "unified";
 import { describe, expect, it } from "vite-plus/test";
 
-import { remarkGithubAlerts } from "@t3tools/shared/markdownGithubAlerts";
+import { remarkGithubAlerts } from "./markdownGithubAlerts.ts";
+
+const processor = unified()
+  .use(remarkParse)
+  .use([remarkGfm, remarkGithubAlerts] satisfies PluggableList)
+  .use(remarkRehype, { allowDangerousHtml: true });
 
 function renderMarkdown(markdown: string): string {
-  return renderToStaticMarkup(
-    <ReactMarkdown remarkPlugins={[remarkGfm, remarkGithubAlerts]}>{markdown}</ReactMarkdown>,
-  );
+  return toHtml(processor.runSync(processor.parse(markdown), markdown), {
+    allowDangerousHtml: true,
+  });
 }
 
 describe("remarkGithubAlerts", () => {

@@ -106,6 +106,7 @@ describe("OrchestratorMcpService", () => {
             threadId: parentThreadId,
             origin: "app_owned",
             childThreadId,
+            title: "Merge",
             driver: "codex",
             model: "gpt-5.6-terra",
             result: "terminal result",
@@ -252,6 +253,13 @@ describe("OrchestratorMcpService", () => {
         const commandIds = yield* Ref.get(acknowledgementCommandIds);
         assert.equal(commandIds.length, 2);
         assert.notEqual(commandIds[0], commandIds[1]);
+
+        const missing = yield* service
+          .taskStatus(scope, NodeId.make("node:mcp-ack-missing"))
+          .pipe(Effect.flip);
+        assert.equal(missing.code, "task_not_found");
+        assert.include(missing.message, "No delegated task with id node:mcp-ack-missing");
+        assert.include(missing.message, `${taskId} (Merge)`);
       }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(layerDependencies))));
     }),
   );
@@ -617,7 +625,8 @@ describe("OrchestratorMcpService", () => {
       const childThreadId = ThreadId.make("thread:mcp-next-child");
       const taskId = NodeId.make("node:mcp-next-task");
       let finished = false;
-      let pendingRequest = false;
+      let firstRun = false;
+      let pendingRequest: "live" | "message" | null = null;
       const parentProjection = () =>
         ({
           thread: { id: parentThreadId },
@@ -640,19 +649,33 @@ describe("OrchestratorMcpService", () => {
       const childRun = () => ({
         id: RunId.make("run:mcp-next-child"),
         ordinal: 1,
-        status: finished ? ("completed" as const) : ("running" as const),
-        delegatedTaskId: taskId,
+        status: finished && !firstRun ? ("completed" as const) : ("running" as const),
+        // A task's first run is untagged; the child's fork node names the task.
+        ...(firstRun ? {} : { delegatedTaskId: taskId }),
       });
       const childProjection = () =>
         ({
-          thread: { id: childThreadId, title: "Child task" },
+          thread: {
+            id: childThreadId,
+            title: "Child task",
+            forkedFrom: { type: "node", nodeId: taskId },
+          },
           runs: [childRun()],
           contextTransfers: [],
           messages: [],
           subagents: [],
           providerThreads: [],
           providerTurns: [],
-          runtimeRequests: pendingRequest ? [{ status: "pending" }] : [],
+          runtimeRequests:
+            pendingRequest === null
+              ? []
+              : [
+                  {
+                    kind: "user_input",
+                    status: "pending",
+                    responseCapability: { type: pendingRequest },
+                  },
+                ],
           nodes: [],
           turnItems: [],
         }) as unknown as OrchestrationV2ThreadProjection;
@@ -668,7 +691,7 @@ describe("OrchestratorMcpService", () => {
             Effect.succeed({
               threadId: childThreadId,
               run: childRun() as unknown as OrchestrationV2ThreadProjection["runs"][number],
-              timedOut: !finished,
+              timedOut: !finished || firstRun,
             }),
           dispatch: () => Effect.succeed({} as never),
         }),
@@ -705,13 +728,28 @@ describe("OrchestratorMcpService", () => {
         assert.equal(waiting.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
 
         // A child waiting on a question or approval needs an answer, not a wake.
-        pendingRequest = true;
+        pendingRequest = "live";
         const asking = yield* service.waitForThread(scope, { threadId: childThreadId });
         assert.isTrue(asking.timedOut);
         assert.notProperty(asking, "next");
-        pendingRequest = false;
 
+        // A question answered by message does not stop the child.
+        pendingRequest = "message";
+        const working = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.equal(working.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+        pendingRequest = null;
+
+        firstRun = true;
+        const first = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.equal(first.next, ORCHESTRATOR_MCP_RUNNING_TASK_NEXT);
+
+        // An untagged run after the task has its result is no longer that task.
         finished = true;
+        const followUp = yield* service.waitForThread(scope, { threadId: childThreadId });
+        assert.isTrue(followUp.timedOut);
+        assert.notProperty(followUp, "next");
+        firstRun = false;
+
         const completed = yield* service.taskStatus(scope, taskId);
         assert.equal(completed.status, "completed");
         assert.notProperty(completed, "next");

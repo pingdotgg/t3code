@@ -37,6 +37,20 @@ function parseChangeRequestUrl(url: URL) {
     : { ...link, repositoryUrl: `${url.origin}/@${CHANGE_REQUEST_PATH.exec(url.pathname)![1]}` };
 }
 
+/**
+ * `owner/name` as the API names it. The web spells it `@owner/name`, and a client without this
+ * definition percent-encodes that as `%40owner/name`.
+ */
+export const withoutOwnerMark = (repository: string) => repository.replace(/^(?:@|%40)/iu, "");
+
+/** Links stored with the web's spelling compare equal to the project's own key. */
+function canonicalRepositoryKey(key: string): string | null {
+  const slash = key.indexOf("/");
+  return slash > 0 && isTanStackSourceHost(key.slice(0, slash))
+    ? `${TANSTACK_SOURCE_HOST}/${withoutOwnerMark(key.slice(slash + 1))}`
+    : null;
+}
+
 /** Keys drop the owner's `@`, so a project's repository is `owner/name` as the API names it. */
 function repositoryKeyFromRemote(key: string): string | null {
   // Remote parsing spells the `@` percent-encoded.
@@ -80,13 +94,13 @@ export const definition = defineSourceControl({
       ? null
       : webUrl
         ? changeRequestUrlBelow(webUrl, `pull/${number}`)
-        : `https://${host}/@${repository.replace(/^@/u, "")}/pull/${number}`,
+        : `https://${host}/@${withoutOwnerMark(repository)}/pull/${number}`,
   parseChangeRequestUrl,
   commitUrl: (input) =>
     buildCommitUrl(
       input.webUrl
         ? input
-        : { ...input, webUrl: `https://${input.host}/@${input.repository.replace(/^@/u, "")}` },
+        : { ...input, webUrl: `https://${input.host}/@${withoutOwnerMark(input.repository)}` },
       "commit",
     ),
   parseIssueUrl: (url) =>
@@ -122,6 +136,7 @@ export const definition = defineSourceControl({
   checkoutChangeRequestHost: () => null,
   changeRequestHeadRef: (number) => `refs/pull/${number}/head`,
   repositoryKeyFromRemote,
+  canonicalRepositoryKey,
   recognizeRemote: ({ hostname }) =>
     isTanStackSourceHost(hostname)
       ? { kind: KIND, name: "TanStack Source", baseUrl: `https://${TANSTACK_SOURCE_HOST}` }

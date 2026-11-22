@@ -3,6 +3,7 @@ import {
   issueTrackerBindingScopes,
   type IssueRef,
   type IssueTrackerConnectionList,
+  type RepositoryIdentity,
 } from "@t3tools/contracts";
 import {
   LINEAR_HOST,
@@ -15,11 +16,22 @@ import type { EnvironmentProject } from "./state/shell.ts";
 
 type LinkProject = Pick<EnvironmentProject, "id" | "environmentId" | "repositoryIdentity">;
 
+const issueBindingsByRepository = new WeakMap<
+  RepositoryIdentity,
+  ReturnType<typeof sourceControlClients.issueBindings>
+>();
+
 /** The hosts and scopes a project's git-host tracker is bound to, the way the server resolves them. */
 function projectIssueBindings(project: LinkProject) {
-  return sourceControlClients
-    .issueBindings(project.repositoryIdentity)
+  const identity = project.repositoryIdentity;
+  if (identity == null) return [];
+  const cached = issueBindingsByRepository.get(identity);
+  if (cached !== undefined) return cached;
+  const bindings = sourceControlClients
+    .issueBindings(identity)
     .map((binding) => ({ ...binding, scope: binding.scope.toLowerCase() }));
+  issueBindingsByRepository.set(identity, bindings);
+  return bindings;
 }
 
 function linkAuthority(url: string): string | null {
