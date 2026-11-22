@@ -128,8 +128,8 @@ remain agent-specific.
 ## Checkpoints
 
 Checkpoint rollback restores your files as usual. ACP agents cannot rewind their own conversation,
-so the next turn after a rollback starts a fresh agent session that no longer remembers the
-conversation from before the checkpoint.
+so the next turn after a rollback starts a fresh agent session and T3 Code sends it the kept
+conversation, without the turns you rolled back.
 
 Registry instances are not used for T3's app-owned text generation, such as thread titles, commit
 messages, branch names, or pull request descriptions. Configure a text-generation-capable provider

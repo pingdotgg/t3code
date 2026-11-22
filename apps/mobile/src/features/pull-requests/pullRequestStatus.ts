@@ -6,33 +6,36 @@ import type {
   PullRequestListEntry,
   PullRequestMergeability,
 } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
 import type { AppSymbolName } from "../../components/ui/AppSymbol";
+import { m, type MessageResolver } from "../../i18n/messages";
 import { PullRequestGlyph } from "./pullRequestGlyphs";
 
 const STATES = {
   open: {
-    label: "Open",
+    label: msg("Open", { $context: "pull request state" }),
     icon: PullRequestGlyph.pullRequest,
     tint: "accent-adaptive-emerald-600-400",
     text: "text-adaptive-emerald-600-400",
     background: "bg-adaptive-emerald-500-a12-a16",
   },
   merged: {
-    label: "Merged",
+    label: msg("Merged", { $context: "pull request state" }),
     icon: PullRequestGlyph.merged,
     tint: "accent-adaptive-violet-600-400",
     text: "text-adaptive-violet-600-400",
     background: "bg-adaptive-violet-500-a12-a16",
   },
   closed: {
-    label: "Closed",
+    label: msg("Closed", { $context: "pull request state" }),
     icon: PullRequestGlyph.closed,
     tint: "accent-danger-foreground",
     text: "text-danger-foreground",
     background: "bg-danger",
   },
   draft: {
-    label: "Draft",
+    label: msg("Draft", { $context: "pull request state" }),
     icon: PullRequestGlyph.draft,
     tint: "accent-icon-muted",
     text: "text-foreground-muted",
@@ -43,92 +46,152 @@ const STATES = {
   { label: string; icon: AppSymbolName; tint: string; text: string; background: string }
 >;
 
-export function pullRequestStatus(pr: Pick<PullRequestListEntry, "state" | "isDraft">) {
-  return STATES[pr.isDraft && pr.state === "open" ? "draft" : pr.state];
+export function pullRequestStatus(
+  pr: Pick<PullRequestListEntry, "state" | "isDraft">,
+  resolve: MessageResolver = m,
+) {
+  const status = STATES[pr.isDraft && pr.state === "open" ? "draft" : pr.state];
+  return { ...status, label: resolve(status.label) };
 }
 
-export function pullRequestConflict(pr: {
-  readonly state: PullRequestListEntry["state"];
-  readonly isDraft: boolean;
-  readonly mergeability?: PullRequestMergeability | undefined;
-  readonly baseBranch?: string | undefined;
-}) {
+export function pullRequestConflict(
+  pr: {
+    readonly state: PullRequestListEntry["state"];
+    readonly isDraft: boolean;
+    readonly mergeability?: PullRequestMergeability | undefined;
+    readonly baseBranch?: string | undefined;
+  },
+  resolve: MessageResolver = m,
+) {
   if (pr.state !== "open" || pr.isDraft || pr.mergeability !== "conflicting") return null;
-  return { label: pr.baseBranch ? `Conflicts with ${pr.baseBranch}` : "Has conflicts" };
+  return {
+    label: pr.baseBranch
+      ? resolve(msg("Conflicts with {branch}", { branch: pr.baseBranch }))
+      : resolve(msg("Has conflicts")),
+  };
 }
 
-export function checkStatus(check: PullRequestCheck) {
+export function checkStatus(check: PullRequestCheck, resolve: MessageResolver = m) {
   switch (check.status) {
     case "success":
       return {
-        label: "Passed",
+        label: resolve(msg("Passed", { $context: "CI check status" })),
         icon: "checkmark.circle",
         tint: "accent-adaptive-emerald-600-400",
       } as const;
     case "failure":
       return {
-        label: "Failed",
+        label: resolve(msg("Failed", { $context: "CI check status" })),
         icon: "exclamationmark.circle",
         tint: "accent-danger-foreground",
       } as const;
     case "action-required":
       return {
-        label: "Action required",
+        label: resolve(msg("Action required", { $context: "CI check status" })),
         icon: "exclamationmark.circle",
         tint: "accent-warning-foreground",
       } as const;
     case "pending":
-      return { label: "Pending", icon: "clock", tint: "accent-warning-foreground" } as const;
+      return {
+        label: resolve(msg("Pending", { $context: "CI check status" })),
+        icon: "clock",
+        tint: "accent-warning-foreground",
+      } as const;
     case "cancelled":
-      return { label: "Cancelled", icon: "minus", tint: "accent-icon-muted" } as const;
+      return {
+        label: resolve(msg("Cancelled", { $context: "CI check status" })),
+        icon: "minus",
+        tint: "accent-icon-muted",
+      } as const;
     case "skipped":
-      return { label: "Skipped", icon: "slash.circle", tint: "accent-icon-muted" } as const;
+      return {
+        label: resolve(msg("Skipped", { $context: "CI check status" })),
+        icon: "slash.circle",
+        tint: "accent-icon-muted",
+      } as const;
     case "neutral":
-      return { label: "Neutral", icon: "minus", tint: "accent-icon-muted" } as const;
+      return {
+        label: resolve(msg("Neutral", { $context: "CI check status" })),
+        icon: "minus",
+        tint: "accent-icon-muted",
+      } as const;
   }
 }
 
-export function pullRequestChecksSummary(pr: Pick<PullRequestDetail, "checks">) {
-  const failed = pr.checks.filter((check) => check.status === "failure").length;
+export function isFailingCheck(check: PullRequestCheck) {
+  return check.status === "failure" || check.status === "cancelled";
+}
+
+export function pullRequestChecksSummary(
+  pr: Pick<PullRequestDetail, "checks">,
+  resolve: MessageResolver = m,
+) {
+  const failed = pr.checks.filter(isFailingCheck).length;
   const required = pr.checks.filter((check) => check.status === "action-required").length;
   const pending = pr.checks.filter((check) => check.status === "pending").length;
   const passed = pr.checks.filter((check) => check.status === "success").length;
-  const count = pr.checks.length ? `${passed} of ${pr.checks.length}` : undefined;
-  if (failed)
+  const total = pr.checks.length;
+  const count = total ? resolve(msg("{passed} of {total}", { passed, total })) : undefined;
+  if (failed) {
+    const failing = resolve(
+      msg("{count, plural, one {{count} check failing} other {{count} checks failing}}", {
+        count: failed,
+      }),
+    );
     return {
-      label: `${failed} ${failed === 1 ? "check" : "checks"} failing`,
-      title: `${failed} ${failed === 1 ? "check" : "checks"} failing`,
+      label: failing,
+      title: failing,
       count,
       icon: "exclamationmark.circle",
       tint: "accent-danger-foreground",
     } as const;
+  }
   if (required)
     return {
-      label: `${required} need attention`,
-      title: "Checks need attention",
-      count: `${required} awaiting action`,
+      label: resolve(
+        msg("{count, plural, one {{count} need attention} other {{count} need attention}}", {
+          count: required,
+        }),
+      ),
+      title: resolve(msg("Checks need attention")),
+      count: resolve(
+        msg("{count, plural, one {{count} awaiting action} other {{count} awaiting action}}", {
+          count: required,
+        }),
+      ),
       icon: "exclamationmark.circle",
       tint: "accent-warning-foreground",
     } as const;
   if (pending)
     return {
-      label: `${pending} pending`,
-      title: "Checks running",
-      count: `${pending} pending`,
+      label: resolve(
+        msg("{count, plural, one {{count} pending} other {{count} pending}}", { count: pending }),
+      ),
+      title: resolve(msg("Checks running")),
+      count: resolve(
+        msg("{count, plural, one {{count} pending} other {{count} pending}}", { count: pending }),
+      ),
       icon: "clock",
       tint: "accent-warning-foreground",
     } as const;
   if (passed)
     return {
-      label: `${passed} of ${pr.checks.length} passed`,
-      title: passed === pr.checks.length ? "All checks passed" : "Checks completed",
+      label: resolve(msg("{passed} of {total} passed", { passed, total })),
+      title:
+        passed === total ? resolve(msg("All checks passed")) : resolve(msg("Checks completed")),
       count,
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
     } as const;
   return {
-    label: pr.checks.length ? `${pr.checks.length} completed` : "No checks reported",
-    title: pr.checks.length ? "Checks completed" : "No checks reported",
+    label: total
+      ? resolve(
+          msg("{count, plural, one {{count} completed} other {{count} completed}}", {
+            count: total,
+          }),
+        )
+      : resolve(msg("No checks reported")),
+    title: total ? resolve(msg("Checks completed")) : resolve(msg("No checks reported")),
     count,
     icon: "minus",
     tint: "accent-icon-muted",
@@ -143,6 +206,7 @@ export function normalizedReviewState(reviewState: string | null) {
 export function pullRequestReviewSummary(
   pr: Pick<PullRequestDetail, "reviewers">,
   activity: Pick<PullRequestActivity, "comments" | "commits"> | null,
+  resolve: MessageResolver = m,
 ) {
   const latest = new Map<string, PullRequestActivity["comments"][number]>();
   const comments = new Map<string, PullRequestActivity["comments"][number]>();
@@ -161,22 +225,29 @@ export function pullRequestReviewSummary(
     if (!previous || Date.parse(review.createdAt) >= Date.parse(previous.createdAt))
       latest.set(key, { ...review, reviewState: state });
   }
-  const reviews = [
-    ...[...latest.values()].filter((review) => review.reviewState !== "DISMISSED"),
-    ...[...comments.entries()].filter(([key]) => !latest.has(key)).map(([, review]) => review),
-  ];
-  const requested = reviews.filter((review) => review.reviewState === "CHANGES_REQUESTED");
   const newestCommit = Math.max(
     0,
     ...(activity?.commits.map((commit) => Date.parse(commit.committedDate)) ?? []),
   );
+  const reviews = [
+    ...[...latest.values()].filter((review) => review.reviewState !== "DISMISSED"),
+    ...[...comments.entries()].filter(([key]) => !latest.has(key)).map(([, review]) => review),
+  ].map((review) => ({
+    ...review,
+    outdated: review.reviewState === "APPROVED" && Date.parse(review.createdAt) < newestCommit,
+  }));
+  const requested = reviews.filter((review) => review.reviewState === "CHANGES_REQUESTED");
   const approved = reviews.filter(
-    (review) => review.reviewState === "APPROVED" && Date.parse(review.createdAt) >= newestCommit,
+    (review) => review.reviewState === "APPROVED" && !review.outdated,
   );
   if (requested.length)
     return {
-      title: "Changes requested",
-      count: `${requested.length} ${requested.length === 1 ? "reviewer" : "reviewers"}`,
+      title: resolve(msg("Changes requested")),
+      count: resolve(
+        msg("{count, plural, one {{count} reviewer} other {{count} reviewers}}", {
+          count: requested.length,
+        }),
+      ),
       icon: "xmark.circle.fill",
       tint: "accent-danger-foreground",
       reviews,
@@ -185,9 +256,13 @@ export function pullRequestReviewSummary(
     return {
       title:
         approved.length === 1 && approved[0]?.author
-          ? `Approved by ${approved[0].author.login}`
-          : "Reviews approved",
-      count: `${approved.length} approved`,
+          ? resolve(msg("Approved by {login}", { login: approved[0].author.login }))
+          : resolve(msg("Reviews approved")),
+      count: resolve(
+        msg("{count, plural, one {{count} approved} other {{count} approved}}", {
+          count: approved.length,
+        }),
+      ),
       icon: "checkmark.circle",
       tint: "accent-adaptive-emerald-600-400",
       reviews,
@@ -195,15 +270,25 @@ export function pullRequestReviewSummary(
   const commented = reviews.filter((review) => review.reviewState === "COMMENTED");
   if (commented.length && !pr.reviewers.length)
     return {
-      title: "Reviews",
-      count: `${commented.length} commented`,
+      title: resolve(msg("Reviews")),
+      count: resolve(
+        msg("{count, plural, one {{count} commented} other {{count} commented}}", {
+          count: commented.length,
+        }),
+      ),
       icon: "bubble.left",
       tint: "accent-icon-muted",
       reviews,
     } as const;
   return {
-    title: pr.reviewers.length ? "Awaiting review" : "Request a review",
-    count: pr.reviewers.length ? `${pr.reviewers.length} requested` : "None assigned",
+    title: pr.reviewers.length ? resolve(msg("Awaiting review")) : resolve(msg("Request a review")),
+    count: pr.reviewers.length
+      ? resolve(
+          msg("{count, plural, one {{count} requested} other {{count} requested}}", {
+            count: pr.reviewers.length,
+          }),
+        )
+      : resolve(msg("None assigned")),
     icon: "person.2",
     tint: "accent-icon-muted",
     reviews,
@@ -212,11 +297,22 @@ export function pullRequestReviewSummary(
 
 export function pullRequestBranchSummary(
   pr: Pick<PullRequestDetail, "mergeability" | "baseComparison" | "behindBy" | "baseBranch">,
+  resolve: MessageResolver = m,
 ) {
-  if (pr.mergeability === "conflicting") return "Has conflicts";
-  if (pr.baseComparison === "behind") return `${pr.behindBy ?? ""} behind ${pr.baseBranch}`.trim();
-  if (pr.baseComparison === "up-to-date") return "Up to date";
-  return pr.mergeability === "mergeable" ? "No conflicts" : "Not reported";
+  if (pr.mergeability === "conflicting") return resolve(msg("Has conflicts"));
+  if (pr.baseComparison === "behind")
+    return pr.behindBy == null
+      ? resolve(msg("behind {branch}", { branch: pr.baseBranch }))
+      : resolve(
+          msg("{count, plural, one {{count} behind {branch}} other {{count} behind {branch}}}", {
+            count: pr.behindBy,
+            branch: pr.baseBranch,
+          }),
+        );
+  if (pr.baseComparison === "up-to-date") return resolve(msg("Up to date"));
+  return pr.mergeability === "mergeable"
+    ? resolve(msg("No conflicts"))
+    : resolve(msg("Not reported"));
 }
 
 export function pullRequestChecksStatus(state: PullRequestChecksState) {
