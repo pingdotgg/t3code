@@ -30,18 +30,26 @@ interface LiveConfigurationUpdate {
 }
 
 export interface AcpRegistryLiveConfigurationSnapshot {
+  readonly catalog: Option.Option<AcpRegistryLiveConfiguration>;
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
   readonly revision: number;
   readonly catalogRevision: number;
   readonly clearedThroughRevision: number;
 }
 
-interface StoredLiveConfiguration extends AcpRegistryLiveConfigurationSnapshot {
-  readonly lastPublishedConfiguration: Option.Option<AcpRegistryLiveConfiguration>;
-  readonly lastCatalogPublishedRevision: number;
+interface StoredLiveConfiguration {
+  readonly catalog: {
+    readonly configuration: AcpRegistryLiveConfiguration;
+    readonly revision: number;
+  } | null;
+  readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
+  readonly revision: number;
+  readonly catalogRevision: number;
+  readonly clearedThroughRevision: number;
 }
 
 export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
+  catalog: Option.none(),
   configuration: Option.none(),
   revision: 0,
   catalogRevision: 0,
@@ -49,14 +57,17 @@ export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnap
 };
 
 const EMPTY_STORED_LIVE_CONFIGURATION: StoredLiveConfiguration = {
-  ...EMPTY_LIVE_CONFIGURATION_SNAPSHOT,
-  lastPublishedConfiguration: Option.none(),
-  lastCatalogPublishedRevision: 0,
+  catalog: null,
+  configuration: Option.none(),
+  revision: 0,
+  catalogRevision: 0,
+  clearedThroughRevision: 0,
 };
 
 const toPublicLiveConfigurationSnapshot = (
   entry: StoredLiveConfiguration,
 ): AcpRegistryLiveConfigurationSnapshot => ({
+  catalog: entry.catalog === null ? Option.none() : Option.some(entry.catalog.configuration),
   configuration: entry.configuration,
   revision: entry.revision,
   catalogRevision: entry.catalogRevision,
@@ -264,8 +275,8 @@ const make = Effect.gen(function* () {
         if (current === undefined) return state;
         const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
         if (
+          current.catalog === null &&
           Option.isNone(current.configuration) &&
-          Option.isNone(current.lastPublishedConfiguration) &&
           nextCleared === current.clearedThroughRevision
         ) {
           return state;
@@ -273,8 +284,8 @@ const make = Effect.gen(function* () {
         const next = new Map(state);
         next.set(instanceId, {
           ...current,
+          catalog: null,
           configuration: Option.none(),
-          lastPublishedConfiguration: Option.none(),
           clearedThroughRevision: nextCleared,
         });
         return next;
@@ -302,8 +313,8 @@ const make = Effect.gen(function* () {
                   }),
                 );
           if (
+            current.catalog === null &&
             Equal.equals(current.configuration, nextConfiguration) &&
-            Equal.equals(current.lastPublishedConfiguration, nextConfiguration) &&
             nextCleared === current.clearedThroughRevision
           ) {
             return [true, state] as const;
@@ -311,8 +322,8 @@ const make = Effect.gen(function* () {
           const next = new Map(state);
           next.set(instanceId, {
             ...current,
+            catalog: null,
             configuration: nextConfiguration,
-            lastPublishedConfiguration: nextConfiguration,
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -332,38 +343,15 @@ const make = Effect.gen(function* () {
             const catalogRevision = hasCatalog
               ? current.catalogRevision + 1
               : current.catalogRevision;
-            const lastCatalogPublishedRevision = hasCatalog
-              ? revision
-              : current.lastCatalogPublishedRevision;
-            // Preserve an unsuperseded session catalog across options-only updates only when
-            // the update targets that catalog (or no model), keeping the default marker intact.
-            const canPreserveStoredCatalog =
-              !hasCatalog &&
-              Option.isSome(current.configuration) &&
-              current.configuration.value.models.length > 0 &&
-              (configuration.currentModelId === null ||
-                current.configuration.value.models.some(
-                  (model) => model.id === configuration.currentModelId,
-                ));
-            const storedConfiguration: AcpRegistryLiveConfiguration =
-              canPreserveStoredCatalog && Option.isSome(current.configuration)
-                ? {
-                    ...configuration,
-                    models: current.configuration.value.models,
-                    ...(current.configuration.value.modelsFromModelSelect === undefined
-                      ? {}
-                      : {
-                          modelsFromModelSelect: current.configuration.value.modelsFromModelSelect,
-                        }),
-                  }
-                : configuration;
+            // Store the active catalog separately from options-only updates so an
+            // unrelated session's options update never discards or mutates it.
+            const catalog = hasCatalog ? { configuration, revision } : current.catalog;
             const next = new Map(state);
             next.set(instanceId, {
-              configuration: Option.some(storedConfiguration),
-              lastPublishedConfiguration: Option.some(configuration),
+              catalog,
+              configuration: Option.some(configuration),
               revision,
               catalogRevision,
-              lastCatalogPublishedRevision,
               clearedThroughRevision: current.clearedThroughRevision,
             });
             return [revision, next] as const;
@@ -399,23 +387,18 @@ const make = Effect.gen(function* () {
     (instanceId, onUpdate, options) =>
       Effect.scoped(
         Effect.gen(function* () {
-          const afterRevision = options?.afterRevision;
           const subscription = yield* PubSub.subscribe(liveConfigurationUpdates);
           const current = (yield* Ref.get(liveConfigurations)).get(instanceId);
-          let deliveredRevision = afterRevision ?? 0;
-          if (
-            current !== undefined &&
-            Option.isSome(current.configuration) &&
-            (afterRevision === undefined || current.revision > afterRevision)
-          ) {
-            deliveredRevision = current.revision;
-            const replayConfiguration =
-              afterRevision !== undefined &&
-              current.lastCatalogPublishedRevision <= afterRevision &&
-              Option.isSome(current.lastPublishedConfiguration)
-                ? current.lastPublishedConfiguration.value
-                : current.configuration.value;
-            yield* onUpdate(replayConfiguration, current.revision);
+          let deliveredRevision = options?.afterRevision ?? 0;
+          if (current !== undefined) {
+            if (current.catalog !== null && current.catalog.revision > deliveredRevision) {
+              deliveredRevision = current.catalog.revision;
+              yield* onUpdate(current.catalog.configuration, current.catalog.revision);
+            }
+            if (Option.isSome(current.configuration) && current.revision > deliveredRevision) {
+              deliveredRevision = current.revision;
+              yield* onUpdate(current.configuration.value, current.revision);
+            }
           }
           yield* Stream.fromSubscription(subscription).pipe(
             Stream.filter((update) => update.instanceId === instanceId),

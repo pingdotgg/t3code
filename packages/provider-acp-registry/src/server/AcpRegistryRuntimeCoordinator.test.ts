@@ -300,7 +300,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
   );
 
   it.effect(
-    "preserves an unsuperseded catalog only for options-only updates targeting that catalog",
+    "preserves the active catalog independently of options-only updates from any session",
     () =>
       Effect.gen(function* () {
         const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
@@ -316,42 +316,38 @@ describe("AcpRegistryRuntimeCoordinator", () => {
             { id: "high", label: "High" },
           ],
         };
-        const catalogModels = [
-          { id: "model-b", name: "Model B", description: null },
-          { id: "model-c", name: "Model C", description: null },
-        ];
-
-        yield* coordinator.publishLiveConfiguration(instanceId, {
-          models: catalogModels,
+        const catalogConfig = {
+          models: [
+            { id: "model-b", name: "Model B", description: null },
+            { id: "model-c", name: "Model C", description: null },
+          ],
           currentModelId: "model-b",
           configOptions: [],
           modelsFromModelSelect: true,
-        });
-        const catalogSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        };
 
-        // Options-only update targeting model-b keeps the active catalog in coordinator state.
-        yield* coordinator.publishLiveConfiguration(instanceId, {
+        yield* coordinator.publishLiveConfiguration(instanceId, catalogConfig);
+        const catalogSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(catalogSnap.catalog).toEqual(Option.some(catalogConfig));
+        expect(catalogSnap.configuration).toEqual(Option.some(catalogConfig));
+
+        // Options-only update targeting model-b keeps the active catalog separately from raw options.
+        const matchingOptionsOnly = {
           models: [],
           currentModelId: "model-b",
           configOptions: [effortOption],
           modelOptionIds: ["effort"],
           modelsFromModelSelect: false,
-        });
+        };
+        yield* coordinator.publishLiveConfiguration(instanceId, matchingOptionsOnly);
         const matchingOptionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(matchingOptionsSnap.revision).toBe(catalogSnap.revision + 1);
         expect(matchingOptionsSnap.catalogRevision).toBe(catalogSnap.catalogRevision);
-        expect(matchingOptionsSnap.configuration).toEqual(
-          Option.some({
-            models: catalogModels,
-            currentModelId: "model-b",
-            configOptions: [effortOption],
-            modelOptionIds: ["effort"],
-            modelsFromModelSelect: true,
-          }),
-        );
+        expect(matchingOptionsSnap.catalog).toEqual(Option.some(catalogConfig));
+        expect(matchingOptionsSnap.configuration).toEqual(Option.some(matchingOptionsOnly));
 
-        // An options-only update from another session running an absent model stores raw
-        // so stored snapshots never lose the default marker compared to the PubSub stream.
+        // An options-only update from another session running an absent model neither discards
+        // the active catalog nor merges foreign model options into it.
         const foreignOptionsOnly = {
           models: [],
           currentModelId: "model-a",
@@ -360,9 +356,39 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelsFromModelSelect: false,
         };
         yield* coordinator.publishLiveConfiguration(instanceId, foreignOptionsOnly);
-        expect(
-          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).configuration,
-        ).toEqual(Option.some(foreignOptionsOnly));
+        const foreignSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(foreignSnap.catalog).toEqual(Option.some(catalogConfig));
+        expect(foreignSnap.configuration).toEqual(Option.some(foreignOptionsOnly));
+
+        // A watcher starting behind the active catalog replays the catalog first, then the raw options.
+        const replayed: Array<readonly [number, string | null, number]> = [];
+        const bothReplayed = yield* Deferred.make<void>();
+        const watcher = yield* coordinator
+          .watchLiveConfiguration(
+            instanceId,
+            (configuration, revision) =>
+              Effect.sync(() => {
+                replayed.push([
+                  configuration.models.length,
+                  configuration.currentModelId,
+                  revision,
+                ] as const);
+                return replayed.length;
+              }).pipe(
+                Effect.flatMap((count) =>
+                  count === 2 ? Deferred.succeed(bothReplayed, undefined) : Effect.void,
+                ),
+                Effect.asVoid,
+              ),
+            { afterRevision: 0 },
+          )
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Deferred.await(bothReplayed);
+        yield* Fiber.interrupt(watcher);
+        expect(replayed).toEqual([
+          [2, "model-b", catalogSnap.revision],
+          [0, "model-a", foreignSnap.revision],
+        ]);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 
@@ -405,8 +431,8 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).clearedThroughRevision,
         ).toBe(0);
 
-        // Catalog-scoped clear reconciles newer in-flight options-only updates through retain
-        // and advances clearedThroughRevision past them so delayed raw callbacks are skipped.
+        // Catalog-scoped clear reconciles newer in-flight options-only updates through retain,
+        // clears the stored catalog, and advances clearedThroughRevision past them.
         const optionsOnlyConfig = {
           models: [],
           currentModelId: "model-v2",
@@ -428,6 +454,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...optionsSnap,
+          catalog: Option.none(),
           configuration: Option.some({
             ...optionsOnlyConfig,
             configOptions: [effortOption("low")],
@@ -443,6 +470,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         ).toBe(true);
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...optionsSnap,
+          catalog: Option.none(),
           configuration: Option.none(),
           clearedThroughRevision: optionsSnap.revision,
         });
@@ -487,7 +515,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* coordinator.publishLiveConfiguration(instanceId, optionsOnly);
       const optionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
 
-      // A watcher already at the catalog revision receives the raw options-only payload on replay.
+      // A watcher already at the catalog revision receives only the raw options-only payload.
       const rawReplay = yield* Deferred.make<readonly [number, number]>();
       const afterCatalogWatcher = yield* coordinator
         .watchLiveConfiguration(
@@ -502,23 +530,31 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       expect(yield* Deferred.await(rawReplay)).toEqual([0, optionsSnap.revision]);
       yield* Fiber.interrupt(afterCatalogWatcher);
 
-      // A watcher behind the catalog revision receives the preserved catalog alongside the options.
-      const fullReplay = yield* Deferred.make<readonly [number, number]>();
+      // A watcher behind the catalog revision receives the catalog first, then the raw options.
+      const fullReplay: Array<readonly [number, number]> = [];
+      const fullReplayDone = yield* Deferred.make<void>();
       const beforeCatalogWatcher = yield* coordinator
         .watchLiveConfiguration(
           instanceId,
           (configuration, revision) =>
-            Deferred.succeed(fullReplay, [configuration.models.length, revision] as const).pipe(
+            Effect.sync(() => {
+              fullReplay.push([configuration.models.length, revision] as const);
+              return fullReplay.length;
+            }).pipe(
+              Effect.flatMap((count) =>
+                count === 2 ? Deferred.succeed(fullReplayDone, undefined) : Effect.void,
+              ),
               Effect.asVoid,
             ),
           { afterRevision: 0 },
         )
         .pipe(Effect.forkChild({ startImmediately: true }));
-      expect(yield* Deferred.await(fullReplay)).toEqual([
-        catalogModels.length,
-        optionsSnap.revision,
-      ]);
+      yield* Deferred.await(fullReplayDone);
       yield* Fiber.interrupt(beforeCatalogWatcher);
+      expect(fullReplay).toEqual([
+        [catalogModels.length, catalogSnap.revision],
+        [0, optionsSnap.revision],
+      ]);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });

@@ -215,6 +215,11 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelsFromModelSelect?: boolean;
   // Set on retained post-probe overrides so probe-only options stay untouched.
   readonly partialOptions?: boolean;
+  // Non-current per-model reasoning descriptors normalized from `_meta` when an
+  // effort selector appears mid-session without re-advertising the frozen model list.
+  readonly advertisedReasoning?: Readonly<
+    Record<string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>>
+  >;
 }
 
 export interface PreparedAcpRegistryLiveConfiguration {
@@ -284,8 +289,25 @@ export function prepareAcpRegistryLiveConfiguration(
     .map((descriptor) => descriptor.id);
   const hasModelSelect = modelOption !== undefined;
   const resolvedCurrentModelId = currentModel === undefined ? null : currentModel.id;
+  const advertisedReasoningEntries: Array<
+    readonly [string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>]
+  > = [];
+  for (const model of advertisedModels) {
+    if (model.id !== resolvedCurrentModelId && model.reasoningEffort != null) {
+      advertisedReasoningEntries.push([model.id, model.reasoningEffort]);
+    }
+  }
+  const advertisedReasoning =
+    advertisedReasoningEntries.length > 0
+      ? Object.fromEntries(advertisedReasoningEntries)
+      : undefined;
   return {
-    catalogKey: JSON.stringify([hasModelSelect, advertisedModels]),
+    // Key on catalog identity and provenance (not per-model reasoning) so toggling
+    // an effort selector mid-session does not re-send a frozen pre-probe model list.
+    catalogKey: JSON.stringify([
+      hasModelSelect,
+      advertisedModels.map(({ id, name, description }) => [id, name, description]),
+    ]),
     toLiveConfiguration: (options) => {
       const includeCatalog = options?.includeCatalog !== false;
       return {
@@ -294,6 +316,7 @@ export function prepareAcpRegistryLiveConfiguration(
         configOptions: descriptors,
         modelOptionIds,
         modelsFromModelSelect: includeCatalog && hasModelSelect,
+        ...(!includeCatalog && advertisedReasoning !== undefined ? { advertisedReasoning } : {}),
       };
     },
   };
@@ -303,13 +326,12 @@ export function normalizeAcpRegistryLiveConfiguration(
   configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
   modeState?: Parameters<typeof acpProviderOptionDescriptors>[0]["modeState"],
   modelState?: EffectAcpSchema.SessionModelState | null,
-  options?: { readonly includeCatalog?: boolean },
 ): AcpRegistryLiveConfiguration {
   return prepareAcpRegistryLiveConfiguration(
     configOptions,
     modeState,
     modelState,
-  ).toLiveConfiguration(options);
+  ).toLiveConfiguration();
 }
 
 const emptyAcpRegistryAvailableCommands = (): AcpRegistryAvailableCommands => ({
