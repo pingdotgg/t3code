@@ -57,8 +57,12 @@ const SEARCH_RADIUS_PX: f32 = 6.0;
 const HEADER_ICON_BTN_PX: f32 = 28.0;
 /// `size-4` (`16px`) for `ProjectFavicon` / `ProjectMonogram` in thread rows.
 const ROW_FAVICON_PX: f32 = 16.0;
-/// `ps-5.5` (`22px` = `16px` favicon + `6px` gap) aligning line 2 under the title.
-const META_LINE_INDENT_PX: f32 = 22.0;
+/// Gap between the favicon and the title. Conn web uses `gap-1.5` (`6px`); we add `2px` (#278).
+const CARD_ICON_TITLE_GAP_PX: f32 = 8.0;
+/// Line 2 indent (Conn `ps-5.5`): favicon + icon/title gap, so line 2 aligns under the title.
+const META_LINE_INDENT_PX: f32 = ROW_FAVICON_PX + CARD_ICON_TITLE_GAP_PX;
+/// Gap between line 1 and line 2. Conn web uses `mt-1` (`4px`); we add `2px` (#278).
+const CARD_LINE_GAP_PX: f32 = 6.0;
 /// `text-sm` (`14px` / `20px`) for search field and thread row titles.
 const TITLE_FONT_SIZE_PX: f32 = 14.0;
 const TITLE_LINE_HEIGHT_PX: f32 = 20.0;
@@ -1004,7 +1008,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .flex()
         .flex_row()
         .items_center()
-        .gap(px(6.0))
+        .gap(px(CARD_ICON_TITLE_GAP_PX))
         .w_full()
         .h(px(TITLE_LINE_HEIGHT_PX))
         .min_w_0();
@@ -1139,7 +1143,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .items_center()
         .gap(px(6.0))
         .w_full()
-        .mt(px(4.0))
+        .mt(px(CARD_LINE_GAP_PX))
         .min_w_0()
         .text_size(px(13.0))
         .line_height(px(META_LINE_HEIGHT_PX))
@@ -1453,7 +1457,7 @@ fn render_draft_sidebar_row(
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(6.0))
+                .gap(px(CARD_ICON_TITLE_GAP_PX))
                 .w_full()
                 .h(px(TITLE_LINE_HEIGHT_PX))
                 .min_w_0()
@@ -1478,7 +1482,7 @@ fn render_draft_sidebar_row(
                 .items_center()
                 .gap(px(6.0))
                 .w_full()
-                .mt(px(4.0))
+                .mt(px(CARD_LINE_GAP_PX))
                 .pl(px(META_LINE_INDENT_PX))
                 .min_w_0()
                 .text_size(px(META_FONT_SIZE_PX))
