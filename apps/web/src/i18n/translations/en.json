@@ -8848,7 +8848,7 @@
   "9ae293971d93c819": "Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links.",
   "0aa5406ac4d7f7c7": "Guest links",
   "f0e853acd2006d53": "Linked environments",
-  "13e86eb5d8287a71": "Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
+  "3d68642693e8f949": "Show a predicted next message in the empty composer after a Claude, Codex, or Antigravity turn. Tab uses it. Each is an extra request on your plan. Needs Codex 0.165+. Claude threads update on restart.",
   "d4b2a2ec812aafb0": "Suggest next prompt",
   "298c7150a7621c80": "Simlock device hosts",
   "67937aa49179285e": "On a Mac, clone new worktrees from a checkout cached in the T3 home folder instead of writing every file. Uses Git’s normal checkout when it can’t. Turning it off deletes the cache.",

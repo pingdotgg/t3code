@@ -25,8 +25,12 @@ import { removeAntigravitySessionFiles } from "../provider/acp/AntigravitySessio
 
 import {
   type AntigravityTextGenerationOptions,
+  buildAntigravityPromptSuggestionPrompt,
   isAntigravityTextGenerationAvailable,
+  makeAntigravityPromptSuggestionSampler,
   makeAntigravityTextGeneration,
+  sanitizeAntigravityPromptSuggestion,
+  selectLowestAntigravityThinkingLevel,
 } from "./AntigravityTextGeneration.ts";
 
 type TextRuntime = Effect.Success<ReturnType<AntigravityTextGenerationOptions["makeRuntime"]>>;
@@ -295,6 +299,11 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     makeRuntime,
     withProcess,
   });
+  const samplePromptSuggestion = yield* makeAntigravityPromptSuggestionSampler({
+    profileDirectory,
+    makeRuntime,
+    withProcess,
+  });
   const titleInput = { cwd: projectDirectory, message: "Repair Google login", modelSelection };
   const assertCleaned = Effect.gen(function* () {
     expect(state.closed).toEqual(state.workspaces);
@@ -321,6 +330,7 @@ const makeFixture = Effect.fn("makeAntigravityTextGenerationFixture")(function* 
     incoming,
     enteredPrompt,
     textGeneration,
+    samplePromptSuggestion,
     titleInput,
     assertCleaned,
   };
@@ -701,6 +711,107 @@ it.layer(NodeServices.layer)("AntigravityTextGeneration", (it) => {
       expect(yield* fixture.fs.readFileString(`${fixture.sessionBase}.meta`)).toBe(metadata);
     }),
   );
+
+  it.effect("samples a next-prompt suggestion at the lowest thinking level and cleans up", () =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({
+        outputs: ['{"suggestion":"  add tests for subtract\\n"}'],
+      });
+      const suggestion = yield* fixture.samplePromptSuggestion({
+        modelSelection: {
+          ...modelSelection,
+          options: [{ id: "thinking_level", value: "high" }],
+        },
+        messages: [
+          { role: "user", text: "Add a subtract function." },
+          { role: "assistant", text: "Added subtract in math.ts." },
+        ],
+      });
+      expect(suggestion).toBe("add tests for subtract");
+      expect(fixture.state.selectedModels).toEqual([modelSelection.model]);
+      expect(fixture.state.thinkingUpdates).toEqual(["low"]);
+      expect(fixture.state.promptThinkingLevels).toEqual(["low"]);
+      const sentText = JSON.stringify(fixture.state.prompts[0]?.prompt);
+      expect(sentText).toContain("Add a subtract function.");
+      expect(sentText).toContain("Added subtract in math.ts.");
+      yield* fixture.assertCleaned;
+    }),
+  );
+
+  it.effect.each([
+    { name: "empty", output: '{"suggestion":""}', expected: null },
+    {
+      name: "delegated-task imitation",
+      output: '{"suggestion":"Delegated task finished with 2 findings"}',
+      expected: null,
+    },
+    {
+      name: "overlong",
+      output: JSON.stringify({ suggestion: "a".repeat(201) }),
+      expected: null,
+    },
+    {
+      name: "multiline normalized",
+      output: '{"suggestion":"  run the\\n  test suite  "}',
+      expected: "run the test suite",
+    },
+  ])("sanitizes $name prompt suggestions", ({ output, expected }) =>
+    Effect.gen(function* () {
+      const fixture = yield* makeFixture({ outputs: [output] });
+      expect(
+        yield* fixture.samplePromptSuggestion({
+          modelSelection,
+          messages: [
+            { role: "user", text: "Fix the parser." },
+            { role: "assistant", text: "Fixed the parser." },
+          ],
+        }),
+      ).toBe(expected);
+      yield* fixture.assertCleaned;
+    }),
+  );
+
+  it("picks the lowest available thinking level and preserves the tail of long transcripts", () => {
+    expect(
+      selectLowestAntigravityThinkingLevel([
+        {
+          id: "thinking_level",
+          name: "Thinking level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "high",
+          options: [
+            { value: "minimal", name: "Minimal" },
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ]),
+    ).toEqual({ id: "thinking_level", value: "minimal" });
+    expect(
+      selectLowestAntigravityThinkingLevel([
+        {
+          id: "thinking_level",
+          name: "Thinking level",
+          category: "thought_level",
+          type: "select",
+          currentValue: "low",
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        },
+      ]),
+    ).toBeUndefined();
+    const longReply = `${"x".repeat(4_500)}Should I open a PR?`;
+    const prompt = buildAntigravityPromptSuggestionPrompt([
+      { role: "user", text: "Implement the fix." },
+      { role: "assistant", text: longReply },
+    ]);
+    expect(prompt).toContain("[Earlier content truncated]");
+    expect(prompt).toContain("Should I open a PR?");
+    expect(sanitizeAntigravityPromptSuggestion("   ")).toBeNull();
+  });
 });
 
 it.effect("retains filesystem services supplied only during construction", () =>

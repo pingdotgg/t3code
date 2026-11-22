@@ -8839,7 +8839,7 @@
   "9ae293971d93c819": "Partagez un fil avec un invité qui le suit en direct dans un navigateur et envoie des messages que vous approuvez. Connectez-vous à T3 Connect pour utiliser les liens invités.",
   "0aa5406ac4d7f7c7": "Liens invités",
   "f0e853acd2006d53": "Environnements associés",
-  "13e86eb5d8287a71": "Affiche un prochain message suggéré dans la zone de saisie vide après un tour Claude ou Codex. Tab l’utilise. Chaque suggestion est une requête en cache supplémentaire sur votre forfait. Nécessite Codex 0.165+. Les fils Claude se mettent à jour au redémarrage.",
+  "3d68642693e8f949": "Affiche un prochain message suggéré dans la zone de saisie vide après un tour Claude, Codex ou Antigravity. Tab l’utilise. Chaque suggestion est une requête supplémentaire sur votre forfait. Nécessite Codex 0.165+. Les fils Claude se mettent à jour au redémarrage.",
   "d4b2a2ec812aafb0": "Suggérer le prochain prompt",
   "298c7150a7621c80": "Hôtes d’appareils Simlock",
   "67937aa49179285e": "Sur Mac, clone les nouveaux worktrees depuis une copie en cache dans le dossier T3 home au lieu d’écrire chaque fichier. Utilise le checkout Git normal quand ce n’est pas possible. La désactivation supprime le cache.",

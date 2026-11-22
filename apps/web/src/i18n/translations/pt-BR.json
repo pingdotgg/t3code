@@ -8838,7 +8838,7 @@
   "9ae293971d93c819": "Compartilhe uma thread com um convidado que a acompanha ao vivo no navegador e envia mensagens que você aprova. Entre no T3 Connect para usar links de convidado.",
   "0aa5406ac4d7f7c7": "Links de convidado",
   "f0e853acd2006d53": "Ambientes vinculados",
-  "13e86eb5d8287a71": "Mostra uma próxima mensagem prevista no editor vazio após um turno do Claude ou do Codex. Tab a usa. Cada uma é uma requisição extra em cache no seu plano. Requer Codex 0.165+. As threads do Claude são atualizadas ao reiniciar.",
+  "3d68642693e8f949": "Mostra uma próxima mensagem prevista no editor vazio após um turno do Claude, Codex ou Antigravity. Tab a usa. Cada uma é uma requisição extra no seu plano. Requer Codex 0.165+. As threads do Claude são atualizadas ao reiniciar.",
   "d4b2a2ec812aafb0": "Sugerir próximo prompt",
   "298c7150a7621c80": "Hosts de dispositivos Simlock",
   "67937aa49179285e": "No Mac, clona novos worktrees a partir de um checkout em cache na pasta T3 home em vez de gravar cada arquivo. Usa o checkout normal do Git quando não consegue. Desativar exclui o cache.",
