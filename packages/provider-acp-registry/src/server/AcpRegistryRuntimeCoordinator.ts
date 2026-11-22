@@ -168,9 +168,11 @@ interface ChannelEntry<T> {
   readonly value: T;
   readonly runtimeIdentity: string | undefined;
   readonly revision: number;
+  readonly lifetime: number;
 }
 
 interface InstanceChannelState<T> {
+  readonly lifetime: number;
   readonly entries: ReadonlyMap<string | undefined, ChannelEntry<T>>;
   readonly latestKey: string | undefined;
   readonly hasLatest: boolean;
@@ -187,18 +189,29 @@ interface ChannelUpdate<T> {
   readonly value: T;
   readonly runtimeIdentity: string | undefined;
   readonly revision: number;
+  readonly lifetime: number;
+}
+
+interface LiveStateChannelNames {
+  readonly clear: string;
+  readonly publish: string;
+  readonly get: string;
+  readonly watch: string;
 }
 
 const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveStateChannel")(
-  function* <T>(name: string) {
+  function* <T>(names: LiveStateChannelNames) {
     const updates = yield* PubSub.unbounded<ChannelUpdate<T>>();
     const stateRef = yield* Ref.make<ChannelState<T>>({
       revision: 0,
       instances: new Map(),
     });
 
-    const clear = (instanceId: ProviderInstanceId, options?: AcpRegistryClearLiveStateOptions) =>
-      Ref.update(stateRef, (state) => {
+    const clear = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.clear}`)(function* (
+      instanceId: ProviderInstanceId,
+      options?: AcpRegistryClearLiveStateOptions,
+    ) {
+      yield* Ref.update(stateRef, (state) => {
         const revision = state.revision + 1;
         const nextInstances = new Map(state.instances);
         if (options?.dispose === true) {
@@ -206,6 +219,7 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
           return { revision, instances: nextInstances };
         }
         const existing = state.instances.get(instanceId);
+        const lifetime = existing?.lifetime ?? revision;
         const nextClear = recordLiveStateClear(existing?.clear, revision, options);
         const nextEntries = new Map<string | undefined, ChannelEntry<T>>();
         if (existing !== undefined) {
@@ -226,6 +240,7 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
             undefined,
           );
         nextInstances.set(instanceId, {
+          lifetime,
           entries: nextEntries,
           latestKey: fallbackLatest?.runtimeIdentity,
           hasLatest: fallbackLatest !== undefined,
@@ -233,28 +248,34 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
         });
         return { revision, instances: nextInstances };
       });
+    });
 
-    const publish = (instanceId: ProviderInstanceId, value: T, runtimeIdentity?: string) =>
-      Ref.modify(stateRef, (state) => {
+    const publish = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.publish}`)(function* (
+      instanceId: ProviderInstanceId,
+      value: T,
+      runtimeIdentity?: string,
+    ) {
+      const event = yield* Ref.modify(stateRef, (state) => {
         const revision = state.revision + 1;
         const existing = state.instances.get(instanceId);
+        const lifetime = existing?.lifetime ?? revision;
         const nextEntries = new Map(existing?.entries);
-        nextEntries.set(runtimeIdentity, { value, runtimeIdentity, revision });
+        nextEntries.set(runtimeIdentity, { value, runtimeIdentity, revision, lifetime });
         const nextInstances = new Map(state.instances);
         nextInstances.set(instanceId, {
+          lifetime,
           entries: nextEntries,
           latestKey: runtimeIdentity,
           hasLatest: true,
           clear: existing?.clear,
         });
-        const event: ChannelUpdate<T> = { instanceId, value, runtimeIdentity, revision };
-        return [event, { revision, instances: nextInstances }] as const;
-      }).pipe(
-        Effect.flatMap((event) => PubSub.publish(updates, event)),
-        Effect.asVoid,
-      );
+        const update: ChannelUpdate<T> = { instanceId, value, runtimeIdentity, revision, lifetime };
+        return [update, { revision, instances: nextInstances }] as const;
+      });
+      yield* PubSub.publish(updates, event);
+    });
 
-    const get = Effect.fn(`AcpRegistryRuntimeCoordinator.${name}`)(function* (
+    const get = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.get}`)(function* (
       instanceId: ProviderInstanceId,
       options?: AcpRegistryReadLiveStateOptions,
     ) {
@@ -278,18 +299,21 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
       return inst.hasLatest ? validEntry(inst.entries.get(inst.latestKey)) : Option.none<T>();
     });
 
-    const watch = (
+    const watch = Effect.fn(`AcpRegistryRuntimeCoordinator.${names.watch}`)(function* (
       instanceId: ProviderInstanceId,
       onUpdate: (value: T, meta: AcpRegistryLiveUpdateMeta) => Effect.Effect<void>,
-    ) =>
-      Effect.scoped(
+    ) {
+      yield* Effect.scoped(
         Effect.gen(function* () {
           // Subscribe before reading to avoid missing publications.
           const subscription = yield* PubSub.subscribe(updates);
-          const inst = (yield* Ref.get(stateRef)).instances.get(instanceId);
+          const snapshot = yield* Ref.get(stateRef);
+          const snapshotRevision = snapshot.revision;
+          const inst = snapshot.instances.get(instanceId);
           const metaFor = (
             runtimeIdentity: string | undefined,
             revision: number,
+            lifetime: number,
           ): AcpRegistryLiveUpdateMeta => ({
             runtimeIdentity,
             isCurrent: Ref.get(stateRef).pipe(
@@ -297,6 +321,7 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
                 const current = state.instances.get(instanceId);
                 return (
                   current !== undefined &&
+                  current.lifetime === lifetime &&
                   isLiveUpdateCurrent(current.clear, revision, runtimeIdentity)
                 );
               }),
@@ -310,22 +335,26 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
                     isLiveUpdateCurrent(inst.clear, entry.revision, entry.runtimeIdentity),
                   )
                   .toSorted((left, right) => left.revision - right.revision);
-          const replayedRevisions = new Set(replayed.map((entry) => entry.revision));
           for (const entry of replayed) {
-            yield* onUpdate(entry.value, metaFor(entry.runtimeIdentity, entry.revision));
+            yield* onUpdate(
+              entry.value,
+              metaFor(entry.runtimeIdentity, entry.revision, entry.lifetime),
+            );
           }
           yield* Stream.fromSubscription(subscription).pipe(
-            Stream.filter((update) => {
-              if (update.instanceId !== instanceId) return false;
-              if (replayedRevisions.delete(update.revision)) return false;
-              return true;
-            }),
+            Stream.filter(
+              (update) => update.instanceId === instanceId && update.revision > snapshotRevision,
+            ),
             Stream.runForEach((update) =>
-              onUpdate(update.value, metaFor(update.runtimeIdentity, update.revision)),
+              onUpdate(
+                update.value,
+                metaFor(update.runtimeIdentity, update.revision, update.lifetime),
+              ),
             ),
           );
         }),
       );
+    });
 
     return { clear, publish, get, watch } as const;
   },
@@ -334,10 +363,18 @@ const makeLiveStateChannel = Effect.fn("AcpRegistryRuntimeCoordinator.makeLiveSt
 const make = Effect.gen(function* () {
   const foregroundStarts = yield* PubSub.unbounded<string>();
   const activeForegroundCounts = yield* Ref.make(new Map<string, number>());
-  const availableCommandsChannel =
-    yield* makeLiveStateChannel<AcpRegistryAvailableCommands>("getAvailableCommands");
-  const liveConfigurationChannel =
-    yield* makeLiveStateChannel<AcpRegistryLiveConfiguration>("getLiveConfiguration");
+  const availableCommandsChannel = yield* makeLiveStateChannel<AcpRegistryAvailableCommands>({
+    clear: "clearAvailableCommands",
+    publish: "publishAvailableCommands",
+    get: "getAvailableCommands",
+    watch: "watchAvailableCommands",
+  });
+  const liveConfigurationChannel = yield* makeLiveStateChannel<AcpRegistryLiveConfiguration>({
+    clear: "clearLiveConfiguration",
+    publish: "publishLiveConfiguration",
+    get: "getLiveConfiguration",
+    watch: "watchLiveConfiguration",
+  });
   const urlAuthActionUpdates = yield* PubSub.unbounded<UrlAuthActionUpdate>();
   const pendingUrlAuthActions = yield* Ref.make(
     new Map<ProviderInstanceId, PendingUrlAuthAction>(),
@@ -460,7 +497,7 @@ const make = Effect.gen(function* () {
       });
       if (pending === undefined) return false;
       yield* publishUrlAuthAction(input.instanceId, null);
-      if (DateTime.toEpochMillis(now) > DateTime.toEpochMillis(pending.expiresAt)) {
+      if (DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(pending.expiresAt)) {
         yield* Deferred.succeed(pending.consent, false);
         return false;
       }
@@ -474,7 +511,7 @@ const make = Effect.gen(function* () {
     const pending = (yield* Ref.get(pendingUrlAuthActions)).get(instanceId);
     if (
       pending === undefined ||
-      DateTime.toEpochMillis(now) > DateTime.toEpochMillis(pending.expiresAt)
+      DateTime.toEpochMillis(now) >= DateTime.toEpochMillis(pending.expiresAt)
     ) {
       return Option.none();
     }

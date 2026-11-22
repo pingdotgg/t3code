@@ -455,178 +455,183 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
     const pty = yield* Effect.serviceOption(PtyAdapter.PtyAdapter);
 
     const result = yield* Effect.gen(function* () {
-      // Resolution may install packages; bound it by the probe deadline.
+      // Binary downloads and package installs carry their own bounded timeouts inside AcpRegistryCatalog;
+      // apply the probe timeout only to spawning and probing the resolved agent.
       const resolved = yield* catalog
         .resolve(input.settings, input.cwd, input.environment)
         .pipe(Effect.mapError(AcpRegistrySupport.toAcpRegistryOperationError));
-      const spawn = yield* isolateDeepSeekProbeHistory(
-        input.settings.commandPath,
-        resolved.spawn,
-      ).pipe(
-        Effect.mapError(
-          (cause) =>
-            new AcpRegistryOperationError({
-              reason: "probe_failed",
-              message: "Could not prepare temporary history for the DeepSeek Harness probe.",
-              cause,
-            }),
-        ),
-      );
-      const authMethodsRef = yield* Ref.make<ReadonlyArray<AcpRegistryProbeAuthMethod>>([]);
-      const authActionRef = yield* Ref.make<AcpRegistryUrlAuthAction | undefined>(undefined);
-      const runtimeCoordinator = yield* Effect.serviceOption(
-        AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
-      );
-      const runtimeContext = yield* Layer.build(
-        AcpSessionRuntime.layer({
-          spawn,
-          cwd: input.cwd,
-          clientCapabilities: {
-            auth: { terminal: Option.isSome(pty) },
-            elicitation: { url: {} },
-            fs: { readTextFile: false, writeTextFile: false },
-            terminal: false,
-          },
-          clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
-          authenticateOnAuthRequired: false,
-          onInitialized: (initializeResult) =>
-            Ref.set(
-              authMethodsRef,
-              normalizeAcpRegistryAuthMethods(initializeResult.authMethods, {
-                command: resolved.spawn.command,
-                args: resolved.spawn.args,
+      return yield* Effect.gen(function* () {
+        const spawn = yield* isolateDeepSeekProbeHistory(
+          input.settings.commandPath,
+          resolved.spawn,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new AcpRegistryOperationError({
+                reason: "probe_failed",
+                message: "Could not prepare temporary history for the DeepSeek Harness probe.",
+                cause,
+              }),
+          ),
+        );
+        const authMethodsRef = yield* Ref.make<ReadonlyArray<AcpRegistryProbeAuthMethod>>([]);
+        const authActionRef = yield* Ref.make<AcpRegistryUrlAuthAction | undefined>(undefined);
+        const runtimeCoordinator = yield* Effect.serviceOption(
+          AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
+        );
+        const runtimeContext = yield* Layer.build(
+          AcpSessionRuntime.layer({
+            spawn,
+            cwd: input.cwd,
+            clientCapabilities: {
+              auth: { terminal: Option.isSome(pty) },
+              elicitation: { url: {} },
+              fs: { readTextFile: false, writeTextFile: false },
+              terminal: false,
+            },
+            clientInfo: { name: "t3-code-provider-test", version: "0.0.0" },
+            authenticateOnAuthRequired: false,
+            onInitialized: (initializeResult) =>
+              Ref.set(
+                authMethodsRef,
+                normalizeAcpRegistryAuthMethods(initializeResult.authMethods, {
+                  command: resolved.spawn.command,
+                  args: resolved.spawn.args,
+                }),
+              ),
+            ...(input.settings.authMethodId ? { authMethodId: input.settings.authMethodId } : {}),
+          }).pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
+                Layer.succeed(SecureRandom.SecureRandom, random),
+              ),
+            ),
+          ),
+        );
+        const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+          Effect.provide(runtimeContext),
+        );
+        const commandsRef = yield* Ref.make<AcpRegistryAvailableCommands>(
+          emptyAcpRegistryAvailableCommands(),
+        );
+        const commandsAdvertised = yield* Deferred.make<void>();
+        const configOptionsRef = yield* Ref.make<
+          ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined
+        >(undefined);
+        const modelsAdvertised = yield* Deferred.make<void>();
+        yield* runtime.handleElicitation((request) =>
+          Effect.gen(function* () {
+            if (
+              request.mode !== "url" ||
+              !("url" in request) ||
+              !("elicitationId" in request) ||
+              typeof request.url !== "string" ||
+              typeof request.elicitationId !== "string"
+            ) {
+              return { action: "decline" } as const;
+            }
+            const url = normalizeAcpRegistryWebUrl(request.url);
+            const elicitationId = boundedOpaqueValue(request.elicitationId, MAX_ID_LENGTH);
+            if (url === undefined || elicitationId === undefined) {
+              return { action: "decline" } as const;
+            }
+            const action: AcpRegistryUrlAuthAction = {
+              elicitationId,
+              url,
+              message: boundedText(request.message, MAX_DESCRIPTION_LENGTH),
+            };
+            yield* Ref.set(authActionRef, action);
+            const accepted = yield* Option.match(runtimeCoordinator, {
+              onNone: () => Effect.succeed(false),
+              onSome: (coordinator) =>
+                coordinator.requestUrlAuthentication(input.instanceId, action),
+            });
+            return accepted ? ({ action: "accept" } as const) : ({ action: "decline" } as const);
+          }),
+        );
+        yield* runtime.handleSessionUpdate((notification) => {
+          const update = notification.update;
+          if (update.sessionUpdate === "available_commands_update") {
+            return Ref.set(
+              commandsRef,
+              normalizeAcpRegistryCommands(update.availableCommands),
+            ).pipe(Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)), Effect.asVoid);
+          }
+          if (update.sessionUpdate === "config_option_update") {
+            const hasAdvertisedModels = acpRegistryAdvertisesModelCatalog(update.configOptions);
+            return Ref.set(configOptionsRef, update.configOptions).pipe(
+              Effect.andThen(
+                hasAdvertisedModels
+                  ? Deferred.succeed(modelsAdvertised, undefined).pipe(Effect.asVoid)
+                  : Effect.void,
+              ),
+            );
+          }
+          return Effect.void;
+        });
+        const startResult = yield* Effect.result(runtime.start());
+        if (Result.isFailure(startResult)) {
+          return yield* acpRegistryProbeFailure(
+            startResult.failure,
+            yield* Ref.get(authMethodsRef),
+            yield* Ref.get(authActionRef),
+          );
+        }
+        const started = startResult.success;
+        // Agents that persist sessions (OpenCode) would otherwise keep one empty session per probe.
+        // The runtime only sends session/delete when the agent advertises it.
+        yield* Effect.addFinalizer(() =>
+          runtime
+            .deleteSession(started.sessionId)
+            .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
+        );
+        const hasInitialModels = acpRegistryAdvertisesModelCatalog(
+          started.sessionSetupResult.configOptions,
+          started.sessionSetupResult.models,
+        );
+
+        yield* Effect.all(
+          [
+            hasInitialModels
+              ? Effect.void
+              : Deferred.await(modelsAdvertised).pipe(
+                  Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),
+                ),
+            Deferred.await(commandsAdvertised).pipe(
+              Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
+            ),
+          ],
+          { concurrency: "unbounded" },
+        );
+
+        // config_option_update replaces the full option set, so an empty notice is authoritative.
+        const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
+          (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions),
+          (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
+          started.sessionSetupResult.models,
+        );
+
+        return {
+          resolved,
+          started,
+          commands: yield* Ref.get(commandsRef),
+          liveConfiguration,
+        };
+      }).pipe(
+        Effect.timeoutOrElse({
+          duration: probeTimeoutMs,
+          orElse: () =>
+            Effect.fail(
+              new AcpRegistryOperationError({
+                reason: "probe_failed",
+                message: `The ACP agent did not create a test session within ${probeTimeoutMs / 1_000} seconds. Agent startup may be slow; this check retries on the next provider refresh.`,
               }),
             ),
-          ...(input.settings.authMethodId ? { authMethodId: input.settings.authMethodId } : {}),
-        }).pipe(
-          Layer.provide(
-            Layer.mergeAll(
-              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
-              Layer.succeed(SecureRandom.SecureRandom, random),
-            ),
-          ),
-        ),
-      );
-      const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
-        Effect.provide(runtimeContext),
-      );
-      const commandsRef = yield* Ref.make<AcpRegistryAvailableCommands>(
-        emptyAcpRegistryAvailableCommands(),
-      );
-      const commandsAdvertised = yield* Deferred.make<void>();
-      const configOptionsRef = yield* Ref.make<
-        ReadonlyArray<EffectAcpSchema.SessionConfigOption> | undefined
-      >(undefined);
-      const modelsAdvertised = yield* Deferred.make<void>();
-      yield* runtime.handleElicitation((request) =>
-        Effect.gen(function* () {
-          if (
-            request.mode !== "url" ||
-            !("url" in request) ||
-            !("elicitationId" in request) ||
-            typeof request.url !== "string" ||
-            typeof request.elicitationId !== "string"
-          ) {
-            return { action: "decline" } as const;
-          }
-          const url = normalizeAcpRegistryWebUrl(request.url);
-          const elicitationId = boundedOpaqueValue(request.elicitationId, MAX_ID_LENGTH);
-          if (url === undefined || elicitationId === undefined) {
-            return { action: "decline" } as const;
-          }
-          const action: AcpRegistryUrlAuthAction = {
-            elicitationId,
-            url,
-            message: boundedText(request.message, MAX_DESCRIPTION_LENGTH),
-          };
-          yield* Ref.set(authActionRef, action);
-          const accepted = yield* Option.match(runtimeCoordinator, {
-            onNone: () => Effect.succeed(false),
-            onSome: (coordinator) => coordinator.requestUrlAuthentication(input.instanceId, action),
-          });
-          return accepted ? ({ action: "accept" } as const) : ({ action: "decline" } as const);
         }),
       );
-      yield* runtime.handleSessionUpdate((notification) => {
-        const update = notification.update;
-        if (update.sessionUpdate === "available_commands_update") {
-          return Ref.set(commandsRef, normalizeAcpRegistryCommands(update.availableCommands)).pipe(
-            Effect.andThen(Deferred.succeed(commandsAdvertised, undefined)),
-            Effect.asVoid,
-          );
-        }
-        if (update.sessionUpdate === "config_option_update") {
-          const hasAdvertisedModels = acpRegistryAdvertisesModelCatalog(update.configOptions);
-          return Ref.set(configOptionsRef, update.configOptions).pipe(
-            Effect.andThen(
-              hasAdvertisedModels
-                ? Deferred.succeed(modelsAdvertised, undefined).pipe(Effect.asVoid)
-                : Effect.void,
-            ),
-          );
-        }
-        return Effect.void;
-      });
-      const startResult = yield* Effect.result(runtime.start());
-      if (Result.isFailure(startResult)) {
-        return yield* acpRegistryProbeFailure(
-          startResult.failure,
-          yield* Ref.get(authMethodsRef),
-          yield* Ref.get(authActionRef),
-        );
-      }
-      const started = startResult.success;
-      // Agents that persist sessions (OpenCode) would otherwise keep one empty session per probe.
-      // The runtime only sends session/delete when the agent advertises it.
-      yield* Effect.addFinalizer(() =>
-        runtime
-          .deleteSession(started.sessionId)
-          .pipe(Effect.timeoutOption(PROBE_SESSION_DELETE_TIMEOUT), Effect.ignore),
-      );
-      const hasInitialModels = acpRegistryAdvertisesModelCatalog(
-        started.sessionSetupResult.configOptions,
-        started.sessionSetupResult.models,
-      );
-
-      yield* Effect.all(
-        [
-          hasInitialModels
-            ? Effect.void
-            : Deferred.await(modelsAdvertised).pipe(
-                Effect.timeoutOption(MODEL_ADVERTISEMENT_GRACE),
-              ),
-          Deferred.await(commandsAdvertised).pipe(
-            Effect.timeoutOption(COMMAND_ADVERTISEMENT_GRACE),
-          ),
-        ],
-        { concurrency: "unbounded" },
-      );
-
-      // config_option_update replaces the full option set, so an empty notice is authoritative.
-      const liveConfiguration = normalizeAcpRegistryLiveConfiguration(
-        (yield* Ref.get(configOptionsRef)) ?? (yield* runtime.getConfigOptions),
-        (yield* runtime.getModeState) ?? parseSessionModeState(started.sessionSetupResult),
-        started.sessionSetupResult.models,
-      );
-
-      return {
-        resolved,
-        started,
-        commands: yield* Ref.get(commandsRef),
-        liveConfiguration,
-      };
     }).pipe(
       Effect.scoped,
-      Effect.timeoutOrElse({
-        duration: probeTimeoutMs,
-        orElse: () =>
-          Effect.fail(
-            new AcpRegistryOperationError({
-              reason: "probe_failed",
-              message: `The ACP agent did not resolve and create a test session within ${probeTimeoutMs / 1_000} seconds. Package installation or agent startup may be slow; this check retries on the next provider refresh.`,
-            }),
-          ),
-      }),
       Effect.mapError((error) =>
         error._tag === "AcpRegistryOperationError" ? error : acpRegistryProbeFailure(error),
       ),

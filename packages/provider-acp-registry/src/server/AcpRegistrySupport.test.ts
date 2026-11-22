@@ -763,8 +763,11 @@ describe("AcpRegistrySupport", () => {
     () => {
       const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
       const replacementBytes = new TextEncoder().encode("#!/bin/sh\necho example-repackaged\n");
+      const rehashedBytes = new TextEncoder().encode("#!/bin/sh\necho example-rehashed\n");
       const replacementArchiveUrl = "https://registry.test/example-agent-repackaged.bin";
       const replacementSha256 = Hex.encode(sha256(replacementBytes));
+      const rehashedSha256 = Hex.encode(sha256(rehashedBytes));
+      let serveRehashedAtReplacement = false;
       let currentAgent = makeAgent({
         binary: {
           "linux-x86_64": {
@@ -840,6 +843,29 @@ describe("AcpRegistrySupport", () => {
           path.dirname(first.spawn.command),
         ]);
 
+        // Changing only sha256 at the same archive URL & cmd must install into a new artifact slot.
+        serveRehashedAtReplacement = true;
+        currentAgent = makeAgent({
+          binary: {
+            "linux-x86_64": {
+              archive: replacementArchiveUrl,
+              cmd: "./bin/example-agent",
+              args: ["acp"],
+              sha256: rehashedSha256,
+            },
+          },
+        });
+        yield* resolver.invalidateIndex();
+        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const rehashed = yield* resolver.resolve(settings(), "/workspace");
+        expect(rehashed.spawn.command).not.toBe(third.spawn.command);
+        expect(yield* fileSystem.readFileString(rehashed.spawn.command)).toBe(
+          "#!/bin/sh\necho example-rehashed\n",
+        );
+        expect(yield* fileSystem.readFileString(third.spawn.command)).toBe(
+          "#!/bin/sh\necho example-repackaged\n",
+        );
+
         // A failed replacement (checksum mismatch) leaves existing installed binaries intact.
         currentAgent = makeAgent({
           binary: {
@@ -855,11 +881,11 @@ describe("AcpRegistrySupport", () => {
         yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         const checksumError = yield* resolver.resolve(settings(), "/workspace").pipe(Effect.flip);
         expect(checksumError.reason).toBe("checksum_mismatch");
-        expect(yield* fileSystem.readFileString(third.spawn.command)).toBe(
-          "#!/bin/sh\necho example-repackaged\n",
+        expect(yield* fileSystem.readFileString(rehashed.spawn.command)).toBe(
+          "#!/bin/sh\necho example-rehashed\n",
         );
 
-        // Uninstalling removes both the primary slot and the artifact-scoped sibling slot.
+        // Uninstalling removes the primary slot and all artifact-scoped sibling slots.
         expect(yield* resolver.uninstallManagedBinary({ agentId: "example-agent" })).toEqual({
           agentId: "example-agent",
           removed: true,
@@ -870,7 +896,12 @@ describe("AcpRegistrySupport", () => {
         Effect.provide(
           layerResolver((request) => {
             requests.push(request.url);
-            const payload = request.url === replacementArchiveUrl ? replacementBytes : binaryBytes;
+            const payload =
+              request.url === replacementArchiveUrl
+                ? serveRehashedAtReplacement
+                  ? rehashedBytes
+                  : replacementBytes
+                : binaryBytes;
             const response =
               request.url === registryUrl
                 ? new Response(makeRegistry(currentAgent))
@@ -896,10 +927,13 @@ describe("AcpRegistrySupport", () => {
       const legacyArchiveUrl = "https://example.test/example-agent-1.0.0.bin";
       const swappedArchiveUrl = "https://example.test/example-agent-1.0.0-fixed.bin";
       const v2ArchiveUrl = "https://example.test/example-agent-2.0.0.bin";
+      const v1PrimaryBytes = new TextEncoder().encode("#!/bin/sh\necho v1-primary\n");
       const v1Bytes = new TextEncoder().encode("#!/bin/sh\necho v1-fixed\n");
+      const v2Bytes = new TextEncoder().encode("#!/bin/sh\necho v2\n");
       let offline = true;
       let failSwappedDownload = false;
       let failV2Download = true;
+      let requests: Array<string> = [];
       let currentAgent = {
         ...makeAgent({
           binary: {
@@ -938,16 +972,38 @@ describe("AcpRegistrySupport", () => {
           registryUrl,
         });
 
-        // 1. Pre-existing receipt-less binary works offline without fabricating a receipt.
+        // 1. Pre-existing receipt-less binary works offline without downloading or fabricating a receipt.
         const offlineLegacy = yield* resolver.resolve(settings(), "/workspace");
         expect(offlineLegacy.agent?.version).toBe("1.0.0");
         expect(offlineLegacy.spawn.command).toBe(legacyBinary);
         expect(offlineLegacy.fallback).toBeUndefined();
+        expect(requests).toEqual([]);
+        expect(yield* fileSystem.exists(legacyReceipt)).toBe(false);
+
+        // Changing only args/env while keeping archive/cmd/sha256 unchanged still reuses the legacy binary.
+        offline = false;
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: legacyArchiveUrl,
+                cmd: "./bin/example-agent",
+                args: ["--v1-updated-args"],
+                env: { AGENT_CHANNEL: "v1-updated" },
+              },
+            },
+          }),
+          version: "1.0.0",
+        };
+        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const legacyWithUpdatedArgs = yield* resolver.resolve(settings(), "/workspace");
+        expect(legacyWithUpdatedArgs.spawn.command).toBe(legacyBinary);
+        expect(legacyWithUpdatedArgs.spawn.args).toEqual(["--v1-updated-args"]);
         expect(yield* fileSystem.exists(legacyReceipt)).toBe(false);
 
         // 2. If the registry updates the same-version archive URL and the new download fails,
-        // the receipt-less legacy install is NOT treated as matching the changed artifact.
-        offline = false;
+        // a durable baseline permanently rejects the receipt-less legacy binary for the new artifact
+        // across repeated calls and server restarts.
         failSwappedDownload = true;
         currentAgent = {
           ...makeAgent({
@@ -962,24 +1018,112 @@ describe("AcpRegistrySupport", () => {
           }),
           version: "1.0.0",
         };
-        const changedArtifactFailure = yield* resolver
+        yield* resolver.invalidateIndex();
+        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const changedArtifactFailure1 = yield* resolver
           .resolve(settings(), "/workspace")
           .pipe(Effect.flip);
-        expect(changedArtifactFailure.reason).toBe("download_failed");
+        expect(changedArtifactFailure1.reason).toBe("download_failed");
+        const changedArtifactFailure2 = yield* resolver
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.flip);
+        expect(changedArtifactFailure2.reason).toBe("download_failed");
+        const restartedResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir,
+          toolsDir,
+          registryUrl,
+        });
+        const changedArtifactAfterRestart = yield* restartedResolver
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.flip);
+        expect(changedArtifactAfterRestart.reason).toBe("download_failed");
 
-        // 3. Once the updated same-version archive URL succeeds, download_failed on the stale
-        // cached URL refreshes the index, retries the new launch signature, and writes an immutable slot.
+        // 3. A single resolve() starting from a stale failing archive URL refreshes the index,
+        // retries the updated same-version archive URL, and succeeds.
+        const retryCacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-stale-retry-",
+        });
+        const staleRetryAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: "https://example.test/example-agent-1.0.0-removed.bin",
+                cmd: "./bin/example-agent",
+                args: ["--v1-old"],
+              },
+            },
+          }),
+          version: "1.0.0",
+        };
+        yield* fileSystem.makeDirectory(path.join(retryCacheDir, "acp-registry"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(retryCacheDir, "acp-registry", "registry.json"),
+          makeRegistry(staleRetryAgent),
+        );
         failSwappedDownload = false;
-        const swappedResolved = yield* resolver.resolve(settings(), "/workspace");
-        expect(swappedResolved.agent?.version).toBe("1.0.0");
-        expect(swappedResolved.spawn.command).not.toBe(legacyBinary);
+        requests = [];
+        const retryResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: retryCacheDir,
+          toolsDir: path.join(retryCacheDir, "tools"),
+          registryUrl,
+        });
+        const retriedResolved = yield* retryResolver.resolve(settings(), "/workspace");
+        expect(retriedResolved.agent?.version).toBe("1.0.0");
+        expect(yield* fileSystem.readFileString(retriedResolved.spawn.command)).toBe(
+          "#!/bin/sh\necho v1-fixed\n",
+        );
+        expect(requests).toEqual([
+          "https://example.test/example-agent-1.0.0-removed.bin",
+          registryUrl,
+          swappedArchiveUrl,
+        ]);
+
+        // Install a receipted primary slot AND a newer receipted artifact slot in 1.0.0 on a clean cache
+        // so prior-version fallback and terminal PATH ordering can be verified unambiguously.
+        const fallbackCacheDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-prior-version-",
+        });
+        const fallbackToolsDir = path.join(fallbackCacheDir, "tools");
+        const fallbackResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+          cacheDir: fallbackCacheDir,
+          toolsDir: fallbackToolsDir,
+          registryUrl,
+        });
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: legacyArchiveUrl,
+                cmd: "./bin/example-agent",
+                args: ["--v1-primary"],
+                env: { AGENT_CHANNEL: "v1-primary" },
+              },
+            },
+          }),
+          version: "1.0.0",
+        };
+        const primaryV1 = yield* fallbackResolver.resolve(settings(), "/workspace");
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: swappedArchiveUrl,
+                cmd: "./bin/example-agent",
+                args: ["--v1-fixed"],
+                env: { AGENT_CHANNEL: "v1-fixed" },
+              },
+            },
+          }),
+          version: "1.0.0",
+        };
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const swappedResolved = yield* fallbackResolver.resolve(settings(), "/workspace");
         expect(swappedResolved.spawn.command).toMatch(
           /linux-x86_64-[0-9a-f]{12}[\\/]bin[\\/]example-agent$/,
         );
-        expect(yield* fileSystem.readFileString(swappedResolved.spawn.command)).toBe(
-          "#!/bin/sh\necho v1-fixed\n",
-        );
-        expect(yield* fileSystem.readFileString(legacyBinary)).toBe("#!/bin/sh\necho legacy-v1\n");
 
         // 4. A mismatched receipt at the same version is never reused when a repackaged download fails.
         currentAgent = {
@@ -994,15 +1138,15 @@ describe("AcpRegistrySupport", () => {
           }),
           version: "1.0.0",
         };
-        yield* resolver.invalidateIndex();
-        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const mismatchedSameVersionError = yield* resolver
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const mismatchedSameVersionError = yield* fallbackResolver
           .resolve(settings(), "/workspace")
           .pipe(Effect.flip);
         expect(mismatchedSameVersionError.reason).toBe("download_failed");
 
-        // 5. When upstream publishes 2.0.0 whose download fails, resolve falls back to the
-        // receipted 1.0.0 install with its recorded version, args, env, and fallback=true.
+        // 5. When upstream publishes 2.0.0 whose download fails (or checksum mismatches), resolve falls
+        // back to the newest receipted prior slot (1.0.0 replacement) and terminal PATH keeps it first.
         failV2Download = true;
         currentAgent = {
           ...makeAgent({
@@ -1017,9 +1161,9 @@ describe("AcpRegistrySupport", () => {
           }),
           version: "2.0.0",
         };
-        yield* resolver.invalidateIndex();
-        yield* resolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
-        const fallbackToV1 = yield* resolver.resolve(settings(), "/workspace");
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const fallbackToV1 = yield* fallbackResolver.resolve(settings(), "/workspace");
         expect(fallbackToV1.fallback).toBe(true);
         expect(fallbackToV1.indexRevision).toBeUndefined();
         expect(fallbackToV1.agent?.version).toBe("1.0.0");
@@ -1027,10 +1171,79 @@ describe("AcpRegistrySupport", () => {
         expect(fallbackToV1.spawn.args).toEqual(["--v1-fixed"]);
         expect(fallbackToV1.spawn.env?.AGENT_CHANNEL).toBe("v1-fixed");
         expect(fallbackToV1.launchIdentity).toBe(swappedResolved.launchIdentity);
+
+        const managedAfterV2Bump = yield* AcpRegistrySupport.acpRegistryManagedBinaryDirectories({
+          cacheDir: fallbackCacheDir,
+          toolsDir: fallbackToolsDir,
+          platform: "linux",
+          architecture: "x64",
+        });
+        expect(managedAfterV2Bump.slice(0, 2)).toEqual([
+          path.dirname(swappedResolved.spawn.command),
+          path.dirname(primaryV1.spawn.command),
+        ]);
+
+        // A broken 2.0.0 checksum also falls back to receipted 1.0.0 rather than stranding the user.
+        failV2Download = false;
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: v2ArchiveUrl,
+                cmd: "./bin/example-agent",
+                sha256: "0".repeat(64),
+              },
+            },
+          }),
+          version: "2.0.0",
+        };
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const checksumFallback = yield* fallbackResolver.resolve(settings(), "/workspace");
+        expect(checksumFallback.fallback).toBe(true);
+        expect(checksumFallback.agent?.version).toBe("1.0.0");
+        expect(checksumFallback.spawn.command).toBe(swappedResolved.spawn.command);
+
+        // 6. Installing 2.0.0 and then rolling back upstream to 1.5.0 (which fails download) must fall
+        // back only to versions strictly below 1.5.0 (1.0.0), never silently running newer 2.0.0.
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: v2ArchiveUrl,
+                cmd: "./bin/example-agent",
+                args: ["--v2"],
+              },
+            },
+          }),
+          version: "2.0.0",
+        };
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const installedV2 = yield* fallbackResolver.resolve(settings(), "/workspace");
+        expect(installedV2.agent?.version).toBe("2.0.0");
+
+        currentAgent = {
+          ...makeAgent({
+            binary: {
+              "linux-x86_64": {
+                archive: "https://example.test/example-agent-1.5.0.bin",
+                cmd: "./bin/example-agent",
+              },
+            },
+          }),
+          version: "1.5.0",
+        };
+        yield* fallbackResolver.invalidateIndex();
+        yield* fallbackResolver.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const rollbackFallback = yield* fallbackResolver.resolve(settings(), "/workspace");
+        expect(rollbackFallback.fallback).toBe(true);
+        expect(rollbackFallback.agent?.version).toBe("1.0.0");
       }).pipe(
         Effect.scoped,
         Effect.provide(
           layerResolver((request) => {
+            requests.push(request.url);
             if (offline) {
               return Effect.succeed(
                 HttpClientResponse.fromWeb(request, new Response("offline", { status: 503 })),
@@ -1041,16 +1254,16 @@ describe("AcpRegistrySupport", () => {
                 HttpClientResponse.fromWeb(request, new Response(makeRegistry(currentAgent))),
               );
             }
+            if (request.url === legacyArchiveUrl) {
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(v1PrimaryBytes)),
+              );
+            }
             if (request.url === swappedArchiveUrl && !failSwappedDownload) {
               return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(v1Bytes)));
             }
             if (request.url === v2ArchiveUrl && !failV2Download) {
-              return Effect.succeed(
-                HttpClientResponse.fromWeb(
-                  request,
-                  new Response(new TextEncoder().encode("#!/bin/sh\necho v2\n")),
-                ),
-              );
+              return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(v2Bytes)));
             }
             return Effect.succeed(
               HttpClientResponse.fromWeb(request, new Response("unavailable", { status: 503 })),
@@ -1709,19 +1922,32 @@ describe("AcpRegistrySupport", () => {
         const packageSwapDir = yield* fileSystem.makeTempDirectoryScoped({
           prefix: "t3-acp-registry-launch-identity-",
         });
+        const hostPlatform = HostProcess.Platform.defaultValue();
+        const hostArchitecture = HostProcess.Architecture.defaultValue();
+        const isWindowsHost = hostPlatform === "win32";
+        const hostBinaryOs =
+          hostPlatform === "darwin" ? "darwin" : isWindowsHost ? "windows" : "linux";
+        const hostBinaryArch = hostArchitecture === "arm64" ? "aarch64" : "x86_64";
+        const binaryTargetKey = `${hostBinaryOs}-${hostBinaryArch}` as const;
         const swapResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: packageSwapDir,
           toolsDir: `${packageSwapDir}/tools`,
           registryUrl,
-        });
-        const toolchain = yield* makeFakeNpmToolchain(packageSwapDir);
+        }).pipe(
+          Effect.provideService(HostProcess.Platform, hostPlatform),
+          Effect.provideService(HostProcess.Architecture, hostArchitecture),
+          Effect.provideService(SpawnExecutableResolution, (command) =>
+            command === "npm" || command.endsWith("override-agent") ? command : undefined,
+          ),
+        );
+        const swapEnvironment: NodeJS.ProcessEnv = {};
         upstream = {
           ...makeAgent({ npx: { package: "@example/old@1.0.0" } }),
           version: "1.0.0",
           website: "https://example.test/docs-a",
         };
         yield* swapResolver.refreshIndex(refreshOptions);
-        const oldPackageInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        const oldPackageInspection = yield* swapResolver.inspect(settings(), swapEnvironment);
         expect(oldPackageInspection).toMatchObject({
           status: "ready",
           version: "1.0.0",
@@ -1735,7 +1961,7 @@ describe("AcpRegistrySupport", () => {
         };
         yield* swapResolver.invalidateIndex();
         yield* swapResolver.refreshIndex(refreshOptions);
-        const newPackageInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        const newPackageInspection = yield* swapResolver.inspect(settings(), swapEnvironment);
         expect(newPackageInspection).toMatchObject({ status: "ready", version: "1.0.0" });
         expect(
           oldPackageInspection.status === "ready" &&
@@ -1750,7 +1976,7 @@ describe("AcpRegistrySupport", () => {
         };
         yield* swapResolver.invalidateIndex();
         yield* swapResolver.refreshIndex(refreshOptions);
-        const docsOnlyInspection = yield* swapResolver.inspect(settings(), toolchain.environment);
+        const docsOnlyInspection = yield* swapResolver.inspect(settings(), swapEnvironment);
         expect(docsOnlyInspection).toMatchObject({
           status: "ready",
           version: "1.0.0",
@@ -1763,22 +1989,20 @@ describe("AcpRegistrySupport", () => {
         ).toBe(true);
 
         // commandOverride ignores version/package bumps it does not launch, while tracking args and env separately.
-        const hostPlatform = HostProcess.Platform.defaultValue();
-        const isWindowsHost = hostPlatform === "win32";
         const overridePath = `${packageSwapDir}/override-agent`;
         yield* fileSystem.writeFileString(overridePath, "#!/bin/sh\necho override\n");
         if (!isWindowsHost) {
           yield* fileSystem.chmod(overridePath, 0o755);
         }
         const overrideSettings = settings({ commandPath: overridePath });
-        const overrideBase = yield* swapResolver.inspect(overrideSettings, toolchain.environment);
+        const overrideBase = yield* swapResolver.inspect(overrideSettings, swapEnvironment);
         upstream = {
           ...makeAgent({ npx: { package: "@example/other@2.0.0" } }),
           version: "2.0.0",
         };
         yield* swapResolver.invalidateIndex();
         yield* swapResolver.refreshIndex(refreshOptions);
-        const overrideBumped = yield* swapResolver.inspect(overrideSettings, toolchain.environment);
+        const overrideBumped = yield* swapResolver.inspect(overrideSettings, swapEnvironment);
         expect(overrideBase.status === "ready" && overrideBumped.status === "ready").toBe(true);
         expect(
           overrideBase.status === "ready" && overrideBumped.status === "ready"
@@ -1794,10 +2018,7 @@ describe("AcpRegistrySupport", () => {
         };
         yield* swapResolver.invalidateIndex();
         yield* swapResolver.refreshIndex(refreshOptions);
-        const overrideArgsOnly = yield* swapResolver.inspect(
-          overrideSettings,
-          toolchain.environment,
-        );
+        const overrideArgsOnly = yield* swapResolver.inspect(overrideSettings, swapEnvironment);
         expect(
           overrideBumped.status === "ready" &&
             overrideArgsOnly.status === "ready" &&
@@ -1812,10 +2033,7 @@ describe("AcpRegistrySupport", () => {
         };
         yield* swapResolver.invalidateIndex();
         yield* swapResolver.refreshIndex(refreshOptions);
-        const overrideEnvOnly = yield* swapResolver.inspect(
-          overrideSettings,
-          toolchain.environment,
-        );
+        const overrideEnvOnly = yield* swapResolver.inspect(overrideSettings, swapEnvironment);
         expect(
           overrideBumped.status === "ready" &&
             overrideEnvOnly.status === "ready" &&
@@ -1823,16 +2041,6 @@ describe("AcpRegistrySupport", () => {
         ).toBe(true);
 
         // Binary launchIdentity tracks archive, sha256, cmd, args, and env while ignoring website/icon changes.
-        const binaryTargetKey = isWindowsHost ? "windows-x86_64" : "linux-x86_64";
-        const binaryPlatform = isWindowsHost ? "win32" : "linux";
-        const binarySwapResolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
-          cacheDir: packageSwapDir,
-          toolsDir: `${packageSwapDir}/tools`,
-          registryUrl,
-        }).pipe(
-          Effect.provideService(HostProcess.Platform, binaryPlatform),
-          Effect.provideService(HostProcess.Architecture, "x64"),
-        );
         const binaryExe = `${packageSwapDir}/tools/example-agent/1.0.0/${binaryTargetKey}/bin/agent`;
         yield* fileSystem.makeDirectory(
           `${packageSwapDir}/tools/example-agent/1.0.0/${binaryTargetKey}/bin`,
@@ -1861,9 +2069,9 @@ describe("AcpRegistrySupport", () => {
               ...(meta?.website ? { website: meta.website } : {}),
               ...(meta?.icon ? { icon: meta.icon } : {}),
             };
-            yield* binarySwapResolver.invalidateIndex();
-            yield* binarySwapResolver.refreshIndex(refreshOptions);
-            const inspected = yield* binarySwapResolver.inspect(settings(), toolchain.environment);
+            yield* swapResolver.invalidateIndex();
+            yield* swapResolver.refreshIndex(refreshOptions);
+            const inspected = yield* swapResolver.inspect(settings(), swapEnvironment);
             expect(inspected.status).toBe("ready");
             return inspected.status === "ready" ? inspected.launchIdentity : undefined;
           });

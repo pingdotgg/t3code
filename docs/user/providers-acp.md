@@ -53,12 +53,14 @@ but keeps package installs. To use an existing local binary, set **Executable ov
 
 T3 Code refreshes the Registry index in the background and automatically installs new versions of
 prepared, T3-managed Registry agents alongside earlier versions, deferring background updates while
-that agent is starting a session. Agents using **Executable override** keep running the configured
-executable—update those overrides directly on the server—while Registry refreshes can still pick up
-updated Registry metadata, arguments, and environment variables. Refreshing providers (in
-**Settings → Providers** on web and desktop, or **Refresh providers** in environment settings on
-mobile) requests a fresh Registry check right away for unprepared or unavailable agents, and after
-the agent's status check finishes for installed agents.
+that agent is starting a session. If a newly published version cannot be downloaded, T3 Code keeps
+running the newest previously installed version until the update succeeds. Agents using
+**Executable override** keep running the configured executable—update those overrides directly on
+the server—while Registry refreshes can still pick up updated Registry metadata, arguments, and
+environment variables. Refreshing providers (in **Settings → Providers** on web and desktop, or
+**Refresh providers** in environment settings on mobile) requests a fresh Registry check right away
+for unprepared or unavailable agents, and after the agent's status check finishes for installed
+agents.
 
 ## Signing in
 

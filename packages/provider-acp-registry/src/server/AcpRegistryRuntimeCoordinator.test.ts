@@ -4,6 +4,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as TestClock from "effect/testing/TestClock";
 
 import type { AcpRegistryAvailableCommands } from "./probe.ts";
 import * as AcpRegistryRuntimeCoordinator from "./AcpRegistryRuntimeCoordinator.ts";
@@ -173,6 +174,30 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       ).toBe(true);
       expect(yield* Fiber.join(request)).toBe(true);
       expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
+
+      // Consent must be rejected at the exact expiry boundary as well as after it.
+      const expiringSeen = yield* Deferred.make<void>();
+      const expiringWatcher = yield* coordinator
+        .watchUrlAuthAction(instanceId, (current) =>
+          current?.elicitationId === "login-expiring"
+            ? Deferred.succeed(expiringSeen, undefined).pipe(Effect.asVoid)
+            : Effect.void,
+        )
+        .pipe(Effect.forkChild);
+      const expiringRequest = yield* coordinator
+        .requestUrlAuthentication(instanceId, {
+          ...action,
+          elicitationId: "login-expiring",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(expiringSeen);
+      yield* TestClock.adjust("10 minutes");
+      expect(Option.isNone(yield* coordinator.getUrlAuthAction(instanceId))).toBe(true);
+      expect(
+        yield* coordinator.acceptUrlAuthentication({ instanceId, elicitationId: "login-expiring" }),
+      ).toBe(false);
+      expect(yield* Fiber.join(expiringRequest)).toBe(false);
+      yield* Fiber.interrupt(expiringWatcher);
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
@@ -327,7 +352,11 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           Option.some({ slashCommands: [{ name: "cmd-b" }], skills: [] }),
         );
 
+        // Even after another runtime publishes later, untagged get prefers preservedRuntimeIdentity.
         const metaC = yield* publishAndWait("cmd-c", "runtime-c");
+        expect(yield* coordinator.getAvailableCommands(instanceId)).toEqual(
+          Option.some({ slashCommands: [{ name: "cmd-b" }], skills: [] }),
+        );
         yield* coordinator.clearAvailableCommands(instanceId, {
           preserveRuntimeIdentity: "runtime-c",
         });
@@ -351,10 +380,48 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const metaAfterFullClear = yield* publishAndWait("cmd-fresh", "runtime-b");
         expect(yield* metaAfterFullClear.isCurrent).toBe(true);
 
-        // 4. Disposing an instance drops its state and marks earlier updates stale.
+        // 4. Disposing an instance drops its state and keeps pre-disposal updates permanently stale
+        // even after the same instance ID is reused for new publications.
         yield* coordinator.clearAvailableCommands(instanceId, { dispose: true });
         expect(yield* metaAfterFullClear.isCurrent).toBe(false);
         expect(Option.isNone(yield* coordinator.getAvailableCommands(instanceId))).toBe(true);
+
+        const metaAfterReuse = yield* publishAndWait("cmd-reused", "runtime-b");
+        expect(yield* metaAfterReuse.isCurrent).toBe(true);
+        expect(yield* metaAfterFullClear.isCurrent).toBe(false);
+
+        // 5. A newly subscribed watcher replays retained per-runtime entries in ascending revision
+        // order and delivers subsequent live publications without replaying older revisions.
+        yield* coordinator.publishAvailableCommands(
+          instanceId,
+          { slashCommands: [{ name: "cmd-reused-c" }], skills: [] },
+          "runtime-c",
+        );
+        const replayedNames: Array<string> = [];
+        const initialReplayDone = yield* Deferred.make<void>();
+        const replayDone = yield* Deferred.make<void>();
+        const secondWatcher = yield* coordinator
+          .watchAvailableCommands(instanceId, (commands) =>
+            Effect.gen(function* () {
+              replayedNames.push(commands.slashCommands[0]?.name ?? "empty");
+              if (replayedNames.length === 2) {
+                yield* Deferred.succeed(initialReplayDone, undefined);
+              }
+              if (replayedNames.length >= 3) {
+                yield* Deferred.succeed(replayDone, undefined);
+              }
+            }),
+          )
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(initialReplayDone);
+        yield* coordinator.publishAvailableCommands(
+          instanceId,
+          { slashCommands: [{ name: "cmd-after-watch" }], skills: [] },
+          "runtime-b",
+        );
+        yield* Deferred.await(replayDone);
+        expect(replayedNames).toEqual(["cmd-reused", "cmd-reused-c", "cmd-after-watch"]);
+        yield* Fiber.interrupt(secondWatcher);
         yield* Fiber.interrupt(watcher);
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
