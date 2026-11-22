@@ -2096,7 +2096,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
           }),
         ),
         Layer.provide(Layer.mock(ProjectService.ProjectService)({})),
-        Layer.provide(ServerConfig.layerTest(process.cwd(), process.cwd())),
+        Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-proxy-test-" })),
         Layer.provide(
           Layer.mock(McpSessionRegistry.McpSessionRegistry)({
             resolve: (token) => Effect.succeed(scopes.get(token)),
@@ -2244,6 +2244,11 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       // tool_call invokes optional tools, preserves image content, blocks disabled/meta tools, and returns schema on bad args.
       expect(
         (yield* proxying.call("tool_call", { name: "schedule_task", arguments: {} })).result
+          ?.structuredContent,
+      ).toEqual({ ok: true });
+      // Core tools such as delegate_task also work through tool_call if the agent evicts them.
+      expect(
+        (yield* proxying.call("tool_call", { name: "delegate_task", arguments: {} })).result
           ?.structuredContent,
       ).toEqual({ ok: true });
       const imageCall = yield* proxying.call("tool_call", {

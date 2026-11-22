@@ -100,6 +100,7 @@ describe("T3 device instructions", () => {
       prompt: "Render a chart.",
       state: { ...state, toolExposure: "deferred-proxy" },
     });
+    assert.include(withProxy, "including `delegate_task`");
     assert.include(withProxy, "tool_call({ name, arguments })");
     assert.notInclude(t3AcpPromptWithInstructions({ prompt: "Hi.", state }), "tool_call(");
   });
