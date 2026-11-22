@@ -2,8 +2,8 @@
 
 //! Conn theme palettes and `nckrtl-shell-design` token derivation.
 //!
-//! Mirrors `../conn/packages/shared/src/themePalettes.ts` and the shell token formulas in
-//! `../conn/apps/web/src/index.css` (summarized in `docs/design-spec.md`).
+//! Mirrors `packages/shared/src/themePalettes.ts` and the shell token formulas in
+//! `apps/web/src/index.css` (summarized in `docs/design-spec.md`).
 //!
 //! This crate is GPUI-free. `conn-app` converts [`Rgba`] into GPUI colors.
 //!
@@ -87,7 +87,7 @@ pub enum ThemeError {
 /// One theme: its id, display name, appearance, and color roles.
 ///
 /// Role keys use the camelCase names from `THEME_COLOR_ROLES` in
-/// `../conn/packages/shared/src/themePalettes.ts` (`canvas`, `text`, `sidebar`, ...).
+/// `packages/shared/src/themePalettes.ts` (`canvas`, `text`, `sidebar`, ...).
 #[derive(Clone, Debug, PartialEq)]
 pub struct ThemeDefinition {
     pub id: String,

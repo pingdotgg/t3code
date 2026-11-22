@@ -4,7 +4,7 @@
 //! Operator dictation — shared by both the chat composer (`conn-app`) and browser/device
 //! annotations (Slice 3).
 //!
-//! Protocol summary (see `../conn/FORK.md`):
+//! Protocol summary (see `FORK.md`):
 //! - Auth: Operator's Local API expects `Authorization: Bearer <token>` (or `X-Operator-Token`)
 //!   from Operator → Settings → Local API.
 //! - `POST <origin>/dictate/start`  with `{"session":"<id>"}` -> 2xx started, 400/404 unsupported.

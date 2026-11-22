@@ -1,5 +1,5 @@
 //! Built-in palette role tables mirrored verbatim from
-//! `../conn/packages/shared/src/themePalettes.ts`.
+//! `packages/shared/src/themePalettes.ts`.
 
 pub(crate) const T3_CODE_LIGHT_ROLES: &[(&str, &str)] = &[
     ("searchMatchBackground", "#ffde8b"),

@@ -1,6 +1,6 @@
 /target/
 /target-*/
-/.refs/
+/.refs
 /.t3/
 /.plans/
 /.shots/

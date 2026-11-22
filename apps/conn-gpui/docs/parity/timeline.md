@@ -1,6 +1,6 @@
 # 1:1 Parity Audit: Thread Timeline & Messages
 
-> **Baseline:** T3 Conn (`../conn/apps/web/src/components/chat/*`, `../conn/apps/web/src/components/ChatMarkdown.tsx`, `../conn/apps/web/src/timestampFormat.ts`, `../conn/packages/client-runtime/src/work-log/*`, `../conn/packages/shared/src/orchestrationTiming.ts`) vs `conn-gpui` (`crates/conn-app/src/chat/{mod.rs,cache.rs,markdown.rs,toc.rs,icons.rs,spinner.rs,color.rs}`, `crates/conn-state/src/thread.rs`).
+> **Baseline:** T3 Conn (`apps/web/src/components/chat/*`, `apps/web/src/components/ChatMarkdown.tsx`, `apps/web/src/timestampFormat.ts`, `packages/client-runtime/src/work-log/*`, `packages/shared/src/orchestrationTiming.ts`) vs `conn-gpui` (`crates/conn-app/src/chat/{mod.rs,cache.rs,markdown.rs,toc.rs,icons.rs,spinner.rs,color.rs}`, `crates/conn-state/src/thread.rs`).
 > **Scope rubric:** Locked against [`docs/scope.md`](../scope.md). Features explicitly marked `Drop` or `Orbit`-only are tagged `[-]`; everything else in T3 Conn is in scope and audited 1:1.
 > **Legend:** `[x]` Exact parity · `[~]` Partial / visual or behavioral drift · `[ ]` Missing · `[-]` Intentionally out of scope (`docs/scope.md`)
 

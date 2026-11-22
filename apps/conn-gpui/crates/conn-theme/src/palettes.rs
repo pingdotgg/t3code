@@ -28,7 +28,7 @@ struct RawThemeFile {
 ///
 /// Missing roles fall back to the default palette for the theme's [`Appearance`]
 /// (T3 Chat Light for light themes, T3 Chat Dark for dark themes), matching
-/// `getDefaultThemeColors` in `../conn/apps/web/src/themePalette.ts`.
+/// `getDefaultThemeColors` in `apps/web/src/themePalette.ts`.
 ///
 /// The legacy key `terminalSelectionBackground` (present in e.g. `dark-ocean.json`)
 /// is normalized to `terminalSelection` when `terminalSelection` is not explicitly set.
@@ -107,7 +107,7 @@ pub fn theme_from_role_colors(
 }
 
 /// Default fallback role map for `appearance`, matching `getDefaultThemeColors` in
-/// `../conn/apps/web/src/themePalette.ts`.
+/// `apps/web/src/themePalette.ts`.
 pub(crate) fn default_roles_for_appearance(appearance: Appearance) -> BTreeMap<String, Rgba> {
     let table = match appearance {
         Appearance::Light => T3_CHAT_LIGHT_ROLES,

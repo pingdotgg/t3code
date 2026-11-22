@@ -1,7 +1,7 @@
 //! Left-edge message minimap / TOC scrubber (`TimelineMinimap.tsx` parity) and
 //! "Jump to latest" pill for long chat threads.
 //!
-//! Matches Conn (`../conn/apps/web/src/components/chat/TimelineMinimap.tsx`):
+//! Matches Conn (`apps/web/src/components/chat/TimelineMinimap.tsx`):
 //! - Anchored on the **left** edge of the chat card (`left: 12px`, vertically centered).
 //! - Subtle `1px` vertical spine (`border/15`) behind left-aligned `2px` horizontal ticks.
 //! - **Fisheye magnification wave** around the hovered (or active) tick:

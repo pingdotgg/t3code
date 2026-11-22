@@ -163,7 +163,7 @@ const DEFAULT_WINDOW_HEIGHT_PX: f32 = 900.0;
 const MIN_WINDOW_WIDTH_PX: f32 = 760.0;
 const MIN_WINDOW_HEIGHT_PX: f32 = 480.0;
 
-/// macOS traffic-light position matching `../conn/apps/desktop/src/window/DesktopWindow.ts`:
+/// macOS traffic-light position matching `apps/desktop/src/window/DesktopWindow.ts`:
 /// - `x = 16.0` (Conn's `setWindowButtonPosition({ x: 16, ... })`).
 /// - `y = 15.0` (`MACOS_SHELL_HEADER_HEIGHT (44) / 2 - MACOS_WINDOW_BUTTON_RADIUS (7) = 15`).
 ///

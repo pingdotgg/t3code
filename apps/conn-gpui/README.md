@@ -1,6 +1,6 @@
 # conn-gpui
 
-A native Rust + GPUI desktop client for **Conn** (Nick's fork of T3 Code), built to match Conn desktop's visual design pixel-for-pixel while talking directly to `conn-server` (`.refs/conn/apps/conn-server`) over its typed Rust contract crates.
+A native Rust + GPUI desktop client for **Conn** (Nick's fork of T3 Code), built to match Conn desktop's visual design pixel-for-pixel while talking directly to `conn-server` (`apps/conn-server` in this monorepo) over its typed Rust contract crates.
 
 > **Status:** See [`docs/status.md`](docs/status.md) and [`docs/scope.md`](docs/scope.md).
 
@@ -8,7 +8,7 @@ A native Rust + GPUI desktop client for **Conn** (Nick's fork of T3 Code), built
 
 ```text
 conn-gpui (Rust + GPUI desktop app)
-  ├── crates/conn-client  ──► WebSocket /ws (Effect RPC via .refs/conn/apps/conn-server/crates/{conn-wire,conn-contract})
+  ├── crates/conn-client  ──► WebSocket /ws (Effect RPC via apps/conn-server/crates/{conn-wire,conn-contract})
   ├── crates/conn-state   ──► Pure Rust reducers, workspace/thread/panel state (zero GPUI deps)
   ├── crates/conn-theme   ──► Conn theme palettes + color-mix shell tokens -> GPUI Hsla
   ├── crates/conn-web     ──► Embedded Chromium browser via CEF-on-demand (modeled on Threadbear)
@@ -17,16 +17,15 @@ conn-gpui (Rust + GPUI desktop app)
 
 ## Reference repositories
 
-Pinned in [`references.pin`](references.pin) and synced into gitignored `.refs/` via `scripts/sync-refs.sh`:
+Conn itself (web, desktop, mobile, `conn-server`) is this monorepo. Third-party references are pinned in [`references.pin`](references.pin) and synced into gitignored `.refs/` via `scripts/sync-refs.sh`:
 
-- **`.refs/conn`** — Pinned read-only clone of [`nckrtl/conn`](https://github.com/nckrtl/conn) `origin/main`. Sole source of truth for Conn's UI, shell tokens, themes, icons, fork features (`FORK.md`), and `conn-server` (`apps/conn-server/crates/{conn-wire,conn-contract}`).
 - **`.refs/threadbear`** — Read-only shallow clone of [`mikecann/threadbear`](https://github.com/mikecann/threadbear). Primary reference for GPUI + `gpui-kit = "=0.9.0"`, macOS AppKit hooks, `alacritty_terminal`, and `cef-rs` on-demand embedding.
 - **`.refs/rune`** — Read-only shallow clone of [`anomalyco/rune`](https://github.com/anomalyco/rune). Secondary inspiration reference (rendering/text/perf research notes, frosted-glass & motion ideas, agent visual-verification patterns).
 
 ## Prerequisites & commands
 
 ```sh
-# 1. Populate read-only references (.refs/conn, .refs/threadbear, .refs/rune)
+# 1. Populate read-only references (.refs/threadbear, .refs/rune)
 scripts/sync-refs.sh
 
 # 2. Run formatting, clippy (-D warnings), and workspace tests

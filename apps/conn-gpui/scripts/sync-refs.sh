@@ -33,6 +33,5 @@ sync_repo() {
   echo "==> .refs/$key ready at $(git -C "$dir" rev-parse --short HEAD)"
 }
 
-sync_repo conn "https://github.com/nckrtl/conn.git"
 sync_repo threadbear "https://github.com/mikecann/threadbear.git"
 sync_repo rune "https://github.com/anomalyco/rune.git"

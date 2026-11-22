@@ -4,7 +4,7 @@
 
 **Non-goals for this 6-hour spike:**
 - Do NOT implement mobile (iOS/Android stays separate).
-- Do NOT re-implement `conn-server` or provider adapters—connect to `../conn-server` over `/ws` using `conn-wire` and `conn-contract`.
+- Do NOT re-implement `conn-server` or provider adapters—connect to `apps/conn-server` over `/ws` using `conn-wire` and `conn-contract`.
 - Do NOT implement Clerk cloud auth, auto-updater, Vaultwarden autofill, or Orbit fleet sync yet (keep local/dev-token connection rock solid first).
 - Do NOT touch live `~/.t3/userdata` (always run `conn-server` against a disposable `--state-dir`). Building, testing, and running directly on this Mac is explicitly approved for this run.
 
@@ -21,13 +21,13 @@ Spawn specialized sub-agents along crate boundaries so work stays parallel and m
    - Unit + integration tests against a local `conn-server` with a temp `--state-dir` (or fake provider).
 
 2. **Stream 2 — Design System & Themes (`conn-theme`)**
-   - Port all built-in Conn themes from `../conn/packages/shared/src/themePalettes.ts` (`t3-code` light/dark, `t3-chat`, `grove`, `ocean`, `ember`, `iris`) plus JSON loader for custom themes (especially Dark Ocean).
+   - Port all built-in Conn themes from `packages/shared/src/themePalettes.ts` (`t3-code` light/dark, `t3-chat`, `grove`, `ocean`, `ember`, `iris`) plus JSON loader for custom themes (especially Dark Ocean).
    - Implement exact `color-mix` sRGB derivation for every token in `docs/design-spec.md` and `.claude/skills/nckrtl-shell-design/references/tokens.md` (`--shell-fill`, `--shell-panel`, `--shell-card`, `--shell-raised`, `--shell-overlay`, `--shell-highlight`, `--shell-tile`, `--shell-field`, `--shell-control`, `--shell-divider`, `--shell-divider-header`, `--shell-divider-raised`, `--glass-divider`, `--switch-on`, etc.).
    - Map Conn tokens cleanly into `gpui-kit` theme overrides so every kit primitive inherits Conn's exact look.
    - Unit tests asserting computed dark & light token contrast/values against Conn's CSS formulas.
 
 3. **Stream 3 — Window Shell, Workspace Rail & Sidebar (`conn-app`: `shell/`, `sidebar/`, `header/`)**
-   - macOS window setup matching `../conn/apps/desktop/src/window/DesktopWindow.ts` and `.refs/threadbear/desktop/gpui/src/`: frameless titlebar, 18px window radius, macOS vibrancy/material backdrop, traffic lights vertically centered on the **44px** header (`--shell-header-height`).
+   - macOS window setup matching `apps/desktop/src/window/DesktopWindow.ts` and `.refs/threadbear/desktop/gpui/src/`: frameless titlebar, 18px window radius, macOS vibrancy/material backdrop, traffic lights vertically centered on the **44px** header (`--shell-header-height`).
    - Outer frosted frame (`--shell-fill`) with 4px inset (`--shell-inset`), 14px concentric card corners (`--shell-corner`), 0.5px inner border, and 1px two-tone panel dividers.
    - Workspace rail (leftmost rail with rounded workspace tiles, active ring `2px` inset with gap) + collapsible thread sidebar (projects, threads, status dots/spinners, hover/active/selected lighting overlays, search/filter, new-thread button).
    - 44px transparent header bar with thread title/breadcrumb, branch/worktree indicator, right-panel toggles aligned at 11px right inset, and 28px circular header icon buttons.
@@ -67,8 +67,8 @@ Spawn specialized sub-agents along crate boundaries so work stays parallel and m
 ## Starting Prompt Checklist for Orchestrator
 
 When launching the 6-hour run:
-1. Confirm `.refs/threadbear` exists (run `scripts/sync-refs.sh` if needed) and `../conn` + `../conn-server` are present.
+1. Confirm `.refs/threadbear` exists (run `scripts/sync-refs.sh` if needed) and the Conn monorepo + `apps/conn-server` are present.
 2. Start a disposable `conn-server` (seeded or fresh `--state-dir /tmp/conn-gpui-dev`) on a free port—never `~/.t3`.
-3. Capture 2–3 baseline reference screenshots of Conn's current UI (Dark Ocean + Light) or inspect `../conn/apps/web/src/index.css` & `nckrtl-shell-design` so every agent shares the exact target.
+3. Capture 2–3 baseline reference screenshots of Conn's current UI (Dark Ocean + Light) or inspect `apps/web/src/index.css` & `nckrtl-shell-design` so every agent shares the exact target.
 4. Kick off Streams 1, 2, and 3 in parallel first; integrate Phase 1 before fanning out Streams 4, 5, and 6.
 5. Keep `docs/status.md` updated at every phase boundary with what is proven, screenshots taken, and remaining gaps.

@@ -1,6 +1,6 @@
 //! `Cmd+K` command palette entity and floating `dropdown-glass` overlay.
 //!
-//! Mirrors `../conn/apps/web/src/components/CommandPalette.tsx` and
+//! Mirrors `apps/web/src/components/CommandPalette.tsx` and
 //! `ui/command.tsx` with Conn shell tokens (`shell_overlay`, `glass_divider`,
 //! `shell_highlight`, raised `Kbd` hints).
 

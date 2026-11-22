@@ -1,6 +1,6 @@
 //! Conn window shell primitives: inset cards and full-height two-tone dividers.
 //!
-//! Follows `docs/design-spec.md` §1 and `../conn/apps/web/src/index.css`:
+//! Follows `docs/design-spec.md` §1 and `apps/web/src/index.css`:
 //! - Outer shell inset: `4px` (`ShellGeometry::shell_inset_px`).
 //! - Inset card corner radius: `14px` concentric with `18px` window radius
 //!   (`ShellGeometry::shell_corner_px`).

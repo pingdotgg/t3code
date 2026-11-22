@@ -1,6 +1,6 @@
 # 1:1 Parity Audit: Composer & Context Bar
 
-**Source of truth:** T3 Conn (`../conn/apps/web/src/components/chat/` & `../conn/apps/web/src/components/`)  
+**Source of truth:** T3 Conn (`apps/web/src/components/chat/` & `apps/web/src/components/`)  
 **Target:** `conn-gpui` (`crates/conn-app/src/chat/composer.rs`, `composer/menus.rs`, `composer/model_picker.rs`, `chat/mod.rs`, `app.rs`)  
 **Scope contract:** [`docs/scope.md`](../scope.md) (Locked v1)  
 **Audit date:** 2026-11-22

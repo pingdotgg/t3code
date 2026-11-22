@@ -1,6 +1,6 @@
 # Architecture
 
-`conn-gpui` replaces Conn's Electron + React desktop surface (`../conn/apps/desktop` + `../conn/apps/web`) with a native Rust + GPUI desktop app that talks directly to `conn-server` (`../conn-server`).
+`conn-gpui` replaces Conn's Electron + React desktop surface (`apps/desktop` + `apps/web`) with a native Rust + GPUI desktop app that talks directly to `conn-server` (`apps/conn-server`).
 
 ## System overview
 
@@ -35,14 +35,14 @@
 └──────────────────┼────────────────────────────────────────────────────────┘
                    │
                    ▼
-         conn-server (../conn-server)  —or—  T3 server (../conn/apps/server)
+         conn-server (apps/conn-server)  —or—  T3 server (apps/server)
 ```
 
 ## Mapping Conn & Threadbear into `conn-gpui`
 
-| Capability | Conn specification (`../conn`) | Threadbear GPUI reference (`.refs/threadbear`) | `conn-gpui` home |
+| Capability | Conn specification (the Conn monorepo) | Threadbear GPUI reference (`.refs/threadbear`) | `conn-gpui` home |
 | --- | --- | --- | --- |
-| Wire protocol & RPC | `packages/contracts`, `packages/client-runtime` | `desktop/client/src/runner.rs` | `crates/conn-client` + `../conn-server/crates/{conn-wire,conn-contract}` |
+| Wire protocol & RPC | `packages/contracts`, `packages/client-runtime` | `desktop/client/src/runner.rs` | `crates/conn-client` + `apps/conn-server/crates/{conn-wire,conn-contract}` |
 | Client state & reducers | `packages/client-runtime/src/state/` (`shellReducer.ts`, `threadHistoryController.ts`) | `desktop/core/src/reducer/` | `crates/conn-state` |
 | Theme palettes & shell tokens | `packages/shared/src/themePalettes.ts`, `apps/web/src/index.css` (tail), `apps/web/src/themePalette.ts` | `desktop/gpui/src/style.rs` | `crates/conn-theme` |
 | macOS window & traffic lights | `apps/desktop/src/window/DesktopWindow.ts` (`MACOS_SHELL_HEADER_HEIGHT = 44`) | `desktop/gpui/src/main.rs`, `window_menu.rs`, `colour_space.rs` | `crates/conn-app/src/shell/` |
@@ -64,6 +64,6 @@
    - Reply with `FromClient::Ack { request_id }` after receiving each `FromServer::Chunk` so streams do not stall.
    - Send `FromClient::Ping` periodically and expect `FromServer::Pong`.
    - Reassemble split frames using `conn_wire::frame_parts` when present.
-   - Check `../conn-server/crates/conn-wire/src/lib.rs` and `../conn-server/crates/conn-server/tools/effect-client.mjs` for exact handshake & auth details.
+   - Check `apps/conn-server/crates/conn-wire/src/lib.rs` and `apps/conn-server/crates/conn-server/tools/effect-client.mjs` for exact handshake & auth details.
 3. **CEF overlay limitation:** Native CEF views cannot be painted under GPUI popovers/menus (`docs/gpui-port.md` in `.refs/threadbear`). Keep menus/popovers in separate popup windows or hide/freeze the browser panel while floating UI overlaps it. Inject annotation overlays inside the page DOM via CDP rather than trying to paint GPUI on top of CEF.
 4. **Vendored GPUI patches:** Start with published `gpui-kit = "=0.9.0"`. If macOS text selection, popup menu spacing, long dictated paste scroll, or file drag hits a known bug, inspect `.refs/threadbear/desktop/vendor/` before inventing a workaround.

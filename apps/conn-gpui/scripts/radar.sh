@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Upstream Radar: fetch tracked reference repos into gitignored `.refs/`
-# (never touching sibling repos like `../conn`) and report commits since
+# (Conn itself is this monorepo, so it is not tracked here) and report commits since
 # each pinned SHA in `references.pin`.
 #
 # Usage:
@@ -20,7 +20,6 @@ PIN_FILE="$ROOT/references.pin"
 # mode: "blobless" (no working tree, ideal for large monorepos like t3code)
 #       "checkout" (uses existing .refs/<key> working clone if present)
 RADAR_REPOS=(
-  "conn|https://github.com/nckrtl/conn.git|checkout"
   "t3code|https://github.com/pingdotgg/t3code.git|blobless"
   "threadbear|https://github.com/mikecann/threadbear.git|checkout"
   "rune|https://github.com/anomalyco/rune.git|checkout"

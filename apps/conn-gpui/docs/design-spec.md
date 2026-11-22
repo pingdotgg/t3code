@@ -1,14 +1,14 @@
 # Conn Visual Design Specification (GPUI Target)
 
-`conn-gpui` must look **pixel-for-pixel** like Conn desktop (`../conn`). Do not accept generic GPUI or `gpui-kit` styling.
+`conn-gpui` must look **pixel-for-pixel** like Conn desktop (the Conn monorepo). Do not accept generic GPUI or `gpui-kit` styling.
 
 Primary sources of truth (always check these before guessing):
 - `.claude/skills/nckrtl-shell-design/SKILL.md`
 - `.claude/skills/nckrtl-shell-design/references/tokens.md`
-- `../conn/FORK.md` ("Shell design", "Icons", "Workspaces")
-- `../conn/apps/web/src/index.css` (shell tokens at the end of the file)
-- `../conn/packages/shared/src/themePalettes.ts` (all 60+ semantic `THEME_COLOR_ROLES` and built-in themes)
-- `../conn/apps/desktop/src/window/DesktopWindow.ts` (macOS traffic light positioning & vibrancy)
+- `FORK.md` ("Shell design", "Icons", "Workspaces")
+- `apps/web/src/index.css` (shell tokens at the end of the file)
+- `packages/shared/src/themePalettes.ts` (all 60+ semantic `THEME_COLOR_ROLES` and built-in themes)
+- `apps/desktop/src/window/DesktopWindow.ts` (macOS traffic light positioning & vibrancy)
 
 ---
 
@@ -41,7 +41,7 @@ Primary sources of truth (always check these before guessing):
 
 Every shell surface and divider is computed in sRGB via `color-mix(in srgb, A p%, B)` from the active theme's roles (`--sidebar`, `--background`, `--foreground`, `--popover`, `--muted`, `--muted-foreground`, `--primary`).
 
-**Dark mode reference formulas** (read `../conn/apps/web/src/index.css` tail for exact light mode formulas too):
+**Dark mode reference formulas** (read `apps/web/src/index.css` tail for exact light mode formulas too):
 
 | Token | Dark formula | Usage |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Every shell surface and divider is computed in sRGB via `color-mix(in srgb, A p%
 
 **Primary verification themes:**
 1. **Dark Ocean** (Nick's primary dark theme — check `~/.t3/dev/themes/dark-ocean.json` if present on the machine, or `ocean` / `t3-code` dark as bundled fallback).
-2. **T3 Code Light** (`T3_CODE_LIGHT_THEME_COLORS` in `../conn/packages/shared/src/themePalettes.ts`).
+2. **T3 Code Light** (`T3_CODE_LIGHT_THEME_COLORS` in `packages/shared/src/themePalettes.ts`).
 
 ---
 
