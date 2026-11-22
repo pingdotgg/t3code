@@ -1935,6 +1935,8 @@ interface ActiveAcpSubagent {
   readonly toolSessionIds: Map<string, string>;
   thoughtSegmentIndex: number;
   thoughtEmittedAt: number;
+  /** Bumped on each reopen so a reply without a message id starts a new message. */
+  replyRound: number;
   thoughtText: string;
   thoughtStartedAt: DateTime.Utc | null;
 }
@@ -3464,7 +3466,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           messageId?: string | null,
         ) {
           if (text.length === 0 && mode === "append") return;
-          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          const fallbackId = subagent.replyRound === 0 ? "result" : `result-${subagent.replyRound}`;
+          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? fallbackId}`;
           const previous = subagent.assistantMessages.get(nativeItemId);
           const messageText = mode === "replace" ? text : `${previous ?? ""}${text}`;
           subagent.assistantMessages.set(nativeItemId, messageText);
@@ -3866,6 +3869,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             existing.assistantText = "";
             existing.assistantMessages.clear();
             existing.pendingAssistantMessages.clear();
+            existing.replyRound += 1;
           }
           const task: OrchestrationV2Subagent = {
             ...(existing?.task ?? {
@@ -3926,6 +3930,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interruptedToolIds: new Set(),
             toolSessionIds: new Map(),
             thoughtSegmentIndex: 0,
+            replyRound: 0,
             thoughtEmittedAt: 0,
             thoughtText: "",
             thoughtStartedAt: null,
@@ -10074,6 +10079,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }
               }
             }
+            // Hand buffered child frames over before live frames can reach the published turn.
+            for (const [childId, frames] of pendingBetweenTurnChildNotifications) {
+              context.pendingSubagentNotifications.set(childId, frames);
+            }
+            pendingBetweenTurnChildNotifications.clear();
             yield* Ref.set(activeTurn, context);
             yield* Ref.set(stoppedRunQuarantine, false);
             const queuedExtensionSubagents = yield* Ref.modify(
@@ -10111,12 +10121,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               driver,
               providerThread: activeProviderThread,
             });
-            const queuedChildNotifications = new Map(pendingBetweenTurnChildNotifications);
-            pendingBetweenTurnChildNotifications.clear();
-            for (const [childId, frames] of queuedChildNotifications) {
-              const live = context.pendingSubagentNotifications.get(childId) ?? [];
-              context.pendingSubagentNotifications.set(childId, [...frames, ...live]);
-            }
             for (const queued of queuedExtensionSubagents) {
               // A live update for this worker in this turn is newer than the queued one.
               const touched = liveExtensionWorkers.get(context);

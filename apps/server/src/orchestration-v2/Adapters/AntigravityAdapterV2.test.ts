@@ -2783,6 +2783,13 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
             rawOutput: { combinedOutput: "ok" },
           },
         });
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Round one note." },
+          },
+        });
 
         // Turn stays open past deferred-finalize debounce and protects the session from idle eviction.
         yield* TestClock.adjust("5 seconds");
@@ -3004,6 +3011,18 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
               event.turnItem.text.includes("Parked note."),
           ),
         );
+        // The woken round's reply is a new message; it does not replace round one's.
+        const alphaReplies = new Map<string, string>();
+        for (const event of collected) {
+          if (
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === alphaAfterTurn1?.childThreadId &&
+            event.turnItem.type === "assistant_message"
+          ) {
+            alphaReplies.set(event.turnItem.id, event.turnItem.text);
+          }
+        }
+        assert.includeMembers([...alphaReplies.values()], ["Round one note.", "Parked note."]);
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
