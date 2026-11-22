@@ -3204,7 +3204,7 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
       worktreePath: `${worktreePath}/`,
     });
     yield* createThread({ name: "cased", worktreePath: worktreePath.toUpperCase() });
-    yield* createThread({ name: "windows", worktreePath: "C:\\RÉPO\\wt" });
+    yield* createThread({ name: "windows", worktreePath: "C:\\Répo\\WT" });
 
     const family = (threadId: ThreadId) =>
       store
@@ -3226,25 +3226,29 @@ it.effect("SQL shells read a subagent family and a worktree's threads", () =>
       onWorktree.threads.map((thread) => thread.id),
       [id("root"), id("child"), id("other-child"), id("aliased-child")],
     );
-    const onWindowsWorktree = yield* store.getShellSnapshot({
-      location: "active",
-      worktreePath: "c:/répo/wt/",
-    });
+    const onWindowsWorktree = yield* store
+      .getShellSnapshot({ location: "active", worktreePath: "c:/Répo/wt/" })
+      .pipe(Effect.withTracer(tracer));
     assert.deepEqual(
       onWindowsWorktree.threads.map((thread) => thread.id),
       [id("windows")],
     );
-    // A path names a few threads; scanning every thread parses every payload.
+    // A path, ASCII or not, names a few threads; scanning every thread parses every payload.
     const sql = yield* SqlClient.SqlClient;
-    const threadQuery = statements.find((statement) =>
+    const threadQueries = statements.filter((statement) =>
       statement.includes("AS latest_run_stop_requested"),
     );
-    assert.isDefined(threadQuery);
-    const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
-      `EXPLAIN QUERY PLAN ${threadQuery}`,
-      [],
-    )).map((row) => row.detail);
-    assert.notInclude(threadPlan, "SCAN t", threadPlan.join("\n"));
+    assert.lengthOf(threadQueries, 2);
+    for (const threadQuery of threadQueries) {
+      const threadPlan = (yield* sql.unsafe<{ readonly detail: string }>(
+        `EXPLAIN QUERY PLAN ${threadQuery}`,
+        [],
+      )).map((row) => row.detail);
+      assert.isFalse(
+        threadPlan.some((detail) => detail.startsWith("SCAN t ")),
+        threadPlan.join("\n"),
+      );
+    }
     // A fork keeps its deleted source's root, so the deleted root still names the live tree.
     yield* store.apply({
       id: EventId.make("event:family:root-deleted"),

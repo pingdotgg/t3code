@@ -8596,20 +8596,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             }${
               worktreePath === undefined
                 ? sql``
-                : // The key matches orchestration_v2_projection_threads_worktree_path_key_idx, so an
-                  // ASCII path does not scan the table. SQLite lower() folds only ASCII, so a query
-                  // that itself contains another character also admits those stored paths;
-                  // readShellSnapshotRows keeps the exact comparison.
-                  sql` AND (CASE WHEN json_valid(t.payload_json)
+                : // Matches orchestration_v2_projection_threads_worktree_path_key_idx, so this never
+                  // scans. SQLite lower() folds only ASCII: Windows paths differing only in the case
+                  // of another letter are not found. readShellSnapshotRows keeps the exact comparison.
+                  sql` AND CASE WHEN json_valid(t.payload_json)
                     THEN lower(rtrim(replace(trim(json_extract(t.payload_json, '$.worktreePath')), '\\', '/'), '/'))
-                  END = lower(rtrim(replace(trim(${worktreePath}), '\\', '/'), '/'))${
-                    /^[\u0000-\u007e]*$/u.test(worktreePath)
-                      ? sql``
-                      : sql` OR (
-                          json_valid(t.payload_json)
-                          AND json_extract(t.payload_json, '$.worktreePath') GLOB '*[^ -~]*'
-                        )`
-                  })`
+                  END = lower(rtrim(replace(trim(${worktreePath}), '\\', '/'), '/'))`
             }${threadIds === undefined ? sql`` : sql` AND t.thread_id IN (SELECT value FROM json_each(${encodeIdList(threadIds)}))`}
             ORDER BY t.updated_at ASC, t.thread_id ASC
           `;
