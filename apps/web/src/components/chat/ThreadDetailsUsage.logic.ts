@@ -151,7 +151,7 @@ export function foldLimitRows<
   },
 >(rows: readonly Row[], model: string | null) {
   const meters = rows.map((row) => windowMetersModel(row.driver, row.window, model));
-  const known = !meters.includes(null) && meters.includes(true) && meters.includes(false);
+  const known = !meters.includes(null) && meters.includes(true);
   const nearest = rows.toSorted(
     (left, right) => remainingPercent(left.window) - remainingPercent(right.window),
   );
