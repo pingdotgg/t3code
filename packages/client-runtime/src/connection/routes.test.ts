@@ -352,6 +352,24 @@ describe("learned routes", () => {
     ]);
   });
 
+  it("learns plain HTTP LAN addresses over a token paired over a plain HTTP VPN address", () => {
+    // NetBird, WARP and other VPNs in 100.64.0.0/10 are not confirmed as Tailscale,
+    // so a token paired there already travels over plain HTTP.
+    const vpn = direct("vpn", "http://100.101.102.103:3773/");
+    const entry = entryWithRoutes(relayOnly, [vpn]);
+    const routes = mergeLearnedRoutes({
+      entry,
+      activeRoute: vpn,
+      reported: [
+        { kind: "lan", httpBaseUrl: "http://192.168.1.10:3773/" },
+        { kind: "lan", httpBaseUrl: "http://100.101.102.103:3773/" },
+      ],
+      allowInsecure: true,
+    });
+    expect(ids(routes)).toEqual([`learned:${ENVIRONMENT_ID}:http://192.168.1.10:3773@vpn`, "vpn"]);
+    expect(sendsTokenInClear(routes!, routes![0]!)).toBe(false);
+  });
+
   it("skips plain HTTP from an HTTPS page and never learns loopback", () => {
     expect(
       mergeLearnedRoutes({

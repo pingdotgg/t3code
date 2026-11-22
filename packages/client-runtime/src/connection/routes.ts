@@ -372,8 +372,7 @@ function tokenAllowsPlainHttp(
   return (
     credentialRoute !== undefined &&
     routeHttpBaseUrl(credentialRoute)?.startsWith("http:") === true &&
-    (connectionRouteKind(credentialRoute) === "lan" ||
-      connectionRouteKind(credentialRoute) === "public")
+    ["lan", "vpn", "public"].includes(connectionRouteKind(credentialRoute))
   );
 }
 
