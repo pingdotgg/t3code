@@ -63,8 +63,8 @@ When you return to a large thread after Claude's prompt cache expires, a
 **Compact** chip with the thread's token count shows
 next to the send button. While it is on, Enter summarizes the history first, then
 sends your message. Click the chip to switch it to **Keep** and keep the full
-history for that message. The mobile app shows no chip: an eligible message sent
-from it summarizes first. The cache lasts about an hour on a Claude
+history for that message. The mobile app shows the same chip, labelled with the
+token count: tap it to keep the full history for that message. The cache lasts about an hour on a Claude
 subscription and 5 minutes with an API key, Bedrock, or Vertex. See [commands and skills](./composer.md#commands-and-skills) for using
 composer commands.
 
@@ -117,6 +117,15 @@ To show Claude task lists in the web and desktop apps, add
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
+
+## Sign in to an MCP server
+
+When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
+**Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
+browser then goes to a page that may not load, especially when Claude runs on another machine:
+copy that page's address, paste it into T3 Code, and choose **Finish sign-in**. Claude keeps the
+sign-in and reconnects the server. Connectors you added on claude.ai are signed in on claude.ai,
+so T3 Code doesn't ask about them. Signing in needs permission to manage providers.
 
 ## Claude in Chrome
 

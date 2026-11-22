@@ -243,8 +243,26 @@ describe("GitHubIssueTracker", () => {
                 );
                 const direct = query.startsWith("query RepositoryIssues(");
                 requests.push(direct ? "repository" : "search");
+                const issueNumber = variables.cursor === undefined ? 42 : 43;
                 const base = {
-                  nodes: [],
+                  nodes: direct
+                    ? [
+                        {
+                          number: issueNumber,
+                          title: "A listed issue",
+                          url: `https://github.com/acme/web/issues/${issueNumber}`,
+                          state: "OPEN",
+                          stateReason: null,
+                          createdAt: "2026-11-18T00:00:00Z",
+                          updatedAt: "2026-11-19T00:00:00Z",
+                          closedAt: null,
+                          author: null,
+                          assignees: { nodes: [] },
+                          labels: { nodes: [] },
+                          comments: { totalCount: 2 },
+                        },
+                      ]
+                    : [],
                   pageInfo: {
                     hasNextPage: direct && variables.cursor === undefined,
                     endCursor: "page-2",
@@ -290,8 +308,11 @@ describe("GitHubIssueTracker", () => {
       } as const;
       const api = yield* makeApi();
       const page = yield* api.listIssues(input);
+      expect(page.items).toMatchObject([{ key: "42", title: "A listed issue", commentCount: 2 }]);
       expect(page.nextCursor).not.toBeNull();
-      yield* api.listIssues({ ...input, cursor: page.nextCursor! });
+      const next = yield* api.listIssues({ ...input, cursor: page.nextCursor! });
+      expect(next.items).toMatchObject([{ key: "43" }]);
+      expect(next.nextCursor).toBeNull();
       yield* api.listIssues({ ...input, cursor: "legacy-search-page" });
       yield* api.listIssues({ ...input, query: "filter" });
       yield* api.listIssues({ ...input, host: "github.example.test" });
@@ -316,6 +337,31 @@ describe("GitHubIssueTracker", () => {
         "repository",
         "repository",
         "search",
+      ]);
+    }),
+  );
+
+  it.effect("reads only the fields needed to link a GitHub issue and rejects missing issues", () =>
+    Effect.gen(function* () {
+      const requests: unknown[] = [];
+      const target = { cwd: "/w", host: "github.com", scope: "acme/web", key: "42" };
+      const url = "https://github.com/acme/web/issues/42";
+      const found = yield* tracker((input) => requests.push(input), {
+        issue: { number: 42, title: "Fixture issue", url },
+      });
+      expect(yield* found.getIssueLink(target)).toEqual({
+        displayKey: "#42",
+        title: "Fixture issue",
+        url,
+      });
+
+      const missing = yield* tracker((input) => requests.push(input), { issue: null });
+      expect(yield* Effect.flip(missing.getIssueLink(target))).toMatchObject({
+        reason: "not-found",
+      });
+      expect(requests).toEqual([
+        { owner: "acme", name: "web", number: 42 },
+        { owner: "acme", name: "web", number: 42 },
       ]);
     }),
   );

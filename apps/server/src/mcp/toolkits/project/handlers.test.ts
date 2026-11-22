@@ -210,6 +210,7 @@ it.effect(
         defaultRuntimeMode: RuntimeMode,
         params: {
           readonly title: string;
+          readonly generateTitle?: boolean;
           readonly message?: string;
           readonly runtimeMode?: RuntimeMode;
           readonly targeted?: false;
@@ -252,6 +253,26 @@ it.effect(
       });
       expect(belowCeiling.launched[0]?.runtimeMode).toBe("approval-required");
       expect(belowCeiling.launched[0]?.initialMessage?.senderThreadId).toBeUndefined();
+      expect(belowCeiling.launched[0]?.generateTitle).toBeUndefined();
+      expect(belowCeiling.launched[0]?.titleRenamed).toBe(true);
+
+      const titled = yield* launchWith("full-access", "full-access", {
+        title: "Fix",
+        generateTitle: true,
+        message: "Fix the bug",
+      });
+      expect(titled.launched[0]).toMatchObject({ title: "Fix", generateTitle: true });
+      expect(titled.launched[0]?.titleRenamed).toBeUndefined();
+
+      for (const message of [undefined, "", " \n "]) {
+        const idleTitled = yield* launchWith("full-access", "full-access", {
+          title: "Fix",
+          generateTitle: true,
+          ...(message === undefined ? {} : { message }),
+        });
+        expect(idleTitled.result).toMatchObject({ code: "invalid_request" });
+        expect(idleTitled.launched).toHaveLength(0);
+      }
 
       const aboveCeiling = yield* launchWith("auto-accept-edits", "full-access", {
         title: "Fix",
@@ -1230,7 +1251,7 @@ it.effect("reading a project shows the default model and actions saved in Settin
   }),
 );
 
-it.effect("an update the project refuses tells the agent why", () =>
+it.effect("a project update or create that is refused tells the agent why", () =>
   Effect.gen(function* () {
     const harness = clientLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
     const detail = "Project monograms must contain at most two characters.";
@@ -1255,5 +1276,14 @@ it.effect("an update the project refuses tells the agent why", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
+
+    // A project started from its title has no folder yet for tracked folders to be checked against.
+    const dropped = yield* toolkit
+      .handle("t3_project_create", {
+        title: "Wrapper",
+        trackedFolders: [{ path: "/repos/api", name: "api" }],
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+    expect(dropped.at(-1)?.result).toMatchObject({ code: "invalid_request" });
   }),
 );
