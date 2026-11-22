@@ -513,6 +513,8 @@ impl ChatView {
             self.list_state.set_follow_mode(FollowMode::Tail);
             self.composer.update(cx, |c, cx| {
                 c.set_working(false, cx);
+                c.set_can_resume(false, cx);
+                c.set_plan_follow_up(None, cx);
                 c.clear_edit_queued_if_missing(&[], cx);
             });
             cx.notify();
@@ -639,7 +641,13 @@ impl ChatView {
 
         cx.notify();
         let working = self.working;
-        self.composer.update(cx, |c, cx| c.set_working(working, cx));
+        let can_resume = !working && self.interrupted_run_id.is_some();
+        let plan_follow_up = latest_actionable_plan_markdown(thread, working);
+        self.composer.update(cx, |c, cx| {
+            c.set_working(working, cx);
+            c.set_can_resume(can_resume, cx);
+            c.set_plan_follow_up(plan_follow_up, cx);
+        });
     }
 
     /// Starts timing the open of `thread_id` for `CONN_GPUI_PERF_LOG` (logs its first paint).
@@ -3386,10 +3394,42 @@ fn format_fold_label(duration_ms: Option<u64>, interrupted: bool, continues_stee
     }
 }
 
+/// Returns the markdown of the latest completed `ProposedPlan` when the thread is idle and no
+/// later human user message has followed it, matching Conn's plan follow-up composer trigger.
+#[must_use]
+fn latest_actionable_plan_markdown(thread: &ThreadState, working: bool) -> Option<String> {
+    if working {
+        return None;
+    }
+    let latest_run = thread.latest_run_id();
+    for entry in thread.entries.iter().rev() {
+        match entry {
+            TimelineEntry::User { .. } | TimelineEntry::QueuedUser { .. } => return None,
+            TimelineEntry::ProposedPlan {
+                run_id,
+                markdown,
+                streaming: false,
+                ..
+            } => {
+                if latest_run.is_none() || run_id.as_deref() == latest_run {
+                    let trimmed = markdown.trim();
+                    return (!trimmed.is_empty()).then(|| markdown.clone());
+                }
+                return None;
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod worked_label_tests {
+    use conn_state::{ItemStatus, ThreadState, TimelineEntry};
+
     use super::{
-        format_fold_label, format_queued_timestamp, format_working_elapsed, live_thought_preview,
+        format_fold_label, format_queued_timestamp, format_working_elapsed,
+        latest_actionable_plan_markdown, live_thought_preview,
     };
 
     #[test]
@@ -3476,6 +3516,44 @@ mod worked_label_tests {
         assert_eq!(
             live_thought_preview("First paragraph.\n\nSecond paragraph should not replace first."),
             Some("First paragraph.".to_owned())
+        );
+    }
+
+    #[test]
+    fn resolves_latest_actionable_plan_markdown() {
+        let mut thread = ThreadState::new("t-plan");
+        thread.entries.push(TimelineEntry::ProposedPlan {
+            id: "plan-1".to_owned(),
+            run_id: Some("run-1".to_owned()),
+            title: "Plan".to_owned(),
+            markdown: "# Plan\n\nDo the work".to_owned(),
+            streaming: false,
+            status: ItemStatus::Completed,
+            created_at: None,
+        });
+        assert_eq!(
+            latest_actionable_plan_markdown(&thread, false).as_deref(),
+            Some("# Plan\n\nDo the work"),
+            "idle thread with trailing proposed plan should offer follow-up actions"
+        );
+        assert_eq!(
+            latest_actionable_plan_markdown(&thread, true),
+            None,
+            "working thread must hide plan follow-up actions"
+        );
+        thread.entries.push(TimelineEntry::User {
+            id: "user-2".to_owned(),
+            text: "Go ahead".to_owned(),
+            created_by_agent: false,
+            created_at: None,
+            attachments: Vec::new(),
+            is_steer: false,
+            run_id: Some("run-2".to_owned()),
+        });
+        assert_eq!(
+            latest_actionable_plan_markdown(&thread, false),
+            None,
+            "subsequent user turn clears prior plan follow-up"
         );
     }
 }
