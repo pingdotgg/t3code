@@ -377,6 +377,39 @@ describe("AntigravitySwarm", () => {
         extraWritableRoots: tracker.childPermissionWorkspaces(childWorktreeRequest),
       }),
     ).toBe("allow");
+    // Roots come only from the one worker the request targets, even if tool metadata names another.
+    tracker.applyNotification({
+      sessionId: "root-1",
+      head: 2,
+      activeWorkers: 2,
+      workingWorkers: 2,
+      waitingWorkers: 0,
+      members: [
+        {
+          name: "alpha",
+          role: "worker",
+          conversationId: "worker-a",
+          workspaces: ["/tmp/isolated-worktree"],
+          state: "working",
+        },
+        {
+          name: "beta",
+          role: "worker",
+          conversationId: "worker-b",
+          workspaces: ["/tmp/beta-worktree"],
+          state: "working",
+        },
+      ],
+    });
+    expect(
+      tracker.childPermissionWorkspaces({
+        ...childWorktreeRequest,
+        toolCall: {
+          ...childWorktreeRequest.toolCall,
+          _meta: { antigravity: { childSessionId: "worker-b" } },
+        },
+      }),
+    ).not.toContain("/tmp/beta-worktree");
     expect(
       acpPermissionDisposition(
         policy,

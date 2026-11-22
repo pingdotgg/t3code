@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import type { AcpAdapterV2ExtensionContext, AcpAdapterV2SubagentUpdate } from "./adapter.ts";
-import { unknownRecord } from "./clientPolicy.ts";
+import { extractAcpChildRequestTarget } from "./runtimeModel.ts";
 
 export const ANTIGRAVITY_SWARM_CAPABILITIES_META = {
   antigravity: {
@@ -427,29 +427,16 @@ export function makeAntigravitySwarmTracker(): AntigravitySwarmTracker {
     },
 
     childPermissionWorkspaces(request) {
-      const session = sessions.get(request.sessionId);
-      if (session === undefined) return [];
-      const roots = new Set<string>();
-      for (const container of [
-        unknownRecord(request._meta),
-        unknownRecord(request.toolCall._meta),
-      ]) {
-        const antigravity = unknownRecord(container?.antigravity);
-        if (antigravity === undefined) continue;
-        const swarm = unknownRecord(antigravity.swarm);
-        const childSessionId =
-          (typeof antigravity.childSessionId === "string"
-            ? nonEmpty(antigravity.childSessionId)
-            : undefined) ??
-          (typeof swarm?.workerSessionId === "string"
-            ? nonEmpty(swarm.workerSessionId)
-            : undefined);
-        if (childSessionId === undefined) continue;
-        const tracked = session.membersByConversationId.get(childSessionId);
-        if (tracked === undefined) continue;
-        for (const workspace of tracked.workspaces) roots.add(workspace);
-      }
-      return [...roots];
+      // Same worker resolution as approval routing, so policy and cancellation agree.
+      const target = extractAcpChildRequestTarget({
+        meta: request._meta,
+        toolCallMeta: request.toolCall._meta,
+      });
+      if (target === undefined) return [];
+      const tracked = sessions
+        .get(request.sessionId)
+        ?.membersByConversationId.get(target.childSessionId);
+      return tracked === undefined ? [] : [...tracked.workspaces];
     },
 
     partitionTaskIds(sessionId, nativeTaskIds) {

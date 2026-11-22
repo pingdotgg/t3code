@@ -2653,6 +2653,8 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         >([]);
         const externalBackgroundWorkSessionIds = new Set<string>();
         const knownExtensionChildSessions = new Set<string>();
+        // Workers a live extension update touched in a turn, so turn start skips older queued ones.
+        const liveExtensionWorkers = new WeakMap<ActiveAcpTurn, Set<string>>();
         const pendingBetweenTurnChildNotifications = new Map<
           string,
           Array<EffectAcpSchema.SessionNotification>
@@ -7208,13 +7210,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             update.status === "cancelled"
           ) {
             yield* drainAttachedFrames();
-            const ended =
+            const findEnded = () =>
               context.subagents.get(update.nativeTaskId) ??
               (update.childSessionId === null
                 ? undefined
                 : context.subagentsBySessionId.get(update.childSessionId));
+            const ended = findEnded();
             if (ended !== undefined) yield* terminalizeSubagentTools(ended);
             yield* emitSubagent(context, update, { allowReopenFromIdle });
+            // A worker first seen as finished is created above, which replays its buffered tools.
+            const created = ended === undefined ? findEnded() : undefined;
+            if (created !== undefined) yield* terminalizeSubagentTools(created);
           } else {
             yield* emitSubagent(context, update, { allowReopenFromIdle });
             yield* drainAttachedFrames();
@@ -7245,6 +7251,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             !context.interrupted &&
             context.nativeThreadId === notice.sessionId
           ) {
+            const touched = liveExtensionWorkers.get(context) ?? new Set<string>();
+            touched.add(update.nativeTaskId);
+            if (update.childSessionId !== null) touched.add(update.childSessionId);
+            liveExtensionWorkers.set(context, touched);
             yield* applyExtensionSubagentToTurn(context, update, allowReopenFromIdle);
             return;
           }
@@ -10108,6 +10118,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               context.pendingSubagentNotifications.set(childId, [...frames, ...live]);
             }
             for (const queued of queuedExtensionSubagents) {
+              // A live update for this worker in this turn is newer than the queued one.
+              const touched = liveExtensionWorkers.get(context);
+              if (
+                touched !== undefined &&
+                (touched.has(queued.subagent.nativeTaskId) ||
+                  (queued.subagent.childSessionId !== null &&
+                    touched.has(queued.subagent.childSessionId)))
+              )
+                continue;
               yield* applyExtensionSubagentToTurn(
                 context,
                 queued.subagent,
