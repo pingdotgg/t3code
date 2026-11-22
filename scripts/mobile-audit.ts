@@ -64,7 +64,7 @@ const execAgentDevice = Effect.fn("mobileAudit.execAgentDevice")(function* (
   const execPath = yield* HostProcess.ExecutablePath;
   const defaultEntry = path.resolve(
     import.meta.dirname,
-    "../scripts/node_modules/agent-device/bin/agent-device.mjs",
+    "./node_modules/agent-device-audit/bin/agent-device.mjs",
   );
   const program = Option.isSome(bin) ? bin.value : execPath;
   const fullArgs = Option.isSome(bin) ? [...args] : [defaultEntry, ...args];

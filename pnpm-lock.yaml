@@ -2622,8 +2622,11 @@ importers:
         specifier: workspace:*
         version: link:../packages/tailscale
       agent-device:
-        specifier: 0.21.41
-        version: 0.21.41
+        specifier: 0.21.36
+        version: 0.21.36
+      agent-device-audit:
+        specifier: npm:agent-device@0.21.41
+        version: agent-device@0.21.41
       e2e:
         specifier: 0.24.0
         version: 0.24.0
