@@ -85,6 +85,18 @@ interface AcpRegistryEnrichmentCache {
   } | null;
 }
 
+interface AcceptedAcpRegistryCatalog {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly builtInModelCount: number;
+  readonly modelsFromModelSelect: boolean;
+}
+
+const EMPTY_ACCEPTED_CATALOG: AcceptedAcpRegistryCatalog = {
+  models: [],
+  builtInModelCount: 0,
+  modelsFromModelSelect: false,
+};
+
 export function acpRegistryProbeSupersedesLiveCatalog(input: {
   readonly probedModelCount: number;
   readonly probedModelsFromModelSelect: boolean;
@@ -807,10 +819,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         return [next, next.models === provider.models ? learned : next.models];
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
-    // Readiness checks do not read enrichmentCache; keep the last accepted catalog separately
-    // so a skipped background enrichment does not regress the snapshot to synthetic default.
-    const acceptedModels = yield* Ref.make<ReadonlyArray<ServerProviderModel>>([]);
-    const clearAcceptedModels = Ref.set(acceptedModels, []);
+    // Readiness checks do not read enrichmentCache, and post-TTL probes may see no live entry
+    // once an earlier probe cleared it; keep the last accepted catalog separately so skipped
+    // enrichment or provisional probes do not regress the snapshot.
+    const acceptedCatalog = yield* Ref.make<AcceptedAcpRegistryCatalog>(EMPTY_ACCEPTED_CATALOG);
+    const clearAcceptedCatalog = Ref.set(acceptedCatalog, EMPTY_ACCEPTED_CATALOG);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const withLiveRuntimeState = Effect.fn("AcpRegistryDriver.withLiveRuntimeState")(function* (
       input: ServerProvider,
@@ -829,8 +842,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           : input;
       const applyAcceptedModelsFallback = (target: ServerProvider) =>
         options?.fallbackToAcceptedModels === true && target.enabled && target.installed
-          ? Ref.get(acceptedModels).pipe(
-              Effect.map((models) => (models.length > 0 ? { ...target, models } : target)),
+          ? Ref.get(acceptedCatalog).pipe(
+              Effect.map((accepted) =>
+                accepted.models.length > 0 ? { ...target, models: accepted.models } : target,
+              ),
             )
           : Effect.succeed(target);
       return yield* Option.isNone(runtimeCoordinator)
@@ -998,19 +1013,22 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             instanceId,
                           )
                         : { configuration: Option.none(), revision: 0 };
-                      const previousLiveModels = Option.match(liveSnapshot.configuration, {
-                        onNone: () => 0,
-                        onSome: (configuration) => configuration.models.length,
-                      });
-                      const liveModelsFromModelSelect = Option.match(liveSnapshot.configuration, {
-                        onNone: () => false,
-                        onSome: (configuration) => configuration.modelsFromModelSelect === true,
+                      const accepted = yield* Ref.get(acceptedCatalog);
+                      const incumbent = Option.match(liveSnapshot.configuration, {
+                        onNone: () => ({
+                          modelCount: accepted.builtInModelCount,
+                          modelsFromModelSelect: accepted.modelsFromModelSelect,
+                        }),
+                        onSome: (configuration) => ({
+                          modelCount: configuration.models.length,
+                          modelsFromModelSelect: configuration.modelsFromModelSelect === true,
+                        }),
                       });
                       const probeSupersedesLiveCatalog = acpRegistryProbeSupersedesLiveCatalog({
                         probedModelCount,
                         probedModelsFromModelSelect,
-                        liveModelCount: previousLiveModels,
-                        liveModelsFromModelSelect,
+                        liveModelCount: incumbent.modelCount,
+                        liveModelsFromModelSelect: incumbent.modelsFromModelSelect,
                       });
                       // A fresh non-provisional probe supersedes any live session catalog observed before it started.
                       const cleared = probeSupersedesLiveCatalog
@@ -1021,15 +1039,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             )
                           : true
                         : false;
-                      const models = yield* Ref.modify(learnedModels, (learned) => {
-                        const merged = mergeLearnedModelOptions(
-                          provider.models,
-                          learned,
-                          reasoningDisabledModelSlugs,
-                        );
-                        return [merged, cleared ? merged : learned] as const;
-                      });
-                      resolved = models === provider.models ? provider : { ...provider, models };
+                      if (
+                        !probeSupersedesLiveCatalog &&
+                        Option.isNone(liveSnapshot.configuration) &&
+                        accepted.models.length > 0
+                      ) {
+                        resolved = { ...provider, models: accepted.models };
+                      } else {
+                        const models = yield* Ref.modify(learnedModels, (learned) => {
+                          const merged = mergeLearnedModelOptions(
+                            provider.models,
+                            learned,
+                            reasoningDisabledModelSlugs,
+                          );
+                          return [merged, cleared ? merged : learned] as const;
+                        });
+                        resolved = models === provider.models ? provider : { ...provider, models };
+                      }
                       const published = yield* withLiveRuntimeState(resolved);
                       if (
                         cleared ||
@@ -1045,17 +1071,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           },
                         });
                       }
-                      if (published.status === "ready") {
-                        yield* Ref.set(acceptedModels, published.models);
+                      if (cleared && published.status === "ready") {
+                        yield* Ref.set(acceptedCatalog, {
+                          models: published.models,
+                          builtInModelCount: probedModelCount,
+                          modelsFromModelSelect: probedModelsFromModelSelect,
+                        });
                       }
                       yield* publishSnapshot(published);
                       return;
                     }
-                    const published = yield* withLiveRuntimeState(resolved);
-                    if (published.status === "ready") {
-                      yield* Ref.set(acceptedModels, published.models);
-                    }
-                    yield* publishSnapshot(published);
+                    yield* withLiveRuntimeState(resolved).pipe(Effect.flatMap(publishSnapshot));
                   }),
                 ),
             }),
@@ -1087,7 +1113,26 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   getSnapshot.pipe(
                     Effect.flatMap((current) => applyLiveConfiguration(current, configuration)),
                     Effect.tap((next) =>
-                      next.status === "ready" ? Ref.set(acceptedModels, next.models) : Effect.void,
+                      next.status === "ready"
+                        ? Ref.update(acceptedCatalog, (previous) => {
+                            const liveUsed =
+                              configuration.models.length > 1 ||
+                              (configuration.models.length === 1 &&
+                                (configuration.modelsFromModelSelect === true ||
+                                  previous.builtInModelCount <= 1));
+                            return liveUsed
+                              ? {
+                                  models: next.models,
+                                  builtInModelCount: configuration.models.length,
+                                  modelsFromModelSelect:
+                                    configuration.modelsFromModelSelect === true,
+                                }
+                              : {
+                                  ...previous,
+                                  models: next.models,
+                                };
+                          })
+                        : Effect.void,
                     ),
                     Effect.tap(() =>
                       Clock.currentTimeMillis.pipe(
@@ -1173,7 +1218,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             .clearLiveConfiguration(instanceId)
             .pipe(Effect.andThen(runtimeCoordinator.value.clearAvailableCommands(instanceId)))
         : Effect.void
-    ).pipe(Effect.andThen(clearLearnedModels), Effect.andThen(clearAcceptedModels));
+    ).pipe(
+      Effect.andThen(
+        liveSnapshotSemaphore.withPermit(
+          invalidateEnrichmentCache.pipe(
+            Effect.andThen(clearLearnedModels),
+            Effect.andThen(clearAcceptedCatalog),
+          ),
+        ),
+      ),
+    );
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
@@ -1183,8 +1237,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         confirmedAuthentication
           .set(authenticated)
           .pipe(
-            Effect.andThen(authenticated ? Effect.void : clearLiveState),
-            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+            Effect.andThen(
+              authenticated
+                ? liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)
+                : clearLiveState,
+            ),
             Effect.andThen(snapshot.refresh),
             Effect.asVoid,
           ),
@@ -1198,7 +1255,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       invalidate: (controller.invalidate ?? Effect.void).pipe(
         Effect.andThen(confirmedAuthentication.set(false)),
         Effect.andThen(clearLiveState),
-        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
       ),
@@ -1224,7 +1280,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           liveSnapshotSemaphore.withPermit(
             invalidateEnrichmentCache.pipe(
               Effect.andThen(clearLearnedModels),
-              Effect.andThen(clearAcceptedModels),
+              Effect.andThen(clearAcceptedCatalog),
             ),
           ),
         ),
@@ -1299,7 +1355,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               liveSnapshotSemaphore.withPermit(
                 invalidateEnrichmentCache.pipe(
                   Effect.andThen(clearLearnedModels),
-                  Effect.andThen(clearAcceptedModels),
+                  Effect.andThen(clearAcceptedCatalog),
                   Effect.andThen(
                     Option.isSome(runtimeCoordinator)
                       ? Effect.all(

@@ -995,8 +995,48 @@ createInterface({ input: process.stdin }).on("line", (line) => {
       result: { protocolVersion: 1, agentCapabilities: {}, authMethods: [], agentInfo: { name: "fake", version: "1.5.9" } },
     });
   } else if (method === "session/new") {
-    const rawModels = JSON.parse(readFileSync(process.argv[2], "utf8"));
-    const availableModels = rawModels.map((entry) =>
+    const payload = JSON.parse(readFileSync(process.argv[2], "utf8"));
+    if (!Array.isArray(payload) && typeof payload.provisional === "string") {
+      send({
+        id,
+        result: {
+          sessionId: "probe-session",
+          models: {
+            currentModelId: payload.provisional,
+            availableModels: [{ modelId: payload.provisional, name: payload.provisional }],
+          },
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: payload.provisional,
+              options: [
+                { value: payload.provisional, name: payload.provisional },
+                { value: "transient-placeholder", name: "transient-placeholder" },
+              ],
+            },
+          ],
+        },
+      });
+      send({
+        method: "session/update",
+        params: {
+          sessionId: "probe-session",
+          update: { sessionUpdate: "config_option_update", configOptions: [] },
+        },
+      });
+      send({
+        method: "session/update",
+        params: {
+          sessionId: "probe-session",
+          update: { sessionUpdate: "available_commands_update", availableCommands: [] },
+        },
+      });
+      return;
+    }
+    const availableModels = payload.map((entry) =>
       typeof entry === "string" ? { modelId: entry, name: entry } : entry,
     );
     const hasMeta = availableModels.some((entry) => entry._meta !== undefined);
@@ -1429,6 +1469,21 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         expect(
           Option.getOrThrow(yield* Fiber.join(nextCached)).models.map((model) => model.slug),
+        ).toEqual(["new-model", "old-model", "other-model"]);
+
+        // Once the live entry has been cleared, a later provisional post-TTL probe must not
+        // regress the settled accepted catalog to a placeholder model.
+        yield* fileSystem.writeFileString(
+          modelsPath,
+          JSON.stringify({ provisional: "placeholder" }),
+        );
+        yield* TestClock.adjust("16 minutes");
+        const afterProvisional = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        expect(
+          Option.getOrThrow(yield* Fiber.join(afterProvisional)).models.map((model) => model.slug),
         ).toEqual(["new-model", "old-model", "other-model"]);
 
         // Readiness must keep the last accepted catalog when enrichment is skipped during foreground startup,
