@@ -638,8 +638,8 @@ export interface AcpAdapterV2Flavor {
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
   /**
-   * Bound a settled turn held open only by an outliving tool; finalize after this quiet period
-   * so a command that never reports back cannot leave the thread in Working forever.
+   * Finalize a settled turn this long after the prompt settles when an outliving tool still holds
+   * it, so a command that never reports back cannot leave the thread in Working forever.
    */
   readonly postSettleBackgroundHoldTimeout?: Duration.Input;
   readonly isProviderWakeNotification?: (
@@ -8840,10 +8840,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
 
-        /**
-         * Bound a settled turn held only by an outliving tool that never reports back, so the
-         * run cannot stay in Working forever with no visible background work.
-         */
         const schedulePostSettleHoldExpiry = Effect.fn("AcpAdapterV2.schedulePostSettleHoldExpiry")(
           function* (context: ActiveAcpTurn) {
             const timeout = flavor.postSettleBackgroundHoldTimeout;
@@ -9297,7 +9293,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (context.finalized) return;
                   if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
-                    if (deferredBackgroundWork) yield* schedulePostSettleHoldExpiry(context);
+                    yield* schedulePostSettleHoldExpiry(context);
                     if (pendingReply) {
                       context.replyOpen = true;
                       yield* scheduleDeferredFinalize(context);
