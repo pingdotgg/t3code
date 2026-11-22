@@ -7,21 +7,23 @@ import { test, WEB } from "./t3.ts";
 const SHEETS = ["Overview", "Actuals", "Forecast"];
 const RELATIONSHIPS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
 
-async function workbook() {
+async function workbook(sheetNames = SHEETS) {
   const archive = new JSZip();
-  const sheets = SHEETS.map(
-    (name, index) => `<sheet name="${name}" sheetId="${index + 1}" r:id="sheet${index + 1}"/>`,
-  ).join("");
+  const sheets = sheetNames
+    .map((name, index) => `<sheet name="${name}" sheetId="${index + 1}" r:id="sheet${index + 1}"/>`)
+    .join("");
   archive.file(
     "xl/workbook.xml",
     `<workbook xmlns:r="${RELATIONSHIPS}"><sheets>${sheets}</sheets></workbook>`,
   );
-  const relationships = SHEETS.map(
-    (_, index) =>
-      `<Relationship Id="sheet${index + 1}" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
-  ).join("");
+  const relationships = sheetNames
+    .map(
+      (_, index) =>
+        `<Relationship Id="sheet${index + 1}" Type="${RELATIONSHIPS}/worksheet" Target="worksheets/sheet${index + 1}.xml"/>`,
+    )
+    .join("");
   archive.file("xl/_rels/workbook.xml.rels", `<Relationships>${relationships}</Relationships>`);
-  for (const [index] of SHEETS.entries())
+  for (const [index] of sheetNames.entries())
     archive.file(
       `xl/worksheets/sheet${index + 1}.xml`,
       `<worksheet><sheetData><row r="1"><c r="A1"><v>${index + 1}</v></c></row></sheetData></worksheet>`,
@@ -33,7 +35,10 @@ test(
   "Two rapid right arrows advance two tabs in an Excel preview",
   WEB,
   async ({ t3, app, screen, browser }) => {
-    const project = await t3.project("demo", { "budget.xlsx": await workbook() });
+    const project = await t3.project("demo", {
+      "budget.xlsx": await workbook(),
+      "wraparound.xlsx": await workbook(["Overview", "Actuals"]),
+    });
     const thread = await t3.thread({ project, title: "Review budget", messages: ["Start"] });
     await t3.open(thread);
     await screen.getByText("fixture turn complete", { exact: false }).waitFor();
@@ -73,5 +78,56 @@ test(
         ),
       )
       .toBe("Forecast");
+
+    await browser.keyboard.press("Control+p");
+    await screen.getByPlaceholder("Search files…").fill("wraparound.xlsx");
+    await screen.getByRole("option", "wraparound.xlsx", { exact: false }).tap();
+    await browser
+      .locator('[data-active-tab="true"]')
+      .getByText("wraparound.xlsx", { exact: true })
+      .waitFor();
+    const overview = screen.getByRole("tab", "Overview");
+    await overview.waitFor();
+
+    const selectedAtSecondPress = await browser.evaluate(async () => {
+      const first = document.querySelector<HTMLButtonElement>(
+        '[role="tablist"] [role="tab"][aria-selected="true"]',
+      )!;
+      const pressRight = () =>
+        document.activeElement?.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true, cancelable: true }),
+        );
+      const postMessage = Worker.prototype.postMessage;
+      return await new Promise<string | null>((resolve) => {
+        Worker.prototype.postMessage = function (
+          this: Worker,
+          message: { method?: string; id?: number },
+          options?: Transferable[] | StructuredSerializeOptions,
+        ) {
+          if (message.method === "show") {
+            Worker.prototype.postMessage = postMessage;
+            const onReply = (event: MessageEvent<{ id: number }>) => {
+              if (event.data.id !== message.id) return;
+              this.removeEventListener("message", onReply);
+              // The worker client has queued the first layout, and React has yet to commit it.
+              queueMicrotask(() => {
+                const selected = first.getAttribute("aria-selected");
+                pressRight();
+                resolve(selected);
+              });
+            };
+            this.addEventListener("message", onReply);
+          }
+          Reflect.apply(postMessage, this, [message, options]);
+        };
+        first.focus();
+        pressRight();
+      });
+    });
+    expect(selectedAtSecondPress).toBe("true");
+    await expect(overview).toBeFocused();
+    await app.screenshot("after-wrapping-to-overview");
+    await expect(overview).toHaveAttribute("aria-selected", "true");
+    await expect(screen.getByRole("grid", "Overview")).toBeVisible();
   },
 );
