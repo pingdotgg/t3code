@@ -1,3 +1,4 @@
+import { EnvironmentId, ThreadId, type ScopedThreadRef } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 const mocks = vi.hoisted(() => ({
@@ -15,9 +16,21 @@ import { dismissGitActionResult, showGitActionResult } from "./use-vcs-action-st
 
 describe("showGitActionResult", () => {
   it("buzzes once per reported result with the matching feedback type", () => {
-    showGitActionResult({ type: "success", title: "Pushed" });
-    showGitActionResult({ type: "error", title: "Git action failed", description: "rejected" });
-    dismissGitActionResult();
+    const threadRef = {
+      environmentId: EnvironmentId.make("env"),
+      threadId: ThreadId.make("thread"),
+    };
+    const success = { threadRef, type: "success", title: "Pushed" } as const;
+    const error = {
+      threadRef,
+      type: "error",
+      title: "Git action failed",
+      description: "rejected",
+    } as const;
+    const dismiss: (threadRef: ScopedThreadRef) => void = dismissGitActionResult;
+    showGitActionResult(success);
+    showGitActionResult(error);
+    dismiss(threadRef);
 
     expect(mocks.notificationAsync.mock.calls).toEqual([["success"], ["error"]]);
   });
