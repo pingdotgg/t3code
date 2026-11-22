@@ -10,6 +10,7 @@ import { EMPTY_ENVIRONMENT_THREAD_STATE } from "@t3tools/client-runtime/state/th
 import { ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
+import { linkedThreadRouteParams } from "./linkedThreadSurface";
 import { makeThreadProjectionFixture } from "./test-fixtures";
 
 import {
@@ -70,6 +71,17 @@ describe("threadRoutes", () => {
     expect(isThreadRoutePathname(router.state.location.pathname, ref)).toBe(false);
   });
 
+  it("does not take a linked environment's thread route for a thread this client can open", () => {
+    // The layout reads every match's params untyped, as here.
+    const params: Record<string, string> = linkedThreadRouteParams({
+      viaEnvironmentId: "env-1" as never,
+      environmentId: "env-2" as never,
+      threadId: ThreadId.make("thread-there"),
+    });
+
+    expect(resolveThreadRouteTarget(params)).toBeNull();
+  });
+
   it("resolves the backing thread while a draft route is being promoted", () => {
     const target = resolveThreadRouteTarget({ draftId: "draft-1" });
 
@@ -83,6 +95,13 @@ describe("threadRoutes", () => {
       environmentId: "env-2",
       threadId: "server-thread",
     });
+    expect(
+      resolveActiveThreadRouteRef(
+        target,
+        null,
+        scopeThreadRef("env-2" as never, ThreadId.make("server-thread")),
+      ),
+    ).toEqual({ environmentId: "env-2", threadId: "server-thread" });
   });
 
   it("does not treat a draft's reserved thread ref as an active sidebar thread", () => {
