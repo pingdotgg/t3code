@@ -1,6 +1,5 @@
 import type { UsageTokenTotals } from "@t3tools/contracts";
 import {
-  cacheHitRate as tokenCacheHitRate,
   isModelCostUnknown,
   type CategoryCost,
   type ModelTotals,
@@ -21,10 +20,6 @@ export function sortModelsByTokens(models: readonly ModelTotals[]) {
 export function modelShare(model: ModelTotals, metric: "cost" | "tokens"): number | null {
   if (metric === "tokens") return model.tokenShare;
   return isModelCostUnknown(model) ? null : model.costShare;
-}
-
-export function cacheHitRate({ tokens }: ModelTotals): number | null {
-  return tokenCacheHitRate(tokens);
 }
 
 /** Effective USD per million priced tokens, or `null` when none were priced. */

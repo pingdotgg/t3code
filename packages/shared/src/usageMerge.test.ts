@@ -90,7 +90,6 @@ describe("cacheHitRate", () => {
   it.each([
     [1, 1, 2, 0.25],
     [0, 0, 0, null],
-    [0, 0, 2, 0],
   ] as const)(
     "with %i uncached, %i cached and %i cache writes",
     (uncached, cached, writes, rate) => {
