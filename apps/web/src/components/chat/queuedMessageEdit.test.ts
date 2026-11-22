@@ -172,31 +172,18 @@ describe("queued message file edits", () => {
       replyTo: structuredClone(reply),
       result: "clean",
     },
-    {
-      edit: "changed text",
-      originalReplyTo: reply,
-      replyTo: reply,
-      prompt: "Changed",
-      result: "kept",
-    },
   ])(
     "reports $result for a queued edit with $edit",
-    ({
-      originalReplyTo,
-      replyTo,
-      originalText = "Original message",
-      prompt = originalText,
-      result,
-    }) => {
+    ({ originalReplyTo, replyTo, originalText = "Original message", result }) => {
       const store = useComposerDraftStore.getState();
-      store.setPrompt(editTarget, prompt);
+      store.setPrompt(editTarget, originalText);
       store.setReplyTo(editTarget, replyTo);
       expect(
         recoverQueuedMessageEdit({ editTarget, threadTarget, originalText, originalReplyTo }),
       ).toBe(result);
       expect(store.getComposerDraft(editTarget)).toBeNull();
       expect(store.getComposerDraft(threadTarget)).toEqual(
-        result === "kept" ? expect.objectContaining({ prompt, replyTo }) : null,
+        result === "kept" ? expect.objectContaining({ prompt: originalText, replyTo }) : null,
       );
     },
   );

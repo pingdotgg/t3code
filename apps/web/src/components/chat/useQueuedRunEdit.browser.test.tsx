@@ -5,7 +5,6 @@ import {
   MessageId,
   RunId,
   ThreadId,
-  TurnItemId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { useImperativeHandle, type RefObject } from "react";
@@ -23,8 +22,6 @@ import { INLINE_TERMINAL_CONTEXT_PLACEHOLDER } from "../../lib/terminalContext";
 import {
   environmentContextRecord,
   environmentContextReference,
-  responseContextRecord,
-  responseContextReference,
   threadContextReference,
 } from "../../lib/composerContextRecords";
 import { deriveComposerSendState } from "../ChatView.logic";
@@ -437,37 +434,16 @@ describe("useQueuedRunEdit", () => {
     ).toBe("changed");
   });
 
-  it("recovers a removed reply when the run starts while the user is away", async () => {
+  it("moves a changed edit into the thread draft when its run starts while the user is away", async () => {
     const { hook } = setup();
-    const reply = responseContextRecord({
-      citation: {
-        version: 1,
-        ...THREAD_A,
-        messageId: MessageId.make("answer"),
-        text: "Done.",
-        start: 0,
-        end: 5,
-        prefix: "",
-        suffix: "",
-      },
-      itemId: TurnItemId.make("item:answer"),
-      subagents: [],
-    });
-    const messageId = MessageId.make("message-1");
-    const text = `${formatInlineContextReference(responseContextReference(reply))} original`;
-    const messages = [{ id: messageId, text, context: { version: 1, records: [reply] } }];
-    await using screen = await render(view(THREAD_A, "queued", hook, messages));
-    await act(() => requireHook(hook).beginEdit({ runId: RUN, messageId, text, attachments: [] }));
-    const store = useComposerDraftStore.getState();
-    const target = requireHook(hook).draftTarget;
-    expect(store.getComposerDraft(target)).toMatchObject({ prompt: "original", replyTo: reply });
-    await act(() => store.setReplyTo(target, null));
+    await using screen = await render(view(THREAD_A, "queued", hook));
+    await beginChangedEdit(hook);
 
     await screen.rerender(view(THREAD_B, "queued", hook));
     expect(promptOf(THREAD_A)).toBe("");
     await act(() => setRuns(THREAD_A, "running"));
 
-    expect(store.getComposerDraft(THREAD_A)).toMatchObject({ prompt: "original", replyTo: null });
+    expect(promptOf(THREAD_A)).toBe("changed");
   });
 
   it("does not copy a saved edit into the thread draft when the run starts mid-save", async () => {
