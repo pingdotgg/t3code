@@ -1,0 +1,66 @@
+[package]
+name = "conn-app"
+description = "Conn native desktop application built with GPUI."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+default-run = "conn-app"
+
+[[bin]]
+name = "conn-app"
+path = "src/main.rs"
+
+[dependencies]
+conn-client.workspace = true
+conn-desktop.workspace = true
+conn-contract.workspace = true
+conn-state.workspace = true
+conn-theme.workspace = true
+conn-web.workspace = true
+gpui-kit.workspace = true
+# Optional direct dependency solely to activate `gpui-pre`'s built-in Subsecond hot-reload feature
+# (which `gpui-kit` does not forward). Debug-only inside `gpui-pre/build.rs`.
+gpui-pre = { version = "=0.3.11", default-features = false, features = ["hot-reload"], optional = true }
+alacritty_terminal.workspace = true
+futures.workspace = true
+image.workspace = true
+log = "0.4"
+markdown.workspace = true
+raw-window-handle.workspace = true
+reqwest.workspace = true
+rust-embed.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "default-syntaxes", "regex-fancy"] }
+tokio.workspace = true
+url.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+# Tag each window's CAMetalLayer as sRGB (`colour_space.rs`), matching
+# `.refs/threadbear/desktop/gpui/Cargo.toml`. Already in the build via GPUI.
+objc2 = "0.6"
+objc2-quartz-core = { version = "=0.3.2", default-features = false, features = ["std", "CALayer", "CAMetalLayer", "objc2-metal", "objc2-core-foundation", "objc2-core-graphics"] }
+objc2-core-graphics = { version = "=0.3.2", default-features = false, features = ["CGColorSpace"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+conn-state = { workspace = true, features = ["testkit"] }
+conn-wire.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+tokio-tungstenite.workspace = true
+
+[features]
+# Scripted UI automation and screenshot capture hook for visual verification in nick-vm
+# (modeled on .refs/threadbear/desktop/gpui/src/automation.rs). Never enabled in release builds.
+automation = ["gpui-kit/test-support"]
+# Embedded Chromium (CEF-on-demand) browser panel support via conn-web.
+cef = ["conn-web/cef"]
+# In-process Rust hot-patching via GPUI's built-in Subsecond integration (`dx serve --hot-patch`).
+hot-reload = ["dep:gpui-pre"]
+
+[lints]
+workspace = true

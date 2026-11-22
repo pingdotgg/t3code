@@ -1,0 +1,16 @@
+[package]
+name = "conn-theme"
+description = "Conn theme palettes, color-mix shell tokens, and GPUI Hsla mapping."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true
