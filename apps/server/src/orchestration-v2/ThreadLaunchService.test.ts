@@ -2165,6 +2165,17 @@ it.effect.each(["failed", "interrupted"] as const)(
         ],
       );
       assert.equal(after.thread.worktreePath, null);
+
+      // The hold needs a way out: retrying the setup is it, for a stopped setup too.
+      const retried = yield* threads
+        .dispatch({
+          type: "prepared-run.retry",
+          commandId: CommandId.make(`command:launch:late-queued-follow-up-${ending}:retry`),
+          threadId: launched.threadId,
+          runId: launched.projection.runs[0]!.id,
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(Exit.isSuccess(retried), String(Exit.isFailure(retried) && retried.cause));
     }).pipe(Effect.provide(harness.layer));
   },
 );
