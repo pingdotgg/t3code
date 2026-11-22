@@ -56,9 +56,9 @@ export function planNextReopen(
 type PullRequestsSearchLike = Partial<PullRequestListPreferences> & {
   repository?: string;
   number?: number;
-  selectedProjectId?: ProjectId;
-  selectedHost?: string;
-  selectedEnvironmentId?: EnvironmentId;
+  selectedProjectId?: ProjectId | undefined;
+  selectedHost?: string | undefined;
+  selectedEnvironmentId?: EnvironmentId | undefined;
 };
 
 export function pullRequestsSearchForRestore<S extends PullRequestsSearchLike>(
@@ -109,6 +109,10 @@ export async function reopenClosedView(
       ...(url === undefined ? {} : { url }),
       ...(view.snapshot.viewport === undefined ? {} : { viewport: view.snapshot.viewport }),
       ...(view.snapshot.profileId === undefined ? {} : { profileId: view.snapshot.profileId }),
+      ...(view.snapshot.zoomFactor === undefined ? {} : { zoomFactor: view.snapshot.zoomFactor }),
+      ...(view.snapshot.colorScheme === undefined
+        ? {}
+        : { colorScheme: view.snapshot.colorScheme }),
     });
     if (result._tag === "Failure") return false;
     panels.openBrowser(ref, result.value.tabId);
@@ -154,8 +158,14 @@ export async function reopenClosedView(
     case "pull-request":
       panels.openPullRequest(ref, surface);
       break;
-    case "side-chat":
-      panels.openSideChat(ref, surface.threadId);
+    case "issue":
+      panels.openIssue(ref, surface);
+      break;
+    case "thread":
+      panels.openThread(ref, surface.threadId);
+      break;
+    case "linked-thread":
+      panels.openLinkedThread(ref, surface);
       break;
     default:
       panels.open(ref, surface.kind);
