@@ -167,6 +167,9 @@ fn build_client() -> Result<OrbitTasksClient, String> {
             scenario,
         ))));
     }
+    if cfg!(test) {
+        return Err("Orbit Tasks live client disabled in tests".to_owned());
+    }
     OrbitTasksClient::live().map_err(|err| err.to_string())
 }
 

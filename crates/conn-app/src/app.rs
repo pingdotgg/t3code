@@ -2289,13 +2289,69 @@ impl ConnApp {
     }
 
     /// Replaces the shell snapshot (projects and threads).
-    #[expect(
-        dead_code,
-        reason = "programmatic state hook for conn-client snapshots and future automation"
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "programmatic state hook for conn-client snapshots and future automation"
+        )
     )]
     pub(crate) fn set_shell(&mut self, shell: ShellState, cx: &mut Context<'_, Self>) {
         self.shell = shell;
         cx.notify();
+    }
+
+    /// Stages local file paths into the active thread composer (used by automation and tests).
+    #[cfg(any(test, feature = "automation"))]
+    pub(crate) fn attach_paths_to_composer(
+        &mut self,
+        paths: Vec<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.chat
+            .update(cx, |chat, cx| chat.attach_paths(paths, window, cx));
+    }
+
+    /// Test helper: injects a synthetic [`ThreadState`], selects it, and syncs the chat timeline.
+    #[cfg(test)]
+    pub(crate) fn set_thread_for_test(
+        &mut self,
+        thread_id: String,
+        thread: ThreadState,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.threads.insert(thread_id.clone(), thread);
+        self.layout.selected_thread_id = Some(thread_id.clone());
+        if let Some(shell_thread) = self.shell.find_thread(&thread_id) {
+            self.layout.selected_project_id = Some(shell_thread.project_id.clone());
+        }
+        self.sync_chat(cx);
+        cx.notify();
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn chat_for_test(&self) -> Entity<crate::chat::ChatView> {
+        self.chat.clone()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn thread_menu_copy_open_for_test(&self) -> bool {
+        self.thread_menu.as_ref().is_some_and(|m| m.copy_open)
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn thread_menu_open_for_test(&self) -> bool {
+        self.thread_menu.is_some()
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn theme_id_for_test(&self) -> &str {
+        &self.theme_id
     }
 
     /// Scopes the thread sidebar to one workspace (`Some(project_id)`) or all
@@ -2938,12 +2994,17 @@ impl ConnApp {
     }
 
     /// Toggles the top-right Thread Details card and loads its data when it opens.
-    pub(crate) fn toggle_thread_details(&mut self, cx: &mut Context<'_, Self>) {
+    pub(crate) fn toggle_thread_details(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
         self.thread_details.open = !self.thread_details.open;
         self.thread_details.open_in_menu_open = false;
         self.thread_details.scripts_menu_open = false;
         self.thread_details.copy_menu = None;
         if self.thread_details.open {
+            window.focus(&self.focus_handle, cx);
             self.refresh_thread_details(cx);
         }
         cx.notify();

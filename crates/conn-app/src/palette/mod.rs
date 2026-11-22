@@ -13,8 +13,8 @@ use gpui_kit::component::input::{Enter, Escape, Input, InputEvent, InputState, M
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement as _, IntoElement, KeyBinding, MouseButton, ParentElement as _, Render,
-    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
-    actions, anchored, deferred, div, point, px,
+    ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    TestSupportExt as _, Window, actions, anchored, deferred, div, point, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
@@ -617,6 +617,7 @@ impl Render for CommandPalette {
 
         let card = div()
             .id("conn-command-palette")
+            .test_support()
             .a11y(gpui_kit::Role::Dialog, "palette.modal", "Command palette")
             .flex()
             .flex_col()

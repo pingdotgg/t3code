@@ -24,6 +24,8 @@
 
 pub(crate) mod details_card;
 
+use gpui_kit::TestSupportExt as _;
+
 use conn_state::{LayoutState, RightPanelTab, ShellState};
 use conn_theme::{ShellGeometry, Tokens};
 use gpui_kit::assets::IconName;
@@ -313,10 +315,11 @@ pub(crate) fn render_chat_header(
                 icons::PANEL_MENU,
                 details_active,
                 tokens,
-                cx.listener(|app, _event, _window, cx| {
-                    app.toggle_thread_details(cx);
+                cx.listener(|app, _event, window, cx| {
+                    app.toggle_thread_details(window, cx);
                 }),
             )
+            .test_support()
             .a11y_button("header.thread-details", "Toggle thread details panel")
             .aria_selected(details_active)
             .conn_tooltip("Toggle thread details", tokens),

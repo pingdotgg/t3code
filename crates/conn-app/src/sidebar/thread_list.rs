@@ -19,6 +19,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use conn_desktop::orbit::{OrbitWorkspace, workspace_matches_project};
 use conn_state::{LayoutState, ProjectShell, ShellState, ThreadShell};
 use conn_theme::{Appearance, ShellGeometry, Tokens};
+use gpui_kit::TestSupportExt as _;
 use gpui_kit::assets::IconName;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -1191,7 +1192,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
     }
 
     // Outer `li`: `py-0.5` (`2px`).
-    div().w_full().py(px(2.0)).child(card)
+    div().w_full().py(px(2.0)).child(card.test_support())
 }
 
 /// Settled row (`SidebarThreadRow.tsx` slim variant, `h-9 gap-2.5 px-2.5`): grayscale `opacity-40`

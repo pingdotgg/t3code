@@ -24,6 +24,8 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gpui_kit::TestSupportExt as _;
+
 use conn_client::Connection;
 use conn_contract::rpc::projects::search_entries;
 use conn_contract::rpc::server::get_config;
@@ -900,6 +902,29 @@ impl Composer {
             });
         })
         .detach();
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn attachment_states_for_test(&self) -> Vec<(String, String)> {
+        self.attachments
+            .iter()
+            .map(|a| {
+                let state = match &a.status {
+                    AttachmentUploadStatus::Uploading => "uploading".to_owned(),
+                    AttachmentUploadStatus::Ready(att) => {
+                        let id = match att {
+                            ChatAttachment::Image(img) => img.id.as_str(),
+                            ChatAttachment::File(file) => file.id.as_str(),
+                            ChatAttachment::Unknown(_) => "unknown",
+                        };
+                        format!("ready:{id}")
+                    }
+                    AttachmentUploadStatus::Error(err) => format!("error:{err}"),
+                };
+                (a.name.clone(), state)
+            })
+            .collect()
     }
 
     /// Intercepts `⌘V` when the clipboard holds copied files or a standalone image (screenshots,
@@ -2064,6 +2089,7 @@ impl Render for Composer {
         }
         let model_trigger = div()
             .id("chat-composer-model-picker")
+            .test_support()
             .a11y_button("composer.model-picker", trigger_aria)
             .aria_expanded(picker_open)
             .flex()

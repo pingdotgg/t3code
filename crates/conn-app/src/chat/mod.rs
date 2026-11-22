@@ -392,6 +392,25 @@ impl ChatView {
         cx.notify();
     }
 
+    /// Stages local file paths into the composer attachment strip (used by automation and tests).
+    #[cfg(any(test, feature = "automation"))]
+    pub(crate) fn attach_paths(
+        &mut self,
+        paths: Vec<std::path::PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |composer, cx| composer.attach_paths(paths, window, cx));
+    }
+
+    /// Returns the child composer entity for headless GPUI tests.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn composer_for_test(&self) -> Entity<Composer> {
+        self.composer.clone()
+    }
+
     /// Re-fetches provider/model options from `server.getConfig` (e.g. once WS connects).
     pub(crate) fn refresh_providers(&mut self, cx: &mut Context<'_, Self>) {
         self.composer.update(cx, |c, cx| c.refresh_providers(cx));

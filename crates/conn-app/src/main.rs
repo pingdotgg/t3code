@@ -21,6 +21,8 @@ mod sidebar;
 mod stderr_log;
 mod superhero;
 mod theme;
+#[cfg(test)]
+mod ui_tests;
 mod vibrancy;
 
 use std::sync::Arc;

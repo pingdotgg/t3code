@@ -9,7 +9,8 @@ use conn_theme::Tokens;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, FontWeight, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    TestSupportExt as _, div, px,
 };
 
 use super::super::color::{hsla, hsla_alpha};
@@ -113,6 +114,7 @@ pub(super) fn render_interaction_mode_toggle(
     };
     div()
         .id("composer-plan-mode-toggle")
+        .test_support()
         .a11y_button("composer.plan-mode", tooltip)
         .aria_selected(plan_active)
         .flex()

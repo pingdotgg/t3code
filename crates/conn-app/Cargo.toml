@@ -49,6 +49,9 @@ libc = "0.2"
 
 [dev-dependencies]
 conn-state = { workspace = true, features = ["testkit"] }
+conn-wire.workspace = true
+gpui-kit = { workspace = true, features = ["test-support"] }
+tokio-tungstenite.workspace = true
 
 [features]
 # Scripted UI automation and screenshot capture hook for visual verification in nick-vm

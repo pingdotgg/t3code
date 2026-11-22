@@ -209,6 +209,9 @@ impl DatabasePanel {
     }
 
     pub(super) fn load_vault_databases(&mut self, allow_unlock: bool, cx: &mut Context<'_, Self>) {
+        if cfg!(test) {
+            return;
+        }
         let vault = self.runner.vault().clone();
         if !vault.is_installed() {
             self.vault_connections.clear();

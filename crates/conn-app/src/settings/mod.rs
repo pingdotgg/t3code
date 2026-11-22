@@ -22,8 +22,8 @@ use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Entity, EventEmitter, FocusHandle,
     Focusable, FontWeight, InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent,
     MouseButton, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, actions, anchored,
-    deferred, div, point, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window,
+    actions, anchored, deferred, div, point, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
@@ -1861,6 +1861,7 @@ impl Render for SettingsModal {
 
         let modal = div()
             .id("conn-settings-modal")
+            .test_support()
             .a11y(gpui_kit::Role::Dialog, "settings.modal", "Settings")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _window, cx| {

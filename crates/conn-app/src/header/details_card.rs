@@ -22,7 +22,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, Context, Hsla, InteractiveElement as _, IntoElement as _, MouseButton,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
-    anchored, deferred, div, px,
+    TestSupportExt as _, anchored, deferred, div, px,
 };
 
 use crate::a11y::ConnA11yExt as _;
@@ -449,9 +449,10 @@ pub(crate) fn render_thread_details_card(
 
     let mut card = div()
         .id("thread-details-card")
+        .test_support()
         .a11y(
             gpui_kit::Role::Dialog,
-            "header.thread-details",
+            "header.details-card",
             "Thread details",
         )
         .w(px(DETAILS_CARD_WIDTH_PX))

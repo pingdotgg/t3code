@@ -11,9 +11,10 @@ use conn_theme::Tokens;
 use gpui_kit::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, MouseButton,
     ParentElement as _, Pixels, Point, SharedString, StatefulInteractiveElement as _, Styled as _,
-    anchored, deferred, div, px,
+    TestSupportExt as _, anchored, deferred, div, px,
 };
 
+use crate::a11y::ConnA11yExt as _;
 use crate::app::ConnApp;
 use crate::icons;
 use crate::panels::header::dropdown_glass_shadow;
@@ -50,6 +51,30 @@ pub(crate) enum ThreadMenuAction {
     CopyThreadId,
     ProjectSettings,
     Delete,
+}
+
+impl ThreadMenuAction {
+    /// Stable AccessKit identifier for automation and headless GPUI tests.
+    #[must_use]
+    pub(crate) fn ax_id(self) -> &'static str {
+        match self {
+            Self::Pin => "thread-menu.pin",
+            Self::Unpin => "thread-menu.unpin",
+            Self::Settle => "thread-menu.settle",
+            Self::Unsettle => "thread-menu.unsettle",
+            Self::Rename => "thread-menu.rename",
+            Self::RegenerateTitle => "thread-menu.regenerate-title",
+            Self::MarkUnread => "thread-menu.mark-unread",
+            Self::FilterByProject => "thread-menu.filter-project",
+            Self::Copy => "thread-menu.copy",
+            Self::CopyPath => "thread-menu.copy.path",
+            Self::CopyBranch => "thread-menu.copy.branch",
+            Self::CopyThread => "thread-menu.copy.thread",
+            Self::CopyThreadId => "thread-menu.copy.thread-id",
+            Self::ProjectSettings => "thread-menu.project-settings",
+            Self::Delete => "thread-menu.delete",
+        }
+    }
 }
 
 /// One menu row (`ContextMenuItem<ThreadActionMenuId>`).
@@ -326,7 +351,15 @@ fn render_menu_list(
     let muted = hsla(tokens.muted_foreground);
     let highlight = hsla(tokens.shell_highlight);
     let separator = hsla_alpha(tokens.foreground, 0.08);
-    let mut list = menu_surface(SharedString::from(id_prefix), tokens);
+    let (menu_ax_id, menu_ax_label) = match level {
+        MenuLevel::Root => ("thread-menu", "Thread actions"),
+        MenuLevel::Submenu => ("thread-menu.copy.submenu", "Copy"),
+    };
+    let mut list = menu_surface(SharedString::from(id_prefix), tokens).a11y(
+        gpui_kit::Role::Menu,
+        menu_ax_id,
+        menu_ax_label,
+    );
 
     for (idx, item) in items.iter().enumerate() {
         if item.separator_before && idx > 0 {
@@ -344,6 +377,8 @@ fn render_menu_list(
         let thread_id = anchor.thread_id.clone();
         let mut row = div()
             .id(SharedString::from(format!("{id_prefix}-{idx}")))
+            .test_support()
+            .a11y(gpui_kit::Role::MenuItem, action.ax_id(), item.label.clone())
             .relative()
             .flex()
             .flex_row()

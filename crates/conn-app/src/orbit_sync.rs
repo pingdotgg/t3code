@@ -433,6 +433,9 @@ pub(crate) struct OrbitAdoptEffects {
 /// under `CONN_GPUI_AUTOMATION` (where live profile sync defaults off unless explicitly opted in).
 #[must_use]
 pub(crate) fn orbit_sync_enabled_by_env() -> bool {
+    if cfg!(test) {
+        return false;
+    }
     if let Ok(val) = std::env::var("CONN_GPUI_ORBIT_SYNC") {
         return !matches!(val.trim(), "0" | "false" | "off" | "no");
     }

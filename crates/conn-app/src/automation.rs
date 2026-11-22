@@ -354,6 +354,26 @@ async fn run(
             })
             .map_err(|e| err(e.into()))
         }
+        "attach-file" => {
+            let path = text(cmd, "path");
+            if path.is_empty() {
+                return Err("`attach-file` requires a non-empty `path`".to_owned());
+            }
+            let path = std::path::PathBuf::from(path);
+            let entity = app.upgrade().ok_or("app is gone")?;
+            window
+                .update(cx, |_, window, cx| {
+                    entity.update(cx, |app, cx| {
+                        app.attach_paths_to_composer(vec![path], window, cx);
+                    });
+                })
+                .map_err(|e| e.to_string())?;
+            Ok(json!("ok"))
+        }
+        "clipboard-read" => {
+            let value = cx.update(|cx| cx.read_from_clipboard().and_then(|item| item.text()));
+            Ok(json!({ "text": value }))
+        }
         "stop" => app
             .update(cx, |app, cx| {
                 app.stop_selected(cx);
