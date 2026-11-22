@@ -6,6 +6,7 @@ import * as NodeWS from "@effect/platform-node/NodeWS";
 import { test as base } from "@e2e-dev/web";
 import { expect } from "e2e";
 import {
+  type AuthMcpClientAccess,
   CommandId,
   EnvironmentHttpApi,
   ORCHESTRATION_PROTOCOL_VERSION,
@@ -207,6 +208,17 @@ export function makeState(home: string, env: NodeJS.ProcessEnv = {}) {
 
   return {
     cli,
+    peerLinkCredential: (access: AuthMcpClientAccess) =>
+      runPromise(
+        Effect.gen(function* () {
+          const { client, headers } = yield* api;
+          const { credential } = yield* client.auth.pairingCredential({
+            headers,
+            payload: { purpose: "peer-link", access },
+          });
+          return credential;
+        }),
+      ),
     state: {
       project: (title, files = {}) => runPromise(project(title, files)),
       thread: (input) => runPromise(thread(input)),
