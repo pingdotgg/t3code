@@ -5234,6 +5234,20 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   }
                 }),
               ),
+            // Drops the wake traffic the unstarted run would have drained, as its start does.
+            onRunEndedWithoutStarting: () =>
+              continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(continuationGeneration)) !== generation) return;
+                  yield* Ref.update(continuationGeneration, (value) => value + 1);
+                  yield* Ref.set(continuationRequested, false);
+                  yield* Ref.set(wakeBuffer, []);
+                  yield* Ref.update(wakeReports, ({ reports, offered }) => ({
+                    reports: new Map([...reports].filter(([key]) => !offered.has(key))),
+                    offered: noWakeReports.offered,
+                  }));
+                }),
+              ),
             dispatchIfCurrent: (effect) =>
               continuationPermit.withPermit(
                 Effect.gen(function* () {
