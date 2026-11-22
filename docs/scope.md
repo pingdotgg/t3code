@@ -10,7 +10,7 @@ Every feature belongs to **one** primary owner. Anything duplicated across layer
 
 | Layer | Owns | Must NOT own |
 | --- | --- | --- |
-| **Orbit** *(infrastructure & control plane)* | Nodes & environment discovery, pairing/relay, workspaces, user profiles, themes & appearance sync, desktop settings sync, Tasks/insights board, `ai-router` / model routing | Local PTYs, local git/file reads, agent turn loop, agent-scheduled thread prompts, macOS AppKit/CEF UI |
+| **Orbit** *(infrastructure & control plane)* | Nodes & `agent`-role entry point discovery, pairing/relay, **Projects**, workspaces, instances, user profiles, themes & appearance sync, desktop settings sync, Tasks/insights board, `ai-router` / model routing | Local PTYs, local git/file reads, agent turn loop, agent-scheduled thread prompts, macOS AppKit/CEF UI |
 | **`conn-server`** *(headless per-node work engine)* | Agent execution (`conn-engine`), provider drivers (`claude`, `codex`, `acp` via `ai-router`/CLI), thread persistence & streaming, **agent scheduled tasks & webhook triggers**, workspace files/git/diff, **GitHub PRs**, attachments, Vaultwarden credentials/test logins, **annotations**, MCP/browser/device/panel brokers, **Operator voice bridge** — serving **`conn-gpui` and mobile** | Cloud accounts/Clerk, OAuth multi-account pools, load balancing, usage-limit scrapers, guest sharing, telemetry export, T3 Whisper voice, standalone theme publishing, GitLab, AI PR Review Guides |
 | **`conn-gpui`** *(thin native macOS client)* | Native Rust + GPUI frosted shell, chat/composer, right-panel views (Files, Diff, Terminal, CEF Browser, Annotations, API, DB, MCP, Tasks, GitHub PR, Linked Items, Device), local macOS bridges (`Vault --conn-bridge`, Operator dictation, `conn://` links), Orbit Gateway client | Direct raw WS framing (stays in `conn-client`), duplicate server logic, upstream T3 bloat |
 | **Mobile** *(current: Expo `../conn/apps/mobile`; future: **pure SwiftUI iOS**)* | **Now:** Expo remains the daily-driver mobile app during transition (keep its required RPCs intact on `conn-server`). **Next:** Pure SwiftUI iOS app sharing the GPUI-free Rust core (`conn-client` + `conn-state` + `conn-theme` via UniFFI) — focused on inbox, chat, Operator voice, approvals/questions, and quick PR/task views. | Embedded CEF browser, split IDE diffs, multi-panel desktop dock, React Native/Expo runtime long-term |
@@ -90,3 +90,22 @@ Every feature belongs to **one** primary owner. Anything duplicated across layer
 Keep `crates/conn-client`, `crates/conn-state`, and `crates/conn-theme` **100% GPUI-free and `#![forbid(unsafe_code)]`**. That guarantees:
 1. Instant headless unit tests (`cargo test -p conn-client -p conn-state -p conn-theme`).
 2. Drop-in reuse via **UniFFI** (`.xcframework`) when building the pure SwiftUI iOS client later — zero protocol or reducer duplication across `conn-server`, `conn-gpui`, and iOS.
+
+---
+
+## 5. Orbit `agent` Node Role, General Orchestrator & Orbit-Owned Projects
+
+> **Status:** **Locked architectural direction** (confirmed 2026-11-22).
+
+1. **Orbit owns Projects (single source of truth):** Conn does not maintain a separate ad-hoc local folder project registry. Every project-bound thread targets a first-party **Orbit Project** (or an Orbit Instance provisioned for it). Creating a new project happens through Orbit (including conversationally from a General thread).
+2. **Orbit `agent` node role (always-on Conn entry point):**
+   - A node carrying the Orbit **`agent`** role runs host-level `conn-server` and acts as the default entry point for Conn clients (`conn-gpui`, web, mobile).
+   - **Bootstrap path:** On day 1, the user's own Mac can hold the `agent` role; for always-on orchestration, assign the `agent` role to **`mini`** first and later move/promote it to a dedicated **Agent VPS** (multiple `agent`-role nodes allowed, with one primary entry point).
+   - Closing a laptop never interrupts running orchestrators, delegated child agents, or scheduled tasks; desktop and mobile connect to the same live entry point.
+3. **General-first Orchestrator + Container Delegation (no `cwd` migration hack):**
+   - Inspired by Threadbear's *"No project picker"* model, `⌘N` can always drop straight into a **General** (unbound) thread on the primary `agent`-role node.
+   - When concrete project work emerges, the outer General thread acts as an **orchestrator**: it resolves (or creates) the Orbit Project, spins up or targets an **Orbit Instance** running `conn-server` inside the container, and delegates child threads into that instance — while staying outside the container so it can also fix container/infra issues, manage Orbit Tasks, and coordinate across multiple projects.
+   - Once a General thread maps to a single Orbit Project, it is **auto-tagged / filed** under that project in the sidebar (without relocating its `cwd`), while multi-project threads stay in General and delegated inner-container threads appear nested under **Lineage** so the user can jump straight into Files, Diff, Terminal, or Browser at any time.
+4. **Client rollout (`conn-gpui` & future iOS):**
+   - Auto-select the primary Orbit `agent`-role node on startup (falling back to local when unset) and badge the `agent` role in Settings › Connections.
+   - Replace standalone Conn-only `"Add project"` flows with Orbit-backed project creation / General thread startup, and surface Orbit project tags + nested child-thread lineage.
