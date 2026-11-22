@@ -97,6 +97,40 @@ describe("AcpClientTerminals", () => {
     }),
   );
 
+  it.effect("killSession returns when a killed command never exits", () =>
+    Effect.gen(function* () {
+      // Models a kill the OS refused (EPERM after the command elevated): the process stays up.
+      const processExited = yield* Deferred.make<void>();
+      const child = ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        exitCode: Deferred.await(processExited).pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+        isRunning: Effect.succeed(true),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      });
+      const terminals = yield* makeAcpClientTerminals({ defaultCwd: process.cwd() }).pipe(
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() => Effect.succeed(child)),
+        ),
+      );
+      yield* Effect.addFinalizer(() =>
+        Deferred.succeed(processExited, undefined).pipe(Effect.andThen(terminals.disposeAll)),
+      );
+      yield* terminals.create({ sessionId: "session", command: "fixture" });
+
+      const kill = yield* terminals.killSession("session").pipe(Effect.forkChild);
+      yield* TestClock.adjust("2 seconds");
+      yield* Fiber.join(kill);
+    }),
+  );
+
   it.live("resolves terminal environment from the requesting ACP session", () =>
     Effect.gen(function* () {
       const inheritedEnvironment = yield* HostProcess.Environment;

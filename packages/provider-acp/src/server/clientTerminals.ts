@@ -4,6 +4,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -22,6 +23,8 @@ const MAX_RETAINED_OUTPUT_BYTES = 16 * 1024 * 1024;
 const DEFAULT_OUTPUT_BYTE_LIMIT = 4 * 1024 * 1024;
 const MAX_OUTPUT_BYTE_LIMIT = 8 * 1024 * 1024;
 const OUTPUT_DRAIN_GRACE = "1 second";
+// After a kill, the exit fiber may still drain output for up to OUTPUT_DRAIN_GRACE.
+const KILL_EXIT_CONFIRM_GRACE = "2 seconds";
 
 const terminalRequestError = (message: string, cause?: unknown) =>
   EffectAcpErrors.AcpRequestError.internalError(
@@ -414,6 +417,7 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
     terminals.get(terminalId)?.commandLine;
 
   // Taking the creation permit lets an in-flight terminal/create register before the sweep.
+  // A kill can fail (EPERM after a command elevates), so the exit wait is bounded.
   const killSession: AcpClientTerminals["killSession"] = (sessionId) =>
     creationPermit
       .withPermit(
@@ -430,11 +434,22 @@ export const makeAcpClientTerminals = Effect.fn("makeAcpClientTerminals")(functi
         Effect.flatMap((live) =>
           Effect.forEach(
             live,
-            (terminal) => terminal.kill.pipe(Effect.andThen(Deferred.await(terminal.exit))),
+            (terminal) =>
+              Effect.uninterruptible(terminal.kill).pipe(
+                Effect.andThen(
+                  Deferred.await(terminal.exit).pipe(Effect.timeoutOption(KILL_EXIT_CONFIRM_GRACE)),
+                ),
+                Effect.flatMap((exit) =>
+                  Option.isNone(exit)
+                    ? Effect.logWarning("ACP client terminal did not exit after kill", {
+                        terminalId: terminal.terminalId,
+                      })
+                    : Effect.void,
+                ),
+              ),
             { concurrency: "unbounded", discard: true },
           ),
         ),
-        Effect.uninterruptible,
       );
 
   const disposeAll: AcpClientTerminals["disposeAll"] = Effect.uninterruptible(
