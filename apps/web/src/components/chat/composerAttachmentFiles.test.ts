@@ -129,6 +129,10 @@ describe("composer attachment files", () => {
     expect(shouldHandleComposerAttachmentPaste({ ...input, bypassAutoAttachment: false })).toBe(
       false,
     );
+    // Finder puts a copied file's name on the clipboard as text; the image still attaches.
+    expect(shouldHandleComposerAttachmentPaste({ files: [image], plainText: "image.png" })).toBe(
+      true,
+    );
   });
 
   it("preserves text when the clipboard also includes generic image files", () => {

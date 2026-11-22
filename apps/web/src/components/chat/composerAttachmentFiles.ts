@@ -239,6 +239,14 @@ export function attachmentsToReleaseOnUploadCapabilityLoss(
   );
 }
 
+function isOnlyFileNames(text: string, files: ReadonlyArray<File>): boolean {
+  const names = new Set(files.map((file) => file.name));
+  return text
+    .split(/\r?\n/)
+    .filter((line) => line.length > 0)
+    .every((line) => names.has(line));
+}
+
 export function shouldHandleComposerAttachmentPaste(input: {
   readonly files: ReadonlyArray<File>;
   readonly plainText: string;
@@ -247,22 +255,19 @@ export function shouldHandleComposerAttachmentPaste(input: {
   // Paste as Text keeps the text even when the source also put an image of it on the clipboard.
   if (input.bypassAutoAttachment && input.plainText.length > 0) return false;
   if (
-    input.files.some((file) => {
-      if (isDngFile(file)) return true;
-      const classification = classifyComposerAttachmentFile(file);
-      return (
-        classification === "image" ||
-        classification === "unsupported-image" ||
-        isSvgAttachment({ name: file.name, mimeType: file.type })
-      );
-    })
+    input.files.some(
+      (file) => isDngFile(file) || isSvgAttachment({ name: file.name, mimeType: file.type }),
+    )
   ) {
     return true;
   }
-
-  if (input.plainText.length > 0) {
-    return false;
+  const hasImage = input.files.some((file) => {
+    const classification = classifyComposerAttachmentFile(file);
+    return classification === "image" || classification === "unsupported-image";
+  });
+  if (input.plainText.length === 0) {
+    return hasImage || input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
   }
-
-  return input.files.some((file) => classifyComposerAttachmentFile(file) === "file");
+  // Rich text sources (Word, Pages) add a picture of the text; a Finder copy's text is only file names.
+  return hasImage && isOnlyFileNames(input.plainText, input.files);
 }
