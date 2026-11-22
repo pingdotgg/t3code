@@ -13,6 +13,7 @@ import * as Effect from "effect/Effect";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpIncomingMessage from "effect/http/HttpIncomingMessage";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
@@ -23,11 +24,13 @@ const NO_STORE = { "cache-control": "no-store" };
 const MAX_JSON_BODY_BYTES = 64 * 1024;
 
 const decodeSpawn = Schema.decodeUnknownEffect(SandboxSpawnInput);
-const decodeSnapshotBody = Schema.decodeUnknownEffect(
-  Schema.Struct({
-    name: Schema.optional(SandboxSnapshotInput.fields.name),
-    markAsBase: Schema.optional(SandboxSnapshotInput.fields.markAsBase),
-  }),
+const decodeSnapshotJson = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      name: Schema.optional(SandboxSnapshotInput.fields.name),
+      markAsBase: Schema.optional(SandboxSnapshotInput.fields.markAsBase),
+    }),
+  ),
 );
 const decodeSandboxId = Schema.decodeUnknownEffect(SandboxId);
 
@@ -182,12 +185,28 @@ const snapshotRoute = HttpRouter.add(
         { status: 400, headers: NO_STORE },
       );
     }
-    const body = yield* readJsonBody.pipe(
-      Effect.flatMap(decodeSnapshotBody),
-      Effect.orElseSucceed(() => ({})),
+    const rawBody = yield* request.text.pipe(
+      Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.bytes(MAX_JSON_BODY_BYTES)),
+      Effect.option,
     );
+    if (rawBody._tag === "None") {
+      return yield* HttpServerResponse.json(
+        { error: "invalid_request", message: "Invalid snapshot payload." },
+        { status: 400, headers: NO_STORE },
+      );
+    }
+    const body =
+      rawBody.value.trim().length === 0
+        ? Option.some({})
+        : yield* decodeSnapshotJson(rawBody.value).pipe(Effect.option);
+    if (Option.isNone(body)) {
+      return yield* HttpServerResponse.json(
+        { error: "invalid_request", message: "Invalid snapshot payload." },
+        { status: 400, headers: NO_STORE },
+      );
+    }
     const orchestrator = yield* SandboxOrchestratorService;
-    return yield* orchestrator.snapshotSandbox({ id: id.value, ...body }).pipe(
+    return yield* orchestrator.snapshotSandbox({ id: id.value, ...body.value }).pipe(
       Effect.flatMap((result) => HttpServerResponse.json(result, { headers: NO_STORE })),
       Effect.catchTags({ SandboxOperationError: errorToHttpResponse }),
     );

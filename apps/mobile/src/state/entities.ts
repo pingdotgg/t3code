@@ -207,10 +207,11 @@ const NULL_ENVIRONMENT_ID_ATOM = Atom.make<EnvironmentId | null>(null).pipe(
 
 const threadEnvironmentIdByThreadIdAtom = Atom.family((threadId: string) =>
   Atom.make((get): EnvironmentId | null => {
-    const match = get(environmentThreadShells.threadShellsAtom).find(
+    const matches = get(environmentThreadShells.threadShellsAtom).filter(
       (shell) => shell.id === threadId,
     );
-    return match?.environmentId ?? null;
+    // Ids can repeat across environments; guessing would open the wrong thread.
+    return matches.length === 1 ? matches[0]!.environmentId : null;
   }).pipe(Atom.withLabel(`mobile-thread-env-lookup:${threadId}`)),
 );
 

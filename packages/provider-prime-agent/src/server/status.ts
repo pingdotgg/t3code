@@ -264,12 +264,17 @@ export function primeAgentAuthFromStatus(
   if (environment[PRIME_API_KEY_ENV]?.trim()) {
     return { status: "authenticated", type: "api_key", label: "Prime API key" };
   }
+  const fallbackKey = FALLBACK_API_KEY_ENVS.some((name) => Boolean(environment[name]?.trim()));
+  const unauthenticated = (): ServerProviderAuth =>
+    fallbackKey
+      ? { status: "authenticated", type: "api_key", label: "Provider API key" }
+      : { status: "unauthenticated" };
   if (output !== undefined) {
     const trimmed = output.stdout.trim();
     const json = Option.getOrUndefined(decodePrimeAgentStatusJson(trimmed));
     if (json !== undefined) {
       if (json.authenticated === false || json.loggedIn === false) {
-        return { status: "unauthenticated" };
+        return unauthenticated();
       }
       if (json.authenticated === true || json.loggedIn === true) {
         return {
@@ -286,7 +291,7 @@ export function primeAgentAuthFromStatus(
       combined.includes("unauthenticated") ||
       combined.includes("no credentials")
     ) {
-      return { status: "unauthenticated" };
+      return unauthenticated();
     }
     if (
       output.code === 0 &&
@@ -298,7 +303,7 @@ export function primeAgentAuthFromStatus(
       return { status: "authenticated", label: "Prime Agent" };
     }
   }
-  if (FALLBACK_API_KEY_ENVS.some((name) => Boolean(environment[name]?.trim()))) {
+  if (fallbackKey) {
     return { status: "authenticated", type: "api_key", label: "Provider API key" };
   }
   return { status: "unknown" };

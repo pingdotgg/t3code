@@ -17,8 +17,9 @@ const APP_DISPLAY_NAME = isDevelopment ? "KBCode (Dev)" : "KBCode (Beta)";
 const APP_BUNDLE_ID = isDevelopment
   ? `com.kbcode.app.dev.${devBundleIdSuffix || "local"}`
   : "com.kbcode.app";
-const APP_PROTOCOL_SCHEMES = isDevelopment ? ["kbcode-dev"] : ["kbcode"];
-const LAUNCHER_VERSION = 20;
+// Legacy t3code schemes stay registered so saved links still launch the app.
+const APP_PROTOCOL_SCHEMES = isDevelopment ? ["kbcode-dev", "t3code-dev"] : ["kbcode", "t3code"];
+const LAUNCHER_VERSION = 21;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",

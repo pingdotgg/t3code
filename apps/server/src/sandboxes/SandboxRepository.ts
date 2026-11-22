@@ -146,6 +146,50 @@ const make = Effect.gen(function* () {
     findByIdQuery(id).pipe(Effect.mapError(toRepoError("findById"))),
   );
 
+  const updateRecord = Effect.fn("SandboxRepository.updateRecord")(function* (
+    id: SandboxId,
+    patch: SandboxUpdatePatch,
+  ) {
+    const existing = yield* findByIdQuery(id);
+    if (Option.isNone(existing)) return Option.none();
+    const current = existing.value;
+    const next: CloudSandboxRecord = {
+      ...current,
+      ...(patch.state !== undefined ? { state: patch.state } : {}),
+      ...(patch.providerSandboxId !== undefined
+        ? { providerSandboxId: patch.providerSandboxId }
+        : {}),
+      ...(patch.snapshotId !== undefined ? { snapshotId: patch.snapshotId } : {}),
+      ...(patch.baseSnapshotId !== undefined ? { baseSnapshotId: patch.baseSnapshotId } : {}),
+      ...(patch.connectionUrl !== undefined ? { connectionUrl: patch.connectionUrl } : {}),
+      ...(patch.environmentId !== undefined ? { environmentId: patch.environmentId } : {}),
+      ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
+      ...(patch.lastActivityAt !== undefined ? { lastActivityAt: patch.lastActivityAt } : {}),
+      ...(patch.pausedAt !== undefined ? { pausedAt: patch.pausedAt } : {}),
+      ...(patch.vercelWarnedAt !== undefined ? { vercelWarnedAt: patch.vercelWarnedAt } : {}),
+      ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
+      updatedAt: patch.updatedAt,
+    };
+    yield* sql`
+          UPDATE cloud_sandboxes
+          SET
+            provider_sandbox_id = ${next.providerSandboxId},
+            snapshot_id = ${next.snapshotId},
+            base_snapshot_id = ${next.baseSnapshotId},
+            connection_url = ${next.connectionUrl},
+            environment_id = ${next.environmentId},
+            state = ${next.state},
+            started_at = ${next.startedAt},
+            last_activity_at = ${next.lastActivityAt},
+            paused_at = ${next.pausedAt},
+            vercel_warned_at = ${next.vercelWarnedAt},
+            last_error = ${next.lastError},
+            updated_at = ${next.updatedAt}
+          WHERE id = ${id}
+        `;
+    return Option.some(next);
+  });
+
   return SandboxRepository.of({
     listAll: Effect.fn("SandboxRepository.listAll")(() =>
       listAllQuery(undefined).pipe(Effect.mapError(toRepoError("listAll"))),
@@ -175,46 +219,10 @@ const make = Effect.gen(function* () {
       `.pipe(Effect.mapError(toRepoError("insert")));
     }),
 
-    update: Effect.fn("SandboxRepository.update")(function* (id, patch) {
-      const existing = yield* findById(id);
-      if (Option.isNone(existing)) return Option.none();
-      const current = existing.value;
-      const next: CloudSandboxRecord = {
-        ...current,
-        ...(patch.state !== undefined ? { state: patch.state } : {}),
-        ...(patch.providerSandboxId !== undefined
-          ? { providerSandboxId: patch.providerSandboxId }
-          : {}),
-        ...(patch.snapshotId !== undefined ? { snapshotId: patch.snapshotId } : {}),
-        ...(patch.baseSnapshotId !== undefined ? { baseSnapshotId: patch.baseSnapshotId } : {}),
-        ...(patch.connectionUrl !== undefined ? { connectionUrl: patch.connectionUrl } : {}),
-        ...(patch.environmentId !== undefined ? { environmentId: patch.environmentId } : {}),
-        ...(patch.startedAt !== undefined ? { startedAt: patch.startedAt } : {}),
-        ...(patch.lastActivityAt !== undefined ? { lastActivityAt: patch.lastActivityAt } : {}),
-        ...(patch.pausedAt !== undefined ? { pausedAt: patch.pausedAt } : {}),
-        ...(patch.vercelWarnedAt !== undefined ? { vercelWarnedAt: patch.vercelWarnedAt } : {}),
-        ...(patch.lastError !== undefined ? { lastError: patch.lastError } : {}),
-        updatedAt: patch.updatedAt,
-      };
-      yield* sql`
-        UPDATE cloud_sandboxes
-        SET
-          provider_sandbox_id = ${next.providerSandboxId},
-          snapshot_id = ${next.snapshotId},
-          base_snapshot_id = ${next.baseSnapshotId},
-          connection_url = ${next.connectionUrl},
-          environment_id = ${next.environmentId},
-          state = ${next.state},
-          started_at = ${next.startedAt},
-          last_activity_at = ${next.lastActivityAt},
-          paused_at = ${next.pausedAt},
-          vercel_warned_at = ${next.vercelWarnedAt},
-          last_error = ${next.lastError},
-          updated_at = ${next.updatedAt}
-        WHERE id = ${id}
-      `.pipe(Effect.mapError(toRepoError("update")));
-      return Option.some(next);
-    }),
+    update: Effect.fn("SandboxRepository.update")((id: SandboxId, patch: SandboxUpdatePatch) =>
+      // Read-modify-write must not interleave, or a stale copy erases a concurrent patch.
+      sql.withTransaction(updateRecord(id, patch)).pipe(Effect.mapError(toRepoError("update"))),
+    ),
 
     deleteById: Effect.fn("SandboxRepository.deleteById")(function* (id) {
       yield* sql`DELETE FROM cloud_sandboxes WHERE id = ${id}`.pipe(
