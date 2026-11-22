@@ -75,6 +75,20 @@ describe("turnItemIsWorkspacePreparation", () => {
     expect(turnItemIsWorkspacePreparation(preparationFailure("failed"))).toBe(false);
     expect(turnItemIsWorkspacePreparation(preparationFailure("cancelled"))).toBe(true);
     expect(turnItemIsWorkspacePreparation(preparationFailure("cancelled", null))).toBe(false);
+    const {
+      input: _input,
+      output: _output,
+      exitCode: _exitCode,
+      ...base
+    } = command("") as Extract<OrchestrationV2TurnItem, { type: "command_execution" }>;
+    const interrupted = (status: OrchestrationV2TurnItem["status"]): OrchestrationV2TurnItem => ({
+      ...base,
+      status,
+      type: "run_interrupt_result",
+      message: "Run interrupted before provider start",
+    });
+    expect(turnItemIsWorkspacePreparation(interrupted("interrupted"))).toBe(false);
+    expect(turnItemIsWorkspacePreparation(interrupted("cancelled"))).toBe(true);
   });
 });
 

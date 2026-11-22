@@ -13,7 +13,10 @@ export function turnItemIsWorkspacePreparation(item: OrchestrationV2TurnItem): b
     (item.type === "command_execution" && item.input === WORKSPACE_PREPARATION_INPUT) ||
     (item.type === "error" &&
       item.status === "cancelled" &&
-      item.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE)
+      item.failure.code === ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE) ||
+    // Only a setup retry cancels a Stop; the retried run is no longer interrupted.
+    ((item.type === "run_interrupt_request" || item.type === "run_interrupt_result") &&
+      item.status === "cancelled")
   );
 }
 
