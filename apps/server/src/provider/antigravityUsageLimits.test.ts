@@ -70,6 +70,7 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
     userId?: string;
     userInfoAt?: number;
     missingToken?: boolean;
+    cliToken?: string;
     authMethod?: "oauth-personal" | "oauth-business" | "gemini-api-key";
     keyringSecret?: string;
     /** Reads the OS keyring instead of `keyringSecret`. */
@@ -92,6 +93,12 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
       }),
     );
   if (!options.missingToken) yield* writeToken(options.refreshToken ?? "refresh-a");
+  if (options.cliToken !== undefined) {
+    yield* fs.writeFileString(
+      path.join(profileDirectory, "antigravity-acp", "antigravity-oauth-token"),
+      options.cliToken,
+    );
+  }
   const requests: Array<{ url: string; body: string }> = [];
   const http = HttpClient.make((request, url, _signal, fiber) =>
     Effect.sync(() => {
@@ -119,7 +126,9 @@ const fixture = Effect.fn("AntigravityUsageTest.fixture")(function* (
             : Response.json({}, { status: 403 }),
         );
       }
-      expect(JSON.parse(body)).toEqual(options.missingToken ? {} : { project: "project-id" });
+      expect(JSON.parse(body)).toEqual(
+        options.missingToken || options.cliToken !== undefined ? {} : { project: "project-id" },
+      );
       expect(request.headers["user-agent"]).toMatch(/^antigravity\/hub\/2\.24\.0 /);
       return HttpClientResponse.fromWeb(
         request,
@@ -663,31 +672,29 @@ describe("Antigravity subscription limits", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
-  it.effect("reads the native CLI's stored sign-in when acp_token.json is absent", () =>
+  it.effect("prefers the native CLI's stored sign-in over a leftover legacy token", () =>
     Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const { probe, tokenPath } = yield* fixture({ missingToken: true });
-      // The 1.5.x CLI never writes acp_token.json; without a keyring it stores this file instead.
-      yield* fs.writeFileString(
-        path.join(path.dirname(tokenPath), "antigravity-oauth-token"),
-        JSON.stringify({
-          token: {
-            access_token: "access-token",
-            token_type: "Bearer",
-            refresh_token: "refresh-a",
-            expiry: "2099-01-01T00:00:00Z",
-            expires_in: 3600,
-          },
-          auth_method: "consumer",
-          id_token_email: "someone@example.com",
-        }),
-      );
-      const limits = yield* probe;
-      expect(limits.unavailable?.message).not.toBe(
-        "Sign in with Google to see Antigravity limits.",
-      );
-      expect(limits.unavailable?.reason).not.toBe("unsupported");
+      for (const missingToken of [true, false]) {
+        const { probe, requests } = yield* fixture({
+          missingToken,
+          tokenStatus: 401,
+          cliToken: JSON.stringify({
+            token: {
+              access_token: "access-token",
+              token_type: "Bearer",
+              refresh_token: "refresh-a",
+              expiry: "2099-01-01T00:00:00Z",
+              expires_in: 3600,
+            },
+            auth_method: "consumer",
+            id_token_email: "someone@example.com",
+          }),
+        });
+        const limits = yield* probe;
+        expect(limits.unavailable).toBeUndefined();
+        expect(limits.windows).toHaveLength(4);
+        expect(requests.some((request) => request.url.endsWith("/token"))).toBe(false);
+      }
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 
@@ -724,6 +731,12 @@ describe("Antigravity subscription limits", () => {
       });
       expect((yield* expired.probe).unavailable?.reason).toBe("probeFailed");
       expect(expired.requests).toEqual([]);
+
+      const expiredFile = yield* fixture({
+        cliToken: keyringSecret("2026-10-09T12:00:30Z"),
+      });
+      expect((yield* expiredFile.probe).unavailable?.reason).toBe("probeFailed");
+      expect(expiredFile.requests).toEqual([]);
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
   );
 

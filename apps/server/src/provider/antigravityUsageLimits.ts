@@ -357,10 +357,11 @@ export const makeAntigravityUsageProbe = Effect.fn("makeAntigravityUsageProbe")(
     let accessToken: string;
     let account: string;
     let projectId: string | undefined;
-    if (!(yield* fs.exists(tokenPath))) {
+    const hasCliToken = yield* fs.exists(cliTokenPath);
+    if (hasCliToken || !(yield* fs.exists(tokenPath))) {
       cached = undefined;
       // Google account instances bypass the keyring, whose one entry every profile shares.
-      const stored = (yield* fs.exists(cliTokenPath))
+      const stored = hasCliToken
         ? yield* fs.readFileString(cliTokenPath)
         : input.authMethod === "oauth-business"
           ? yield* readKeyringSecret
