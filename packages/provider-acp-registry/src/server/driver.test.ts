@@ -4896,9 +4896,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         ).toEqual([]);
 
         // When a fresh live catalog + options-only update arrive right after clearLiveConfigurationIfRevision,
-        // the probe commit's replay must preserve the new catalog and its options rather than snapping back to probe baseline.
+        // the probe commit's replay must preserve the new catalog and its options (using the replayed
+        // catalog's reasoning rules rather than the probe's disabled-model set or baseline).
         injectLiveCatalogAfterClear = true;
-        yield* writeModels(["probe-1", "probe-2"]);
+        yield* writeModels({
+          models: [
+            { modelId: "live-c", name: "Live C", _meta: { supportsReasoningEffort: false } },
+            { modelId: "probe-2", name: "Probe 2" },
+          ],
+        });
         yield* TestClock.adjust("16 minutes");
         const concurrentCommit = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
@@ -5339,7 +5345,31 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
       yield* instance.snapshot.refresh;
       const replayedM0 = Option.getOrThrow(yield* Fiber.join(firstM0DuringCommit));
       expect(replayedM0.models.at(-1)?.slug).toBe("m255");
+      // Releasing the blocked watcher must not flicker back to the older m256 revision already
+      // superseded by the cache-hit replay; only newer revisions (m1) should publish afterward.
+      const seenAfterRelease: Array<readonly [string | undefined, string | undefined]> = [];
+      const sawDrainedM1 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.tap((snapshot) =>
+          Effect.sync(() => {
+            seenAfterRelease.push([
+              snapshot.models.find((m) => m.isDefault === true)?.slug,
+              snapshot.models.at(-1)?.slug,
+            ]);
+          }),
+        ),
+        Stream.filter((snapshot) => snapshot.models[1]?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
       yield* Deferred.succeed(releaseOverflowWatcher, undefined);
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(selectFrom("m1", fullChoices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+      );
+      yield* Fiber.join(sawDrainedM1);
+      expect(seenAfterRelease).toEqual([["m1", "m255"]]);
     }),
   );
 

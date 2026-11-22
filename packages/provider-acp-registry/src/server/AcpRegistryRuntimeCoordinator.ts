@@ -56,10 +56,24 @@ export interface AcpRegistryLiveConfigurationSnapshot {
   readonly clearedThroughRevision: number;
 }
 
+type AcpRegistryAdvertisedReasoningDescriptor = NonNullable<
+  AcpRegistryLiveConfiguration["models"][number]["reasoningEffort"]
+>;
+
+interface StoredAdvertisedReasoning {
+  readonly descriptor: AcpRegistryAdvertisedReasoningDescriptor;
+  readonly revision: number;
+}
+
 interface StoredLiveConfiguration {
   readonly catalog: AcpRegistryRevisionedLiveConfiguration | null;
   readonly configuration: Option.Option<AcpRegistryLiveConfiguration>;
   readonly optionsByModel: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration>;
+  // Latest cross-model advertisedReasoning per model slug, independent of replaceable
+  // optionsByModel entries keyed by currentModelId.
+  readonly reasoningByModel: ReadonlyMap<string, StoredAdvertisedReasoning>;
+  // Catalog-reasoning slugs superseded by a newer live observation.
+  readonly catalogReasoningSupersededSlugs: ReadonlySet<string>;
   readonly revision: number;
   readonly catalogRevision: number;
   readonly clearedThroughRevision: number;
@@ -69,6 +83,8 @@ const MAX_TRACKED_MODEL_OPTIONS = 256;
 
 const EMPTY_OPTIONS_BY_MODEL: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration> =
   new Map();
+const EMPTY_REASONING_BY_MODEL: ReadonlyMap<string, StoredAdvertisedReasoning> = new Map();
+const EMPTY_SLUG_SET: ReadonlySet<string> = new Set();
 
 export const EMPTY_LIVE_CONFIGURATION_SNAPSHOT: AcpRegistryLiveConfigurationSnapshot = {
   catalog: Option.none(),
@@ -83,6 +99,8 @@ const EMPTY_STORED_LIVE_CONFIGURATION: StoredLiveConfiguration = {
   catalog: null,
   configuration: Option.none(),
   optionsByModel: EMPTY_OPTIONS_BY_MODEL,
+  reasoningByModel: EMPTY_REASONING_BY_MODEL,
+  catalogReasoningSupersededSlugs: EMPTY_SLUG_SET,
   revision: 0,
   catalogRevision: 0,
   clearedThroughRevision: 0,
@@ -308,6 +326,8 @@ const make = Effect.gen(function* () {
           current.catalog === null &&
           Option.isNone(current.configuration) &&
           current.optionsByModel.size === 0 &&
+          current.reasoningByModel.size === 0 &&
+          current.catalogReasoningSupersededSlugs.size === 0 &&
           nextCleared === current.clearedThroughRevision
         ) {
           return state;
@@ -318,6 +338,8 @@ const make = Effect.gen(function* () {
           catalog: null,
           configuration: Option.none(),
           optionsByModel: EMPTY_OPTIONS_BY_MODEL,
+          reasoningByModel: EMPTY_REASONING_BY_MODEL,
+          catalogReasoningSupersededSlugs: EMPTY_SLUG_SET,
           clearedThroughRevision: nextCleared,
         });
         return next;
@@ -344,60 +366,90 @@ const make = Effect.gen(function* () {
               current.catalog === null
                 ? undefined
                 : extractAdvertisedReasoning(current.catalog.configuration);
-            const modelsUpdatedAfterCatalog = new Set<string>();
+            const preservedCatalogReasoning = (() => {
+              if (catalogReasoning === undefined) return undefined;
+              const entries = Object.entries(catalogReasoning).filter(
+                ([slug]) => !current.catalogReasoningSupersededSlugs.has(slug),
+              );
+              return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+            })();
             if (current.catalog !== null) {
-              candidates.set(current.catalog.configuration.currentModelId, current.catalog);
-              for (const entry of current.optionsByModel.values()) {
-                if (entry.revision <= current.catalog.revision) continue;
-                if (entry.configuration.currentModelId !== null) {
-                  modelsUpdatedAfterCatalog.add(entry.configuration.currentModelId);
-                }
-                if (entry.configuration.advertisedReasoning !== undefined) {
-                  for (const slug of Object.keys(entry.configuration.advertisedReasoning)) {
-                    modelsUpdatedAfterCatalog.add(slug);
-                  }
-                }
-              }
+              const { advertisedReasoning: _droppedCatalogReasoning, ...catalogRest } =
+                current.catalog.configuration;
+              candidates.set(current.catalog.configuration.currentModelId, {
+                revision: current.catalog.revision,
+                configuration: {
+                  ...catalogRest,
+                  models: [],
+                  modelsFromModelSelect: false,
+                  ...(preservedCatalogReasoning === undefined
+                    ? {}
+                    : { advertisedReasoning: preservedCatalogReasoning }),
+                },
+              });
             }
             for (const [key, entry] of current.optionsByModel) {
               if (
-                catalogReasoning !== undefined &&
+                preservedCatalogReasoning !== undefined &&
                 current.catalog !== null &&
                 key === current.catalog.configuration.currentModelId
               ) {
-                const preservedCatalogEntries = Object.entries(catalogReasoning).filter(
-                  ([slug]) => !modelsUpdatedAfterCatalog.has(slug),
-                );
-                const mergedAdvertisedReasoning =
-                  preservedCatalogEntries.length === 0
-                    ? entry.configuration.advertisedReasoning
-                    : {
-                        ...Object.fromEntries(preservedCatalogEntries),
-                        ...entry.configuration.advertisedReasoning,
-                      };
                 candidates.set(key, {
                   revision: entry.revision,
                   configuration: {
                     ...entry.configuration,
-                    ...(mergedAdvertisedReasoning === undefined
-                      ? {}
-                      : { advertisedReasoning: mergedAdvertisedReasoning }),
+                    advertisedReasoning: {
+                      ...preservedCatalogReasoning,
+                      ...entry.configuration.advertisedReasoning,
+                    },
                   },
                 });
                 continue;
               }
               candidates.set(key, entry);
             }
+            if (current.reasoningByModel.size > 0) {
+              const coveredReasoningSlugs = new Set<string>();
+              for (const entry of candidates.values()) {
+                const reasoning = entry.configuration.advertisedReasoning;
+                if (reasoning === undefined) continue;
+                for (const slug of Object.keys(reasoning)) {
+                  const tracked = current.reasoningByModel.get(slug);
+                  if (tracked !== undefined && entry.revision >= tracked.revision) {
+                    coveredReasoningSlugs.add(slug);
+                  }
+                }
+              }
+              const orphanedEntries: Array<
+                readonly [string, AcpRegistryAdvertisedReasoningDescriptor]
+              > = [];
+              for (const [slug, tracked] of current.reasoningByModel) {
+                if (!coveredReasoningSlugs.has(slug)) {
+                  orphanedEntries.push([slug, tracked.descriptor]);
+                }
+              }
+              if (orphanedEntries.length > 0) {
+                const latestCandidate = sortedPendingOptions(candidates).at(-1);
+                if (latestCandidate !== undefined) {
+                  candidates.set(latestCandidate.configuration.currentModelId, {
+                    revision: latestCandidate.revision,
+                    configuration: {
+                      ...latestCandidate.configuration,
+                      advertisedReasoning: {
+                        ...Object.fromEntries(orphanedEntries),
+                        ...latestCandidate.configuration.advertisedReasoning,
+                      },
+                    },
+                  });
+                }
+              }
+            }
             const retained = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             for (const entry of sortedPendingOptions(candidates)) {
-              const catalogAdvertisedReasoning = extractAdvertisedReasoning(entry.configuration);
               const kept = retain({
                 ...entry.configuration,
                 models: [],
                 modelsFromModelSelect: false,
-                ...(catalogAdvertisedReasoning === undefined
-                  ? {}
-                  : { advertisedReasoning: catalogAdvertisedReasoning }),
               });
               if (Option.isNone(kept)) continue;
               if (entry.revision < current.revision) {
@@ -456,6 +508,8 @@ const make = Effect.gen(function* () {
               : Option.some(lastRetained.configuration);
           if (
             current.catalog === null &&
+            current.reasoningByModel.size === 0 &&
+            current.catalogReasoningSupersededSlugs.size === 0 &&
             Equal.equals(current.configuration, nextConfiguration) &&
             Equal.equals(
               sortedPendingOptions(current.optionsByModel),
@@ -471,6 +525,8 @@ const make = Effect.gen(function* () {
             catalog: null,
             configuration: nextConfiguration,
             optionsByModel: nextOptionsByModel,
+            reasoningByModel: EMPTY_REASONING_BY_MODEL,
+            catalogReasoningSupersededSlugs: EMPTY_SLUG_SET,
             clearedThroughRevision: nextCleared,
           });
           return [true, next] as const;
@@ -506,11 +562,77 @@ const make = Effect.gen(function* () {
                   }
                   return updated;
                 })();
+            const reasoningByModel = hasCatalog
+              ? EMPTY_REASONING_BY_MODEL
+              : (() => {
+                  const hasSelfToDelete =
+                    configuration.currentModelId !== null &&
+                    current.reasoningByModel.has(configuration.currentModelId);
+                  const incoming = configuration.advertisedReasoning;
+                  const incomingEntries =
+                    incoming === undefined
+                      ? []
+                      : Object.entries(incoming).filter(
+                          ([slug]) => slug !== configuration.currentModelId,
+                        );
+                  if (!hasSelfToDelete && incomingEntries.length === 0) {
+                    return current.reasoningByModel;
+                  }
+                  const updated = new Map(current.reasoningByModel);
+                  if (configuration.currentModelId !== null) {
+                    updated.delete(configuration.currentModelId);
+                  }
+                  for (const [slug, descriptor] of incomingEntries) {
+                    updated.delete(slug);
+                    updated.set(slug, { descriptor, revision });
+                  }
+                  while (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
+                    const oldestKey = updated.keys().next().value;
+                    if (oldestKey === undefined) break;
+                    updated.delete(oldestKey);
+                  }
+                  return updated.size === 0 ? EMPTY_REASONING_BY_MODEL : updated;
+                })();
+            const catalogReasoningSupersededSlugs = hasCatalog
+              ? EMPTY_SLUG_SET
+              : (() => {
+                  const catalogReasoning =
+                    current.catalog === null
+                      ? undefined
+                      : extractAdvertisedReasoning(current.catalog.configuration);
+                  if (catalogReasoning === undefined) {
+                    return current.catalogReasoningSupersededSlugs;
+                  }
+                  const added: Array<string> = [];
+                  if (
+                    configuration.currentModelId !== null &&
+                    Object.hasOwn(catalogReasoning, configuration.currentModelId) &&
+                    !current.catalogReasoningSupersededSlugs.has(configuration.currentModelId)
+                  ) {
+                    added.push(configuration.currentModelId);
+                  }
+                  if (configuration.advertisedReasoning !== undefined) {
+                    for (const slug of Object.keys(configuration.advertisedReasoning)) {
+                      if (
+                        Object.hasOwn(catalogReasoning, slug) &&
+                        !current.catalogReasoningSupersededSlugs.has(slug)
+                      ) {
+                        added.push(slug);
+                      }
+                    }
+                  }
+                  if (added.length === 0) return current.catalogReasoningSupersededSlugs;
+                  const updated = new Set(current.catalogReasoningSupersededSlugs);
+                  for (const slug of added) updated.add(slug);
+                  return updated;
+                })();
             const next = new Map(state);
             next.set(instanceId, {
               catalog,
               configuration: Option.some(configuration),
               optionsByModel,
+              reasoningByModel,
+              catalogReasoningSupersededSlugs,
               revision,
               catalogRevision,
               clearedThroughRevision: current.clearedThroughRevision,

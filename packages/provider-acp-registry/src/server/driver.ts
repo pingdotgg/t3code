@@ -1171,14 +1171,6 @@ export function applyAcpRegistryLiveConfiguration(
             partialOverrideIds.add(descriptor.id);
           }
         }
-      } else {
-        const advertisedForTail = readAdvertisedReasoning(
-          configuration.advertisedReasoning,
-          tailSlotReplacement.id,
-        );
-        if (advertisedForTail !== undefined) {
-          partialOverrideIds.add(advertisedForTail.id);
-        }
       }
       const learnedPreviousModels = previousModels
         .filter((model) => !model.isCustom)
@@ -1741,6 +1733,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           readonly preserveStatus?: boolean | undefined;
           readonly updateAcceptedAndCache?: boolean | undefined;
           readonly ignoreProbeBaseline?: boolean | undefined;
+          readonly reasoningDisabledModelSlugs?: ReadonlySet<string> | undefined;
           readonly revision: number;
         },
       ) {
@@ -1750,7 +1743,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           acceptedBefore,
         );
         const preserveSingleModelCatalog = isExplicitSingletonCatalog(acceptedBefore);
-        const reasoningDisabledModelSlugs = acceptedBefore.reasoningDisabledModelSlugs;
+        const reasoningDisabledModelSlugs =
+          options.reasoningDisabledModelSlugs ?? acceptedBefore.reasoningDisabledModelSlugs;
         const hasDiscoveredCatalog = acceptedBefore.builtInModelCount > 0;
         const withPreservedStatus = (applied: ServerProvider) =>
           options.preserveStatus === true
@@ -1924,6 +1918,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       options?: {
         readonly applyLiveModels?: boolean;
         readonly recordLiveRevision?: boolean;
+        readonly persistReplayedSteps?: boolean;
         readonly fallbackToAcceptedModels?: boolean;
         readonly preserveStatus?: boolean;
       },
@@ -1991,7 +1986,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             steps.push(entry);
           }
         }
+        const persistReplayedSteps =
+          options?.persistReplayedSteps ?? options?.recordLiveRevision === true;
         let catalogReplacedInReplay = false;
+        let replayedReasoningDisabledSlugs: ReadonlySet<string> | undefined;
         for (const step of steps) {
           const stepAccepted = yield* Ref.get(acceptedCatalog);
           const stepReplacesCatalog = liveConfigurationReplacesAcceptedCatalog(
@@ -2003,15 +2001,21 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             step.configuration,
             {
               preserveStatus: options?.preserveStatus,
-              // Readiness advances lastObservedLiveRevision before the replacement watcher
-              // starts, so persist accepted state and applied revisions now.
-              updateAcceptedAndCache: options?.recordLiveRevision === true,
+              updateAcceptedAndCache: persistReplayedSteps,
               ignoreProbeBaseline: catalogReplacedInReplay && !stepReplacesCatalog,
+              ...(replayedReasoningDisabledSlugs === undefined || stepReplacesCatalog
+                ? {}
+                : { reasoningDisabledModelSlugs: replayedReasoningDisabledSlugs }),
               revision: step.revision,
             },
           );
           if (stepReplacesCatalog) {
             catalogReplacedInReplay = true;
+            replayedReasoningDisabledSlugs = new Set(
+              step.configuration.models
+                .filter((model) => model.reasoningEffort === null)
+                .map((model) => model.id),
+            );
           }
         }
         if (options?.recordLiveRevision === true) {
@@ -2259,15 +2263,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       probeBaselineModels: supersededLiveSession ? provider.models : null,
                     });
                   }
-                  const published = yield* withLiveRuntimeState(resolved);
+                  const published = yield* withLiveRuntimeState(resolved, {
+                    persistReplayedSteps: !cleared,
+                  });
                   if (cleared) {
                     yield* Ref.update(lastAppliedLiveRevision, (prev) =>
                       Math.max(prev, clearedThroughRevision),
                     );
                   }
                   const completedAt = yield* Clock.currentTimeMillis;
-                  yield* Ref.set(enrichmentCache, {
-                    ...current,
+                  yield* Ref.update(enrichmentCache, (latestCache) => ({
+                    ...latestCache,
                     entry: {
                       // Cache the winning catalog while keeping the retry TTL from the fresh probe.
                       provider: !probeSupersedesLiveCatalog
@@ -2275,7 +2281,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         : resolved,
                       expiresAt: completedAt + acpRegistryProbeTtlMs(provider),
                     },
-                  });
+                  }));
                   yield* publishSnapshot(published);
                   return;
                 }
@@ -2299,6 +2305,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   fresh && resolved.status !== "ready" && !isUnauthenticated;
                 yield* withLiveRuntimeState(resolved, {
                   applyLiveModels: !isUnauthenticated,
+                  persistReplayedSteps: !isUnauthenticated,
                   fallbackToAcceptedModels: preserveTransientFailure,
                   preserveStatus: preserveTransientFailure,
                 }).pipe(Effect.flatMap(publishSnapshot));

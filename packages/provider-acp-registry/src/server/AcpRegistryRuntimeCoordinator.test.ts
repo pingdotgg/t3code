@@ -824,6 +824,105 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           "model-c": lowEffort,
         });
 
+        // Cross-model advertisedReasoning supersedes older catalog reasoning even when a
+        // subsequent same-model update replaces the publishing model's pending entry without
+        // repeating that metadata (preserving the newer high value alongside untouched catalog models).
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: lowEffort },
+            { id: "model-d", name: "Model D", description: null, reasoningEffort: lowEffort },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const crossModelCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        // Case 1: model-x advertises model-b: high and stays in optionsByModel; model-a update
+        // must not carry older catalog model-b: low over model-x's newer observation.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-x",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        const modelXSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: crossModelCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterCrossModelClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterCrossModelClear.pendingOptions.find((e) => e.revision === modelXSnap.revision)
+            ?.configuration.advertisedReasoning,
+        ).toEqual({ "model-b": highEffort });
+        expect(
+          afterCrossModelClear.pendingOptions.at(-1)?.configuration.advertisedReasoning,
+        ).toEqual({ "model-d": lowEffort });
+
+        // Case 2: model-c advertises model-b: high, then another session replaces model-c without
+        // model-b metadata before model-a updates and a probe clears; model-b keeps high (never low).
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: lowEffort },
+            { id: "model-d", name: "Model D", description: null, reasoningEffort: lowEffort },
+          ],
+          currentModelId: "model-a",
+          configOptions: [],
+          modelsFromModelSelect: true,
+        });
+        const replacedCrossCatalog =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-c",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: replacedCrossCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterReplacedCrossClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterReplacedCrossClear.pendingOptions.at(-1)?.configuration.advertisedReasoning,
+        ).toEqual({
+          "model-b": highEffort,
+          "model-d": lowEffort,
+        });
+
         // Earlier displaced tail updates (both overflow m256 and displaced ordinary tail m255)
         // keep their tail metadata alongside preserveDefault so the driver can learn their options
         // off-screen without swapping slot 255 or default, while non-tail models (m1) drop it.
@@ -871,7 +970,7 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         });
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: sameModelCatalog.catalogRevision,
+            catalogRevision: replacedCrossCatalog.catalogRevision,
             retain: (live) => Option.some({ ...live, partialOptions: true }),
           }),
         ).toBe(true);
