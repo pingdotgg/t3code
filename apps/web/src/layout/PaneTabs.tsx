@@ -10,7 +10,6 @@ import {
 import { formatFilePathForClipboard } from "@t3tools/client-runtime/media-actions";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { msg, useGT, useMessages } from "gt-react";
-import { createPortal } from "react-dom";
 import { create } from "zustand";
 import { useAtomValue } from "@effect/atom-react";
 import { resolvePathLinkTarget } from "@t3tools/shared/fileLinks";
@@ -516,6 +515,9 @@ function releasePaneStrip(key: string, entry: PaneStrip): void {
   });
 }
 
+/** Before its header places it; constant, so a render never writes the layer's display back. */
+const HIDDEN_STRIP_LAYER = { display: "none" } as const;
+
 /** A header's tabs: in the pane's strip while its header shows, hidden in its own row otherwise. */
 function showStripLayer(layer: HTMLElement, parent: HTMLElement, shown: boolean): void {
   layer.style.display = shown ? "contents" : "none";
@@ -764,19 +766,12 @@ export function LayoutPaneTabStrip({
   const holds = own !== null || visible;
   const motionMs = usePaneJoinMotionMs();
   const slotRef = useRef<HTMLSpanElement>(null);
-  // This header's tabs. They stay mounted while the header is hidden, as a
-  // hidden tab's whole header does; only the shown header's layer sits in the
-  // pane's strip.
-  const [layer] = useState(() => {
-    const element = document.createElement("div");
-    element.dataset.stripLayer = "";
-    element.style.display = "contents";
-    return element;
-  });
+  const layerRef = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Hold the pane's persistent strip node in this header's row.
   useLayoutEffect(() => {
     const slot = slotRef.current;
-    if (!slot) return;
+    const layer = layerRef.current;
+    if (!slot || !layer) return;
     const { strip } = entry;
     if (!holds) {
       showStripLayer(layer, slot, false);
@@ -812,7 +807,7 @@ export function LayoutPaneTabStrip({
         markPaneJoinedAtStart(pane);
       }
     };
-  }, [entry, holds, layer]);
+  }, [entry, holds]);
   // A tab press changes only which tab the strip's joined shape goes to, placed in the next frame.
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Place the pane strip's joined tab after each commit.
   useLayoutEffect(() => {
@@ -828,18 +823,22 @@ export function LayoutPaneTabStrip({
     holdPaneStrip(entry, place, motionMs);
   }, [entry, holds, motionMs, tabId]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Take this header's tabs out of the pane's strip, and drop the strip once its last header lets go of it.
-  useLayoutEffect(
-    () => () => {
-      layer.remove();
+  useLayoutEffect(() => {
+    const layer = layerRef.current;
+    return () => {
+      layer?.remove();
       if (key !== null) releasePaneStrip(key, entry);
-    },
-    [entry, key, layer],
-  );
+    };
+  }, [entry, key]);
+  // This header's tabs, mounted while the header is hidden; only the shown header's layer sits in
+  // the pane's strip. Moved, not portaled: a portal target takes React's whole delegated listener
+  // set. The slot is the layer's only React parent and leaves with it.
   return (
-    <>
-      <span ref={slotRef} data-layout-tab-strip-slot="" className="contents" />
-      {createPortal(children, layer)}
-    </>
+    <span ref={slotRef} data-layout-tab-strip-slot="" className="contents">
+      <div ref={layerRef} data-strip-layer="" style={HIDDEN_STRIP_LAYER}>
+        {children}
+      </div>
+    </span>
   );
 }
 
