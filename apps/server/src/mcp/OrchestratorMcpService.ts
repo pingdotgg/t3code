@@ -158,6 +158,7 @@ const DEFAULT_THREAD_LIST_LIMIT = 10;
 const DEFAULT_THREAD_READ_LIMIT = 10;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 500;
+const MAX_LISTED_TASK_IDS = 10;
 const THREAD_PULL_REQUEST_PREVIEW_LIMIT = 5;
 // Claude Code saves MCP results over ~25k tokens to a file instead of showing them. Bytes, not
 // chars: CJK text runs near one token per char, which a char budget lets through at 30k tokens.
@@ -1813,16 +1814,40 @@ const make = Effect.gen(function* () {
     acknowledgementOperation = "task-status-acknowledge",
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     yield* requireCapability(scope);
-    const task = (yield* loadTasks(scope.thread.threadId, [taskId])).find(
-      (candidate) =>
-        candidate.id === taskId &&
-        candidate.origin === "app_owned" &&
-        candidate.threadId === scope.thread.threadId,
-    );
-    if (task === undefined || (task.childThreadId === null && task.remoteChild === undefined)) {
+    const isCallerTask = (candidate: OrchestrationV2Subagent) =>
+      candidate.origin === "app_owned" &&
+      candidate.threadId === scope.thread.threadId &&
+      (candidate.childThreadId !== null || candidate.remoteChild !== undefined);
+    // A compacted parent may keep only the child thread link, so a child thread id names its latest task.
+    const childThreadId = ThreadId.make(taskId);
+    const task =
+      (yield* loadTasks(scope.thread.threadId, [taskId])).find(
+        (candidate) => candidate.id === taskId && isCallerTask(candidate),
+      ) ??
+      (yield* threadManagement
+        .getThreadRecords(scope.thread.threadId, ["subagents"], {
+          subagentChildThreadIds: [childThreadId],
+        })
+        .pipe(Effect.mapError(threadManagementFailure))).subagents.findLast(
+        (candidate) => candidate.childThreadId === childThreadId && isCallerTask(candidate),
+      );
+    if (task === undefined) {
+      const { subagents } = yield* threadManagement
+        .getThreadRecords(scope.thread.threadId, ["subagents"])
+        .pipe(Effect.mapError(threadManagementFailure));
+      const known = subagents.filter(isCallerTask).slice(-MAX_LISTED_TASK_IDS);
       return yield* failure(
         "task_not_found",
-        `Delegated task ${taskId} does not belong to thread ${scope.thread.threadId}.`,
+        `No delegated task of thread ${scope.thread.threadId} has id ${taskId}. ${
+          known.length === 0
+            ? "This thread has no delegated tasks."
+            : `Its most recent tasks: ${known
+                .map(
+                  (candidate) =>
+                    `${candidate.id}${candidate.childThreadId === null ? "" : ` (child thread ${candidate.childThreadId})`}`,
+                )
+                .join(", ")}.`
+        }`,
       );
     }
     if (task.childThreadId === null) {
@@ -2992,9 +3017,10 @@ const make = Effect.gen(function* () {
       const scope = yield* requireThreadScope(callerScope, "task_status");
       return yield* readTask(scope, taskId, false, true);
     }),
-    cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, input) {
+    cancelTask: Effect.fn("OrchestratorMcpService.cancelTask")(function* (callerScope, request) {
       const scope = yield* requireThreadScope(callerScope, "task_cancel");
-      const current = yield* readTask(scope, input.taskId);
+      const current = yield* readTask(scope, request.taskId);
+      const input = { ...request, taskId: current.taskId };
       const childThreadId = current.childThreadId;
       if (childThreadId === null) {
         // The task runs in a linked environment: its thread there is stopped through the link.
