@@ -2135,13 +2135,13 @@ export const layer: Layer.Layer<
                           })
                           .pipe(
                             Effect.as(true),
-                            Effect.catchCauseIf(
-                              (interruptCause) => !Cause.hasInterruptsOnly(interruptCause),
-                              (interruptCause) =>
-                                Effect.logWarning(
-                                  "orchestration V2 failed to interrupt turn after ingestion failure",
-                                  { runId: input.run.id, cause: interruptCause },
-                                ).pipe(Effect.as(false)),
+                            // An adapter whose session scope is closing exits interrupted. That is
+                            // its fiber, not this one: Effect never hands a fiber its own interrupt.
+                            Effect.catchCause((interruptCause) =>
+                              Effect.logWarning(
+                                "orchestration V2 failed to interrupt turn after ingestion failure",
+                                { runId: input.run.id, cause: interruptCause },
+                              ).pipe(Effect.as(false)),
                             ),
                             // A failed interrupt leaves the stored turn running so the next start
                             // retries it. The snapshot is cached before it is published, so it may

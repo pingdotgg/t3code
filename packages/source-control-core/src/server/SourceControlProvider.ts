@@ -173,6 +173,18 @@ export class SourceControlProvider extends Context.Service<
     }) => Effect.Effect<void>;
     /** True when `createChangeRequest` opens the change request as a draft when asked. */
     readonly createsDraftChangeRequests?: boolean;
+    /**
+     * The private companion of the checkout's repository, made when it has none. The branch of
+     * a private change request is pushed to `url` and never to the repository itself, which
+     * everyone can read. Absent on a host without private change requests.
+     */
+    readonly privateChangeRequestRemote?: (input: {
+      readonly cwd: string;
+      readonly context?: SourceControlProviderContext;
+    }) => Effect.Effect<
+      { readonly url: string; readonly repository: string },
+      SourceControlProviderError
+    >;
     readonly listChangeRequests: (input: {
       readonly cwd: string;
       readonly context?: SourceControlProviderContext;
@@ -202,6 +214,8 @@ export class SourceControlProvider extends Context.Service<
       readonly bodyFile: string;
       /** Honored only by a provider with `createsDraftChangeRequests`. */
       readonly draft?: boolean;
+      /** Asked only of a provider with `privateChangeRequestRemote`, which holds the head. */
+      readonly private?: boolean;
     }) => Effect.Effect<void, SourceControlProviderError>;
     readonly getRepositoryCloneUrls: (input: {
       readonly cwd: string;

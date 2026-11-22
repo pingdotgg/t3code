@@ -1878,6 +1878,28 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
             [],
           );
           assert.deepEqual(yield* outbox.listByCommandId(commandId), []);
+          if (status === "error") {
+            // A failed capture still pins the conversation.
+            const conversationCommandId = CommandId.make("runtime-rollback-error-conversation");
+            const conversationOnly = yield* orchestrator.dispatch({
+              type: "checkpoint.rollback",
+              commandId: conversationCommandId,
+              threadId,
+              checkpointId,
+              scopeId: scope.id,
+              restoreFiles: false,
+            });
+            assert.deepEqual(
+              conversationOnly.storedEvents.map((stored) => stored.event.type),
+              ["thread.metadata-updated", "checkpoint.rollback-requested"],
+            );
+            assert.deepEqual(
+              (yield* outbox.listByCommandId(conversationCommandId)).map(
+                (effect) => effect.request.type,
+              ),
+              ["provider-thread.rollback"],
+            );
+          }
         }
       }
     }).pipe(Effect.provide(Layer.fresh(layerTest))),
