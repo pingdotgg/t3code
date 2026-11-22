@@ -3,28 +3,40 @@ import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
 const SSE_EVENT_SEPARATOR = /(?:\r\n|\r(?!\n)|\n){2}/u;
+// A separator is at most four characters, so one that a new chunk completes starts within the
+// last three characters already read. Scanning only those plus the chunk keeps parsing linear.
+const SEPARATOR_OVERLAP = 3;
+
+function sseEventData(rawEvent: string): string {
+  return rawEvent
+    .split(/\r\n|\r|\n/u)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice("data:".length).trimStart())
+    .join("\n");
+}
 
 async function* sseDataLines(
   reader: ReadableStreamDefaultReader<Uint8Array>,
 ): AsyncGenerator<string> {
   const decoder = new TextDecoder();
-  let buffered = "";
+  let eventParts: string[] = [];
+  let unscanned = "";
   while (true) {
     const { done, value } = await reader.read();
     if (done) return;
-    buffered += decoder.decode(value, { stream: true });
-    let separator = SSE_EVENT_SEPARATOR.exec(buffered);
+    let text = unscanned + decoder.decode(value, { stream: true });
+    let separator = SSE_EVENT_SEPARATOR.exec(text);
     while (separator !== null) {
-      const rawEvent = buffered.slice(0, separator.index);
-      buffered = buffered.slice(separator.index + separator[0].length);
-      const data = rawEvent
-        .split(/\r\n|\r|\n/u)
-        .filter((line) => line.startsWith("data:"))
-        .map((line) => line.slice("data:".length).trimStart())
-        .join("\n");
+      eventParts.push(text.slice(0, separator.index));
+      const data = sseEventData(eventParts.join(""));
+      eventParts = [];
+      text = text.slice(separator.index + separator[0].length);
       if (data.length > 0) yield data;
-      separator = SSE_EVENT_SEPARATOR.exec(buffered);
+      separator = SSE_EVENT_SEPARATOR.exec(text);
     }
+    const scannedLength = Math.max(0, text.length - SEPARATOR_OVERLAP);
+    eventParts.push(text.slice(0, scannedLength));
+    unscanned = text.slice(scannedLength);
   }
 }
 

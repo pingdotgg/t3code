@@ -1,10 +1,38 @@
-import { ArrowLeftIcon, FileDiffIcon } from "lucide-react";
+import { useGT } from "gt-react";
+import { ArrowLeftIcon, FileDiffIcon, LockIcon } from "lucide-react";
 import { useEffect, useRef, type ComponentProps, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 
+import { Badge } from "../ui/badge";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PullRequestMetaLine } from "./pullRequestPresentation";
+
+export function PullRequestPrivateMark({ className }: { className?: string }) {
+  const gt = useGT();
+  const label = gt("Private");
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={<LockIcon role="img" aria-label={label} className={cn("shrink-0", className)} />}
+      />
+      <TooltipPopup side="top">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function PullRequestPrivateBadge() {
+  const gt = useGT();
+  return (
+    <Badge size="control" variant="outline">
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <LockIcon className="size-3.5" />
+        {gt("Private")}
+      </span>
+    </Badge>
+  );
+}
 
 export function PullRequestDetailHeaderBody({
   title,
@@ -25,6 +53,7 @@ export function PullRequestDetailHeaderBody({
   files: ReactNode;
   diffStat: ReactNode;
 }) {
+  const gt = useGT();
   return (
     <div className="col-span-2 mt-1 min-w-0 px-4 pb-4">
       {title}
@@ -39,7 +68,10 @@ export function PullRequestDetailHeaderBody({
         <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
           {base}
           <ArrowLeftIcon
-            aria-label="receives changes from"
+            aria-label={gt("receives changes from", {
+              $context:
+                "screen reader label for an arrow between the base branch, read before it, and the head branch, read after it",
+            })}
             className="size-3.5 shrink-0 opacity-60"
           />
           {head}
@@ -77,6 +109,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   inert?: boolean;
   children?: ReactNode;
 }) {
+  const gt = useGT();
   // A pointer passing over a tab is not intent; it must rest like a list row does.
   const pointerIntent = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- A rest timer still pending when the bar unmounts must not read for a closed panel.
@@ -84,7 +117,7 @@ export function PullRequestDetailTabBar<Tab extends string>({
   return (
     <nav
       className="col-span-2 flex min-w-0 flex-wrap items-center gap-2 border-t border-border/60 px-4 py-2"
-      aria-label="Pull request tabs"
+      aria-label={gt("Pull request tabs")}
       inert={inert}
     >
       <ToggleGroup

@@ -21,6 +21,10 @@ describe("themeCssValueFetches", () => {
     ["background-image", `url("${SVG_WITH_OWN_GRADIENT}")`, false],
     // The url( sits inside a string, so the address after that string is a real remote url().
     ["content", `"url('data:" url("https://evil.example/a") "'"`, true],
+    ["--leak", '/* " */ url(https://evil.example/a) /* " */', true],
+    ["content", String.raw`"Theme preview: \"ready\""`, false],
+    ["--label", String.raw`'It\'s ready'`, false],
+    ["content", String.raw`url("#icon") / "The \"ready\" icon"`, false],
     ["filter", 'url("#blur")', false],
     ["background-image", "var(--pattern)", false],
     ["color", "red", false],
@@ -32,7 +36,19 @@ describe("themeCssValueFetches", () => {
 describe("themeCssLoadsRemoteFiles", () => {
   it.each([
     ['[data-chat-header]::after { content: "@import"; }', false],
+    ['.a::after { content: "say \\"@import\\""; }', false],
+    ['.a::after { content: "a\\\r\n@import"; }', false],
+    ['.a::after { content: "\\22\r\n@import"; }', false],
+    ['.a::after { content: "/*"; } /* note */ .b::after { content: "@import"; }', false],
+    ['/* @import "x.css"; */ .a::after { content: "*/"; }', false],
+    [
+      ".a { background-image: url(data:image/svg+xml,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%3E%3C!--/*@import*/--%3E%3C/svg%3E); }",
+      false,
+    ],
     ['@import "x.css";', true],
+    ['.a\\" {} @import "x.css"; .b\\" {}', true],
+    ['.a::after { content: "\\\\"; } @import "x.css";', true],
+    [".a { background: url(https://example.invalid/x.png); }", true],
   ])("%s", (css, loads) => {
     expect(themeCssLoadsRemoteFiles(css)).toBe(loads);
   });

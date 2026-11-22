@@ -56,7 +56,7 @@ const provideTestEnv = Effect.provide(
 
 interface DeviceFlowServer {
   readonly requests: Array<RecordedTokenRequest>;
-  readonly tokenReplies: Array<{ readonly status: number; readonly body: string }>;
+  readonly tokenReplies: Array<{ readonly status: number; readonly body: string } | "stall">;
 }
 
 const DEVICE_AUTHORIZATION_BODY = JSON.stringify({
@@ -84,7 +84,7 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
   Layer.succeed(
     HttpClient.HttpClient,
     HttpClient.make((request) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         const body =
           request.body._tag === "Uint8Array" ? new TextDecoder().decode(request.body.body) : "";
         server.requests.push({ url: request.url, params: new URLSearchParams(body) });
@@ -93,12 +93,15 @@ const layerDeviceFlow = (server: DeviceFlowServer) =>
           : ((server.tokenReplies.length > 1
               ? server.tokenReplies.shift()
               : server.tokenReplies[0]) ?? oauthError("invalid_grant"));
-        return HttpClientResponse.fromWeb(
-          request,
-          new Response(reply.body, {
-            status: reply.status,
-            headers: { "content-type": "application/json" },
-          }),
+        if (reply === "stall") return Effect.never;
+        return Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            new Response(reply.body, {
+              status: reply.status,
+              headers: { "content-type": "application/json" },
+            }),
+          ),
         );
       }),
     ),
@@ -299,6 +302,24 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))(
           assert.equal(poll.params.get("device_code"), "device-code-1");
           assert.equal(poll.params.get("client_id"), "oauth_client_test");
         }
+      }),
+    );
+
+    it.effect("retries a poll that never answers instead of waiting out the device code", () =>
+      Effect.gen(function* () {
+        const server: DeviceFlowServer = { requests: [], tokenReplies: ["stall", tokenGranted] };
+
+        const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+          Effect.provide(layerDeviceFlow(server)),
+          provideTestEnv,
+          Effect.forkChild,
+        );
+        // 5 s interval, a 10 s request timeout, then the 10 s slowed-down interval.
+        yield* TestClock.adjust(Duration.seconds(25));
+
+        assert.lengthOf(tokenRequests(server.requests), 2);
+        const { token } = yield* Fiber.join(fiber);
+        assert.equal(token.accessToken, "access-token-1");
       }),
     );
 
