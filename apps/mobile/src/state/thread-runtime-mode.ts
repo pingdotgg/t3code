@@ -76,9 +76,8 @@ export function selectThreadRuntimeMode(input: SelectThreadRuntimeModeInput): vo
     canPersistThreadRuntimeModeImmediately({ thread, projection });
 
   if (!canPersistImmediately) {
-    updateComposerDraftSettings(threadKey, {
-      runtimeMode: runtimeMode === durableRuntimeMode ? undefined : runtimeMode,
-    });
+    // A saved-mode pick only gets here while another mode is saving; keep it so the next send restores it.
+    updateComposerDraftSettings(threadKey, { runtimeMode });
     return;
   }
 

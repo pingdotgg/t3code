@@ -43,17 +43,17 @@ export async function resumeThread<E>(input: {
 }): Promise<AtomCommandResult<unknown, E>> {
   const { thread, runtimeMode, interactionMode, createdAt } = input;
   const environmentId = thread.environmentId;
+  // A turn on an existing thread, held queued ones included, runs with the thread's saved modes.
+  if (runtimeMode !== thread.runtimeMode) {
+    const saved = await input.setRuntimeMode({
+      environmentId,
+      input: { threadId: thread.id, runtimeMode, createdAt },
+    });
+    if (saved._tag === "Failure") return saved;
+  }
+  input.onRuntimeModePersisted?.(runtimeMode);
   // The server holds the queue behind a stopped or usage-limited run until that run is continued.
   if (input.resumableRunId !== null) {
-    // A turn on an existing thread runs with the thread's saved modes, not the turn's.
-    if (runtimeMode !== thread.runtimeMode) {
-      const saved = await input.setRuntimeMode({
-        environmentId,
-        input: { threadId: thread.id, runtimeMode, createdAt },
-      });
-      if (saved._tag === "Failure") return saved;
-    }
-    input.onRuntimeModePersisted?.(runtimeMode);
     if (interactionMode !== thread.interactionMode) {
       const saved = await input.setInteractionMode({
         environmentId,

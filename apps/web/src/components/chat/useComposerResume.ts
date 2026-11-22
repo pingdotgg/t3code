@@ -108,6 +108,14 @@ export function useComposerResume(input: ComposerResumeInput) {
     // Commands settle into a result, so this always runs.
     const resume = async () => {
       if (resumableRunId === null) {
+        // Held turns start with the thread's saved mode, so a deferred pick is saved first.
+        const settingsResult = await persistThreadSettingsForNextTurn({
+          threadId,
+          createdAt: new Date().toISOString(),
+          runtimeMode,
+          interactionMode: activeThread.interactionMode,
+        });
+        if (settingsResult._tag === "Failure") return settingsResult;
         return resumeThreadQueue({ environmentId, input: { threadId } });
       }
       // Read before the first await: the composer follows the route, so after the user switches
