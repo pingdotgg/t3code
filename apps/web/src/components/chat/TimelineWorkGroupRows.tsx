@@ -1,6 +1,6 @@
 import { T, useGT, useMessages } from "gt-react";
 import {
-  thoughtPreviewPlugins,
+  thoughtPreviewMarkdown,
   THOUGHT_PREVIEW_SOURCE_MAX_LENGTH,
 } from "./TimelineWorkEntryRow.logic";
 import {
@@ -106,7 +106,7 @@ import {
   skillInstructionsOpener,
   skillPopoverDescription,
 } from "./SkillInlineText";
-import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/markdownPipeline";
+import { shouldPreserveAssistantLineBreaks } from "@t3tools/shared/assistantInsights";
 import { useAssistantMessageText } from "../../state/entities";
 import { AssistantCitationSource } from "./AssistantCitationSource";
 import { presentSlashCommand } from "./timelineSlashCommands";
@@ -745,7 +745,7 @@ export function LiveWorkEntryTimelineRow({
                 text={thoughtLine}
                 cwd={ctx.markdownCwd}
                 parseRawHtml={false}
-                extraRemarkPlugins={thoughtPreviewPlugins(gt("Thought"))}
+                extensions={thoughtPreviewMarkdown(gt("Thought"))}
               />
             </span>
           }
@@ -766,10 +766,10 @@ export function LiveWorkEntryTimelineRow({
               text={(row.entry.detail ?? label).slice(0, THOUGHT_PREVIEW_SOURCE_MAX_LENGTH)}
               cwd={ctx.markdownCwd}
               parseRawHtml={false}
-              extraRemarkPlugins={
+              extensions={
                 row.active
-                  ? thoughtPreviewPlugins(gt("Thinking"))
-                  : thoughtPreviewPlugins(gt("Thought"))
+                  ? thoughtPreviewMarkdown(gt("Thinking"))
+                  : thoughtPreviewMarkdown(gt("Thought"))
               }
             />
           ) : threadLabel ? (
