@@ -1,5 +1,8 @@
 import type { Element, ElementContent, Root, Text } from "hast";
-import { renderToHtml, type RenderOptions as WordsRenderOptions } from "@pierre/words";
+import {
+  renderToHtml as wordsRenderToHtml,
+  type RenderOptions as WordsRenderOptions,
+} from "@pierre/words";
 import { decodeHTML, decodeHTMLAttribute } from "entities";
 import { find, html as htmlSchema, svg as svgSchema } from "property-information";
 import { resolveCodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
@@ -79,6 +82,18 @@ const PARAGRAPH_SCOPE = new Set([
 type RenderOptions = Omit<WordsRenderOptions, "frontmatter">;
 
 const decoder = new TextDecoder();
+const encoder = new TextEncoder();
+
+function renderToHtml(markdown: string, options: RenderOptions): Uint8Array {
+  try {
+    return wordsRenderToHtml(markdown, options);
+  } catch {
+    return encoder.encode(
+      `<p>${markdown.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll("\n", "<br>")}</p>`,
+    );
+  }
+}
+
 const decode = (value: string) => (value.includes("&") ? decodeHTML(value) : value);
 
 function properties(source: string | undefined, inSvg: boolean): Element["properties"] {
