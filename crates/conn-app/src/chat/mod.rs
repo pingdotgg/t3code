@@ -1578,7 +1578,10 @@ impl ChatView {
 
         // Conn `.chat-content-lane`: centered `max-w-(--chat-content-max-width)` (736px) with
         // 48px horizontal padding and 16px top/bottom timeline insets carried on first/last row.
+        // Scoping each row with `("chat-vitem", idx)` guarantees distinct GPUI element / a11y
+        // node IDs across list items even if two timeline entries share an underlying id.
         let mut outer = div()
+            .id(("chat-vitem", idx))
             .w_full()
             .min_w_0()
             .px(px(CHAT_LANE_PADDING_X_PX))

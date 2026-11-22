@@ -1179,15 +1179,15 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
                 .border_1()
                 .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
         }
+    } else if recede && matches!(status, Some(RowStatus::Working | RowStatus::Goal)) {
+        card = card
+            .border_color(gpui_kit::transparent_black())
+            .opacity(0.7)
+            .hover(move |s| s.bg(hover_bg).opacity(1.0));
     } else {
         card = card
             .border_color(gpui_kit::transparent_black())
             .hover(move |s| s.bg(hover_bg));
-        if recede && matches!(status, Some(RowStatus::Working | RowStatus::Goal)) {
-            card = card
-                .opacity(0.7)
-                .hover(move |s| s.bg(hover_bg).opacity(1.0));
-        }
     }
 
     // Outer `li`: `py-0.5` (`2px`).
