@@ -337,6 +337,8 @@ export interface GitSetBranchUpstreamInput {
 
 export interface GitRemoteStatusOptions {
   readonly refreshUpstream?: boolean;
+  /** False skips the base-branch lookup and reports `aheadOfDefaultCount` as 0. */
+  readonly includeAheadOfDefault?: boolean;
 }
 
 /**
@@ -367,8 +369,10 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       options?: GitRemoteStatusOptions,
     ) => Effect.Effect<GitRemoteStatusDetails, GitCommandError>;
-    /** Refs, HEAD and shallow boundaries. Null when the snapshot cannot be read. */
-    readonly readRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    /** Refs, HEAD and shallow boundaries. Null on read failure. */
+    readonly readLocalStatusRefSnapshot: (cwd: string) => Effect.Effect<string | null>;
+    /** Includes worktree paths. Accepts an existing local status ref snapshot to avoid re-reading refs. */
+    readonly readRefSnapshot: (cwd: string, refs?: string) => Effect.Effect<string | null>;
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],

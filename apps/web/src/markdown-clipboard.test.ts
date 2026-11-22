@@ -11,19 +11,27 @@ import {
   collectAssistantCitations,
   serializeAssistantCitation,
 } from "@t3tools/shared/assistantCitations";
-import { markdownMathRanges, parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import type { Element as HastElement, ElementContent, Root } from "hast";
 
-import { unified } from "unified";
-import remarkParse from "remark-parse";
-import {
-  CHAT_MARKDOWN_REMARK_PLUGINS,
-  CHAT_USER_MARKDOWN_REMARK_PLUGINS,
-} from "@t3tools/shared/markdownPipeline";
+import { markdownTree } from "./markdown/wordsHast";
 
-const userMarkdown = unified()
-  .use(remarkParse)
-  .use(CHAT_MARKDOWN_REMARK_PLUGINS)
-  .use(CHAT_USER_MARKDOWN_REMARK_PLUGINS);
+// Copied Markdown read back as the chat reads it, to check it says what was copied.
+const elementsOf = (node: Root | HastElement) =>
+  (node.children as ElementContent[]).filter(
+    (child): child is HastElement => child.type === "element",
+  );
+const textOf = (node: ElementContent): string =>
+  node.type === "text"
+    ? node.value
+    : node.type === "element"
+      ? node.children.map(textOf).join("")
+      : "";
+const readBack = (markdown: string, options?: Parameters<typeof markdownTree>[1]) =>
+  elementsOf(markdownTree(markdown, options))[0]!;
+// A user message's reading: a single `~` stays text.
+const readUserBack = (markdown: string) => readBack(markdown, { singleTilde: false });
+const inline = (node: ElementContent) =>
+  node.type === "element" ? [node.tagName, textOf(node)] : [node.type, textOf(node)];
 
 const TEXT_NODE = 3;
 const ELEMENT_NODE = 1;
@@ -223,10 +231,10 @@ describe("serializeRenderedMarkdownFragment", () => {
         new FakeText(" here."),
       ),
     );
-    const paragraph = parseMarkdownWithMath(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children.find((child) => child.type === "inlineCode")?.value).toBe(value);
+    const paragraph = readBack(serializeRenderedMarkdownFragment(asNode(container)));
+    const code = elementsOf(paragraph).find((child) => child.tagName === "code");
+    expect(paragraph.tagName).toBe("p");
+    expect(code && textOf(code)).toBe(value);
   });
 
   it.each([
@@ -238,28 +246,24 @@ describe("serializeRenderedMarkdownFragment", () => {
     String.raw`before\ after\	end`,
   ])("copies prose that parses back unchanged: %s", (value) => {
     const container = new FakeElement("DIV").append(new FakeText(value));
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({ type: "paragraph", children: [{ type: "text", value }] });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.tagName).toBe("p");
+    expect(paragraph.children.map(inline)).toEqual([["text", value]]);
   });
 
   it.each([
-    ["*", "EM", "word", "emphasis"],
-    ["\\", "CODE", "value", "inlineCode"],
-  ])("keeps a text edge %j beside %s", (edge, tag, value, type) => {
+    ["*", "EM", "word"],
+    ["\\", "CODE", "value"],
+  ])("keeps a text edge %j beside %s", (edge, tag, value) => {
     const container = new FakeElement("DIV").append(
       new FakeText(edge),
       new FakeElement(tag).append(new FakeText(value)),
     );
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    expect(paragraph).toMatchObject({
-      type: "paragraph",
-      children: [
-        { type: "text", value: edge },
-        type === "inlineCode" ? { type, value } : { type, children: [{ type: "text", value }] },
-      ],
-    });
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(paragraph.children.map(inline)).toEqual([
+      ["text", edge],
+      [tag.toLowerCase(), value],
+    ]);
   });
 
   it("copies email links with their address and drops in-app destinations", () => {
@@ -288,10 +292,10 @@ describe("serializeRenderedMarkdownFragment", () => {
     expect(copied).toBe(
       "Write to support@example.com, [Support](mailto:support@example.com?subject=Help), [Support](mailto:support@example.com?subject=Help\\)) or the thread.",
     );
-    const paragraph = parseMarkdownWithMath(copied).children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
     expect(
-      paragraph.children.filter((child) => child.type === "link").map((link) => link.url),
+      elementsOf(readBack(copied))
+        .filter((child) => child.tagName === "a")
+        .map((link) => link.properties.href),
     ).toEqual([
       "mailto:support@example.com",
       "mailto:support@example.com?subject=Help",
@@ -312,12 +316,14 @@ describe("serializeRenderedMarkdownFragment", () => {
   ])("keeps the link label and destination: %s", (label, href) => {
     const anchor = new FakeElement("A", [], { href }).append(new FakeText(label));
     const container = new FakeElement("DIV").append(anchor);
-    const paragraph = userMarkdown.parse(serializeRenderedMarkdownFragment(asNode(container)))
-      .children[0];
-    if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
-    expect(paragraph.children).toMatchObject([
-      { type: "link", url: href, children: [{ type: "text", value: label }] },
-    ]);
+    const paragraph = readUserBack(serializeRenderedMarkdownFragment(asNode(container)));
+    expect(
+      paragraph.children.map((child) =>
+        child.type === "element"
+          ? [child.tagName, decodeURI(String(child.properties.href)), textOf(child)]
+          : [child.type, textOf(child)],
+      ),
+    ).toEqual([["a", href, label]]);
   });
 
   it("copies alert and insight callouts as their Markdown instead of the rendered label", () => {
@@ -484,31 +490,25 @@ describe("copying rendered Markdown tables", () => {
     );
     const markdown = serializeTableElementToMarkdown(table as unknown as Element);
 
-    const tree = parseMarkdownWithMath(markdown);
-    const parsed = tree.children[0];
-    if (parsed?.type !== "table") throw new Error("Expected a table");
-    expect(parsed.children.map((row) => row.children.length)).toEqual([2, 2, 2, 2, 2]);
-    expect(markdownMathRanges(markdown, tree).map((formula) => formula.tex)).toEqual([
-      "|x|",
-      "\\|x\\|",
-      "|y|",
-      "|z|",
-    ]);
-    expect(parsed.children[1]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "*a* | ~~b~~" },
-    ]);
-    expect(parsed.children[4]?.children[1]?.children).toMatchObject([
-      { type: "text", value: "> c | d" },
-    ]);
-    const [, , codeRow, linkRow] = parsed.children;
-    expect(codeRow?.children[1]?.children[0]).toMatchObject({
-      type: "inlineCode",
-      value: "\\(c|d\\)",
-    });
-    expect(linkRow?.children[0]?.children[0]).toMatchObject({
-      type: "link",
-      url: "https://example.com/?q=a|b",
-    });
+    const parsed = readBack(markdown, { math: true });
+    expect(parsed.tagName).toBe("table");
+    const rows = elementsOf(parsed).flatMap((section) => elementsOf(section));
+    const cells = rows.map((row) => elementsOf(row));
+    expect(cells.map((row) => row.length)).toEqual([2, 2, 2, 2, 2]);
+    const formulas: string[] = [];
+    const visit = (node: HastElement) => {
+      if (node.tagName === "svg") formulas.push(String(node.properties.ariaLabel));
+      else elementsOf(node).forEach(visit);
+    };
+    visit(parsed);
+    expect(formulas).toEqual(["|x|", "\\|x\\|", "|y|", "|z|"]);
+    expect(textOf(cells[1]![1]!)).toBe("*a* | ~~b~~");
+    expect(textOf(cells[4]![1]!).trim()).toBe("> c | d");
+    expect(inline(cells[2]![1]!.children[0]!)).toEqual(["code", "\\(c|d\\)"]);
+    const link = cells[3]![0]!.children[0]!;
+    expect(link.type === "element" && decodeURI(String(link.properties.href))).toBe(
+      "https://example.com/?q=a|b",
+    );
   });
 
   it("copies code and diagrams in cells without markers or unescaped pipes", () => {
