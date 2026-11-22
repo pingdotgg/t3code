@@ -25,7 +25,13 @@ export function DiffFileLoadingBoundary({ load, count }: { load: () => void; cou
   }, [isNear, count, loadLatest]);
 
   return (
-    <div ref={observe} role="status" aria-label={gt("Loading diff…")}>
+    <div
+      ref={observe}
+      role="status"
+      aria-label={gt("Loading diff…")}
+      // Out of view the pulse would keep the page drawing frames for as long as files remain.
+      className={isNear ? undefined : "[&_[data-slot=skeleton]]:animate-none"}
+    >
       {Array.from({ length: Math.min(count, 4) }, (_, index) => (
         <div key={index} aria-hidden className="border-b border-border">
           <DiffFileHeaderSkeleton titleWidth="medium" />
