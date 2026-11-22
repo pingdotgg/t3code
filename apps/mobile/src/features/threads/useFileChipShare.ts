@@ -5,7 +5,8 @@ import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { useGT } from "gt-react-native";
 import { m } from "../../i18n/messages";
-import { useEffect, useRef } from "react";
+import { useCallback, useRef } from "react";
+import { useFocusEffect } from "@react-navigation/native";
 
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { assetEnvironment } from "../../state/assets";
@@ -14,9 +15,14 @@ import { useAtomQueryRunner } from "../../state/use-atom-query-runner";
 import { fileChipShareSource, type FileChipTarget } from "./fileChipMenu";
 
 export function useFileChipShare(
-  environmentId: EnvironmentId,
-  threadId: ThreadId,
+  environmentId: EnvironmentId | null,
+  threadId: ThreadId | null,
   sourceIdentifier: string,
+  options?: {
+    readonly draftCwd?: string | null;
+    readonly filePath?: string | null;
+    readonly failureTitle?: string;
+  },
 ) {
   const gt = useGT();
   const connection = usePreparedConnection(environmentId);
@@ -25,16 +31,27 @@ export function useFileChipShare(
     refresh: true,
     reportFailure: false,
   });
-  const requestRef = useRef<AbortController | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- aborts the in-flight file share download when the component unmounts
-  useEffect(() => () => requestRef.current?.abort(), []);
+  const requestRef = useRef<{ scope: string; controller: AbortController } | null>(null);
+  const scope = JSON.stringify([environmentId, threadId, options?.draftCwd, options?.filePath]);
+  useFocusEffect(
+    useCallback(
+      () => () => {
+        const request = requestRef.current;
+        if (request?.scope === scope) {
+          requestRef.current = null;
+          request.controller.abort();
+        }
+      },
+      [scope],
+    ),
+  );
 
-  return (target: FileChipTarget) => {
-    const source = fileChipShareSource(target, threadId);
-    if (!source || requestRef.current) return;
+  return (target: FileChipTarget): Promise<void> => {
+    const source = fileChipShareSource(target, threadId, options?.draftCwd ?? null);
+    if (!source || requestRef.current || environmentId === null) return Promise.resolve();
     const request = new AbortController();
-    requestRef.current = request;
-    void (async () => {
+    requestRef.current = { scope, controller: request };
+    return (async () => {
       if (httpBaseUrl === null) throw new Error(gt("Reconnect to the environment and try again."));
       const result = await createUrl(
         { environmentId, input: { resource: source.resource } },
@@ -55,13 +72,13 @@ export function useFileChipShare(
       .catch((error: unknown) => {
         if (!request.signal.aborted) {
           Dialog.alert(
-            gt("Could not share file"),
+            options?.failureTitle ?? gt("Could not share file"),
             errorDisplayMessage(error, m) ?? gt("Try again."),
           );
         }
       })
       .finally(() => {
-        if (requestRef.current === request) {
+        if (requestRef.current?.controller === request) {
           requestRef.current = null;
         }
       });

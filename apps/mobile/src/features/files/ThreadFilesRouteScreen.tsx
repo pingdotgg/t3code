@@ -29,7 +29,7 @@ import { EmptyState } from "../../components/ui/EmptyState";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/ui/FilePreviewModal";
 import { LoadingScreen } from "../../components/LoadingScreen";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
-import { isPdfFile } from "../../lib/filePreview";
+import { isBinaryFileReadError, isPdfFile } from "../../lib/filePreview";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
@@ -52,6 +52,7 @@ import { FilePreviewLoading, FilePreviewNotice } from "./FilePreviewFeedback";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
+import { useWorkspaceFileSave } from "./useWorkspaceFileSave";
 import { preloadWorkspaceFileContents } from "./preload-workspace-file";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { ThreadFileNavigatorPane } from "./thread-file-navigator-pane";
@@ -253,6 +254,9 @@ function FileContent(props: {
   readonly threadId: ThreadId | null;
   readonly initialLine: number | null;
   readonly truncated: boolean;
+  readonly binaryFile: boolean;
+  readonly savingFile: boolean;
+  readonly onSaveFile: () => void;
   readonly selectable: boolean;
   readonly onRefresh?: () => Promise<void> | void;
 }) {
@@ -317,6 +321,21 @@ function FileContent(props: {
 
   if (props.activeMode === "preview" && isBrowserFile) {
     return <WorkspaceFileWebPreview uri={props.previewUri} />;
+  }
+
+  if (props.binaryFile) {
+    return (
+      <View className="flex-1 items-center justify-center bg-sheet px-6">
+        <EmptyState
+          title={gt("No preview for this file")}
+          detail={gt(
+            "This file type can't be shown on mobile. Save or share it to open it in another app.",
+          )}
+          actionLabel={props.savingFile ? gt("Preparing file…") : gt("Save or share")}
+          onAction={props.onSaveFile}
+        />
+      </View>
+    );
   }
 
   if (props.fileError && props.fileContents === null) {
@@ -660,6 +679,12 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const { canReadFiles } = fileAccess;
   const targetPath =
     cwd !== null && relativePath !== null ? resolveWorkspaceFilePath(cwd, relativePath) : null;
+  const { save: saveWorkspaceFile, saving: savingWorkspaceFile } = useWorkspaceFileSave({
+    environmentId,
+    cwd,
+    relativePath,
+    threadId,
+  });
   const metadata = useEnvironmentQuery(
     canReadFiles && environmentId !== null && targetPath !== null
       ? projectEnvironment.fileMetadata({ environmentId, input: { path: targetPath } })
@@ -871,6 +896,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
             onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
           } as const)
         : null,
+      {
+        id: "save-file",
+        title: savingWorkspaceFile ? gt("Preparing file…") : gt("Save or share"),
+        icon: "tray.and.arrow.down",
+        inline: false,
+        onPress: saveWorkspaceFile,
+      } as const,
       canSelectText
         ? ({
             id: "select-text",
@@ -882,7 +914,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
         : null,
       ...(mediaSource
         ? mediaActions.actions
-            .filter(({ id }) => id !== "open-file")
+            .filter(({ id }) => id !== "open-file" && id !== "save")
             .map((action) => ({
               id: action.id,
               title: action.title,
@@ -1089,6 +1121,9 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
           relativePath={relativePath}
           threadId={threadId}
           truncated={fileData?.truncated ?? false}
+          binaryFile={isBinaryFileReadError(fileQuery.failure)}
+          savingFile={savingWorkspaceFile}
+          onSaveFile={saveWorkspaceFile}
           selectable={selectingText}
           onRefresh={() => fileQuery.refresh()}
         />
