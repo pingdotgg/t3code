@@ -79,3 +79,6 @@
 "@effect/platform/HttpLayerRouter#Request.Without":
   replacement: "HttpRouter.Request.Without"
   note: "Moved with the layer-oriented router into the consolidated HttpRouter module. McpServer.McpRequest.Without is the MCP counterpart."
+"@effect/platform/HttpLayerRouter#disableLogger":
+  replacement: "HttpRouter.disableLogger"
+  note: "Moved to the consolidated HttpRouter module; provide this layer to disable HTTP request logging. CloudflareTracer.layer installs tracing and is not a replacement."
