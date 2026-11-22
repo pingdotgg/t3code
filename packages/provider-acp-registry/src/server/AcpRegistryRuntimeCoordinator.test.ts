@@ -1043,10 +1043,117 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           "model-d": lowEffort,
         });
 
+        // A follow-up clear whose retain drops only the orphaned reasoning entry must update
+        // stored state rather than short-circuiting as a no-op.
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: replacedCrossCatalog.catalogRevision,
+            retain: (live) =>
+              live.currentModelId === null
+                ? Option.none()
+                : Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["model-b"] !== undefined,
+          ),
+        ).toBe(false);
+
+        // Orphan replay preserves __proto__ as an own property alongside other slugs in the same
+        // revision, and retainedReasoning caps at 256 while evicting older revisions first.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-proto",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: Object.fromEntries([
+            ["model-b", highEffort],
+            ["__proto__", lowEffort],
+          ]),
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-proto",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        const protoOrphanBeforeClear = (yield* coordinator.getLiveConfigurationWithRevision(
+          instanceId,
+        )).pendingOptions.find((e) => e.configuration.currentModelId === null)?.configuration
+          .advertisedReasoning;
+        expect(protoOrphanBeforeClear?.["model-b"]).toEqual(highEffort);
+        expect(
+          protoOrphanBeforeClear !== undefined &&
+            Object.hasOwn(protoOrphanBeforeClear, "__proto__"),
+        ).toBe(true);
+        expect(protoOrphanBeforeClear?.["__proto__"]).toEqual(lowEffort);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: replacedCrossCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const protoOrphanAfterClear = (yield* coordinator.getLiveConfigurationWithRevision(
+          instanceId,
+        )).pendingOptions.find((e) => e.configuration.currentModelId === null)?.configuration
+          .advertisedReasoning;
+        expect(
+          protoOrphanAfterClear !== undefined && Object.hasOwn(protoOrphanAfterClear, "__proto__"),
+        ).toBe(true);
+        expect(protoOrphanAfterClear?.["__proto__"]).toEqual(lowEffort);
+
+        // Retained reasoning caps at 256 and evicts older orphaned entries before newer candidates.
+        yield* coordinator.clearLiveConfiguration(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "orphan-pub",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "oldest-orphan": highEffort },
+        });
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "orphan-pub",
+          configOptions: [modeOption("code")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        const newerAdvertised = Object.fromEntries(
+          Array.from({ length: 256 }, (_, index) => [`newer-${index}`, lowEffort]),
+        );
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "cand-pub",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: newerAdvertised,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: replacedCrossCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterCapClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterCapClear.pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["oldest-orphan"] !== undefined,
+          ),
+        ).toBe(false);
+        expect(
+          afterCapClear.pendingOptions.some(
+            (e) => e.configuration.advertisedReasoning?.["newer-255"] !== undefined,
+          ),
+        ).toBe(true);
+
         // Case 3: When model-b later reports its own full option set (either with no reasoning or
         // its own lowEffort), older pending cross-model advertisedReasoning for model-b is dropped
-        // in both live replay and post-clear retention (even if the older publisher stays or is
-        // replaced).
+        // immediately so even 256+ subsequent reasoning evictions never let model-c resurrect it.
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [
             { id: "model-a", name: "Model A", description: null },
@@ -1074,6 +1181,17 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           modelOptionIds: [],
           modelsFromModelSelect: false,
         });
+        // Cycle reasoningByModel past the 256 cap while model-c stays in optionsByModel.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-churn",
+          configOptions: [],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          advertisedReasoning: Object.fromEntries(
+            Array.from({ length: 260 }, (_, index) => [`churn-${index}`, lowEffort]),
+          ),
+        });
         const afterModelBDroppedReasoning =
           yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(
@@ -1085,7 +1203,8 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
             catalogRevision: dropReasoningCatalog.catalogRevision,
             retain: (live) =>
-              live.currentModelId === "model-b" && live.configOptions.length === 0
+              live.currentModelId === "model-churn" ||
+              (live.currentModelId === "model-b" && live.configOptions.length === 0)
                 ? Option.none()
                 : Option.some({ ...live, partialOptions: true }),
           }),

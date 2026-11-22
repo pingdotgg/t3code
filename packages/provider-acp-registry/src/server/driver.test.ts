@@ -558,6 +558,54 @@ describe("acpRegistrySnapshotReadiness", () => {
         (model.capabilities?.optionDescriptors ?? []).map((descriptor) => descriptor.id),
       ),
     ).toEqual([["mode"], ["mode", "effort"]]);
+
+    // Live reasoning-only replay (orphaned advertisedReasoning) preserves shared options on all
+    // models even when previousModels only holds learned model-specific options.
+    const lowOnlyEffort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      role: "reasoning" as const,
+      options: [{ id: "low", label: "Low" }],
+      currentValue: "low",
+    };
+    const withNarrowOpus = applyAcpRegistryLiveConfiguration(
+      overlaidEnabled,
+      {
+        models: [
+          { id: "glm", name: "GLM", description: null },
+          { id: "opus", name: "Opus", description: null, reasoningEffort: lowOnlyEffort },
+        ],
+        currentModelId: "glm",
+        configOptions: [modeDescriptor],
+        modelsFromModelSelect: true,
+      },
+      [],
+    );
+    const afterOrphanOverlay = applyAcpRegistryLiveConfiguration(
+      withNarrowOpus,
+      {
+        models: [],
+        currentModelId: null,
+        configOptions: [],
+        advertisedReasoning: { opus: effortDescriptor },
+        preserveDefault: true,
+      },
+      [],
+      [],
+    );
+    expect(afterOrphanOverlay.models.find((m) => m.slug === "glm")?.isDefault).toBe(true);
+    expect(
+      afterOrphanOverlay.models.map((model) =>
+        (model.capabilities?.optionDescriptors ?? []).map((d) => [d.id, d.currentValue]),
+      ),
+    ).toEqual([
+      [["mode", "plan"]],
+      [
+        ["mode", "plan"],
+        ["effort", "high"],
+      ],
+    ]);
   });
 
   it("keeps each Mistral Vibe model's own thinking levels", () => {
@@ -1352,6 +1400,7 @@ describe("acpRegistryEnrichmentCache", () => {
         modelOptionIds: ["effort"],
         modelsFromModelSelect: false,
         partialOptions: true,
+        replaceModelOptions: true,
       }),
     );
 
@@ -1504,6 +1553,7 @@ describe("acpRegistryEnrichmentCache", () => {
       modelOptionIds: [],
       modelsFromModelSelect: false,
       partialOptions: true,
+      replaceModelOptions: true,
     });
     expect(
       retainAcpRegistryLiveOptionsAfterProbe(
@@ -5775,7 +5825,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         });
 
         let blockReasoningWatcher = false;
-        const releaseReasoningWatcher = yield* Deferred.make<void>();
+        let releaseReasoningWatcher = yield* Deferred.make<void>();
         const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
           prefix: "acp-driver-advertised-reasoning-",
           initialModels: {
@@ -5787,15 +5837,14 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             watchLiveConfiguration: (instanceId, onUpdate, options) =>
               base.watchLiveConfiguration(
                 instanceId,
-                (configuration, revision) =>
-                  blockReasoningWatcher
-                    ? Effect.sync(() => {
-                        blockReasoningWatcher = false;
-                      }).pipe(
-                        Effect.andThen(Deferred.await(releaseReasoningWatcher)),
-                        Effect.andThen(onUpdate(configuration, revision)),
-                      )
-                    : onUpdate(configuration, revision),
+                (configuration, revision) => {
+                  if (!blockReasoningWatcher) return onUpdate(configuration, revision);
+                  blockReasoningWatcher = false;
+                  const gate = releaseReasoningWatcher;
+                  return Deferred.await(gate).pipe(
+                    Effect.andThen(onUpdate(configuration, revision)),
+                  );
+                },
                 options,
               ),
           }),
@@ -5936,8 +5985,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort"),
         ).toEqual(highEffort);
 
-        // If c advertises effort=high for b and b later reports a full option set without
-        // reasoning, a superseding probe selecting b without reasoning must not restore high.
+        // If c advertises effort=high for b and b later reports an empty full option set,
+        // the live watcher immediately removes b's old selector and a superseding probe selecting
+        // b without reasoning must not restore high.
         const modeSelect = {
           id: "mode",
           name: "Mode",
@@ -5976,7 +6026,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* coordinator.publishLiveConfiguration(identity.instanceId, {
           models: [],
           currentModelId: "b",
-          configOptions: [modeOption],
+          configOptions: [],
           modelOptionIds: [],
           modelsFromModelSelect: false,
         });
@@ -5997,6 +6047,75 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "b")
             ?.capabilities?.optionDescriptors?.some((d) => d.id === "effort") ?? false,
         ).toBe(false);
+
+        // When b previously learned effort=high and reports a full update removing effort while
+        // a superseding probe selecting a runs before the watcher drains, probe retention preserves
+        // replacement intent so b's omitted effort is removed while c keeps its learned effort.
+        const sawBLearnedAndCLearned = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "b")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+                "high" &&
+              snapshot.models
+                .find((m) => m.slug === "c")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+                "high",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "b",
+          configOptions: [modeOption, highEffort],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { c: highEffort },
+        });
+        yield* Fiber.join(sawBLearnedAndCLearned);
+
+        releaseReasoningWatcher = yield* Deferred.make<void>();
+        blockReasoningWatcher = true;
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "b",
+          configOptions: [modeOption],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "a",
+          configOptions: [modeOption],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* writeModels({
+          models: ids.map((id) => ({ modelId: id, name: id })),
+          configOptions: [modelSelect("a"), modeSelect],
+        });
+        yield* TestClock.adjust("16 minutes");
+        const probeConsumedRemoval = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const afterProbeConsumedRemoval = Option.getOrThrow(
+          yield* Fiber.join(probeConsumedRemoval),
+        );
+        yield* Deferred.succeed(releaseReasoningWatcher, undefined);
+        expect(afterProbeConsumedRemoval.models.find((m) => m.slug === "a")?.isDefault).toBe(true);
+        expect(
+          afterProbeConsumedRemoval.models
+            .find((m) => m.slug === "b")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["mode", "ask"]]);
+        expect(
+          afterProbeConsumedRemoval.models
+            .find((m) => m.slug === "c")
+            ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue,
+        ).toBe("high");
 
         // When neither live state nor a fresh probe advertises models, keep live reasoning
         // options on the synthetic default model instead of clearing them.

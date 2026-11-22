@@ -219,6 +219,9 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelsFromModelSelect?: boolean;
   // Set on retained post-probe overrides so probe-only options stay untouched.
   readonly partialOptions?: boolean;
+  // Set when a full live update for a non-probe model was retained as partial across a superseding
+  // probe so replay drops omitted learned options for that model while keeping probe descriptors.
+  readonly replaceModelOptions?: boolean;
   // Set on earlier-model retained overrides so they update model-specific options without stealing isDefault.
   readonly preserveDefault?: boolean;
   // Non-current per-model reasoning descriptors normalized from `_meta` when an

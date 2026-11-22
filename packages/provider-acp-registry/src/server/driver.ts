@@ -597,7 +597,11 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     retainedAdvertisedReasoning === undefined
       ? {}
       : { advertisedReasoning: retainedAdvertisedReasoning };
-  const preserveDefaultFields = live.preserveDefault === true ? { preserveDefault: true } : {};
+  const replaceModelOptions =
+    currentProbedModel !== undefined &&
+    currentProbedModel.id !== probe.currentModelId &&
+    (live.partialOptions !== true || live.replaceModelOptions === true);
+  const replaceModelOptionsFields = replaceModelOptions ? { replaceModelOptions: true } : {};
   const configOptions = [...sharedDescriptors, ...modelDescriptors];
   if (configOptions.length === 0) {
     // Keep the running session's model selection, capped tail update, or advertised reasoning
@@ -605,9 +609,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     if (
       matchingCappedTail === undefined &&
       retainedAdvertisedReasoning === undefined &&
-      (live.preserveDefault === true ||
-        currentProbedModel === undefined ||
-        currentProbedModel.id === probe.currentModelId)
+      (currentProbedModel === undefined || currentProbedModel.id === probe.currentModelId)
     ) {
       return Option.none();
     }
@@ -618,7 +620,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
       modelOptionIds: [],
       modelsFromModelSelect: false,
       partialOptions: true,
-      ...preserveDefaultFields,
+      ...replaceModelOptionsFields,
       ...overflowFields,
       ...advertisedReasoningFields,
     });
@@ -632,7 +634,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     modelOptionIds: modelDescriptors.map((descriptor) => descriptor.id),
     modelsFromModelSelect: false,
     partialOptions: true,
-    ...preserveDefaultFields,
+    ...replaceModelOptionsFields,
     ...overflowFields,
     ...advertisedReasoningFields,
   });
@@ -1306,7 +1308,8 @@ export function applyAcpRegistryLiveConfiguration(
     !useLiveCatalog &&
     effectiveConfigOptions.length === 0 &&
     !hasAdvertisedReasoning &&
-    tailSlotReplacement === undefined
+    tailSlotReplacement === undefined &&
+    !liveCurrentModelInProbed
       ? stripReasoningForDisabledModels(
           withAcpRegistryDefaultModel(provider.models, selectedProbedModelId),
           disabledReasoningSlugs,
@@ -1780,7 +1783,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               ? Option.some(configuration)
               : retainAcpRegistryLiveOptionsAfterProbe(configuration, probeOptions);
           const replacedLiveModelId =
-            configuration.partialOptions !== true &&
+            (configuration.partialOptions !== true || configuration.replaceModelOptions === true) &&
             configuration.currentModelId !== null &&
             (probeOptions.models.some((model) => model.id === configuration.currentModelId) ||
               (configuration.cappedLastModel !== undefined &&
@@ -2242,7 +2245,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       Option.isSome(liveSnapshot.catalog) ||
                       Option.isSome(liveSnapshot.configuration) ||
                       Option.isSome(afterClear.configuration) ||
-                      afterClear.pendingOptions.length > 0 ||
                       afterClear.revision > liveSnapshot.revision ||
                       accepted.probeOptions !== null;
                     yield* resetAppliedLiveRevisions;
@@ -2261,17 +2263,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       Math.max(prev, clearedThroughRevision),
                     );
                   }
-                  const acceptedAfter = yield* Ref.get(acceptedCatalog);
                   const completedAt = yield* Clock.currentTimeMillis;
                   yield* Ref.update(enrichmentCache, (latestCache) => ({
                     ...latestCache,
                     entry: {
                       // Cache the winning catalog while keeping the retry TTL from the fresh probe.
-                      provider:
-                        (!probeSupersedesLiveCatalog || acceptedAfter.probeOptions === null) &&
-                        published.models !== resolved.models
-                          ? { ...resolved, models: published.models }
-                          : resolved,
+                      provider: !probeSupersedesLiveCatalog
+                        ? { ...resolved, models: published.models }
+                        : resolved,
                       expiresAt: completedAt + acpRegistryProbeTtlMs(provider),
                     },
                   }));
@@ -2346,15 +2345,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 liveSnapshotSemaphore.withPermit(
                   Effect.uninterruptible(
                     Effect.gen(function* () {
-                      const currentLive =
-                        yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(
+                      const clearedThroughRevision =
+                        yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
                           instanceId,
                         );
                       const appliedRevision = yield* Ref.get(lastAppliedLiveRevision);
-                      if (
-                        revision <= currentLive.clearedThroughRevision ||
-                        revision < appliedRevision
-                      ) {
+                      if (revision <= clearedThroughRevision || revision < appliedRevision) {
                         return;
                       }
                       const rawCurrent = yield* getSnapshot;

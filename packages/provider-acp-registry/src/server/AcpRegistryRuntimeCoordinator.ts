@@ -61,9 +61,7 @@ type AcpRegistryAdvertisedReasoningDescriptor = NonNullable<
 >;
 
 interface StoredAdvertisedReasoning {
-  // `null` records that the model itself published a newer full option set
-  // (`currentModelId === slug`), superseding older cross-model `advertisedReasoning`.
-  readonly descriptor: AcpRegistryAdvertisedReasoningDescriptor | null;
+  readonly descriptor: AcpRegistryAdvertisedReasoningDescriptor;
   readonly revision: number;
   readonly partialOptions?: boolean;
 }
@@ -114,23 +112,18 @@ const sortedPendingOptions = (
 ): ReadonlyArray<AcpRegistryRevisionedLiveConfiguration> =>
   Array.from(optionsByModel.values()).sort((left, right) => left.revision - right.revision);
 
-const filterEntryAdvertisedReasoning = (
+const stripAdvertisedReasoningSlugs = (
   entry: AcpRegistryRevisionedLiveConfiguration,
-  reasoningByModel: ReadonlyMap<string, StoredAdvertisedReasoning>,
-  coveredReasoningSlugs?: Set<string>,
+  supersededSlugs: ReadonlySet<string>,
 ): AcpRegistryRevisionedLiveConfiguration => {
   const reasoning = entry.configuration.advertisedReasoning;
   if (reasoning === undefined) return entry;
   let changed = false;
   const kept: Array<readonly [string, AcpRegistryAdvertisedReasoningDescriptor]> = [];
   for (const [slug, descriptor] of Object.entries(reasoning)) {
-    const tracked = reasoningByModel.get(slug);
-    if (tracked !== undefined) {
-      if (tracked.descriptor === null || entry.revision < tracked.revision) {
-        changed = true;
-        continue;
-      }
-      coveredReasoningSlugs?.add(slug);
+    if (supersededSlugs.has(slug)) {
+      changed = true;
+      continue;
     }
     kept.push([slug, descriptor]);
   }
@@ -143,72 +136,68 @@ const filterEntryAdvertisedReasoning = (
   };
 };
 
-const collectOrphanedReasoningByRevision = (
+const makeOrphanedReasoningConfiguration = (
+  entries: ReadonlyArray<readonly [string, AcpRegistryAdvertisedReasoningDescriptor]>,
+  partialOptions: boolean,
+): AcpRegistryLiveConfiguration => ({
+  models: [],
+  modelsFromModelSelect: false,
+  currentModelId: null,
+  configOptions: [],
+  advertisedReasoning: Object.fromEntries(entries),
+  ...(partialOptions ? { partialOptions: true } : {}),
+  preserveDefault: true,
+});
+
+const collectOrphanedReasoningSteps = (
   reasoningByModel: ReadonlyMap<string, StoredAdvertisedReasoning>,
   coveredReasoningSlugs: ReadonlySet<string>,
-): ReadonlyArray<
-  readonly [
-    number,
-    {
-      readonly entries: Record<string, AcpRegistryAdvertisedReasoningDescriptor>;
-      readonly partialOptions: boolean;
-    },
-  ]
-> => {
+): ReadonlyArray<AcpRegistryRevisionedLiveConfiguration> => {
   if (reasoningByModel.size === 0) return [];
   const orphanedByRevision = new Map<
     number,
     {
-      readonly entries: Record<string, AcpRegistryAdvertisedReasoningDescriptor>;
+      readonly entries: Array<readonly [string, AcpRegistryAdvertisedReasoningDescriptor]>;
       readonly partialOptions: boolean;
     }
   >();
   for (const [slug, tracked] of reasoningByModel) {
-    if (tracked.descriptor === null || coveredReasoningSlugs.has(slug)) continue;
+    if (coveredReasoningSlugs.has(slug)) continue;
     const existing = orphanedByRevision.get(tracked.revision);
     if (existing === undefined) {
       orphanedByRevision.set(tracked.revision, {
-        entries: { [slug]: tracked.descriptor },
+        entries: [[slug, tracked.descriptor]],
         partialOptions: tracked.partialOptions === true,
       });
     } else {
-      existing.entries[slug] = tracked.descriptor;
+      existing.entries.push([slug, tracked.descriptor]);
     }
   }
-  return Array.from(orphanedByRevision.entries()).sort(
-    ([leftRev], [rightRev]) => leftRev - rightRev,
-  );
+  return Array.from(orphanedByRevision.entries())
+    .sort(([leftRev], [rightRev]) => leftRev - rightRev)
+    .map(([revision, bucket]) => ({
+      revision,
+      configuration: makeOrphanedReasoningConfiguration(bucket.entries, bucket.partialOptions),
+    }));
 };
 
 const buildEffectivePendingOptions = (
   optionsByModel: ReadonlyMap<string | null, AcpRegistryRevisionedLiveConfiguration>,
   reasoningByModel: ReadonlyMap<string, StoredAdvertisedReasoning>,
 ): ReadonlyArray<AcpRegistryRevisionedLiveConfiguration> => {
-  if (optionsByModel.size === 0 && reasoningByModel.size === 0) return [];
+  const pending = sortedPendingOptions(optionsByModel);
+  if (reasoningByModel.size === 0) return pending;
   const coveredReasoningSlugs = new Set<string>();
-  const pending: Array<AcpRegistryRevisionedLiveConfiguration> = [];
-  for (const entry of sortedPendingOptions(optionsByModel)) {
-    pending.push(filterEntryAdvertisedReasoning(entry, reasoningByModel, coveredReasoningSlugs));
-  }
-  const orphaned = collectOrphanedReasoningByRevision(reasoningByModel, coveredReasoningSlugs);
-  if (orphaned.length > 0) {
-    for (const [revision, bucket] of orphaned) {
-      pending.push({
-        revision,
-        configuration: {
-          models: [],
-          modelsFromModelSelect: false,
-          currentModelId: null,
-          configOptions: [],
-          advertisedReasoning: bucket.entries,
-          ...(bucket.partialOptions ? { partialOptions: true } : {}),
-          preserveDefault: true,
-        },
-      });
+  for (const entry of pending) {
+    const reasoning = entry.configuration.advertisedReasoning;
+    if (reasoning === undefined) continue;
+    for (const slug of Object.keys(reasoning)) {
+      coveredReasoningSlugs.add(slug);
     }
-    pending.sort((left, right) => left.revision - right.revision);
   }
-  return pending;
+  const orphaned = collectOrphanedReasoningSteps(reasoningByModel, coveredReasoningSlugs);
+  if (orphaned.length === 0) return pending;
+  return [...pending, ...orphaned].sort((left, right) => left.revision - right.revision);
 };
 
 const toPublicLiveConfigurationSnapshot = (
@@ -278,6 +267,9 @@ export class AcpRegistryRuntimeCoordinator extends Context.Service<
     readonly getLiveConfiguration: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<Option.Option<AcpRegistryLiveConfiguration>>;
+    readonly getLiveConfigurationClearedThroughRevision: (
+      instanceId: ProviderInstanceId,
+    ) => Effect.Effect<number>;
     readonly getLiveConfigurationWithRevision: (
       instanceId: ProviderInstanceId,
     ) => Effect.Effect<AcpRegistryLiveConfigurationSnapshot>;
@@ -491,29 +483,46 @@ const make = Effect.gen(function* () {
               });
             }
             for (const [key, entry] of current.optionsByModel) {
-              const filteredEntry = filterEntryAdvertisedReasoning(entry, current.reasoningByModel);
               if (
                 preservedCatalogReasoning !== undefined &&
                 current.catalog !== null &&
                 key === current.catalog.configuration.currentModelId
               ) {
                 candidates.set(key, {
-                  revision: filteredEntry.revision,
+                  revision: entry.revision,
                   configuration: {
-                    ...filteredEntry.configuration,
+                    ...entry.configuration,
                     advertisedReasoning: {
                       ...preservedCatalogReasoning,
-                      ...filteredEntry.configuration.advertisedReasoning,
+                      ...entry.configuration.advertisedReasoning,
                     },
                   },
                 });
                 continue;
               }
-              candidates.set(key, filteredEntry);
+              candidates.set(key, entry);
             }
+            const coveredReasoningSlugs = new Set<string>();
+            if (current.reasoningByModel.size > 0) {
+              for (const entry of candidates.values()) {
+                const reasoning = entry.configuration.advertisedReasoning;
+                if (reasoning === undefined) continue;
+                for (const slug of Object.keys(reasoning)) {
+                  coveredReasoningSlugs.add(slug);
+                }
+              }
+            }
+            const steps: Array<{
+              readonly entry: AcpRegistryRevisionedLiveConfiguration;
+              readonly isOrphan: boolean;
+            }> = [
+              ...sortedPendingOptions(candidates).map((entry) => ({ entry, isOrphan: false })),
+              ...collectOrphanedReasoningSteps(current.reasoningByModel, coveredReasoningSlugs).map(
+                (entry) => ({ entry, isOrphan: true }),
+              ),
+            ].sort((left, right) => left.entry.revision - right.entry.revision);
             const retained = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             const retainedReasoning = new Map<string, StoredAdvertisedReasoning>();
-            const coveredReasoningSlugs = new Set<string>();
             const recordRetainedReasoning = (
               advertisedReasoning: AcpRegistryLiveConfiguration["advertisedReasoning"],
               revision: number,
@@ -531,28 +540,25 @@ const make = Effect.gen(function* () {
                 });
               }
             };
-            for (const entry of sortedPendingOptions(candidates)) {
-              if (entry.configuration.advertisedReasoning !== undefined) {
-                for (const slug of Object.keys(entry.configuration.advertisedReasoning)) {
-                  const tracked = current.reasoningByModel.get(slug);
-                  if (
-                    tracked !== undefined &&
-                    tracked.descriptor !== null &&
-                    entry.revision >= tracked.revision
-                  ) {
-                    coveredReasoningSlugs.add(slug);
-                  }
-                }
-              }
+            for (const { entry, isOrphan } of steps) {
               const kept = retain({
                 ...entry.configuration,
                 models: [],
                 modelsFromModelSelect: false,
               });
               if (Option.isNone(kept)) continue;
+              if (isOrphan) {
+                recordRetainedReasoning(
+                  kept.value.advertisedReasoning,
+                  entry.revision,
+                  null,
+                  kept.value.partialOptions === true,
+                );
+                continue;
+              }
               if (entry.revision < current.revision) {
-                // Earlier models keep only model-specific options, advertised reasoning, and
-                // displaced-tail metadata without stealing default selection or shared options.
+                // Earlier models keep only model-specific options, advertised reasoning,
+                // replacement intent, and displaced-tail metadata without stealing default or shared options.
                 const modelOptionIds = new Set(kept.value.modelOptionIds ?? []);
                 const modelOnlyOptions = kept.value.configOptions.filter((descriptor) =>
                   modelOptionIds.has(descriptor.id),
@@ -560,7 +566,13 @@ const make = Effect.gen(function* () {
                 const hasAdvertisedReasoning =
                   kept.value.advertisedReasoning !== undefined &&
                   Object.keys(kept.value.advertisedReasoning).length > 0;
-                if (modelOnlyOptions.length === 0 && !hasAdvertisedReasoning) continue;
+                if (
+                  modelOnlyOptions.length === 0 &&
+                  !hasAdvertisedReasoning &&
+                  kept.value.replaceModelOptions !== true
+                ) {
+                  continue;
+                }
                 const keepDisplacedTailModel =
                   kept.value.cappedLastModel !== undefined &&
                   kept.value.cappedPrefixKey !== undefined &&
@@ -602,27 +614,6 @@ const make = Effect.gen(function* () {
                 kept.value.advertisedReasoning,
                 entry.revision,
                 kept.value.currentModelId,
-                kept.value.partialOptions === true,
-              );
-            }
-            for (const [revision, bucket] of collectOrphanedReasoningByRevision(
-              current.reasoningByModel,
-              coveredReasoningSlugs,
-            )) {
-              const kept = retain({
-                models: [],
-                modelsFromModelSelect: false,
-                currentModelId: null,
-                configOptions: [],
-                advertisedReasoning: bucket.entries,
-                ...(bucket.partialOptions ? { partialOptions: true } : {}),
-                preserveDefault: true,
-              });
-              if (Option.isNone(kept)) continue;
-              recordRetainedReasoning(
-                kept.value.advertisedReasoning,
-                revision,
-                null,
                 kept.value.partialOptions === true,
               );
             }
@@ -697,11 +688,33 @@ const make = Effect.gen(function* () {
             // Keep the active catalog and per-model options separate; a new catalog replaces
             // prior per-model options while options-only updates preserve earlier models' entries.
             const catalog = hasCatalog ? { configuration, revision } : current.catalog;
+            const incoming = configuration.advertisedReasoning;
+            const incomingEntries =
+              incoming === undefined
+                ? []
+                : Object.entries(incoming).filter(
+                    ([slug]) => slug !== configuration.currentModelId,
+                  );
+            const supersededSlugs = new Set<string>();
+            if (configuration.currentModelId !== null) {
+              supersededSlugs.add(configuration.currentModelId);
+            }
+            for (const [slug] of incomingEntries) {
+              supersededSlugs.add(slug);
+            }
             const optionsByModel = hasCatalog
               ? EMPTY_OPTIONS_BY_MODEL
               : (() => {
-                  const updated = new Map(current.optionsByModel);
-                  updated.delete(configuration.currentModelId);
+                  const updated = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
+                  for (const [key, entry] of current.optionsByModel) {
+                    if (key === configuration.currentModelId) continue;
+                    updated.set(
+                      key,
+                      supersededSlugs.size === 0
+                        ? entry
+                        : stripAdvertisedReasoningSlugs(entry, supersededSlugs),
+                    );
+                  }
                   updated.set(configuration.currentModelId, { configuration, revision });
                   while (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
                     const oldestKey = updated.keys().next().value;
@@ -713,33 +726,19 @@ const make = Effect.gen(function* () {
             const reasoningByModel = hasCatalog
               ? EMPTY_REASONING_BY_MODEL
               : (() => {
-                  const selfSlug =
-                    configuration.partialOptions !== true ? configuration.currentModelId : null;
-                  const hasSelfToSupersede =
-                    selfSlug !== null && current.reasoningByModel.has(selfSlug);
-                  const incoming = configuration.advertisedReasoning;
-                  const incomingEntries =
-                    incoming === undefined
-                      ? []
-                      : Object.entries(incoming).filter(
-                          ([slug]) => slug !== configuration.currentModelId,
-                        );
-                  if (!hasSelfToSupersede && incomingEntries.length === 0) {
+                  const hasSelfToDelete =
+                    configuration.currentModelId !== null &&
+                    current.reasoningByModel.has(configuration.currentModelId);
+                  if (!hasSelfToDelete && incomingEntries.length === 0) {
                     return current.reasoningByModel;
                   }
                   const updated = new Map(current.reasoningByModel);
-                  if (hasSelfToSupersede) {
-                    updated.delete(selfSlug);
-                    updated.set(selfSlug, { descriptor: null, revision });
+                  if (configuration.currentModelId !== null) {
+                    updated.delete(configuration.currentModelId);
                   }
-                  const isPartial = configuration.partialOptions === true;
                   for (const [slug, descriptor] of incomingEntries) {
                     updated.delete(slug);
-                    updated.set(slug, {
-                      descriptor,
-                      revision,
-                      ...(isPartial ? { partialOptions: true } : {}),
-                    });
+                    updated.set(slug, { descriptor, revision });
                   }
                   while (updated.size > MAX_TRACKED_MODEL_OPTIONS) {
                     const oldestKey = updated.keys().next().value;
@@ -760,7 +759,6 @@ const make = Effect.gen(function* () {
                   }
                   const added: Array<string> = [];
                   if (
-                    configuration.partialOptions !== true &&
                     configuration.currentModelId !== null &&
                     Object.hasOwn(catalogReasoning, configuration.currentModelId) &&
                     !current.catalogReasoningSupersededSlugs.has(configuration.currentModelId)
@@ -819,8 +817,15 @@ const make = Effect.gen(function* () {
 
   const getLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["getLiveConfiguration"] =
     Effect.fn("AcpRegistryRuntimeCoordinator.getLiveConfiguration")(function* (instanceId) {
-      return (yield* getLiveConfigurationWithRevision(instanceId)).configuration;
+      return (yield* Ref.get(liveConfigurations)).get(instanceId)?.configuration ?? Option.none();
     });
+
+  const getLiveConfigurationClearedThroughRevision: AcpRegistryRuntimeCoordinator["Service"]["getLiveConfigurationClearedThroughRevision"] =
+    Effect.fn("AcpRegistryRuntimeCoordinator.getLiveConfigurationClearedThroughRevision")(
+      function* (instanceId) {
+        return (yield* Ref.get(liveConfigurations)).get(instanceId)?.clearedThroughRevision ?? 0;
+      },
+    );
 
   const watchLiveConfiguration: AcpRegistryRuntimeCoordinator["Service"]["watchLiveConfiguration"] =
     (instanceId, onUpdate, options) =>
@@ -954,6 +959,7 @@ const make = Effect.gen(function* () {
     clearLiveConfigurationIfRevision,
     publishLiveConfiguration,
     getLiveConfiguration,
+    getLiveConfigurationClearedThroughRevision,
     getLiveConfigurationWithRevision,
     watchLiveConfiguration,
     requestUrlAuthentication,
