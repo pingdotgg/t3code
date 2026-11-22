@@ -478,8 +478,11 @@ function holdPaneStrip(
 }
 
 function attachPaneStrip(entry: PaneStrip, slot: HTMLElement): void {
-  if (!entry.strip.isConnected) entry.restoreScroll = true;
-  if (entry.strip.parentNode !== slot) moveInto(slot, entry.strip);
+  if (entry.strip.parentNode !== slot) {
+    // Inserted again, the strip starts unscrolled; the next placement puts its scroll back.
+    entry.restoreScroll = true;
+    moveInto(slot, entry.strip);
+  }
   if (entry.foot.parentNode !== slot) moveInto(slot, entry.foot);
 }
 
@@ -506,10 +509,9 @@ function showStripLayer(layer: HTMLElement, parent: HTMLElement, shown: boolean)
 }
 
 function moveInto(parent: HTMLElement, node: HTMLElement): void {
-  // moveBefore keeps the node's scroll and running transitions where it exists.
-  const atomic = (parent as { moveBefore?: (node: Node, child: Node | null) => void }).moveBefore;
-  if (atomic && node.isConnected) atomic.call(parent, node, null);
-  else parent.append(node);
+  // Not moveBefore: Chrome stops restyling a node it moves into a pane that the same commit
+  // shows out of content-visibility:hidden (SurfaceHost.tsx), leaving the strip blank or stale.
+  parent.append(node);
 }
 
 const PANE_JOIN_EASING = "ease-out";
