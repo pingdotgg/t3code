@@ -751,14 +751,14 @@ describe("RelayClient", () => {
             Effect.gen(function* () {
               const fileSystem = yield* FileSystem.FileSystem;
               const pathBinary = `${baseDir}/bin/cloudflared`;
-              const older = managedPathFor(baseDir, "2025.9.0");
-              const newer = managedPathFor(baseDir, "2026.1.0");
+              const older = managedPathFor(baseDir, "2026.10.2");
+              const newer = managedPathFor(baseDir, "2026.10.3");
               const pinned = managedPathFor(baseDir, RelayClient.CLOUDFLARED_VERSION);
               const newerServer = managedPathFor(baseDir, "2099.1.0");
               versions[newerServer] = "2099.1.0";
               yield* writeExecutable(newerServer);
               versions[pathBinary] = "2026.10.3";
-              versions[older] = "2025.9.0";
+              versions[older] = "2026.10.2";
               versions[newer] = "2026.10.3";
               yield* writeExecutable(pathBinary);
               yield* writeExecutable(older);
@@ -784,11 +784,11 @@ describe("RelayClient", () => {
               yield* manager.pruneManagedVersions;
               expect(
                 (yield* fileSystem.readDirectory(`${baseDir}/tools/cloudflared`)).sort(),
-              ).toEqual(["2026.1.0", RelayClient.CLOUDFLARED_VERSION, "2099.1.0"]);
+              ).toEqual(["2026.10.3", RelayClient.CLOUDFLARED_VERSION, "2099.1.0"]);
 
               yield* fileSystem.remove(pinned);
               expect(yield* resolveWith).toMatchObject({ source: "managed", version: "2026.10.3" });
-              yield* fileSystem.remove(`${baseDir}/tools/cloudflared/2026.1.0`, {
+              yield* fileSystem.remove(`${baseDir}/tools/cloudflared/2026.10.3`, {
                 recursive: true,
               });
               expect(yield* resolveWith).toMatchObject({ source: "path", version: "2026.10.3" });
@@ -797,6 +797,30 @@ describe("RelayClient", () => {
         );
       },
     );
+
+    it.effect.skipIf(windowsHost)("prunes an older release below the minimum version", () => {
+      const versions: Record<string, string> = {};
+      return run(
+        (baseDir) =>
+          Effect.gen(function* () {
+            const fileSystem = yield* FileSystem.FileSystem;
+            const pinned = managedPathFor(baseDir, RelayClient.CLOUDFLARED_VERSION);
+            const outdated = managedPathFor(baseDir, "2026.10.0");
+            versions[pinned] = RelayClient.CLOUDFLARED_VERSION;
+            versions[outdated] = "2026.10.0";
+            yield* writeExecutable(pinned);
+            yield* writeExecutable(outdated);
+            const manager = yield* RelayClient.makeCloudflaredRelayClient({ baseDir });
+
+            yield* manager.pruneManagedVersions;
+
+            expect(
+              (yield* fileSystem.readDirectory(`${baseDir}/tools/cloudflared`)).sort(),
+            ).toEqual([RelayClient.CLOUDFLARED_VERSION]);
+          }),
+        { versions },
+      );
+    });
 
     it.effect.skipIf(windowsHost)(
       "keeps a self-updated managed binary as a fallback but still installs the pin",

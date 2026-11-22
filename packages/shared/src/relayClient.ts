@@ -422,8 +422,14 @@ export const makeCloudflaredRelayClient = Effect.fn("cloudflared.make")(function
   }).pipe(Effect.withSpan("cloudflared.resolve"));
 
   const pruneManagedVersions: RelayClientShape["pruneManagedVersions"] = Effect.gen(function* () {
-    // Retain the newest older release for rollback or older servers that cannot redownload it.
-    for (const version of (yield* olderManagedVersions).slice(1)) {
+    const olderVersions = yield* olderManagedVersions;
+    // Keep the newest older release that can still run, for rollback or older servers
+    // that cannot redownload it. Releases below the minimum version are unusable.
+    const retained = olderVersions.find(
+      (version) => compareCloudflaredVersions(version, CLOUDFLARED_MIN_VERSION) >= 0,
+    );
+    for (const version of olderVersions) {
+      if (version === retained) continue;
       // Windows cannot delete another server's running connector; retry next prune.
       yield* fileSystem.remove(path.join(managedRoot, version), { recursive: true }).pipe(
         Effect.tap(() => Effect.logInfo("Removed an older managed relay client", { version })),
