@@ -36,6 +36,14 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      # Only used to re-measure agentContextBudget.json when the merge conflicts on it.
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1.15.0
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: false
+
       - name: Merge the latest upstream nightly
         shell: bash
         run: |
@@ -84,8 +92,27 @@ jobs:
           git switch -c "$branch"
           if ! git merge --no-ff -m "chore: merge upstream nightly $source_tag" "$source_sha"; then
             conflicts="$(git diff --name-only --diff-filter=U | head -20 | tr '\n' ' ')"
-            git merge --abort
-            fail "merging $source_tag into main conflicts in: $conflicts"
+            budget=apps/server/src/provider/agentContextBudget.json
+            if [[ "$conflicts" != "$budget " ]]; then
+              git merge --abort
+              fail "merging $source_tag into main conflicts in: $conflicts"
+            fi
+            # Both sides move this generated file, so re-measure it on the merged tree instead of picking a side.
+            git checkout --theirs -- "$budget"
+            vp i --frozen-lockfile
+            printf '{"claudeSystemAppendBytes":0,"codexAdditionalContextBytes":0,"mcpToolListJsonBytes":0}' > "$budget"
+            (cd apps/server && vp test run src/provider/AgentContextBudget.test.ts > "$RUNNER_TEMP/budget.log" 2>&1) || true
+            measured="$(grep -E '^\+ +"[A-Za-z]+": [0-9]+' "$RUNNER_TEMP/budget.log" | sed 's/^+ *//; s/,$//' | paste -sd, -)"
+            if [[ -z "$measured" ]] || ! echo "{$measured}" | jq . > "$budget"; then
+              git merge --abort
+              fail "could not re-measure agentContextBudget.json while merging $source_tag"
+            fi
+            if ! (cd apps/server && vp test run src/provider/AgentContextBudget.test.ts); then
+              git merge --abort
+              fail "agentContextBudget.json still fails its test after re-measuring while merging $source_tag"
+            fi
+            git add "$budget"
+            git commit --no-edit
           fi
 
           old_tag="$(sed -n 's/^ *PATCH_BASE: //p' .github/workflows/patched-nightly.yml)"

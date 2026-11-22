@@ -14,8 +14,10 @@ Git remembers a conflict resolution once the sync PR is merged, so a drift is fi
 ## When it needs you
 
 A conflict or failing check in the sync wakes the fix-forward agent through the webhook (secret
-`NIGHTLY_FIX_WEBHOOK_URL`); the health workflow also reports a sync PR open for over 36 hours. To do it by hand
-from a fresh `main`:
+`NIGHTLY_FIX_WEBHOOK_URL`); the health workflow also reports a sync PR open for over 36 hours. The one conflict the
+sync resolves itself is `agentContextBudget.json`, which upstream and the fork both move: it takes upstream's file,
+re-measures it with `AgentContextBudget.test.ts` on the merged tree, and commits the merge. A conflict in any other
+file aborts the merge and wakes the agent. To do it by hand from a fresh `main`:
 
 ```sh
 git fetch origin && git fetch upstream --tags
