@@ -115,7 +115,7 @@ async function resolveSpawnExecutableWithNode(
     if (normalizedPathEntry.length === 0) continue;
     const names =
       platform === "win32"
-        ? listPathDirectorySync(normalizedPathEntry, path.isAbsolute)
+        ? await listResolverPathDirectory(normalizedPathEntry, path.isAbsolute)
         : undefined;
     for (const candidate of candidates) {
       if (isAbsentFromListing(names, candidate)) continue;
@@ -665,42 +665,42 @@ export const PathDirectoryListings = Context.Reference(
   { defaultValue: () => Effect.runSync(makePathDirectoryListings) },
 );
 
-const syncPathDirectoryListings = new Map<
+const resolverPathDirectoryListings = new Map<
   string,
   { readonly modified: number; readonly names: ReadonlySet<string> }
 >();
 
-// The synchronous resolver's counterpart of `PathDirectoryListings`, under the same rules.
-function listPathDirectorySync(
+// The spawn resolver's counterpart of `PathDirectoryListings`, under the same rules.
+async function listResolverPathDirectory(
   directory: string,
   isAbsolute: (path: string) => boolean,
-): ReadonlySet<string> | undefined {
+): Promise<ReadonlySet<string> | undefined> {
   let modified: number;
   try {
-    const stats = NodeFS.statSync(directory);
+    const stats = await NodeFS.promises.stat(directory);
     if (!stats.isDirectory()) return undefined;
     modified = stats.mtimeMs;
   } catch (error) {
     return (error as NodeJS.ErrnoException).code === "ENOENT" ? NO_DIRECTORY_NAMES : undefined;
   }
-  const cached = syncPathDirectoryListings.get(directory);
+  const cached = resolverPathDirectoryListings.get(directory);
   if (cached?.modified === modified) return cached.names;
-  syncPathDirectoryListings.delete(directory);
+  resolverPathDirectoryListings.delete(directory);
   // This resolver runs outside Effect, so it has no Clock to read.
   // @effect-diagnostics-next-line globalDate:off
   const listedAtMs = Date.now();
   let names: ReadonlySet<string>;
   try {
-    names = new Set(NodeFS.readdirSync(directory).map((entry) => entry.toLowerCase()));
+    names = new Set((await NodeFS.promises.readdir(directory)).map((entry) => entry.toLowerCase()));
   } catch {
     return undefined;
   }
   if (isReusableListing(directory, modified, listedAtMs, isAbsolute)) {
-    if (syncPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
-      const oldest = syncPathDirectoryListings.keys().next().value;
-      if (oldest !== undefined) syncPathDirectoryListings.delete(oldest);
+    if (resolverPathDirectoryListings.size >= PATH_DIRECTORY_LISTINGS_MAX_ENTRIES) {
+      const oldest = resolverPathDirectoryListings.keys().next().value;
+      if (oldest !== undefined) resolverPathDirectoryListings.delete(oldest);
     }
-    syncPathDirectoryListings.set(directory, { modified, names });
+    resolverPathDirectoryListings.set(directory, { modified, names });
   }
   return names;
 }

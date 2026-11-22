@@ -577,7 +577,9 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
           ),
         ).toBe(path.join(directory, "audit-command"));
         const resolveExecutable = yield* SpawnExecutableResolution;
-        expect(resolveExecutable("audit-command", "linux", env)).toBe(executable);
+        expect(
+          yield* Effect.promise(async () => resolveExecutable("audit-command", "linux", env)),
+        ).toBe(executable);
       }),
   );
 
@@ -736,7 +738,7 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 
   // A POSIX directory joined with win32 separators names nothing, so this needs a Windows host.
   it.effect.skipIf(HostProcess.Platform.defaultValue() !== "win32")(
-    "relists a changed PATH directory in the synchronous spawn resolver",
+    "relists a changed PATH directory in the spawn resolver",
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -746,11 +748,17 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
         yield* fs.utimes(directory, 946_684_800, 946_684_800);
         const env = { PATH: directory, PATHEXT: ".EXE;.CMD" };
         const resolveExecutable = yield* SpawnExecutableResolution;
-        expect(resolveExecutable("cursor", "win32", env)).toBe(path.join(directory, "cursor.CMD"));
-        expect(resolveExecutable("late", "win32", env)).toBeUndefined();
+        expect(yield* Effect.promise(async () => resolveExecutable("cursor", "win32", env))).toBe(
+          path.join(directory, "cursor.CMD"),
+        );
+        expect(
+          yield* Effect.promise(async () => resolveExecutable("late", "win32", env)),
+        ).toBeUndefined();
         yield* fs.writeFileString(path.join(directory, "late.EXE"), "");
         yield* fs.utimes(directory, 946_684_830, 946_684_830);
-        expect(resolveExecutable("late", "win32", env)).toBe(path.join(directory, "late.EXE"));
+        expect(yield* Effect.promise(async () => resolveExecutable("late", "win32", env))).toBe(
+          path.join(directory, "late.EXE"),
+        );
       }),
   );
 });
