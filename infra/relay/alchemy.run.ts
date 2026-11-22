@@ -6,10 +6,12 @@ import * as Cloudflare from "@alchemy.run/cloudflare";
 import * as Drizzle from "@alchemy.run/drizzle";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Planetscale from "@alchemy.run/planetscale";
 
 import { PublishClientConfig, tokenDigest } from "./src/clientConfig.ts";
 import * as RelayDb from "./src/db.ts";
+import { relayDatabaseProviderConfig } from "./src/dbConfig.ts";
 import { MobileSourceMapsUploadCredentials, RelayObservability } from "./src/observability.ts";
 import { isPreviewStage } from "./src/previewStages.ts";
 import { PreviewTunnelSweep, PreviewTunnelSweepProvider } from "./src/previewTunnelSweep.ts";
@@ -30,7 +32,10 @@ export default Alchemy.Stack(
   },
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
-    const db = yield* RelayDb.PlanetscaleDatabase;
+    const db =
+      (yield* relayDatabaseProviderConfig) === "external"
+        ? undefined
+        : yield* RelayDb.PlanetscaleDatabase;
     const hyperdrive = yield* RelayDb.RelayHyperdrive;
     const managedEndpointZone = yield* ManagedEndpointZone.pipe(Effect.orDie);
     const relayApiZone = yield* RelayApiZone.pipe(Effect.orDie);
@@ -45,39 +50,48 @@ export default Alchemy.Stack(
         workerName: api.workerName,
       });
     }
+    // With observability off the tracing keys are written empty, clearing stale values.
+    const noToken = Redacted.make("");
+    const tracing = observability && {
+      url: observability.traces.otelTracesEndpoint,
+      dataset: observability.traces.name,
+      mobileToken: observability.mobileIngestToken.token,
+      clientToken: observability.clientIngestToken.token,
+    };
     yield* PublishClientConfig({
       url: api.url,
-      mobileTracingUrl: observability.traces.otelTracesEndpoint,
-      mobileTracingDataset: observability.traces.name,
-      mobileTracingToken: observability.mobileIngestToken.token,
-      clientTracingUrl: observability.traces.otelTracesEndpoint,
-      clientTracingDataset: observability.traces.name,
-      clientTracingToken: observability.clientIngestToken.token,
-      tokenDigest: Output.map(
-        Output.all(observability.mobileIngestToken.token, observability.clientIngestToken.token),
-        tokenDigest,
-      ),
+      mobileTracingUrl: tracing?.url ?? "",
+      mobileTracingDataset: tracing?.dataset ?? "",
+      mobileTracingToken: tracing?.mobileToken ?? noToken,
+      clientTracingUrl: tracing?.url ?? "",
+      clientTracingDataset: tracing?.dataset ?? "",
+      clientTracingToken: tracing?.clientToken ?? noToken,
+      tokenDigest: tracing
+        ? Output.map(Output.all(tracing.mobileToken, tracing.clientToken), tokenDigest)
+        : tokenDigest([noToken, noToken]),
     });
 
     return {
-      databaseName: db.database.name,
-      databaseBranchName: db.branch?.name ?? "main",
+      databaseName: db?.database.name ?? "external",
+      databaseBranchName: db ? (db.branch?.name ?? "main") : "external",
       hyperdriveName: hyperdrive.name,
       workerName: api.workerName,
       url: api.url,
       relayApiZoneId: relayApiZone.zoneId,
       managedEndpointZoneId: managedEndpointZone.zoneId,
-      mobileTracingUrl: observability.traces.otelTracesEndpoint,
-      mobileTracingDataset: observability.traces.name,
-      mobileTracingToken: observability.mobileIngestToken.token,
-      clientTracingUrl: observability.traces.otelTracesEndpoint,
-      clientTracingDataset: observability.traces.name,
-      clientTracingToken: observability.clientIngestToken.token,
-      mobileLogsDataset: observability.mobileLogs.name,
-      mobileMetricsDataset: observability.mobileMetrics.name,
-      mobileSourceMapsBucket: observability.mobileSourceMaps.bucketName,
+      ...(observability && {
+        mobileTracingUrl: observability.traces.otelTracesEndpoint,
+        mobileTracingDataset: observability.traces.name,
+        mobileTracingToken: observability.mobileIngestToken.token,
+        clientTracingUrl: observability.traces.otelTracesEndpoint,
+        clientTracingDataset: observability.traces.name,
+        clientTracingToken: observability.clientIngestToken.token,
+        mobileLogsDataset: observability.mobileLogs.name,
+        mobileMetricsDataset: observability.mobileMetrics.name,
+        mobileSourceMapsBucket: observability.mobileSourceMaps.bucketName,
+      }),
       // The MOBILE_SOURCEMAPS_R2 secret for GitHub Actions and EAS Build.
-      mobileSourceMapsUploadCredentials,
+      ...(mobileSourceMapsUploadCredentials && { mobileSourceMapsUploadCredentials }),
     };
   }).pipe(Effect.provide(RelayWorker.layer)),
 );

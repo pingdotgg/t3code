@@ -103,6 +103,28 @@ describe("PublishClientConfig", () => {
       expect(third).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=client-v2\n");
       expect(third).not.toContain("client-v1");
       expect(third).toContain("KEEP=yes\n");
+
+      // RELAY_OBSERVABILITY=off publishes empty tracing keys, clearing the stale ones.
+      const noToken = Redacted.make("");
+      yield* stack
+        .deploy(
+          PublishClientConfig({
+            url: "https://relay.example.com",
+            mobileTracingUrl: "",
+            mobileTracingDataset: "",
+            mobileTracingToken: noToken,
+            clientTracingUrl: "",
+            clientTracingDataset: "",
+            clientTracingToken: noToken,
+            tokenDigest: tokenDigest([noToken, noToken]),
+          }),
+        )
+        .pipe(configured);
+      const off = yield* fs.readFileString(target);
+      expect(off).toContain("T3CODE_RELAY_URL=https://relay.example.com\n");
+      expect(off).toContain("T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=\n");
+      expect(off).toContain("T3CODE_MOBILE_OTLP_TRACES_URL=\n");
+      expect(off).not.toContain("client-v2");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

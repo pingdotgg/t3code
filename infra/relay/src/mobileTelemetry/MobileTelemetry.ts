@@ -328,6 +328,16 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(MobileTelemetry, make);
 
+/** With observability off, accept and drop reports so the app's exporter does not retry them. */
+export const layerDisabled = Layer.succeed(
+  MobileTelemetry,
+  MobileTelemetry.of({
+    handle: Effect.fn("MobileTelemetry.handleDisabled")(() =>
+      Effect.succeed(HttpServerResponse.empty({ status: 204 })),
+    ),
+  }),
+);
+
 /** Raw so the body is read once, capped. */
 export const layerApi = HttpApiBuilder.group(
   RelayApi,

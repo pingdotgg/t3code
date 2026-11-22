@@ -5,11 +5,16 @@ import * as Planetscale from "@alchemy.run/planetscale";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
 import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
+import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
-import { relayDatabaseMode } from "./dbConfig.ts";
+import {
+  parseRelayDatabaseUrl,
+  relayDatabaseMode,
+  relayDatabaseProviderConfig,
+} from "./dbConfig.ts";
 
 export class RelayDb extends Context.Service<
   RelayDb,
@@ -73,13 +78,28 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
   return { branch, database, runtimeRole };
 });
 
+/**
+ * A Postgres the operator runs (e.g. Neon), given by its direct, non-pooled URL.
+ * Its migrations run before deploy (`scripts/migrate-external-db.ts`), not here.
+ */
+export const ExternalDatabase = Effect.gen(function* () {
+  const { stage } = yield* Alchemy.Stack;
+  relayDatabaseMode(stage, "external");
+  const url = yield* Config.Redacted("RELAY_DATABASE_URL");
+  return { origin: parseRelayDatabaseUrl(url) };
+});
+
 export const RelayHyperdrive = Effect.gen(function* () {
-  const { runtimeRole } = yield* PlanetscaleDatabase;
+  const external = (yield* relayDatabaseProviderConfig) === "external";
+  const origin = external
+    ? (yield* ExternalDatabase).origin
+    : (yield* PlanetscaleDatabase).runtimeRole.origin;
   return yield* Cloudflare.Hyperdrive.Connection("RelayHyperdrive", {
-    origin: runtimeRole.origin,
+    origin,
     caching: {
       disabled: true,
     },
-    originConnectionLimit: 40,
+    // Hyperdrive on Workers Free pools about 20 origin connections.
+    originConnectionLimit: external ? 20 : 40,
   });
 });

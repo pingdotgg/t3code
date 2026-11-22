@@ -33,6 +33,7 @@ catalog:
   "@alchemy.run/cloudflare": 2.0.0-beta.85
   "@alchemy.run/drizzle": 2.0.0-beta.85
   "@alchemy.run/planetscale": 2.0.0-beta.85
+  "@alchemy.run/sql": 2.0.0-beta.85
   "@alchemy.run/test": 2.0.0-beta.85
   "@clerk/backend": 3.27.0
   "@clerk/clerk-js": 6.42.3
