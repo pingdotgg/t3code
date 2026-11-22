@@ -369,7 +369,7 @@ patchedDependencies:
   '@effect/vitest@4.1.5': dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
-  '@generaltranslation/format@0.1.9': 367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a
+  '@generaltranslation/format@0.1.9': 16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a
   '@generaltranslation/icu@0.1.2': a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
@@ -385,6 +385,7 @@ patchedDependencies:
   expo-sharing@58.0.22: 321a86e1471e34c53f1f2937fbb4304ea3f7b7a78ad9e4d35febc2b9e73e9688
   expo-video@58.0.13: e80ec3ef8c4af50a607beea1c0917e71ba679844efdb702b45d17a5f03cf466c
   expo-widgets@58.0.27: 0e26817ca487a5156bcc9499f7db2e99a7d102f4a53b6b738f00552958774c86
+  gt-i18n@1.0.40: de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff
   mdast-util-math@3.0.0: afe6b2c89e1eaddfd3c90cf2723f12c9a17d513e65beff51653781486013251c
   mdast-util-to-hast@13.2.1: 57ea46c73aea3c876ab8d351fe0482ddd081dcb4a0610576e399dbe5eb59d2b1
   micromark-extension-gfm-table@2.1.1: 9ad23a530e45d9f83cba1da8654fe16d5af8b59d5c73d5c7a7c91fd25b9be1d8
@@ -477,7 +478,7 @@ importers:
         version: 1.3.2
       gt-i18n:
         specifier: 1.0.40
-        version: 1.0.40
+        version: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       playwright-core:
         specifier: 1.64.1
         version: 1.64.1
@@ -820,6 +821,9 @@ importers:
       '@effect/vitest':
         specifier: 4.1.5
         version: 4.1.5(patch_hash=dd0bf2b1ae0f63aff0d620ebc67b82d19759b3fa69a608ef85e2a5b40b4d46c5)(@astrojs/compiler-rs@0.5.1)(@types/node@24.12.4)(@vitest/browser-playwright@5.0.5)(@vitest/ui@5.0.5)(@volar/typescript@2.4.28(typescript@6.0.3))(bufferutil@4.1.0)(effect@4.1.5)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(playwright@1.64.1)(terser@5.48.0)(typescript@6.0.3)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
+      '@generaltranslation/format':
+        specifier: 0.1.9
+        version: 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       '@pierre/trees':
         specifier: 1.0.0-beta.6
         version: 1.0.0-beta.6(@pierre/theme@2.0.0)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.2.0)
@@ -1572,7 +1576,7 @@ importers:
         version: 4.1.5
       gt-i18n:
         specifier: 1.0.40
-        version: 1.0.40
+        version: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       jszip:
         specifier: 3.10.1
         version: 3.10.1
@@ -2157,7 +2161,7 @@ importers:
         version: 1.6.0
       gt-i18n:
         specifier: 1.0.40
-        version: 1.0.40
+        version: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       mdast-util-directive:
         specifier: 'catalog:'
         version: 3.1.0(supports-color@8.1.1)
@@ -15367,7 +15371,7 @@ snapshots:
 
   '@generaltranslation/api@0.5.6': {}
 
-  '@generaltranslation/format@0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)':
+  '@generaltranslation/format@0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)':
     dependencies:
       '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
 
@@ -15380,9 +15384,9 @@ snapshots:
 
   '@generaltranslation/react-core@11.4.18(react@19.3.0)':
     dependencies:
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       generaltranslation: 9.5.9
-      gt-i18n: 1.0.40
+      gt-i18n: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       react: 19.3.0
 
   '@generaltranslation/supported-locales@2.1.45':
@@ -15394,7 +15398,7 @@ snapshots:
       '@babel/parser': 7.29.8
       '@babel/traverse': 7.29.7(supports-color@8.1.1)
       '@babel/types': 7.29.8
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       '@vue/shared': 3.5.45
       enhanced-resolve: 5.24.5
       entities: 7.0.1
@@ -19996,7 +20000,7 @@ snapshots:
   generaltranslation@9.5.9:
     dependencies:
       '@generaltranslation/api': 0.5.6
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
       '@noble/hashes': 2.4.0
 
@@ -20097,9 +20101,9 @@ snapshots:
 
   graphql@16.14.1: {}
 
-  gt-i18n@1.0.40:
+  gt-i18n@1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff):
     dependencies:
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       generaltranslation: 9.5.9
 
   gt-react-native@11.4.18(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
@@ -20112,11 +20116,11 @@ snapshots:
       '@formatjs/intl-numberformat': 8.15.6
       '@formatjs/intl-pluralrules': 5.4.6
       '@formatjs/intl-relativetimeformat': 11.4.13
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       '@generaltranslation/react-core': 11.4.18(react@19.3.0)
       '@generaltranslation/supported-locales': 2.1.45
       generaltranslation: 9.5.9
-      gt-i18n: 1.0.40
+      gt-i18n: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       react: 19.3.0
       react-native: 0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6)
 
@@ -20124,7 +20128,7 @@ snapshots:
     dependencies:
       '@generaltranslation/react-core': 11.4.18(react@19.3.0)
       generaltranslation: 9.5.9
-      gt-i18n: 1.0.40
+      gt-i18n: 1.0.40(patch_hash=de5efb4799205d1cbee287aff1a3411044adf0c49d663d1c761bc365a4fb12ff)
       react: 19.3.0
       react-dom: 19.3.0(react@19.3.0)
 
@@ -20150,7 +20154,7 @@ snapshots:
       '@babel/traverse': 7.29.7(supports-color@8.1.1)
       '@babel/types': 7.29.8
       '@clack/prompts': 1.0.0-alpha.6
-      '@generaltranslation/format': 0.1.9(patch_hash=367633f9dbc935737868fbc22217ba82ca7d7b6dbcd7707ab163e0cf65f0ec4a)
+      '@generaltranslation/format': 0.1.9(patch_hash=16b9d9a47ece838175928166d5da81606efd9bd9b7fef85ff961bf8dd49e900a)
       '@generaltranslation/icu': 0.1.2(patch_hash=a528fa03c88f8716a999b4461d2886401e47a29e72fc0a5c864d74e6b321e217)
       '@generaltranslation/python-extractor': 0.2.64
       '@generaltranslation/supported-locales': 2.1.45

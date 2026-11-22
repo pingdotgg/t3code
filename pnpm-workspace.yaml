@@ -286,6 +286,7 @@ patchedDependencies:
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
   "@generaltranslation/icu@0.1.2": patches/@generaltranslation__icu@0.1.2.patch
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
+  gt-i18n@1.0.40: patches/gt-i18n@1.0.40.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
