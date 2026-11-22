@@ -989,6 +989,30 @@ describe("createOrbitGatewayClient", () => {
       ["/operations/31898", false],
       ["/operations/31898", true],
     ]);
+    // The next poll of that Operation skips the Conn read that answers 404.
+    await client.operation(31898);
+    expect(requests.slice(2).map((request) => [request.path, request.root ?? false])).toEqual([
+      ["/operations/31898", true],
+    ]);
+  });
+
+  it("polls a finalize it admitted through Orbit's read only", async () => {
+    const requests: OrbitGatewayRequest[] = [];
+    const client = createOrbitGatewayClient(async (request) => {
+      requests.push(request);
+      return {
+        status: request.method === "POST" ? 202 : 200,
+        body: JSON.stringify({
+          data: { id: 32060, kind: "instance.finalize", status: "queued", target_id: 3947 },
+        }),
+      };
+    });
+    await client.finalizeReservation("r1", "fix-login", "key-1");
+    await client.operation(32060);
+    expect(requests.map((request) => [request.path, request.root ?? false])).toEqual([
+      ["/reservations/r1/finalize", false],
+      ["/operations/32060", true],
+    ]);
   });
 });
 

@@ -34,6 +34,7 @@ import {
   type OrbitReservationClient,
 } from "./reservations.ts";
 import {
+  createOrbitInstanceNameFits,
   newOrbitThreadStart,
   orbitThreadStartHiddenEnvironmentId,
   runOrbitThreadStart,
@@ -75,11 +76,15 @@ const gone = () =>
 /** A step-by-step clock: each `sleep` resolves only when the test calls `tick`. */
 function scheduler() {
   const waiting: Array<{ ms: number; resolve: () => void }> = [];
+  let elapsed = 0;
   return {
     sleeps: waiting,
+    /** The time the resolved sleeps added up to. */
+    elapsed: () => elapsed,
     sleep: (ms: number) => new Promise<void>((resolve) => waiting.push({ ms, resolve })),
     async tick() {
       const next = waiting.shift();
+      elapsed += next?.ms ?? 0;
       next?.resolve();
       await flush();
       return next?.ms;
@@ -135,7 +140,8 @@ function harness(
   const reservations = createOrbitReservations({
     client,
     sleep: clock.sleep,
-    now: () => now++,
+    // Each read of the clock is a little later; a tick moves it by the sleep it resolved.
+    now: () => clock.elapsed() + now++ / 1_000,
     isSaved: options.saved ?? (() => false),
     connect: async (environmentId, pairingUrl) => {
       calls.push(`connect ${environmentId}`);
@@ -183,23 +189,38 @@ describe("createOrbitReservations", () => {
     expect(calls.slice(5)).toEqual(["read r78"]);
   });
 
-  it("pairs explicitly when the Gateway delivers no link after a few ready reads", async () => {
+  it("pairs explicitly when the Gateway delivers no link for 4 s of ready reads", async () => {
     const { calls, clock, reservations } = harness({
       reserve: async () => reservation("r78", "ready"),
     });
     reservations.open(78);
     await flush();
     expect(calls).toEqual(["reserve 78", "read r78"]);
-    expect(await clock.tick()).toBe(RESERVATION_PREPARING_POLL_MS);
-    expect(await clock.tick()).toBe(RESERVATION_PREPARING_POLL_MS);
+    expect(RESERVATION_PREPARING_POLL_MS).toBe(500);
+    // Read every 500 ms while the link is not there; the read 4 s after the first pairs explicitly.
+    for (let tick = 0; tick < 8; tick++) {
+      expect(await clock.tick()).toBe(RESERVATION_PREPARING_POLL_MS);
+    }
     expect(calls).toEqual([
       "reserve 78",
-      "read r78",
-      "read r78",
-      "read r78",
+      ...Array.from({ length: 9 }, () => "read r78"),
       "pair env-r78",
       "connect env-r78",
     ]);
+    expect(clock.sleeps.map((entry) => entry.ms)).toEqual([RESERVATION_KEEPALIVE_MS]);
+  });
+
+  it("installs a link that comes 500 ms after ready without an explicit pairing", async () => {
+    const pairing = issued("env-r78");
+    const { calls, clock, reservations } = harness({
+      reserve: async () => reservation("r78", "preparing"),
+      reads: [reservation("r78", "ready"), reservation("r78", "ready", { pairing })],
+    });
+    reservations.open(78);
+    await flush();
+    expect(await clock.tick()).toBe(RESERVATION_PREPARING_POLL_MS);
+    expect(await clock.tick()).toBe(RESERVATION_PREPARING_POLL_MS);
+    expect(calls).toEqual(["reserve 78", "read r78", "read r78", "connect env-r78"]);
     expect(clock.sleeps.map((entry) => entry.ms)).toEqual([RESERVATION_KEEPALIVE_MS]);
   });
 
@@ -676,7 +697,10 @@ function startHarness(script: {
   finalize?: () => Promise<OrbitGatewayOperation>;
   finalizeStatus?: OrbitGatewayOperation["status"];
   createReadyAfterMs?: number;
+  /** Reads of the finalize that still find it running. */
+  finalizeRunningReads?: number;
   nameLimit?: number;
+  nameFits?: ReturnType<typeof createOrbitInstanceNameFits>;
   waitForPairing?: (reservationId: string) => Promise<void> | undefined;
   reservationPairing?: ReturnType<typeof createOrbitReservations>;
   dismissed?: () => boolean;
@@ -688,6 +712,8 @@ function startHarness(script: {
   let clock = 0;
   let createStartedAt = 0;
   const createWaits: number[] = [];
+  const finalizeWaits: number[] = [];
+  let finalizeReads = 0;
   const client = {
     reservation: async (id: string) => {
       calls.push(`read ${id}`);
@@ -709,12 +735,16 @@ function startHarness(script: {
       return op(100, "queued", 41);
     },
     checkInstanceName: async (_projectId: number, name: string) => {
+      calls.push(`check ${name}`);
       const fits = script.nameLimit === undefined || name.length <= script.nameLimit;
       return { name, available: fits, reason: fits ? null : "domain_invalid", domain: null };
     },
     operation: async (id: number) => {
       calls.push(`operation ${id}`);
-      if (id === 900) return op(900, script.finalizeStatus ?? "succeeded");
+      if (id === 900) {
+        if (finalizeReads++ < (script.finalizeRunningReads ?? 0)) return op(900, "running");
+        return op(900, script.finalizeStatus ?? "succeeded");
+      }
       if (id === 100 && script.createReadyAfterMs !== undefined) {
         if (clock - createStartedAt < script.createReadyAfterMs) {
           return op(id, "running", 41);
@@ -759,6 +789,8 @@ function startHarness(script: {
   return {
     calls,
     createWaits,
+    finalizeWaits,
+    client,
     saves,
     sent,
     run: (start: OrbitThreadStart, saved: (environmentId: string) => boolean = () => false) =>
@@ -770,6 +802,7 @@ function startHarness(script: {
         },
         sleep: async (ms) => {
           if (calls.at(-1) === "operation 100") createWaits.push(ms);
+          if (calls.at(-1) === "operation 900") finalizeWaits.push(ms);
           clock += ms;
         },
         now: () => clock,
@@ -778,6 +811,7 @@ function startHarness(script: {
         isSaved: saved,
         reservationPairing: script.reservationPairing,
         waitForReservationPairing: script.waitForPairing,
+        nameFits: script.nameFits,
         connect: async (environmentId, pairingUrl) => {
           calls.push(`connect ${environmentId}`);
           await script.connect?.(environmentId, pairingUrl);
@@ -810,12 +844,8 @@ describe("runOrbitThreadStart with a reservation", () => {
     const start = reservedStart(true);
     expect(orbitThreadStartHiddenEnvironmentId(start)).toBe("env-501");
     expect(await harness.run(start, (id) => id === "env-501")).toBe(true);
-    expect(harness.calls).toEqual([
-      "read r1",
-      "finalize r1 fix-login branch",
-      "operation 900",
-      "environments",
-    ]);
+    // Paired while typing: no reservation read before, no environment list after the finalize.
+    expect(harness.calls).toEqual(["finalize r1 fix-login branch", "operation 900"]);
     expect(harness.sent).toEqual(["env-501"]);
     const last = harness.saves.at(-1)!;
     expect(last).toMatchObject({
@@ -831,7 +861,7 @@ describe("runOrbitThreadStart with a reservation", () => {
     const harness = startHarness({
       reads: [reservation("r1", "preparing"), reservation("r1", "ready")],
     });
-    expect(await harness.run(reservedStart(), () => true)).toBe(true);
+    expect(await harness.run(reservedStart(), () => false)).toBe(true);
     expect(harness.calls.slice(0, 3)).toEqual(["read r1", "read r1", "finalize r1 fix-login"]);
   });
 
@@ -872,12 +902,8 @@ describe("runOrbitThreadStart with a reservation", () => {
     expect(start.calls).toEqual([]);
     install.resolve();
     expect(await sending).toBe(true);
-    expect(start.calls).toEqual([
-      "read r1",
-      "finalize r1 fix-login",
-      "operation 900",
-      "environments",
-    ]);
+    // The install saved the server: the start finalizes without reading the reservation again.
+    expect(start.calls).toEqual(["finalize r1 fix-login", "operation 900"]);
     expect(draft.reservations.waitForPairing("r1")).toBeUndefined();
     expect(draft.stored()).toEqual([]);
   });
@@ -1065,7 +1091,9 @@ describe("runOrbitThreadStart with a reservation", () => {
   });
 
   it("uses ordinary pairing when the finalized server was not saved", async () => {
-    const harness = startHarness({});
+    const harness = startHarness({
+      reads: [reservation("r1", "ready", { environmentId: "env-501" })],
+    });
     expect(await harness.run(reservedStart())).toBe(true);
     expect(harness.calls).toContain("pair env-501");
     expect(harness.calls).not.toContain("create fix-login");
@@ -1082,6 +1110,121 @@ describe("runOrbitThreadStart with a reservation", () => {
     expect(await harness.run(start)).toBe(true);
     expect(harness.calls).toContain("finalize r1 please-refac-k3j9");
     expect(harness.saves.at(-1)?.instanceName).toBe("please-refac-k3j9");
+  });
+
+  it("uses the name check that ran while the user typed, and checks again for another message", async () => {
+    const message = "Please refactor the checkout payment flow handlers";
+    const typed = startHarness({ nameLimit: 20 });
+    const fits = createOrbitInstanceNameFits(typed.client as never);
+    fits.prefetch(78, message, "k3j9");
+    fits.prefetch(78, message, "k3j9");
+    await fits.lookup(78, message, "k3j9");
+    expect(typed.calls.filter((call) => call.startsWith("check"))).toHaveLength(3);
+
+    const harness = startHarness({ nameLimit: 20, nameFits: fits });
+    const start = { ...reservedStart(), message, nameSuffix: "k3j9" };
+    expect(await harness.run(start)).toBe(true);
+    expect(harness.calls.filter((call) => call.startsWith("check"))).toEqual([]);
+    expect(harness.calls).toContain("finalize r1 please-refac-k3j9");
+
+    // The message changed after the last check: the send checks the new names.
+    const edited = startHarness({ nameLimit: 20, nameFits: fits });
+    const changed = {
+      ...start,
+      message: "Fix the login form",
+      instanceName: "fix-the-login-form-k3j9",
+    };
+    expect(await edited.run(changed)).toBe(true);
+    expect(edited.calls).toContain("check fix-the-login-form-k3j9");
+  });
+
+  it("keeps a typed check's refusal: the start stops as its own check would", async () => {
+    const message = "Please refactor the checkout payment flow handlers";
+    const typed = startHarness({ nameLimit: 3 });
+    const fits = createOrbitInstanceNameFits(typed.client as never);
+    fits.prefetch(78, message, "k3j9");
+    const harness = startHarness({ nameFits: fits });
+    expect(await harness.run({ ...reservedStart(), message, nameSuffix: "k3j9" })).toBe(false);
+    expect(harness.saves.at(-1)).toMatchObject({ errorCode: "route.domain_invalid" });
+    expect(harness.calls.filter((call) => call.startsWith("check"))).toEqual([]);
+  });
+
+  it("checks at send when the typed check failed", async () => {
+    const message = "Please refactor the checkout payment flow handlers";
+    const fits = createOrbitInstanceNameFits({
+      checkInstanceName: async () => {
+        throw new Error("offline");
+      },
+    });
+    fits.prefetch(78, message, "k3j9");
+    await fits.lookup(78, message, "k3j9");
+    expect(fits.lookup(78, message, "k3j9")).toBeUndefined();
+    const harness = startHarness({ nameLimit: 20, nameFits: fits });
+    expect(await harness.run({ ...reservedStart(), message, nameSuffix: "k3j9" })).toBe(true);
+    expect(harness.calls).toContain("finalize r1 please-refac-k3j9");
+  });
+
+  it("reads a running finalize every 200 ms for its first 2 s", async () => {
+    const harness = startHarness({ finalizeRunningReads: 14 });
+    expect(await harness.run(reservedStart(), (id) => id === "env-501")).toBe(true);
+    expect(harness.finalizeWaits.slice(0, 10)).toEqual(Array.from({ length: 10 }, () => 200));
+    expect(harness.finalizeWaits.slice(10)).toEqual([500, 500, 500, 500]);
+    // Seen running just now: the reserved server is used without listing the environments.
+    expect(harness.calls).not.toContain("environments");
+    expect(harness.sent).toEqual(["env-501"]);
+  });
+
+  it("lists the environments when a reload replays a finalize under its saved key", async () => {
+    const harness = startHarness({ finalize: async () => op(900, "succeeded") });
+    const replayed = { ...reservedStart(), createKey: "k", instanceId: 501 };
+    expect(await harness.run(replayed, (id) => id === "env-501")).toBe(true);
+    expect(harness.calls).toEqual(["finalize r1 fix-login", "operation 900", "environments"]);
+  });
+
+  it("does not keep a typed refusal when a shorter name's check failed", async () => {
+    const message = "Please refactor the checkout payment flow handlers";
+    let calls = 0;
+    const fits = createOrbitInstanceNameFits({
+      checkInstanceName: async (_projectId, name) => {
+        if (calls++ > 0) throw new Error("offline");
+        return { name, available: false, reason: "domain_invalid", domain: null };
+      },
+    });
+    fits.prefetch(78, message, "k3j9");
+    expect(await fits.lookup(78, message, "k3j9")).toBeNull();
+    expect(fits.lookup(78, message, "k3j9")).toBeUndefined();
+    const harness = startHarness({ nameLimit: 20, nameFits: fits });
+    expect(await harness.run({ ...reservedStart(), message, nameSuffix: "k3j9" })).toBe(true);
+    expect(harness.calls).toContain("finalize r1 please-refac-k3j9");
+  });
+
+  it("lists the environments for a finalize resumed after a reload", async () => {
+    const harness = startHarness({});
+    const resumed = { ...reservedStart(), createKey: "k", createOperationId: 900, instanceId: 501 };
+    expect(await harness.run(resumed, (id) => id === "env-501")).toBe(true);
+    expect(harness.calls).toEqual(["operation 900", "environments"]);
+    expect(harness.sent).toEqual(["env-501"]);
+  });
+
+  it("falls back to a create when a paired reservation ended before the send", async () => {
+    const harness = startHarness({
+      finalize: async () => {
+        throw new OrbitGatewayError({
+          code: "reservation.expired",
+          message: "",
+          status: 410,
+          details: {},
+        });
+      },
+    });
+    expect(await harness.run(reservedStart(), (id) => id === "env-501")).toBe(true);
+    expect(harness.calls.slice(0, 3)).toEqual([
+      "finalize r1 fix-login",
+      "release r1",
+      "create fix-login",
+    ]);
+    expect(harness.sent).toEqual(["env-41"]);
+    expect(harness.saves.every((save) => save.error === null)).toBe(true);
   });
 
   const fallbacks: ReadonlyArray<readonly [string, Parameters<typeof startHarness>[0]]> = [
@@ -1119,11 +1262,12 @@ describe("runOrbitThreadStart with a reservation", () => {
 
   it("creates with its full time when the reservation stays preparing", async () => {
     const harness = startHarness({
-      reads: Array.from({ length: 200 }, () => reservation("r1", "preparing")),
+      reads: Array.from({ length: 300 }, () => reservation("r1", "preparing")),
       createReadyAfterMs: 29 * 60_000,
     });
     expect(await harness.run(reservedStart())).toBe(true);
-    expect(harness.calls.filter((call) => call === "read r1")).toHaveLength(61);
+    // A read every 500 ms for the 2 minutes the start waits.
+    expect(harness.calls.filter((call) => call === "read r1")).toHaveLength(241);
     expect(harness.calls).toContain("create fix-login");
     expect(harness.createWaits[0]).toBe(500);
     expect(harness.calls).not.toContain("environments");

@@ -32,6 +32,8 @@ export interface MobileOrbitThreadStartPorts {
   readonly isSaved: (environmentId: string) => boolean;
   readonly reservationPairing?: OrbitThreadStartPorts["reservationPairing"];
   readonly waitForReservationPairing?: OrbitThreadStartPorts["waitForReservationPairing"];
+  /** The name checks run while the user typed the first message. */
+  readonly nameFits?: OrbitThreadStartPorts["nameFits"];
   readonly connect: OrbitThreadStartPorts["connect"];
   readonly firstMessage: Omit<OrbitFirstMessagePorts, "stopped">;
   /** Adds the clone's project ref to the workspace selected at Start; never throws. */
@@ -73,6 +75,8 @@ export function beginOrbitThreadStart(
     readonly now: number;
     /** The clone reserved while the screen was open; the start finalizes it. */
     readonly reservation?: TakenOrbitReservation | null;
+    /** The name suffix the screen checked names with while the user typed; else a new one. */
+    readonly suffix?: string;
   },
 ): OrbitThreadStart {
   const start = {
@@ -80,7 +84,7 @@ export function beginOrbitThreadStart(
       id: input.uuid(),
       project: input.project,
       message: input.message,
-      suffix: input.uuid().slice(0, 6),
+      suffix: input.suffix ?? input.uuid().slice(0, 6),
       threadId: input.uuid(),
       messageId: input.uuid(),
       commandId: input.uuid(),
@@ -157,6 +161,7 @@ export async function runSavedOrbitThreadStart(
       isSaved: ports.isSaved,
       reservationPairing: ports.reservationPairing,
       waitForReservationPairing: ports.waitForReservationPairing,
+      nameFits: ports.nameFits,
       connect: async (environmentId, pairingUrl, installId) => {
         await store.flush();
         await ports.connect(environmentId, pairingUrl, installId);

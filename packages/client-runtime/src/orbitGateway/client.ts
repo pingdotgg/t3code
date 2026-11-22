@@ -609,6 +609,8 @@ export function createOrbitGatewayClient(
   const sleep =
     options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   const now = options.now ?? Date.now;
+  /** Operations only Orbit's own read serves (`instance.finalize`), so polls skip the Conn read. */
+  const rootReadOperations = new Set<number>();
   const call = async (request: OrbitGatewayRequest): Promise<unknown> =>
     (await callEnvelope(request)).data;
   const callEnvelope = async (request: OrbitGatewayRequest): Promise<Record<string, unknown>> =>
@@ -794,12 +796,18 @@ export function createOrbitGatewayClient(
     },
     operation: async (operationId) => {
       const path = `/operations/${operationId}`;
+      // A finalize is read through Orbit's own read at once: the Conn read would answer 404 first.
+      if (rootReadOperations.has(operationId)) {
+        return operation(await call({ method: "GET", path, root: true }), path);
+      }
       try {
         return operation(await call({ method: "GET", path }), path);
       } catch (error) {
         // The Conn read serves no `instance.finalize` (release 2201); Orbit's own read does.
         if (!isOrbitGatewayError(error) || error.status !== 404) throw error;
-        return operation(await call({ method: "GET", path, root: true }), path);
+        const read = operation(await call({ method: "GET", path, root: true }), path);
+        rootReadOperations.add(operationId);
+        return read;
       }
     },
     cancelOperation: async (operationId) => {
@@ -883,7 +891,7 @@ export function createOrbitGatewayClient(
     },
     finalizeReservation: async (reservationId, name, idempotencyKey, branch) => {
       const path = `${reservationPath(reservationId)}/finalize`;
-      return operation(
+      const admitted = operation(
         await call({
           method: "POST",
           path,
@@ -893,6 +901,8 @@ export function createOrbitGatewayClient(
         }),
         path,
       );
+      rootReadOperations.add(admitted.id);
+      return admitted;
     },
   };
 }

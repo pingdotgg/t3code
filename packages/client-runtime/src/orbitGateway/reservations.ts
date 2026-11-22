@@ -13,12 +13,18 @@ import {
  * that is not usable at send leaves the start to the normal create.
  */
 
-/** Poll a preparing reservation every 2 s, and read a ready one every 60 s so it stays held. */
-export const RESERVATION_PREPARING_POLL_MS = 2_000;
+/**
+ * Poll a preparing reservation, and a ready one still without its pairing link, every 500 ms (a
+ * read is cheap); read a paired one every 60 s so it stays held.
+ */
+export const RESERVATION_PREPARING_POLL_MS = 500;
 export const RESERVATION_KEEPALIVE_MS = 60_000;
 const PAIRING_CLEANUP_RETRY_MS = 2_000;
-/** Ready reads without a link, the last one pairing explicitly; the Gateway mints the link after `ready`. */
-const ISSUED_PAIRING_READS = 3;
+/**
+ * How long ready reads may come without the Gateway's pairing link (it is minted after `ready`)
+ * before the read that pairs explicitly.
+ */
+const ISSUED_PAIRING_WAIT_MS = 4_000;
 /** Orbit holds at most 3 per caller and releases the oldest for a fourth; Conn does it first. */
 export const MAX_OPEN_RESERVATIONS = 3;
 
@@ -63,8 +69,8 @@ interface Entry {
   pending: Promise<void> | null;
   /** The device saved the clone's server for this reservation. */
   paired: boolean;
-  /** Ready reads that came without the Gateway's pairing link (it is minted after `ready`). */
-  readsWithoutPairing: number;
+  /** When a ready read first came without the Gateway's pairing link (it is minted after `ready`). */
+  readyWithoutPairingSince: number | null;
   /** Closed or taken: the loop stops; a reservation still being admitted is released when it arrives. */
   ended: "closed" | "taken" | null;
 }
@@ -125,6 +131,14 @@ const USABLE_STATES: ReadonlySet<OrbitGatewayReservation["state"]> = new Set([
   "preparing",
   "ready",
 ]);
+
+/** The ready reads waited long enough for the Gateway's link: the start pairs explicitly. */
+function waitedForIssuedPairing(entry: Entry, now: number): boolean {
+  return (
+    entry.readyWithoutPairingSince !== null &&
+    now - entry.readyWithoutPairingSince >= ISSUED_PAIRING_WAIT_MS
+  );
+}
 
 export function createOrbitReservations(ports: OrbitReservationPorts): OrbitReservations {
   const entries = new Map<number, Entry>();
@@ -299,14 +313,9 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
     entry.reservation = details;
     if (entry.ended === null) changed();
     if (details.state === "ready" && details.environmentId !== null) {
-      if (
-        pairing === null &&
-        !entry.paired &&
-        entry.readsWithoutPairing < ISSUED_PAIRING_READS &&
-        ++entry.readsWithoutPairing < ISSUED_PAIRING_READS &&
-        !ports.isSaved(details.environmentId)
-      ) {
-        return;
+      if (pairing === null && !entry.paired && !ports.isSaved(details.environmentId)) {
+        entry.readyWithoutPairingSince ??= ports.now();
+        if (!waitedForIssuedPairing(entry, ports.now())) return;
       }
       await pairOnce(entry, details.id, details.environmentId, pairing);
     }
@@ -344,7 +353,7 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
         const ready =
           current.state === "ready" &&
           current.environmentId !== null &&
-          (entry.paired || entry.readsWithoutPairing >= ISSUED_PAIRING_READS);
+          (entry.paired || waitedForIssuedPairing(entry, ports.now()));
         await ports.sleep(ready ? RESERVATION_KEEPALIVE_MS : RESERVATION_PREPARING_POLL_MS);
       }
       if (entry.ended !== null) return;
@@ -376,7 +385,7 @@ export function createOrbitReservations(ports: OrbitReservationPorts): OrbitRese
         reservation: null,
         pending: null,
         paired: false,
-        readsWithoutPairing: 0,
+        readyWithoutPairingSince: null,
         ended: null,
       };
       entries.set(projectId, entry);

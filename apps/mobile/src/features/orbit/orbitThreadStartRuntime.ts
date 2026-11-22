@@ -1,4 +1,7 @@
-import type { OrbitGatewayProject } from "@t3tools/client-runtime/orbit-gateway";
+import {
+  createOrbitInstanceNameFits,
+  type OrbitGatewayProject,
+} from "@t3tools/client-runtime/orbit-gateway";
 import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import type { Atom } from "effect/reactivity";
@@ -66,6 +69,9 @@ function findCloneProject(environmentId: EnvironmentId) {
     );
 }
 
+/** Conn: the start screen checks the Instance name its message makes while the user types. */
+export const orbitInstanceNameFits = createOrbitInstanceNameFits(orbitGatewayClient);
+
 const ports: MobileOrbitThreadStartPorts = {
   store: orbitThreadStartStore,
   gateway: orbitGatewayClient,
@@ -77,6 +83,7 @@ const ports: MobileOrbitThreadStartPorts = {
       .entries.has(EnvironmentId.make(environmentId)),
   reservationPairing: orbitReservations,
   waitForReservationPairing: orbitReservations.waitForPairing,
+  nameFits: orbitInstanceNameFits,
   connect: async (environmentId, pairingUrl, installId) => {
     const result = await runAtomCommand(
       appAtomRegistry,
@@ -140,6 +147,8 @@ export function startOrbitThread(
   project: OrbitGatewayProject,
   message: string,
   returnRouteKey: string | undefined,
+  /** The suffix the screen checked the name with while the user typed. */
+  suffix?: string,
 ): void {
   const start = beginOrbitThreadStart(orbitThreadStartStore, {
     project,
@@ -148,6 +157,7 @@ export function startOrbitThread(
     uuid: uuidv4,
     now: Date.now(),
     reservation: takeOrbitReservation(project.id),
+    ...(suffix === undefined ? {} : { suffix }),
   });
   if (returnRouteKey !== undefined) openOnSend.set(start.id, returnRouteKey);
 }

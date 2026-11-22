@@ -370,6 +370,11 @@ export interface OrbitThreadStartPorts {
   readonly waitForReservationPairing?:
     | ((reservationId: string) => Promise<void> | undefined)
     | undefined;
+  /**
+   * Names checked while the user typed (`createOrbitInstanceNameFits`). A start whose name was
+   * checked already skips the check; any other name is checked at send as before.
+   */
+  readonly nameFits?: OrbitInstanceNameFits | undefined;
   /** Whether the user pressed Cancel while the create was being admitted. */
   readonly cancelRequested?: () => boolean;
   /** The runner cancelled the create Orbit admitted for a Cancel; the start is to be dropped. */
@@ -449,6 +454,89 @@ function orbitThreadInstanceNameTries(message: string, suffix: string): string[]
     orbitThreadInstanceName(message, suffix, length),
   );
   return [...new Set(names)];
+}
+
+/** A name that fits Orbit's address limits, or a refusal of every shorter try. */
+export type OrbitInstanceNameFit =
+  | { readonly kind: "fits"; readonly name: string }
+  | { readonly kind: "refused" };
+
+/**
+ * Checks the names a message makes, longest first, while Orbit answers `domain_invalid`. Null
+ * when a check failed before any such answer: the name is then left to the create.
+ */
+async function fitOrbitThreadInstanceName(
+  client: Pick<OrbitGatewayClient, "checkInstanceName">,
+  projectId: number,
+  message: string,
+  suffix: string,
+  beforeCheck: () => void = () => {},
+  /** A check that fails after a refusal is unknown (null) instead of refusing every name. */
+  explicitOnly = false,
+): Promise<OrbitInstanceNameFit | null> {
+  let refused = false;
+  for (const name of orbitThreadInstanceNameTries(message, suffix)) {
+    beforeCheck();
+    let answer;
+    try {
+      answer = await client.checkInstanceName(projectId, name);
+    } catch {
+      if (!refused || explicitOnly) return null;
+      break;
+    }
+    if (answer.reason !== "domain_invalid") return { kind: "fits", name };
+    refused = true;
+  }
+  return { kind: "refused" };
+}
+
+/** Conn: the name check of a derived name, run while the user types instead of at send. */
+export interface OrbitInstanceNameFits {
+  /** Checks the names the message makes; the same names are checked once. */
+  readonly prefetch: (projectId: number, message: string, suffix: string) => void;
+  /**
+   * The answer for exactly these names: undefined when never checked, a promise while the check
+   * runs. It resolves null when the check failed, so the send checks again.
+   */
+  readonly lookup: (
+    projectId: number,
+    message: string,
+    suffix: string,
+  ) => Promise<OrbitInstanceNameFit | null> | undefined;
+}
+
+/** Keeps the last few checks; a changed message that makes other names checks again. */
+const NAME_FIT_CACHE_SIZE = 8;
+
+export function createOrbitInstanceNameFits(
+  client: Pick<OrbitGatewayClient, "checkInstanceName">,
+): OrbitInstanceNameFits {
+  const checks = new Map<string, Promise<OrbitInstanceNameFit | null>>();
+  const key = (projectId: number, message: string, suffix: string) =>
+    `${projectId}\n${orbitThreadInstanceNameTries(message, suffix).join("\n")}`;
+  return {
+    prefetch: (projectId, message, suffix) => {
+      if (message.trim() === "") return;
+      const id = key(projectId, message, suffix);
+      if (checks.has(id)) return;
+      // Kept only when Orbit answered: a refusal is cached only if it refused every name.
+      const check = fitOrbitThreadInstanceName(
+        client,
+        projectId,
+        message,
+        suffix,
+        undefined,
+        true,
+      ).catch(() => null);
+      checks.set(id, check);
+      // A failed check is not kept: the send or the next keystroke checks again.
+      void check.then((fit) => {
+        if (fit === null && checks.get(id) === check) checks.delete(id);
+      });
+      while (checks.size > NAME_FIT_CACHE_SIZE) checks.delete(checks.keys().next().value!);
+    },
+    lookup: (projectId, message, suffix) => checks.get(key(projectId, message, suffix)),
+  };
 }
 
 export function newOrbitThreadStart(input: {
@@ -705,8 +793,21 @@ function isReservationGone(error: unknown): boolean {
   );
 }
 
-/** How often a start waits on a reservation that is still preparing. */
-const RESERVATION_POLL_MS = 2_000;
+/**
+ * A finalize ends about a second after its admission: the start reads it this often for its first
+ * 2 s, then as any waited Operation.
+ */
+const FINALIZE_POLL_MS = 200;
+const FAST_POLL_WINDOW_MS = 2_000;
+
+/** A finalize that succeeded, and when it was last seen admitted or running (null after a resume). */
+interface FinalizedReservation {
+  readonly operation: OrbitGatewayOperation;
+  readonly runningSeenAt: number | null;
+}
+
+/** How often a start waits on a reservation that is still preparing (a read is cheap). */
+const RESERVATION_POLL_MS = 500;
 /** How long a start waits for a reservation to become ready before it creates instead. */
 const RESERVATION_WAIT_MS = 2 * 60_000;
 
@@ -748,9 +849,12 @@ export async function runOrbitThreadStart(
     ) => StepFailed,
     observe?: (operation: OrbitGatewayOperation) => void,
     beforeRead?: () => Promise<void>,
+    /** Reads this often for the first `FAST_POLL_WINDOW_MS`, for an Operation that ends in about a second. */
+    fastPollMs?: number,
   ): Promise<OrbitGatewayOperation> => {
     const deadline = ports.now() + timeoutMs;
     const fastUntil = ports.now() + WAITED_POLL_WINDOW_MS;
+    const fastestUntil = ports.now() + FAST_POLL_WINDOW_MS;
     let outageSince: number | null = null;
     let lastHint: number | null = null;
     for (;;) {
@@ -779,8 +883,10 @@ export async function runOrbitThreadStart(
       if (operation !== null) lastHint = operation.pollAfterSeconds ?? lastHint;
       // A failed read keeps the last hint, so a failing Gateway is not read faster.
       const hinted = operationPollDelayMs(lastHint);
+      const waited =
+        fastPollMs !== undefined && ports.now() < fastestUntil ? fastPollMs : WAITED_POLL_MS;
       const wait =
-        operation !== null && ports.now() < fastUntil ? Math.min(hinted, WAITED_POLL_MS) : hinted;
+        operation !== null && ports.now() < fastUntil ? Math.min(hinted, waited) : hinted;
       await ports.sleep(Math.max(Math.min(wait, deadline - ports.now()), 0));
     }
   };
@@ -828,23 +934,23 @@ export async function runOrbitThreadStart(
    * leaves the name to the create; after one, or when no name fits, the start stops.
    */
   const fitDerivedName = async (suffix: string) => {
-    let refused = false;
-    for (const name of orbitThreadInstanceNameTries(current.message, suffix)) {
-      checkStopped();
-      let answer;
-      try {
-        answer = await ports.client.checkInstanceName(current.projectId, name);
-      } catch {
-        if (!refused) return;
-        break;
-      }
-      if (answer.reason !== "domain_invalid") {
-        if (name !== current.instanceName) update({ instanceName: name });
-        return;
-      }
-      refused = true;
+    // The check that ran while the user typed, for these names; else it runs now.
+    const typed = await ports.nameFits?.lookup(current.projectId, current.message, suffix);
+    checkStopped();
+    const fit =
+      typed ??
+      (await fitOrbitThreadInstanceName(
+        ports.client,
+        current.projectId,
+        current.message,
+        suffix,
+        checkStopped,
+      ));
+    if (fit === null) return;
+    if (fit.kind === "refused") {
+      throw stepFailed(ORBIT_NAME_DOMAIN_INVALID_TEXT, {}, ORBIT_ROUTE_DOMAIN_INVALID);
     }
-    throw stepFailed(ORBIT_NAME_DOMAIN_INVALID_TEXT, {}, ORBIT_ROUTE_DOMAIN_INVALID);
+    if (fit.name !== current.instanceName) update({ instanceName: fit.name });
   };
 
   /**
@@ -876,14 +982,19 @@ export async function runOrbitThreadStart(
    * Operation, or null when the start must create instead (reservation expired, failed, gone, or
    * its finalize failed). Refusals of the name or branch stop the start as a create's would.
    */
-  const finalizeReservation = async (deadline: number): Promise<OrbitGatewayOperation | null> => {
+  const finalizeReservation = async (deadline: number): Promise<FinalizedReservation | null> => {
     const reservationId = current.reservationId!;
+    let admittedAt: number | null = null;
     if (current.createOperationId === null) {
       await ports.waitForReservationPairing?.(reservationId);
+      const reserved = current.reservedEnvironmentId ?? null;
+      // The draft paired with the clone once it was ready: no read is needed before the finalize.
+      // A reservation that ended since is refused by the finalize, which falls back as below.
+      const pairedWhileTyping = reserved !== null && ports.isSaved(reserved);
       // Wait until the clone is ready; a reservation that cannot become ready soon falls back.
       const readyBy = Math.min(deadline, ports.now() + RESERVATION_WAIT_MS);
       let instanceId: number | null = null;
-      for (;;) {
+      while (!pairedWhileTyping) {
         checkStopped();
         let reservation;
         try {
@@ -936,6 +1047,8 @@ export async function runOrbitThreadStart(
       checkStopped();
       // A name made from the message fits Orbit's address limits, as for a create.
       if (!current.createKey && current.nameSuffix) await fitDerivedName(current.nameSuffix);
+      /** A key saved by an earlier run: the finalize below may replay its Operation. */
+      const replayKey = current.createKey != null;
       const begin = current.createKey
         ? stamp("createStartedAt")
         : {
@@ -970,11 +1083,19 @@ export async function runOrbitThreadStart(
         if (isOrbitGatewayError(error) && !isLostAdmission(error)) return null;
         throw error;
       }
+      // Only a finalize this call admitted counts as seen just now: a replay under a saved key may
+      // return one that ended long ago, whose clone may sleep since.
+      admittedAt =
+        replayKey || OPERATION_TERMINAL_STATUSES.has(operation.status) ? null : ports.now();
       update({ createOperationId: operation.id, instanceId: instanceId ?? operation.targetId });
       await cancelIfRequested(operation.id);
     }
     try {
-      return (await followCreate(deadline)).operation;
+      const followed = await followCreate(deadline, FINALIZE_POLL_MS);
+      return {
+        operation: followed.operation,
+        runningSeenAt: followed.runningSeenAt ?? admittedAt,
+      };
     } catch (error) {
       // A finalize that failed leaves the send to a create; a timeout stops as a create's would.
       if (isStepFailed(error) && error.code !== "operation.timeout") return null;
@@ -982,7 +1103,7 @@ export async function runOrbitThreadStart(
     }
   };
 
-  const followCreate = async (deadline: number) => {
+  const followCreate = async (deadline: number, fastPollMs?: number) => {
     let runningSeenAt: number | null = null;
     const operation = await follow(
       current.createOperationId!,
@@ -1005,15 +1126,16 @@ export async function runOrbitThreadStart(
         ports.onCreateOperation?.(operation);
       },
       () => cancelIfRequested(current.createOperationId!),
+      fastPollMs,
     );
-    return { operation, runningSeenAt };
+    return { operation, runningSeenAt: runningSeenAt as number | null };
   };
 
   try {
     checkStopped();
     if (current.environmentId === null) {
       let createDeadline = ports.now() + CREATE_TIMEOUT_MS;
-      let finalized: OrbitGatewayOperation | null = null;
+      let finalized: FinalizedReservation | null = null;
       if (current.reservationId && current.orbitInstanceKind !== "existing") {
         finalized = await finalizeReservation(createDeadline);
         if (finalized === null) {
@@ -1075,13 +1197,16 @@ export async function runOrbitThreadStart(
       }
       // A failed clone resumes when the same name is created again, so a retry admits it anew
       // under a new key. A create still running past the deadline keeps its Operation.
-      const { operation: created, runningSeenAt } = finalized
-        ? { operation: finalized, runningSeenAt: null }
-        : await followCreate(createDeadline);
+      const { operation: created, runningSeenAt } =
+        finalized ?? (await followCreate(createDeadline));
       const result = created.result ?? null;
       const t3 = result?.t3;
-      const createdServer =
-        typeof t3 === "object" && t3 !== null && "environment_id" in t3 ? t3.environment_id : null;
+      // A finalize keeps the reserved clone's server, which the draft paired with.
+      const createdServer = finalized
+        ? (current.reservedEnvironmentId ?? null)
+        : typeof t3 === "object" && t3 !== null && "environment_id" in t3
+          ? t3.environment_id
+          : null;
       let environmentId: string;
       if (
         runningSeenAt !== null &&

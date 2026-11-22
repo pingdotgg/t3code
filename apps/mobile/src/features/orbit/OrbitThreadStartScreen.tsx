@@ -17,9 +17,13 @@ import { ListSection } from "../../components/ui/ListSection";
 import { ScreenContent } from "../../components/ui/ScreenContent";
 import { ScreenScrollView as ScrollView } from "../../components/ui/ScreenScrollView";
 import { orbitGatewayClient } from "./orbitGatewayClient";
+import { uuidv4 } from "../../lib/uuid";
 import { useOrbitReservation } from "./orbitReservations";
-import { startOrbitThread } from "./orbitThreadStartRuntime";
+import { orbitInstanceNameFits, startOrbitThread } from "./orbitThreadStartRuntime";
 import { orbitStartReturn } from "./orbitThreadStarts";
+
+/** A pause in typing before the name the message makes is checked. */
+const NAME_CHECK_DEBOUNCE_MS = 400;
 
 /**
  * Conn: starts a thread in an Orbit Project. Orbit creates a clone of the Project's default
@@ -33,6 +37,8 @@ export function OrbitThreadStartScreen() {
   const [chosenId, setChosenId] = useState<number | null>(null);
   const [text, setText] = useState("");
   const started = useRef(false);
+  // The new Instance's name suffix, fixed while the screen shows so its name is checked as typed.
+  const [nameSuffix] = useState(() => uuidv4().slice(0, 6));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the Gateway's Projects once when the screen opens
   useEffect(() => {
@@ -50,6 +56,17 @@ export function OrbitThreadStartScreen() {
   const project = projects?.find((entry) => entry.id === chosenId) ?? projects?.[0] ?? null;
   // Conn: a clone of the chosen Project is reserved while this screen shows (invisible pre-warm).
   useOrbitReservation(project?.id ?? null, true);
+  const projectId = project?.id ?? null;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- checks the Instance name the message makes while the user types, not at Start
+  useEffect(() => {
+    const message = text.trim();
+    if (projectId === null || message === "") return;
+    const timer = setTimeout(
+      () => orbitInstanceNameFits.prefetch(projectId, message, nameSuffix),
+      NAME_CHECK_DEBOUNCE_MS,
+    );
+    return () => clearTimeout(timer);
+  }, [projectId, text, nameSuffix]);
   const canStart = project !== null && text.trim() !== "";
   const goBack = () => {
     if (navigation.canGoBack()) navigation.goBack();
@@ -59,7 +76,7 @@ export function OrbitThreadStartScreen() {
     if (started.current || project === null || text.trim() === "") return;
     started.current = true;
     const { back, returnRouteKey } = orbitStartReturn(navigation.getState());
-    startOrbitThread(project, text.trim(), returnRouteKey);
+    startOrbitThread(project, text.trim(), returnRouteKey, nameSuffix);
     navigation.dispatch(StackActions.pop(back));
   };
 
