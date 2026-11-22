@@ -1373,7 +1373,7 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 /* The fill alone, for an opaque part inside a panel that paints the rim. */
 @utility surface-card-fill {
-  background: var(--card-fill);
+  background: var(--card-top, var(--card-fill));
 }
 @utility surface-card-settings {
   background: var(--card-settings-background, var(--card-settings-fill));
@@ -2742,8 +2742,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --tooltip-shadow: 0 3px 9px #00000012;
   --palette-shadow: 0 14px 36px #00000019;
   --dialog-shadow: 0 16px 40px #0000001f;
+  --card-top: #fafafa;
   --card-bottom: #f7f7f7;
-  --card-fill: linear-gradient(180deg, #fafafa, var(--card-bottom));
+  --card-fill: linear-gradient(180deg, var(--card-top), var(--card-bottom));
   --card-settings-fill: linear-gradient(180deg, #fafafa, #f8f8f8);
   --tray-fill: linear-gradient(180deg, #fefefe, #fafafa);
   --tray-stroke: #00000008;
@@ -2878,8 +2879,9 @@ html[data-theme-id]:not([data-theme-id=""]):not(.black-chrome) {
   --tooltip-shadow: 0 3px 9px #0000005a;
   --palette-shadow: 0 14px 36px #0000007d;
   --dialog-shadow: 0 16px 40px #000000a0;
+  --card-top: #191919;
   --card-bottom: #171717;
-  --card-fill: linear-gradient(180deg, #191919, var(--card-bottom));
+  --card-fill: linear-gradient(180deg, var(--card-top), var(--card-bottom));
   --card-settings-fill: linear-gradient(#191919, #191919);
   --tray-fill: linear-gradient(#191919, #191919);
   --tray-stroke: #ffffff0d;
@@ -3099,6 +3101,7 @@ html[data-theme-id]:not([data-theme-id=""]) {
   );
   --popover-top: var(--popover);
   --popover-bottom: var(--popover);
+  --card-top: var(--card);
   --card-bottom: var(--card);
   --card-fill: linear-gradient(var(--card), var(--card));
   --card-settings-fill: linear-gradient(var(--card), var(--card));
@@ -4801,6 +4804,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --popover-fill: var(--style-container-fill, var(--raised-fill));
   --card-background: initial;
   --card-settings-background: initial;
+  --card-top: initial;
   --card-fill: var(--style-container-fill, var(--raised-fill)) !important;
   --card-settings-fill: var(--card-fill) !important;
   --card-shadow: var(--raised-shadow);
@@ -4882,6 +4886,7 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
   --app-panel-stroke: transparent;
   --app-panel-shadow: none;
   --card-rim: var(--ss-none) !important;
+  --card-top: var(--flat-middle) !important;
   /* The hairline rides the fill's border-box layer, under the card's transparent border. */
   --card-fill: var(--tray-fill) padding-box, var(--flat-edge) border-box !important;
   /* Settings cards sit a step off their panel, as main's cards do, so rows are not bare on it. */
@@ -4976,6 +4981,10 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 :root.black-chrome[data-surface-style="soft-gradient"] [data-chrome-scope] {
   --popover-rim: var(--ss-none) !important;
   --card-rim: var(--ss-none) !important;
+  --card-top: light-dark(
+    oklch(from var(--ss-background) calc(l + 0.03) c h),
+    oklch(from var(--ss-background) calc(l + 0.105) c h)
+  ) !important;
   --card-fill: var(--raised-fill) !important;
   --card-settings-fill: var(--raised-fill) !important;
   --tint-rim-top: 0%;
@@ -5111,12 +5120,13 @@ html:root[data-theme-id="t3-code-classic"].black-chrome [data-app-sidebar] {
 [data-surface-preview="aqua-blue"],
 :root.black-chrome:is([data-surface-style="aqua-gloss-full"], [data-surface-style="aqua-blue"])
   [data-chrome-scope] {
+  --card-top: light-dark(
+    oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
+    oklch(from var(--ss-background) calc(l + 0.065) c h)
+  ) !important;
   --style-container-fill: linear-gradient(
     180deg in srgb,
-    light-dark(
-      oklch(from var(--ss-background) min(calc(l + 0.03), 1) c h),
-      oklch(from var(--ss-background) calc(l + 0.065) c h)
-    ),
+    var(--card-top),
     light-dark(
       oklch(from var(--ss-background) l c h),
       oklch(from var(--ss-background) calc(l + 0.04) c h)
