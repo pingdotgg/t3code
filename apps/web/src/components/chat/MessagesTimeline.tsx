@@ -1803,7 +1803,7 @@ function ContextCompactionTimelineRow({
 }
 
 function useDeferredWorkLoading(
-  row: { expanded: boolean; deferredWorkItemIds?: ReadonlyArray<string> },
+  row: { expanded: boolean; deferredWorkAnchorKeys?: ReadonlyArray<string> },
   onToggle: () => void,
 ) {
   const gt = useGT();
@@ -1812,14 +1812,14 @@ function useDeferredWorkLoading(
   const ref = parseScopedThreadKey(ctx.routeThreadKey);
   const environmentId = ref?.environmentId;
   const threadId = ref?.threadId;
-  const anchorsKey = row.deferredWorkItemIds?.join("\n") ?? "";
+  const anchorsKey = row.deferredWorkAnchorKeys?.join("\n") ?? "";
   const [failed, setFailed] = useState(false);
   const load = () => {
     if (!anchorsKey || environmentId === undefined || threadId === undefined) return;
     void Promise.all(
       anchorsKey
         .split("\n")
-        .map((workAnchorId) => loadWork({ environmentId, input: { threadId, workAnchorId } })),
+        .map((workAnchorKey) => loadWork({ environmentId, input: { threadId, workAnchorKey } })),
     ).then((results) =>
       setFailed(
         results.some((result) => result._tag === "Failure" || result.value._tag === "error"),

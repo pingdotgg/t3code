@@ -15,7 +15,7 @@ export type ThreadHistoryLoadEarlierResult =
 export type ThreadHistoryHandler = {
   readonly loadEarlier: (
     throughEntryId?: string,
-    workAnchorId?: string,
+    workAnchorKey?: string,
   ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
   readonly reconcilePendingWork: () => Effect.Effect<void>;
 };
@@ -39,7 +39,7 @@ export class ThreadHistoryController extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
       throughEntryId?: string,
-      workAnchorId?: string,
+      workAnchorKey?: string,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
     readonly reconcilePendingWork: (
       environmentId: EnvironmentId,
@@ -85,14 +85,14 @@ export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
         });
       }),
       loadEarlier: Effect.fn("ThreadHistoryController.loadEarlier")(
-        function (environmentId, threadId, throughEntryId, workAnchorId) {
+        function (environmentId, threadId, throughEntryId, workAnchorKey) {
           return Ref.get(handlers).pipe(
             Effect.flatMap((current) => {
               const handler = current.get(threadKey({ environmentId, threadId }));
               if (handler === undefined) {
                 return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
               }
-              return handler.loadEarlier(throughEntryId, workAnchorId);
+              return handler.loadEarlier(throughEntryId, workAnchorKey);
             }),
           );
         },

@@ -1,5 +1,6 @@
 import type { OrchestrationV2ProjectedTurnItem, OrchestrationV2Subagent } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
+import { orchestrationV2ProjectedTurnItemKey } from "@t3tools/shared/orchestrationV2Timeline";
 import * as DateTime from "effect/DateTime";
 
 import { v2Projection, v2ThreadId } from "./orchestrationV2TestFixtures.ts";
@@ -80,7 +81,7 @@ describe("threadHistoryMerge", () => {
       ),
     };
     const loadedWork = mergeOlderHistoryIntoProjection(deferred, [row(1), row(2), row(3)], {
-      anchorId: anchorItem.id,
+      anchorKey: orchestrationV2ProjectedTurnItemKey(deferred.visibleTurnItems[0]!),
       nextCursor: null,
     });
     expect(loadedWork.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
@@ -175,6 +176,57 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems[1]?.item).toBe(preview.item);
     expect(merged.turnItems).toEqual([local.item]);
     expect(mergeOlderHistoryIntoProjection(merged, [inherited(0), inherited(1)])).toBe(merged);
+
+    // Both anchors carry deferred work: expanding the fork's own leaves the parent's deferred.
+    const deferredWork = { cursor: "work", itemCount: 2, lastOrdinal: 3 };
+    const parentAnchor = { ...preview, item: { ...preview.item, deferredWork } };
+    const localAnchor = { ...local, item: { ...local.item, deferredWork } };
+    const expanded = mergeOlderHistoryIntoProjection(
+      {
+        ...projection,
+        turnItems: [localAnchor.item],
+        visibleTurnItems: [parentAnchor, localAnchor],
+      },
+      [local, row(2)],
+      { anchorKey: orchestrationV2ProjectedTurnItemKey(localAnchor), nextCursor: null },
+    );
+    expect(
+      expanded.visibleTurnItems.map((entry) => [
+        entry.sourceThreadId,
+        entry.sourceItemId,
+        entry.item.deferredWork !== undefined,
+      ]),
+    ).toEqual([
+      ["fork-source", "item-1", true],
+      [v2ThreadId, "item-1", false],
+      [v2ThreadId, "item-2", false],
+    ]);
+    expect(expanded.visibleTurnItems[0]?.item).toBe(parentAnchor.item);
+
+    // Held and paged rows with one ordinal follow the server's item id order.
+    const tied = (id: string, ordinal: number) => ({
+      ...local,
+      sourceItemId: id as never,
+      item: { ...local.item, id: id as never, ordinal },
+    });
+    const tiedAnchor = {
+      ...tied("item-a", 10),
+      item: { ...tied("item-a", 10).item, deferredWork: { ...deferredWork, lastOrdinal: 11 } },
+    };
+    const tiedExpanded = mergeOlderHistoryIntoProjection(
+      {
+        ...projection,
+        turnItems: [tiedAnchor.item, tied("item-b", 11).item],
+        visibleTurnItems: [tiedAnchor, tied("item-b", 11)],
+      },
+      [tied("item-c", 11)],
+      { anchorKey: orchestrationV2ProjectedTurnItemKey(tiedAnchor), nextCursor: null },
+    );
+    expect(tiedExpanded.visibleTurnItems.map((entry) => entry.sourceItemId)).toEqual([
+      "item-a",
+      "item-b",
+      "item-c",
+    ]);
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {
