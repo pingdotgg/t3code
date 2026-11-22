@@ -987,3 +987,31 @@ it("lets the user retry after a status failure without reselecting the destinati
   await act(() => mocks.voice.stop());
   expect(mocks.transcribeCalls).toEqual(["env-a"]);
 });
+
+it("delivers a queued submission for a persistent draft after switching owners", async () => {
+  setup({ destination: "env-a" });
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" persistent />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+    await screen.rerender(<Probe ownerKey="thread-b" persistent />);
+  });
+  await vi.waitFor(() => expect(submit).toHaveBeenCalledExactlyOnceWith("dictated"));
+  expect(mocks.storedDraft).toBe("dictated");
+});
+
+it("drops a queued submission for a non-persistent draft when switching owners", async () => {
+  setup({ destination: "env-a" });
+  const submit = vi.fn();
+  await using screen = await render(<Probe ownerKey="thread-a" />);
+  await act(() => mocks.voice.start());
+  expect(mocks.voice.state.phase).toBe("recording");
+  await act(async () => {
+    mocks.voice.submitAfterDictation(submit);
+    await screen.rerender(<Probe ownerKey="thread-b" />);
+  });
+  await vi.waitFor(() => expect(mocks.voice.state.phase).toBe("idle"));
+  expect(submit).not.toHaveBeenCalled();
+});
