@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useEffect,
   useLayoutEffect,
   useState,
   useSyncExternalStore,
@@ -37,12 +38,18 @@ const ThreadScreenContext = createContext<ReturnType<typeof createThreadScreenSt
 function ThreadScreenOutlet() {
   const store = useContext(ThreadScreenContext)!;
   const content = useSyncExternalStore(store.subscribe, store.getSnapshot);
+  const [bodyReady, setBodyReady] = useState(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- waits one native frame so the push starts before the detail screen's render pins the JS thread
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setBodyReady(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
   if (content === null) return null;
   const body = "props" in content ? <ThreadDetailScreen {...content.props} /> : content.fallback;
   return (
     <>
       {"props" in content ? content.props.header : content.header}
-      <ScreenContent surface="canvas">{body}</ScreenContent>
+      <ScreenContent surface="canvas">{bodyReady ? body : null}</ScreenContent>
     </>
   );
 }

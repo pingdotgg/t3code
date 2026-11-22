@@ -287,8 +287,9 @@ patchedDependencies:
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
-  # gt validates, canonicalizes and resolves the same locale on every translated string; memoize
-  # those pure lookups so opening a chat does not spend a third of its render in Intl.
+  # gt validates, canonicalizes and resolves the same locale, and builds new plural and number
+  # formatters, on every translated string; memoize those per locale so opening a chat does not
+  # spend a third of its render in the Intl polyfills.
   "@generaltranslation/format@0.1.9": patches/@generaltranslation__format@0.1.9.patch
   "@generaltranslation/icu@0.1.2": patches/@generaltranslation__icu@0.1.2.patch
 

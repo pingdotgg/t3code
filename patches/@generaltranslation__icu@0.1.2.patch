@@ -1,8 +1,41 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..a395fe8a4d2bf306fb3ef7b250f4f6927990b66f 100644
+index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..67700a0e6da220d4b5269defb6f083f5b3d9a3b4 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -879,8 +879,20 @@ function ownOption(options, key) {
+@@ -837,8 +837,22 @@ function applyScale(value, scale) {
+ 	}
+ 	return Number(value) * scale;
+ }
++const sharedFormatterCaches = /* @__PURE__ */ new Map();
++function sharedFormatterCache(context, kind) {
++	const locales = context.locales;
++	const localesKey = typeof locales === "string" ? locales : Array.isArray(locales) ? locales.join("\0") : void 0;
++	if (localesKey === void 0) return context[kind] ??= /* @__PURE__ */ new Map();
++	const key = kind + "\0" + localesKey;
++	let cache = sharedFormatterCaches.get(key);
++	if (cache === void 0) {
++		if (sharedFormatterCaches.size >= 1e3) sharedFormatterCaches.delete(sharedFormatterCaches.keys().next().value);
++		cache = /* @__PURE__ */ new Map();
++		sharedFormatterCaches.set(key, cache);
++	}
++	return cache;
++}
+ function getNumberFormat(context, options = {}) {
+-	return getCachedFormatter(context.numberFormats ??= /* @__PURE__ */ new Map(), JSON.stringify(options), () => {
++	return getCachedFormatter(sharedFormatterCache(context, "numberFormats"), JSON.stringify(options), () => {
+ 		return new Intl.NumberFormat(context.locales, options);
+ 	});
+ }
+@@ -854,7 +868,7 @@ function getPluralRules(context, type) {
+ 		error.originalMessage = context.message;
+ 		throw error;
+ 	}
+-	return getCachedFormatter(context.pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
++	return getCachedFormatter(sharedFormatterCache(context, "pluralRules"), type, () => {
+ 		return new Intl.PluralRules(context.locales, { type });
+ 	});
+ }
+@@ -879,8 +893,20 @@ function ownOption(options, key) {
  function invalidSelection(name, value, options) {
  	return /* @__PURE__ */ new RangeError(`The ICU variable "${name}" value ${JSON.stringify(String(value))} did not match any of: ${Object.keys(options).join(", ")}.`);
  }
@@ -24,10 +57,43 @@ index 1d257228877aeab6a04ee143c0aad5a209d3e6a5..a395fe8a4d2bf306fb3ef7b250f4f692
  	const requested = typeof locales === "string" ? locales : locales[0];
  	return new Intl.Locale(supported ?? requested);
 diff --git a/dist/index.mjs b/dist/index.mjs
-index a54f2235227290efe761215b30da542562b2e77f..ae2cc9d9318e6ae7e3f1b6cca2092596185852e2 100644
+index a54f2235227290efe761215b30da542562b2e77f..b0f48a835ad8c93227fd3a928e48b9defcabcae2 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -878,8 +878,20 @@ function ownOption(options, key) {
+@@ -836,8 +836,22 @@ function applyScale(value, scale) {
+ 	}
+ 	return Number(value) * scale;
+ }
++const sharedFormatterCaches = /* @__PURE__ */ new Map();
++function sharedFormatterCache(context, kind) {
++	const locales = context.locales;
++	const localesKey = typeof locales === "string" ? locales : Array.isArray(locales) ? locales.join("\0") : void 0;
++	if (localesKey === void 0) return context[kind] ??= /* @__PURE__ */ new Map();
++	const key = kind + "\0" + localesKey;
++	let cache = sharedFormatterCaches.get(key);
++	if (cache === void 0) {
++		if (sharedFormatterCaches.size >= 1e3) sharedFormatterCaches.delete(sharedFormatterCaches.keys().next().value);
++		cache = /* @__PURE__ */ new Map();
++		sharedFormatterCaches.set(key, cache);
++	}
++	return cache;
++}
+ function getNumberFormat(context, options = {}) {
+-	return getCachedFormatter(context.numberFormats ??= /* @__PURE__ */ new Map(), JSON.stringify(options), () => {
++	return getCachedFormatter(sharedFormatterCache(context, "numberFormats"), JSON.stringify(options), () => {
+ 		return new Intl.NumberFormat(context.locales, options);
+ 	});
+ }
+@@ -853,7 +867,7 @@ function getPluralRules(context, type) {
+ 		error.originalMessage = context.message;
+ 		throw error;
+ 	}
+-	return getCachedFormatter(context.pluralRules ??= /* @__PURE__ */ new Map(), type, () => {
++	return getCachedFormatter(sharedFormatterCache(context, "pluralRules"), type, () => {
+ 		return new Intl.PluralRules(context.locales, { type });
+ 	});
+ }
+@@ -878,8 +892,20 @@ function ownOption(options, key) {
  function invalidSelection(name, value, options) {
  	return /* @__PURE__ */ new RangeError(`The ICU variable "${name}" value ${JSON.stringify(String(value))} did not match any of: ${Object.keys(options).join(", ")}.`);
  }

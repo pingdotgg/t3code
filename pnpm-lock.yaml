@@ -372,7 +372,7 @@ patchedDependencies:
   '@expo/ui@58.0.27': 9f2547678939f4ec78fe45163b6455aad63d3c80353d7e0cc783f6a61a7ccc2f
   '@ff-labs/fff-node@0.11.0': 93f62a76399b435a76588b2bef237db0a1e85880c1ac0d0759c416e9cc579252
   '@generaltranslation/format@0.1.9': 59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d
-  '@generaltranslation/icu@0.1.2': df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f
+  '@generaltranslation/icu@0.1.2': 09010cb5d46ad102681125d29dbcfcef7b4d3c5d51564a90f3507184a24d6502
   '@legendapp/list@3.7.3': 85979836ae620bdc6b40e29e3da04afd0a1a3a925ef00bdb3788e9b6fa2153f4
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
   '@pierre/diffs@1.7.0-beta.4': 7edcdd484a99c7ec0b2667499c4cb21d113ec9bea1f8570c0b0a030d33bbf1cd
@@ -15365,9 +15365,9 @@ snapshots:
 
   '@generaltranslation/format@0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)':
     dependencies:
-      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
+      '@generaltranslation/icu': 0.1.2(patch_hash=09010cb5d46ad102681125d29dbcfcef7b4d3c5d51564a90f3507184a24d6502)
 
-  '@generaltranslation/icu@0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)': {}
+  '@generaltranslation/icu@0.1.2(patch_hash=09010cb5d46ad102681125d29dbcfcef7b4d3c5d51564a90f3507184a24d6502)': {}
 
   '@generaltranslation/python-extractor@0.2.64':
     dependencies:
@@ -19998,7 +19998,7 @@ snapshots:
     dependencies:
       '@generaltranslation/api': 0.5.6
       '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
-      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
+      '@generaltranslation/icu': 0.1.2(patch_hash=09010cb5d46ad102681125d29dbcfcef7b4d3c5d51564a90f3507184a24d6502)
       '@noble/hashes': 2.4.0
 
   gensync@1.0.0-beta.2: {}
@@ -20152,7 +20152,7 @@ snapshots:
       '@babel/types': 7.29.8
       '@clack/prompts': 1.0.0-alpha.6
       '@generaltranslation/format': 0.1.9(patch_hash=59ce8f85f3964cac1d380d55cfa96087c4c8b81fbe470c180159b301e00acb1d)
-      '@generaltranslation/icu': 0.1.2(patch_hash=df968ea421369969efd00dadf33e8863a2ab83c19f48c8dd0aab349b10b1533f)
+      '@generaltranslation/icu': 0.1.2(patch_hash=09010cb5d46ad102681125d29dbcfcef7b4d3c5d51564a90f3507184a24d6502)
       '@generaltranslation/python-extractor': 0.2.64
       '@generaltranslation/supported-locales': 2.1.45
       '@generaltranslation/vue-extractor': 0.1.23(supports-color@8.1.1)
