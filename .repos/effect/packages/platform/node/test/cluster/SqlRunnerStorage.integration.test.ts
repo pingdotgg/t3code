@@ -685,12 +685,13 @@ describe("SqlRunnerStorage", () => {
       60_000
     )
   })
-  ;([
+  const backends: ReadonlyArray<readonly [string, Layer.Layer<SqlClient.SqlClient>]> = [
     ["pg", Layer.orDie(PgContainer.layerClient)],
     ["mysql", Layer.orDie(MysqlContainer.layerClient)],
     ["vitess", Layer.orDie(MysqlContainer.layerClientVitess)],
     ["sqlite", Layer.orDie(SqliteLayer)]
-  ] as const).flatMap(([label, layer]) =>
+  ]
+  backends.flatMap(([label, layer]) =>
     [
       [label, StorageLayer.pipe(Layer.provideMerge(layer), Layer.provide(ShardingConfig.layer()))],
       [
@@ -819,6 +820,36 @@ describe("SqlRunnerStorage", () => {
             expect(yield* sql`SELECT machine_id, address, runner, healthy FROM legacy_runners`).toEqual(rows)
             expect(yield* sql`SELECT * FROM legacy_locks`).toEqual([])
           }))
+      }
+
+      if (label === "vitess") {
+        it.effect(
+          "refreshes and releases idle advisory sessions under concurrent load",
+          () =>
+            Effect.forEach(Array.from({ length: 8 }, (_, i) => i), (i) =>
+              Effect.gen(function*() {
+                const storage = yield* SqlRunnerStorage.make({ prefix: `idle_load_${i}` })
+                for (let round = 0; round < 10; round++) {
+                  const shard = ShardId.make("default", round + 1)
+                  assert.deepStrictEqual(yield* storage.acquire(runnerAddress1, [shard]), [shard])
+                  // Cross vtgate's lock-heartbeat interval, not MySQL's wait_timeout
+                  // (which vtgate ignores). Each session is used sequentially.
+                  yield* Effect.sleep(5100)
+                  // Alternate the first operation after idling: refreshing first
+                  // covers the runner heartbeat without warming every release.
+                  if (round % 2 === 0) {
+                    assert.deepStrictEqual(yield* storage.refresh(runnerAddress1, [shard]), [shard])
+                  }
+                  yield* storage.release(runnerAddress1, shard)
+                  assert.deepStrictEqual(yield* storage.refresh(runnerAddress1, [shard]), [])
+                  yield* storage.releaseAll(runnerAddress1)
+                }
+              }).pipe(Effect.scoped), { concurrency: "unbounded" }).pipe(
+                Effect.provide(ShardingConfig.layer()),
+                TestClock.withLive
+              ),
+          120_000
+        )
       }
 
       if (label === "mysql" || label === "vitess") {
