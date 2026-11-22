@@ -29,6 +29,8 @@ import {
   useEnvironmentScope,
   useEnvironmentsWithScope,
 } from "./session";
+import { msg } from "gt-react";
+import { m } from "../i18n/messages";
 
 const EMPTY_KNOWN_TERMINAL_SESSIONS = Object.freeze<ReadonlyArray<KnownTerminalSession>>([]);
 
@@ -146,7 +148,7 @@ const attachedTerminalSessionFamily = Atom.family((key: string) => {
   if (Option.isNone(decoded)) {
     return Atom.make<TerminalSessionState>({
       ...EMPTY_TERMINAL_SESSION_STATE,
-      error: "Invalid terminal launch input",
+      error: m(msg("Invalid terminal launch input")),
       status: "error",
     }).pipe(Atom.withLabel(`web-terminal-session:${key}`));
   }
@@ -234,6 +236,40 @@ export function useKnownTerminalSessions(input: {
     input.environmentId === null || !canRead
       ? NO_KNOWN_TERMINAL_SESSIONS_ATOM
       : knownTerminalSessionsAtom(input.environmentId, input.threadId),
+  );
+}
+
+interface TerminalDrawerSessions {
+  readonly sessions: ReadonlyArray<KnownTerminalSession>;
+  readonly snapshotId: string | symbol;
+}
+
+const noTerminalDrawerSessions = Atom.make<TerminalDrawerSessions | null>(null);
+
+const terminalDrawerSessionsFamily = Atom.family((key: string) => {
+  const [environmentId, threadId] = Option.getOrThrow(decodeKnownSessionsKey(key));
+  return Atom.make((get): TerminalDrawerSessions | null => {
+    const metadata = get(terminalEnvironment.metadataFeed({ environmentId, input: null }));
+    if (!AsyncResult.isSuccess(metadata)) return null;
+    const { terminals, snapshotId } = metadata.value;
+    return {
+      sessions: selectKnownTerminalSessions(terminals, environmentId, threadId),
+      snapshotId,
+    };
+  }).pipe(
+    Atom.withEquality<TerminalDrawerSessions | null>(
+      (left, right) => left?.sessions === right?.sessions && left?.snapshotId === right?.snapshotId,
+    ),
+    Atom.withLabel(`web-terminal-drawer-sessions:${key}`),
+  );
+});
+
+export function useTerminalDrawerSessions(environmentId: EnvironmentId, threadId: ThreadId) {
+  const canRead = useEnvironmentScope(environmentId, AuthTerminalReadScope);
+  return useAtomValue(
+    canRead
+      ? terminalDrawerSessionsFamily(JSON.stringify([environmentId, threadId]))
+      : noTerminalDrawerSessions,
   );
 }
 

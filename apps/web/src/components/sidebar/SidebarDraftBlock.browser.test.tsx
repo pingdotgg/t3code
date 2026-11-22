@@ -3,46 +3,36 @@ import { EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contract
 import { Profiler } from "react";
 import { expect, it, vi } from "vite-plus/test";
 
-const terminalLabels = vi.hoisted(() => ({ byThreadId: new Map<string, string>() }));
-
-vi.mock(import("~/state/terminalSessions"), async (original) => ({
-  ...(await original()),
-  useTerminalLabelsByThreadKey: (environmentIds) =>
-    new Map(
-      environmentIds.flatMap((environmentId) =>
-        [...terminalLabels.byThreadId].map(
-          ([threadId, label]) => [`${environmentId}:${threadId}`, label] as const,
-        ),
-      ),
-    ),
-}));
-
 import { act, render } from "../../../test/render";
 import { formatAssistantCitationForComposer } from "../../composer-logic";
 import { DraftId, useComposerDraftStore } from "../../composerDraftStore";
-import { SidebarDraftBlock } from "./SidebarDraftBlock";
+import { SidebarDraftBlock, useSidebarDrafts } from "./SidebarDraftBlock";
 
-function setup(labels: Record<string, string> = {}) {
-  terminalLabels.byThreadId = new Map(Object.entries(labels));
-}
+const NO_TERMINAL_LABELS: ReadonlyMap<string, string> = new Map();
 
-function draftBlock(routeDraftId: string | null) {
+function DraftBlock(props: {
+  routeDraftId?: string | null;
+  terminalLabels?: ReadonlyMap<string, string>;
+}) {
+  const routeDraftId = props.routeDraftId ?? null;
+  const terminalLabels = props.terminalLabels ?? NO_TERMINAL_LABELS;
+  const { draftIds, routeDraftComposer } = useSidebarDrafts(null, routeDraftId, terminalLabels);
   return (
-    <ul>
-      <SidebarDraftBlock
-        projectByKey={new Map()}
-        projectDisplayNameByKey={new Map()}
-        scopedProjectKeys={null}
-        routeDraftId={routeDraftId}
-        onNavigateToDraft={vi.fn()}
-        onDraftContextMenu={vi.fn()}
-      />
-    </ul>
+    <SidebarDraftBlock
+      draftIds={draftIds}
+      routeDraftComposer={routeDraftComposer}
+      terminalLabels={terminalLabels}
+      jumpLabelByDraftId={null}
+      projectByKey={new Map()}
+      projectDisplayNameByKey={new Map()}
+      routeDraftId={routeDraftId}
+      onNavigateToDraft={vi.fn()}
+      onDraftContextMenu={vi.fn()}
+    />
   );
 }
 
 it("keeps draft previews current through edits, promotion and removal", async () => {
-  setup();
   const initial = useComposerDraftStore.getState();
   using _store = {
     [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
@@ -59,7 +49,9 @@ it("keeps draft previews current through edits, promotion and removal", async ()
   const onRender = vi.fn();
   await using screen = await render(
     <Profiler id="draft-block" onRender={onRender}>
-      {draftBlock(null)}
+      <ul>
+        <DraftBlock />
+      </ul>
     </Profiler>,
   );
   const row = screen.getByTestId("sidebar-draft-row");
@@ -109,7 +101,6 @@ it("keeps draft previews current through edits, promotion and removal", async ()
 });
 
 it("lists empty drafts by terminal label while their terminal exists, active or not", async () => {
-  setup({ "terminal-thread": "dev" });
   const initial = useComposerDraftStore.getState();
   using _store = {
     [Symbol.dispose]: () => useComposerDraftStore.setState(initial, true),
@@ -132,12 +123,18 @@ it("lists empty drafts by terminal label while their terminal exists, active or 
     { threadId: ThreadId.make("idle-thread") },
   );
 
-  await using screen = await render(draftBlock(terminalDraftId));
+  const terminalLabels = new Map([[`${environmentId}:terminal-thread`, "dev"]]);
+  const block = (routeDraftId: string | null) => (
+    <ul>
+      <DraftBlock routeDraftId={routeDraftId} terminalLabels={terminalLabels} />
+    </ul>
+  );
+  await using screen = await render(block(terminalDraftId));
   const rows = screen.getByTestId("sidebar-draft-row");
   await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
   expect(rows.elements()).toHaveLength(1);
 
-  await screen.rerender(draftBlock(null));
+  await screen.rerender(block(null));
   await expect.element(rows).toHaveAccessibleName("dev, Unsent draft");
   expect(rows.elements()).toHaveLength(1);
 });
