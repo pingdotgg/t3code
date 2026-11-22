@@ -912,6 +912,9 @@ export const ThreadComposer = function ThreadComposer(props: ThreadComposerProps
                       setPendingNativeImageCount((count) => count - uris.length);
                     });
                   }}
+                  onPasteImagesPending={(delta) =>
+                    setPendingNativeImageCount((count) => count + delta)
+                  }
                   onPasteText={(paste) => {
                     if (isSubmissionLocked) return;
                     const insertPaste = () => {

@@ -86,6 +86,8 @@ private final class ComposerTextView: UITextView {
   ])
 
   var onPasteImages: (([String]) -> Void)?
+  /// Change in how many pasted images are still loading: +n when a paste is accepted, -n once it settles.
+  var onPasteImagesPending: ((Int) -> Void)?
   var onPasteContext: (([String: String]) -> Void)?
   var onPasteText: ((String, NSRange) -> Void)?
   var clipboardFragment = ""
@@ -308,6 +310,8 @@ private final class ComposerTextView: UITextView {
   }
 
   func loadImages(from providers: [NSItemProvider]) {
+    guard !providers.isEmpty else { return }
+    onPasteImagesPending?(providers.count)
     let group = DispatchGroup()
     let lock = NSLock()
     var images = [(data: Data, fileExtension: String)?](repeating: nil, count: providers.count)
@@ -337,7 +341,11 @@ private final class ComposerTextView: UITextView {
     }
 
     group.notify(queue: .main) { [weak self] in
-      guard let self, !self.isReadOnly else {
+      guard let self else {
+        return
+      }
+      defer { self.onPasteImagesPending?(-providers.count) }
+      guard !self.isReadOnly else {
         return
       }
       let urls = images.compactMap { $0 }.compactMap {
@@ -525,6 +533,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
   let onComposerBlur = EventDispatcher()
   let onComposerSubmit = EventDispatcher()
   let onComposerPasteImages = EventDispatcher()
+  let onComposerPasteImagesPending = EventDispatcher()
   let onComposerContextPress = EventDispatcher()
   let onComposerPasteContext = EventDispatcher()
   let onComposerPasteText = EventDispatcher()
@@ -554,6 +563,9 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     }
     textView.onPasteImages = { [weak self] urls in
       self?.onComposerPasteImages(["uris": urls])
+    }
+    textView.onPasteImagesPending = { [weak self] delta in
+      self?.onComposerPasteImagesPending(["delta": delta])
     }
     textView.onPasteContext = { [weak self] context in
       guard let self else { return }
