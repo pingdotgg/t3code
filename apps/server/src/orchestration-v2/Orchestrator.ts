@@ -12697,7 +12697,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const projection = yield* loadProjectionForCommand(
       command,
       ["runs", "attempts", "nodes", "providerThreads", "turnItems"],
-      { turnItemTypes: ["command_execution", "error"], turnItemRunId: command.runId },
+      {
+        turnItemTypes: ["command_execution", "error", "run_interrupt_request"],
+        turnItemRunId: command.runId,
+      },
     );
     const state = preparedRunState(command, projection);
     const failureItem = projection.turnItems.find(
@@ -12740,6 +12743,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ...scope,
         type: "turn-item.updated",
         payload: { ...failureItem, status: "cancelled", updatedAt: now },
+      });
+    }
+    // The Stop that ended the setup must not count as a Stop of the retried run.
+    for (const item of projection.turnItems) {
+      if (item.type !== "run_interrupt_request" || item.status === "cancelled") continue;
+      yield* emitEvent({
+        ...scope,
+        type: "turn-item.updated",
+        payload: { ...item, status: "cancelled", updatedAt: now },
       });
     }
     yield* emitEvent({

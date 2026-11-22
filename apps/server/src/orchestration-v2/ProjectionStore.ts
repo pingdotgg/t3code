@@ -1967,7 +1967,10 @@ export function threadShellFromProjection(
     latestRunStopRequested:
       latestRun != null &&
       projection.turnItems.some(
-        (item) => item.runId === latestRun.id && item.type === "run_interrupt_request",
+        (item) =>
+          item.runId === latestRun.id &&
+          item.type === "run_interrupt_request" &&
+          item.status !== "cancelled",
       ),
     latestRunBackgroundWake:
       latestRun != null && isBackgroundWakeRunForShell(latestRun, projection),
@@ -6090,6 +6093,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const rows = yield* sql<{ readonly found: number }>`
           SELECT 1 AS found FROM orchestration_v2_projection_turn_items
           WHERE thread_id = ${threadId} AND run_id = ${runId} AND type = 'run_interrupt_request'
+            AND status <> 'cancelled'
           LIMIT 1`;
         return rows.length > 0;
       },
@@ -8407,8 +8411,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               presented.completed_at AS latest_run_completed_at,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
+                  INDEXED BY orchestration_v2_projection_turn_items_stop_request_idx
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = presented.run_id
                   AND stop_request.type = 'run_interrupt_request'
+                  AND stop_request.status <> 'cancelled'
               ) AS latest_run_stop_requested,
               ${isBackgroundWakeShellRun("presented")} AS latest_run_background_wake,
               active.run_id AS active_run_id,
@@ -8468,8 +8474,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               blocked.completed_at AS blocking_run_completed_at,
               EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_turn_items stop_request
+                  INDEXED BY orchestration_v2_projection_turn_items_stop_request_idx
                 WHERE stop_request.thread_id = t.thread_id AND stop_request.run_id = blocked.run_id
                   AND stop_request.type = 'run_interrupt_request'
+                  AND stop_request.status <> 'cancelled'
               ) AS blocking_run_stop_requested,
               ${isBackgroundWakeShellRun("blocked")} AS blocking_run_background_wake,
               (

@@ -2176,6 +2176,14 @@ it.effect.each(["failed", "interrupted"] as const)(
         })
         .pipe(Effect.exit);
       assert.isTrue(Exit.isSuccess(retried), String(Exit.isFailure(retried) && retried.cause));
+      // The Stop that ended the setup no longer counts as a Stop of the retried run.
+      const retriedProjection = yield* threads.getThreadProjection(launched.threadId);
+      assert.deepStrictEqual(
+        retriedProjection.turnItems
+          .filter((item) => item.type === "run_interrupt_request")
+          .map((item) => item.status),
+        ending === "interrupted" ? ["cancelled"] : [],
+      );
     }).pipe(Effect.provide(harness.layer));
   },
 );
