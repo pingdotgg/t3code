@@ -268,6 +268,7 @@ export function useComposerSelection(input: ComposerSelectionInput) {
   // re-renders the branch toolbar and thread details panel with it.
   const activeThreadId = activeThread?.id;
   const onStartFromOriginChange = (nextStartFromOrigin: boolean) => {
+    cancelHeldComposerSend(composerTargetKey(composerDraftTarget));
     if (canOverrideServerThreadEnvMode && activeThreadId !== undefined) {
       setPendingServerThreadStartFromOriginByThreadId((current) =>
         current[activeThreadId] === nextStartFromOrigin

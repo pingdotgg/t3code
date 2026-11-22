@@ -29,36 +29,39 @@ function HeldComposerSendStatus({
   const draft = useComposerThreadDraft(draftTarget);
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
 
+  let label: string;
   if (preparingCount > 0) {
-    return gt(
+    label = gt(
       "{count, plural, one {Sending once image is ready} other {Sending once {count} images are ready}}",
       { count: preparingCount },
     );
-  }
-
-  const uploading: number[] = [];
-  for (const attachment of [...draft.images, ...draft.files]) {
-    const upload = uploadsByImageId[attachment.id];
-    if (upload?.status === "uploading" && upload.environmentId === environmentId) {
-      uploading.push(upload.progress);
+  } else {
+    const uploading: number[] = [];
+    for (const attachment of [...draft.images, ...draft.files]) {
+      const upload = uploadsByImageId[attachment.id];
+      if (upload?.status === "uploading" && upload.environmentId === environmentId) {
+        uploading.push(upload.progress);
+      }
+    }
+    if (uploading.length > 0) {
+      const averageProgress =
+        uploading.reduce((sum, progress) => sum + progress, 0) / uploading.length;
+      label =
+        averageProgress > 0
+          ? gt(
+              "{count, plural, one {Sending once upload finishes ({percent})} other {Sending once {count} uploads finish ({percent})}}",
+              { count: uploading.length, percent: formatAttachmentUploadProgress(averageProgress) },
+            )
+          : gt(
+              "{count, plural, one {Sending once upload finishes} other {Sending once {count} uploads finish}}",
+              { count: uploading.length },
+            );
+    } else {
+      label = gt("Sending message");
     }
   }
-  if (uploading.length > 0) {
-    const averageProgress =
-      uploading.reduce((sum, progress) => sum + progress, 0) / uploading.length;
-    if (averageProgress > 0) {
-      return gt(
-        "{count, plural, one {Sending once upload finishes ({percent})} other {Sending once {count} uploads finish ({percent})}}",
-        { count: uploading.length, percent: formatAttachmentUploadProgress(averageProgress) },
-      );
-    }
-    return gt(
-      "{count, plural, one {Sending once upload finishes} other {Sending once {count} uploads finish}}",
-      { count: uploading.length },
-    );
-  }
 
-  return gt("Sending message");
+  return <span aria-live="polite">{label}</span>;
 }
 
 /** Shown while a send waits for image compression or attachment uploads to finish. */
