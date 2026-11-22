@@ -49,6 +49,7 @@ import {
 import { resolveCloudPublicConfig } from "../cloud/publicConfig";
 import { supportsAgentAwarenessPush } from "./capabilities";
 import { makeRelayDeviceRegistrationRequest, resolveApsEnvironment } from "./registrationPayload";
+import { isUnifiedPushBuild } from "./unifiedPush";
 
 const REMOTE_ACTIVITY_REGISTRATION_RETRY_MS = 15_000;
 
@@ -184,7 +185,7 @@ function canRegisterRemoteLiveActivities(): boolean {
 }
 
 function canRegisterPushNotifications(): boolean {
-  return Platform.OS === "ios" || Platform.OS === "android";
+  return (Platform.OS === "ios" || Platform.OS === "android") && !isUnifiedPushBuild();
 }
 
 function shouldRegisterAgentAwarenessDeviceForProvider(
@@ -198,6 +199,8 @@ export function setAgentAwarenessRelayTokenProvider(
   provider: (() => Promise<string | null>) | null,
   identity?: string,
 ): void {
+  // The UnifiedPush path has no relay account; clearing here would wipe its native configuration.
+  if (isUnifiedPushBuild()) return;
   const isExistingIdentity =
     provider !== null &&
     !shouldRegisterAgentAwarenessDeviceForProvider(relayTokenProviderIdentity, identity);

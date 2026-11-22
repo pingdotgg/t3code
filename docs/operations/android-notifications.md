@@ -80,6 +80,44 @@ After Android prebuild, run the native presentation regression tests from `apps/
 ./gradlew :t3-agent-notifications:testDebugUnitTest --tests expo.modules.t3agentnotifications.AgentNotificationsTest
 ```
 
+## UnifiedPush without Firebase
+
+A build without Firebase configuration cannot register with the hosted relay. Setting `T3CODE_ANDROID_PUSH=unifiedpush` when running Expo prebuild and the Gradle build makes the app receive notifications through [UnifiedPush](https://unifiedpush.org) instead. The Notifications settings page then needs no T3 Connect sign-in. Builds without that variable keep the FCM path unchanged.
+
+The relay is not involved. A watcher you run (`infra/relay/scripts/unifiedpush-watch.ts`) connects to each T3 server as an ordinary paired client, projects the same agent awareness the relay uses, merges every server into one card, and POSTs the payload to the phone's UnifiedPush endpoint. Servers need no changes and no fork build.
+
+1. On the phone, install a UnifiedPush distributor. Two kinds work:
+   - **Sunup** (or any distributor that relays through a public Web Push service): nothing to host, and the phone needs no tailnet. The copied config carries the distributor's `keys`, and the watcher encrypts every push for them (RFC 8291), so the push service sees only ciphertext.
+   - **ntfy** pointed at a server you run: the config has no `keys`, so the watcher posts plain JSON. Titles then transit that server in plain text, so keep it on your tailnet; the phone must be on that network to receive pushes.
+2. In the app, open Settings → Notifications and turn on Device Notifications. Allow notifications when asked. The row shows the distributor once the endpoint arrives.
+3. Tap **Copy watcher config** and paste the result into the watcher's config file, next to the servers it should watch:
+
+   ```json
+   {
+     "endpoint": "http://ntfy.example/upAbC123",
+     "deviceId": "…",
+     "userId": "unifiedpush",
+     "servers": [{ "name": "workstation", "wsUrl": "wss://host/ws", "bearerToken": "…" }]
+   }
+   ```
+
+   Give the watcher its own read-only credential for each server: run `t3 pair --scope orchestration:read --ttl 10m` on that server, then exchange the pairing token for a bearer token. The `scope` and the 30 day lifetime are fixed at issue, so mint a new one when the watcher alerts that the server rejected it:
+
+   ```sh
+   curl -sS https://host/oauth/token \
+     -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
+     -d subject_token=PAIRING_TOKEN \
+     -d subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap \
+     -d requested_token_type=urn:ietf:params:oauth:token-type:access_token \
+     -d scope=orchestration:read | jq -r .access_token
+   ```
+
+   The distributor keeps the same endpoint across restarts. If it ever issues a new one, the app posts a "push endpoint changed" notification: copy the config again and restart the watcher.
+
+4. Run it from `infra/relay` with `vp run push:unifiedpush:watch /path/config.json`. Each accepted push logs one line. If a server rejects the watcher's credential, the phone gets one alert naming that server.
+
+Alerts the watcher cannot deliver within ten minutes are dropped, and the app ignores messages older than that anyway. A change that happens while the watcher is disconnected from a server is not alerted when it reconnects. To test delivery with the app swiped away, run `adb shell dumpsys deviceidle force-idle` and then finish or approve a thread.
+
 ## Relay deployment
 
 ### Local verification with existing T3 services

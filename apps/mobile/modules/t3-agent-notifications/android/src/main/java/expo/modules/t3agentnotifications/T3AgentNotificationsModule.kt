@@ -26,6 +26,28 @@ class T3AgentNotificationsModule : Module() {
       appContext.reactContext?.let { AgentNotifications.clear(it) }
     }
 
+    Events("onUnifiedPushState")
+
+    OnCreate {
+      AgentUnifiedPush.onChange =
+        { sendEvent("onUnifiedPushState", mapOf<String, Any?>()) }
+    }
+
+    OnDestroy { AgentUnifiedPush.onChange = null }
+
+    Function("unifiedPushState") {
+      appContext.reactContext?.let { AgentUnifiedPush.state(it) }
+    }
+
+    Function("unifiedPushEnable") {
+      appContext.reactContext?.let { AgentUnifiedPush.enable(it, appContext.currentActivity) }
+        ?: "none"
+    }
+
+    Function("unifiedPushDisable") {
+      appContext.reactContext?.let { AgentUnifiedPush.disable(it) }
+    }
+
     Function("showShowcaseActivity") { scheme: String, data: Map<String, String> ->
       appContext.reactContext?.let { AgentNotifications.showcase(it, scheme, data) }
     }

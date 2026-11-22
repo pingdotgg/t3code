@@ -124,6 +124,8 @@ const variant = VARIANT_CONFIG[APP_VARIANT];
 const forkAndroidPackage = repoEnv.T3CODE_FORK_ANDROID_PACKAGE?.trim() || undefined;
 const forkAppName = repoEnv.T3CODE_FORK_APP_NAME?.trim() || undefined;
 const forkScheme = repoEnv.T3CODE_FORK_SCHEME?.trim() || undefined;
+// A build without Firebase configuration receives agent notifications over UnifiedPush instead.
+const androidPush = repoEnv.T3CODE_ANDROID_PUSH?.trim() === "unifiedpush" ? "unifiedpush" : "fcm";
 // Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
 const HOSTED_APP_HOST = "app.t3.codes";
 const iosBundleIdentifier = isIosPersonalTeamBuild
@@ -484,6 +486,7 @@ const config: ExpoConfig = {
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),
     iosPersonalTeamBuild: isIosPersonalTeamBuild,
+    androidPush,
     relay: {
       url: repoEnv.T3CODE_RELAY_URL ?? null,
     },

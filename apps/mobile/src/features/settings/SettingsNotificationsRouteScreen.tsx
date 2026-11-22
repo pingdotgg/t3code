@@ -44,6 +44,8 @@ import {
   setLiveActivityUpdatesEnabled,
 } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
+import { isUnifiedPushBuild } from "../agent-awareness/unifiedPush";
+import { SettingsNotificationsUnifiedPush } from "./SettingsNotificationsUnifiedPush";
 import {
   agentAwarenessNotificationsReady,
   getAgentAwarenessRegistrationStatus,
@@ -189,6 +191,7 @@ function useNotificationsReady(): boolean {
 
 export function SettingsNotificationsRouteScreen() {
   const gt = useGT();
+  if (isUnifiedPushBuild()) return <SettingsNotificationsUnifiedPush />;
   if (!hasCloudPublicConfig()) {
     return (
       <SettingsScreen title={gt("Notifications")}>
