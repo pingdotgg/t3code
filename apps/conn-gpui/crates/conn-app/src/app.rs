@@ -58,7 +58,31 @@ struct DraftThreadState {
     runtime_mode: String,
     interaction_mode: String,
     use_worktree: bool,
+    /// Base ref for a new worktree, or the branch the local checkout was switched to.
+    branch: Option<String>,
+    /// Reuse this existing worktree (`Previous worktree`, or a ref checked out in one).
+    worktree_path: Option<String>,
+    /// `Start from remote` for a new worktree's base.
+    start_from_origin: bool,
     launching: bool,
+}
+
+/// `orchestration.launchThread` `workspaceStrategy` for a draft.
+fn draft_workspace_strategy(draft: &DraftThreadState) -> serde_json::Value {
+    if let Some(path) = &draft.worktree_path {
+        serde_json::json!({ "type": "existing_worktree", "worktreePath": path, "branch": draft.branch })
+    } else if draft.use_worktree {
+        serde_json::json!({
+            "type": "worktree",
+            "baseRef": draft.branch.as_deref().unwrap_or("HEAD"),
+            "startFromOrigin": draft.start_from_origin,
+        })
+    } else {
+        match &draft.branch {
+            Some(branch) => serde_json::json!({ "type": "root", "branch": branch }),
+            None => serde_json::json!({ "type": "root" }),
+        }
+    }
 }
 
 /// Root view of the Conn native desktop shell.
@@ -85,6 +109,12 @@ pub(crate) struct ConnApp {
     ended_threads: HashSet<String>,
     /// Active new-thread draft; sent with `orchestration.launchThread` on first message.
     draft: Option<DraftThreadState>,
+    /// `server.getConfig` `scratchWorkspaceRoot`; `None` hides `or start without a project`.
+    scratch_workspace_root: Option<String>,
+    /// Project id returned by `projects.ensureScratch`, before the shell lists it.
+    scratch_project_id: Option<String>,
+    /// The new-thread draft left by opening a thread, restored by the next new thread.
+    parked_draft: Option<DraftThreadState>,
     /// Right panel tabs the user has open, in order (Conn's `RightPanelTabs`).
     right_panel_open_tabs: Vec<PanelSurface>,
     /// The open file while `layout.right_panel_tab` is [`RightPanelTab::File`].
@@ -269,11 +299,19 @@ impl ConnApp {
                 crate::chat::ChatEvent::InteractionModeSelected(mode) => {
                     app.set_interaction_mode(mode, cx);
                 }
-                crate::chat::ChatEvent::WorkspaceModeSelected(use_worktree) => {
-                    app.set_draft_workspace_strategy(*use_worktree, cx);
+                crate::chat::ChatEvent::Branch(action) => {
+                    app.handle_branch_action(action.clone(), cx)
                 }
                 crate::chat::ChatEvent::DraftProjectSelected(project_id) => {
                     app.set_draft_project(project_id.clone(), cx);
+                }
+                crate::chat::ChatEvent::DraftStartScratch => app.start_draft_scratch(cx),
+                crate::chat::ChatEvent::DraftAddProject => app.add_project_via_picker(window, cx),
+                crate::chat::ChatEvent::ScratchWorkspaceRoot(root) => {
+                    if app.scratch_workspace_root != *root {
+                        app.scratch_workspace_root = root.clone();
+                        app.sync_chat(cx);
+                    }
                 }
                 crate::chat::ChatEvent::StartNewThread => {
                     app.start_new_thread(None, Some(window), cx);
@@ -383,6 +421,9 @@ impl ConnApp {
             right_panel,
             ended_threads: HashSet::new(),
             draft: None,
+            scratch_workspace_root: None,
+            scratch_project_id: None,
+            parked_draft: None,
             right_panel_open_tabs: vec![PanelSurface::Kind(RightPanelTab::Files)],
             right_panel_file: None,
             right_panel_add_menu_open: false,
@@ -763,7 +804,9 @@ impl ConnApp {
                 .map(|p| crate::chat::DraftProjectOption {
                     id: p.id.clone(),
                     title: p.title.clone(),
-                    workspace_root: p.workspace_root.clone(),
+                    pinned: matches!(p.pinned_at, Some(Some(_))),
+                    is_scratch: self.is_scratch_project(&p.id, Some(&p.workspace_root)),
+                    shell: p.clone(),
                 })
                 .collect();
             crate::chat::DraftViewInfo {
@@ -771,11 +814,13 @@ impl ConnApp {
                 project_title: project
                     .map(|p| p.title.clone())
                     .unwrap_or_else(|| draft.project_id.clone()),
-                workspace_root: project
-                    .map(|p| p.workspace_root.clone())
-                    .unwrap_or_default(),
                 projects,
                 launching: draft.launching,
+                is_scratch: self.is_scratch_project(
+                    &draft.project_id,
+                    project.map(|p| p.workspace_root.as_str()),
+                ),
+                scratch_available: self.scratch_workspace_root.is_some(),
             }
         });
         let title = if self.draft.is_some() {
@@ -825,8 +870,8 @@ impl ConnApp {
                 draft.model_instance_id.clone(),
                 draft.model_slug.clone(),
                 draft.model_options.clone(),
-                None,
-                draft.use_worktree,
+                draft.branch.clone(),
+                draft.use_worktree || draft.worktree_path.is_some(),
                 draft.runtime_mode.clone(),
                 draft.interaction_mode.clone(),
             )
@@ -861,6 +906,7 @@ impl ConnApp {
                 interaction_mode,
             )
         };
+        let branch_context = self.branch_context(shell_thread, &branch);
         let has_projects = self.shell.projects.iter().any(|p| p.archived_at.is_none());
         let connected = self.connection.is_some();
         let perf_open = if self.perf_open_pending_chat {
@@ -877,6 +923,7 @@ impl ConnApp {
             chat.set_draft(draft_view, cx);
             chat.set_workspace_root(root, cx);
             chat.set_thread(thread, title, cx);
+            chat.set_branch_context(branch_context, cx);
             chat.set_thread_context(branch, worktree_active, runtime_mode, interaction_mode, cx);
             if let Some(model) = model {
                 chat.set_model_selection(model_instance, model, model_options, cx);
@@ -1064,7 +1111,11 @@ impl ConnApp {
 
     /// Selects `thread_id` and subscribes to its timeline once.
     fn open_thread(&mut self, thread_id: String) {
-        self.draft = None;
+        if let Some(draft) = self.draft.take()
+            && !draft.launching
+        {
+            self.parked_draft = Some(draft);
+        }
         if conn_client::perf::enabled()
             && self.layout.selected_thread_id.as_deref() != Some(thread_id.as_str())
         {
@@ -1286,15 +1337,22 @@ impl ConnApp {
         }
         self.layout.selected_project_id = Some(project_id.clone());
         self.layout.selected_thread_id = None;
-        self.draft = Some(DraftThreadState {
-            project_id,
-            model_instance_id,
-            model_slug,
-            model_options,
-            runtime_mode,
-            interaction_mode,
-            use_worktree: false,
-            launching: false,
+        // Coming back to the same project's draft keeps its model, modes and workspace choice.
+        self.draft = Some(match self.parked_draft.take() {
+            Some(parked) if parked.project_id == project_id => parked,
+            _ => DraftThreadState {
+                project_id,
+                model_instance_id,
+                model_slug,
+                model_options,
+                runtime_mode,
+                interaction_mode,
+                use_worktree: false,
+                branch: None,
+                worktree_path: None,
+                start_from_origin: false,
+                launching: false,
+            },
         });
         self.chat.update(cx, |chat, cx| chat.set_error(None, cx));
         self.sync_chat(cx);
@@ -1337,6 +1395,279 @@ impl ConnApp {
         self.layout.selected_project_id = Some(project_id);
         self.sync_chat(cx);
         cx.notify();
+    }
+
+    /// Workspace facts for the composer's context strip.
+    fn branch_context(
+        &self,
+        shell_thread: Option<&conn_state::ThreadShell>,
+        branch: &Option<String>,
+    ) -> crate::chat::BranchContext {
+        let project_id = shell_thread
+            .map(|t| t.project_id.as_str())
+            .or_else(|| self.draft.as_ref().map(|d| d.project_id.as_str()));
+        let project_cwd = project_id
+            .and_then(|id| self.shell.project(id))
+            .map(|p| p.workspace_root.clone());
+        let worktree_path = match (shell_thread, &self.draft) {
+            (Some(t), _) => t.worktree_path.clone(),
+            (None, Some(d)) => d.worktree_path.clone(),
+            (None, None) => None,
+        };
+        let previous_worktree = self.draft.as_ref().and_then(|d| {
+            crate::chat::previous_worktree(
+                self.shell.threads_for_project(&d.project_id).map(|t| {
+                    crate::chat::ThreadWorkspace {
+                        branch: t.branch.as_deref(),
+                        worktree_path: t.worktree_path.as_deref(),
+                        updated_at: &t.updated_at,
+                        archived: t.archived_at.is_some(),
+                    }
+                }),
+                d.worktree_path.as_deref(),
+            )
+        });
+        crate::chat::BranchContext {
+            project_cwd,
+            worktree_path,
+            branch: branch.clone(),
+            start_from_origin: self.draft.as_ref().is_some_and(|d| d.start_from_origin),
+            previous_worktree,
+            worktree_change_blocked: shell_thread.is_some()
+                && self
+                    .layout
+                    .selected_thread_id
+                    .as_deref()
+                    .and_then(|id| self.threads.get(id))
+                    .is_some_and(|t| t.working),
+        }
+    }
+
+    /// Carries out a branch or workspace change from the composer context strip.
+    fn handle_branch_action(
+        &mut self,
+        action: crate::chat::BranchAction,
+        cx: &mut Context<'_, Self>,
+    ) {
+        use crate::chat::BranchAction;
+        match action {
+            BranchAction::WorkspaceMode(use_worktree) => {
+                if let Some(draft) = &mut self.draft {
+                    draft.worktree_path = None;
+                }
+                self.set_draft_workspace_strategy(use_worktree, cx);
+            }
+            BranchAction::StartFromOrigin(on) => {
+                if let Some(draft) = &mut self.draft {
+                    draft.start_from_origin = on;
+                    self.sync_chat(cx);
+                }
+            }
+            BranchAction::UsePreviousWorktree(seed) => {
+                if let Some(draft) = &mut self.draft
+                    && !draft.launching
+                {
+                    draft.use_worktree = false;
+                    draft.worktree_path = Some(seed.worktree_path);
+                    draft.branch = seed.branch;
+                    self.sync_chat(cx);
+                }
+            }
+            BranchAction::SelectRef(entry) => self.select_branch_ref(entry, cx),
+            BranchAction::CreateRef(name) => self.create_branch_ref(name, cx),
+        }
+    }
+
+    /// The thread's branch cwd and project root (`branchCwd`, `activeProjectCwd`).
+    fn branch_cwds(&self) -> Option<(String, Option<String>, bool)> {
+        let selected = self.layout.selected_thread_id.as_deref();
+        if let Some(draft) = &self.draft {
+            let root = self
+                .shell
+                .project(&draft.project_id)?
+                .workspace_root
+                .clone();
+            return Some((root, draft.worktree_path.clone(), false));
+        }
+        let thread = selected.and_then(|id| self.shell.find_thread(id))?;
+        let root = self
+            .shell
+            .project(&thread.project_id)?
+            .workspace_root
+            .clone();
+        let working = self.threads.get(&thread.id).is_some_and(|t| t.working);
+        Some((root, thread.worktree_path.clone(), working))
+    }
+
+    fn select_branch_ref(&mut self, entry: crate::chat::RefEntry, cx: &mut Context<'_, Self>) {
+        let Some((project_cwd, worktree_path, working)) = self.branch_cwds() else {
+            return;
+        };
+        if let Some(draft) = &mut self.draft
+            && draft.use_worktree
+            && draft.worktree_path.is_none()
+        {
+            draft.branch = Some(entry.name);
+            self.sync_chat(cx);
+            return;
+        }
+        let target =
+            crate::chat::branch_selection_target(&project_cwd, worktree_path.as_deref(), &entry);
+        if working && target.next_worktree_path != worktree_path {
+            self.chat.update(cx, |chat, cx| {
+                chat.set_error(
+                    Some("Stop the current turn to switch worktrees.".to_owned()),
+                    cx,
+                );
+            });
+            return;
+        }
+        if target.reuse_existing_worktree && !target.stays_in_active_checkout {
+            self.apply_thread_branch(Some(entry.name), target.next_worktree_path, cx);
+            return;
+        }
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        let fallback = if entry.is_remote {
+            crate::chat::local_branch_name_from_remote_ref(&entry.name).to_owned()
+        } else {
+            entry.name.clone()
+        };
+        let payload = conn_contract::VcsSwitchRefInput {
+            cwd: target.checkout_cwd,
+            ref_name: entry.name,
+        };
+        let next_worktree = target.next_worktree_path;
+        cx.spawn(async move |this, cx| {
+            let res = connection
+                .call::<conn_contract::rpc::vcs::switch_ref::Payload, conn_contract::rpc::vcs::switch_ref::Success>(
+                    "vcs.switchRef",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |app, cx| match res {
+                Ok(result) => {
+                    let branch = result.ref_name.unwrap_or(fallback);
+                    app.apply_thread_branch(Some(branch), next_worktree, cx);
+                }
+                Err(err) => app.chat.update(cx, |chat, cx| {
+                    chat.set_error(Some(format!("Failed to switch ref. {err}")), cx);
+                }),
+            });
+        })
+        .detach();
+    }
+
+    fn create_branch_ref(&mut self, name: String, cx: &mut Context<'_, Self>) {
+        let (Some(connection), Some((project_cwd, worktree_path, _))) =
+            (self.connection.clone(), self.branch_cwds())
+        else {
+            return;
+        };
+        let payload = conn_contract::VcsCreateRefInput {
+            cwd: worktree_path.clone().unwrap_or(project_cwd),
+            ref_name: name,
+            switch_ref: Some(true),
+        };
+        cx.spawn(async move |this, cx| {
+            let res = connection
+                .call::<conn_contract::rpc::vcs::create_ref::Payload, conn_contract::rpc::vcs::create_ref::Success>(
+                    "vcs.createRef",
+                    &payload,
+                )
+                .await;
+            let _ = this.update(cx, |app, cx| match res {
+                Ok(result) => app.apply_thread_branch(Some(result.ref_name), worktree_path, cx),
+                Err(err) => app.chat.update(cx, |chat, cx| {
+                    chat.set_error(Some(format!("Failed to create and switch ref. {err}")), cx);
+                }),
+            });
+        })
+        .detach();
+    }
+
+    /// Records the branch and worktree on the draft, or on the thread (`thread.metadata.update`).
+    fn apply_thread_branch(
+        &mut self,
+        branch: Option<String>,
+        worktree_path: Option<String>,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if let Some(draft) = &mut self.draft {
+            if worktree_path.is_some() {
+                draft.use_worktree = false;
+            }
+            draft.branch = branch;
+            draft.worktree_path = worktree_path;
+            self.sync_chat(cx);
+            return;
+        }
+        let (Some(connection), Some(thread_id)) = (
+            self.connection.clone(),
+            self.layout.selected_thread_id.clone(),
+        ) else {
+            return;
+        };
+        let command =
+            conn_contract::from_json::<conn_contract::OrchestrationV2Command>(serde_json::json!({
+                "type": "thread.metadata.update",
+                "commandId": format!("cmd-{}", crate::commands::new_thread_id()),
+                "threadId": thread_id,
+                "branch": branch,
+                "worktreePath": worktree_path,
+            }));
+        let Ok(command) = command else {
+            return;
+        };
+        cx.spawn(async move |_, _| {
+            if let Err(e) = connection.dispatch_command(command).await {
+                eprintln!("branch: thread.metadata.update failed: {e}");
+            }
+        })
+        .detach();
+    }
+
+    /// Whether `project_id` is the server's scratch project (`isScratchProject`).
+    fn is_scratch_project(&self, project_id: &str, workspace_root: Option<&str>) -> bool {
+        if self.scratch_project_id.as_deref() == Some(project_id) {
+            return true;
+        }
+        let trim = |path: &str| path.trim_end_matches('/').to_owned();
+        match (self.scratch_workspace_root.as_deref(), workspace_root) {
+            (Some(scratch), Some(root)) => trim(scratch) == trim(root),
+            _ => false,
+        }
+    }
+
+    /// `or start without a project`: retargets the draft at `projects.ensureScratch`.
+    fn start_draft_scratch(&mut self, cx: &mut Context<'_, Self>) {
+        let Some(connection) = self.connection.clone() else {
+            return;
+        };
+        if self.draft.as_ref().is_none_or(|d| d.launching) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let result = connection
+                .call::<conn_contract::rpc::projects::ensure_scratch::Payload, conn_contract::rpc::projects::ensure_scratch::Success>(
+                    "projects.ensureScratch",
+                    &conn_contract::ServerProbePayload {},
+                )
+                .await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(project) => {
+                    app.scratch_project_id = Some(project.project_id.clone());
+                    app.set_draft_project(project.project_id, cx);
+                }
+                Err(err) => {
+                    let message = format!("Could not start without a project. {err}");
+                    app.chat
+                        .update(cx, |chat, cx| chat.set_error(Some(message), cx));
+                }
+            });
+        })
+        .detach();
     }
 
     /// Toggles whether the active new-thread draft launches in a fresh git worktree or local root.
@@ -1453,7 +1784,7 @@ impl ConnApp {
             crate::commands::WorkspaceStrategyChoice::Local
         };
         let thread_id = crate::commands::new_thread_id();
-        let payload = crate::commands::launch_thread_payload(
+        let mut payload = crate::commands::launch_thread_payload(
             &thread_id,
             &project_id,
             &text,
@@ -1463,6 +1794,7 @@ impl ConnApp {
             &draft.interaction_mode,
             strategy,
         );
+        payload["workspaceStrategy"] = draft_workspace_strategy(&draft);
 
         if let Some(active_draft) = &mut self.draft {
             active_draft.launching = true;

@@ -903,8 +903,8 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
         );
     });
 
-    // 3. Even with `persist_composer_context_strip = false`, a new-thread draft always renders the
-    // context strip (workspace/branch + permissions) with the same symmetric 9px margins.
+    // 3. A new-thread draft always renders the context strip with the same 9px top margin, and the
+    // composer sits vertically centered in the chat card (`isDraftHeroState`).
     cx.update(|cx| {
         app.update(cx, |app, cx| {
             app.set_persist_composer_context_strip(false, cx);
@@ -913,22 +913,19 @@ fn composer_keeps_bottom_breathing_room_and_context_strip_layout(cx: &mut TestAp
     });
     let _ = cx.update_window(window, |_, window, cx| {
         window.render_frame(cx);
+        let hero = window.find_by_label("New thread");
         let card = window.find_by_label("Message input card");
         let strip = window.find_by_label("Thread context");
         let top_gap = f32::from(strip.bounds().top()) - f32::from(card.bounds().bottom());
-        let bottom_gap =
-            (TEST_WINDOW_HEIGHT - SHELL_BOTTOM_CHROME_PX) - f32::from(strip.bounds().bottom());
         assert!(
             (8.0..=10.5).contains(&top_gap),
             "draft context strip top margin should be ~9px (got {top_gap:.1}px)"
         );
+        let above = f32::from(card.bounds().top()) - f32::from(hero.bounds().top());
+        let below = f32::from(hero.bounds().bottom()) - (f32::from(strip.bounds().bottom()) + 9.0);
         assert!(
-            (8.0..=10.5).contains(&bottom_gap),
-            "draft context strip bottom margin should be ~9px without excessive padding (got {bottom_gap:.1}px)"
-        );
-        assert!(
-            (top_gap - bottom_gap).abs() <= 1.5,
-            "draft context strip vertical margins must be symmetric (top {top_gap:.1}px vs bottom {bottom_gap:.1}px)"
+            (above - below).abs() <= 2.0,
+            "draft composer must be vertically centered (above {above:.1}px vs below {below:.1}px)"
         );
     });
 }

@@ -7,6 +7,12 @@ mod cache;
 mod cards;
 mod color;
 mod composer;
+mod composer_state;
+pub(crate) use self::composer_state::{
+    RefEntry, ThreadWorkspace, branch_selection_target, local_branch_name_from_remote_ref,
+    previous_worktree,
+};
+mod draft_hero;
 mod icons;
 pub(crate) mod markdown;
 mod spinner;
@@ -26,14 +32,14 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
-    InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, MouseButton,
-    ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window,
-    deferred, div, list, px, relative,
+    InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, ParentElement, Render,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, list, px,
+    relative,
 };
 
 use self::cache::{CachedRow, RowCache, VirtualItem};
 use self::color::{hsla, hsla_alpha, message_highlight, muted_icon, prose_foreground};
-pub(crate) use self::composer::SendDispatch;
+pub(crate) use self::composer::{BranchAction, BranchContext, SendDispatch};
 use self::composer::{Composer, ComposerEvent};
 use self::spinner::{SHIMMER_STEP_INTERVAL, TurningArc, shimmer_text};
 use crate::a11y::ConnA11yExt as _;
@@ -57,22 +63,29 @@ const UI_FONT_PX: f32 = 13.0;
 const UI_LINE_HEIGHT_PX: f32 = 20.0;
 const MONO_FONT_FAMILY: &str = crate::theme::MONO_FONT;
 
-/// Project option selectable from the new-thread draft canvas.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Project option selectable from the new-thread draft hero's project combobox.
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraftProjectOption {
     pub(crate) id: String,
     pub(crate) title: String,
-    pub(crate) workspace_root: String,
+    pub(crate) pinned: bool,
+    /// The server's scratch ("no project") project; hidden from the combobox.
+    pub(crate) is_scratch: bool,
+    /// Shell record for the row favicon.
+    pub(crate) shell: conn_state::ProjectShell,
 }
 
 /// View state rendered while composing a brand-new thread before `orchestration.launchThread`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraftViewInfo {
     pub(crate) project_id: String,
     pub(crate) project_title: String,
-    pub(crate) workspace_root: String,
     pub(crate) projects: Vec<DraftProjectOption>,
     pub(crate) launching: bool,
+    /// The draft targets the server's scratch project (`isScratchDraft`).
+    pub(crate) is_scratch: bool,
+    /// The server offers a scratch workspace (`scratchWorkspaceRoot`).
+    pub(crate) scratch_available: bool,
 }
 
 /// One human user bubble's render inputs.
@@ -131,10 +144,16 @@ pub(crate) enum ChatEvent {
     RuntimeModeSelected(String),
     /// Switch the thread's interaction mode (`thread.interaction-mode.set`).
     InteractionModeSelected(String),
-    /// Toggle Local (`false`) vs Worktree (`true`) for a new-thread draft.
-    WorkspaceModeSelected(bool),
+    /// Workspace or branch change from the composer context strip.
+    Branch(composer::BranchAction),
     /// Switch which project a new-thread draft will launch in.
     DraftProjectSelected(String),
+    /// Retarget the draft at the server's scratch project (`or start without a project`).
+    DraftStartScratch,
+    /// `Add project` from the draft project combobox.
+    DraftAddProject,
+    /// The server's `scratchWorkspaceRoot` from `server.getConfig`.
+    ScratchWorkspaceRoot(Option<String>),
     /// Start a new thread from the empty state CTA.
     StartNewThread,
     /// Open Settings → Connections from the empty/offline state.
@@ -166,7 +185,7 @@ pub(crate) struct ChatView {
     has_projects: bool,
     connected: bool,
     draft: Option<DraftViewInfo>,
-    draft_project_menu_open: bool,
+    hero: draft_hero::DraftHeroState,
     error_banner: Option<String>,
     thread_id: Option<String>,
     thread_title: Option<String>,
@@ -325,22 +344,24 @@ impl ChatView {
                 ComposerEvent::InteractionModeSelected(mode) => {
                     cx.emit(ChatEvent::InteractionModeSelected(mode.clone()));
                 }
-                ComposerEvent::WorkspaceModeSelected(worktree) => {
-                    cx.emit(ChatEvent::WorkspaceModeSelected(*worktree));
-                }
+                ComposerEvent::Branch(action) => cx.emit(ChatEvent::Branch(action.clone())),
                 ComposerEvent::SlashCommand(command) => {
                     cx.emit(ChatEvent::SlashCommand(command.clone()));
+                }
+                ComposerEvent::ScratchWorkspaceRoot(root) => {
+                    cx.emit(ChatEvent::ScratchWorkspaceRoot(root.clone()));
                 }
             },
         );
 
+        let hero = draft_hero::DraftHeroState::new(window, cx);
         Self {
             tokens,
             has_thread: false,
             has_projects: false,
             connected: false,
             draft: None,
-            draft_project_menu_open: false,
+            hero,
             error_banner: None,
             thread_id: None,
             thread_title: None,
@@ -474,7 +495,7 @@ impl ChatView {
         let launching = draft.as_ref().is_some_and(|d| d.launching);
         if self.draft != draft {
             if !is_draft {
-                self.draft_project_menu_open = false;
+                self.hero.menu_open = false;
             }
             self.draft = draft;
             cx.notify();
@@ -571,6 +592,18 @@ impl ChatView {
             return;
         }
         self.synced_revision = Some(thread.revision);
+        let history =
+            composer_state::prompt_history_entries(thread.entries.iter().filter_map(|e| match e {
+                TimelineEntry::User {
+                    id,
+                    text,
+                    created_by_agent,
+                    ..
+                } => Some((id.as_str(), text.as_str(), *created_by_agent)),
+                _ => None,
+            }));
+        self.composer
+            .update(cx, |c, _| c.set_prompt_history(history));
 
         let was_following_tail = self.list_state.is_following_tail();
         let prev_scroll = self.list_state.logical_scroll_top();
@@ -756,6 +789,16 @@ impl ChatView {
     }
 
     /// Updates the composer's bottom `BranchToolbar` context strip.
+    /// Workspace facts for the composer's branch picker and workspace selector.
+    pub(crate) fn set_branch_context(
+        &mut self,
+        context: composer::BranchContext,
+        cx: &mut Context<'_, Self>,
+    ) {
+        self.composer
+            .update(cx, |c, cx| c.set_branch_context(context, cx));
+    }
+
     pub(crate) fn set_thread_context(
         &mut self,
         branch: Option<String>,
@@ -1225,196 +1268,6 @@ impl ChatView {
             .px(px(32.0))
             .py(px(48.0))
             .child(card)
-            .into_any_element()
-    }
-
-    fn render_draft_canvas(&self, draft: &DraftViewInfo, cx: &mut Context<'_, Self>) -> AnyElement {
-        let fg = hsla(self.tokens.foreground);
-        let muted = hsla(self.tokens.muted_foreground);
-        let control_bg = hsla(self.tokens.shell_control);
-        let border = hsla(self.tokens.shell_inner_border);
-        let hover_bg = hsla(self.tokens.shell_highlight);
-        let glass_bg = hsla(self.tokens.shell_overlay);
-        let glass_divider = hsla(self.tokens.glass_divider);
-        let can_switch = draft.projects.len() > 1 && !draft.launching;
-
-        let mut project_pill = div()
-            .id("draft-project-picker")
-            .a11y_button(
-                "chat.draft.project-picker",
-                format!("Project: {}", draft.project_title),
-            )
-            .aria_expanded(self.draft_project_menu_open)
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .h(px(30.0))
-            .px(px(10.0))
-            .rounded(px(8.0))
-            .bg(control_bg)
-            .border_1()
-            .border_color(border)
-            .text_size(px(UI_FONT_PX))
-            .line_height(px(UI_LINE_HEIGHT_PX))
-            .font_weight(FontWeight::MEDIUM)
-            .text_color(fg)
-            .child(icons::icon("superhero/folder.svg", 14.0, muted))
-            .child(draft.project_title.clone());
-
-        if can_switch {
-            project_pill = project_pill
-                .cursor_pointer()
-                .hover(move |s| s.bg(hover_bg))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(|view, _, _, cx| {
-                    view.draft_project_menu_open = !view.draft_project_menu_open;
-                    cx.notify();
-                }))
-                .child(icons::icon("superhero/chevron-down.svg", 12.0, muted));
-        }
-
-        let mut picker_slot = div().relative().child(project_pill);
-        if self.draft_project_menu_open && can_switch {
-            let mut menu = div()
-                .id("draft-project-menu")
-                .absolute()
-                .top_full()
-                .left_0()
-                .mt(px(4.0))
-                .w(px(260.0))
-                .max_h(px(260.0))
-                .overflow_y_scroll()
-                .rounded(px(10.0))
-                .bg(glass_bg)
-                .border_1()
-                .border_color(glass_divider)
-                .shadow_md()
-                .p(px(4.0))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .occlude()
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-
-            for (idx, project) in draft.projects.iter().enumerate() {
-                let is_active = project.id == draft.project_id;
-                let project_id = project.id.clone();
-                menu = menu.child(
-                    div()
-                        .id(("draft-project-opt", idx))
-                        .a11y_button(
-                            SharedString::from(format!("chat.draft.project.{}", project.id)),
-                            project.title.clone(),
-                        )
-                        .aria_selected(is_active)
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap(px(8.0))
-                        .h(px(30.0))
-                        .px(px(8.0))
-                        .rounded(px(7.0))
-                        .cursor_pointer()
-                        .text_size(px(UI_FONT_PX))
-                        .line_height(px(UI_LINE_HEIGHT_PX))
-                        .text_color(if is_active { fg } else { muted })
-                        .hover(move |s| s.bg(hover_bg).text_color(fg))
-                        .on_click(cx.listener(move |view, _, _, cx| {
-                            view.draft_project_menu_open = false;
-                            cx.emit(ChatEvent::DraftProjectSelected(project_id.clone()));
-                            cx.notify();
-                        }))
-                        .child(icons::icon("superhero/folder.svg", 14.0, muted))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .child(project.title.clone()),
-                        )
-                        .child(if is_active {
-                            icons::icon("superhero/check.svg", 13.0, fg).into_any_element()
-                        } else {
-                            div().size(px(13.0)).into_any_element()
-                        }),
-                );
-            }
-            picker_slot = picker_slot.child(deferred(menu).with_priority(3));
-        }
-
-        let mut center = div()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(10.0))
-            .max_w(px(460.0))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .size(px(44.0))
-                    .rounded(px(12.0))
-                    .bg(hsla(self.tokens.shell_tile))
-                    .border_1()
-                    .border_color(hsla(self.tokens.shell_tile_border))
-                    .child(icons::icon("superhero/edit.svg", 20.0, muted)),
-            )
-            .child(
-                div()
-                    .text_size(px(16.0))
-                    .line_height(px(24.0))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(fg)
-                    .child("New thread"),
-            )
-            .child(picker_slot);
-
-        if draft.launching {
-            center = center.child(
-                div()
-                    .mt(px(4.0))
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(8.0))
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(muted)
-                    .child(TurningArc::new(14.0, muted))
-                    .child("Creating thread…"),
-            );
-        } else if !draft.workspace_root.is_empty() {
-            center = center.child(
-                div()
-                    .max_w(px(420.0))
-                    .truncate()
-                    .text_size(px(UI_FONT_PX))
-                    .line_height(px(UI_LINE_HEIGHT_PX))
-                    .text_color(muted)
-                    .child(draft.workspace_root.clone()),
-            );
-        }
-
-        div()
-            .flex()
-            .flex_col()
-            .flex_1()
-            .w_full()
-            .items_center()
-            .justify_center()
-            .py(px(48.0))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|view, _, _, cx| {
-                    if view.draft_project_menu_open {
-                        view.draft_project_menu_open = false;
-                        cx.notify();
-                    }
-                }),
-            )
-            .child(center)
             .into_any_element()
     }
 
@@ -2975,31 +2828,28 @@ impl Render for ChatView {
                 .child(self.render_empty_no_thread(cx));
         }
 
-        let timeline: AnyElement = if let Some(draft) = &self.draft {
-            div()
-                .id("chat-timeline-scroll")
-                .a11y(
-                    gpui_kit::Role::Log,
-                    "chat.timeline",
-                    "Conversation timeline",
-                )
-                .flex_1()
+        let draft_key = if self.draft.is_some() {
+            Some(composer_state::NEW_THREAD_DRAFT_KEY.to_owned())
+        } else {
+            self.thread_id
+                .as_deref()
+                .map(composer_state::thread_draft_key)
+        };
+        self.composer.update(cx, |c, cx| {
+            c.sync_draft_key(draft_key.as_deref(), window, cx)
+        });
+
+        if let Some(draft) = self.draft.clone() {
+            return div()
+                .flex()
+                .flex_col()
+                .size_full()
                 .min_h_0()
-                .w_full()
-                .px(px(CHAT_LANE_PADDING_X_PX))
-                .child(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .size_full()
-                        .max_w(px(CHAT_CONTENT_MAX_WIDTH_PX))
-                        .mx_auto()
-                        .pt(px(16.0))
-                        .pb(px(16.0))
-                        .child(self.render_draft_canvas(draft, cx)),
-                )
-                .into_any_element()
-        } else if self.cache.items().is_empty() && !self.synchronized {
+                .min_w_0()
+                .child(self.render_draft_hero(&draft, window, cx));
+        }
+
+        let timeline: AnyElement = if self.cache.items().is_empty() && !self.synchronized {
             let muted = hsla(self.tokens.muted_foreground);
             div()
                 .id("chat-timeline-scroll")

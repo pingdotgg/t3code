@@ -11,6 +11,7 @@
 //!   and `32px` round send button (or destructive stop button while working).
 
 mod actions;
+mod branch_picker;
 mod context_meter;
 mod footer;
 mod menus;
@@ -18,6 +19,7 @@ mod model_picker;
 mod stash;
 
 pub(crate) use self::actions::{FollowUpBehavior, SendDispatch};
+pub(crate) use self::branch_picker::{BranchAction, BranchContext};
 pub(crate) use self::context_meter::ContextWindowSnapshot;
 
 use std::fmt;
@@ -57,11 +59,15 @@ use self::menus::{
 use self::model_picker::{ModelCatalog, ModelOption, ModelPickerView, render_model_picker};
 use self::stash::{PromptStash, render_stash_badge, render_stash_menu};
 use super::color::{hsla, hsla_alpha};
+use super::composer_state::{
+    ComposerDraft, ComposerDraftStore, PromptHistoryEntry, PromptHistoryPosition,
+    composer_placeholder, prompt_length_message, step_prompt_history,
+};
 use super::icons;
 use crate::a11y::ConnA11yExt as _;
 use crate::panels::chrome::ConnTooltipExt as _;
 
-pub(super) const COMPOSER_PLACEHOLDER: &str = "Ask anything. @ files, $ skills, / commands";
+pub(super) const COMPOSER_PLACEHOLDER: &str = super::composer_state::DEFAULT_COMPOSER_PLACEHOLDER;
 pub(super) const COMPOSER_MIN_LINES: usize = 2;
 pub(super) const COMPOSER_MAX_LINES: usize = 8;
 
@@ -171,9 +177,11 @@ pub(crate) enum ComposerEvent {
     },
     RuntimeModeSelected(String),
     InteractionModeSelected(String),
-    /// Toggle between Local (`false`) and Worktree (`true`) when composing a new thread draft.
-    WorkspaceModeSelected(bool),
+    /// Workspace or branch change from the context strip.
+    Branch(BranchAction),
     SlashCommand(String),
+    /// `server.getConfig` loaded; carries its `scratchWorkspaceRoot`.
+    ScratchWorkspaceRoot(Option<String>),
 }
 
 /// Stateful GPUI entity for the Conn composer, model picker, `/` command menu, and `@` mentions.
@@ -209,6 +217,7 @@ pub(crate) struct Composer {
     permission_preview: Option<&'static str>,
     implement_menu_open: bool,
     stash: PromptStash,
+    branch: branch_picker::BranchUi,
     textarea: Entity<TextareaState>,
     model_search_input: Entity<InputState>,
     catalog: ModelCatalog,
@@ -228,6 +237,14 @@ pub(crate) struct Composer {
     file_mentions_loading: bool,
     file_search_generation: u64,
     attachments: Vec<PendingAttachment>,
+    /// Unsent prompt + attachments parked per thread / draft (`composerDraftStore`).
+    drafts: ComposerDraftStore<PendingAttachment>,
+    /// The thread's recallable sent prompts, oldest first (↑/↓ history).
+    prompt_history: Vec<PromptHistoryEntry>,
+    /// Browsing position, tied to the draft key it was recalled in.
+    history_position: Option<(String, PromptHistoryPosition)>,
+    /// Placeholder last pushed into the textarea.
+    applied_placeholder: &'static str,
     next_attachment_id: u64,
     editing_queued: Option<EditingQueuedRun>,
     dictation: DictationState,
@@ -314,6 +331,7 @@ impl Composer {
                 },
             );
 
+        let branch = branch_picker::BranchUi::new(window, cx);
         let mut composer = Self {
             tokens,
             connection,
@@ -342,6 +360,7 @@ impl Composer {
             permission_preview: None,
             implement_menu_open: false,
             stash: PromptStash::default(),
+            branch,
             textarea,
             model_search_input,
             catalog: ModelCatalog::default(),
@@ -361,6 +380,10 @@ impl Composer {
             file_mentions_loading: false,
             file_search_generation: 0,
             attachments: Vec::new(),
+            drafts: ComposerDraftStore::default(),
+            prompt_history: Vec::new(),
+            history_position: None,
+            applied_placeholder: COMPOSER_PLACEHOLDER,
             next_attachment_id: 1,
             editing_queued: None,
             dictation: DictationState::Idle,
@@ -559,6 +582,87 @@ impl Composer {
         self.on_draft_changed(cx);
     }
 
+    /// Shows the draft for `key` (a thread or the new-thread draft), parking the current one.
+    pub(crate) fn sync_draft_key(
+        &mut self,
+        key: Option<&str>,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) {
+        if self.drafts.active_key() == key {
+            return;
+        }
+        let mut text = self.textarea.read(cx).value().to_string();
+        let mut attachments = std::mem::take(&mut self.attachments);
+        if let Some(editing) = self.editing_queued.take() {
+            text = editing.saved_draft;
+            attachments.clear();
+            cx.emit(ComposerEvent::CancelEditQueuedMessage);
+        }
+        let Some(next) = self.drafts.switch(key, ComposerDraft { text, attachments }) else {
+            return;
+        };
+        self.close_overlays(cx);
+        self.attachments = next.attachments;
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(next.text, window, cx);
+        });
+        self.on_draft_changed(cx);
+    }
+
+    /// Replaces the thread's recallable sent prompts.
+    pub(crate) fn set_prompt_history(&mut self, entries: Vec<PromptHistoryEntry>) {
+        self.prompt_history = entries;
+    }
+
+    /// ↑/↓ through sent prompts when the prompt is empty or recalled and the caret sits on the
+    /// first (↑) or last (↓) line (`navigatePromptHistory`). Returns `true` when it handled the key.
+    fn step_history(
+        &mut self,
+        backward: bool,
+        window: &mut Window,
+        cx: &mut Context<'_, Self>,
+    ) -> bool {
+        if !self.attachments.is_empty() || self.editing_queued.is_some() {
+            return false;
+        }
+        let (text, cursor) = {
+            let input = self.textarea.read(cx);
+            (input.value().to_string(), input.cursor())
+        };
+        let on_edge = if backward {
+            !text[..cursor.min(text.len())].contains('\n')
+        } else {
+            !text[cursor.min(text.len())..].contains('\n')
+        };
+        if !on_edge {
+            return false;
+        }
+        let key = self.drafts.active_key().unwrap_or_default().to_owned();
+        let position = self
+            .history_position
+            .as_ref()
+            .filter(|(k, _)| *k == key)
+            .map(|(_, p)| p);
+        let Some(step) = step_prompt_history(backward, &self.prompt_history, position, &text)
+        else {
+            return false;
+        };
+        self.history_position = step.position.map(|p| (key, p));
+        // Multi-line `set_value` puts the caret at 0; recall leaves it at the end, as in Conn.
+        let last_line = step.prompt.rsplit('\n').next().unwrap_or_default();
+        let end = gpui_kit::base::input::Position::new(
+            u32::try_from(step.prompt.matches('\n').count()).unwrap_or(u32::MAX),
+            u32::try_from(last_line.encode_utf16().count()).unwrap_or(u32::MAX),
+        );
+        self.textarea.update(cx, |input, cx| {
+            input.set_value(step.prompt, window, cx);
+            input.set_cursor_position(end, window, cx);
+        });
+        self.on_draft_changed(cx);
+        true
+    }
+
     /// Loads a server-backed queued message into the composer for editing.
     ///
     /// Preserves any existing unsent thread draft so cancelling restores it.
@@ -728,6 +832,9 @@ impl Composer {
                 composer.catalog_loading = false;
                 match res {
                     Ok(config) => {
+                        cx.emit(ComposerEvent::ScratchWorkspaceRoot(
+                            config.scratch_workspace_root.clone(),
+                        ));
                         composer.catalog = ModelCatalog::from_server_config(&config);
                         composer.catalog_error = None;
                         if (composer.selected_instance_id.is_none()
@@ -786,6 +893,8 @@ impl Composer {
             &mut self.implement_menu_open,
             &mut self.context_meter_open,
             &mut self.stash.menu_open,
+            &mut self.branch.picker_open,
+            &mut self.branch.workspace_menu_open,
         ] {
             if *open {
                 *open = false;
@@ -812,6 +921,7 @@ impl Composer {
             || self.implement_menu_open
             || self.context_meter_open
             || self.stash.menu_open
+            || self.branch_popup_open()
             || self.active_trigger.is_some()
     }
 
@@ -905,9 +1015,11 @@ impl Composer {
         cx.spawn_in(window, async move |this, cx| {
             let upload_res = conn.upload_chat_attachment(name, mime_type, bytes).await;
             let _ = this.update(cx, |composer, cx| {
+                // The upload may finish after the user switched threads; its draft is parked then.
                 if let Some(slot) = composer
                     .attachments
                     .iter_mut()
+                    .chain(composer.drafts.parked_attachments_mut())
                     .find(|a| a.local_id == local_id)
                 {
                     slot.status = match upload_res {
@@ -1238,6 +1350,9 @@ impl Composer {
             return;
         }
         let raw = self.textarea.read(cx).value().to_string();
+        if prompt_length_message(&raw).is_some() {
+            return;
+        }
         let trimmed = raw.trim().to_owned();
         let still_uploading = self
             .attachments
@@ -1857,78 +1972,8 @@ impl Composer {
             .flex_1()
             .overflow_hidden();
 
-        let env_icon = if self.worktree_active {
-            "superhero/folder-git.svg"
-        } else {
-            "superhero/folder.svg"
-        };
-        let env_label = if self.worktree_active {
-            "Worktree"
-        } else {
-            "Local"
-        };
-        if self.is_draft {
-            let next_worktree = !self.worktree_active;
-            left = left.child(
-                div()
-                    .id("composer-workspace-mode-toggle")
-                    .a11y_button(
-                        "composer.workspace-mode",
-                        format!("Workspace mode: {env_label}"),
-                    )
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .h(px(22.0))
-                    .px(px(6.0))
-                    .rounded(px(6.0))
-                    .flex_shrink_0()
-                    .cursor_pointer()
-                    .text_color(if self.worktree_active { fg } else { muted })
-                    .when(self.worktree_active, |el| el.bg(hover_bg))
-                    .hover(move |s| s.bg(hover_bg).text_color(fg))
-                    .on_click(cx.listener(move |composer, _, _, cx| {
-                        composer.worktree_active = next_worktree;
-                        cx.emit(ComposerEvent::WorkspaceModeSelected(next_worktree));
-                        cx.notify();
-                    }))
-                    .conn_tooltip(
-                        "Click to switch between Local checkout and new git Worktree",
-                        tokens,
-                    )
-                    .child(icons::icon(
-                        env_icon,
-                        12.0,
-                        if self.worktree_active { fg } else { muted },
-                    ))
-                    .child(env_label),
-            );
-        } else {
-            left = left.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .flex_shrink_0()
-                    .child(icons::icon(env_icon, 12.0, muted))
-                    .child(env_label),
-            );
-        }
-
-        if let Some(branch) = self.thread_branch.as_deref().filter(|b| !b.is_empty()) {
-            left = left.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(4.0))
-                    .min_w_0()
-                    .child(icons::icon("superhero/branch.svg", 12.0, muted))
-                    .child(div().min_w_0().truncate().child(branch.to_owned())),
-            );
-        }
+        left = left.child(self.render_workspace_control(tokens, cx));
+        let branch_control = self.render_branch_control(tokens, cx);
 
         // New-thread drafts name the permissions at the strip's trailing end
         // (`ComposerContextPermissions`); started threads keep them in the footer and picker.
@@ -2009,9 +2054,18 @@ impl Composer {
             .line_height(px(16.0))
             .text_color(muted)
             .child(left)
-            .when_some(trailing, |el, trailing| {
-                el.child(div().flex_none().ml_auto().child(trailing))
-            })
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(4.0))
+                    .min_w_0()
+                    .child(branch_control)
+                    .when_some(trailing, |el, trailing| {
+                        el.child(div().flex_none().child(trailing))
+                    }),
+            )
             .into_any_element()
     }
 
@@ -2025,7 +2079,19 @@ impl Composer {
 }
 
 impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<'_, Self>) -> impl IntoElement {
+        let provider_unavailable = self.connection.is_some()
+            && !self.catalog_loading
+            && self.catalog_error.is_none()
+            && self.catalog.providers.is_empty();
+        let placeholder = composer_placeholder(provider_unavailable);
+        if self.applied_placeholder != placeholder {
+            self.applied_placeholder = placeholder;
+            self.textarea.update(cx, |input, cx| {
+                input.set_placeholder(placeholder, window, cx)
+            });
+        }
+        let length_alert = prompt_length_message(&self.textarea.read(cx).value());
         let is_editing_queued = self.editing_queued.is_some();
         let has_ready_attachments = self
             .attachments
@@ -2527,6 +2593,20 @@ impl Render for Composer {
                         .text_color(fg),
                 ),
             )
+            // `ComposerPromptLengthValidation`: `role="alert"`, `px-4 pb-2 text-xs`.
+            .when_some(length_alert, |el, message| {
+                el.child(
+                    div()
+                        .id("composer-prompt-length-alert")
+                        .a11y(gpui_kit::Role::Alert, "composer.prompt-length", message.clone())
+                        .px(px(16.0))
+                        .pb(px(8.0))
+                        .text_size(px(12.0))
+                        .line_height(px(16.0))
+                        .text_color(hsla(tokens.destructive))
+                        .child(message),
+                )
+            })
             .child(
                 div()
                     .flex()
@@ -2578,6 +2658,7 @@ impl Render for Composer {
                 }
                 if composer.any_overlay_open() {
                     composer.close_overlays(cx);
+                    composer.focus_input(window, cx);
                     cx.stop_propagation();
                     return;
                 }
@@ -2586,7 +2667,7 @@ impl Render for Composer {
                     cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|composer, _: &MoveUp, _window, cx| {
+            .capture_action(cx.listener(|composer, _: &MoveUp, window, cx| {
                 if composer.stash.menu_open {
                     composer.stash.move_highlight(-1);
                     cx.notify();
@@ -2594,15 +2675,19 @@ impl Render for Composer {
                 } else if composer.model_picker_open || composer.active_trigger.is_some() {
                     composer.move_overlay_selection(-1, cx);
                     cx.stop_propagation();
+                } else if !composer.any_overlay_open() && composer.step_history(true, window, cx) {
+                    cx.stop_propagation();
                 }
             }))
-            .capture_action(cx.listener(|composer, _: &MoveDown, _window, cx| {
+            .capture_action(cx.listener(|composer, _: &MoveDown, window, cx| {
                 if composer.stash.menu_open {
                     composer.stash.move_highlight(1);
                     cx.notify();
                     cx.stop_propagation();
                 } else if composer.model_picker_open || composer.active_trigger.is_some() {
                     composer.move_overlay_selection(1, cx);
+                    cx.stop_propagation();
+                } else if !composer.any_overlay_open() && composer.step_history(false, window, cx) {
                     cx.stop_propagation();
                 }
             }))
@@ -2660,6 +2745,16 @@ impl Render for Composer {
                     // `⌘⇧M` toggles the model picker (`modelPicker.toggle`).
                     if keystroke.key == "m" && m.platform && m.shift && !m.alt && !m.control {
                         composer.toggle_model_picker(window, cx);
+                        cx.stop_propagation();
+                    }
+                    // `⌘⇧G` branch picker, `⌘⇧X` workspace menu, `⌘⇧L` previous worktree.
+                    if m.platform && m.shift && !m.alt && !m.control {
+                        match keystroke.key.as_str() {
+                            "g" => composer.toggle_branch_picker(window, cx),
+                            "x" => composer.toggle_workspace_menu(cx),
+                            "l" => composer.use_previous_worktree(window, cx),
+                            _ => return,
+                        }
                         cx.stop_propagation();
                     }
                 },
