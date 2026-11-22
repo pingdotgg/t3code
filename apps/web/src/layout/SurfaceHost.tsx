@@ -24,6 +24,7 @@ import { cn } from "../lib/utils";
 import {
   layoutChordHeld,
   listenLayoutWheel,
+  scrollLeftByWheel,
   scrollTabStripFromRow,
   sidewaysWheelStripScroll,
   WHEEL_STREAM_IDLE_MS,
@@ -1080,7 +1081,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     root.parentElement?.append(chrome);
     const stop = observeResize([root, scroller, stage], update);
@@ -1113,7 +1114,7 @@ export function LayoutSurfaceHost({
       event.preventDefault();
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(event.deltaX, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(event.deltaX, event));
     };
     // Decided once per wheel stream, as the browser latches a scroll to one target.
     let stream: { at: number; scroll: "native" | "script" | null } | null = null;
@@ -1140,7 +1141,7 @@ export function LayoutSurfaceHost({
       // Past a code block that ends the browser's scroll chain, script moves the strip.
       settleStripCamera();
       noteUserStripScroll();
-      scroller.scrollLeft += wheelDeltaPx(delta, event);
+      scrollLeftByWheel(scroller, event, wheelDeltaPx(delta, event));
     };
     // The strip itself moved right after a sideways wheel: the user's scroll.
     const onScroll = () => {

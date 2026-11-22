@@ -296,6 +296,18 @@ it("scrolls overflowing pane tabs from the add button without moving the workspa
   const header = strip.closest<HTMLElement>("[data-pane-header]")!;
   const workspace = screen.container.querySelector<HTMLElement>("[data-layout-strip]")!;
   await vi.waitFor(() => expect(strip.scrollWidth).toBeGreaterThan(strip.clientWidth + 200));
+  const stripBox = strip.getBoundingClientRect();
+  const revealed = strip.scrollLeft;
+  header.dispatchEvent(
+    new WheelEvent("wheel", {
+      deltaY: -30,
+      clientX: stripBox.left + stripBox.width / 2,
+      clientY: stripBox.top + stripBox.height / 2,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  expect(strip.scrollLeft).toBe(revealed - 30);
   strip.scrollLeft = 100;
   const before = workspace.scrollLeft;
 
