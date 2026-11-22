@@ -22,7 +22,7 @@ import * as GitLabCli from "./GitLabCli.ts";
 import {
   decodeCreatedIssueJson,
   decodeUserIdsJson,
-  decodeIssueDetailJson,
+  decodeIssueDetailListJson,
   decodeIssueListJson,
   decodeIssueNotesJson,
   decodeLabelEventsJson,
@@ -402,7 +402,13 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
           },
         },
         decode: decodeAwardEmojiJson,
-      });
+      }).pipe(
+        // GitLab before 16.1 has no `Note.awardEmoji`; comments then load without reactions.
+        Effect.catchIf(
+          (error) => error.reason === "failed",
+          () => Effect.succeed(null),
+        ),
+      );
 
     const linked = (input: {
       readonly cwd: string;
@@ -464,6 +470,7 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
               : [["assignee_username", input.assignee] as const]),
             ["order_by", input.sort === "created" ? "created_at" : "updated_at"],
             ["sort", "desc"],
+            ["with_labels_details", "true"],
             ["per_page", String(perPage)],
             ["page", String(page)],
           ])}`,
@@ -490,9 +497,18 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                   cwd: input.cwd,
                   host: input.host,
                   operation: "getIssue",
-                  path,
-                  decode: decodeIssueDetailJson,
-                }),
+                  path: `projects/${projectPath(input.scope)}/issues?${query([
+                    ["iids[]", String(number)],
+                    ["with_labels_details", "true"],
+                    ["per_page", "1"],
+                  ])}`,
+                  decode: decodeIssueDetailListJson,
+                }).pipe(
+                  Effect.filterOrFail(
+                    (issue) => issue !== null,
+                    () => notFound("getIssue"),
+                  ),
+                ),
                 viewer({ cwd: input.cwd, host: input.host, operation: "getIssue" }),
                 notesPage({
                   cwd: input.cwd,
@@ -557,9 +573,9 @@ export const make: Effect.Effect<IssueTrackerApi, never, GitLabCli.GitLabCli> = 
                 reactions: awardReactions(issueAwards, viewerLogin),
                 comments: notes.comments.map((comment) => ({
                   ...comment,
-                  reactions: awardPage.reactionsByNoteId.get(comment.id) ?? [],
+                  reactions: awardPage?.reactionsByNoteId.get(comment.id) ?? [],
                 })),
-                commentsCursor: commentsCursor(notes.nextCursor, awardPage.nextCursor),
+                commentsCursor: commentsCursor(notes.nextCursor, awardPage?.nextCursor ?? null),
                 events: [...systemEvents, ...labelEvents].sort((left, right) =>
                   left.createdAt.localeCompare(right.createdAt),
                 ),

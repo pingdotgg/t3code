@@ -21,7 +21,7 @@ const WORK_ITEM_PATH = /^\/([^/]+\/[^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const LEGACY_WORK_ITEM_PATH = /^\/([^/]+)\/_workitems\/edit\/(\d+)(?:\/|$)/u;
 const CHECKOUT_COMMAND = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
 const CHANGE_REQUEST_REFERENCE =
-  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/(?:DefaultCollection\/)?[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
+  /^https:\/\/(?:dev\.azure\.com\/[^/\s]+(?:\/[^/\s]+)?|[^/\s]+\.visualstudio\.com(?:\/DefaultCollection)?(?:\/[^/\s]+)?)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 
 // `ssh.dev.azure.com` is the default SSH clone host (git@ssh.dev.azure.com:v3/org/project/repo),
 // so any `*.dev.azure.com` subdomain is Azure. Legacy hosts stay under `.visualstudio.com`,
@@ -124,14 +124,18 @@ export const definition = defineSourceControl({
   },
   // A project named with spaces arrives percent-encoded; the binding it is matched against is not.
   parseIssueUrl: (url) => {
+    const legacy = url.hostname.toLowerCase().endsWith(".visualstudio.com");
     const link =
       parseIssuePath(url, WORK_ITEM_PATH) ??
-      (url.hostname.toLowerCase().endsWith(".visualstudio.com")
-        ? parseIssuePath(url, LEGACY_WORK_ITEM_PATH)
-        : null);
-    return link === null
-      ? null
-      : { ...link, scope: link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase() };
+      (legacy ? parseIssuePath(url, LEGACY_WORK_ITEM_PATH) : null);
+    if (link === null) return null;
+    const scope = link.scope.split("/").map(decodeUrlPathSegment).join("/").toLowerCase();
+    if (!legacy) return { ...link, scope };
+    // On legacy hosts the default collection is optional in a work item URL.
+    const scopeAlias =
+      /^defaultcollection\/([^/]+)$/u.exec(scope)?.[1] ??
+      (scope.includes("/") ? undefined : `defaultcollection/${scope}`);
+    return { ...link, scope, ...(scopeAlias === undefined ? {} : { scopeAlias }) };
   },
   changeRequestUrlFromReferenceAutolink: () => null,
   changeRequestActions: new Set([
@@ -170,13 +174,25 @@ export const definition = defineSourceControl({
     return name ? decodeUrlPathSegment(name) : null;
   },
   // Work items belong to the project: `organization/project` out of the remote's
-  // `organization/project/_git/repository`. A shorter path is not placed: `acme/_git/web` is a
-  // project named after its repository on dev.azure.com and a bare project on a legacy host, and
-  // nothing here says which host the remote is on.
+  // `organization/project/_git/repository`. A shorter path depends on the host: `acme/_git/web`
+  // is a project named after its repository on dev.azure.com and a bare project on a legacy host.
   issueScope: (identity) => {
-    const segments = (identity.displayName ?? "").split("/").filter((part) => part !== "");
+    const segments = (identity.displayName ?? "")
+      .split("/")
+      .filter((part) => part !== "")
+      .map(decodeUrlPathSegment);
     const at = segments.indexOf("_git");
-    return at === 2 ? segments.slice(0, at).map(decodeUrlPathSegment).join("/") : null;
+    if (at === 2) return segments.slice(0, at).join("/");
+    const repository = segments[at + 1];
+    if ((at !== 0 && at !== 1) || repository === undefined) return null;
+    const host = identity.canonicalKey?.split("/", 1)[0]?.toLowerCase() ?? "";
+    const legacy = host.endsWith(".visualstudio.com");
+    const [first = ""] = segments;
+    if (at === 0) return legacy ? repository : null;
+    if (host === "dev.azure.com") return `${first}/${repository}`;
+    if (!legacy) return null;
+    // Work item URLs on a legacy host leave the collection out.
+    return first.toLowerCase() === "defaultcollection" ? repository : first;
   },
   repositoryKeyFromRemote,
   canonicalRepositoryKey,
