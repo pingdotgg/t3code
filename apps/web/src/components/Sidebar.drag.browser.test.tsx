@@ -40,7 +40,7 @@ it("shows the titled preview inside and outside search results from a collapsed 
   using _environment = installFakeEnvironment([first, second]);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
-    boringSidebarEnabled: true,
+    classicSidebarEnabled: false,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
   });
   const router = getRouter(
@@ -60,6 +60,7 @@ it("shows the titled preview inside and outside search results from a collapsed 
   folder.element().focus();
   await userEvent.keyboard("{Enter}");
   await expect.element(secondRow).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Search threads" }).click();
   await userEvent.fill(page.getByRole("combobox", { name: "Search threads" }), "search-target");
   const result = page.getByRole("option", { name: /Thread search-target/ });
   await expect.element(result).toBeVisible();

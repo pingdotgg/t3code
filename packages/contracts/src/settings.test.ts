@@ -323,6 +323,15 @@ describe("resolveIdleCompaction", () => {
   });
 });
 
+describe("ClientSettings sidebar layout", () => {
+  it("groups by project even when an older client saved the boring sidebar off", () => {
+    const settings = decodeClientSettings({ boringSidebarEnabled: false });
+    expect(settings.classicSidebarEnabled).toBe(false);
+    expect(encodeClientSettings(settings)).not.toHaveProperty("boringSidebarEnabled");
+    expect(decodeClientSettings({ classicSidebarEnabled: true }).classicSidebarEnabled).toBe(true);
+  });
+});
+
 describe("ClientSettings notifications", () => {
   it("requires opt-in when existing settings omit notification preferences", () => {
     expect(decodeClientSettings({}).notificationMode).toBe("off");

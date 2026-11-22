@@ -313,11 +313,20 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   );
 });
 
-export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
+export const SidebarChromeFooter = memo(function SidebarChromeFooter({
+  environment,
+}: {
+  environment?: ReactNode;
+}) {
   return (
     <SidebarFooter>
       <SidebarProviderUpdatePill />
       <SidebarUpdateArchitectureWarning />
+      {environment ? (
+        <SidebarMenu>
+          <SidebarMenuItem>{environment}</SidebarMenuItem>
+        </SidebarMenu>
+      ) : null}
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

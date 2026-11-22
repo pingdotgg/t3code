@@ -18,6 +18,8 @@ import {
   resolveSidebarThreadStatus,
   resolveSidebarEnvironmentScope,
   summarizeSidebarEnvironmentWork,
+  selectSidebarNeedsYouThreads,
+  sidebarStatusDotClassName,
   resolveThreadStatusPill,
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
@@ -210,6 +212,65 @@ describe("sidebar environment filter", () => {
     ]);
     expect(work.get(server)).toEqual({ needsYou: 1, working: 1 });
     expect(work.has(laptop)).toBe(false);
+  });
+});
+
+describe("selectSidebarNeedsYouThreads", () => {
+  it("lists every thread blocked on the user, approvals first, past filters, snooze and settle", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("idle") }),
+      makeThread({ id: ThreadId.make("question"), hasPendingUserInput: true }),
+      makeThread({
+        id: ThreadId.make("approval-settled"),
+        hasPendingApprovals: true,
+        settledOverride: "settled",
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+      }),
+      makeThread({ id: ThreadId.make("guest"), pendingGuestMessageCount: 2 }),
+      makeThread({
+        id: ThreadId.make("archived"),
+        hasPendingApprovals: true,
+        archivedAt: "2026-03-09T10:00:00.000Z",
+      }),
+      makeThread({
+        id: ThreadId.make("subagent"),
+        hasPendingApprovals: true,
+        lineage: {
+          rootThreadId: ThreadId.make("question"),
+          parentThreadId: ThreadId.make("question"),
+          relationshipToParent: "subagent",
+        },
+      }),
+      makeThread({ id: ThreadId.make("delegated"), hasPendingUserInput: true }),
+    ];
+    const delegated = new Set([
+      threadKey({ environmentId: localEnvironmentId, threadId: ThreadId.make("delegated") }),
+    ]);
+
+    expect(
+      selectSidebarNeedsYouThreads(threads, delegated).map(({ thread, reason }) => [
+        thread.id,
+        reason,
+      ]),
+    ).toEqual([
+      ["approval-settled", "approval"],
+      ["question", "input"],
+      ["guest", "request"],
+    ]);
+  });
+});
+
+describe("sidebarStatusDotClassName", () => {
+  it("maps each status to its semantic token", () => {
+    expect(sidebarStatusDotClassName("working", false)).toBe("bg-info");
+    expect(sidebarStatusDotClassName("preparing", false)).toBe("bg-info");
+    expect(sidebarStatusDotClassName("approval", false)).toBe("bg-warning");
+    expect(sidebarStatusDotClassName("input", false)).toBe("bg-warning");
+    expect(sidebarStatusDotClassName("limited", false)).toBe("bg-warning");
+    expect(sidebarStatusDotClassName("failed", false)).toBe("bg-error");
+    expect(sidebarStatusDotClassName("ready", true)).toBe("bg-success");
+    expect(sidebarStatusDotClassName("ready", false)).toBe("bg-muted-foreground/40");
+    expect(sidebarStatusDotClassName("waiting", true)).toBe("bg-muted-foreground/40");
   });
 });
 

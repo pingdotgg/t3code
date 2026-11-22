@@ -90,7 +90,7 @@ describe("sidebar header new thread", () => {
     stack.defer(() => __setClientSettingsForTests(previousSettings));
     __setClientSettingsForTests({
       ...DEFAULT_CLIENT_SETTINGS,
-      boringSidebarEnabled: scenario.mode === "boring",
+      classicSidebarEnabled: scenario.mode !== "boring",
     });
     const projects = [project("active"), project("idle")].slice(0, scenario.count);
     const currentProjectRef = {

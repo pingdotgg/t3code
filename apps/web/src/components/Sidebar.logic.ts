@@ -972,6 +972,62 @@ export interface SidebarEnvironmentWork {
   readonly working: number;
 }
 
+export type SidebarNeedsYouReason = "approval" | "input" | "request";
+
+const NEEDS_YOU_PRIORITY: Record<SidebarNeedsYouReason, number> = {
+  approval: 0,
+  input: 1,
+  request: 2,
+};
+
+function isSidebarNeedsYouStatus(status: SidebarThreadStatus): status is SidebarNeedsYouReason {
+  return status === "approval" || status === "input" || status === "request";
+}
+
+/**
+ * Threads blocked on the user across every project and environment, ignoring the sidebar's
+ * filters, snooze and settle: a hidden approval would stall its agent. Delegated children
+ * are left out because their parent already carries their request.
+ */
+export function selectSidebarNeedsYouThreads<
+  T extends SidebarThreadStatusInput &
+    Pick<SidebarThreadSummary, "archivedAt" | "environmentId" | "id" | "lineage"> & {
+      projectId: string;
+    },
+>(
+  threads: readonly T[],
+  delegatedUnderParent: ReadonlySet<string>,
+): Array<{ readonly thread: T; readonly reason: SidebarNeedsYouReason }> {
+  const entries: Array<{ readonly thread: T; readonly reason: SidebarNeedsYouReason }> = [];
+  for (const thread of filterSidebarV2VisibleThreads(threads, null, delegatedUnderParent)) {
+    const status = resolveSidebarThreadStatus(thread);
+    if (isSidebarNeedsYouStatus(status)) entries.push({ thread, reason: status });
+  }
+  return entries.toSorted(
+    (left, right) => NEEDS_YOU_PRIORITY[left.reason] - NEEDS_YOU_PRIORITY[right.reason],
+  );
+}
+
+/** The status dot's fill: running is info, waiting on the user warning, failed error, an unseen finish success. */
+export function sidebarStatusDotClassName(status: SidebarThreadStatus, isUnread: boolean): string {
+  switch (status) {
+    case "preparing":
+    case "working":
+      return "bg-info";
+    case "approval":
+    case "input":
+    case "request":
+    case "limited":
+      return "bg-warning";
+    case "failed":
+      return "bg-error";
+    case "ready":
+      return isUnread ? "bg-success" : "bg-muted-foreground/40";
+    case "waiting":
+      return "bg-muted-foreground/40";
+  }
+}
+
 /** Per environment, the threads waiting on the user and the ones running, so a filter that hides them can say so. */
 export function summarizeSidebarEnvironmentWork(
   threads: ReadonlyArray<
@@ -982,7 +1038,7 @@ export function summarizeSidebarEnvironmentWork(
   for (const thread of threads) {
     if (thread.archivedAt !== null) continue;
     const status = resolveSidebarThreadStatus(thread);
-    const needsYou = status === "approval" || status === "input" || status === "request";
+    const needsYou = isSidebarNeedsYouStatus(status);
     const working = status === "working" || status === "preparing";
     if (!needsYou && !working) continue;
     const current = work.get(thread.environmentId) ?? { needsYou: 0, working: 0 };

@@ -489,17 +489,17 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
   {
-    id: "boring-sidebar",
-    title: msg("Boring sidebar (group by project)"),
+    id: "classic-sidebar",
+    title: msg("Classic sidebar (flat list)"),
     to: "/settings/labs",
-    searchTerms: [msg("beta folders project tree classic sidebar")],
+    searchTerms: [msg("beta flat list active settled folders project tree boring sidebar")],
   },
   {
     id: "boring-sidebar-multiline",
     title: msg("Two-line folder rows"),
     to: "/settings/labs",
-    // Shown inside the boring sidebar row only while it is on, so search lands on the parent.
-    targetId: "boring-sidebar",
+    // Shown inside the classic sidebar row only while it is off, so search lands on the parent.
+    targetId: "classic-sidebar",
     searchTerms: [msg("beta boring sidebar folder rows multiline branch pull request details")],
   },
   {

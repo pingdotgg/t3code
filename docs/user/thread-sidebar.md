@@ -148,10 +148,18 @@ choice.
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
-### Group threads by project (beta)
+### Needs you
 
-Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
-threads in a folder for each project. Pinned projects come first. A project with no active
+On web and desktop, **Needs you** at the top of the sidebar lists every thread waiting on you
+for an approval, an answer, or a guest's message, on every project and environment, even one
+that is filtered out, snoozed, or settled. Click a row to open its thread. The section hides when
+nothing is waiting.
+
+### Group threads by project
+
+On web and desktop, active threads sit in a folder for each project, one line per thread with a
+status dot and how long ago it last changed. Turn on **Settings → Labs → Classic sidebar (flat
+list)** for one list with Active and Settled sections instead. Pinned projects come first. A project with no active
 threads has no folder unless it is pinned or you pick it in the project filter. An archived
 project's folder comes last and shows only while it has active threads. Click a folder to open or
 close it. A closed folder shows how many threads it holds, and a dot when one of them
@@ -162,10 +170,11 @@ section is off. Each device keeps its own choice.
 
 ### Show one environment
 
-When more than one environment is connected, the device button next to the project filter on web
-and desktop narrows the sidebar to one of them. Projects grouped by repository then list only
+The chip at the bottom of the sidebar on web and desktop shows the environment in view, whether
+it is connected, and how you reach it. With one environment it opens its connection settings.
+When more than one environment is connected, it narrows the sidebar to one of them. Projects grouped by repository then list only
 their copies on that environment. It only hides rows: every environment stays connected and
-keeps working, and the button shows a dot while a thread on a hidden environment needs you. Its
+keeps working, and the chip shows a dot while a thread on a hidden environment needs you. Its
 menu counts what needs you and what is working on each environment. Opening a hidden thread
 from a link or the command palette shows all environments again. If you remove the environment,
 the sidebar shows all of them. Each device keeps its own choice.

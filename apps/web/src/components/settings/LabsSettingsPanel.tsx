@@ -20,7 +20,7 @@ export function LabsSettingsPanel() {
   return (
     <SettingsPageContainer>
       <SettingsSection id="beta" title={gt("Beta")}>
-        <BoringSidebarRow />
+        <ClassicSidebarRow />
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : <GuestLinksRow />}
         <LinkedEnvironmentsRow />
@@ -32,30 +32,30 @@ export function LabsSettingsPanel() {
   );
 }
 
-function BoringSidebarRow() {
+function ClassicSidebarRow() {
   const searchableSetting = useSearchableSetting();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const gt = useGT();
   return (
     <SettingsRow
-      {...searchableSetting("boring-sidebar")}
+      {...searchableSetting("classic-sidebar")}
       description={gt(
-        "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+        "Show threads in one flat list with Active and Settled sections instead of project folders.",
       )}
       control={
         <Switch
-          checked={settings.boringSidebarEnabled}
-          onCheckedChange={(checked) => updateSettings({ boringSidebarEnabled: Boolean(checked) })}
-          aria-label={gt("Boring sidebar (group by project)")}
+          checked={settings.classicSidebarEnabled}
+          onCheckedChange={(checked) => updateSettings({ classicSidebarEnabled: Boolean(checked) })}
+          aria-label={gt("Classic sidebar (flat list)")}
         />
       }
     >
-      {settings.boringSidebarEnabled ? (
+      {settings.classicSidebarEnabled ? null : (
         <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
           <BoringSidebarMultilineRow />
         </div>
-      ) : null}
+      )}
     </SettingsRow>
   );
 }
