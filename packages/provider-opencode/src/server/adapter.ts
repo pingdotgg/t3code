@@ -59,6 +59,7 @@ import { brokenVersionDetail } from "@t3tools/provider-core/server/compatibility
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { mcpToolPresentation } from "@t3tools/provider-core/server/mcpToolPresentation";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
   structuralProtocolMethod,
@@ -1103,7 +1104,11 @@ export const makeOpenCodeAdapterV2 = Effect.fn("makeOpenCodeAdapterV2")(function
               config: {
                 type: "remote",
                 url: mcpSession.endpoint,
-                headers: { Authorization: mcpSession.authorizationHeader },
+                // OpenCode re-lists on tools/list_changed, so T3's optional tools load on demand.
+                headers: {
+                  Authorization: mcpSession.authorizationHeader,
+                  [MCP_TOOL_EXPOSURE_HEADER]: "deferred",
+                },
                 oauth: false,
               },
             }),

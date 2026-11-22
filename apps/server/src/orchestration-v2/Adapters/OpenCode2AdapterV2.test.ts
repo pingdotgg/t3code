@@ -5441,7 +5441,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
         config: {
           type: "remote",
           url: "http://127.0.0.1:3773/mcp",
-          headers: { Authorization: "Bearer thread-credential" },
+          headers: { Authorization: "Bearer thread-credential", "t3-tool-exposure": "deferred" },
           oauth: false,
         },
       });
@@ -5523,7 +5523,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           config: {
             type: "remote",
             url: "http://127.0.0.1:3773/mcp",
-            headers: { Authorization: "Bearer thread-credential" },
+            headers: { Authorization: "Bearer thread-credential", "t3-tool-exposure": "deferred" },
             oauth: false,
           },
         }),

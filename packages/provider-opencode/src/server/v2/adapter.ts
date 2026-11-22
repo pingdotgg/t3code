@@ -67,6 +67,7 @@ import * as OpenCode2Server from "./OpenCode2Server.ts";
 import * as OpenCodeRuntime from "../OpenCodeRuntime.ts";
 import { readableProviderErrorMessage } from "../providerErrorMessage.ts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import { t3OrchestrationSystemPrompt } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { SKILL_MENTION_PATTERN } from "@t3tools/shared/composerInlineTokens";
@@ -4409,7 +4410,8 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
             config: new Mcp.RemoteConfig({
               type: "remote",
               url: mcpSession!.endpoint,
-              headers: { Authorization: wanted.credential },
+              // OpenCode re-lists on tools/list_changed, so T3's optional tools load on demand.
+              headers: { Authorization: wanted.credential, [MCP_TOOL_EXPOSURE_HEADER]: "deferred" },
               oauth: false,
             }),
           })

@@ -219,6 +219,8 @@ export function cursorMcpServers(
   if (session === undefined) {
     return undefined;
   }
+  // No MCP_TOOL_EXPOSURE_HEADER: Cursor lists tools only on connect and rejects unlisted
+  // ones, so tools that tool_search loads later would stay unreachable.
   return {
     "t3-code": {
       type: "http",
