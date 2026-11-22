@@ -1,3 +1,5 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type {
   EnvironmentId,
   OrchestrationV2ShellSnapshot,
@@ -67,6 +69,46 @@ export function isShownUnderParent(
   delegatedUnderParent: ReadonlySet<string>,
 ): boolean {
   return !isListedThreadLineage(lineage) || delegatedUnderParent.has(threadKey(ref));
+}
+
+// Subagents, side chats and tasks delegated from a listed parent have no list row,
+// so an open one is represented by its nearest listed ancestor. A broken chain
+// (missing or archived parent, cycle) resolves to the thread itself, which then matches no row.
+export function resolveListedAncestorThreadRef(
+  ref: ScopedThreadRef,
+  threads: readonly Pick<
+    EnvironmentThreadShell,
+    "id" | "environmentId" | "lineage" | "delegatedFrom" | "archivedAt"
+  >[],
+): ScopedThreadRef {
+  const findThread = (target: ScopedThreadRef) =>
+    threads.find(
+      (thread) => thread.id === target.threadId && thread.environmentId === target.environmentId,
+    );
+  const visited = new Set<string>();
+  let current = ref;
+  let thread = findThread(current);
+  while (thread !== undefined) {
+    let parent: ScopedThreadRef;
+    if (!isListedThreadLineage(thread.lineage)) {
+      if (thread.lineage.parentThreadId === null) return ref;
+      parent = { environmentId: thread.environmentId, threadId: thread.lineage.parentThreadId };
+    } else if (thread.delegatedFrom != null) {
+      parent = {
+        environmentId: thread.delegatedFrom.environmentId,
+        threadId: thread.delegatedFrom.threadId,
+      };
+      // Mirrors delegatedUnderParent: a task whose parent is not listed keeps its own row.
+      if (findThread(parent)?.archivedAt !== null) return current;
+    } else {
+      return current;
+    }
+    if (visited.has(threadKey(current))) return ref;
+    visited.add(threadKey(current));
+    current = parent;
+    thread = findThread(current);
+  }
+  return ref;
 }
 
 /** Provider-native
@@ -161,15 +203,27 @@ const sameRequests = (
 
 export function childThreadInputsTitle(
   children: ReadonlyArray<Pick<EnvironmentThreadShell, "hasPendingApprovals" | "lineage">>,
+  resolve: MFunctionType = mFallback,
 ): string {
   const approvals = children.filter((child) => child.hasPendingApprovals).length;
   const need = approvals === 0 ? "input" : approvals === children.length ? "approval" : "you";
   const sideChats = children.filter((child) => child.lineage.sideChat === true).length;
-  const noun =
-    sideChats === children.length ? "side chat" : sideChats === 0 ? "subagent" : "thread";
-  return children.length === 1
-    ? `${noun === "side chat" ? "Side chat" : "Subagent"} needs ${need}`
-    : `${children.length} ${noun}s need ${need}`;
+  const kind = sideChats === children.length ? "sideChat" : sideChats === 0 ? "subagent" : "thread";
+  const count = children.length;
+  if (count === 1) {
+    return resolve(
+      msg(
+        "{kind, select, sideChat {{need, select, input {Side chat needs input} approval {Side chat needs approval} other {Side chat needs you}}} other {{need, select, input {Subagent needs input} approval {Subagent needs approval} other {Subagent needs you}}}}",
+        { kind, need },
+      ),
+    );
+  }
+  return resolve(
+    msg(
+      "{kind, select, sideChat {{need, select, input {{count} side chats need input} approval {{count} side chats need approval} other {{count} side chats need you}}} subagent {{need, select, input {{count} subagents need input} approval {{count} subagents need approval} other {{count} subagents need you}}} other {{need, select, input {{count} threads need input} approval {{count} threads need approval} other {{count} threads need you}}}}",
+      { kind, need, count: String(count) },
+    ),
+  );
 }
 
 const sameWireThreadShell = Schema.toEquivalence(OrchestrationV2ThreadShell);

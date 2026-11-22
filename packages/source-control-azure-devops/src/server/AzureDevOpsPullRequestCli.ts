@@ -6,11 +6,15 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import type {
   PullRequestAction,
+  PullRequestCheck,
   PullRequestComment,
   PullRequestInvolvement,
+  PullRequestLabel,
   PullRequestListState,
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
+
+import { sortChecks } from "@t3tools/source-control-core/server/pullRequestChecks";
 
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import { blobContent, readBlobZip } from "./azureDevOpsBlobZip.ts";
@@ -18,6 +22,8 @@ import {
   decodeItemContentJson,
   decodeIterationChangesJson,
   decodeIterationsJson,
+  decodeLabelsJson,
+  decodePolicyChecksJson,
   decodePullRequestJson,
   decodePullRequestListJson,
   decodeThreadsJson,
@@ -138,6 +144,9 @@ const BLOB_ID = /^[0-9a-f]{40}$/i;
 /** Review history is unpaged and independent of diff size. */
 const REVIEW_HISTORY_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 
+const POLICY_EVALUATIONS_PER_PAGE = 100;
+const MAX_POLICY_EVALUATIONS = 1000;
+
 /** Azure's iteration-change page limit. */
 const CHANGE_ENTRIES_PER_PAGE = 2000;
 
@@ -184,11 +193,25 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
       readonly number: number;
     }) => Effect.Effect<AzureDevOpsPullRequest, AzureDevOpsPullRequestCliError>;
 
+    readonly listPolicyChecks: (input: {
+      readonly cwd: string;
+      readonly number: number;
+      /** Azure holds builds back on a draft, which reads the same as a build about to start. */
+      readonly isDraft: boolean;
+    }) => Effect.Effect<ReadonlyArray<PullRequestCheck>, AzureDevOpsPullRequestCliError>;
+
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly location: AzureDevOpsRepositoryLocation;
       readonly number: number;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
+
+    /** `az repos pr show` returns null labels, so the detail reads them here. */
+    readonly listLabels: (input: {
+      readonly cwd: string;
+      readonly location: AzureDevOpsRepositoryLocation;
+      readonly number: number;
+    }) => Effect.Effect<ReadonlyArray<PullRequestLabel>, AzureDevOpsPullRequestCliError>;
 
     readonly listIterations: (input: {
       readonly cwd: string;
@@ -318,7 +341,6 @@ export const make = Effect.gen(function* () {
   const azure = yield* AzureDevOpsCli.AzureDevOpsCli;
   const fileSystem = yield* FileSystem.FileSystem;
 
-  // Let `az` parse all three remote formats.
   const detectArgs = ["--detect", "true"] as const;
 
   const executeJson = (input: {
@@ -603,6 +625,41 @@ export const make = Effect.gen(function* () {
       );
     }),
 
+    listPolicyChecks: Effect.fn("AzureDevOpsPullRequestCli.listPolicyChecks")(function* (input) {
+      const unreadable = (cause: unknown) =>
+        new AzureDevOpsPullRequestReadError({
+          command: "az",
+          cwd: input.cwd,
+          operation: "listPolicyChecks",
+          cause,
+        });
+      const checks: PullRequestCheck[] = [];
+      for (let skip = 0; skip < MAX_POLICY_EVALUATIONS; skip += POLICY_EVALUATIONS_PER_PAGE) {
+        const result = yield* executeJson({
+          cwd: input.cwd,
+          args: [
+            "repos",
+            "pr",
+            "policy",
+            "list",
+            ...detectArgs,
+            "--id",
+            String(input.number),
+            "--top",
+            String(POLICY_EVALUATIONS_PER_PAGE),
+            "--skip",
+            String(skip),
+          ],
+        });
+        if (result.stdoutTruncated) return yield* unreadable("Policy output was truncated");
+        const page = decodePolicyChecksJson(result.stdout.trim(), { isDraft: input.isDraft });
+        if (!Result.isSuccess(page)) return yield* unreadable(page.failure);
+        checks.push(...page.success.checks);
+        if (page.success.rawCount < POLICY_EVALUATIONS_PER_PAGE) return sortChecks(checks);
+      }
+      return yield* unreadable("Policy evaluations exceeded the read limit");
+    }),
+
     listThreads: Effect.fn("AzureDevOpsPullRequestCli.listThreads")(function (input) {
       return invoke({
         cwd: input.cwd,
@@ -611,6 +668,16 @@ export const make = Effect.gen(function* () {
         routeParameters: pullRequestRoute(input),
         maxOutputBytes: REVIEW_HISTORY_MAX_OUTPUT_BYTES,
         decode: decodeThreadsJson,
+      });
+    }),
+
+    listLabels: Effect.fn("AzureDevOpsPullRequestCli.listLabels")(function (input) {
+      return invoke({
+        cwd: input.cwd,
+        operation: "listLabels",
+        resource: "pullRequestLabels",
+        routeParameters: pullRequestRoute(input),
+        decode: decodeLabelsJson,
       });
     }),
 
@@ -805,6 +872,8 @@ export const make = Effect.gen(function* () {
     ),
 
     updatePullRequest: Effect.fn("AzureDevOpsPullRequestCli.updatePullRequest")(function* (input) {
+      const title =
+        input.title === undefined ? undefined : AzureDevOpsCli.textOption("--title", input.title);
       const descriptionFile =
         input.body === undefined ? undefined : yield* writeDescriptionFile(input.cwd, input.body);
       yield* azure.execute({
@@ -816,14 +885,14 @@ export const make = Effect.gen(function* () {
           ...detectArgs,
           "--id",
           String(input.number),
-          // `--flag=value` keeps a leading-dash title one value.
-          ...(input.title === undefined ? [] : [`--title=${input.title}`]),
+          ...(title === undefined ? [] : [title.arg]),
           // cmd.exe ends a Windows az.cmd line at a newline, so the description goes by file.
           ...(descriptionFile === undefined ? [] : [`--description=@${descriptionFile}`]),
           "--only-show-errors",
           "--output",
           "json",
         ],
+        ...(title?.stdin === undefined ? {} : { stdin: title.stdin }),
       });
     }, Effect.scoped),
   });

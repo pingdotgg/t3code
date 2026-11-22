@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
+import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import * as atomCommands from "../../state/use-atom-command";
 
 vi.mock(import("../../state/session"), async (original) => ({
   ...(await original()),
@@ -13,7 +15,7 @@ vi.mock(import("../../state/session"), async (original) => ({
 }));
 vi.mock(import("../../state/use-atom-command"), async (original) => ({
   ...(await original()),
-  useAtomCommand: (() => vi.fn()) as never,
+  useAtomCommand: vi.fn(() => vi.fn()) as never,
 }));
 vi.mock(import("./SettingsScopeContext"), async (original) => ({
   ...(await original()),
@@ -21,7 +23,13 @@ vi.mock(import("./SettingsScopeContext"), async (original) => ({
     const environment = {
       environmentId: "env",
       label: "Build workstation",
-      serverConfig: { keybindings: [], keybindingsConfigPath: null, availableEditors: [] },
+      serverConfig: {
+        keybindings: compileResolvedKeybindingsConfig([
+          { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        ]),
+        keybindingsConfigPath: null,
+        availableEditors: [],
+      },
     };
     return {
       scope: { kind: "environment" },
@@ -105,6 +113,50 @@ describe("Esc in a shortcut recorder", () => {
   });
 });
 
+it("unassigns a default shortcut and restores its condition when one is assigned again", async () => {
+  const mutate = vi.fn(async () => ({ _tag: "Success", value: [] }));
+  await vi.mocked(atomCommands.useAtomCommand).withImplementation(
+    () => mutate as never,
+    async () => {
+      await using screen = await render(<KeybindingsSettingsPanel />);
+
+      await screen.getByRole("button", { name: "Actions for Sidebar: Toggle" }).click();
+      await screen.getByRole("menuitem", { name: "Unassign" }).click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: {
+          command: "sidebar.toggle",
+          key: "mod+b",
+          when: "false",
+          replace: { command: "sidebar.toggle", key: "mod+b" },
+        },
+      });
+
+      const unassigned = screen.getByRole("button", {
+        name: "Edit shortcut for Composer: Start in Background: Unassigned",
+      });
+      const save = screen.getByRole("button", { name: "Save" });
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await expect.element(save).toBeVisible();
+      await userEvent.keyboard("{Escape}");
+      await expect.element(save).not.toBeInTheDocument();
+
+      await unassigned.click();
+      await userEvent.keyboard("{Control>}{Alt>}j{/Alt}{/Control}");
+      await save.click();
+      expect(mutate).toHaveBeenLastCalledWith({
+        environmentId: "env",
+        input: expect.objectContaining({
+          command: "composer.sendBackground",
+          when: "composerFocus && draftThreadRoute",
+          replace: { command: "composer.sendBackground", key: "mod+alt+enter", when: "false" },
+        }),
+      });
+    },
+  );
+});
+
 it("Esc in the keybindings search clears the query without closing Settings", async () => {
   const onOpenChange = vi.fn();
   await using _screen = await render(
@@ -143,4 +195,35 @@ it("re-enables Save when a When editor closes on an expression it could not pars
 
   await expect.element(expression).toHaveValue("terminalFocus");
   await expect.element(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
+it("filters actions and allows additional shortcuts for assigned commands", async () => {
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  await screen.getByRole("button", { name: "Add keybinding" }).click();
+  const dialog = page.getByRole("dialog", { name: "Command", exact: true });
+  const search = dialog.getByRole("combobox", { name: "Search", exact: true });
+  await expect.element(search).toHaveFocus();
+  await userEvent.keyboard("sidebar.toggle");
+  const assigned = page.getByRole("option", { name: /Sidebar: Toggle/ });
+  await expect.element(assigned).not.toHaveAttribute("aria-disabled", "true");
+  await expect.element(assigned.element().querySelector("kbd")!).toBeVisible();
+  await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
+  await assigned.click();
+  const command = screen.getByRole("combobox", { name: "Command", exact: true });
+  await expect.element(command).toHaveTextContent("Sidebar: Toggle");
+  await command.click();
+  await search.fill("Opposite Queue");
+  await expect
+    .element(page.getByRole("option", { name: /Composer: Opposite Queue or Steer Action/ }))
+    .toBeVisible();
+  await vi.waitFor(() => expect(page.getByRole("option").elements()).toHaveLength(1));
+  await search.fill("no-such-action");
+  await expect.element(page.getByText("No results found.")).toBeVisible();
+  await search.fill("composer.cycleHost");
+  const available = page.getByRole("option", { name: "Composer: Cycle Host" });
+  await expect.element(available).not.toHaveAttribute("aria-disabled", "true");
+  await available.click();
+  await expect
+    .element(screen.getByRole("combobox", { name: "Command", exact: true }))
+    .toHaveTextContent("Composer: Cycle Host");
 });

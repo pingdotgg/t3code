@@ -236,6 +236,18 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           truncated: false,
         });
 
+        const bomContents = "\uFEFFexport const answer = 42;\n";
+        yield* writeTextFile(cwd, "bom.ts", bomContents);
+        const bomRead = yield* workspaceFileSystem.readFile({ cwd, relativePath: "bom.ts" });
+        yield* workspaceFileSystem.writeFile({
+          cwd,
+          relativePath: "bom.ts",
+          contents: bomRead.contents.replace("42", "43"),
+        });
+        const fs = yield* FileSystem.FileSystem;
+        const saved = yield* fs.readFile(`${cwd}/bom.ts`);
+        expect([...saved]).toEqual([...new TextEncoder().encode(bomContents.replace("42", "43"))]);
+
         yield* writeTextFile(cwd, "report.txt", "ordinary file");
         for (const relativePath of whitespaceFilePaths) {
           yield* writeTextFile(cwd, relativePath, "whitespace file");
@@ -243,6 +255,32 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
           expect(read.contents).toBe("whitespace file");
           expect(read.relativePath).toBe(relativePath);
         }
+      }),
+    );
+
+    it.effect("reports an optional file as absent when the workspace root was removed", () =>
+      Effect.gen(function* () {
+        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+        const path = yield* Path.Path;
+        const cwd = path.join(yield* makeTempDir, "removed-worktree");
+
+        const result = yield* workspaceFileSystem.readFile({
+          cwd,
+          relativePath: "t3.json",
+          allowMissing: true,
+        });
+        expect(result).toEqual({
+          relativePath: "t3.json",
+          contents: "",
+          byteLength: 0,
+          truncated: false,
+          exists: false,
+        });
+
+        const error = yield* workspaceFileSystem
+          .readFile({ cwd, relativePath: "t3.json" })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({ operation: "realpath-workspace-root" });
       }),
     );
 
@@ -308,25 +346,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("reads ~/ paths from the server home outside the workspace", () =>
-      Effect.gen(function* () {
-        const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
-        const cwd = yield* makeTempDir;
-        const home = yield* makeTempDir;
-        yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
-        yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
+    it.effect.each(["~/.claude/CLAUDE.md", "~\\.claude/CLAUDE.md"])(
+      "reads %s from the server home outside the workspace",
+      (relativePath) =>
+        Effect.gen(function* () {
+          const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const cwd = yield* makeTempDir;
+          const home = yield* makeTempDir;
+          yield* writeTextFile(home, ".claude/CLAUDE.md", "# Notes\n");
+          yield* writeTextFile(cwd, "~/.claude/CLAUDE.md", "Workspace decoy\n");
 
-        const result = yield* workspaceFileSystem
-          .readFile({ cwd, relativePath: "~/.claude/CLAUDE.md" })
-          .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+          const result = yield* workspaceFileSystem
+            .readFile({ cwd, relativePath })
+            .pipe(Effect.provideService(HostProcess.HomeDirectory, home));
 
-        expect(result).toEqual({
-          relativePath: "~/.claude/CLAUDE.md",
-          contents: "# Notes\n",
-          byteLength: 8,
-          truncated: false,
-        });
-      }),
+          expect(result).toEqual({
+            relativePath,
+            contents: "# Notes\n",
+            byteLength: 8,
+            truncated: false,
+          });
+        }),
     );
 
     it.effect("does not read server state files", () =>
@@ -400,6 +440,27 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
             const result = yield* underWsl(service.readFile({ cwd, relativePath }));
             expect(result).toMatchObject({ contents: "# Notes\n", truncated: false });
           }
+        }),
+    );
+
+    // Agents on Windows copy paths from Git Bash, which prints `C:\x` as `/c/x`.
+    it.effect.runIf(HostProcess.Platform.defaultValue() === "win32")(
+      "reads a Git Bash drive path on Windows",
+      () =>
+        Effect.gen(function* () {
+          const service = yield* WorkspaceFileSystem.WorkspaceFileSystem;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const cwd = yield* makeTempDir;
+          const filePath = path.join(yield* fs.realPath(yield* makeTempDir), "notes.md");
+          yield* fs.writeFileString(filePath, "# Notes\n");
+          const gitBashPath = `/${filePath[0]!.toLowerCase()}${filePath.slice(2).replaceAll("\\", "/")}`;
+
+          expect((yield* service.getMetadata({ paths: [gitBashPath] })).entries).toEqual([
+            { kind: "file", byteLength: 8 },
+          ]);
+          const result = yield* service.readFile({ cwd, relativePath: gitBashPath });
+          expect(result).toMatchObject({ contents: "# Notes\n", truncated: false });
         }),
     );
 
@@ -530,14 +591,17 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceFileSystemLive", (i
       }),
     );
 
-    it.effect("rejects binary files without leaking their contents into the error", () =>
+    it.effect.each([
+      { name: "a NUL byte", bytes: [0x61, 0, 0x62] },
+      { name: "invalid UTF-8", bytes: [0x63, 0x61, 0x66, 0xe9] },
+    ])("rejects files with $name without leaking their contents", ({ bytes }) =>
       Effect.gen(function* () {
         const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
         const fileSystem = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const cwd = yield* makeTempDir;
         const absolutePath = path.join(cwd, "asset.bin");
-        yield* fileSystem.writeFile(absolutePath, Uint8Array.from([0x61, 0, 0x62]));
+        yield* fileSystem.writeFile(absolutePath, Uint8Array.from(bytes));
 
         const error = yield* workspaceFileSystem
           .readFile({ cwd, relativePath: "asset.bin" })

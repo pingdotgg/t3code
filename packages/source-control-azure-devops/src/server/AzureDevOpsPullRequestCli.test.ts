@@ -191,7 +191,11 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
             ),
           ),
         )
-        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))));
+        .mockReturnValueOnce(Effect.succeed(output(json({ changeEntries: [] }))))
+        .mockReturnValueOnce(Effect.succeed(output("[]")))
+        .mockReturnValueOnce(
+          Effect.succeed(output(json({ count: 1, value: [{ id: "4f1c", name: "release-1.0" }] }))),
+        );
       const provider = yield* AzureDevOpsPullRequestProvider.make;
       const detail = yield* provider.getChangeRequest({
         cwd: "/w",
@@ -202,7 +206,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
 
       expect(detail.headSha).toBe(latestHead);
       expect(argsOfCall(2)).toContain("iterationId=2");
-      expect(mockedExecute).toHaveBeenCalledTimes(3);
+      expect(argsOfCall(4)).toContain("pullRequestLabels");
+      expect(detail.labels).toEqual([{ name: "release-1.0", color: null }]);
+      expect(mockedExecute).toHaveBeenCalledTimes(5);
     }),
   );
 
@@ -381,6 +387,59 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
+  const policyRow = (name: string, status: string) => ({
+    status,
+    configuration: {
+      url: "https://dev.azure.com/acme/platform/_apis/policy/configurations/54",
+      isBlocking: true,
+      type: { id: "0609b952-1397-4640-95ec-e00a01b2c241" },
+      settings: { displayName: name },
+    },
+  });
+
+  it.effect("follows every page of policies and puts failures first", () =>
+    Effect.gen(function* () {
+      const fullPage = Array.from({ length: 100 }, () => policyRow("Lint", "approved"));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output(JSON.stringify(fullPage))))
+        .mockReturnValueOnce(
+          Effect.succeed(output(JSON.stringify([policyRow("Tests", "rejected")]))),
+        );
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const checks = yield* cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false });
+      assert.deepStrictEqual(argsOfCall(1).slice(0, 12), [
+        "repos",
+        "pr",
+        "policy",
+        "list",
+        "--detect",
+        "true",
+        "--id",
+        "42",
+        "--top",
+        "100",
+        "--skip",
+        "100",
+      ]);
+      assert.strictEqual(checks.length, 101);
+      assert.strictEqual(checks[0]?.name, "Tests");
+    }),
+  );
+
+  it.effect.each([
+    { name: "cut off", result: { ...output("[]"), stdoutTruncated: true } },
+    { name: "unreadable", result: output(JSON.stringify([{ status: 7 }])) },
+  ])("fails rather than report a $name policy page as complete", ({ result }) =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(result));
+      const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+      const error = yield* Effect.flip(
+        cli.listPolicyChecks({ cwd: "/w", number: 42, isDraft: false }),
+      );
+      assert.strictEqual(error._tag, "AzureDevOpsPullRequestReadError");
+    }),
+  );
+
   it.effect("sends a multi-line description through a file, which survives a Windows az.cmd", () =>
     Effect.gen(function* () {
       const body = "## Summary\n\nline two\nline three";
@@ -404,6 +463,33 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(argsOfCall(0).filter((arg) => arg.includes("\n"))).toEqual([]);
       expect(sentDescription).toBe(body);
     }),
+  );
+
+  it.effect(
+    "sends a title or description that looks like `@path` as text, not as a file for az to read",
+    () =>
+      Effect.gen(function* () {
+        mockedExecute.mockReturnValue(Effect.succeed(output("{}")));
+        const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
+
+        yield* cli.updatePullRequest({
+          cwd: "/w",
+          number: 42,
+          title: "@notes.txt",
+          body: "@notes.txt",
+        });
+
+        // az replaces an argument that starts with `@`, or whose text after the first `=` does, with that file's contents.
+        const fileReads = argsOfCall(0).flatMap((arg) => {
+          const value = arg.startsWith("@") ? arg : arg.slice(arg.indexOf("=") + 1);
+          return (arg.startsWith("@") || arg.includes("=")) && value.startsWith("@")
+            ? [value.slice(1)]
+            : [];
+        });
+        expect(fileReads).not.toContain("notes.txt");
+        // A title read over stdin reaches az wherever it runs; the description goes by file.
+        expect(mockedExecute.mock.calls.map(([call]) => call.stdin)).toEqual(["@notes.txt"]);
+      }),
   );
 
   it.effect("names the head's blob as what a cleared file was cleared at", () =>
