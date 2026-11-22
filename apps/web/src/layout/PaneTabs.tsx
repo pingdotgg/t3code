@@ -280,10 +280,16 @@ function createPaneStrip(role?: "panel"): PaneStrip {
   return entry;
 }
 
+function stripScrollLeft(entry: PaneStrip): number {
+  return entry.restoreScroll ? entry.scrollLeft : entry.strip.scrollLeft;
+}
+
 /** How much of the strip is scrolled out at each end, for its edge fade. */
 function markStripOverflow(strip: HTMLElement): void {
   const row = strip.closest("[data-pane-header]");
-  const { scrollLeft, scrollWidth, clientWidth } = strip;
+  const entry = stripEntries.get(strip);
+  const { scrollWidth, clientWidth } = strip;
+  const scrollLeft = entry ? stripScrollLeft(entry) : strip.scrollLeft;
   const overflow = scrollWidth > clientWidth;
   if (row && row.hasAttribute("data-tab-row-overflow") !== overflow) {
     row.toggleAttribute("data-tab-row-overflow", overflow);
@@ -293,16 +299,17 @@ function markStripOverflow(strip: HTMLElement): void {
   setPaneLitProperty(strip, "--strip-overflow-end", `${Math.max(0, end)}px`);
   setPaneLitProperty(strip, "--strip-overflowing-end", end > 0.5 ? "1" : "0");
   setPaneLitProperty(strip, "--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
-  const entry = stripEntries.get(strip);
   if (!entry) return;
   entry.width = clientWidth;
   markJoinAtStart(entry);
   markPaneLit(entry, scrollLeft);
 }
 
-function activeTabInView({ strip, shown, width }: PaneStrip): boolean {
+function activeTabInView(entry: PaneStrip): boolean {
+  const { shown, width } = entry;
   if (shown === null || width === 0) return true;
-  return shown.x + shown.w > strip.scrollLeft && shown.x < strip.scrollLeft + width;
+  const scrollLeft = stripScrollLeft(entry);
+  return shown.x + shown.w > scrollLeft && shown.x < scrollLeft + width;
 }
 
 /**
@@ -314,10 +321,11 @@ function markJoinAtStart(entry: PaneStrip): void {
   const { strip, shown } = entry;
   const row = strip.closest<HTMLElement>("[data-pane-header]");
   if (!row) return;
+  const scrollLeft = stripScrollLeft(entry);
   const atStart =
     shown !== null &&
-    shown.x - strip.scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
-    shown.x + shown.w - strip.scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
+    shown.x - scrollLeft <= PANE_JOIN_EAR_PX + 1 &&
+    shown.x + shown.w - scrollLeft >= PANE_JOIN_EAR_PX + 14 &&
     stripAtPaneEdge(strip, row);
   if (row.hasAttribute("data-pane-join-start") !== atStart) {
     row.toggleAttribute("data-pane-join-start", atStart);
@@ -444,7 +452,7 @@ function litCuts(host: HTMLElement): NodeListOf<HTMLElement> {
 /** A pane's cuts, mounted again (SurfaceHost.tsx PaneCuts), take its lit span. */
 export function markPaneCutsLit(host: HTMLElement): void {
   for (const entry of paneStrips.values()) {
-    if (entry.lit?.host === host) markPaneLit(entry, entry.strip.scrollLeft);
+    if (entry.lit?.host === host) markPaneLit(entry, stripScrollLeft(entry));
   }
 }
 
@@ -495,6 +503,7 @@ function restorePaneStripScroll(entry: PaneStrip): void {
   if (!entry.restoreScroll) return;
   entry.restoreScroll = false;
   entry.strip.scrollLeft = entry.scrollLeft;
+  markStripOverflow(entry.strip);
 }
 
 /** Forget a pane's strip once no header holds it, after the commit that may hand it on. */
@@ -789,7 +798,7 @@ export function LayoutPaneTabStrip({
     const inset = new ResizeObserver(() => {
       measurePaneLit(entry);
       markJoinAtStart(entry);
-      markPaneLit(entry, strip.scrollLeft);
+      markPaneLit(entry, stripScrollLeft(entry));
     });
     if (row) inset.observe(row);
     const notch = strip.closest('[data-pane-notch=""]');
