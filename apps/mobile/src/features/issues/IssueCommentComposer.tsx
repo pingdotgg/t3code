@@ -170,7 +170,11 @@ export function IssueCommentComposer(props: {
                   />
                   {/* TalkBack orders siblings by position; outside this row the editor reads after Send. */}
                   <Animated.View
-                    style={[compactEditor.editorStyle, dictating ? { display: "none" } : undefined]}
+                    style={[
+                      compactEditor.editorStyle,
+                      // iOS destroys a view under display: none; the editor would lose its focus and caret.
+                      Platform.OS === "android" && dictating ? { display: "none" } : undefined,
+                    ]}
                   >
                     <ComposerEditor
                       ref={editorRef}
