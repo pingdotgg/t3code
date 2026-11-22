@@ -177,6 +177,7 @@ export const make = Effect.gen(function* () {
     const result = yield* gitlab
       .execute({
         cwd: input.cwd,
+        callerNamedHost: input.url.host,
         args: ["api", "--hostname", input.url.host, endpoint],
         timeoutMs: 3_000,
         maxOutputBytes: 32_000,
@@ -282,6 +283,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    createsDraftChangeRequests: true,
     createChangeRequest: Effect.fn("GitLabSourceControlProvider.createChangeRequest")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -294,6 +296,7 @@ export const make = Effect.gen(function* () {
             ...(input.target ? { target: input.target } : {}),
             title: input.title,
             bodyFile: input.bodyFile,
+            ...(input.draft === true ? { draft: true } : {}),
           })
           .pipe(
             Effect.mapError(

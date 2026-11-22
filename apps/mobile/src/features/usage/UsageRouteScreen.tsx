@@ -18,16 +18,14 @@ import {
   enumerateDays,
   enumerateHourStarts,
   formatCount,
-  formatDayShort,
-  formatHourShort,
   formatPercent,
   formatTokens,
-  formatUsageContractMismatch,
   formatUsd,
   makeWindow,
-  usageSourceMessages,
 } from "@t3tools/shared/usageFormat";
-import { useRef, useState, type ReactNode } from "react";
+import { formatUsageContractMismatch, usageSourceMessages } from "@t3tools/shared/usageFormatCopy";
+import { msg, T, useGT, useLocale, useMessages, Var } from "gt-react-native";
+import { use, useRef, useState, type ReactNode } from "react";
 import { View } from "react-native";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
@@ -38,9 +36,12 @@ import { useReduceMotionEnabled } from "../../lib/appState";
 import { AppText as Text } from "../../components/ui/AppText";
 import { useWorkspaceSettledContentWidth } from "../layout/workspace-content-width";
 import { cn } from "../../lib/cn";
+import type { MessageResolver } from "../../i18n/messages";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
+import { NativeWorkspaceTabActivityContext } from "../../native/v5-workspace-context";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
+import { usageAxisDayLabel, usageAxisHourLabel } from "./usageAxisLabels";
 import { UsageDailyChart } from "./UsageDailyChart";
 import { toggleUsageEnvironment } from "./usageEnvironmentSelection";
 import { useRefreshLimits } from "./UsageLimitsSection";
@@ -50,16 +51,32 @@ import { PROVIDER_LABEL, useProviderColors, useUsageMixColors } from "./usagePro
 
 type UsageView = UsageChartMetric | "limits";
 const VIEW_OPTIONS = [
-  { value: "cost", label: "Cost" },
-  { value: "tokens", label: "Tokens" },
-  { value: "limits", label: "Limits" },
+  { value: "cost", label: msg("Cost", { $context: "usage view tab" }) },
+  { value: "tokens", label: msg("Tokens", { $context: "usage view tab" }) },
+  { value: "limits", label: msg("Limits", { $context: "usage view tab, subscription limits" }) },
 ] as const satisfies readonly { value: UsageView; label: string }[];
 
 const WINDOW_OPTIONS = [
-  { value: 1, label: "24h", accessibilityLabel: "Past 24 hours" },
-  { value: 7, label: "7d", accessibilityLabel: "Past 7 days" },
-  { value: 30, label: "30d", accessibilityLabel: "Past 30 days" },
-  { value: 90, label: "90d", accessibilityLabel: "Past 90 days" },
+  {
+    value: 1,
+    label: msg("24h", { $context: "short label for the past 24 hours" }),
+    accessibilityLabel: msg("Past 24 hours"),
+  },
+  {
+    value: 7,
+    label: msg("7d", { $context: "short label for the past 7 days" }),
+    accessibilityLabel: msg("Past 7 days"),
+  },
+  {
+    value: 30,
+    label: msg("30d", { $context: "short label for the past 30 days" }),
+    accessibilityLabel: msg("Past 30 days"),
+  },
+  {
+    value: 90,
+    label: msg("90d", { $context: "short label for the past 90 days" }),
+    accessibilityLabel: msg("Past 90 days"),
+  },
 ] as const;
 
 const CHART_HEIGHT = 180;
@@ -78,7 +95,16 @@ function UsageScreen(props: {
   readonly workspace?: boolean;
   readonly tabParam: string | undefined;
 }) {
+  const gt = useGT();
+  const m = useMessages();
+  const viewOptions = VIEW_OPTIONS.map((option) => ({ ...option, label: m(option.label) }));
+  const windowOptions = WINDOW_OPTIONS.map((option) => ({
+    ...option,
+    label: m(option.label),
+    accessibilityLabel: m(option.accessibilityLabel),
+  }));
   const insets = useSafeAreaInsets();
+  const headerOnly = use(NativeWorkspaceTabActivityContext)?.headerOnly === true;
   const [selection, setSelection] = useState(() => ({
     params: props.tabParam,
     view: (props.tabParam === "usage" ? "cost" : "limits") as UsageView,
@@ -106,11 +132,16 @@ function UsageScreen(props: {
   const { merged, environments, selectedEnvironments, isPending, refresh } = useUsage(
     window,
     selectedEnvironmentIds,
+    !headerOnly,
   );
   const isFocused = useIsFocused();
-  const limits = useRefreshLimits(selectedEnvironmentIds, isFocused && view === "limits");
+  const limits = useRefreshLimits(
+    selectedEnvironmentIds,
+    isFocused && view === "limits" && !headerOnly,
+  );
   const sourceMessages = usageSourceMessages(
     selectedEnvironments.flatMap((environment) => environment.summary?.sources ?? []),
+    m,
   );
   const canReadDiagnostics = selectedEnvironments.some(
     (environment) => environment.canReadDiagnostics,
@@ -134,10 +165,14 @@ function UsageScreen(props: {
   const refreshingRef = useRef(false);
   const showingLimits = view === "limits";
   const metric: UsageChartMetric = view === "tokens" ? "tokens" : "cost";
-  const progress = usageProgress(selectedEnvironments, {
-    refreshing: refreshingUsage,
-    providerLabel,
-  });
+  const progress = usageProgress(
+    selectedEnvironments,
+    {
+      refreshing: refreshingUsage,
+      providerLabel,
+    },
+    m,
+  );
   const selectWindow = (days: number) => {
     setWindowSelection({
       days,
@@ -185,7 +220,7 @@ function UsageScreen(props: {
     setSelectedEnvironmentIds((selected) => toggleUsageEnvironment(selected, environments, id));
   };
   const environmentMenu = {
-    title: "Filter usage environments",
+    title: gt("Filter usage environments"),
     icon:
       selectedEnvironmentIds === null
         ? ("line.3.horizontal.decrease" as const)
@@ -193,14 +228,14 @@ function UsageScreen(props: {
     items: [
       {
         id: "all",
-        title: "All environments",
+        title: gt("All environments"),
         selected: selectedEnvironmentIds === null,
         onPress: () => selectEnvironment("all"),
       },
       ...environments.map((environment) => ({
         id: environment.environmentId,
         title: environment.label,
-        subtitle: usageEnvironmentStatus(environment, refreshingUsage),
+        subtitle: usageEnvironmentStatus(environment, refreshingUsage, m),
         selected:
           selectedEnvironmentIds === null || selectedEnvironmentIds.has(environment.environmentId),
         onPress: () => selectEnvironment(environment.environmentId),
@@ -210,154 +245,166 @@ function UsageScreen(props: {
 
   return (
     <SettingsScreen
-      title="Usage"
+      title={gt("Usage", { $context: "screen title" })}
       menus={showEnvironmentFilter ? [environmentMenu] : undefined}
       workspaceRoot={props.workspace}
     >
-      <ScrollView
-        contentInsetAdjustmentBehavior="automatic"
-        showsVerticalScrollIndicator={false}
-        className="flex-1"
-        contentContainerClassName="px-5 pt-4"
-        contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
-        onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
-        refreshControl={
-          showingLimits || canReadDiagnostics ? (
-            <RefreshControl
-              refreshing={showingLimits ? limits.refreshing : refreshingUsage}
-              onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
-            />
-          ) : undefined
-        }
-      >
-        <View className="w-full gap-6 self-center" style={{ maxWidth: MAX_CONTENT_WIDTH }}>
-          {wide ? (
-            <View className="flex-row items-center gap-3">
-              {showingLimits ? (
-                <View className="flex-1" />
-              ) : (
-                <SegmentedControl
-                  options={WINDOW_OPTIONS}
-                  selected={windowDays}
-                  onSelect={selectWindow}
-                  size="compact"
-                  className="flex-1"
-                />
-              )}
-              <SegmentedControl
-                options={VIEW_OPTIONS}
-                selected={view}
-                onSelect={setView}
-                size="compact"
-                role="tab"
-                className="flex-1"
+      {headerOnly ? null : (
+        <ScrollView
+          contentInsetAdjustmentBehavior="automatic"
+          showsVerticalScrollIndicator={false}
+          className="flex-1"
+          contentContainerClassName="px-5 pt-4"
+          contentContainerStyle={{ paddingBottom: Math.max(insets.bottom, 18) + 18 }}
+          onLayout={(event) => setWidth(event.nativeEvent.layout.width)}
+          refreshControl={
+            showingLimits || canReadDiagnostics ? (
+              <RefreshControl
+                refreshing={showingLimits ? limits.refreshing : refreshingUsage}
+                onRefresh={showingLimits ? () => void limits.refresh() : refreshWindow}
               />
-            </View>
-          ) : (
-            <SegmentedControl
-              options={VIEW_OPTIONS}
-              selected={view}
-              onSelect={setView}
-              role="tab"
-            />
-          )}
-          <Animated.View
-            key={showingLimits ? "limits" : "usage"}
-            entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
-            className="gap-6"
-          >
-            {showingLimits ? (
-              <UsageLimitsSection
-                now={limits.now}
-                failedLabels={limits.failedLabels}
-                selectedEnvironmentIds={selectedEnvironmentIds}
-                wide={wide}
-              />
-            ) : (
-              <>
-                {wide ? null : (
+            ) : undefined
+          }
+        >
+          <View className="w-full gap-6 self-center" style={{ maxWidth: MAX_CONTENT_WIDTH }}>
+            {wide ? (
+              <View className="flex-row items-center gap-3">
+                {showingLimits ? (
+                  <View className="flex-1" />
+                ) : (
                   <SegmentedControl
-                    options={WINDOW_OPTIONS}
+                    options={windowOptions}
                     selected={windowDays}
                     onSelect={selectWindow}
                     size="compact"
+                    className="flex-1"
                   />
                 )}
-                <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
-                {merged.duplicateSources.length > 0 ? (
-                  <Text className="text-sm text-foreground-muted">
-                    Counted once across environments sharing a transcript directory:{" "}
-                    {merged.duplicateSources.join(", ")}
-                  </Text>
-                ) : null}
-                {isPending ? (
-                  <Text className="py-16 text-center text-base text-foreground-muted">
-                    Scanning provider transcripts…
-                  </Text>
-                ) : selectedEnvironments.length === 0 ? (
-                  <Text className="py-16 text-center text-base text-foreground-muted">
-                    {environments.length === 0
-                      ? "Connect an environment to see usage."
-                      : "Select an environment to see usage."}
-                  </Text>
-                ) : !canReadDiagnostics ? (
-                  <View className="gap-2 py-16">
-                    {selectedEnvironments.map((environment) => (
-                      <Text
-                        key={environment.environmentId}
-                        className="text-center text-base text-foreground-muted"
-                      >
-                        {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
-                        {environment.error}
-                      </Text>
-                    ))}
-                  </View>
-                ) : (
-                  <>
-                    {sourceMessages.map((message) => (
-                      <Text key={message} className="text-sm text-foreground-muted">
-                        {message}
-                      </Text>
-                    ))}
-                    <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
-                      {wide ? (
-                        <View className="flex-row gap-6">
-                          <View className="w-72 gap-6">
-                            <View className="rounded-[24px] border-continuous bg-grouped-card p-4">
-                              <UsageSummary merged={merged} metric={metric} />
-                            </View>
-                            {providers}
-                          </View>
-                          <View className="min-w-0 flex-1">
-                            <ChartCard
-                              {...chart}
-                              height={WIDE_CHART_HEIGHT}
-                              fill
-                              title={`${isPast24Hours ? "Hourly" : "Daily"} ${metric === "cost" ? "cost" : "processed tokens"}`}
-                            />
-                          </View>
-                        </View>
-                      ) : (
-                        <>
-                          <ChartCard {...chart} height={CHART_HEIGHT} />
-                          {providers}
-                        </>
-                      )}
-                      <TotalsSection
-                        merged={merged}
-                        isPast24Hours={isPast24Hours}
-                        columns={width >= 900 ? 6 : wide ? 3 : 2}
-                      />
-                      <CostSection merged={merged} wide={wide} />
-                      <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
-                    </UsageUpdating>
-                  </>
-                )}
-              </>
+                <SegmentedControl
+                  options={viewOptions}
+                  selected={view}
+                  onSelect={setView}
+                  size="compact"
+                  role="tab"
+                  className="flex-1"
+                />
+              </View>
+            ) : (
+              <SegmentedControl
+                options={viewOptions}
+                selected={view}
+                onSelect={setView}
+                role="tab"
+              />
             )}
-          </Animated.View>
-        </View>
-      </ScrollView>
+            <Animated.View
+              key={showingLimits ? "limits" : "usage"}
+              entering={FadeIn.duration(160).reduceMotion(ReduceMotion.System)}
+              className="gap-6"
+            >
+              {showingLimits ? (
+                <UsageLimitsSection
+                  now={limits.now}
+                  failedLabels={limits.failedLabels}
+                  selectedEnvironmentIds={selectedEnvironmentIds}
+                  wide={wide}
+                />
+              ) : (
+                <>
+                  {wide ? null : (
+                    <SegmentedControl
+                      options={windowOptions}
+                      selected={windowDays}
+                      onSelect={selectWindow}
+                      size="compact"
+                    />
+                  )}
+                  <ChatGptUsageSummary selectedEnvironmentIds={selectedEnvironmentIds} />
+                  {merged.duplicateSources.length > 0 ? (
+                    <Text className="text-sm text-foreground-muted">
+                      <T>
+                        Counted once across environments sharing a transcript directory:{" "}
+                        <Var>{merged.duplicateSources.join(", ")}</Var>
+                      </T>
+                    </Text>
+                  ) : null}
+                  {isPending ? (
+                    <Text className="py-16 text-center text-base text-foreground-muted">
+                      <T>Scanning provider transcripts…</T>
+                    </Text>
+                  ) : selectedEnvironments.length === 0 ? (
+                    <Text className="py-16 text-center text-base text-foreground-muted">
+                      {environments.length === 0
+                        ? gt("Connect an environment to see usage.")
+                        : gt("Select an environment to see usage.")}
+                    </Text>
+                  ) : !canReadDiagnostics ? (
+                    <View className="gap-2 py-16">
+                      {selectedEnvironments.map((environment) => (
+                        <Text
+                          key={environment.environmentId}
+                          className="text-center text-base text-foreground-muted"
+                        >
+                          {selectedEnvironments.length > 1 ? `${environment.label}: ` : null}
+                          {environment.error}
+                        </Text>
+                      ))}
+                    </View>
+                  ) : (
+                    <>
+                      {sourceMessages.map((message) => (
+                        <Text key={message} className="text-sm text-foreground-muted">
+                          {message}
+                        </Text>
+                      ))}
+                      <UsageUpdating dimmed={progress.dimmed} label={progress.label}>
+                        {wide ? (
+                          <View className="flex-row gap-6">
+                            <View className="w-72 gap-6">
+                              <View className="rounded-[24px] border-continuous bg-grouped-card p-4">
+                                <UsageSummary merged={merged} metric={metric} />
+                              </View>
+                              {providers}
+                            </View>
+                            <View className="min-w-0 flex-1">
+                              <ChartCard
+                                {...chart}
+                                height={WIDE_CHART_HEIGHT}
+                                fill
+                                title={
+                                  isPast24Hours
+                                    ? metric === "cost"
+                                      ? gt("Hourly cost")
+                                      : gt("Hourly processed tokens")
+                                    : metric === "cost"
+                                      ? gt("Daily cost")
+                                      : gt("Daily processed tokens")
+                                }
+                              />
+                            </View>
+                          </View>
+                        ) : (
+                          <>
+                            <ChartCard {...chart} height={CHART_HEIGHT} />
+                            {providers}
+                          </>
+                        )}
+                        <TotalsSection
+                          merged={merged}
+                          isPast24Hours={isPast24Hours}
+                          columns={width >= 900 ? 6 : wide ? 3 : 2}
+                        />
+                        <CostSection merged={merged} wide={wide} />
+                        <ModelsSection merged={merged} metric={metric} columns={wide ? 2 : 1} />
+                      </UsageUpdating>
+                    </>
+                  )}
+                </>
+              )}
+            </Animated.View>
+          </View>
+        </ScrollView>
+      )}
     </SettingsScreen>
   );
 }
@@ -419,6 +466,7 @@ function ChartCard(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const locale = useLocale();
   const hasActivity = props.daily.some((period) => period.totalTokens > 0);
   const [fillHeight, setFillHeight] = useState(0);
   const height = props.fill ? Math.max(fillHeight, props.height) : props.height;
@@ -426,7 +474,9 @@ function ChartCard(props: {
     <UsageDailyChart days={props.days} daily={props.daily} metric={metric} height={height} />
   ) : (
     <View style={{ height }} className="items-center justify-center">
-      <Text className="text-base text-foreground-muted">No activity in this window.</Text>
+      <Text className="text-base text-foreground-muted">
+        <T>No activity in this window.</T>
+      </Text>
     </View>
   );
 
@@ -457,13 +507,13 @@ function ChartCard(props: {
         <View className="flex-row items-center justify-between">
           <Text className="text-xs text-foreground-tertiary">
             {props.isPast24Hours
-              ? formatHourShort(props.days[0] ?? "", props.timeZone)
-              : formatDayShort(props.sinceDay)}
+              ? usageAxisHourLabel(props.days[0] ?? "", locale, props.timeZone)
+              : usageAxisDayLabel(props.sinceDay, locale)}
           </Text>
           <Text className="text-xs text-foreground-tertiary">
             {props.isPast24Hours
-              ? formatHourShort(props.days[props.days.length - 1] ?? "", props.timeZone)
-              : formatDayShort(props.untilDay)}
+              ? usageAxisHourLabel(props.days[props.days.length - 1] ?? "", locale, props.timeZone)
+              : usageAxisDayLabel(props.untilDay, locale)}
           </Text>
         </View>
         <View className="flex-row flex-wrap items-center gap-x-4 gap-y-1">
@@ -486,18 +536,22 @@ function ChartCard(props: {
 
 function UsageSummary(props: { readonly merged: MergedUsage; readonly metric: UsageChartMetric }) {
   const { merged, metric } = props;
+  const gt = useGT();
   return (
     <View className="gap-0.5">
       <Text className="text-sm text-foreground-muted">
-        {metric === "cost" ? "Raw token cost" : "Processed tokens"}
+        {metric === "cost" ? gt("Raw token cost") : gt("Processed tokens")}
       </Text>
       <Text className="text-4xl font-t3-bold tabular-nums text-foreground">
         {metric === "cost" ? `${formatUsd(merged.costUsd)}*` : formatTokens(merged.totalTokens)}
       </Text>
       <Text className="text-sm text-foreground-muted">
         {metric === "cost"
-          ? "* if billed at full API rate"
-          : `Across ${formatCount(merged.sessions)} sessions`}
+          ? gt("* if billed at full API rate")
+          : gt("{count, plural, other {Across {sessions} sessions}}", {
+              count: merged.sessions,
+              sessions: formatCount(merged.sessions),
+            })}
       </Text>
     </View>
   );
@@ -511,6 +565,7 @@ function ProviderSection(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const gt = useGT();
   if (merged.providers.length === 0) return null;
 
   // Hermes lacks toSorted.
@@ -519,7 +574,7 @@ function ProviderSection(props: {
   );
 
   return (
-    <SettingsSection title="Providers">
+    <SettingsSection title={gt("Providers")}>
       {ordered.map((provider, index) => {
         const share = metric === "cost" ? provider.costShare : provider.tokenShare;
         return (
@@ -567,8 +622,14 @@ function ProviderSection(props: {
             )}
             <Text className="text-sm text-foreground-muted">
               {metric === "cost"
-                ? `${formatPercent(share)} of cost · ${formatTokens(provider.totalTokens)} tokens`
-                : `${formatPercent(share)} of tokens · ${formatUsd(provider.costUsd)}`}
+                ? gt("{share} of cost · {tokens} tokens", {
+                    share: formatPercent(share),
+                    tokens: formatTokens(provider.totalTokens),
+                  })
+                : gt("{share} of tokens · {cost}", {
+                    share: formatPercent(share),
+                    cost: formatUsd(provider.costUsd),
+                  })}
             </Text>
           </View>
         );
@@ -583,6 +644,7 @@ function TotalsSection(props: {
   readonly columns: number;
 }) {
   const { merged } = props;
+  const gt = useGT();
   const activePeriods = (props.isPast24Hours ? merged.hourly : merged.daily).filter(
     (period) => period.totalTokens > 0,
   ).length;
@@ -591,47 +653,58 @@ function TotalsSection(props: {
   const cachedShare = observedInput === 0 ? 0 : merged.cachedInputTokens / observedInput;
 
   return (
-    <SettingsSection title="Totals">
+    <SettingsSection title={gt("Totals")}>
       <View className="flex-row flex-wrap">
         <MetricCell
           columns={props.columns}
-          label="Processed tokens"
+          label={gt("Processed tokens")}
           value={formatTokens(merged.totalTokens)}
-          detail={`${formatTokens(periodAverage)} per active ${props.isPast24Hours ? "hour" : "day"}`}
-        />
-        <MetricCell
-          columns={props.columns}
-          label="Cache savings"
-          value={formatUsd(merged.costQuality.cacheSavingsUsd)}
           detail={
-            merged.costUsd > 0
-              ? `${(merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1)}x the raw cost`
-              : "vs full input rates"
+            props.isPast24Hours
+              ? gt("{tokens} per active hour", { tokens: formatTokens(periodAverage) })
+              : gt("{tokens} per active day", { tokens: formatTokens(periodAverage) })
           }
         />
         <MetricCell
           columns={props.columns}
-          label="Cached input"
+          label={gt("Cache savings")}
+          value={formatUsd(merged.costQuality.cacheSavingsUsd)}
+          detail={
+            merged.costUsd > 0
+              ? gt("{ratio}x the raw cost", {
+                  ratio: (merged.costQuality.cacheSavingsUsd / merged.costUsd).toFixed(1),
+                })
+              : gt("vs full input rates", {
+                  $context:
+                    "detail under the cache savings amount, compared with full input prices",
+                })
+          }
+        />
+        <MetricCell
+          columns={props.columns}
+          label={gt("Cached input")}
           value={formatTokens(merged.cachedInputTokens)}
-          detail={`${formatPercent(cachedShare)} of observed input`}
+          detail={gt("{share} of observed input", { share: formatPercent(cachedShare) })}
         />
         <MetricCell
           columns={props.columns}
-          label="Uncached input"
+          label={gt("Uncached input")}
           value={formatTokens(merged.uncachedInputTokens)}
-          detail={`${formatTokens(merged.cacheCreationTokens)} cache writes`}
+          detail={gt("{tokens} cache writes", { tokens: formatTokens(merged.cacheCreationTokens) })}
         />
         <MetricCell
           columns={props.columns}
-          label="Output"
+          label={gt("Output", { $context: "output tokens" })}
           value={formatTokens(merged.outputTokens)}
-          detail={`incl. ${formatTokens(merged.reasoningTokens)} reasoning`}
+          detail={gt("incl. {tokens} reasoning", { tokens: formatTokens(merged.reasoningTokens) })}
         />
         <MetricCell
           columns={props.columns}
-          label="Unpriced"
+          label={gt("Unpriced", { $context: "share of usage records with no known price" })}
           value={formatPercent(merged.costQuality.unpricedShare)}
-          detail="of records, excluded from cost"
+          detail={gt("of records, excluded from cost", {
+            $context: "detail under a percentage of usage records that have no known price",
+          })}
         />
       </View>
     </SettingsSection>
@@ -641,31 +714,52 @@ function TotalsSection(props: {
 function CostSection(props: { readonly merged: MergedUsage; readonly wide: boolean }) {
   const { categoryCost, speedCost } = props.merged;
   const colors = useUsageMixColors();
+  const gt = useGT();
   const byType = [
-    { label: "Input", value: categoryCost.input, color: colors.input },
-    { label: "Cache read", value: categoryCost.cacheRead, color: colors.cacheRead },
-    { label: "Cache write", value: categoryCost.cacheWrite, color: colors.cacheWrite },
-    { label: "Output", value: categoryCost.output, color: colors.output },
+    {
+      label: gt("Input", { $context: "input tokens" }),
+      value: categoryCost.input,
+      color: colors.input,
+    },
+    { label: gt("Cache read"), value: categoryCost.cacheRead, color: colors.cacheRead },
+    { label: gt("Cache write"), value: categoryCost.cacheWrite, color: colors.cacheWrite },
+    {
+      label: gt("Output", { $context: "output tokens" }),
+      value: categoryCost.output,
+      color: colors.output,
+    },
     // Reported cost with no rates to split it, or from older servers. Below a
     // cent it is rounding, not usage.
     {
-      label: "Other",
+      label: gt("Other", { $context: "cost category" }),
       value: categoryCost.unsplit >= 0.005 ? categoryCost.unsplit : 0,
       color: colors.other,
     },
   ];
   const bySpeed = [
-    { label: "Standard", value: speedCost.standard, color: colors.standard },
-    { label: "Fast", value: speedCost.fast, color: colors.fast },
-    { label: "Ultrafast", value: speedCost.ultrafast, color: colors.ultrafast },
+    {
+      label: gt("Standard", { $context: "model speed tier" }),
+      value: speedCost.standard,
+      color: colors.standard,
+    },
+    {
+      label: gt("Fast", { $context: "model speed tier" }),
+      value: speedCost.fast,
+      color: colors.fast,
+    },
+    {
+      label: gt("Ultrafast", { $context: "model speed tier" }),
+      value: speedCost.ultrafast,
+      color: colors.ultrafast,
+    },
   ];
   if (props.merged.costUsd <= 0) return null;
 
   return (
-    <SettingsSection title="Cost">
+    <SettingsSection title={gt("Cost", { $context: "section heading" })}>
       <View className={props.wide ? "flex-row" : undefined}>
         <View className={props.wide ? "min-w-0 flex-1" : undefined}>
-          <ShareBar label="By type" segments={byType} />
+          <ShareBar label={gt("By type")} segments={byType} />
         </View>
         {speedCost.fast + speedCost.ultrafast > 0 ? (
           <View
@@ -676,9 +770,9 @@ function CostSection(props: { readonly merged: MergedUsage; readonly wide: boole
             }
           >
             <ShareBar
-              label="By speed"
+              label={gt("By speed")}
               segments={bySpeed}
-              aside={`${formatUsd(speedCost.premium)} premium`}
+              aside={gt("{cost} premium", { cost: formatUsd(speedCost.premium) })}
             />
           </View>
         ) : null}
@@ -747,6 +841,7 @@ function ModelsSection(props: {
 }) {
   const { merged, metric } = props;
   const colors = useProviderColors();
+  const gt = useGT();
   if (merged.models.length === 0) return null;
 
   // Hermes lacks toSorted.
@@ -757,7 +852,7 @@ function ModelsSection(props: {
   );
 
   return (
-    <SettingsSection title="By model">
+    <SettingsSection title={gt("By model")}>
       <View className="flex-row flex-wrap">
         {ordered.map((model, index) => (
           <View
@@ -779,19 +874,29 @@ function ModelsSection(props: {
               </Text>
               <Text className="text-sm text-foreground-muted">
                 {metric === "tokens"
-                  ? `${formatPercent(model.tokenShare)} of tokens · ${
-                      isModelCostUnknown(model) ? "no known rates" : formatUsd(model.costUsd)
-                    }`
+                  ? isModelCostUnknown(model)
+                    ? gt("{share} of tokens · no known rates", {
+                        share: formatPercent(model.tokenShare),
+                      })
+                    : gt("{share} of tokens · {cost}", {
+                        share: formatPercent(model.tokenShare),
+                        cost: formatUsd(model.costUsd),
+                      })
                   : isModelCostUnknown(model)
-                    ? `no known rates · ${formatTokens(model.totalTokens)} tokens`
-                    : `${formatPercent(model.costShare)} of cost · ${formatTokens(model.totalTokens)} tokens`}
+                    ? gt("no known rates · {tokens} tokens", {
+                        tokens: formatTokens(model.totalTokens),
+                      })
+                    : gt("{share} of cost · {tokens} tokens", {
+                        share: formatPercent(model.costShare),
+                        tokens: formatTokens(model.totalTokens),
+                      })}
               </Text>
             </View>
             <Text className="text-base tabular-nums text-foreground">
               {metric === "tokens"
                 ? formatTokens(model.totalTokens)
                 : isModelCostUnknown(model)
-                  ? "Unpriced"
+                  ? gt("Unpriced", { $context: "model with no known price" })
                   : formatUsd(model.costUsd)}
             </Text>
           </View>
@@ -801,26 +906,38 @@ function ModelsSection(props: {
   );
 }
 
-function usageEnvironmentStatus(environment: EnvironmentUsageStatus, refreshing: boolean): string {
+function usageEnvironmentStatus(
+  environment: EnvironmentUsageStatus,
+  refreshing: boolean,
+  resolve: MessageResolver,
+): string {
   if (
     environment.summary &&
     !isCompatibleUsageContractVersion(environment.summary.contractVersion, USAGE_CONTRACT_VERSION)
   ) {
-    return formatUsageContractMismatch(environment.label, {
-      direction:
-        environment.summary.contractVersion < USAGE_CONTRACT_VERSION
-          ? "serverBehind"
-          : "clientBehind",
-    });
+    return formatUsageContractMismatch(
+      environment.label,
+      {
+        direction:
+          environment.summary.contractVersion < USAGE_CONTRACT_VERSION
+            ? "serverBehind"
+            : "clientBehind",
+      },
+      resolve,
+    );
   }
   if (environment.error)
-    return environment.summary ? `${environment.error} Showing saved totals.` : environment.error;
+    return environment.summary
+      ? resolve(msg("{error} Showing saved totals.", { error: environment.error }))
+      : environment.error;
   if (!environment.isConnected)
-    return environment.summary ? "Disconnected · showing saved usage" : "Waiting for connection…";
+    return environment.summary
+      ? resolve(msg("Disconnected · showing saved usage"))
+      : resolve(msg("Waiting for connection…"));
   const progress = usageEnvironmentProgress(environment, refreshing);
-  if (progress.phase === "loading") return "Loading usage…";
-  if (progress.phase === "stale") return "Updating usage…";
+  if (progress.phase === "loading") return resolve(msg("Loading usage…"));
+  if (progress.phase === "stale") return resolve(msg("Updating usage…"));
   if (progress.phase === "partway")
-    return updatingProvidersLabel(progress.providers, providerLabel);
-  return "Usage up to date";
+    return updatingProvidersLabel(progress.providers, providerLabel, resolve);
+  return resolve(msg("Usage up to date"));
 }
