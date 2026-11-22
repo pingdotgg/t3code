@@ -21,12 +21,21 @@ export function NotificationSettings() {
   const updateSettings = useUpdateScopedSettings();
   const [permissionMessage, setPermissionMessage] = useState<string | null>(null);
   const [requesting, setRequesting] = useState(false);
+  const permissionDenied = gt(
+    "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
+  );
+  // Permission can be revoked after the mode is saved; the coordinator then skips notifications.
+  const notificationsBlocked =
+    hasDesktopNotifications(mode) &&
+    typeof Notification !== "undefined" &&
+    Notification.permission !== "granted";
 
   return (
     <SettingsRow
       {...searchableSetting("thread-notifications")}
       description={
         permissionMessage ??
+        (notificationsBlocked ? permissionDenied : null) ??
         gt(
           "System alerts when a thread finishes, fails, or needs input or approval. Applies to this device while T3 Code is open.",
         )
@@ -66,11 +75,7 @@ export function NotificationSettings() {
                 return;
               }
               if (permission.value !== "granted") {
-                setPermissionMessage(
-                  gt(
-                    "Allow notifications in your browser or system settings, then choose this option again. Sound only is still available.",
-                  ),
-                );
+                setPermissionMessage(permissionDenied);
                 return;
               }
             }
