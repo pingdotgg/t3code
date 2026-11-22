@@ -97,6 +97,8 @@ five minutes. Text is inserted at the cursor or replaces the selection you had
 when recording started, and the editor is read-only while dictation runs.
 Changes that reach the draft meanwhile, such as a cited message, are kept;
 the text then goes after your selection instead of replacing it.
+A file or thread you paste or drop in meanwhile can be removed by focusing its
+chip and pressing Backspace or Delete.
 
 Pressing Send while dictating finishes the recording and sends the draft once
 the transcript has been inserted. Cancelling also cancels that queued send. In

@@ -643,8 +643,10 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
     const waited = yield* waitSlice(WAIT_SLICE_MS, true);
     // `resultRun` is the thread's latest finished run, whoever sent it.
     const result = waited.timedOut ? undefined : waited.resultRun;
+    // A later run can submit the result the asked run owes, so read it again.
+    const settled = waited.output === undefined ? outcome : { ...outcome, output: waited.output };
     const after = yield* runsAfter(tools, threadId, finalRunId);
-    if (after.sent) return outcome;
+    if (after.sent) return settled;
     if (!waited.timedOut) {
       if (result !== undefined && after.later.some((run) => run.runId === result.runId)) {
         // A run that work woke was not asked for the result; the run before it holds it.
@@ -652,13 +654,13 @@ export const waitForRun = Effect.fn("cli.thread.waitForRun")(function* (
           type: "ended",
           runId: result.runId,
           status: result.status,
-          ...(outcome.output === undefined ? {} : { output: outcome.output }),
+          ...(settled.output === undefined ? {} : { output: settled.output }),
         } satisfies WaitOutcome;
       }
-      if (!workOutlivedRun) return outcome;
+      if (!workOutlivedRun) return settled;
       if (after.later.some((run) => !TERMINAL_RUN_STATUSES.has(run.status))) continue;
       if (after.later.length === 0 && (yield* wakeRunRecorded)) continue;
-      return outcome;
+      return settled;
     }
     workOutlivedRun = true;
     const { thread } = yield* tools.call(

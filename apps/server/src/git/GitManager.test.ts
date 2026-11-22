@@ -1065,6 +1065,95 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("status of a repository without remotes runs no remote, provider or PR lookups", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/local-only"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+
+      const local = yield* manager.localStatus({ cwd: repoDir });
+      const remote = yield* manager.remoteStatus({ cwd: repoDir });
+
+      expect(local.hasPrimaryRemote).toBe(false);
+      expect(local.sourceControlProvider).toBeUndefined();
+      expect(remote?.pr ?? null).toBeNull();
+      // Once git reports no remotes, remote URLs, branch remotes and remote refs cannot exist.
+      expect(
+        gitCommands.filter((args) =>
+          /remote get-url|remote\.[^ ]+\.url|branch\.[^ ]+\.remote|refs\/remotes/.test(args),
+        ),
+      ).toEqual([]);
+
+      // A remote added outside T3 Code shows on the next read.
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
+      yield* TestClock.adjust("2 seconds");
+      const afterRemote = yield* manager.localStatus({ cwd: repoDir });
+      expect(afterRemote.hasPrimaryRemote).toBe(true);
+      expect(afterRemote.sourceControlProvider?.kind).toBe("github");
+    }),
+  );
+
+  it.effect("a turn-end status refresh reads the branch remote and remote URL once", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "-b", "feature/turn-end"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "feature/turn-end"]);
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+      const count = (cmd: string) => gitCommands.filter((args) => args === cmd).length;
+
+      // Turn end: local status, then the PR lookup for a branch that has no PR yet.
+      yield* manager.invalidateLocalStatus(repoDir);
+      yield* manager.localStatus({ cwd: repoDir });
+      yield* manager.invalidateRemoteStatus(repoDir);
+      const remote = yield* manager.remoteStatus(
+        { cwd: repoDir },
+        { refreshUpstream: false, refreshMissingPullRequest: true },
+      );
+
+      expect(remote?.pr ?? null).toBeNull();
+      expect(count("config --get branch.feature/turn-end.remote")).toBe(1);
+      expect(count("config --get-all remote.origin.url")).toBe(1);
+
+      // The thread's PR backfill can reach the lookup before the status refresh does.
+      const backfillCommands: string[] = [];
+      const backfill = yield* makeManager({ gitCommands: backfillCommands });
+      yield* backfill.manager.localStatus({ cwd: repoDir });
+      yield* backfill.manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/turn-end" },
+        { confirmTerminal: false },
+      );
+      yield* backfill.manager.remoteStatus(
+        { cwd: repoDir },
+        { refreshUpstream: false, refreshMissingPullRequest: true },
+      );
+      expect(
+        backfillCommands.filter((args) => args === "config --get branch.feature/turn-end.remote")
+          .length,
+      ).toBe(1);
+
+      // A fresh identity check reads git itself, not what local status just read.
+      yield* manager.invalidateLocalStatus(repoDir);
+      yield* manager.localStatus({ cwd: repoDir });
+      gitCommands.length = 0;
+      yield* manager.branchPullRequest(
+        { cwd: repoDir, branch: "feature/turn-end" },
+        { freshGitState: true },
+      );
+      expect(count("config --get-all remote.origin.url")).toBe(1);
+    }),
+  );
+
   it.effect("a git read in flight during a T3 git action does not outlive it", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
@@ -3372,6 +3461,12 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
       const repoDir = yield* makeTempDir("t3code-git-manager-");
       yield* initRepo(repoDir);
       yield* runGit(repoDir, ["checkout", "-b", "feature/status-open-over-merged"]);
+      yield* runGit(repoDir, [
+        "remote",
+        "add",
+        "origin",
+        "https://github.com/pingdotgg/codething-mvp.git",
+      ]);
 
       const { manager } = yield* makeManager({
         providerScenario: {
@@ -3540,6 +3635,51 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           Effect.map((result) => result.stdout.trim()),
         ),
       ).toBe("Implement stacked git actions");
+    }),
+  );
+
+  it.effect("stages the worktree once for a typed commit message", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("t3code-git-manager-");
+      yield* initRepo(repoDir);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "typed\n");
+      const gitCommands: string[] = [];
+      const { manager } = yield* makeManager({ gitCommands });
+
+      const created = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Typed subject\n\nTyped body",
+      });
+
+      expect(created.commit).toMatchObject({ status: "created", subject: "Typed subject" });
+      expect(gitCommands.filter((args) => args.endsWith("add -A"))).toHaveLength(1);
+      expect((yield* runGit(repoDir, ["log", "-1", "--pretty=%B"])).stdout.trim()).toBe(
+        "Typed subject\n\nTyped body",
+      );
+
+      // Status shows the staged change, but staging the reverted worktree leaves nothing.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "staged\n");
+      yield* runGit(repoDir, ["add", "README.md"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "typed\n");
+      const head = (yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout;
+
+      const skipped = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit",
+        commitMessage: "Nothing to commit",
+      });
+
+      expect(skipped.commit.status).toBe("skipped_no_changes");
+      expect((yield* runGit(repoDir, ["rev-parse", "HEAD"])).stdout).toBe(head);
+      expect((yield* runGit(repoDir, ["show", ":README.md"])).stdout).toBe("staged\n");
+
+      // A generated message already checked a scratch index, so staging again stays at two.
+      NodeFS.writeFileSync(NodePath.join(repoDir, "README.md"), "generated\n");
+      gitCommands.length = 0;
+      const generated = yield* runStackedAction(manager, { cwd: repoDir, action: "commit" });
+      expect(generated.commit.status).toBe("created");
+      expect(gitCommands.filter((args) => args.endsWith("add -A"))).toHaveLength(2);
     }),
   );
 
@@ -4112,7 +4252,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         ),
       );
       yield* Deferred.await(gate.reached);
-      NodeFS.writeFileSync(NodePath.join(repoDir, ".git", "index.lock"), "");
+      NodeFS.appendFileSync(NodePath.join(repoDir, ".git", "config"), "\n[broken\n");
       yield* Deferred.succeed(gate.release, undefined);
       const result = yield* Fiber.join(action);
 

@@ -439,6 +439,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           projectId,
           title: input.title,
           ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
+          ...(input.generateTitle === true ? {} : { titleRenamed: true }),
           modelSelection,
           runtimeMode: startedRuntimeMode,
           interactionMode,
