@@ -4,10 +4,13 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as Schedule from "effect/Schedule";
 
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+// EBUSY, EPERM/EACCES, and ENOTEMPTY (Unknown): how Windows reports a folder another process holds.
+const RETRYABLE_REMOVE_ERRORS = new Set(["Busy", "PermissionDenied", "Unknown"]);
 
 /**
  * git-annex replaces a linked worktree's `.git` file with a symlink to its admin
@@ -208,6 +211,12 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
+    // A stopped provider's processes can hold the folder for a few seconds after its session ends.
+    Effect.retry({
+      while: (error) => RETRYABLE_REMOVE_ERRORS.has(error.reason._tag),
+      schedule: Schedule.spaced("500 millis"),
+      times: 20,
+    }),
     Effect.tapError(() => fileSystem.writeFileString(gitFile, gitFileContents).pipe(Effect.ignore)),
     Effect.mapError((cause) => refuse(`failed to delete '${worktreePath}'`, cause)),
   );
