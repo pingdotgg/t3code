@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { isGroundNetName, parseEngineeringNumber } from "./parsers.ts";
+import { computePcbCopperIslands } from "./validator.ts";
 
 const TRAVERSABLE_SERIES_KINDS: ReadonlySet<ElectronicsComponentKind> = new Set([
   "resistor",
@@ -48,45 +49,52 @@ function resolveEndpoint(model: ElectronicsCircuitModel, rawQuery: string): Reso
     return { query, nets, warnings };
   }
 
-  // 2. Component.Pin or Component:Pin syntax (e.g. U1.3, U1.VOUT, J1:1)
+  // 2. Component.Pin or Component:Pin syntax (e.g. U1.3, U1.VOUT, J1:1) — search across all units of a multi-unit ref
   const dotIdx = query.search(/[.:]/u);
   if (dotIdx > 0) {
     const refPart = query.slice(0, dotIdx).trim();
     const pinPart = query.slice(dotIdx + 1).trim();
-    const comp = model.components.find((c) => c.ref.toLowerCase() === refPart.toLowerCase());
-    if (!comp) {
+    const matchingUnits = model.components.filter(
+      (c) => c.ref.toLowerCase() === refPart.toLowerCase(),
+    );
+    if (matchingUnits.length === 0) {
       warnings.push(`Component "${refPart}" was not found in ${model.filePath}.`);
       return { query, nets, warnings };
     }
-    const pin = comp.pins.find(
+    const primaryRef = matchingUnits[0]!.ref;
+    const allPins = matchingUnits.flatMap((c) => c.pins);
+    const pin = allPins.find(
       (p) =>
         p.number.toLowerCase() === pinPart.toLowerCase() ||
         (p.name !== undefined && p.name.toLowerCase() === pinPart.toLowerCase()),
     );
     if (!pin) {
-      warnings.push(`Pin "${pinPart}" was not found on component ${comp.ref}.`);
-      return { query, nets, componentRef: comp.ref, warnings };
+      warnings.push(`Pin "${pinPart}" was not found on component ${primaryRef}.`);
+      return { query, nets, componentRef: primaryRef, warnings };
     }
     if (pin.net) {
       nets.add(pin.net);
     } else {
       warnings.push(
-        `Pin ${comp.ref}.${pin.number}${pin.name ? ` (${pin.name})` : ""} is unconnected.`,
+        `Pin ${primaryRef}.${pin.number}${pin.name ? ` (${pin.name})` : ""} is unconnected.`,
       );
     }
-    return { query, nets, componentRef: comp.ref, pinNumber: pin.number, warnings };
+    return { query, nets, componentRef: primaryRef, pinNumber: pin.number, warnings };
   }
 
-  // 3. Component reference match (all nets touching this component)
-  const comp = model.components.find((c) => c.ref.toLowerCase() === query.toLowerCase());
-  if (comp) {
-    for (const pin of comp.pins) {
-      if (pin.net) nets.add(pin.net);
+  // 3. Component reference match (aggregate all nets across all units of a multi-unit symbol)
+  const matchingUnits = model.components.filter((c) => c.ref.toLowerCase() === query.toLowerCase());
+  if (matchingUnits.length > 0) {
+    const primaryRef = matchingUnits[0]!.ref;
+    for (const unit of matchingUnits) {
+      for (const pin of unit.pins) {
+        if (pin.net) nets.add(pin.net);
+      }
     }
     if (nets.size === 0) {
-      warnings.push(`Component ${comp.ref} has no connected nets.`);
+      warnings.push(`Component ${primaryRef} has no connected nets.`);
     }
-    return { query, nets, componentRef: comp.ref, warnings };
+    return { query, nets, componentRef: primaryRef, warnings };
   }
 
   warnings.push(
@@ -169,24 +177,54 @@ export function traceCircuitPath(
     };
   }
 
-  // 1. Check direct same-net connectivity
+  // 1. Check direct same-net connectivity (and verify physical copper continuity on PCBs)
   for (const netName of fromNets) {
     if (toResolved.nets.has(netName)) {
       const highlightedComponents = new Set<string>();
       if (fromResolved.componentRef) highlightedComponents.add(fromResolved.componentRef);
       if (toResolved.componentRef) highlightedComponents.add(toResolved.componentRef);
+
+      let physicallyConnected = true;
+      if (model.format === "kicad_pcb") {
+        const copper = computePcbCopperIslands(model, netName);
+        if (
+          fromResolved.componentRef &&
+          fromResolved.pinNumber &&
+          toResolved.componentRef &&
+          toResolved.pinNumber
+        ) {
+          const islandA = copper.padIslandByRefPin.get(
+            `${fromResolved.componentRef.toLowerCase()}:${fromResolved.pinNumber.toLowerCase()}`,
+          );
+          const islandB = copper.padIslandByRefPin.get(
+            `${toResolved.componentRef.toLowerCase()}:${toResolved.pinNumber.toLowerCase()}`,
+          );
+          if (islandA !== undefined && islandB !== undefined && islandA !== islandB) {
+            physicallyConnected = false;
+            warnings.push(
+              `Endpoints share logical PCB net "${netName}", but their pads sit on disconnected copper islands (unrouted copper).`,
+            );
+          }
+        } else if (copper.islandCount > 1) {
+          physicallyConnected = false;
+          warnings.push(
+            `Logical PCB net "${netName}" is split across ${copper.islandCount} disconnected copper islands; physical continuity is broken.`,
+          );
+        }
+      }
+
       return {
         filePath: model.filePath,
         from: options.from,
         to: options.to,
-        connected: true,
+        connected: physicallyConnected,
         directNet: netName,
         fromNets,
         toNets,
         hops: [{ kind: "net", name: netName }],
         highlightedNets: [netName],
         highlightedComponents: Array.from(highlightedComponents),
-        estimatedResistanceOhms: 0,
+        ...(physicallyConnected ? { estimatedResistanceOhms: 0 } : {}),
         warnings,
       };
     }

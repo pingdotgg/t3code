@@ -2,9 +2,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { DEFAULT_SERVER_SETTINGS, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as ServerSettings from "../serverSettings.ts";
@@ -29,7 +31,7 @@ const makeTestLayer = (settingsOverride: Partial<typeof DEFAULT_SERVER_SETTINGS>
 };
 
 it.effect(
-  "discovers workspace electronics files, blocks path traversal, and streams thread sessions",
+  "discovers workspace files, blocks symlinks & traversal, and streams live updates + reconnect snapshots",
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -37,11 +39,18 @@ it.effect(
       const service = yield* ElectronicsService.ElectronicsService;
 
       const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-test-" });
+      const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-outside-" });
       yield* fs.makeDirectory(path.join(dir, "hw"), { recursive: true });
       yield* fs.writeFileString(
         path.join(dir, "hw", "divider.cir"),
         "* Divider\nV1 in 0 5\nR1 in out 10k\nR2 out 0 10k\n.end\n",
       );
+      yield* fs.writeFileString(
+        path.join(outside, "leaked.cir"),
+        "* Outside\nV1 a 0 5\nR1 a 0 1k\n.end\n",
+      );
+      // Symlink to outside directory must NOT leak filenames through listFiles
+      yield* fs.symlink(outside, path.join(dir, "linked-outside"));
 
       const listed = yield* service.listFiles(dir);
       expect(listed.files.map((f) => f.relativePath)).toEqual(["hw/divider.cir"]);
@@ -52,17 +61,14 @@ it.effect(
       const escapeResult = yield* service.inspect(dir, "../etc/passwd").pipe(Effect.flip);
       expect(escapeResult.code).toBe("invalid_path");
 
-      // Inspect + trace + validate + simulate + openPanel
-      const model = yield* service.inspect(dir, "hw/divider.cir");
-      expect(model.components.length).toBe(3);
-
+      // Subscribe BEFORE mutations: must receive initial empty snapshot + live update
       const threadId = ThreadId.make("thread-elec-1");
-      const trace = yield* service.tracePath(
-        { cwd: dir, filePath: "hw/divider.cir", from: "V1.+", to: "out" },
-        threadId,
+      const streamFiber = yield* service.subscribeState.pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
       );
-      expect(trace.connected).toBe(true);
-      expect(trace.estimatedResistanceOhms).toBe(10_000);
+      yield* Effect.yieldNow;
 
       const sim = yield* service.simulate(
         { cwd: dir, filePath: "hw/divider.cir", kind: "dc_op", outputNode: "out" },
@@ -70,9 +76,15 @@ it.effect(
       );
       expect(sim.nodeVoltages.find((n) => n.node === "out")?.voltageV).toBeCloseTo(2.5, 4);
 
-      const session = yield* service.getThreadSession(threadId);
-      expect(session?.filePath).toBe("hw/divider.cir");
-      expect(session?.activeTab).toBe("simulate");
+      const events = Array.from(yield* Fiber.join(streamFiber));
+      expect(events.length).toBe(2);
+      expect(events[0]?.sessions.length).toBe(0);
+      expect(events[1]?.sessions[0]?.filePath).toBe("hw/divider.cir");
+      expect(events[1]?.sessions[0]?.activeTab).toBe("simulate");
+
+      // Reconnecting subscriber immediately receives the latest session snapshot
+      const reconnectSnap = yield* service.subscribeState.pipe(Stream.take(1), Stream.runCollect);
+      expect(Array.from(reconnectSnap)[0]?.sessions[0]?.threadId).toBe(threadId);
 
       yield* service.closePanel(threadId);
       expect(yield* service.getThreadSession(threadId)).toBeUndefined();

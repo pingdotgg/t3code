@@ -380,16 +380,18 @@ export const ElectronicsValidateInput = Schema.Struct({
 });
 export type ElectronicsValidateInput = typeof ElectronicsValidateInput.Type;
 
+const PositiveFiniteNumber = Schema.Finite.check(Schema.isGreaterThan(0));
+
 export const ElectronicsSimulateInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   filePath: TrimmedNonEmptyString,
   kind: Schema.optional(ElectronicsSimulationKind),
   outputNode: Schema.optional(TrimmedNonEmptyString),
-  startFreqHz: Schema.optional(Schema.Number),
-  stopFreqHz: Schema.optional(Schema.Number),
+  startFreqHz: Schema.optional(PositiveFiniteNumber),
+  stopFreqHz: Schema.optional(PositiveFiniteNumber),
   pointsPerDecade: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: 50 }))),
-  stopTimeSeconds: Schema.optional(Schema.Number),
-  stepTimeSeconds: Schema.optional(Schema.Number),
+  stopTimeSeconds: Schema.optional(PositiveFiniteNumber),
+  stepTimeSeconds: Schema.optional(PositiveFiniteNumber),
   useExternalToolchain: Schema.optional(Schema.Boolean),
 });
 export type ElectronicsSimulateInput = typeof ElectronicsSimulateInput.Type;

@@ -10,14 +10,59 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 const PROBE_TIMEOUT = Duration.seconds(5);
 const RUN_TIMEOUT = Duration.seconds(20);
+const MAX_TOOL_OUTPUT_BYTES = 2 * 1024 * 1024;
+const MAX_INCLUDE_FILES = 16;
+const MAX_INCLUDE_DEPTH = 4;
+const MAX_INCLUDE_FILE_BYTES = 256 * 1024;
+const MAX_SIMULATION_POINTS = 2_000;
+
+const ALLOWED_SPICE_DIRECTIVES: ReadonlySet<string> = new Set([
+  ".title",
+  ".param",
+  ".model",
+  ".subckt",
+  ".ends",
+  ".temp",
+  ".global",
+  ".ic",
+  ".nodeset",
+  ".options",
+  ".option",
+  ".include",
+  ".inc",
+  ".lib",
+]);
+
+const STRIPPED_ANALYSIS_DIRECTIVES: ReadonlySet<string> = new Set([
+  ".end",
+  ".op",
+  ".ac",
+  ".tran",
+  ".dc",
+  ".print",
+  ".plot",
+  ".probe",
+  ".save",
+]);
+
+const UNSAFE_ELEMENT_PATTERN =
+  /\b(?:filesource|d_source|tablefile|file_name|shell|system|wrdata|write)\b|\b(?:file|input_file|output_file)\s*=/iu;
+
+function isWithinRoot(pathApi: Path.Path, rootReal: string, candidate: string): boolean {
+  const rel = pathApi.relative(rootReal, candidate);
+  if (rel === "") return true;
+  if (pathApi.isAbsolute(rel)) return false;
+  return rel !== ".." && !rel.startsWith(`..${pathApi.sep}`) && !rel.startsWith("../");
+}
 
 /**
- * Executes a single command without a shell and returns captured stdout, or fails cleanly on timeout/error.
+ * Executes a single command without a shell and captures up to MAX_TOOL_OUTPUT_BYTES of stdout.
  */
 const execToolString = Effect.fn("ElectronicsToolchain.execToolString")(function* (
   executable: string,
@@ -31,7 +76,40 @@ const execToolString = Effect.fn("ElectronicsToolchain.execToolString")(function
     stderr: "ignore",
     ...(cwd !== undefined ? { cwd } : {}),
   });
-  return yield* spawner.string(command).pipe(Effect.timeout(timeout));
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawner.spawn(command);
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+      let truncated = false;
+      yield* Stream.runForEach(child.stdout, (chunk) =>
+        Effect.sync(() => {
+          if (totalBytes >= MAX_TOOL_OUTPUT_BYTES) {
+            truncated = true;
+            return;
+          }
+          const remaining = MAX_TOOL_OUTPUT_BYTES - totalBytes;
+          if (chunk.byteLength <= remaining) {
+            chunks.push(chunk);
+            totalBytes += chunk.byteLength;
+          } else {
+            chunks.push(chunk.subarray(0, remaining));
+            totalBytes += remaining;
+            truncated = true;
+          }
+        }),
+      );
+      yield* child.exitCode.pipe(Effect.ignore);
+      const merged = new Uint8Array(totalBytes);
+      let offset = 0;
+      for (const c of chunks) {
+        merged.set(c, offset);
+        offset += c.byteLength;
+      }
+      const text = new TextDecoder("utf-8", { fatal: false }).decode(merged);
+      return { text, truncated };
+    }),
+  ).pipe(Effect.timeout(timeout));
 });
 
 export const probeBinary = Effect.fn("ElectronicsToolchain.probeBinary")(function* (
@@ -39,9 +117,9 @@ export const probeBinary = Effect.fn("ElectronicsToolchain.probeBinary")(functio
   overridePath?: string,
 ): Effect.fn.Return<ElectronicsToolBinaryStatus, never, ChildProcessSpawner.ChildProcessSpawner> {
   const executable = overridePath && overridePath.trim().length > 0 ? overridePath.trim() : name;
-  const args = name === "kicad-cli" ? ["--version"] : ["-v"];
+  const args = name === "kicad-cli" ? ["--version"] : ["-n", "-v"];
   const output = yield* execToolString(executable, args, PROBE_TIMEOUT).pipe(
-    Effect.map((raw) => ({ ok: true as const, raw })),
+    Effect.map((res) => ({ ok: true as const, raw: res.text })),
     Effect.catch((err) => Effect.succeed({ ok: false as const, err: String(err) })),
   );
   if (!output.ok) {
@@ -81,7 +159,7 @@ function mapKiCadSeverity(raw: string | undefined): "error" | "warning" | "info"
   return "info";
 }
 
-function parseKiCadJsonViolations(
+export function parseKiCadJsonViolations(
   jsonText: string,
   source: "kicad_erc" | "kicad_drc",
 ):
@@ -212,21 +290,45 @@ export const runKiCadExternalValidation = Effect.fn(
   );
 });
 
-const MAX_STAGED_INCLUDES = 24;
-const MAX_INCLUDE_FILE_BYTES = 1024 * 1024;
-
-function stripUnsafeSpiceLines(spiceSource: string): {
+export function sanitizeSpiceDeckLines(spiceSource: string): {
   readonly lines: string[];
-  readonly blockedDirectives: string[];
+  readonly blockedReasons: string[];
 } {
-  const output: string[] = [];
-  const blockedDirectives: string[] = [];
-  let inControlBlock = false;
+  // Join SPICE '+' continuation lines into logical lines before validating directives/tokens
+  // so attackers cannot split `.codemodel` or `filesource(file=...)` across lines.
+  const logicalLines: string[] = [];
   for (const rawLine of spiceSource.split(/\r?\n/u)) {
     const trimmed = rawLine.trim();
+    if (
+      logicalLines.length > 0 &&
+      trimmed.startsWith("+") &&
+      !logicalLines[logicalLines.length - 1]!.trim().startsWith("*")
+    ) {
+      logicalLines[logicalLines.length - 1] =
+        `${logicalLines[logicalLines.length - 1]} ${trimmed.slice(1).trim()}`;
+    } else {
+      logicalLines.push(rawLine);
+    }
+  }
+
+  const output: string[] = [];
+  const blockedReasons: string[] = [];
+  let inControlBlock = false;
+  for (let idx = 0; idx < logicalLines.length; idx += 1) {
+    const rawLine = logicalLines[idx]!;
+    const trimmed = rawLine.trim();
+    if (trimmed.length === 0 || trimmed.startsWith("*")) {
+      output.push(rawLine);
+      continue;
+    }
+    // Line 0 is the SPICE title line unless it starts with a directive dot.
+    if (idx === 0 && !trimmed.startsWith(".")) {
+      output.push(rawLine);
+      continue;
+    }
     if (/^\.control\b/iu.test(trimmed)) {
       inControlBlock = true;
-      blockedDirectives.push(".control");
+      blockedReasons.push("Disallowed SPICE directive: .control");
       continue;
     }
     if (/^\.endc\b/iu.test(trimmed)) {
@@ -234,16 +336,128 @@ function stripUnsafeSpiceLines(spiceSource: string): {
       continue;
     }
     if (inControlBlock) continue;
-    if (/^\.(shell|system|csparam|write|wrdata|save|plot)\b/iu.test(trimmed)) {
-      blockedDirectives.push(trimmed.split(/\s+/u)[0] ?? trimmed);
+
+    const codePart = trimmed.split(";")[0] ?? trimmed;
+
+    if (trimmed.startsWith(".")) {
+      const directive = (trimmed.split(/\s+/u)[0] ?? "").toLowerCase();
+      if (STRIPPED_ANALYSIS_DIRECTIVES.has(directive)) {
+        continue;
+      }
+      if (!ALLOWED_SPICE_DIRECTIVES.has(directive)) {
+        blockedReasons.push(`Disallowed SPICE directive: ${directive}`);
+        continue;
+      }
+      if (
+        directive !== ".include" &&
+        directive !== ".inc" &&
+        directive !== ".lib" &&
+        UNSAFE_ELEMENT_PATTERN.test(codePart)
+      ) {
+        blockedReasons.push(
+          `Disallowed external file/command token in SPICE ${directive} directive.`,
+        );
+        continue;
+      }
+      output.push(rawLine);
       continue;
     }
-    if (/^\.(end|op|ac|tran|dc|print)\b/iu.test(trimmed)) {
+
+    if (UNSAFE_ELEMENT_PATTERN.test(codePart)) {
+      blockedReasons.push("Disallowed external file/command token in SPICE element line.");
       continue;
     }
     output.push(rawLine);
   }
-  return { lines: output, blockedDirectives };
+  return { lines: output, blockedReasons };
+}
+
+export function parseNgspiceBatchOutput(
+  stdout: string,
+  kind: ElectronicsSimulationKind,
+): {
+  readonly nodeVoltages: Array<{ node: string; voltageV: number }>;
+  readonly points: Array<{ x: number; y: number; phaseDeg?: number }>;
+} {
+  const nodeVoltages: Array<{ node: string; voltageV: number }> = [];
+  const seenNodes = new Set<string>();
+  const points: Array<{ x: number; y: number; phaseDeg?: number }> = [];
+
+  for (const line of stdout.split(/\r?\n/u)) {
+    if (kind === "dc_op") {
+      // Handle `v(out) = 2.500000e+00`, `out = 2.5`, or tabular `out   2.500000e+00`
+      const eqMatch =
+        /^\s*(?:v\(([^)]+)\)|([A-Za-z0-9_.:+-]+))\s*=\s*([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
+          line,
+        );
+      if (eqMatch) {
+        const node = (eqMatch[1] ?? eqMatch[2] ?? "").trim();
+        const val = Number(eqMatch[3]!);
+        if (
+          node.length > 0 &&
+          Number.isFinite(val) &&
+          !seenNodes.has(node.toLowerCase()) &&
+          !/^(index|temp|tnom)$/iu.test(node)
+        ) {
+          seenNodes.add(node.toLowerCase());
+          nodeVoltages.push({ node, voltageV: Number(val.toPrecision(6)) });
+        }
+        continue;
+      }
+      const tabMatch = /^\s*([A-Za-z0-9_.:+-]+)\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
+        line,
+      );
+      if (tabMatch) {
+        const node = tabMatch[1]!;
+        const val = Number(tabMatch[2]!);
+        if (
+          Number.isFinite(val) &&
+          !seenNodes.has(node.toLowerCase()) &&
+          !/^(index|temp|tnom|\d+)$/iu.test(node)
+        ) {
+          seenNodes.add(node.toLowerCase());
+          nodeVoltages.push({ node, voltageV: Number(val.toPrecision(6)) });
+        }
+      }
+      continue;
+    }
+
+    if (points.length >= MAX_SIMULATION_POINTS) break;
+
+    // Handle AC comma-separated complex tuples (e.g. `0 1.0e+01 0.0,0.0 -0.05,0.0`)
+    // and whitespace-separated columns (`0 1.0e+01 -3.01 -0.7854`).
+    const rowPrefix = /^\s*\d+\s+(.+)$/u.exec(line);
+    if (!rowPrefix) continue;
+    const tokens = rowPrefix[1]!.trim().split(/\s+/u);
+    const parseScalar = (tok: string | undefined): number | null => {
+      if (!tok) return null;
+      const realPart = tok.split(",")[0]!;
+      const num = Number(realPart);
+      return Number.isFinite(num) ? num : null;
+    };
+    const xVal = parseScalar(tokens[0]);
+    const yVal = parseScalar(tokens[1]);
+    const thirdRaw = parseScalar(tokens[2]);
+    if (xVal !== null && yVal !== null) {
+      // ngspice vp(...) outputs phase in radians by default
+      const phaseDeg =
+        kind === "ac_sweep" && thirdRaw !== null
+          ? Number(((thirdRaw * 180) / Math.PI).toFixed(2))
+          : undefined;
+      points.push({
+        x: kind === "transient" ? Number((xVal * 1000).toPrecision(5)) : xVal,
+        y: Number(yVal.toPrecision(5)),
+        ...(phaseDeg !== undefined ? { phaseDeg } : {}),
+      });
+    }
+  }
+
+  return { nodeVoltages, points };
+}
+
+export interface NgspiceRunOutcome {
+  readonly result: ElectronicsSimulationResult | null;
+  readonly rejectionNote?: string;
 }
 
 export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSimulation")(
@@ -260,7 +474,11 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
     readonly pointsPerDecade?: number;
     readonly stopTimeSeconds?: number;
     readonly stepTimeSeconds?: number;
-  }) {
+  }): Effect.fn.Return<
+    NgspiceRunOutcome,
+    never,
+    FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner
+  > {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const executable =
@@ -271,147 +489,225 @@ export const runNgspiceSimulation = Effect.fn("ElectronicsToolchain.runNgspiceSi
     return yield* Effect.scoped(
       Effect.gen(function* () {
         const tmpDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ngspice-" });
-        const rootReal = yield* fs
-          .realPath(input.workspaceRoot)
-          .pipe(Effect.orElseSucceed(() => path.resolve(input.workspaceRoot)));
-        const sourceDir = path.dirname(path.resolve(input.sourceFilePath));
-        const { lines, blockedDirectives } = stripUnsafeSpiceLines(input.spiceSource);
-        if (blockedDirectives.length > 0) {
-          // Refuse to execute decks with interactive/shell control blocks on the server.
-          return null;
-        }
+        const rootReal = yield* fs.realPath(input.workspaceRoot);
+        const includedCountRef = { count: 0 };
 
-        // Validate and stage any workspace-relative .include / .lib references inside tmpDir.
-        const stagedPaths = new Set<string>();
-        const sanitizedLines: string[] = [];
-        for (const line of lines) {
-          const incMatch = /^\s*\.(include|inc|lib)\s+("([^"]+)"|'([^']+)'|(\S+))(.*)$/iu.exec(
-            line,
-          );
-          if (!incMatch) {
-            sanitizedLines.push(line);
-            continue;
+        // Recursively validate and inline all workspace-contained .include/.inc/.lib files so
+        // the deck passed to ngspice contains ZERO external file references.
+        const expandSource: (
+          sourceText: string,
+          currentDir: string,
+          depth: number,
+          activeStack: ReadonlySet<string>,
+        ) => Effect.Effect<
+          | { readonly ok: true; readonly lines: string[] }
+          | { readonly ok: false; readonly reason: string }
+        > = Effect.fn("ElectronicsToolchain.expandSpiceIncludes")(function* (
+          sourceText: string,
+          currentDir: string,
+          depth: number,
+          activeStack: ReadonlySet<string>,
+        ) {
+          if (depth > MAX_INCLUDE_DEPTH) {
+            return { ok: false as const, reason: "SPICE include nesting depth limit exceeded." };
           }
-          const directiveName = incMatch[1]!;
-          const refPath = incMatch[3] ?? incMatch[4] ?? incMatch[5] ?? "";
-          const trailing = incMatch[6] ?? "";
-          if (
-            refPath.length === 0 ||
-            path.isAbsolute(refPath) ||
-            stagedPaths.size >= MAX_STAGED_INCLUDES
-          ) {
-            return null;
+          const { lines, blockedReasons } = sanitizeSpiceDeckLines(sourceText);
+          if (blockedReasons.length > 0) {
+            return { ok: false as const, reason: blockedReasons[0]! };
           }
-          const resolvedCandidate = path.resolve(sourceDir, refPath);
-          const relLex = path.relative(rootReal, resolvedCandidate);
-          if (relLex.startsWith("..") || path.isAbsolute(relLex)) {
-            return null;
+          const expanded: string[] = [];
+          for (const line of lines) {
+            const incMatch =
+              /^\s*\.(include|inc|lib)\s+("([^"]+)"|'([^']+)'|(\S+))(?:\s+(\S+))?/iu.exec(line);
+            if (!incMatch) {
+              expanded.push(line);
+              continue;
+            }
+            const directiveName = incMatch[1]!.toLowerCase();
+            const refPath = incMatch[3] ?? incMatch[4] ?? incMatch[5] ?? "";
+            const libSection = incMatch[6];
+            if (directiveName === "lib" && libSection !== undefined) {
+              return {
+                ok: false as const,
+                reason: "Sectioned .lib directives are not supported in sandboxed external runs.",
+              };
+            }
+            const baseName = path.basename(refPath).toLowerCase();
+            if (
+              refPath.length === 0 ||
+              path.isAbsolute(refPath) ||
+              baseName === ".spiceinit" ||
+              baseName === "spiceinit"
+            ) {
+              return {
+                ok: false as const,
+                reason: `Disallowed SPICE include path "${refPath}".`,
+              };
+            }
+            if (includedCountRef.count >= MAX_INCLUDE_FILES) {
+              return { ok: false as const, reason: "Too many SPICE include files." };
+            }
+            const resolvedCandidate = path.resolve(currentDir, refPath);
+            if (!isWithinRoot(path, rootReal, resolvedCandidate)) {
+              return {
+                ok: false as const,
+                reason: `SPICE include "${refPath}" escapes the workspace root.`,
+              };
+            }
+            const exists = yield* fs
+              .exists(resolvedCandidate)
+              .pipe(Effect.orElseSucceed(() => false));
+            if (!exists) {
+              return {
+                ok: false as const,
+                reason: `SPICE include "${refPath}" was not found.`,
+              };
+            }
+            const realCandidate = yield* fs
+              .realPath(resolvedCandidate)
+              .pipe(Effect.orElseSucceed(() => null));
+            if (realCandidate === null || !isWithinRoot(path, rootReal, realCandidate)) {
+              return {
+                ok: false as const,
+                reason: `SPICE include "${refPath}" resolves outside the workspace root.`,
+              };
+            }
+            if (activeStack.has(realCandidate)) {
+              return { ok: false as const, reason: `Cyclic SPICE include "${refPath}".` };
+            }
+            const stat = yield* fs.stat(realCandidate).pipe(Effect.orElseSucceed(() => null));
+            if (
+              stat === null ||
+              stat.type !== "File" ||
+              Number(stat.size) > MAX_INCLUDE_FILE_BYTES
+            ) {
+              return {
+                ok: false as const,
+                reason: `SPICE include "${refPath}" is not a valid file within size limits.`,
+              };
+            }
+            includedCountRef.count += 1;
+            const incText = yield* fs
+              .readFileString(realCandidate)
+              .pipe(Effect.orElseSucceed(() => null));
+            if (incText === null) {
+              return {
+                ok: false as const,
+                reason: `Failed to read SPICE include "${refPath}".`,
+              };
+            }
+            const nextStack = new Set(activeStack);
+            nextStack.add(realCandidate);
+            const nested = yield* expandSource(
+              incText,
+              path.dirname(realCandidate),
+              depth + 1,
+              nextStack,
+            );
+            if (!nested.ok) return nested;
+            expanded.push(...nested.lines);
           }
-          const exists = yield* fs.exists(resolvedCandidate);
-          if (!exists) return null;
-          const realCandidate = yield* fs.realPath(resolvedCandidate);
-          const relReal = path.relative(rootReal, realCandidate);
-          if (relReal.startsWith("..") || path.isAbsolute(relReal)) {
-            return null;
-          }
-          const stat = yield* fs.stat(realCandidate);
-          if (stat.type !== "File" || Number(stat.size) > MAX_INCLUDE_FILE_BYTES) {
-            return null;
-          }
-          const stagedRel = relReal.replaceAll("\\", "/");
-          const stagedTarget = path.join(tmpDir, stagedRel);
-          if (!stagedPaths.has(stagedRel)) {
-            stagedPaths.add(stagedRel);
-            const includeContent = yield* fs.readFileString(realCandidate);
-            const cleanedInc = stripUnsafeSpiceLines(includeContent);
-            if (cleanedInc.blockedDirectives.length > 0) return null;
-            yield* fs.makeDirectory(path.dirname(stagedTarget), { recursive: true });
-            yield* fs.writeFileString(stagedTarget, cleanedInc.lines.join("\n"));
-          }
-          sanitizedLines.push(`.${directiveName} "${stagedRel}"${trailing}`);
+          return { ok: true as const, lines: expanded };
+        });
+
+        const initialStack = new Set<string>([path.resolve(input.sourceFilePath)]);
+        const expanded = yield* expandSource(
+          input.spiceSource,
+          path.dirname(path.resolve(input.sourceFilePath)),
+          0,
+          initialStack,
+        );
+        if (!expanded.ok) {
+          return { result: null, rejectionNote: expanded.reason };
         }
 
         const deckPath = path.join(tmpDir, "deck.cir");
         const targetNode =
           input.outputNode ?? input.model.nets.find((n) => !n.isGround)?.name ?? "out";
         if (!/^[A-Za-z0-9_.:+-]+$/u.test(targetNode)) {
-          return null;
+          return { result: null, rejectionNote: `Invalid probe node name "${targetNode}".` };
         }
+
+        const startFreq = Math.max(0.1, input.startFreqHz ?? 10);
+        const stopFreq = Math.max(startFreq * 10, input.stopFreqHz ?? 1_000_000);
+        const decades = Math.max(1, Math.log10(stopFreq / startFreq));
+        const maxPtsPerDecade = Math.max(2, Math.floor(MAX_SIMULATION_POINTS / decades));
+        const ptsPerDecade = Math.min(input.pointsPerDecade ?? 10, maxPtsPerDecade, 50);
+
+        const stopTime = Math.max(1e-9, input.stopTimeSeconds ?? 5e-3);
+        const minStep = stopTime / MAX_SIMULATION_POINTS;
+        const stepTime = Math.max(minStep, input.stepTimeSeconds ?? stopTime / 100);
 
         const directive =
           input.kind === "dc_op"
             ? ".op\n.print op all"
             : input.kind === "ac_sweep"
-              ? `.ac dec ${input.pointsPerDecade ?? 10} ${input.startFreqHz ?? 10} ${input.stopFreqHz ?? 1_000_000}\n.print ac vdb(${targetNode}) vp(${targetNode})`
-              : `.tran ${input.stepTimeSeconds ?? 5e-5} ${input.stopTimeSeconds ?? 5e-3}\n.print tran v(${targetNode})`;
+              ? `.ac dec ${ptsPerDecade} ${startFreq} ${stopFreq}\n.print ac vdb(${targetNode}) vp(${targetNode})`
+              : `.tran ${stepTime} ${stopTime}\n.print tran v(${targetNode})`;
 
-        const deck = `${sanitizedLines.join("\n")}\n${directive}\n.end\n`;
+        const deck = `${expanded.lines.join("\n")}\n${directive}\n.end\n`;
         yield* fs.writeFileString(deckPath, deck);
 
-        const stdout = yield* execToolString(executable, ["-b", deckPath], RUN_TIMEOUT, tmpDir);
-        const nodeVoltages: Array<{ node: string; voltageV: number }> = [];
-        const points: Array<{ x: number; y: number; phaseDeg?: number }> = [];
-
-        for (const line of stdout.split(/\r?\n/u)) {
-          const opMatch = /^\s*([A-Za-z0-9_]+)\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s*$/iu.exec(
-            line,
-          );
-          if (input.kind === "dc_op" && opMatch) {
-            const node = opMatch[1]!;
-            const val = Number(opMatch[2]!);
-            if (Number.isFinite(val) && node.toLowerCase() !== "index") {
-              nodeVoltages.push({ node, voltageV: Number(val.toPrecision(6)) });
-            }
-          }
-          const tableMatch =
-            /^\s*\d+\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?)(?:\s+([+-]?\d+(?:\.\d+)?(?:e[+-]?\d+)?))?/iu.exec(
-              line,
-            );
-          if (input.kind !== "dc_op" && tableMatch) {
-            const xVal = Number(tableMatch[1]!);
-            const yVal = Number(tableMatch[2]!);
-            const third = tableMatch[3] !== undefined ? Number(tableMatch[3]) : undefined;
-            if (Number.isFinite(xVal) && Number.isFinite(yVal)) {
-              points.push({
-                x: input.kind === "transient" ? Number((xVal * 1000).toPrecision(5)) : xVal,
-                y: Number(yVal.toPrecision(5)),
-                ...(third !== undefined && Number.isFinite(third)
-                  ? { phaseDeg: Number(third.toFixed(2)) }
-                  : {}),
-              });
-            }
-          }
-        }
+        // Pass -n (--no-spiceinit) so user/workspace .spiceinit scripts cannot execute.
+        const { text: stdout, truncated } = yield* execToolString(
+          executable,
+          ["-n", "-b", deckPath],
+          RUN_TIMEOUT,
+          tmpDir,
+        );
+        const { nodeVoltages, points } = parseNgspiceBatchOutput(stdout, input.kind);
 
         if (nodeVoltages.length === 0 && points.length === 0) {
-          return null as ElectronicsSimulationResult | null;
+          return {
+            result: null,
+            rejectionNote:
+              "ngspice ran but produced no parseable operating-point or waveform output.",
+          };
+        }
+
+        const notes = ["Simulated with local ngspice toolchain (-n -b)."];
+        if (truncated) {
+          notes.push("ngspice stdout was truncated at the 2 MiB output safety limit.");
         }
 
         return {
-          filePath: input.model.filePath,
-          kind: input.kind,
-          engine: "ngspice" as const,
-          xAxisLabel:
-            input.kind === "ac_sweep" ? "Frequency" : input.kind === "transient" ? "Time" : "Node",
-          xAxisUnit: input.kind === "ac_sweep" ? "Hz" : input.kind === "transient" ? "ms" : "",
-          xAxisLog: input.kind === "ac_sweep",
-          nodeVoltages,
-          componentReadings: [],
-          series:
-            points.length > 0
-              ? [
-                  {
-                    label: input.kind === "ac_sweep" ? `|V(${targetNode})|` : `V(${targetNode})`,
-                    unit: input.kind === "ac_sweep" ? "dB" : "V",
-                    points,
-                  },
-                ]
-              : [],
-          metrics: [],
-          notes: [`Simulated using local ngspice (${executable}).`],
-          simulatedAt: DateTime.formatIso(yield* DateTime.now),
-        } satisfies ElectronicsSimulationResult;
+          result: {
+            filePath: input.model.filePath,
+            kind: input.kind,
+            engine: "ngspice" as const,
+            xAxisLabel:
+              input.kind === "ac_sweep"
+                ? "Frequency"
+                : input.kind === "transient"
+                  ? "Time"
+                  : "Node",
+            xAxisUnit: input.kind === "ac_sweep" ? "Hz" : input.kind === "transient" ? "ms" : "",
+            xAxisLog: input.kind === "ac_sweep",
+            nodeVoltages,
+            componentReadings: [],
+            series:
+              points.length > 0
+                ? [
+                    {
+                      label: input.kind === "ac_sweep" ? `|V(${targetNode})|` : `V(${targetNode})`,
+                      unit: input.kind === "ac_sweep" ? "dB" : "V",
+                      points,
+                    },
+                  ]
+                : [],
+            metrics: [],
+            notes,
+            simulatedAt: DateTime.formatIso(yield* DateTime.now),
+          },
+        };
       }),
-    ).pipe(Effect.orElseSucceed(() => null as ElectronicsSimulationResult | null));
+    ).pipe(
+      Effect.catch((err) =>
+        Effect.succeed({
+          result: null,
+          rejectionNote: `ngspice execution failed: ${String(err).slice(0, 160)}`,
+        }),
+      ),
+    );
   },
 );

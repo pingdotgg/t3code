@@ -136,8 +136,10 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
     }
 
     const prefix = comp.ref[0]?.toUpperCase();
-    if (comp.kind === "resistor" || prefix === "R") {
-      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
+    const allowPrefixFallback = spiceMode || comp.kind === "other";
+    const firstValueToken = comp.value.trim().split(/\s+/u)[0] ?? comp.value;
+    if (comp.kind === "resistor" || (allowPrefixFallback && prefix === "R")) {
+      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -153,8 +155,8 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
       } else {
         skipped.push(`${comp.ref} (unparseable resistance "${comp.value}")`);
       }
-    } else if (comp.kind === "capacitor" || prefix === "C") {
-      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
+    } else if (comp.kind === "capacitor" || (allowPrefixFallback && prefix === "C")) {
+      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -170,8 +172,8 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
       } else {
         skipped.push(`${comp.ref} (unparseable capacitance "${comp.value}")`);
       }
-    } else if (comp.kind === "inductor" || prefix === "L") {
-      const val = parseEngineeringNumber(comp.value, { spice: spiceMode });
+    } else if (comp.kind === "inductor" || (allowPrefixFallback && prefix === "L")) {
+      const val = parseEngineeringNumber(firstValueToken, { spice: spiceMode });
       if (val !== null && val > 0) {
         elements.push({
           ref: comp.ref,
@@ -187,7 +189,10 @@ function extractLinearElements(model: ElectronicsCircuitModel): {
       } else {
         skipped.push(`${comp.ref} (unparseable inductance "${comp.value}")`);
       }
-    } else if (comp.kind === "power_source" || prefix === "V" || prefix === "I") {
+    } else if (
+      comp.kind === "power_source" ||
+      (allowPrefixFallback && (prefix === "V" || prefix === "I"))
+    ) {
       const spec = parseSourceSpec(comp.value, spiceMode);
       elements.push({
         ref: comp.ref,
@@ -699,6 +704,18 @@ export function runBuiltinMnaSimulation(
   const firstC = elements.find((e) => e.type === "C")?.numericValue;
   if (firstR && firstC) {
     estimatedTau = Math.max(1e-7, Math.min(1, firstR * firstC));
+  }
+  if (
+    options.stopTimeSeconds !== undefined &&
+    (!Number.isFinite(options.stopTimeSeconds) || options.stopTimeSeconds <= 0)
+  ) {
+    throw new Error("stopTimeSeconds must be a positive finite number.");
+  }
+  if (
+    options.stepTimeSeconds !== undefined &&
+    (!Number.isFinite(options.stepTimeSeconds) || options.stepTimeSeconds <= 0)
+  ) {
+    throw new Error("stepTimeSeconds must be a positive finite number.");
   }
   const stopTime = options.stopTimeSeconds ?? estimatedTau * 5;
   const steps = Math.min(

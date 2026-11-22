@@ -84,6 +84,14 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
   } | null>(null);
   const [hiddenLayers, setHiddenLayers] = useState<ReadonlySet<string>>(() => new Set());
   const [showLayerMenu, setShowLayerMenu] = useState(false);
+  const [lastFilePath, setLastFilePath] = useState(model.filePath);
+  if (model.filePath !== lastFilePath) {
+    setLastFilePath(model.filePath);
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+    setHiddenLayers(new Set());
+    setShowLayerMenu(false);
+  }
 
   const bounds = model.bounds;
   const baseWidth = Math.max(10, bounds.maxX - bounds.minX);
@@ -146,9 +154,16 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
     if (dragging) setDragging(null);
   };
 
-  const selectedComponent = selectedRef
-    ? (model.components.find((c) => c.ref === selectedRef) ?? null)
-    : null;
+  const selectedComponent = (() => {
+    if (!selectedRef) return null;
+    const units = model.components.filter((c) => c.ref === selectedRef);
+    if (units.length === 0) return null;
+    if (units.length === 1) return units[0]!;
+    return {
+      ...units[0]!,
+      pins: units.flatMap((u) => u.pins),
+    };
+  })();
   const selectedNetObj = selectedNet
     ? (model.nets.find((n) => n.name === selectedNet) ?? null)
     : null;
@@ -531,7 +546,20 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
           })}
 
           {model.labels
-            .filter((lbl) => lbl.kind !== "power")
+            .filter(
+              (lbl) =>
+                !(
+                  lbl.kind === "power" &&
+                  model.components.some(
+                    (c) =>
+                      c.kind === "power_symbol" &&
+                      c.x !== undefined &&
+                      c.y !== undefined &&
+                      Math.abs(c.x - lbl.x) < 0.5 &&
+                      Math.abs(c.y - lbl.y) < 0.5,
+                  )
+                ),
+            )
             .map((lbl) => {
               const isHighlighted = lbl.text === selectedNet || traceNets.has(lbl.text);
               return (

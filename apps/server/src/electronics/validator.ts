@@ -47,6 +47,193 @@ function viaMatchesTrackLayer(
   return false;
 }
 
+export interface PcbCopperIslandResult {
+  readonly padPoints: ReadonlyArray<{
+    readonly x: number;
+    readonly y: number;
+    readonly ref: string;
+    readonly pin: string;
+    readonly layers?: ReadonlyArray<string>;
+  }>;
+  readonly islandCount: number;
+  readonly trackCount: number;
+  readonly padIslandByRefPin: ReadonlyMap<string, number>;
+}
+
+export function computePcbCopperIslands(
+  model: ElectronicsCircuitModel,
+  netName: string,
+): PcbCopperIslandResult {
+  const padPoints: Array<{
+    x: number;
+    y: number;
+    ref: string;
+    pin: string;
+    layers?: ReadonlyArray<string>;
+  }> = [];
+  for (const comp of model.components) {
+    for (const pin of comp.pins) {
+      if (
+        pin.net === netName &&
+        pin.x !== undefined &&
+        pin.y !== undefined &&
+        Number.isFinite(pin.x) &&
+        Number.isFinite(pin.y) &&
+        Math.abs(pin.x) <= 1e6 &&
+        Math.abs(pin.y) <= 1e6
+      ) {
+        padPoints.push({
+          x: pin.x,
+          y: pin.y,
+          ref: comp.ref,
+          pin: pin.number,
+          ...(pin.layers !== undefined ? { layers: pin.layers } : {}),
+        });
+      }
+    }
+  }
+  const netTracks = model.wires.filter(
+    (w) =>
+      w.net === netName &&
+      Number.isFinite(w.x1) &&
+      Number.isFinite(w.y1) &&
+      Number.isFinite(w.x2) &&
+      Number.isFinite(w.y2) &&
+      Math.abs(w.x1) <= 1e6 &&
+      Math.abs(w.y1) <= 1e6 &&
+      Math.abs(w.x2) <= 1e6 &&
+      Math.abs(w.y2) <= 1e6,
+  );
+  const netVias = model.vias.filter(
+    (v) =>
+      v.net === netName &&
+      Number.isFinite(v.x) &&
+      Number.isFinite(v.y) &&
+      Math.abs(v.x) <= 1e6 &&
+      Math.abs(v.y) <= 1e6,
+  );
+
+  const totalNodes = padPoints.length + netTracks.length + netVias.length;
+  const parent = Array.from({ length: totalNodes }, (_, idx) => idx);
+  const find = (a: number): number => {
+    let cur = a;
+    while (parent[cur] !== cur) cur = parent[cur]!;
+    let walk = a;
+    while (walk !== cur) {
+      const next = parent[walk]!;
+      parent[walk] = cur;
+      walk = next;
+    }
+    return cur;
+  };
+  const union = (a: number, b: number) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent[ra] = rb;
+  };
+
+  const trackOffset = padPoints.length;
+  const viaOffset = padPoints.length + netTracks.length;
+
+  const PCB_CELL = 1.0;
+  const cellOf = (x: number, y: number) =>
+    [Math.floor(x / PCB_CELL), Math.floor(y / PCB_CELL)] as const;
+  const addToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
+    const [cx, cy] = cellOf(x, y);
+    const key = `${cx},${cy}`;
+    let bucket = grid.get(key);
+    if (!bucket) {
+      bucket = [];
+      grid.set(key, bucket);
+    }
+    bucket.push(item);
+  };
+  const forNearby = <T>(grid: Map<string, T[]>, x: number, y: number, fn: (item: T) => void) => {
+    const [cx, cy] = cellOf(x, y);
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const bucket = grid.get(`${cx + dx},${cy + dy}`);
+        if (!bucket) continue;
+        for (const item of bucket) fn(item);
+      }
+    }
+  };
+
+  const padGrid = new Map<string, number[]>();
+  for (let p = 0; p < padPoints.length; p += 1) {
+    addToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
+  }
+  const viaGrid = new Map<string, number[]>();
+  for (let v = 0; v < netVias.length; v += 1) {
+    addToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
+  }
+  const trackGridByLayer = new Map<
+    string,
+    Map<string, Array<{ idx: number; x: number; y: number; width: number }>>
+  >();
+  const getLayerGrid = (layerKey: string) => {
+    let g = trackGridByLayer.get(layerKey);
+    if (!g) {
+      g = new Map();
+      trackGridByLayer.set(layerKey, g);
+    }
+    return g;
+  };
+
+  for (let t = 0; t < netTracks.length; t += 1) {
+    const seg = netTracks[t]!;
+    const segWidth = seg.width ?? 0.2;
+    const endpoints = [
+      [seg.x1, seg.y1],
+      [seg.x2, seg.y2],
+    ] as const;
+
+    for (const [ex, ey] of endpoints) {
+      forNearby(padGrid, ex, ey, (p) => {
+        const pad = padPoints[p]!;
+        if (padMatchesTrackLayer(pad.layers, seg.layer) && nearPoint(pad.x, pad.y, ex, ey, 0.5)) {
+          union(p, trackOffset + t);
+        }
+      });
+      forNearby(viaGrid, ex, ey, (v) => {
+        const via = netVias[v]!;
+        const viaTol = Math.max(0.05, via.size / 2 + segWidth / 2);
+        if (
+          viaMatchesTrackLayer(via.layers, seg.layer) &&
+          nearPoint(via.x, via.y, ex, ey, viaTol)
+        ) {
+          union(trackOffset + t, viaOffset + v);
+        }
+      });
+      const layerKey = seg.layer ?? "__any__";
+      const layerGrid = getLayerGrid(layerKey);
+      forNearby(layerGrid, ex, ey, (other) => {
+        // Use actual copper overlap radius (half-width sum) rather than a fixed 0.25mm gap
+        const copperTol = Math.max(0.02, (segWidth + other.width) / 2);
+        if (nearPoint(other.x, other.y, ex, ey, copperTol)) {
+          union(trackOffset + t, trackOffset + other.idx);
+        }
+      });
+      addToGrid(layerGrid, ex, ey, { idx: t, x: ex, y: ey, width: segWidth });
+    }
+  }
+
+  const padRoots = new Set<number>();
+  const padIslandByRefPin = new Map<string, number>();
+  for (let p = 0; p < padPoints.length; p += 1) {
+    const r = find(p);
+    padRoots.add(r);
+    const pad = padPoints[p]!;
+    padIslandByRefPin.set(`${pad.ref.toLowerCase()}:${pad.pin.toLowerCase()}`, r);
+  }
+  return {
+    padPoints,
+    islandCount: padRoots.size,
+    trackCount: netTracks.length,
+    padIslandByRefPin,
+  };
+}
+
 /**
  * Deterministic static electrical & layout rule checker.
  * Runs in pure TypeScript with zero external binaries required.
@@ -282,152 +469,15 @@ export function runBuiltinCircuitValidation(model: ElectronicsCircuitModel): {
   // 8. PCB copper continuity / unrouted ratsnest check
   if (model.format === "kicad_pcb") {
     for (const net of model.nets) {
-      // Collect pad positions belonging to this net
-      const padPoints: Array<{
-        x: number;
-        y: number;
-        ref: string;
-        layers?: ReadonlyArray<string>;
-      }> = [];
-      for (const comp of model.components) {
-        for (const pin of comp.pins) {
-          if (pin.net === net.name && pin.x !== undefined && pin.y !== undefined) {
-            padPoints.push({
-              x: pin.x,
-              y: pin.y,
-              ref: comp.ref,
-              ...(pin.layers !== undefined ? { layers: pin.layers } : {}),
-            });
-          }
-        }
-      }
+      const { padPoints, islandCount, trackCount } = computePcbCopperIslands(model, net.name);
       if (padPoints.length < 2) continue;
-      const netTracks = model.wires.filter((w) => w.net === net.name);
-      const netVias = model.vias.filter((v) => v.net === net.name);
-
-      // Build graph over pad indices + track segment indices + via indices
-      const totalNodes = padPoints.length + netTracks.length + netVias.length;
-      const parent = Array.from({ length: totalNodes }, (_, idx) => idx);
-      const find = (a: number): number => {
-        let cur = a;
-        while (parent[cur] !== cur) cur = parent[cur]!;
-        let walk = a;
-        while (walk !== cur) {
-          const next = parent[walk]!;
-          parent[walk] = cur;
-          walk = next;
-        }
-        return cur;
-      };
-      const union = (a: number, b: number) => {
-        const ra = find(a);
-        const rb = find(b);
-        if (ra !== rb) parent[ra] = rb;
-      };
-
-      const trackOffset = padPoints.length;
-      const viaOffset = padPoints.length + netTracks.length;
-
-      // Spatial grid index (1 mm cells) for O(N) endpoint adjacency across tracks, pads, and vias
-      const PCB_CELL = 1.0;
-      const cellOf = (x: number, y: number) =>
-        [Math.floor(x / PCB_CELL), Math.floor(y / PCB_CELL)] as const;
-      const addToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
-        const [cx, cy] = cellOf(x, y);
-        const key = `${cx},${cy}`;
-        let bucket = grid.get(key);
-        if (!bucket) {
-          bucket = [];
-          grid.set(key, bucket);
-        }
-        bucket.push(item);
-      };
-      const forNearby = <T>(
-        grid: Map<string, T[]>,
-        x: number,
-        y: number,
-        fn: (item: T) => void,
-      ) => {
-        const [cx, cy] = cellOf(x, y);
-        for (let dx = -1; dx <= 1; dx += 1) {
-          for (let dy = -1; dy <= 1; dy += 1) {
-            const bucket = grid.get(`${cx + dx},${cy + dy}`);
-            if (!bucket) continue;
-            for (const item of bucket) fn(item);
-          }
-        }
-      };
-
-      const padGrid = new Map<string, number[]>();
-      for (let p = 0; p < padPoints.length; p += 1) {
-        addToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
-      }
-      const viaGrid = new Map<string, number[]>();
-      for (let v = 0; v < netVias.length; v += 1) {
-        addToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
-      }
-      const trackGridByLayer = new Map<
-        string,
-        Map<string, Array<{ idx: number; x: number; y: number }>>
-      >();
-      const getLayerGrid = (layerKey: string) => {
-        let g = trackGridByLayer.get(layerKey);
-        if (!g) {
-          g = new Map();
-          trackGridByLayer.set(layerKey, g);
-        }
-        return g;
-      };
-
-      for (let t = 0; t < netTracks.length; t += 1) {
-        const seg = netTracks[t]!;
-        const endpoints = [
-          [seg.x1, seg.y1],
-          [seg.x2, seg.y2],
-        ] as const;
-
-        // Connect track endpoints to pads on matching copper layers
-        for (const [ex, ey] of endpoints) {
-          forNearby(padGrid, ex, ey, (p) => {
-            const pad = padPoints[p]!;
-            if (
-              padMatchesTrackLayer(pad.layers, seg.layer) &&
-              nearPoint(pad.x, pad.y, ex, ey, 0.5)
-            ) {
-              union(p, trackOffset + t);
-            }
-          });
-          // Connect track endpoints to vias whose copper layer span includes seg.layer
-          forNearby(viaGrid, ex, ey, (v) => {
-            const via = netVias[v]!;
-            if (
-              viaMatchesTrackLayer(via.layers, seg.layer) &&
-              nearPoint(via.x, via.y, ex, ey, 0.4)
-            ) {
-              union(trackOffset + t, viaOffset + v);
-            }
-          });
-          // Connect track endpoints to previously indexed tracks on the same copper layer
-          const layerKey = seg.layer ?? "__any__";
-          const layerGrid = getLayerGrid(layerKey);
-          forNearby(layerGrid, ex, ey, (other) => {
-            if (nearPoint(other.x, other.y, ex, ey)) {
-              union(trackOffset + t, trackOffset + other.idx);
-            }
-          });
-          addToGrid(layerGrid, ex, ey, { idx: t, x: ex, y: ey });
-        }
-      }
-
-      const padRoots = new Set<number>();
-      for (let p = 0; p < padPoints.length; p += 1) padRoots.add(find(p));
-      if (padRoots.size > 1) {
+      if (islandCount > 1) {
         issues.push({
           id: nextId("unrouted"),
           code: "unrouted_pcb_net",
           severity: "warning",
           source: "builtin",
-          message: `PCB net "${net.name}" has ${padPoints.length} pads split across ${padRoots.size} disconnected copper islands (${netTracks.length} track segment${netTracks.length === 1 ? "" : "s"}).`,
+          message: `PCB net "${net.name}" has ${padPoints.length} pads split across ${islandCount} disconnected copper islands (${trackCount} track segment${trackCount === 1 ? "" : "s"}).`,
           net: net.name,
           refs: Array.from(new Set(padPoints.map((p) => p.ref))),
           x: padPoints[0]!.x,

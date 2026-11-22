@@ -176,7 +176,8 @@ export function parseEngineeringNumber(
   options: { readonly spice?: boolean } = {},
 ): number | null {
   const spice = options.spice ?? false;
-  const cleaned = raw
+  const withoutParams = raw.trim().replace(/\s+[a-z_][a-z0-9_]*\s*=.*$/iu, "");
+  const cleaned = withoutParams
     .trim()
     .replace(/Ω|OHMS?|OHM|HZ$/iu, "")
     .trim();
@@ -189,10 +190,15 @@ export function parseEngineeringNumber(
   if (!Number.isFinite(base)) return null;
   const rawSuffix = match[2] ?? "";
   const trailingUnit = match[3] ?? "";
-  // In non-SPICE display values like "1F" (1 Farad), uppercase standalone "F" is Farads,
-  // whereas "10f" or "10fF" (or any SPICE value "10f"/"10F") is femto (1e-15).
+  // In non-SPICE display values:
+  // - uppercase standalone "F" (e.g. "1F") is Farads, while "10f"/"10fF" (and SPICE "10f"/"10F") is femto (1e-15).
+  // - uppercase "M" (e.g. "1M", "10MΩ") is Mega (1e6), while lowercase "m" ("10m", "50mΩ") is milli (1e-3).
+  // In SPICE mode, "m"/"M" is milli (1e-3) and "meg" is Mega (1e6).
   if (!spice && rawSuffix === "F" && trailingUnit.length === 0) {
     return base;
+  }
+  if (!spice && rawSuffix === "M") {
+    return base * 1e6;
   }
   const suffix = rawSuffix.toLowerCase();
   switch (suffix) {
@@ -281,7 +287,7 @@ function buildBom(components: ReadonlyArray<ElectronicsComponent>): ElectronicsB
       footprint?: string;
       libId?: string;
       kind: ElectronicsComponentKind;
-      refs: string[];
+      refs: Set<string>;
     }
   >();
 
@@ -290,27 +296,32 @@ function buildBom(components: ReadonlyArray<ElectronicsComponent>): ElectronicsB
     const key = `${comp.value}||${comp.footprint ?? ""}||${comp.libId ?? ""}`;
     const existing = groups.get(key);
     if (existing) {
-      existing.refs.push(comp.ref);
+      existing.refs.add(comp.ref);
     } else {
       groups.set(key, {
         value: comp.value,
         ...(comp.footprint !== undefined ? { footprint: comp.footprint } : {}),
         ...(comp.libId !== undefined ? { libId: comp.libId } : {}),
         kind: comp.kind,
-        refs: [comp.ref],
+        refs: new Set([comp.ref]),
       });
     }
   }
 
   return Array.from(groups.values())
-    .map((group) => ({
-      value: group.value,
-      ...(group.footprint !== undefined ? { footprint: group.footprint } : {}),
-      ...(group.libId !== undefined ? { libId: group.libId } : {}),
-      kind: group.kind,
-      refs: group.refs.toSorted((a, b) => a.localeCompare(b, undefined, { numeric: true })),
-      quantity: group.refs.length,
-    }))
+    .map((group) => {
+      const sortedRefs = Array.from(group.refs).toSorted((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true }),
+      );
+      return {
+        value: group.value,
+        ...(group.footprint !== undefined ? { footprint: group.footprint } : {}),
+        ...(group.libId !== undefined ? { libId: group.libId } : {}),
+        kind: group.kind,
+        refs: sortedRefs,
+        quantity: sortedRefs.length,
+      };
+    })
     .toSorted((a, b) => a.refs[0]!.localeCompare(b.refs[0]!, undefined, { numeric: true }));
 }
 
@@ -387,12 +398,18 @@ function parseKiCadSubSymbolUnitStyle(name: string | undefined): {
 
 function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
   const libMap = new Map<string, LibPinDef[]>();
+  const extendsMap = new Map<string, string>();
   const libSymbols = findChild(schRoot, "lib_symbols");
   if (!libSymbols) return libMap;
 
   for (const sym of findChildren(libSymbols, "symbol")) {
     const libId = atomString(sym[1]);
     if (!libId) continue;
+    const parentName = atomString(findChild(sym, "extends")?.[1]);
+    if (parentName) {
+      const libPrefix = libId.includes(":") ? libId.slice(0, libId.indexOf(":") + 1) : "";
+      extendsMap.set(libId, parentName.includes(":") ? parentName : `${libPrefix}${parentName}`);
+    }
     const pins: LibPinDef[] = [];
 
     const collectPins = (node: SExprList, unit: number, style: number) => {
@@ -418,6 +435,25 @@ function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
 
     collectPins(sym, 0, 0);
     libMap.set(libId, pins);
+  }
+
+  // Resolve KiCad derived symbols `(extends "Parent")` with cycle protection
+  const resolveDerived = (id: string, stack: Set<string>): LibPinDef[] => {
+    const own = libMap.get(id) ?? [];
+    const parentId = extendsMap.get(id);
+    if (!parentId || stack.has(parentId)) return own;
+    const nextStack = new Set(stack);
+    nextStack.add(id);
+    const parentPins =
+      resolveDerived(parentId, nextStack).length > 0
+        ? resolveDerived(parentId, nextStack)
+        : resolveDerived(parentId.split(":").pop() ?? parentId, nextStack);
+    const ownKeys = new Set(own.map((p) => `${p.unit}:${p.style}:${p.number}`));
+    return [...parentPins.filter((p) => !ownKeys.has(`${p.unit}:${p.style}:${p.number}`)), ...own];
+  };
+
+  for (const id of extendsMap.keys()) {
+    libMap.set(id, resolveDerived(id, new Set()));
   }
   return libMap;
 }
@@ -455,6 +491,12 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
   }
 
   const parseWarnings: string[] = [];
+  const subSheets = findChildren(root, "sheet");
+  if (subSheets.length > 0) {
+    parseWarnings.push(
+      `Detected ${subSheets.length} hierarchical sub-sheet(s); only the current schematic sheet was parsed.`,
+    );
+  }
   const titleBlock = findChild(root, "title_block");
   const title = atomString(findChild(titleBlock ?? [], "title")?.[1]);
 
@@ -555,6 +597,11 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
     if (!ref) ref = libId ?? `SYM_${components.length + 1}`;
     if (!value) value = libId?.split(":").pop() ?? ref;
 
+    const isPowerFlag =
+      /^PWR_FLAG$/iu.test(value) ||
+      /^#FLG/iu.test(ref) ||
+      (libId !== undefined && /:PWR_FLAG$/iu.test(libId));
+
     const kind = inferComponentKind(ref, libId, value);
     const allLibPins = libId ? (libMap.get(libId) ?? []) : [];
     const libPins = allLibPins.filter(
@@ -566,13 +613,15 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
       return {
         number: lp.number,
         ...(lp.name && lp.name !== "~" ? { name: lp.name } : {}),
-        electricalType: lp.electricalType,
+        electricalType: isPowerFlag ? ("power_out" as const) : lp.electricalType,
         x: pos.x,
         y: pos.y,
       };
     });
 
-    if (kind === "power_symbol") {
+    // Never emit a shared global net label for power:PWR_FLAG (multiple PWR_FLAG symbols
+    // sit on distinct rails such as +5V and GND to satisfy ERC, and must not short them).
+    if (kind === "power_symbol" && !isPowerFlag) {
       labels.push({ text: value, kind: "power", x, y });
     }
 
@@ -605,15 +654,32 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
   };
 
   const SCH_GRID_CELL = 10;
+  const MAX_SAFE_COORD = 1e6;
+  const isSafeCoord = (x: number, y: number) =>
+    Number.isFinite(x) &&
+    Number.isFinite(y) &&
+    Math.abs(x) <= MAX_SAFE_COORD &&
+    Math.abs(y) <= MAX_SAFE_COORD;
+
   const wireGrid = new Map<string, number[]>();
   const largeWireIndices: number[] = [];
   const wireStartIds: number[] = [];
+  let warnedExtremeCoords = false;
   for (let i = 0; i < wires.length; i += 1) {
     const w = wires[i]!;
     const a = getPointId(w.x1, w.y1);
     const b = getPointId(w.x2, w.y2);
     uf.union(a, b);
     wireStartIds.push(a);
+
+    if (!isSafeCoord(w.x1, w.y1) || !isSafeCoord(w.x2, w.y2)) {
+      if (!warnedExtremeCoords) {
+        warnedExtremeCoords = true;
+        parseWarnings.push("Skipped spatial indexing for wire(s) with extreme coordinates.");
+      }
+      largeWireIndices.push(i);
+      continue;
+    }
 
     const minCx = Math.floor((Math.min(w.x1, w.x2) - 0.5) / SCH_GRID_CELL);
     const maxCx = Math.floor((Math.max(w.x1, w.x2) + 0.5) / SCH_GRID_CELL);
@@ -696,8 +762,12 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
   const ncKeys = new Set(noConnects.map((nc) => pointKey(nc.x, nc.y)));
 
   for (const comp of components) {
+    const isPowerFlag =
+      /^PWR_FLAG$/iu.test(comp.value) ||
+      /^#FLG/iu.test(comp.ref) ||
+      (comp.libId !== undefined && /:PWR_FLAG$/iu.test(comp.libId));
     for (const pin of comp.pins) {
-      if (comp.kind === "power_symbol") continue;
+      if (comp.kind === "power_symbol" && !isPowerFlag) continue;
       if (ncKeys.has(pointKey(pin.x, pin.y))) {
         pin.electricalType = "unconnected";
         continue;
@@ -752,8 +822,12 @@ function parseKiCadSchematic(filePath: string, content: string): ElectronicsCirc
 
   // Assign resolved net names back to pins and wires
   for (const comp of components) {
+    const isPowerFlag =
+      /^PWR_FLAG$/iu.test(comp.value) ||
+      /^#FLG/iu.test(comp.ref) ||
+      (comp.libId !== undefined && /:PWR_FLAG$/iu.test(comp.libId));
     for (const pin of comp.pins) {
-      if (comp.kind === "power_symbol") {
+      if (comp.kind === "power_symbol" && !isPowerFlag) {
         pin.net = comp.value;
         continue;
       }
@@ -1224,7 +1298,11 @@ function parseSpiceNetlist(filePath: string, content: string): ElectronicsCircui
       continue;
     }
 
-    const nodeNames = tokens.slice(1, 1 + nodeCount).map((n) => (n === "0" ? "GND" : n));
+    // SPICE node names are case-insensitive in ngspice batch mode; node 0 / gnd maps to "GND".
+    const nodeNames = tokens.slice(1, 1 + nodeCount).map((n) => {
+      const lowerNode = n.toLowerCase();
+      return lowerNode === "0" || lowerNode === "gnd" ? "GND" : lowerNode;
+    });
     let value = tokens.slice(1 + nodeCount).join(" ");
     // Substitute simple {param} references
     value = value.replace(
@@ -1515,6 +1593,23 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
     });
   }
 
+  // Choose ONE consistent coordinate space (PCB if PCB geometry exists, else schematic)
+  // so component centers, pin coordinates, and traces never mix two coordinate systems.
+  const hasPcbBoard = elements.some((el) => el.type === "pcb_board");
+  const usePcbCoords = pcbComponents.size > 0 || hasPcbBoard;
+
+  // Map source_port_id -> pcb_port_id so PCB pads can supply pad coordinates in PCB view
+  const pcbPortBySourcePort = new Map<string, string>();
+  for (const el of elements) {
+    if (
+      el.type === "pcb_port" &&
+      typeof el.pcb_port_id === "string" &&
+      typeof el.source_port_id === "string"
+    ) {
+      pcbPortBySourcePort.set(el.source_port_id, el.pcb_port_id);
+    }
+  }
+
   const components: ElectronicsComponent[] = [];
   let fallbackIdx = 0;
   for (const [compId, sc] of sourceComponents.entries()) {
@@ -1529,7 +1624,7 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
             : typeof sc.ftype === "string"
               ? sc.ftype
               : ref;
-    const geom = pcbComponents.get(compId) ?? schComponents.get(compId);
+    const geom = usePcbCoords ? pcbComponents.get(compId) : schComponents.get(compId);
     const center = geom?.center as { x?: number; y?: number } | undefined;
     const cx = typeof center?.x === "number" ? center.x : (fallbackIdx % 4) * 30;
     const cy = typeof center?.y === "number" ? center.y : Math.floor(fallbackIdx / 4) * 24;
@@ -1546,10 +1641,23 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
             ? sp.name
             : String(pIdx + 1);
       const pinName = typeof sp.name === "string" ? sp.name : undefined;
-      const schP = schPorts.get(portId);
-      const schCenter = schP?.center as { x?: number; y?: number } | undefined;
-      const px = typeof schCenter?.x === "number" ? schCenter.x : cx + (pIdx % 2 === 0 ? -6 : 6);
-      const py = typeof schCenter?.y === "number" ? schCenter.y : cy + Math.floor(pIdx / 2) * 4;
+      let px = cx + (pIdx % 2 === 0 ? -6 : 6);
+      let py = cy + Math.floor(pIdx / 2) * 4;
+      if (usePcbCoords) {
+        const pcbPortId = pcbPortBySourcePort.get(portId);
+        const pad = pcbPortId ? pcbPadsByPort.get(pcbPortId) : undefined;
+        if (typeof pad?.x === "number" && typeof pad?.y === "number") {
+          px = pad.x;
+          py = pad.y;
+        }
+      } else {
+        const schP = schPorts.get(portId);
+        const schCenter = schP?.center as { x?: number; y?: number } | undefined;
+        if (typeof schCenter?.x === "number" && typeof schCenter?.y === "number") {
+          px = schCenter.x;
+          py = schCenter.y;
+        }
+      }
       const net = portToNet.get(portId);
       pins.push({
         number: pinNum,
@@ -1568,7 +1676,7 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
       x: cx,
       y: cy,
       rotation: typeof geom?.rotation === "number" ? geom.rotation : 0,
-      layer: typeof geom?.layer === "string" ? geom.layer : "F.Cu",
+      layer: typeof geom?.layer === "string" ? geom.layer : usePcbCoords ? "F.Cu" : "schematic",
       pins,
     });
   }
@@ -1577,7 +1685,7 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
   const boardOutline: ElectronicsWireSegment[] = [];
 
   for (const el of elements) {
-    if (el.type === "pcb_trace" && Array.isArray(el.route)) {
+    if (usePcbCoords && el.type === "pcb_trace" && Array.isArray(el.route)) {
       const route = el.route as ReadonlyArray<{
         x?: number;
         y?: number;
@@ -1603,7 +1711,7 @@ function parseCircuitJson(filePath: string, content: string): ElectronicsCircuit
           });
         }
       }
-    } else if (el.type === "schematic_trace" && Array.isArray(el.edges)) {
+    } else if (!usePcbCoords && el.type === "schematic_trace" && Array.isArray(el.edges)) {
       const edges = el.edges as ReadonlyArray<{
         from?: { x?: number; y?: number };
         to?: { x?: number; y?: number };

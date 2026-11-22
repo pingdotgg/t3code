@@ -24,6 +24,7 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -37,6 +38,14 @@ import { assembleValidationReport, runBuiltinCircuitValidation } from "./validat
 const MAX_CIRCUIT_FILE_BYTES = 5 * 1024 * 1024;
 const MAX_DISCOVERY_DEPTH = 6;
 const MAX_DISCOVERY_FILES = 200;
+const MAX_DISCOVERY_ENTRIES = 5_000;
+
+function isWithinRoot(pathApi: Path.Path, rootReal: string, candidate: string): boolean {
+  const rel = pathApi.relative(rootReal, candidate);
+  if (rel === "") return true;
+  if (pathApi.isAbsolute(rel)) return false;
+  return rel !== ".." && !rel.startsWith(`..${pathApi.sep}`) && !rel.startsWith("../");
+}
 
 const IGNORED_DIRECTORIES: ReadonlySet<string> = new Set([
   ".git",
@@ -107,7 +116,12 @@ export const layer = Layer.effect(
     const sessionsRef = yield* Ref.make<Map<ThreadId, ElectronicsThreadSession>>(new Map());
     const closeGenRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
     const lastUpdatedMsRef = yield* Ref.make<Map<ThreadId, number>>(new Map());
-    const toolchainCacheRef = yield* Ref.make<ElectronicsToolchainStatus | null>(null);
+    const externalToolSemaphore = Semaphore.makeUnsafe(2);
+    const toolchainCacheRef = yield* Ref.make<{
+      readonly status: ElectronicsToolchainStatus;
+      readonly kicadPath: string;
+      readonly ngspicePath: string;
+    } | null>(null);
     const updates = yield* PubSub.unbounded<ElectronicsServiceState>();
 
     const getSettings = serverSettings.getSettings.pipe(
@@ -136,22 +150,26 @@ export const layer = Layer.effect(
       forceRefresh = false,
     ) {
       const settings = yield* getSettings;
+      const kicadPath = settings.electronicsKicadCliPath.trim();
+      const ngspicePath = settings.electronicsNgspicePath.trim();
       const cached = yield* Ref.get(toolchainCacheRef);
       if (
         !forceRefresh &&
         cached !== null &&
-        cached.enabled === settings.enableElectronicsWorkbench &&
-        cached.allowExternalTools === settings.electronicsAllowExternalTools &&
-        cached.agentAccessEnabled === settings.enableAgentElectronicsAccess
+        cached.status.enabled === settings.enableElectronicsWorkbench &&
+        cached.status.allowExternalTools === settings.electronicsAllowExternalTools &&
+        cached.status.agentAccessEnabled === settings.enableAgentElectronicsAccess &&
+        cached.kicadPath === kicadPath &&
+        cached.ngspicePath === ngspicePath
       ) {
-        return cached;
+        return cached.status;
       }
       const [kicadCli, ngspice] = settings.electronicsAllowExternalTools
         ? yield* Effect.all([
-            probeBinary("kicad-cli", settings.electronicsKicadCliPath).pipe(
+            probeBinary("kicad-cli", kicadPath).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
-            probeBinary("ngspice", settings.electronicsNgspicePath).pipe(
+            probeBinary("ngspice", ngspicePath).pipe(
               Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             ),
           ])
@@ -176,7 +194,7 @@ export const layer = Layer.effect(
         ngspice,
         checkedAt: DateTime.formatIso(yield* DateTime.now),
       };
-      yield* Ref.set(toolchainCacheRef, status);
+      yield* Ref.set(toolchainCacheRef, { status, kicadPath, ngspicePath });
       return status;
     });
 
@@ -185,7 +203,7 @@ export const layer = Layer.effect(
       const toolchain = yield* probeToolchain(false).pipe(
         Effect.orElseSucceed((): ElectronicsToolchainStatus => ({
           enabled: true,
-          allowExternalTools: true,
+          allowExternalTools: false,
           agentAccessEnabled: true,
           kicadCli: { name: "kicad-cli", available: false },
           ngspice: { name: "ngspice", available: false },
@@ -211,13 +229,21 @@ export const layer = Layer.effect(
           message: "Invalid file path.",
         });
       }
-      const rootReal = yield* fs.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+      const rootReal = yield* fs.realPath(cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ElectronicsError({
+              code: "invalid_path",
+              message: "Workspace root could not be resolved.",
+              cause,
+            }),
+        ),
+      );
       const candidate = path.isAbsolute(requestedPath)
         ? path.resolve(requestedPath)
         : path.resolve(rootReal, requestedPath);
 
-      const lexicalRelative = path.relative(rootReal, candidate);
-      if (lexicalRelative.startsWith("..") || path.isAbsolute(lexicalRelative)) {
+      if (!isWithinRoot(path, rootReal, candidate)) {
         return yield* new ElectronicsError({
           code: "invalid_path",
           message: `Path "${requestedPath}" escapes the workspace root.`,
@@ -231,15 +257,24 @@ export const layer = Layer.effect(
           message: `Electronics file "${requestedPath}" was not found in workspace.`,
         });
       }
-      const targetReal = yield* fs.realPath(candidate).pipe(Effect.orElseSucceed(() => candidate));
+      const targetReal = yield* fs.realPath(candidate).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ElectronicsError({
+              code: "invalid_path",
+              message: `Unable to resolve "${requestedPath}".`,
+              cause,
+            }),
+        ),
+      );
 
-      const relative = path.relative(rootReal, targetReal);
-      if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      if (!isWithinRoot(path, rootReal, targetReal)) {
         return yield* new ElectronicsError({
           code: "invalid_path",
           message: `Path "${requestedPath}" escapes the workspace root.`,
         });
       }
+      const relative = path.relative(rootReal, targetReal);
 
       const stat = yield* fs.stat(targetReal).pipe(
         Effect.mapError(
@@ -306,25 +341,50 @@ export const layer = Layer.effect(
 
     const listFiles = Effect.fn("ElectronicsService.listFiles")(function* (cwd: string) {
       yield* ensureEnabled;
-      const rootReal = yield* fs.realPath(cwd).pipe(Effect.orElseSucceed(() => path.resolve(cwd)));
+      const rootReal = yield* fs.realPath(cwd).pipe(
+        Effect.mapError(
+          (cause) =>
+            new ElectronicsError({
+              code: "invalid_path",
+              message: "Workspace root could not be resolved.",
+              cause,
+            }),
+        ),
+      );
       const found: ElectronicsWorkspaceFile[] = [];
+      const visitedDirs = new Set<string>([rootReal]);
+      let entriesVisited = 0;
 
       const walk = Effect.fn("ElectronicsService.walk")(function* (
         dir: string,
         depth: number,
       ): Effect.fn.Return<void> {
-        if (depth > MAX_DISCOVERY_DEPTH || found.length >= MAX_DISCOVERY_FILES) return;
+        if (
+          depth > MAX_DISCOVERY_DEPTH ||
+          found.length >= MAX_DISCOVERY_FILES ||
+          entriesVisited >= MAX_DISCOVERY_ENTRIES
+        ) {
+          return;
+        }
         const entries = yield* fs
           .readDirectory(dir)
           .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
         for (const entry of entries) {
-          if (found.length >= MAX_DISCOVERY_FILES) break;
+          if (found.length >= MAX_DISCOVERY_FILES || entriesVisited >= MAX_DISCOVERY_ENTRIES) {
+            break;
+          }
+          entriesVisited += 1;
           if (IGNORED_DIRECTORIES.has(entry)) continue;
           const fullPath = path.join(dir, entry);
-          const stat = yield* fs.stat(fullPath).pipe(Effect.orElseSucceed(() => null));
+          // Resolve canonical destination to reject symlinks escaping the workspace and prevent cycles.
+          const realFullPath = yield* fs.realPath(fullPath).pipe(Effect.orElseSucceed(() => null));
+          if (!realFullPath || !isWithinRoot(path, rootReal, realFullPath)) continue;
+          const stat = yield* fs.stat(realFullPath).pipe(Effect.orElseSucceed(() => null));
           if (!stat) continue;
           if (stat.type === "Directory") {
-            yield* walk(fullPath, depth + 1);
+            if (visitedDirs.has(realFullPath)) continue;
+            visitedDirs.add(realFullPath);
+            yield* walk(realFullPath, depth + 1);
           } else if (stat.type === "File") {
             const format = detectElectronicsFormat(entry);
             if (format) {
@@ -458,16 +518,18 @@ export const layer = Layer.effect(
       if (wantExternal && (loaded.format === "kicad_sch" || loaded.format === "kicad_pcb")) {
         const toolchain = yield* probeToolchain(false);
         if (toolchain.kicadCli.available) {
-          const ext = yield* runKiCadExternalValidation({
-            absolutePath: loaded.absolutePath,
-            format: loaded.format,
-            ...(settings.electronicsKicadCliPath
-              ? { kicadCliPath: settings.electronicsKicadCliPath }
-              : {}),
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          const ext = yield* externalToolSemaphore.withPermits(1)(
+            runKiCadExternalValidation({
+              absolutePath: loaded.absolutePath,
+              format: loaded.format,
+              ...(settings.electronicsKicadCliPath
+                ? { kicadCliPath: settings.electronicsKicadCliPath }
+                : {}),
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
           );
           if (ext.ran) {
             enginesUsed.push(ext.source);
@@ -529,43 +591,48 @@ export const layer = Layer.effect(
       const kind = input.kind ?? "dc_op";
 
       let result: ElectronicsSimulationResult | null = null;
+      let externalNote: string | undefined;
       const wantExternal =
         (input.useExternalToolchain ?? true) && settings.electronicsAllowExternalTools;
 
       if (wantExternal && loaded.format === "spice") {
         const toolchain = yield* probeToolchain(false);
         if (toolchain.ngspice.available) {
-          result = yield* runNgspiceSimulation({
-            model: loaded.model,
-            spiceSource: loaded.content,
-            workspaceRoot: input.cwd,
-            sourceFilePath: loaded.absolutePath,
-            kind,
-            ...(settings.electronicsNgspicePath
-              ? { ngspicePath: settings.electronicsNgspicePath }
-              : {}),
-            ...(input.outputNode !== undefined ? { outputNode: input.outputNode } : {}),
-            ...(input.startFreqHz !== undefined ? { startFreqHz: input.startFreqHz } : {}),
-            ...(input.stopFreqHz !== undefined ? { stopFreqHz: input.stopFreqHz } : {}),
-            ...(input.pointsPerDecade !== undefined
-              ? { pointsPerDecade: input.pointsPerDecade }
-              : {}),
-            ...(input.stopTimeSeconds !== undefined
-              ? { stopTimeSeconds: input.stopTimeSeconds }
-              : {}),
-            ...(input.stepTimeSeconds !== undefined
-              ? { stepTimeSeconds: input.stepTimeSeconds }
-              : {}),
-          }).pipe(
-            Effect.provideService(FileSystem.FileSystem, fs),
-            Effect.provideService(Path.Path, path),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          const outcome = yield* externalToolSemaphore.withPermits(1)(
+            runNgspiceSimulation({
+              model: loaded.model,
+              spiceSource: loaded.content,
+              workspaceRoot: input.cwd,
+              sourceFilePath: loaded.absolutePath,
+              kind,
+              ...(settings.electronicsNgspicePath
+                ? { ngspicePath: settings.electronicsNgspicePath }
+                : {}),
+              ...(input.outputNode !== undefined ? { outputNode: input.outputNode } : {}),
+              ...(input.startFreqHz !== undefined ? { startFreqHz: input.startFreqHz } : {}),
+              ...(input.stopFreqHz !== undefined ? { stopFreqHz: input.stopFreqHz } : {}),
+              ...(input.pointsPerDecade !== undefined
+                ? { pointsPerDecade: input.pointsPerDecade }
+                : {}),
+              ...(input.stopTimeSeconds !== undefined
+                ? { stopTimeSeconds: input.stopTimeSeconds }
+                : {}),
+              ...(input.stepTimeSeconds !== undefined
+                ? { stepTimeSeconds: input.stepTimeSeconds }
+                : {}),
+            }).pipe(
+              Effect.provideService(FileSystem.FileSystem, fs),
+              Effect.provideService(Path.Path, path),
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            ),
           );
+          result = outcome.result;
+          externalNote = outcome.rejectionNote;
         }
       }
 
       if (result === null) {
-        result = yield* Effect.try({
+        const builtinResult = yield* Effect.try({
           try: () =>
             runBuiltinMnaSimulation(loaded.model, {
               kind,
@@ -589,6 +656,22 @@ export const layer = Layer.effect(
               cause,
             }),
         });
+        const hasSkippedNonlinear = builtinResult.notes.some((n) =>
+          n.startsWith("Skipped non-linear/unparsed elements"),
+        );
+        if (externalNote !== undefined && hasSkippedNonlinear) {
+          return yield* new ElectronicsError({
+            code: "simulation_failed",
+            message: `External ngspice failed (${externalNote}) and circuit contains nonlinear elements unsupported by the built-in linear MNA solver.`,
+          });
+        }
+        result =
+          externalNote !== undefined
+            ? {
+                ...builtinResult,
+                notes: [`External ngspice skipped: ${externalNote}`, ...builtinResult.notes],
+              }
+            : builtinResult;
       }
 
       if (threadId !== undefined) {
@@ -628,9 +711,12 @@ export const layer = Layer.effect(
       readonly selectedNet?: string | undefined;
     }) {
       yield* ensureEnabled;
+      const startGen = yield* currentCloseGeneration(input.threadId);
       const loaded = yield* loadAndParse(input.cwd, input.filePath);
       const now = yield* nextMonotonicIso(input.threadId);
-      const session = yield* updateThreadSession(input.threadId, (existing) => ({
+      const nextSession = (
+        existing: ElectronicsThreadSession | undefined,
+      ): ElectronicsThreadSession => ({
         threadId: input.threadId,
         filePath: loaded.relativePath,
         format: loaded.format,
@@ -651,8 +737,9 @@ export const layer = Layer.effect(
           : {}),
         openedAt: existing?.openedAt ?? now,
         updatedAt: now,
-      }));
-      return session!;
+      });
+      const committed = yield* updateThreadSession(input.threadId, nextSession, startGen);
+      return committed ?? nextSession(undefined);
     });
 
     const closePanel = Effect.fn("ElectronicsService.closePanel")(function* (threadId: ThreadId) {

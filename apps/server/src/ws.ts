@@ -3415,8 +3415,18 @@ export const layerWsRpc = (
         [WS_METHODS.electronicsInspect]: (input) =>
           electronicsService.inspect(input.cwd, input.filePath),
         [WS_METHODS.electronicsTracePath]: (input) => electronicsService.tracePath(input),
-        [WS_METHODS.electronicsValidate]: (input) => electronicsService.validate(input),
-        [WS_METHODS.electronicsSimulate]: (input) => electronicsService.simulate(input),
+        [WS_METHODS.electronicsValidate]: (input) =>
+          electronicsService.validate(
+            currentSession.scopes.includes(AuthOrchestrationOperateScope)
+              ? input
+              : { ...input, useExternalToolchain: false },
+          ),
+        [WS_METHODS.electronicsSimulate]: (input) =>
+          electronicsService.simulate(
+            currentSession.scopes.includes(AuthOrchestrationOperateScope)
+              ? input
+              : { ...input, useExternalToolchain: false },
+          ),
         [WS_METHODS.electronicsToolchainStatus]: (input) =>
           electronicsService.getToolchainStatus(input.refresh ?? false),
         [WS_METHODS.electronicsOpenPanel]: (input) =>

@@ -4197,7 +4197,11 @@ export default function ChatView(props: ChatViewProps) {
           pullRequestAvailable={pullRequestSurfaceAvailable}
           pullRequestsAvailable={linkedItemsSurfaceAvailable}
           deviceAvailable={activeThreadRef !== null}
-          electronicsAvailable={activeThreadRef !== null && activeProject !== null}
+          electronicsAvailable={
+            activeThreadRef !== null &&
+            activeProject !== null &&
+            activeProjectSettings.settings.enableElectronicsWorkbench
+          }
           sideChatAvailable={sideChat.available}
           sideChatDisabledReason={sideChatDisabledReason}
         >

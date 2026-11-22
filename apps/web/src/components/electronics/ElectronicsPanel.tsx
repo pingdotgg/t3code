@@ -26,6 +26,7 @@ import { Button } from "../ui/button";
 import { Spinner } from "../ui/spinner";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { electronicsEnvironment, useElectronicsState } from "../../state/electronics";
+import { formatEnvironmentQueryError } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { BomPanel } from "./BomPanel";
 import { CircuitCanvas } from "./CircuitCanvas";
@@ -108,6 +109,9 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   );
 
   const [lastSyncedAt, setLastSyncedAt] = useState<string>("");
+  const [lastSyncedTraceKey, setLastSyncedTraceKey] = useState<string>("");
+  const [traceError, setTraceError] = useState<string | null>(null);
+  const [validationError, setValidationError] = useState<string | null>(null);
   const activeContextRef = useRef({
     env: threadRef.environmentId,
     cwd: workspaceRoot,
@@ -115,17 +119,28 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
   });
   const reqSeqRef = useRef({ files: 0, model: 0, trace: 0, validate: 0, sim: 0 });
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks latest active context so stale async command responses are discarded
+  // Reset running/transient states cleanly whenever the active environment, workspace, or file changes.
+  const resetPendingOperations = useStableCallback(() => {
+    reqSeqRef.current.trace += 1;
+    reqSeqRef.current.validate += 1;
+    reqSeqRef.current.sim += 1;
+    setTraceRunning(false);
+    setValidationRunning(false);
+    setSimRunning(false);
+    setTraceError(null);
+    setValidationError(null);
+    setSimError(null);
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks latest active context and clears pending operation flags so stale async completions never strand buttons disabled
   useEffect(() => {
     activeContextRef.current = {
       env: threadRef.environmentId,
       cwd: workspaceRoot,
       file: selectedFile,
     };
-    reqSeqRef.current.trace += 1;
-    reqSeqRef.current.validate += 1;
-    reqSeqRef.current.sim += 1;
-  }, [threadRef.environmentId, workspaceRoot, selectedFile]);
+    resetPendingOperations();
+  }, [threadRef.environmentId, workspaceRoot, selectedFile, resetPendingOperations]);
 
   const isCurrentFileContext = (env: string, cwd: string | null, file: string) =>
     activeContextRef.current.env === env &&
@@ -136,21 +151,32 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
     setLastSyncedAt(threadSession.updatedAt);
     if (threadSession.filePath !== selectedFile) {
       setSelectedFile(threadSession.filePath);
+      setModel(null);
       setSelectedNet(null);
       setSelectedRef(null);
       setTraceResult(null);
       setValidationReport(null);
       setSimResult(null);
+      setSimOutputNode("");
+      setTraceError(null);
+      setValidationError(null);
       setSimError(null);
+      setTraceRunning(false);
+      setValidationRunning(false);
+      setSimRunning(false);
     }
     setActiveTab(threadSession.activeTab);
     if (threadSession.selectedNet !== undefined) {
       setSelectedNet(threadSession.selectedNet);
     }
     if (threadSession.lastTrace !== undefined) {
+      const traceKey = `${threadSession.filePath}:${threadSession.lastTrace.from}:${threadSession.lastTrace.to ?? ""}:${threadSession.lastTrace.hops.length}`;
       setTraceResult(threadSession.lastTrace);
-      setTraceFrom(threadSession.lastTrace.from);
-      setTraceTo(threadSession.lastTrace.to ?? "");
+      if (traceKey !== lastSyncedTraceKey) {
+        setLastSyncedTraceKey(traceKey);
+        setTraceFrom(threadSession.lastTrace.from);
+        setTraceTo(threadSession.lastTrace.to ?? "");
+      }
     }
     if (threadSession.lastValidation !== undefined) {
       setValidationReport(threadSession.lastValidation);
@@ -184,7 +210,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
         setErrorMessage(null);
         setSelectedFile((current) => current || result.value.files[0]?.relativePath || "");
       } else {
-        setErrorMessage(String(result.cause));
+        setErrorMessage(formatEnvironmentQueryError(result.cause));
       }
     });
   };
@@ -209,7 +235,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
         setErrorMessage(null);
       } else {
         setModel(null);
-        setErrorMessage(gt("Unable to parse circuit file."));
+        setErrorMessage(formatEnvironmentQueryError(result.cause));
       }
     });
   };
@@ -230,7 +256,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
         setErrorMessage(null);
         setSelectedFile((current) => current || result.value.files[0]?.relativePath || "");
       } else {
-        setErrorMessage(String(result.cause));
+        setErrorMessage(formatEnvironmentQueryError(result.cause));
       }
     });
     return () => {
@@ -254,13 +280,13 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
         setErrorMessage(null);
       } else {
         setModel(null);
-        setErrorMessage(gt("Unable to parse circuit file."));
+        setErrorMessage(formatEnvironmentQueryError(result.cause));
       }
     });
     return () => {
       active = false;
     };
-  }, [selectedFile, workspaceRoot, threadRef.environmentId, inspectCmd, gt]);
+  }, [selectedFile, workspaceRoot, threadRef.environmentId, inspectCmd]);
 
   const handleRunTrace = () => {
     if (!workspaceRoot || !selectedFile || traceFrom.trim().length === 0) return;
@@ -269,6 +295,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
     const reqFile = selectedFile;
     const seq = ++reqSeqRef.current.trace;
     setTraceRunning(true);
+    setTraceError(null);
     void traceCmd({
       environmentId: reqEnv,
       input: {
@@ -288,6 +315,8 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
         if (result.value.highlightedNets[0]) {
           setSelectedNet(result.value.highlightedNets[0]);
         }
+      } else {
+        setTraceError(formatEnvironmentQueryError(result.cause));
       }
     });
   };
@@ -299,6 +328,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
     const reqFile = selectedFile;
     const seq = ++reqSeqRef.current.validate;
     setValidationRunning(true);
+    setValidationError(null);
     void validateCmd({
       environmentId: reqEnv,
       input: { cwd: reqCwd, filePath: reqFile, useExternalToolchain: true },
@@ -309,6 +339,8 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
       setValidationRunning(false);
       if (result._tag === "Success") {
         setValidationReport(result.value);
+      } else {
+        setValidationError(formatEnvironmentQueryError(result.cause));
       }
     });
   };
@@ -338,7 +370,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
       if (result._tag === "Success") {
         setSimResult(result.value);
       } else {
-        setSimError(gt("Simulation failed. Verify the circuit includes a ground node and source."));
+        setSimError(formatEnvironmentQueryError(result.cause));
       }
     });
   };
@@ -369,11 +401,21 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
           onChange={(e) => {
             const next = e.target.value;
             setSelectedFile(next);
+            setModel(null);
             setSelectedNet(null);
             setSelectedRef(null);
             setTraceResult(null);
+            setTraceFrom("");
+            setTraceTo("");
             setValidationReport(null);
             setSimResult(null);
+            setSimOutputNode("");
+            setTraceError(null);
+            setValidationError(null);
+            setSimError(null);
+            setTraceRunning(false);
+            setValidationRunning(false);
+            setSimRunning(false);
           }}
           className="h-7 min-w-0 flex-1 truncate rounded-md border border-border bg-card px-2 font-mono text-xs text-foreground"
         >
@@ -543,32 +585,46 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
           )}
 
           {activeTab === "trace" && (
-            <PathTracerPanel
-              model={model}
-              fromValue={traceFrom}
-              toValue={traceTo}
-              traversePassives={traversePassives}
-              running={traceRunning}
-              result={traceResult}
-              onChangeFrom={setTraceFrom}
-              onChangeTo={setTraceTo}
-              onChangeTraversePassives={setTraversePassives}
-              onRunTrace={handleRunTrace}
-              onHighlightOnCanvas={(net, ref) => {
-                if (net) setSelectedNet(net);
-                if (ref) setSelectedRef(ref);
-                setActiveTab("canvas");
-              }}
-            />
+            <>
+              {traceError && (
+                <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                  {traceError}
+                </div>
+              )}
+              <PathTracerPanel
+                model={model}
+                fromValue={traceFrom}
+                toValue={traceTo}
+                traversePassives={traversePassives}
+                running={traceRunning}
+                result={traceResult}
+                onChangeFrom={setTraceFrom}
+                onChangeTo={setTraceTo}
+                onChangeTraversePassives={setTraversePassives}
+                onRunTrace={handleRunTrace}
+                onHighlightOnCanvas={(net, ref) => {
+                  if (net) setSelectedNet(net);
+                  if (ref) setSelectedRef(ref);
+                  setActiveTab("canvas");
+                }}
+              />
+            </>
           )}
 
           {activeTab === "checks" && (
-            <ValidationPanel
-              report={validationReport}
-              running={validationRunning}
-              onRunValidate={handleRunValidate}
-              onFocusIssue={handleFocusIssue}
-            />
+            <>
+              {validationError && (
+                <div className="mx-3 mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-2.5 py-1.5 text-xs text-destructive">
+                  {validationError}
+                </div>
+              )}
+              <ValidationPanel
+                report={validationReport}
+                running={validationRunning}
+                onRunValidate={handleRunValidate}
+                onFocusIssue={handleFocusIssue}
+              />
+            </>
           )}
 
           {activeTab === "simulate" && (

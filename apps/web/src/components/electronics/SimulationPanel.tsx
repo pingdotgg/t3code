@@ -78,10 +78,22 @@ export function SimulationPanel(props: SimulationPanelProps) {
   const allPoints = series.flatMap((s) => s.points);
   const xLog = result?.xAxisLog ?? false;
 
-  const xMin = allPoints.length > 0 ? Math.min(...allPoints.map((p) => p.x)) : 0;
-  const xMax = allPoints.length > 0 ? Math.max(...allPoints.map((p) => p.x)) : 1;
-  const rawYMin = allPoints.length > 0 ? Math.min(...allPoints.map((p) => p.y)) : 0;
-  const rawYMax = allPoints.length > 0 ? Math.max(...allPoints.map((p) => p.y)) : 1;
+  let xMin = 0;
+  let xMax = 1;
+  let rawYMin = 0;
+  let rawYMax = 1;
+  if (allPoints.length > 0) {
+    xMin = Infinity;
+    xMax = -Infinity;
+    rawYMin = Infinity;
+    rawYMax = -Infinity;
+    for (const p of allPoints) {
+      if (p.x < xMin) xMin = p.x;
+      if (p.x > xMax) xMax = p.x;
+      if (p.y < rawYMin) rawYMin = p.y;
+      if (p.y > rawYMax) rawYMax = p.y;
+    }
+  }
   const ySpan = Math.max(1e-6, rawYMax - rawYMin);
   const yMin = rawYMin - ySpan * 0.08;
   const yMax = rawYMax + ySpan * 0.08;

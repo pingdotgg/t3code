@@ -210,8 +210,21 @@ vi.mock("~/state/electronics", () => ({
   }),
 }));
 
+const simControl: {
+  delayNext: boolean;
+  resolve: ((value: unknown) => void) | null;
+} = {
+  delayNext: false,
+  resolve: null,
+};
+
+function resolveDeferredSim(value: unknown) {
+  simControl.resolve?.(value);
+  simControl.resolve = null;
+}
+
 vi.mock("~/state/use-atom-command", () => ({
-  useAtomCommand: (cmd: string) => async () => {
+  useAtomCommand: (cmd: string) => async (payload?: { input?: { filePath?: string } }) => {
     switch (cmd) {
       case "listFiles":
         return Exit.succeed({
@@ -222,16 +235,35 @@ vi.mock("~/state/use-atom-command", () => ({
               format: "kicad_sch",
               sizeBytes: 2048,
             },
+            {
+              relativePath: "boards/filter.cir",
+              name: "filter.cir",
+              format: "spice",
+              sizeBytes: 512,
+            },
           ],
           toolchain: mockState.toolchain,
         });
       case "inspect":
-        return Exit.succeed(SAMPLE_MODEL);
+        return Exit.succeed({
+          ...SAMPLE_MODEL,
+          filePath: payload?.input?.filePath ?? SAMPLE_MODEL.filePath,
+          title:
+            payload?.input?.filePath === "boards/filter.cir"
+              ? "RC Filter Deck"
+              : SAMPLE_MODEL.title,
+        });
       case "tracePath":
         return Exit.succeed(SAMPLE_TRACE);
       case "validate":
         return Exit.succeed(SAMPLE_VALIDATION);
       case "simulate":
+        if (simControl.delayNext) {
+          simControl.delayNext = false;
+          return await new Promise((resolve) => {
+            simControl.resolve = resolve;
+          });
+        }
         return Exit.succeed(SAMPLE_SIM);
       default:
         return Exit.succeed({});
@@ -275,5 +307,35 @@ describe("ElectronicsPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: /BOM/i }));
     await expect.element(screen.getByText("AMS1117-3.3")).toBeVisible();
     await expect.element(screen.getByText("SOT-223")).toBeVisible();
+  });
+
+  it("clears running flags and discards stale results when switching files mid-simulation", async () => {
+    const screen = await render(
+      <div className="h-[720px] w-[720px]">
+        <ElectronicsPanel threadRef={threadRef} workspaceRoot="/tmp/hw-project" visible={true} />
+      </div>,
+    );
+
+    await expect.element(screen.getByText("Sensor Power & Divider")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: /Simulate/i }));
+
+    simControl.delayNext = true;
+    simControl.resolve = null;
+    await userEvent.click(screen.getByRole("button", { name: /Run Simulation/i }));
+    await expect.element(screen.getByRole("button", { name: /Simulating…/i })).toBeDisabled();
+
+    // Switch files while the first simulation is still in flight
+    const fileSelect = screen.getByLabelText("Circuit design file");
+    await userEvent.selectOptions(fileSelect, "boards/filter.cir");
+    await expect.element(screen.getByText("RC Filter Deck")).toBeVisible();
+
+    // Run button must immediately be re-enabled (not stuck in Simulating…)
+    await expect.element(screen.getByRole("button", { name: /Run Simulation/i })).toBeEnabled();
+
+    // Resolving the stale first simulation must NOT paint its result onto the new file
+    resolveDeferredSim(Exit.succeed(SAMPLE_SIM));
+    await Promise.resolve();
+    await Promise.resolve();
+    await expect.element(screen.getByText(/1\.59 kHz/i)).not.toBeInTheDocument();
   });
 });

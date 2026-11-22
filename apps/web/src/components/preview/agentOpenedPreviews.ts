@@ -224,12 +224,19 @@ const electronicsSessionBaselines = new Map<EnvironmentId, Map<ThreadId, string>
 function applyElectronicsSnapshot(
   environmentId: EnvironmentId,
   state: ElectronicsServiceState,
+  options: { readonly sheetLayout: boolean },
 ): void {
   const previous = electronicsSessionBaselines.get(environmentId);
   const next = new Map<ThreadId, string>();
   for (const session of state.sessions) {
-    next.set(session.threadId, session.updatedAt);
-    if (previous !== undefined && previous.get(session.threadId) !== session.updatedAt) {
+    // Track session identity by `openedAt` so only newly opened sessions auto-open the panel;
+    // subsequent read-only updates (trace/validate/simulate) do not steal focus or undo dismissal.
+    next.set(session.threadId, session.openedAt);
+    if (
+      !options.sheetLayout &&
+      previous !== undefined &&
+      previous.get(session.threadId) !== session.openedAt
+    ) {
       useRightPanelStore
         .getState()
         .open(scopeThreadRef(environmentId, session.threadId), "electronics");
@@ -256,7 +263,9 @@ function watchEnvironmentDevices(environmentId: EnvironmentId): () => void {
     (result) => {
       const state = AsyncResult.getOrElse(result, () => null);
       if (state === null) return;
-      applyElectronicsSnapshot(environmentId, state);
+      applyElectronicsSnapshot(environmentId, state, {
+        sheetLayout: window.matchMedia(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY).matches,
+      });
     },
     { immediate: true },
   );

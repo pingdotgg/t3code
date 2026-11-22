@@ -28,6 +28,15 @@ export function ElectronicsSettings() {
 
   const [kicadPathDraft, setKicadPathDraft] = useState(settings.electronicsKicadCliPath);
   const [ngspicePathDraft, setNgspicePathDraft] = useState(settings.electronicsNgspicePath);
+  const [syncedScopeKey, setSyncedScopeKey] = useState(
+    `${environmentId ?? ""}:${settings.electronicsKicadCliPath}:${settings.electronicsNgspicePath}`,
+  );
+  const currentScopeKey = `${environmentId ?? ""}:${settings.electronicsKicadCliPath}:${settings.electronicsNgspicePath}`;
+  if (currentScopeKey !== syncedScopeKey) {
+    setSyncedScopeKey(currentScopeKey);
+    setKicadPathDraft(settings.electronicsKicadCliPath);
+    setNgspicePathDraft(settings.electronicsNgspicePath);
+  }
   const [probing, setProbing] = useState(false);
 
   const handleSavePaths = () => {
@@ -35,6 +44,12 @@ export function ElectronicsSettings() {
       electronicsKicadCliPath: kicadPathDraft.trim(),
       electronicsNgspicePath: ngspicePathDraft.trim(),
     });
+    if (environmentId) {
+      setProbing(true);
+      void probeToolchain({ environmentId, input: { refresh: true } }).then(() => {
+        setProbing(false);
+      });
+    }
   };
 
   const handleReprobe = () => {

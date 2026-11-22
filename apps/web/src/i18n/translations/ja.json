@@ -5461,8 +5461,6 @@
   "1a5738f81362c351": "KiCad PCB",
   "ce20c0f9a773976d": "SPICE",
   "f4a72f7646ff16fe": "Circuit JSON",
-  "fe6d415bf0d00489": "Unable to parse circuit file.",
-  "cdd2db7dde02e28b": "Simulation failed. Verify the circuit includes a ground node and source.",
   "6cf3b9807c2cdea2": "Circuit design file",
   "a25969c0f4e9931d": "No circuit files detected",
   "191550822a5ae5ce": "Refresh workspace circuit files",

@@ -298,27 +298,92 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     expect(finalV).toBeGreaterThan(4.9);
   });
 
-  it("handles SPICE femto suffix, case-sensitive nets, SPICE VSS, AC excitation, and MNA cap", () => {
+  it("handles SPICE femto suffix, case-insensitive SPICE nets, 1M vs 1m, value params, IC1, SPICE VSS, AC excitation, and MNA cap", () => {
     expect(parseEngineeringNumber("10f", { spice: true })).toBeCloseTo(1e-14, 20);
     expect(parseEngineeringNumber("10uF")).toBeCloseTo(1e-5, 12);
     expect(parseEngineeringNumber("1F")).toBeCloseTo(1, 12);
+    // KiCad/schematic uppercase M is Megaohm, lowercase m is milliohm; SPICE keeps m/M as milli and meg as Mega
+    expect(parseEngineeringNumber("1M")).toBeCloseTo(1e6, 2);
+    expect(parseEngineeringNumber("1m")).toBeCloseTo(1e-3, 9);
+    expect(parseEngineeringNumber("1M", { spice: true })).toBeCloseTo(1e-3, 9);
+    expect(parseEngineeringNumber("1meg", { spice: true })).toBeCloseTo(1e6, 2);
+    // Trailing SPICE/KiCad parameters like TC=0,0 do not break engineering value parsing
+    expect(parseEngineeringNumber("1k TC=0,0", { spice: true })).toBeCloseTo(1000, 6);
 
-    // Case-sensitive nets DATA vs data must not collide
+    // SPICE node names are case-insensitive (in === IN)
     const caseModel = parseElectronicsFile(
       "sim/case.cir",
-      "* Case nets\nV1 DATA 0 5\nR1 DATA 0 1k\nR2 data 0 2k\n.end\n",
+      "* Mixed case divider\nV1 IN 0 5\nR1 in out 1k TC=0,0\nR2 OUT 0 1k\n.end\n",
     );
-    const traceLower = traceCircuitPath(caseModel, { from: "data", to: "R2.1" });
-    expect(traceLower.connected).toBe(true);
-    expect(traceLower.directNet).toBe("data");
+    const caseDc = runBuiltinMnaSimulation(caseModel, { kind: "dc_op", outputNode: "OUT" });
+    expect(caseDc.nodeVoltages.find((n) => n.node === "out")?.voltageV).toBeCloseTo(2.5, 4);
+    const traceCase = traceCircuitPath(caseModel, { from: "IN", to: "R1.1" });
+    expect(traceCase.connected).toBe(true);
+    expect(traceCase.directNet).toBe("in");
+
+    // Non-SPICE IC1 / LED1 / CON1 must NOT be misclassified as I/L/C sources/reactives
+    const icDividerSch = `(kicad_sch
+  (lib_symbols
+    (symbol "Device:R"
+      (symbol "R_1_1"
+        (pin passive line (at 0 2 270) (length 1) (name "1") (number "1"))
+        (pin passive line (at 0 -2 90) (length 1) (name "2") (number "2"))
+      )
+    )
+    (symbol "Simulation_SPICE:VDC"
+      (symbol "VDC_1_1"
+        (pin power_out line (at 0 2 270) (length 1) (name "+") (number "1"))
+        (pin power_in line (at 0 -2 90) (length 1) (name "-") (number "2"))
+      )
+    )
+    (symbol "Sensor:IC"
+      (symbol "IC_1_1"
+        (pin input line (at -2 0 0) (length 1) (name "IN") (number "1"))
+        (pin power_in line (at 2 0 180) (length 1) (name "GND") (number "2"))
+      )
+    )
+    (symbol "power:GND" (power)
+      (symbol "GND_0_1"
+        (pin power_in line (at 0 0 90) (length 0) (name "GND") (number "1"))
+      )
+    )
+  )
+  (symbol (lib_id "Simulation_SPICE:VDC") (at 10 25 0) (unit 1) (property "Reference" "V1") (property "Value" "5"))
+  (symbol (lib_id "Device:R") (at 20 20 0) (unit 1) (property "Reference" "R1") (property "Value" "1M"))
+  (symbol (lib_id "Device:R") (at 20 30 0) (unit 1) (property "Reference" "R2") (property "Value" "1k"))
+  (symbol (lib_id "Sensor:IC") (at 40 25 0) (unit 1) (property "Reference" "IC1") (property "Value" "10u"))
+  (symbol (lib_id "power:GND") (at 20 32 0) (unit 1) (property "Reference" "#PWR01") (property "Value" "GND"))
+  (wire (pts (xy 10 23) (xy 10 18)))
+  (wire (pts (xy 10 18) (xy 20 18)))
+  (wire (pts (xy 10 27) (xy 10 32)))
+  (wire (pts (xy 10 32) (xy 20 32)))
+  (wire (pts (xy 20 22) (xy 20 28)))
+  (wire (pts (xy 20 25) (xy 38 25)))
+  (wire (pts (xy 42 25) (xy 42 32)))
+  (wire (pts (xy 20 32) (xy 42 32)))
+  (label "+5V" (at 20 18 0))
+  (label "VSENSE" (at 20 25 0))
+)`;
+    const icModel = parseElectronicsFile("sch/ic_divider.kicad_sch", icDividerSch);
+    const icDc = runBuiltinMnaSimulation(icModel, { kind: "dc_op", outputNode: "VSENSE" });
+    // 5V * 1k / (1M + 1k) ≈ 4.995 mV, NOT 5V or corrupted by IC1 as 10uA current source
+    const vsense = icDc.nodeVoltages.find((n) => n.node === "VSENSE")?.voltageV;
+    expect(vsense).toBeDefined();
+    expect(vsense!).toBeCloseTo(0.004995, 5);
+    expect(icDc.notes.some((n) => n.includes("IC1"))).toBe(true);
 
     // SPICE node VSS is NOT implicitly forced to ground 0
     const vssModel = parseElectronicsFile(
       "sim/vss.cir",
       "* Split supply\nVneg VSS 0 -5\nR1 VSS 0 1k\n.end\n",
     );
-    const vssDc = runBuiltinMnaSimulation(vssModel, { kind: "dc_op", outputNode: "VSS" });
-    expect(vssDc.nodeVoltages.find((n) => n.node === "VSS")?.voltageV).toBeCloseTo(-5, 4);
+    const vssDc = runBuiltinMnaSimulation(vssModel, { kind: "dc_op", outputNode: "vss" });
+    expect(vssDc.nodeVoltages.find((n) => n.node === "vss")?.voltageV).toBeCloseTo(-5, 4);
+
+    // Invalid transient stopTimeSeconds=0 fails cleanly instead of producing NaN
+    expect(() =>
+      runBuiltinMnaSimulation(vssModel, { kind: "transient", stopTimeSeconds: 0 }),
+    ).toThrow(/positive finite/i);
 
     // DC-only supply must NOT be excited during AC sweep when another source has AC 1
     const dualSrc = parseElectronicsFile(
@@ -345,8 +410,61 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     expect(() => runBuiltinMnaSimulation(hugeModel, { kind: "dc_op" })).toThrow(/exceeding/i);
   });
 
-  it("handles KiCad multi-unit symbols, KiCad 10 name-based PCB nets, layer/via checks, and Circuit JSON net IDs", () => {
-    // KiCad multi-unit symbol: unit 1 and unit 2 of U1 share refdes without duplicate_reference
+  it("handles PWR_FLAG, derived lib symbols (extends), extreme coordinates, multi-unit BOM/trace, and PCB copper gaps", () => {
+    // PWR_FLAG on both +5V and GND must NOT short them into one PWR_FLAG net, and must satisfy power_out check
+    const pwrFlagSch = `(kicad_sch
+  (lib_symbols
+    (symbol "power:PWR_FLAG" (power)
+      (symbol "PWR_FLAG_0_1"
+        (pin power_out line (at 0 0 90) (length 0) (name "pwr") (number "1"))
+      )
+    )
+    (symbol "power:+5V" (power)
+      (symbol "+5V_0_1"
+        (pin power_in line (at 0 0 270) (length 0) (name "+5V") (number "1"))
+      )
+    )
+    (symbol "power:GND" (power)
+      (symbol "GND_0_1"
+        (pin power_in line (at 0 0 90) (length 0) (name "GND") (number "1"))
+      )
+    )
+    (symbol "Device:R"
+      (symbol "R_1_1"
+        (pin passive line (at 0 2 270) (length 1) (name "1") (number "1"))
+        (pin passive line (at 0 -2 90) (length 1) (name "2") (number "2"))
+      )
+    )
+    (symbol "Device:R_Derived" (extends "Device:R"))
+  )
+  (symbol (lib_id "power:+5V") (at 10 10 0) (unit 1) (property "Reference" "#PWR01") (property "Value" "+5V"))
+  (symbol (lib_id "power:PWR_FLAG") (at 10 10 0) (unit 1) (property "Reference" "#FLG01") (property "Value" "PWR_FLAG"))
+  (symbol (lib_id "Device:R_Derived") (at 10 20 0) (unit 1) (property "Reference" "R1") (property "Value" "10k"))
+  (symbol (lib_id "power:GND") (at 10 30 0) (unit 1) (property "Reference" "#PWR02") (property "Value" "GND"))
+  (symbol (lib_id "power:PWR_FLAG") (at 10 30 0) (unit 1) (property "Reference" "#FLG02") (property "Value" "PWR_FLAG"))
+  (wire (pts (xy 10 10) (xy 10 18)))
+  (wire (pts (xy 10 22) (xy 10 30)))
+)`;
+    const pwrModel = parseElectronicsFile("sch/pwrflag.kicad_sch", pwrFlagSch);
+    const pwrNetNames = pwrModel.nets.map((n) => n.name);
+    expect(pwrNetNames).toContain("+5V");
+    expect(pwrNetNames).toContain("GND");
+    expect(pwrNetNames).not.toContain("PWR_FLAG");
+    // Derived symbol R_Derived inherited its 2 pins from Device:R
+    const derivedR1 = pwrModel.components.find((c) => c.ref === "R1");
+    expect(derivedR1?.pins).toHaveLength(2);
+    const pwrVal = runBuiltinCircuitValidation(pwrModel);
+    expect(pwrVal.issues.some((i) => i.code === "power_ground_short")).toBe(false);
+    expect(pwrVal.issues.some((i) => i.code === "undriven_power_net")).toBe(false);
+
+    // Extreme coordinate (1e20) must not hang spatial grid indexing
+    const extremeSch = `(kicad_sch
+  (wire (pts (xy 0 0) (xy 1e20 0)))
+)`;
+    const extremeModel = parseElectronicsFile("sch/extreme.kicad_sch", extremeSch);
+    expect(extremeModel.parseWarnings.some((w) => /coordinate/i.test(w))).toBe(true);
+
+    // Multi-unit symbol: BOM counts U1 once (qty 1), and traceCircuitPath finds unit 2 pin U1.5
     const multiUnitSch = `(kicad_sch
   (lib_symbols
     (symbol "OpAmp:LM358"
@@ -366,11 +484,36 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     (property "Reference" "U1")
     (property "Value" "LM358")
   )
+  (wire (pts (xy 45 20) (xy 40 20)))
+  (label "SIG_IN2" (at 40 20 0))
 )`;
     const muModel = parseElectronicsFile("sch/multi.kicad_sch", multiUnitSch);
     expect(muModel.components.map((c) => c.pins.map((p) => p.number))).toEqual([["3"], ["5"]]);
+    expect(muModel.bom.find((b) => b.value === "LM358")?.quantity).toBe(1);
+    const muTrace = traceCircuitPath(muModel, { from: "U1.5", to: "SIG_IN2" });
+    expect(muTrace.connected).toBe(true);
     const muVal = runBuiltinCircuitValidation(muModel);
     expect(muVal.issues.some((i) => i.code === "duplicate_reference")).toBe(false);
+
+    // PCB copper width tolerance: 0.10mm tracks with a 0.20mm gap must be flagged unrouted AND traceCircuitPath returns connected: false
+    const pcbGap = `(kicad_pcb
+  (footprint "R_0603" (layer "F.Cu") (at 10 10)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "SIG"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 20 10)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "SIG"))
+  )
+  (segment (start 10 10) (end 14.9 10) (width 0.1) (layer "F.Cu") (net "SIG"))
+  (segment (start 15.1 10) (end 20 10) (width 0.1) (layer "F.Cu") (net "SIG"))
+)`;
+    const gapModel = parseElectronicsFile("pcb/gap.kicad_pcb", pcbGap);
+    const gapVal = runBuiltinCircuitValidation(gapModel);
+    expect(gapVal.issues.some((i) => i.code === "unrouted_pcb_net" && i.net === "SIG")).toBe(true);
+    const gapTrace = traceCircuitPath(gapModel, { from: "R1.1", to: "R2.1" });
+    expect(gapTrace.connected).toBe(false);
+    expect(gapTrace.warnings.some((w) => /unrouted/i.test(w))).toBe(true);
 
     // KiCad 10 name-based PCB nets: F.Cu pads with a B.Cu track and no via MUST flag unrouted
     const kicad10Pcb = `(kicad_pcb
