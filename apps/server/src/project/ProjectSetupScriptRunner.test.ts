@@ -5,6 +5,7 @@ import {
   ProjectId,
   TerminalNotRunningError,
   type TerminalEvent,
+  type TerminalOpenInput,
   type TerminalSessionSnapshot,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -48,14 +49,19 @@ const makeHarness = Effect.fn(function* (options: {
   readonly shell?: string | null;
 }) {
   const listeners = new Set<(event: TerminalEvent) => Effect.Effect<void>>();
+  const opens: TerminalOpenInput[] = [];
   const writes = yield* Queue.unbounded<string>();
   const outputLines = yield* Queue.unbounded<string>();
   const terminals = Layer.mock(TerminalManager.TerminalManager)({
-    open: () =>
-      (options.opening
-        ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
-        : Effect.void
-      ).pipe(Effect.as(openSnapshot(options.history ?? ""))),
+    open: (input) =>
+      Effect.sync(() => opens.push(input)).pipe(
+        Effect.andThen(
+          options.opening
+            ? Deferred.succeed(options.opening, undefined).pipe(Effect.andThen(Effect.never))
+            : Effect.void,
+        ),
+        Effect.as(openSnapshot(options.history ?? "")),
+      ),
     getShell: () =>
       options.shell === null
         ? Effect.fail(new TerminalNotRunningError({ threadId, terminalId }))
@@ -102,7 +108,7 @@ const makeHarness = Effect.fn(function* (options: {
   });
   const emit = (terminalEvent: TerminalEvent) =>
     Effect.forEach([...listeners], (listener) => listener(terminalEvent), { discard: true });
-  return { start, listeners, writes, outputLines, emit };
+  return { start, listeners, writes, outputLines, emit, opens };
 });
 
 const setup = Effect.fn(function* (
@@ -120,6 +126,13 @@ const setup = Effect.fn(function* (
 });
 
 describe("ProjectSetupScriptRunner", () => {
+  it.effect("keeps setup scripts independent of the interactive shell preference", () =>
+    Effect.gen(function* () {
+      const { opens } = yield* setup();
+      expect(opens[0]?.env?.T3CODE_TERMINAL_SHELL).toBe("");
+    }),
+  );
+
   it.effect("writes immediately when the spawned fallback is PowerShell", () =>
     Effect.gen(function* () {
       const { writes } = yield* setup({
@@ -169,6 +182,28 @@ describe("ProjectSetupScriptRunner", () => {
       yield* emit({ ...event, type: "activity", hasRunningSubprocess: false, label: "zsh" });
       yield* emit({ ...event, type: "output", data: "\r\n% \x1b[?2004h" });
       expect(yield* Queue.take(writes)).toContain("vp i");
+    }),
+  );
+
+  it.effect("drops whole escape sequences from output lines", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({
+        ...event,
+        type: "output",
+        data: "\x1b7\x1b[24;0fProgress: [ 40%]\x1b8\r\n\x1b%G\x1b#8\x1b[4:3mdone\x1bM\r\n",
+      });
+      expect(yield* Queue.takeAll(outputLines)).toEqual(["Progress: [ 40%]", "done"]);
+    }),
+  );
+
+  it.effect("keeps emoji whole when capping a long output line or partial-line buffer", () =>
+    Effect.gen(function* () {
+      const { outputLines, emit } = yield* setup();
+      yield* emit({ ...event, type: "output", data: `x${"🙂".repeat(250)}\r\n` });
+      yield* emit({ ...event, type: "output", data: `${"🙂".repeat(2_100)}x` });
+      yield* emit({ ...event, type: "output", data: "\r\n" });
+      expect(yield* Queue.takeAll(outputLines)).toEqual([`x${"🙂".repeat(199)}`, "🙂".repeat(200)]);
     }),
   );
 

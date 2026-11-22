@@ -171,6 +171,11 @@ describe("editing scheduled task branch settings", () => {
     expect(draft.baseRef).toBe("release");
     expect(draft.startFromOrigin).toBe(false);
   });
+
+  it("leaves the base automatic when a task without a worktree switches to one", () => {
+    const draft = taskToDraft({ ...legacyTask, workspaceStrategy: { type: "root" } });
+    expect(draft.baseRef).toBe("");
+  });
 });
 
 describe("fixed-time scheduled tasks", () => {
@@ -180,6 +185,16 @@ describe("fixed-time scheduled tasks", () => {
       schedule: { type: "fixed_time", timeOfDay: "9:05" },
     });
     expect(draft.timeOfDay).toBe("09:05");
+  });
+
+  it("keeps a fixed run time and rejects a cleared one", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "fixed_time", timeOfDay: "14:30" },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({ type: "fixed_time", timeOfDay: "14:30" });
+    // A native time input reports "" when it is cleared or only partly filled.
+    expect(scheduleFromDraft({ ...draft, timeOfDay: "" })).toBeNull();
   });
 });
 
@@ -409,11 +424,49 @@ it("rejects dedupe templates without a request placeholder", () => {
   expect(scheduleFromDraft({ ...draft, coalesceKey: "{{body.bad" })).toBeNull();
 });
 
+// The host locale's clock for a wall time, so these pass in any locale (digits, day period, zero padding).
+function clock(hour12: boolean, hour: number, minute: number) {
+  return new Intl.DateTimeFormat(undefined, {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12,
+    timeZone: "UTC",
+  }).format(Date.UTC(2000, 0, 1, hour, minute));
+}
+
 it("appends the server zone only to fixed-time schedule labels", () => {
-  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "Etc/UTC")).toBe(
-    "Daily at 16:31 UTC",
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "16:31" }, "24-hour", "Etc/UTC")).toBe(
+    `Daily at ${clock(false, 16, 31)} UTC`,
   );
-  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" })).toBe("Daily at 09:00");
-  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "Etc/UTC")).toBe("Every 1 min");
-  expect(scheduleLabel({ type: "webhook", signature: null }, "Etc/UTC")).toBe("On webhook");
+  expect(scheduleLabel({ type: "fixed_time", timeOfDay: "09:00" }, "24-hour")).toBe(
+    `Daily at ${clock(false, 9, 0)}`,
+  );
+  expect(scheduleLabel({ type: "interval", everyMs: 60_000 }, "24-hour", "Etc/UTC")).toBe(
+    "Every 1 min",
+  );
+  expect(scheduleLabel({ type: "webhook", signature: null }, "24-hour", "Etc/UTC")).toBe(
+    "On webhook",
+  );
+});
+
+it("shows schedule times in the Time format setting", () => {
+  const daily = { type: "fixed_time", timeOfDay: "17:30" } as const;
+  expect(scheduleLabel(daily, "24-hour")).toBe(`Daily at ${clock(false, 17, 30)}`);
+  expect(scheduleLabel(daily, "12-hour")).toBe(`Daily at ${clock(true, 17, 30)}`);
+  const midnight = scheduleLabel({ type: "fixed_time", timeOfDay: "0:05" }, "24-hour");
+  expect(midnight).toBe(`Daily at ${clock(false, 0, 5)}`);
+  // An h24 clock would print midnight as 24:05 in both the label and the helper.
+  expect(midnight).not.toContain("24");
+
+  // A local wall time, so the label reads 17:30 in any host zone.
+  const runAt = new Date(2026, 10, 20, 17, 30);
+  const once = { type: "once", runAt: runAt.toISOString() } as const;
+  for (const hour12 of [false, true]) {
+    const dateTime = new Intl.DateTimeFormat(undefined, {
+      dateStyle: "medium",
+      timeStyle: "short",
+      hour12,
+    }).format(runAt);
+    expect(scheduleLabel(once, hour12 ? "12-hour" : "24-hour")).toBe(`Once, ${dateTime}`);
+  }
 });

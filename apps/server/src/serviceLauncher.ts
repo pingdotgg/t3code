@@ -23,13 +23,16 @@ import {
   decodeServiceLauncherChildMessage,
   isExactServiceVersion,
   parseLegacyServiceState,
+  decodeServiceUnit,
   disabledServiceTask,
+  encodeServiceTask,
   parseServiceState,
   serviceTaskIsDisabled,
   serviceUnitBaseDirOf,
   serviceUnitLogPathOf,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_LOCK_FILE,
+  SERVICE_SERVING_LOCK_FILE,
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
@@ -85,6 +88,42 @@ const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
   args: ["serve"],
 });
 
+function isRegularFile(fd: number): boolean {
+  try {
+    return NodeFS.fstatSync(fd).isFile();
+  } catch {
+    return false;
+  }
+}
+
+const MAX_PENDING_OUTPUT_BYTES = 8 * 1024 * 1024;
+
+/**
+ * Node writes to a regular file synchronously, so a server whose output is the log file freezes
+ * while the filesystem stalls one append. It gets a pipe instead, drained here without backpressure;
+ * output beyond the cap is dropped while a write is stuck.
+ */
+function appendOutput(source: NodeJS.ReadableStream, fd: number): void {
+  let pending: Array<Buffer> = [];
+  let pendingBytes = 0;
+  let writing = false;
+  const flush = (): void => {
+    writing = pending.length > 0;
+    if (!writing) return;
+    const chunk = Buffer.concat(pending, pendingBytes);
+    pending = [];
+    pendingBytes = 0;
+    // Best effort, like the launcher's own diagnostics: a failed append drops that output.
+    NodeFS.write(fd, chunk, flush);
+  };
+  source.on("data", (chunk: Buffer) => {
+    if (pendingBytes + chunk.length > MAX_PENDING_OUTPUT_BYTES) return;
+    pending.push(chunk);
+    pendingBytes += chunk.length;
+    if (!writing) flush();
+  });
+}
+
 /**
  * The unit or launch agent that `t3 service install` wrote. Its program names
  * the runtime that ran the install, and a remote update never replaces it, so
@@ -120,8 +159,8 @@ export async function registerServiceTask(
   }
   const disabledPath = `${unitPath}.${process.pid}.disabled`;
   try {
-    const unit = await NodeFSP.readFile(unitPath, "utf8");
-    await NodeFSP.writeFile(disabledPath, disabledServiceTask(unit));
+    const unit = decodeServiceUnit(await NodeFSP.readFile(unitPath));
+    await NodeFSP.writeFile(disabledPath, encodeServiceTask(disabledServiceTask(unit)));
     await register(disabledPath);
   } finally {
     await NodeFSP.rm(disabledPath, { force: true });
@@ -255,7 +294,9 @@ async function serviceLogPath(
 ): Promise<string | undefined> {
   if (options.logFile !== undefined) return options.logFile;
   if (serviceUnit === undefined) return undefined;
-  const contents = await NodeFSP.readFile(serviceUnit.path, "utf8").catch(() => undefined);
+  const contents = await NodeFSP.readFile(serviceUnit.path)
+    .then(decodeServiceUnit)
+    .catch(() => undefined);
   return contents === undefined ? undefined : serviceUnitLogPathOf(contents);
 }
 
@@ -664,7 +705,7 @@ export async function writeServiceState(filePath: string, state: ServiceState): 
   await replaceFileDurably(filePath, `${JSON.stringify(state, null, 2)}\n`);
 }
 
-async function replaceFileDurably(filePath: string, contents: string): Promise<void> {
+async function replaceFileDurably(filePath: string, contents: string | Uint8Array): Promise<void> {
   const directory = NodePath.dirname(filePath);
   const tempPath = NodePath.join(
     directory,
@@ -673,7 +714,7 @@ async function replaceFileDurably(filePath: string, contents: string): Promise<v
   let handle: NodeFSP.FileHandle | undefined;
   try {
     handle = await NodeFSP.open(tempPath, "wx", 0o600);
-    await handle.writeFile(contents, "utf8");
+    await handle.writeFile(contents);
     await handle.sync();
     await handle.close();
     handle = undefined;
@@ -758,11 +799,12 @@ export const serviceLauncherLockPath = (baseDir: string) =>
 // An exclusive SQLite transaction, like the server's owner lock: the OS drops it when the holder dies.
 async function tryAcquireSqliteLock(
   lockPath: string,
+  busyTimeoutMs = 0,
 ): Promise<{ readonly close: () => void } | undefined> {
   const { DatabaseSync } = await import("node:sqlite");
   const db = new DatabaseSync(lockPath);
   try {
-    db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}; BEGIN EXCLUSIVE;`);
     return db;
   } catch (cause) {
     db.close();
@@ -777,6 +819,13 @@ export async function serviceLauncherIsRunning(lockPath: string): Promise<boolea
   lock?.close();
   return lock === undefined;
 }
+
+const servingLockPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_SERVING_LOCK_FILE);
+
+/** Whether a launcher has, or is about to start, a server for this home. An idle one does not. */
+export const serviceLauncherIsServing = (baseDir: string): Promise<boolean> =>
+  serviceLauncherIsRunning(servingLockPath(baseDir)).catch(() => false);
 
 /** Resolves once no launcher holds the lock; the caller bounds the wait through `signal`. */
 export async function waitForServiceLauncherExit(
@@ -857,6 +906,7 @@ export class Launcher {
   #stateDirFreeProbes = 0;
   readonly #output: number | undefined;
   readonly #lockPath: string | undefined;
+  #servingLock: { readonly close: () => void } | undefined;
   readonly #stopChildOverIpc: boolean;
 
   constructor(
@@ -910,6 +960,7 @@ export class Launcher {
         }
       }
     } finally {
+      this.#releaseServing();
       process.off("SIGTERM", onSigterm);
       process.off("SIGINT", onSigint);
     }
@@ -925,6 +976,19 @@ export class Launcher {
       await new Promise((resolve) => setTimeout(resolve, LOCK_RETRY_MS));
     }
     return undefined;
+  }
+
+  // Advisory: without it an SSH launch may start its own server, as it does beside no service.
+  async #claimServing(): Promise<void> {
+    // An SSH launch probes this lock for a moment; wait out that probe.
+    this.#servingLock ??= await tryAcquireSqliteLock(servingLockPath(this.#baseDir), 250).catch(
+      () => undefined,
+    );
+  }
+
+  #releaseServing(): void {
+    this.#servingLock?.close();
+    this.#servingLock = undefined;
   }
 
   #terminate(child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals = "SIGTERM") {
@@ -1022,6 +1086,7 @@ export class Launcher {
     // A stop during the probe must not arm a retry that outlives it.
     if (this.#stopRequested) return true;
     this.#clearTimer();
+    this.#releaseServing();
     this.#log(`[service-launcher] ${reason} Waiting for free space before retrying.\n`);
     this.#timer = setInterval(
       () =>
@@ -1029,6 +1094,7 @@ export class Launcher {
           if (this.#child !== null || this.#stopping) return;
           if ((await this.#serviceStartDiskSpaceBlocker()) !== undefined) return;
           this.#clearTimer();
+          await this.#claimServing();
           await retry();
         }),
       DISK_SPACE_RETRY_MS,
@@ -1057,6 +1123,7 @@ export class Launcher {
   }
 
   async #recover(): Promise<void> {
+    await this.#claimServing();
     // Clear old stop markers to preserve future tunnels; clear restart-pending only for the awaited version to avoid CLI races.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
     const restartPending = restartPendingPath(this.#baseDir);
@@ -1148,13 +1215,17 @@ export class Launcher {
       ...(update === undefined ? {} : { update }),
     };
     const spawnArguments = runtimeSpawnArguments(paths);
+    const appendStdout = this.#output === undefined && isRegularFile(1);
+    const appendStderr = this.#output === undefined && isRegularFile(2);
     const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
       env: { ...this.#environment, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio:
         this.#output === undefined
-          ? ["inherit", "inherit", "inherit", "ipc"]
+          ? ["inherit", appendStdout ? "pipe" : "inherit", appendStderr ? "pipe" : "inherit", "ipc"]
           : ["ignore", this.#output, this.#output, "ipc"],
     });
+    if (child.stdout !== null) appendOutput(child.stdout, 1);
+    if (child.stderr !== null) appendOutput(child.stderr, 2);
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       child.once("error", onError);
@@ -1333,7 +1404,7 @@ export class Launcher {
         ) {
           return;
         }
-        const contents = await NodeFSP.readFile(unit.path, "utf8");
+        const contents = decodeServiceUnit(await NodeFSP.readFile(unit.path));
         const installedBaseDir = serviceUnitBaseDirOf(contents);
         if (
           installedBaseDir === undefined ||
@@ -1342,7 +1413,12 @@ export class Launcher {
           return;
         }
         const repointed = repointServiceUnit(contents, version);
-        if (repointed !== contents) await replaceFileDurably(unit.path, repointed);
+        if (repointed !== contents) {
+          await replaceFileDurably(
+            unit.path,
+            unit.path.endsWith(".xml") ? encodeServiceTask(repointed) : repointed,
+          );
+        }
         // A previous rename may have succeeded before reload failed.
         await unit.reload();
       } finally {
@@ -1426,6 +1502,7 @@ export class Launcher {
         await this.#repointServiceUnit(next.activeVersion);
       }
     }
+    this.#releaseServing();
     this.#log(
       "[service-launcher] Another T3 Code server owns this T3 home. This service starts again once it stops.\n",
     );
@@ -1450,6 +1527,7 @@ export class Launcher {
     this.#stateDirFreeProbes = owned ? 0 : this.#stateDirFreeProbes + 1;
     if (this.#stateDirFreeProbes < 2) return;
     this.#clearTimer();
+    await this.#claimServing();
     this.#log("[service-launcher] The T3 home is free again. Starting the server.\n");
     const update = this.#state.update;
     if (update?.status === "pending") await this.#startTrial(update);

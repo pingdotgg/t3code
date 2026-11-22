@@ -1,4 +1,5 @@
 import { RegistryContext } from "@effect/atom-react";
+import * as Effect from "effect/Effect";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import {
   DEFAULT_UNIFIED_SETTINGS,
@@ -45,7 +46,13 @@ const task: ScheduledTask = {
 // Stands in for the thread family read the editor makes when the shell lacks the bound thread.
 const threadFamilyRead = {
   snapshotSequence: 1,
-  threads: [{ id: task.threadId, title: "Fix login bug" }],
+  threads: [
+    {
+      id: task.threadId,
+      title: "Fix login bug",
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.5" },
+    },
+  ],
 };
 
 const state = vi.hoisted(() => ({
@@ -60,7 +67,7 @@ const permissions = new Map<string, Atom.Writable<boolean>>();
 function setup() {
   state.connected = true;
   state.tasksLoaded = true;
-  state.remove.mockReset().mockResolvedValue({ _tag: "Success", value: { id: task.id } });
+  state.remove.mockReset().mockReturnValue(Effect.succeed({ id: task.id }));
   state.secondary = false;
   permissions.clear();
   permissions.set(environmentId, Atom.make(true));
@@ -244,6 +251,19 @@ describe("ScheduledTasksSettings", () => {
     await expect.element(name).toHaveValue("Review stale issues");
   });
 
+  it("offers no model choice for a task bound to a thread, whose runs use the thread's model", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings taskId={task.id} />);
+    await expect.element(page.getByRole("dialog").getByText("Fix login bug")).toBeVisible();
+    const enabledPicker = document.querySelector(
+      '[role="dialog"] [data-chat-provider-model-picker]:not(:disabled)',
+    );
+    expect(enabledPicker).toBeNull();
+    await expect
+      .element(page.getByRole("dialog").getByRole("button", { name: "gpt-5.5", exact: true }))
+      .toBeDisabled();
+  });
+
   it("keeps an editor the user opened when the linked task loads later", async () => {
     setup();
     state.tasksLoaded = false;
@@ -257,6 +277,20 @@ describe("ScheduledTasksSettings", () => {
     await screen.rerender(<ScheduledTasksSettings taskId={task.id} />);
 
     await expect.element(dialog.getByRole("heading", { name: "New task" })).toBeInTheDocument();
+    await expect.element(name).toHaveValue("My draft");
+  });
+
+  it("keeps a new task's draft when the user clicks outside the editor", async () => {
+    setup();
+    await using _screen = await render(<ScheduledTasksSettings />);
+    await userEvent.click(page.getByRole("button", { name: "New task" }));
+    const dialog = page.getByRole("dialog");
+    const name = dialog.getByRole("textbox", { name: "Name" });
+    await userEvent.fill(name, "My draft");
+
+    await userEvent.click(document.body, { position: { x: 1, y: 1 } });
+
+    await expect.element(dialog).toHaveAttribute("data-open");
     await expect.element(name).toHaveValue("My draft");
   });
 });

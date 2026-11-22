@@ -11,6 +11,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import { antigravityWindowLimitsModel, hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -50,6 +51,43 @@ function sourceLabel(id: string, config: UsageLimitSourceConfig): string {
   } catch {
     return fallback;
   }
+}
+
+/**
+ * A refused read of one account keeps its last good reading, as provider probes keep their bars
+ * (see ServerProviderUsageLimits); a reading with none to keep stays listed as unreadable.
+ */
+function keepLastGoodReadings(
+  previous: ReadonlyArray<UsageLimitSourceSnapshot>,
+  next: ReadonlyArray<UsageLimitSourceSnapshot>,
+): ReadonlyArray<UsageLimitSourceSnapshot> {
+  return next.map((source) => {
+    // Auth file names can be reused, so only the same hub and login may lend a reading.
+    const before = previous.find(
+      (candidate) => candidate.id === source.id && candidate.endpoint === source.endpoint,
+    );
+    if (!before) return source;
+    return {
+      ...source,
+      accounts: source.accounts.map((account) => {
+        if (account.usageLimits.unavailable?.reason !== "probeFailed") return account;
+        // Without a listed login, a reused auth file name cannot be told apart from the old one.
+        if (account.email === undefined && account.workspaceId === undefined) return account;
+        const last = before.accounts.find(
+          (candidate) =>
+            candidate.id === account.id &&
+            candidate.driver === account.driver &&
+            // Fingerprinted Antigravity readings omit the listed identity, so they are never lent.
+            candidate.usageLimits.credentialFingerprint === undefined &&
+            candidate.email === account.email &&
+            candidate.workspaceId === account.workspaceId,
+        );
+        if (!last || last.usageLimits.unavailable) return account;
+        // Only the reading is lent; an unread model list stays unknown.
+        return { ...last, models: account.models };
+      }),
+    };
+  });
 }
 
 function missingManagementKey(config: UsageLimitSourceConfig): string {
@@ -131,7 +169,7 @@ export const make = Effect.gen(function* () {
       ([id, config]) => readSource(id as UsageLimitSourceId, config),
       { concurrency: 4 },
     );
-    yield* publish(snapshots);
+    yield* publish(keepLastGoodReadings(yield* Ref.get(stateRef), snapshots));
   }).pipe(refreshLock.withPermits(1), Effect.ignoreCause({ log: true }));
 
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
@@ -156,6 +194,7 @@ export const make = Effect.gen(function* () {
       input.accountId,
       input.creditId,
     );
+    // A redemption changes the reading, so a refused re-read must not bring back the one before it.
     const snapshot = yield* readSource(input.sourceId, config);
     const previous = yield* Ref.get(stateRef);
     yield* publish(previous.map((source) => (source.id === input.sourceId ? snapshot : source)));
@@ -213,7 +252,7 @@ export const layer = Layer.effect(UsageLimitSources, make).pipe(
   Layer.provide(SecretResolverLayer.layer),
 );
 
-/** A hub answers with a usage limit only when every account it routes the driver to is spent. */
+/** A hub returns a usage limit only when every account it routes the model to is spent. */
 export function hubPoolResetAt(
   sources: ReadonlyArray<UsageLimitSourceSnapshot>,
   driver: ProviderDriverKind,
@@ -221,21 +260,22 @@ export function hubPoolResetAt(
   now: number,
 ): string | null {
   let earliest: number | null = null;
-  for (const source of sources) {
-    for (const account of source.accounts) {
-      if (account.driver !== driver) continue;
-      // An unread account may be the one still blocked, so its refill is unknown.
-      if (account.usageLimits.unavailable) return null;
-      const spent = account.usageLimits.windows.filter(
-        (window) => window.usedPercent >= 100 && windowLimitsModel(window, model),
-      );
-      if (spent.length === 0) return null;
-      const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
-      if (resets.some((reset) => !Number.isFinite(reset))) return null;
-      const recoversAt = Math.max(...resets);
-      if (recoversAt <= now) return null;
-      earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
-    }
+  const routes = hubRoutes(sources, driver, model);
+  for (const account of sources.flatMap((source) => source.accounts).filter(routes)) {
+    // An unread account may be the one still blocked, so its refill is unknown.
+    if (account.usageLimits.unavailable) return null;
+    const spent = account.usageLimits.windows.filter(
+      (window) =>
+        window.usedPercent >= 100 &&
+        windowLimitsModel(window, model) &&
+        (account.driver !== "antigravity" || antigravityWindowLimitsModel(window, model)),
+    );
+    if (spent.length === 0) return null;
+    const resets = spent.map((window) => Date.parse(window.resetsAt ?? ""));
+    if (resets.some((reset) => !Number.isFinite(reset))) return null;
+    const recoversAt = Math.max(...resets);
+    if (recoversAt <= now) return null;
+    earliest = earliest === null ? recoversAt : Math.min(earliest, recoversAt);
   }
   return earliest === null ? null : DateTime.formatIso(DateTime.makeUnsafe(earliest));
 }

@@ -29,6 +29,7 @@ import {
   readServiceState,
   registerServiceTask,
   serviceLauncherIsRunning,
+  serviceLauncherIsServing,
   serviceLauncherLockPath,
   stateDirOwned,
   writeServiceState,
@@ -37,6 +38,7 @@ import {
   compareExactServiceVersions,
   decodeServiceState,
   isExactServiceVersion,
+  decodeServiceUnit,
   disabledServiceTask,
   SERVICE_ENV_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
@@ -468,7 +470,7 @@ setInterval(() => {}, 1_000);
       // Task Scheduler's copy: `t3 doctor` disabled it to keep the service stopped.
       let task = disabledServiceTask(unit.replace("1.1.0", "1.0.0"));
       const schtasks = async (...args: ReadonlyArray<string>) => {
-        if (args[0] === "/Create") task = await NodeFSP.readFile(args[2] ?? "", "utf8");
+        if (args[0] === "/Create") task = decodeServiceUnit(await NodeFSP.readFile(args[2] ?? ""));
         return { stdout: task };
       };
 
@@ -954,8 +956,11 @@ process.exit(0);
       });
       yield* Effect.promise(() => refused.promise);
       assert.isFalse(completed);
+      // An idle launcher must not make an SSH launch wait for a server it is not starting.
+      assert.isFalse(yield* Effect.promise(() => serviceLauncherIsServing(root)));
       otherOwner.close();
       yield* Effect.promise(() => owned.promise);
+      assert.isTrue(yield* Effect.promise(() => serviceLauncherIsServing(root)));
       yield* Effect.promise(() => launcher.stop("SIGTERM"));
       yield* Effect.promise(() => running);
       assert.strictEqual(spawnedChildren.length - spawnsBefore, 2);

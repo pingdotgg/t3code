@@ -42,9 +42,11 @@ it.each([true, false])(
           lastRowIndex: nativeEvent.lastRowIndex as number,
         });
     };
+    let lastShownRowIndex = 999;
     const emit = (nativeEvent: Record<string, unknown>) =>
       handlePullRequestDiffDebugEvent({ nativeEvent } as Parameters<typeof onDebug>[0], {
         rowCount: 1000,
+        lastShownRowIndex,
         targetFileId: "last-file",
         focusIndex: -1,
         isIos,
@@ -74,6 +76,10 @@ it.each([true, false])(
       expect(loadMore).not.toHaveBeenCalled();
       emit({ message: "visible-range", firstRowIndex: 950, lastRowIndex: 990, totalRows: 1000 });
       expect(loadMore).toHaveBeenCalledOnce();
+      // A folded final file ends at its header, short of the full payload's tail.
+      lastShownRowIndex = 920;
+      emit({ message: "visible-range", firstRowIndex: 880, lastRowIndex: 920, totalRows: 1000 });
+      expect(loadMore).toHaveBeenCalledTimes(2);
     } finally {
       scheduler.cancel();
       vi.useRealTimers();

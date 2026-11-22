@@ -652,6 +652,25 @@ describe("SqlEventJournal", { concurrent: false }, () => {
           })
         }))
 
+      it.effect("withRemoteUncommited preserves older entries imported during an upload", () =>
+        Effect.gen(function*() {
+          const journal = yield* make
+          const remoteId = EventJournal.makeRemoteIdUnsafe()
+          const local = yield* journal.write({ ...localEntry("local"), effect: Effect.succeed })
+          const older = entry(local.createdAtMillis - 1)
+          yield* journal.withRemoteUncommited(remoteId, () =>
+            journal.writeFromRemote({
+              remoteId: EventJournal.makeRemoteIdUnsafe(),
+              entries: remoteEntries([older]),
+              effect: () => Effect.void
+            }))
+          const next = yield* journal.withRemoteUncommited(
+            remoteId,
+            (entries) => Effect.succeed(entries.map((entry) => entry.idString))
+          )
+          assert.deepStrictEqual(next, Option.some([older.idString]))
+        }))
+
       it.effect("writeMany commits and publishes a batch in order only when its callback succeeds", () =>
         Effect.gen(function*() {
           const journal = yield* make
