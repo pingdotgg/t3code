@@ -1042,6 +1042,34 @@ describe("DesktopUpdates", () => {
     ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
   });
 
+  it.effect("background-downloads only an offer the selected track accepts", () => {
+    let published = "1.2.4-nightly.20261027.1";
+    let electronAutoDownloads = 0;
+    const harness = makeHarness({
+      // electron-updater starts an autoDownload before update-available reaches any listener.
+      checkForUpdates: Effect.sync(() => {
+        if (harness.autoDownload()) electronAutoDownloads += 1;
+        harness.emit("update-available", { version: published });
+      }),
+    });
+
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const updates = yield* DesktopUpdates.DesktopUpdates;
+        yield* updates.configure;
+        yield* TestClock.adjust("15 seconds");
+        yield* flushCallbacks;
+        assert.equal(electronAutoDownloads + harness.downloadCount(), 0);
+
+        published = "1.2.4";
+        yield* TestClock.adjust("4 hours");
+        yield* flushCallbacks;
+        assert.equal(electronAutoDownloads, 0);
+        assert.equal(harness.downloadCount(), 1);
+      }),
+    ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+  });
+
   it.effect("ignores a finished download from a track it no longer follows", () => {
     const harness = makeHarness();
 

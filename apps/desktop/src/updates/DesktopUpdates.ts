@@ -1050,9 +1050,13 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  // fork: auto-update. downloadAvailableUpdate refuses anything but an offer of the selected track.
+  const pollForUpdates = (reason: "startup" | "poll") =>
+    checkForUpdates(reason).pipe(Effect.andThen(downloadAvailableUpdate(false)), Effect.asVoid);
+
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
-      Effect.andThen(checkForUpdates("startup")),
+      Effect.andThen(pollForUpdates("startup")),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.void;
@@ -1067,7 +1071,7 @@ export const make = Effect.gen(function* () {
       Effect.forkScoped,
     );
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
-      Effect.andThen(checkForUpdates("poll")),
+      Effect.andThen(pollForUpdates("poll")),
       Effect.forever,
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1327,8 +1331,9 @@ export const make = Effect.gen(function* () {
       }
       yield* Ref.set(updaterConfiguredRef, true);
 
-      // fork: auto-update. Nightlies download in the background and install on the next quit.
-      yield* electronUpdater.setAutoDownload(true);
+      // fork: auto-update. Pollers download offers in the background; they install on the next quit.
+      // electron-updater's autoDownload would start before the channel and floor checks run.
+      yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(true);
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
