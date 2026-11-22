@@ -469,6 +469,10 @@ async fn run_session(
             maybe_msg = ws_read.next() => {
                 match maybe_msg {
                     Some(Ok(Message::Text(text))) => {
+                        // Receiving any text frame (including multi-part snapshot chunks) proves
+                        // the server connection is live; don't let keepalive drop a huge snapshot
+                        // mid-transfer while the server is busy streaming frame parts.
+                        missed_pongs = 0;
                         let part_at = std::time::Instant::now();
                         let started_at = *message_started_at.get_or_insert(part_at);
                         let whole = match joiner.push(&text) {
