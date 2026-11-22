@@ -19,6 +19,8 @@ Releases are built from `main` on the Mac Mini; installed fork apps download eac
 | `apps/desktop/src/app/DesktopUserData.ts`                                 | Electron profile directory from `FORK_IDENTITY`                                                                       |
 | `apps/desktop/src/app/DesktopEnvironment.ts`                              | packaged app display name from `FORK_IDENTITY`                                                                        |
 | `apps/desktop/src/updates/DesktopUpdates.ts`                              | auto-update: background download and install on quit, so an unclicked button never strands a Mac                      |
+| `apps/desktop/src/updates/DesktopUpdates.test.ts`                         | auto-update: background download only offers an update the selected track accepts                                     |
+| `apps/desktop/src/updates/updatesTestHarness.ts`                          | auto-update: harness records setAutoDownload so tests can assert it                                                   |
 | `apps/desktop/src/app/DesktopEnvironment.test.ts`                         | expects the fork's paths and name                                                                                     |
 | `apps/desktop/src/app/DesktopUserData.test.ts`                            | expects the fork's profile directory                                                                                  |
 | `scripts/build-desktop-artifact.ts`                                       | bundle id and nightly product name from `FORK_IDENTITY`; apple-speech-skip: skipped on a pre-26 SDK                   |
