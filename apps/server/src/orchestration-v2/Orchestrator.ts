@@ -2946,6 +2946,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   to: coveredRuns.at(-1)!.ordinal,
                 },
                 runs: projection.runs,
+                providerThreads: projection.providerThreads,
                 strategy: handoffStrategy,
                 items: [
                   ...(needsFullContext && contextBoundary === 0
@@ -6774,6 +6775,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                   .map((run) => run.id),
           ),
           runs: input.projection.runs,
+          providerThreads: input.projection.providerThreads,
           createdAt: now,
         })
         .pipe(mapDispatchError(input.command));
@@ -9178,6 +9180,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                 : "delta_since_target_last_seen",
               items: providerSwitchItems,
               runs: projection.runs,
+              providerThreads: projection.providerThreads,
               createdAt: now,
             })
             .pipe(

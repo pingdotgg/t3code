@@ -25,6 +25,7 @@ import {
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Config from "effect/Config";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -53,7 +54,11 @@ import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { buildCodexAdditionalContext } from "../../apps/server/src/provider/CodexDeveloperInstructions.ts";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import { makeSideChatContext } from "../../apps/server/src/orchestration-v2/ContextHandoffService.ts";
-import { withInlineContext } from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import {
+  deliverContextHandoffs,
+  withInlineContext,
+} from "../../apps/server/src/orchestration-v2/ContextHandoffDelivery.ts";
+import { handoffCoverage } from "@t3tools/provider-core/server/handoffBudget";
 import { AttachmentToolkit } from "../../apps/server/src/mcp/toolkits/attachment/tools.ts";
 import { DeviceToolkit } from "../../apps/server/src/mcp/toolkits/device/tools.ts";
 import { EnvironmentToolkit } from "../../apps/server/src/mcp/toolkits/environment/tools.ts";
@@ -370,6 +375,18 @@ export const McpToolUseCase = Schema.Struct({
     sideChat: Schema.optional(
       Schema.Struct({ parentThreadId: Schema.String, digest: Schema.Array(Schema.String) }),
     ),
+    /**
+     * The turn is the first after a provider switch: T3's real handoff delivery puts the previous
+     * provider's history and the goals its threads still own ahead of `prompt`.
+     */
+    providerHandoff: Schema.optional(
+      Schema.Struct({
+        history: Schema.Array(
+          Schema.Struct({ role: Schema.Literals(["user", "assistant"]), text: Schema.String }),
+        ),
+        goals: Contracts.OrchestrationV2ContextHandoff.fields.goals,
+      }),
+    ),
   }),
   /** Empty to resume a top-level thread without side-chat context after its last tool result. */
   prompt: Schema.String,
@@ -460,6 +477,9 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   shell_command: "Bash",
   shell: "Bash",
   spawn_agent: "Agent",
+  get_goal: "get_goal",
+  create_goal: "create_goal",
+  update_goal: "update_goal",
   apply_patch: "Edit",
   request_user_input: "AskUserQuestion",
   request_user_input_async: "AskUserQuestion",
@@ -1147,6 +1167,75 @@ const loadTools = (tools: Array<ApiTool>, id: string, found: ReadonlyArray<ApiTo
   return { type: "tool_result", tool_use_id: id, content };
 };
 
+/** The inline context T3 delivers on the first turn after a provider switch. */
+const providerHandoffContext = (testCase: McpToolUseCase) => {
+  const handoff = testCase.setup.providerHandoff;
+  if (handoff === undefined) return undefined;
+  const threadId = ThreadId.make("22222222-2222-4222-8222-222222222222");
+  const target = Contracts.ProviderThreadId.make("provider-thread-target");
+  const source = handoff.goals?.[0]?.providerThreadId ?? Contracts.ProviderThreadId.make("source");
+  const runId = Contracts.RunId.make("run-target");
+  const coveredRunOrdinals = { from: 1, to: Math.max(1, handoff.history.length) };
+  const createdAt = DateTime.makeUnsafe("2026-11-21T12:00:00Z");
+  const messages = handoff.history.map((message, index) => ({
+    ...message,
+    threadId,
+    runId: null,
+    itemId: Contracts.TurnItemId.make(`item-${index + 1}`),
+    providerThreadId: source,
+    status: "completed",
+    kind: message.role === "user" ? "user_message" : "assistant_message",
+  }));
+  const delivered = Effect.runSync(
+    deliverContextHandoffs({
+      handoffs: [
+        {
+          id: Contracts.ContextHandoffId.make("handoff-eval"),
+          threadId,
+          targetRunId: runId,
+          fromProviderThreadIds: [source],
+          toProviderThreadId: target,
+          coveredRunOrdinals,
+          strategy: "full_thread_summary",
+          status: "ready",
+          summaryMessageId: null,
+          summaryText: "",
+          history: {
+            messages,
+            coverage: handoffCoverage({ threadId, coveredRunOrdinals, items: [] }),
+            omittedItems: 0,
+          },
+          ...(handoff.goals === undefined ? {} : { goals: handoff.goals }),
+          createdByProviderInstanceId: null,
+          createdAt,
+          updatedAt: createdAt,
+        },
+      ],
+      providerThread: {
+        id: target,
+        driver: Contracts.ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        providerSessionId: null,
+        appThreadId: threadId,
+        ownerNodeId: null,
+        nativeThreadRef: null,
+        nativeConversationHeadRef: null,
+        status: "not_loaded",
+        firstRunOrdinal: null,
+        lastRunOrdinal: null,
+        handoffIds: [],
+        forkedFrom: null,
+        createdAt,
+        updatedAt: createdAt,
+      },
+      budget: 100_000,
+      alreadyDeliveredItemIds: new Set(),
+      persist: () => Effect.void,
+    }),
+  );
+  return delivered.context;
+};
+
 /** Messages for a case: reminders, context, prior turns with real tool blocks, then the prompt. */
 export const buildMessages = (sample: Sample) => {
   const { testCase, base, tools } = sample;
@@ -1222,8 +1311,9 @@ export const buildMessages = (sample: Sample) => {
     testCase.promptContext === undefined
       ? testCase.prompt
       : projectComposerContextForProvider({ text: testCase.prompt, ...testCase.promptContext });
+  const inlineContext = sideChatContext ?? providerHandoffContext(testCase);
   const prompt =
-    sideChatContext === undefined ? userText : withInlineContext(sideChatContext, userText);
+    inlineContext === undefined ? userText : withInlineContext(inlineContext, userText);
   const childPrompt = () => taskPrompt({ task: prompt, role: delegateRole });
   if (testCase.prompt !== "")
     push("user", text(role === "delegated-child" ? childPrompt() : prompt));

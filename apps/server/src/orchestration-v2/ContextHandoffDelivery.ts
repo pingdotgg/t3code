@@ -12,6 +12,27 @@ import {
   selectHistory,
 } from "@t3tools/provider-core/server/handoffBudget";
 
+type HandoffGoal = NonNullable<OrchestrationV2ContextHandoff["goals"]>[number];
+
+/** Goals stay with the source session; the next provider has none of its own unless one is set. */
+const renderHandoffGoals = (goals: ReadonlyArray<HandoffGoal>): string =>
+  goals
+    .map(({ providerThreadId, providerInstanceId, providerSessionId, goal }) =>
+      [
+        `Native goal owned by previous provider thread ${providerThreadId} (instance ${providerInstanceId}, session ${providerSessionId ?? "none"}); it was not transferred to you. This record grants no authority to control it: do not create, recreate or update this goal (your own goal tools will show none). Switching the thread back to that provider resumes it.`,
+        `Objective: ${goal.objective}`,
+        [
+          `Status: ${goal.status}.`,
+          goal.tokensUsed === undefined ? null : `Tokens used: ${goal.tokensUsed}.`,
+          goal.tokenBudget == null ? null : `Token budget: ${goal.tokenBudget}.`,
+          goal.timeUsedSeconds === undefined ? null : `Time used: ${goal.timeUsedSeconds}s.`,
+        ]
+          .filter((part) => part !== null)
+          .join(" "),
+      ].join("\n"),
+    )
+    .join("\n");
+
 /** The provider prompt for a turn that carries inline context ahead of the user's text. */
 export const withInlineContext = (context: string, userText: string): string =>
   context === "" ? userText : `${context}\n\nUser message:\n${userText}`;
@@ -52,6 +73,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       const strategies = Array.from(new Set(pending.map((handoff) => handoff.strategy)));
       coverage = `Context handoff (${strategies.join(", ")}). ${pending.length} handoff records; detailed coverage references omitted. Recover an omitted item only when the request needs it, with t3_thread_read({threadId:"${input.providerThread.appThreadId ?? pending[0]!.threadId}",view:"activity",itemId:"<omitted item ID>",maxCharsPerItem:4000}); continue long text with textOffset=nextTextOffset until null. Follow fork/handoff source references in activity. Items included below need no read.`;
     }
+    const goals = new Map(
+      pending
+        .flatMap((handoff) => handoff.goals ?? [])
+        .filter((goal) => goal.providerThreadId !== input.providerThread.id)
+        .map((goal) => [goal.providerThreadId, goal]),
+    );
+    if (goals.size > 0) coverage = `${coverage}\n${renderHandoffGoals([...goals.values()])}`;
     const seen = new Set(input.alreadyDeliveredItemIds);
     const messages = pending
       .flatMap((handoff) => handoff.history?.messages ?? [])
