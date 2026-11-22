@@ -16,6 +16,7 @@ import {
   type OrchestrationV2PendingBackgroundTask,
   type OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderSession,
+  type ProviderOptionDescriptor,
   type ServerProvider,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
@@ -30,6 +31,7 @@ import {
   derivePendingBackgroundWork,
 } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import {
+  DEFAULT_VARIANT_CHOICE_ID,
   getModelSelectionStringOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionStatedValue,
@@ -233,6 +235,7 @@ export const REASONING_EFFORT_OPTION_IDS: ReadonlyArray<string> = [
   "variant",
   "reasoning_effort",
   "thinking_level",
+  "thought_level",
 ];
 
 export function formatModelSelectionEffort(
@@ -244,11 +247,21 @@ export function formatModelSelectionEffort(
   if (!caps) return null;
   const options = withLegacyUltracodeEffort(caps.optionDescriptors, selection.options);
   const current = options ? { ...selection, options } : selection;
-  for (const id of REASONING_EFFORT_OPTION_IDS) {
-    const descriptor = caps.optionDescriptors?.find((candidate) => candidate.id === id);
-    if (descriptor?.type !== "select") continue;
-    const value = getProviderOptionStatedValue(id, current, reportedSelection);
-    if (value === undefined && id !== "variant") continue;
+  const selectDescriptors = (caps.optionDescriptors ?? []).filter(
+    (candidate) => candidate.type === "select",
+  );
+  const reasoningDescriptors = [
+    ...selectDescriptors.filter((candidate) => candidate.role === "reasoning"),
+    ...REASONING_EFFORT_OPTION_IDS.flatMap((id) => {
+      const descriptor = selectDescriptors.find(
+        (candidate) => candidate.id === id && candidate.role !== "reasoning",
+      );
+      return descriptor ? [descriptor] : [];
+    }),
+  ];
+  for (const descriptor of reasoningDescriptors) {
+    const value = getProviderOptionStatedValue(descriptor.id, current, reportedSelection);
+    if (value === undefined && descriptor.id !== "variant") continue;
     if (typeof value === "boolean") continue;
     // Bypass picker normalization so an obsolete choice cannot become a catalog default.
     const label = getProviderOptionCurrentLabel(
@@ -276,10 +289,24 @@ export function formatSubagentEffort(input: {
   if (provider.models.some((model) => model.slug === modelSlug)) {
     return formatModelSelectionEffort({ ...selection, model: modelSlug }, provider.models);
   }
+  return readSelectedEffortValue(selection);
+}
+
+/** The raw saved effort, preferring the option the model marks as its reasoning control. */
+export function readSelectedEffortValue(
+  selection: ModelSelection | undefined,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor> = [],
+): string | null {
+  const ids = [
+    ...descriptors.flatMap((descriptor) =>
+      descriptor.type === "select" && descriptor.role === "reasoning" ? [descriptor.id] : [],
+    ),
+    ...REASONING_EFFORT_OPTION_IDS,
+  ];
   return (
-    REASONING_EFFORT_OPTION_IDS.map((id) => getModelSelectionStringOptionValue(selection, id)).find(
-      Boolean,
-    ) ?? null
+    ids
+      .map((id) => getModelSelectionStringOptionValue(selection, id))
+      .find((value) => value && value !== DEFAULT_VARIANT_CHOICE_ID) ?? null
   );
 }
 
