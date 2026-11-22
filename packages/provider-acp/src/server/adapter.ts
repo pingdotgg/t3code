@@ -7186,7 +7186,11 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             mcpBridge.connect(request).pipe(mapMcpBridgeError),
           );
           yield* targetRuntime.handleMcpMessage((request) =>
-            mcpBridge.message(request).pipe(mapMcpBridgeError),
+            mcpBridge
+              .message(request, (notification) =>
+                targetRuntime.notify("mcp/message", notification).pipe(Effect.ignore),
+              )
+              .pipe(mapMcpBridgeError),
           );
           yield* targetRuntime.handleMcpNotification((request) =>
             mcpBridge.notification(request).pipe(mapMcpBridgeError),
@@ -7729,6 +7733,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           const mcpBridge = yield* makeAcpMcpOverAcpBridge({
             endpoint: mcpContext.endpoint,
             authorization: mcpContext.authorization,
+            ...(flavor.deferMcpTools === true ? { toolExposure: "deferred" } : {}),
             allocateConnectionId: random.uuidV4(),
           });
           yield* Scope.addFinalizer(scope, mcpBridge.dispose);

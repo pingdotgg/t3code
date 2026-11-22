@@ -6,6 +6,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import type * as AcpSchema from "effect-acp/compat";
 
+import { MCP_TOOL_EXPOSURE_HEADER } from "@t3tools/provider-core/server/mcpSession";
 import { responsePayloads } from "@t3tools/shared/mcpResponsePayloads";
 
 const MAX_CONNECTIONS = 16;
@@ -67,6 +68,8 @@ function errorMessage(error: unknown): string {
 export interface AcpMcpOverAcpBridgeOptions {
   readonly endpoint: string;
   readonly authorization: string;
+  /** Sent as `MCP_TOOL_EXPOSURE_HEADER`, so a deferring agent lists T3's tools on demand. */
+  readonly toolExposure?: string;
   readonly allocateConnectionId: Effect.Effect<string>;
   readonly fetchImplementation?: (url: string, init?: RequestInit) => Promise<Response>;
 }
@@ -75,8 +78,10 @@ export interface AcpMcpOverAcpBridge {
   readonly connect: (
     request: AcpSchema.ConnectMcpRequest,
   ) => Effect.Effect<AcpSchema.ConnectMcpResponse, AcpMcpOverAcpError>;
+  /** Server notifications in the response, such as tools/list_changed, go to `notifyAgent`. */
   readonly message: (
     request: AcpSchema.MessageMcpRequest,
+    notifyAgent?: (notification: AcpSchema.MessageMcpNotification) => Effect.Effect<void>,
   ) => Effect.Effect<AcpSchema.MessageMcpResponse, AcpMcpOverAcpError>;
   readonly notification: (
     request: AcpSchema.MessageMcpNotification,
@@ -134,6 +139,9 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
                 "content-type": "application/json",
                 accept: "application/json, text/event-stream",
                 authorization: options.authorization,
+                ...(options.toolExposure === undefined
+                  ? {}
+                  : { [MCP_TOOL_EXPOSURE_HEADER]: options.toolExposure }),
                 ...(connection.sessionId === null
                   ? {}
                   : { "mcp-session-id": connection.sessionId }),
@@ -244,7 +252,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       });
       return { connectionId };
     }),
-    message: Effect.fn("mcpOverAcpBridge.message")(function* (request) {
+    message: Effect.fn("mcpOverAcpBridge.message")(function* (request, notifyAgent) {
       const connection = yield* connectionFor(request.connectionId);
       const id = ++connection.nextRequestId;
       const payloads = yield* send(connection, {
@@ -253,6 +261,20 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
         method: request.method,
         ...(request.params == null ? {} : { params: request.params }),
       });
+      if (notifyAgent !== undefined) {
+        for (const payload of payloads) {
+          const notification = asEnvelope(payload);
+          if (notification?.id !== undefined || typeof notification?.method !== "string") continue;
+          const params = (notification as { readonly params?: unknown }).params;
+          yield* notifyAgent({
+            connectionId: request.connectionId,
+            method: notification.method,
+            ...(typeof params === "object" && params !== null
+              ? { params: params as NonNullable<AcpSchema.MessageMcpNotification["params"]> }
+              : {}),
+          });
+        }
+      }
       const response = payloads.find((payload) => asEnvelope(payload)?.id === id);
       const envelope = asEnvelope(response);
       if (envelope === null) {

@@ -21,9 +21,11 @@ describe("AcpMcpOverAcpBridge", () => {
         readonly body: unknown;
       }> = [];
       let deletes = 0;
+      const relayed: Array<unknown> = [];
       const bridge = yield* makeAcpMcpOverAcpBridge({
         endpoint: "http://127.0.0.1:1/mcp",
         authorization: "Bearer bridge-test",
+        toolExposure: "deferred",
         allocateConnectionId: Effect.succeed("connection-1"),
         fetchImplementation: async (_url, init) => {
           const method = init?.method ?? "GET";
@@ -44,6 +46,17 @@ describe("AcpMcpOverAcpBridge", () => {
           }
           if (request.method === "notifications/initialized") {
             return new Response(null, { status: 202 });
+          }
+          if (request.method === "tools/list") {
+            const event = (message: unknown) =>
+              `event: message\ndata: ${JSON.stringify(message)}\n\n`;
+            return new Response(
+              event({ jsonrpc: "2.0", method: "notifications/tools/list_changed" }) +
+                event({ jsonrpc: "2.0", id: request.id, result: { tools: [] } }),
+              {
+                headers: { "content-type": "text/event-stream", "mcp-session-id": "session-42" },
+              },
+            );
           }
           return new Response(
             JSON.stringify({
@@ -69,15 +82,18 @@ describe("AcpMcpOverAcpBridge", () => {
       yield* Effect.promise(() => initializeStarted.promise);
       const list = yield* Effect.gen(function* () {
         listQueued.resolve();
-        return yield* bridge.message({
-          connectionId: connected.connectionId,
-          method: "tools/list",
-        });
+        return yield* bridge.message(
+          { connectionId: connected.connectionId, method: "tools/list" },
+          (notification) => Effect.sync(() => relayed.push(notification)),
+        );
       }).pipe(Effect.forkChild);
       yield* Effect.promise(() => listQueued.promise);
       initializeResponse.resolve();
       expect(yield* Fiber.join(initialize)).toMatchObject({ protocolVersion: "2025-06-18" });
       expect(yield* Fiber.join(list)).toEqual({ tools: [] });
+      expect(relayed).toEqual([
+        { connectionId: "connection-1", method: "notifications/tools/list_changed" },
+      ]);
       yield* bridge.notification({
         connectionId: connected.connectionId,
         method: "notifications/initialized",
@@ -97,6 +113,7 @@ describe("AcpMcpOverAcpBridge", () => {
       expect(deletes).toBe(2);
 
       expect(requests[0]?.headers.get("authorization")).toBe("Bearer bridge-test");
+      expect(requests[1]?.headers.get("t3-tool-exposure")).toBe("deferred");
       expect(requests[1]?.headers.get("mcp-session-id")).toBe("session-42");
       expect(requests[1]?.headers.get("mcp-protocol-version")).toBe("2025-06-18");
       expect(requests.at(-1)?.method).toBe("DELETE");

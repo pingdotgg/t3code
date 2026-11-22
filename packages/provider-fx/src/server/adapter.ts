@@ -207,7 +207,6 @@ function makeFxAcpAdapterFlavor(options: FxAdapterV2Options): AcpAdapterV2Flavor
   const runtimeCwds = new WeakMap<AcpSessionRuntime.AcpSessionRuntime["Service"], string>();
   return {
     driver: FX_DRIVER_KIND,
-    deferMcpTools: true,
     runtimeHarness: "fx",
     capabilities: FxProviderCapabilitiesV2,
     makeRuntime: (input) =>

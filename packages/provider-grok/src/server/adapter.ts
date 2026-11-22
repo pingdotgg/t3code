@@ -356,7 +356,6 @@ export function makeGrokAcpAdapterFlavor(
   return {
     driver: GROK_PROVIDER,
     runtimeHarness: "Grok",
-    deferMcpTools: true,
     capabilities: GrokProviderCapabilitiesV2,
     interruptPromptOnCancel: false,
     // User Stop restarts the process group; steering cancels softly to preserve background work.
