@@ -75,12 +75,12 @@ export async function downloadRest(input: {
   let resumed = false;
   if (response.status === 206 && total === input.sizeBytes) {
     const head = await readAtLeast(reader, overlap.byteLength + UTF8_BOM.length);
-    // Shifted by three bytes when the file starts with a BOM the preview read dropped.
-    for (const shift of [0, UTF8_BOM.length]) {
-      if (!startsWithAt(head, overlap, shift)) continue;
-      pending = head.subarray(shift + overlap.byteLength);
+    // Shifted by three bytes when the file starts with a BOM the preview read dropped. Repetitive
+    // text can match at both shifts; then the position is ambiguous and the file downloads whole.
+    const shifts = [0, UTF8_BOM.length].filter((shift) => startsWithAt(head, overlap, shift));
+    if (shifts.length === 1) {
+      pending = head.subarray(shifts[0]! + overlap.byteLength);
       resumed = true;
-      break;
     }
   }
   if (!resumed) {

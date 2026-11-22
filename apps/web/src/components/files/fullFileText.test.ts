@@ -46,6 +46,14 @@ describe("downloadRest", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("downloads the whole file when repetitive text hides whether a BOM was dropped", async () => {
+    const preview = "a".repeat(5000);
+    const whole = new Uint8Array([0xef, 0xbb, 0xbf, ...encoder.encode(`${preview}TAIL`)]);
+    using fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(serve(whole));
+    expect(await download(preview, whole.byteLength)).toBe(`${preview}TAIL`);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("keeps a U+FEFF that starts the rest of the file", async () => {
     const preview = "line one\n";
     const whole = encoder.encode(`${preview}\uFEFFtail\n`);
