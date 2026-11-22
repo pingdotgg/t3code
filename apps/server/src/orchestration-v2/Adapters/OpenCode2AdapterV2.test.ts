@@ -1010,6 +1010,58 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       );
       return { attached: Deferred.await(attached), terminal: Fiber.join(terminal) };
     });
+  it.effect("Stop removes a shell the turn launches while its interrupt lands", () =>
+    Effect.gen(function* () {
+      const shellID = "sh_late";
+      const tool = { sessionID: SESSION, assistantMessageID: "msg_assistant", id: "call-late" };
+      const output = [
+        out("shell.output", "<any>"),
+        reply("shell.output", {
+          location: { directory: WORK },
+          data: { output: "", cursor: 0, size: 0, truncated: false },
+        }),
+      ];
+      const { runtime, thread } = yield* resumed([
+        out("session.prompt", { sessionID: SESSION, text: "<any>" }),
+        promptAccepted,
+        event("session.execution.started", { sessionID: SESSION }),
+        event("session.tool.input.started", { ...tool, name: "shell" }),
+        event("session.tool.called", {
+          ...tool,
+          name: "shell",
+          input: { command: "sleep 500", background: true },
+          executed: false,
+        }),
+        out("session.interrupt", { sessionID: SESSION }),
+        reply("session.interrupt", { interrupted: true }),
+        // OpenCode accepted the interrupt, but the running tool still launches before the run ends.
+        event(
+          "session.tool.success",
+          {
+            ...tool,
+            content: [{ type: "text", text: "Launched" }],
+            metadata: { shellID },
+            executed: false,
+          },
+          undefined,
+          2,
+        ),
+        ...output,
+        event("session.execution.interrupted", { sessionID: SESSION }),
+        ...output,
+        out("shell.remove", { id: shellID, "location[directory]": WORK }),
+        reply("shell.remove", null),
+      ]);
+      yield* runtime.startTurn(withLineage(thread));
+      yield* runtime.interruptTurn({
+        providerThread: thread,
+        providerTurnId: yield* providerTurnId,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+    }),
+  );
+
   it.effect.each([false, true, "thread", "failed", "burst", "poll"] as const)(
     "tracks native background shells through launch, retained output, stop=%s",
     (stop) =>
@@ -2342,7 +2394,7 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     }),
   );
 
-  it.effect.each(["running", "exited", "timeout", "held", "sync"] as const)(
+  it.effect.each(["running", "exited", "timeout", "held", "sync", "stopped"] as const)(
     "marks a shell OpenCode started on its own before T3 runs the wake, shell %s",
     (shell) =>
       Effect.gen(function* () {
@@ -2419,13 +2471,22 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             sessionID: SESSION,
             model: { providerID: "opencode", id: "big-pickle", variant: "thinking" },
           }),
-          ...Array.from({ length: shell === "held" ? 2 : shell === "sync" ? 0 : 1 }, () => [
-            out("shell.output", "<any>"),
-            reply("shell.output", {
-              location: { directory: WORK },
-              data: { output: "", cursor: 0, size: 0, truncated: false },
-            }),
-          ]).flat(),
+          ...(shell === "stopped"
+            ? [
+                out("shell.remove", { id: shellID, "location[directory]": WORK }),
+                reply("shell.remove", null),
+              ]
+            : []),
+          ...Array.from(
+            { length: shell === "held" ? 2 : shell === "sync" || shell === "stopped" ? 0 : 1 },
+            () => [
+              out("shell.output", "<any>"),
+              reply("shell.output", {
+                location: { directory: WORK },
+                data: { output: "", cursor: 0, size: 0, truncated: false },
+              }),
+            ],
+          ).flat(),
         ]).pipe(
           Effect.provideService(ProviderContinuationRequests.ProviderContinuationRequests, {
             offer: (request) =>
@@ -2470,9 +2531,18 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
             taskIds: [shellID],
             awaited: true,
           }),
-          { matched: shell === "running" ? [shellID] : [] },
+          { matched: shell === "running" || shell === "stopped" ? [shellID] : [] },
         );
         if (shell === "sync") return;
+        if (shell === "stopped") {
+          // Stop discards the held wake, so the launch it holds must be removed before it goes.
+          yield* runtime.interruptTurn({
+            providerThread: thread,
+            providerTurnId: yield* providerTurnId,
+            requestRuntimeRestart: true,
+          });
+          return assert.isFalse(yield* runtime.hasPendingBackgroundWorkForThread!(thread));
+        }
         yield* runtime.startTurn(continuationTurn(thread, offers[0]!));
         if (shell === "running") return assert.isTrue(yield* Deferred.await(marked));
         // A shell that ended before the wake ran never holds the thread.
