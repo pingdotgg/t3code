@@ -1,0 +1,34 @@
+diff --git a/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt b/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
+index 6ee5e2ddbbb46e501f90b8f376e464b5d74b705c..fab431e683e894a4ec6704115a500eef1d563dfb 100644
+--- a/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
++++ b/android/src/main/java/expo/modules/documentpicker/DocumentPickerModule.kt
+@@ -80,10 +80,13 @@ class DocumentPickerModule : Module() {
+   }
+ 
+   private fun copyDocumentToCacheDirectory(documentUri: Uri, name: String): Uri {
++    val extension = FilenameUtils.getExtension(name)
++    // The cache basename has a 255-byte limit, including the UUID and dot.
++    val cacheExtension = extension.takeIf { it.toByteArray(Charsets.UTF_8).size <= 255 - 36 - 1 }.orEmpty()
+     val outputFilePath = FileUtilities.generateOutputPath(
+       context.cacheDir,
+       "DocumentPicker",
+-      FilenameUtils.getExtension(name)
++      cacheExtension
+     )
+     val outputFile = File(outputFilePath)
+     context.contentResolver.openInputStream(documentUri).use { inputStream ->
+diff --git a/ios/DocumentPickerModule.swift b/ios/DocumentPickerModule.swift
+index cdca147be7cb2d2a416b0e3adb2229c94527b2e1..e01716d7f8e8c4b473c05f128312b9cc9b8efe7c 100644
+--- a/ios/DocumentPickerModule.swift
++++ b/ios/DocumentPickerModule.swift
+@@ -114,7 +114,9 @@ public class DocumentPickerModule: Module, PickingResultHandler {
+       let cacheDirURL = URL(fileURLWithPath: fileSystem.cachesDirectory)
+       let directory = cacheDirURL.appendingPathComponent("DocumentPicker", isDirectory: true).path
+       let fileExtension = "." + documentUrl.pathExtension
+-      let path = fileSystem.generatePath(inDirectory: directory, withExtension: fileExtension)
++      // The cache basename has a 255-byte limit, including the UUID and dot.
++      let cacheExtension = fileExtension.utf8.count <= 255 - 36 ? fileExtension : ""
++      let path = fileSystem.generatePath(inDirectory: directory, withExtension: cacheExtension)
+       newUrl = URL(fileURLWithPath: path)
+ 
+       try FileManager.default.copyItem(at: documentUrl, to: newUrl)

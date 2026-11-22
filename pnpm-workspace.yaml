@@ -109,6 +109,7 @@ overrides:
   mdast-util-to-hast: 13.2.1
   alchemy: "catalog:"
   expo-audio: 58.0.11
+  expo-document-picker: 58.0.4
   expo-network: 58.0.4
   "@clerk/expo-native-components": 0.4.4
   "@cursor/sdk": 1.4.2
@@ -285,6 +286,7 @@ patchedDependencies:
   react-native-svg@15.16.1: patches/react-native-svg@15.16.1.patch
   # Android: double-tap zoom no longer cancels itself, and taps near a link open it.
   react-native-pdf-jsi@6.1.0: patches/react-native-pdf-jsi@6.1.0.patch
+  expo-document-picker@58.0.4: patches/expo-document-picker@58.0.4.patch
 
 # Unmet peers fail resolution, so a pin outside a dependency's peer range is
 # caught when the lockfile changes instead of scrolling past as a warning.
