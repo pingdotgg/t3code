@@ -4486,10 +4486,6 @@ body {
   margin: 0.65rem 0;
 }
 
-.chat-markdown-math-display .katex-display {
-  margin: 0;
-}
-
 :is(.chat-markdown, .composer-tiptap) h1,
 :is(.chat-markdown, .composer-tiptap) h2,
 :is(.chat-markdown, .composer-tiptap) h3,
@@ -4908,6 +4904,15 @@ body {
 .chat-markdown :is(th, td) {
   max-width: 24rem;
   overflow-wrap: break-word;
+}
+
+.chat-markdown [data-markdown-math] {
+  font-weight: normal;
+  font-style: normal;
+}
+
+.chat-markdown [data-markdown-math] > svg {
+  font-size: 1.21em;
 }
 
 /* Formula cells keep their natural width and scroll with the table. */

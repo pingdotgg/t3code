@@ -9,7 +9,7 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { createContext, useContext } from "react";
-import type { PluggableList } from "unified";
+import type { MarkdownExtensions } from "~/markdown/wordsHast";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
 import { cn } from "~/lib/utils";
@@ -21,7 +21,7 @@ import { splitPullRequestBody, type PullRequestBodySegment } from "./pullRequest
 
 export const PullRequestMarkdownContext = createContext<{
   /** Stable per repository, so comments share one renderer and its parse cache. */
-  remarkPlugins: PluggableList;
+  extensions: MarkdownExtensions;
   lineBreaks: boolean;
   threadRef: ScopedThreadRef | null;
   /** The change request's `owner/name`, which can differ from the checkout the body renders in. */
@@ -129,7 +129,7 @@ function PullRequestBodySegmentView({
         threadRef={threadRef}
         pullRequestPanelRef={threadRef ?? listPanelRef}
         environmentId={environmentId}
-        {...(context ? { extraRemarkPlugins: context.remarkPlugins } : {})}
+        {...(context ? { extensions: context.extensions } : {})}
         lineBreaks={lineBreaks}
         sourceControlMedia
         sourceControlMediaRepository={repository}
