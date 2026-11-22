@@ -545,7 +545,7 @@ describe("CLIProxyAPI built-in management API", () => {
       });
       const [account] = yield* (yield* test.api).readAccounts(config);
       expect(account?.driver).toBe("antigravity");
-      expect(account?.email).toBeUndefined();
+      expect(account?.email).toBe("g@example.com");
       expect(account?.usageLimits.credentialFingerprint).toBe(
         // sha256("google-account\0google-42"), as a local Antigravity probe reports it.
         "136d4952771fd67a3600053f37492cbd05828712e0b1c89ebab03d4c22ab6554",

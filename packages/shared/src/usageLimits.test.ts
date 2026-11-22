@@ -417,6 +417,7 @@ describe("pools", () => {
     const hubAccount = {
       id: "antigravity-g@example.com.json",
       driver: antigravity,
+      email: "g@example.com",
       usageLimits: {
         checkedAt: "2026-09-03T11:30:00.000Z",
         credentialFingerprint: "google-key",
@@ -438,6 +439,7 @@ describe("pools", () => {
       ]),
     );
     expect(accounts).toHaveLength(1);
+    expect(accounts[0]).toMatchObject({ displayName: null, email: "g@example.com" });
     expect(accounts[0]?.limits.windows[0]?.usedPercent).toBe(30);
   });
 
