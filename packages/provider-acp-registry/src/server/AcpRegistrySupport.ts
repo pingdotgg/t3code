@@ -959,14 +959,14 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         const { registry, fetched } = yield* fetchRegistry().pipe(
           Effect.map((registry) => ({ registry, fetched: true })),
           Effect.catch((networkError) =>
-            readCachedRegistry.pipe(
-              Effect.flatMap(
-                Option.match({
-                  onNone: () => Effect.fail(networkError),
-                  onSome: (registry) => Effect.succeed({ registry, fetched: false }),
-                }),
-              ),
-            ),
+            Effect.gen(function* () {
+              // Prefer an already-loaded index over disk so a cache-write failure cannot regress it.
+              const inMemory = yield* Ref.get(registryRef);
+              if (inMemory !== undefined) return { registry: inMemory, fetched: false };
+              const cached = yield* readCachedRegistry;
+              if (Option.isSome(cached)) return { registry: cached.value, fetched: false };
+              return yield* networkError;
+            }),
           ),
         );
         yield* Ref.set(registryRef, registry);
@@ -1007,14 +1007,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
 
     const cached = yield* readCachedRegistry;
     if (Option.isNone(cached)) return yield* refreshRegistry();
-    return yield* registrySemaphore.withPermits(1)(
-      Effect.gen(function* () {
-        // A refresh that completed during the disk read owns the stored index.
-        const latest = yield* Ref.get(registryRef);
-        if (latest !== undefined) return latest;
-        yield* Ref.set(registryRef, cached.value);
-        return cached.value;
-      }),
+    // Publish without waiting on an in-flight refresh, while letting a completed refresh win.
+    return yield* Ref.modify(registryRef, (latest) =>
+      latest !== undefined ? ([latest, latest] as const) : ([cached.value, cached.value] as const),
     );
   });
 

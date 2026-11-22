@@ -955,11 +955,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-type RegistryTarget = "linux-x86_64" | "darwin-aarch64";
+const isWindowsHost = HostProcess.Platform.defaultValue() === "win32";
+const testHostPlatform: NodeJS.Platform = isWindowsHost ? "win32" : "linux";
+const compatibleRegistryTarget: AcpRegistrySupport.AcpRegistryPlatformTarget = isWindowsHost
+  ? "windows-x86_64"
+  : "linux-x86_64";
+const incompatibleRegistryTarget: AcpRegistrySupport.AcpRegistryPlatformTarget = "darwin-aarch64";
 
 const registryUrl = "https://registry.test/registry.json";
 
-const makeBinaryRegistry = (version: string, target: RegistryTarget = "linux-x86_64") =>
+const makeBinaryRegistry = (
+  version: string,
+  target: AcpRegistrySupport.AcpRegistryPlatformTarget = compatibleRegistryTarget,
+) =>
   JSON.stringify({
     version: "1.0.0",
     agents: [
@@ -997,12 +1005,22 @@ const seedInstalledBinaryAgent = Effect.fn("seedInstalledBinaryAgent")(function*
   const installedV1 = installedBinaryPath(path, directory, "1.0.0");
   yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
   yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
-  yield* fileSystem.chmod(installedV1, 0o755);
+  if (!isWindowsHost) {
+    yield* fileSystem.chmod(installedV1, 0o755);
+  }
   return { directory, agentPath, modelsPath };
 });
 
 const installedBinaryPath = (path: Path.Path, directory: string, version: string) =>
-  path.join(directory, "tools", "test-agent", version, "linux-x86_64", "bin", "test-agent");
+  path.join(
+    directory,
+    "tools",
+    "test-agent",
+    version,
+    compatibleRegistryTarget,
+    "bin",
+    "test-agent",
+  );
 
 const driverLayer = TestProviderHost.layer({ runBackgroundWork: false }).pipe(
   Layer.provideMerge(AcpRegistryRuntimeCoordinator.layer),
@@ -1258,7 +1276,7 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
         toolsDir: path.join(directory, "tools"),
         registryUrl,
       }).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Platform, testHostPlatform),
         Effect.provideService(HostProcess.Architecture, "x64"),
         Effect.provideService(
           HttpClient.HttpClient,
@@ -1352,15 +1370,15 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
           yield* seedInstalledBinaryAgent("acp-driver-recover-");
 
         let remoteVersion = "2.0.0";
-        let remoteTarget: RegistryTarget = "darwin-aarch64";
-        let resolvedProbes = 0;
+        let remoteTarget: AcpRegistrySupport.AcpRegistryPlatformTarget = incompatibleRegistryTarget;
+        let resolveAttempts = 0;
         const restoredRefreshDone = yield* Deferred.make<void>();
         const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
           cacheDir: directory,
           toolsDir: path.join(directory, "tools"),
           registryUrl,
         }).pipe(
-          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HostProcess.Platform, testHostPlatform),
           Effect.provideService(HostProcess.Architecture, "x64"),
           Effect.provideService(
             HttpClient.HttpClient,
@@ -1391,12 +1409,10 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
                 ),
               ),
           resolve: (settings, cwd, environment) =>
-            realCatalog.resolve(settings, cwd, environment).pipe(
-              Effect.tap(() =>
-                Effect.sync(() => {
-                  resolvedProbes += 1;
-                }),
-              ),
+            Effect.sync(() => {
+              resolveAttempts += 1;
+            }).pipe(
+              Effect.andThen(() => realCatalog.resolve(settings, cwd, environment)),
               Effect.map((resolved) => ({
                 ...resolved,
                 spawn: { command: process.execPath, args: [agentPath, modelsPath] },
@@ -1423,13 +1439,13 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         expect(unsupported.status).toBe("error");
 
         // 2. Upstream restores a compatible 3.0.0; post-TTL refresh updates the index while keeping probe suppressed.
-        const resolvedBeforeRecovery = resolvedProbes;
+        const attemptsBeforeRecovery = resolveAttempts;
         remoteVersion = "3.0.0";
-        remoteTarget = "linux-x86_64";
+        remoteTarget = compatibleRegistryTarget;
         yield* TestClock.adjust("16 minutes");
         yield* instance.snapshot.refresh;
         yield* Deferred.await(restoredRefreshDone);
-        expect(resolvedProbes).toBe(resolvedBeforeRecovery);
+        expect(resolveAttempts).toBe(attemptsBeforeRecovery);
 
         // 3. The next periodic refresh recovers and installs 3.0.0 without invalidateCaches.
         const recovered = yield* instance.snapshot.streamChanges.pipe(
@@ -1445,7 +1461,7 @@ it.layer(driverLayer)("AcpRegistryDriver registry recovery", (it) => {
         yield* instance.snapshot.refresh;
         const ready = Option.getOrThrow(yield* Fiber.join(recovered));
         expect(ready.status).toBe("ready");
-        expect(resolvedProbes).toBeGreaterThan(resolvedBeforeRecovery);
+        expect(resolveAttempts).toBeGreaterThan(attemptsBeforeRecovery);
         expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
       }),
   );

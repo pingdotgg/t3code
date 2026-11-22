@@ -1029,7 +1029,11 @@ describe("AcpRegistrySupport", () => {
       expect(registryRequests).toBe(3);
       expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
 
-      // An offline refresh keeps the cached index and retries on the next call.
+      // An offline refresh prefers the in-memory index over a stale disk cache and retries next time.
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/acp-registry/registry.json`,
+        makeRegistry(makeBinaryAgent("1.2.3")),
+      );
       online = false;
       yield* resolver.refreshIndex();
       expect(registryRequests).toBe(4);
@@ -1798,16 +1802,26 @@ describe("AcpRegistrySupport", () => {
   });
 
   it.effect("inspects from disk without waiting for a registry refresh", () => {
-    const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
+    const makeNpxAgent = (version: string) => ({
+      ...makeAgent({ npx: { package: `@example/acp@${version}` } }),
+      version,
+    });
+    const agent = makeNpxAgent("1.2.3");
+    let upstreamVersion = "1.2.4";
     let requests = 0;
+    let refreshGate: {
+      readonly started: Deferred.Deferred<void>;
+      readonly release: Deferred.Deferred<void>;
+    } | null = null;
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
         prefix: "t3-acp-registry-cold-inspect-",
       });
       const registryDirectory = `${cacheDir}/acp-registry`;
+      const registryCachePath = `${registryDirectory}/registry.json`;
       yield* fileSystem.makeDirectory(registryDirectory, { recursive: true });
-      yield* fileSystem.writeFileString(`${registryDirectory}/registry.json`, makeRegistry(agent));
+      yield* fileSystem.writeFileString(registryCachePath, makeRegistry(agent));
 
       const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
         cacheDir,
@@ -1816,16 +1830,86 @@ describe("AcpRegistrySupport", () => {
       });
       const inspection = yield* resolver.inspect(settings());
 
-      expect(inspection).toMatchObject({ status: "ready", agentId: agent.id });
+      expect(inspection).toMatchObject({ status: "ready", agentId: agent.id, version: "1.2.3" });
       expect(requests).toBe(0);
+
+      // Cold inspection returns the disk cache immediately even while a refresh holds the semaphore.
+      refreshGate = {
+        started: yield* Deferred.make<void>(),
+        release: yield* Deferred.make<void>(),
+      };
+      const resolverWhileRefreshing = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+      const refreshFiber = yield* resolverWhileRefreshing
+        .refreshIndex()
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(refreshGate.started);
+      expect(yield* resolverWhileRefreshing.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.3",
+      });
+      yield* Deferred.succeed(refreshGate.release, undefined);
+      yield* Fiber.join(refreshFiber);
+      expect(yield* resolverWhileRefreshing.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.4",
+      });
+
+      // A disk read that finishes after a concurrent refresh must not overwrite the refreshed index.
+      refreshGate = null;
+      upstreamVersion = "1.2.5";
+      const diskReadStarted = yield* Deferred.make<void>();
+      const releaseDiskRead = yield* Deferred.make<void>();
+      const delayedFileSystem: FileSystem.FileSystem = {
+        ...fileSystem,
+        readFileString: (filePath, encoding) =>
+          filePath === registryCachePath
+            ? fileSystem.readFileString(filePath, encoding).pipe(
+                Effect.tap(() => Deferred.succeed(diskReadStarted, undefined)),
+                Effect.tap(() => Deferred.await(releaseDiskRead)),
+              )
+            : fileSystem.readFileString(filePath, encoding),
+      };
+      const resolverDuringDiskRead = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      }).pipe(Effect.provideService(FileSystem.FileSystem, delayedFileSystem));
+      const diskInspectFiber = yield* resolverDuringDiskRead
+        .inspect(settings())
+        .pipe(Effect.forkScoped({ startImmediately: true }));
+      yield* Deferred.await(diskReadStarted);
+      yield* resolverDuringDiskRead.refreshIndex();
+      yield* Deferred.succeed(releaseDiskRead, undefined);
+      expect(yield* Fiber.join(diskInspectFiber)).toMatchObject({
+        status: "ready",
+        version: "1.2.5",
+      });
+      expect(yield* resolverDuringDiskRead.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.5",
+      });
     }).pipe(
       Effect.scoped,
       Effect.provide(
         layerResolver((request) => {
           requests += 1;
-          return Effect.succeed(
-            HttpClientResponse.fromWeb(request, new Response(makeRegistry(agent))),
+          const gate = refreshGate;
+          const respond = Effect.sync(() =>
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(makeRegistry(makeNpxAgent(upstreamVersion))),
+            ),
           );
+          return gate === null
+            ? respond
+            : Deferred.succeed(gate.started, undefined).pipe(
+                Effect.andThen(Deferred.await(gate.release)),
+                Effect.andThen(respond),
+              );
         }),
       ),
     );
