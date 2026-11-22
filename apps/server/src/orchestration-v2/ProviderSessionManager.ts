@@ -267,7 +267,7 @@ export interface ProviderSessionManagerV2Shape {
   readonly closeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
-  /** Closes every session whose cwd matches, and waits for those already closing, so their processes are gone. */
+  /** Closes every single-thread session whose cwd matches, and waits for those already closing, so their processes are gone. */
   readonly closeInWorkspace: (
     isInWorkspace: (cwd: string) => boolean,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
@@ -3412,8 +3412,11 @@ export const layerWithOptions = (
         ),
         closeInWorkspace: Effect.fn("ProviderSessionManager.closeInWorkspace")(
           function* (isInWorkspace) {
-            const live = [...(yield* Ref.get(sessions)).values()].filter((entry) =>
-              isInWorkspace(entry.runtime.providerSession.cwd),
+            // A shared session serves threads in other workspaces; detach unloads its threads instead.
+            const live = [...(yield* Ref.get(sessions)).values()].filter(
+              (entry) =>
+                !entry.supportsMultipleProviderThreads &&
+                isInWorkspace(entry.runtime.providerSession.cwd),
             );
             const closing = [...(yield* Ref.get(closingSessions))].filter((entry) =>
               isInWorkspace(entry.cwd),

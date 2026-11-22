@@ -1138,6 +1138,55 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
   }),
 );
 
+it.effect(
+  "ProviderSessionManagerV2 keeps a shared session serving other workspaces when one workspace closes",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const removedThreadId = ThreadId.make("thread-provider-session-manager-workspace-removed");
+        const otherThreadId = ThreadId.make("thread-provider-session-manager-workspace-other");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: removedThreadId, now }),
+            yield* makeThreadCreatedEvent({ idAllocator, threadId: otherThreadId, now }),
+          ],
+        });
+        // The removed workspace's thread opened the session, so the session records its cwd.
+        const runtime = yield* manager.open({
+          threadId: removedThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* runtime.resumeThread({
+          threadId: otherThreadId,
+          providerThread: makeProviderThread({
+            idAllocator,
+            threadId: otherThreadId,
+            providerSessionId,
+            now,
+            nativeThreadId: "native-other-workspace",
+          }),
+        });
+
+        yield* manager.closeInWorkspace((cwd) => cwd === runtimePolicy.cwd);
+
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+      });
+
+      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+    }),
+);
+
 // regression: #27018 a worktree is removed only after the processes of its sessions are gone
 it.effect(
   "ProviderSessionManagerV2 closes a workspace's sessions and waits for one already closing",
@@ -1185,6 +1234,7 @@ it.effect(
             idleTimeoutMs: 60_000,
             hangSessionScopeClose: true,
             scopeCloseReached,
+            capabilities: ExclusiveCapabilities,
           }),
         ),
       );
