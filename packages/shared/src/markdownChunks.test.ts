@@ -78,6 +78,11 @@ describe("splitLargeMarkdown", () => {
     expect(starts(text)).toEqual(["<!--", "after"]);
   });
 
+  it("still cuts after an autolink line", () => {
+    const text = ["<https://example.com>", "# next"].join("\n");
+    expect(starts(text)).toEqual(["<https://example.com>", "# next"]);
+  });
+
   it("waits for the target size before cutting", () => {
     const text = ["# a", "", "b", "", "# c", "", "d"].join("\n");
     expect(splitLargeMarkdown(text, 6).map((chunk) => chunk.text)).toEqual([

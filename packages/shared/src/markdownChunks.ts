@@ -19,7 +19,8 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}\$\$/, /\$\$/],
 ];
 
-const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z]/;
+// A tag name, not an autolink such as <https://example.com>.
+const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z][A-Za-z0-9-]*(?=[\s/>]|$)/;
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
