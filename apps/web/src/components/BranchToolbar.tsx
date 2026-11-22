@@ -1420,7 +1420,7 @@ export const BranchToolbar = memo(function BranchToolbar({
       data-composer-context-control
     >
       {machineMenu}
-      {!(showGitControls && showBranchControls) && !onOpenWorkspaceDetails ? (
+      {showGitControls && !showBranchControls && !onOpenWorkspaceDetails ? (
         <WorkspaceMenu {...workspaceMenuProps} />
       ) : null}
       {offersRepositoryChoice ? (
