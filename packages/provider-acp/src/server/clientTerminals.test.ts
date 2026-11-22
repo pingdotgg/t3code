@@ -154,7 +154,7 @@ describe("AcpClientTerminals", () => {
     ),
   );
 
-  it.live("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
+  it.live("runs Devin shell source as bash with pipes and session fallback variables", () =>
     Effect.gen(function* () {
       const terminals = yield* makeAcpClientTerminals({
         defaultCwd: process.cwd(),
@@ -162,9 +162,12 @@ describe("AcpClientTerminals", () => {
         environmentForSession: () => ({ T3_ACP_MCP_NODE: "mailbox-probe" }),
       });
       yield* Effect.addFinalizer(() => terminals.disposeAll);
+      // Process substitution is bash-only: dash and macOS's POSIX-mode /bin/sh both reject it,
+      // and dash also rejects `[[ ]]`.
       const terminal = yield* terminals.create({
         sessionId: "devin",
-        command: 'printf "%s\\n" "$T3_ACP_MCP_NODE" | tr a-z A-Z',
+        command:
+          '[[ -n $T3_ACP_MCP_NODE ]] && cat <(printf "%s\\n" "$T3_ACP_MCP_NODE") | tr a-z A-Z',
       });
       const exit = yield* terminals.waitForExit({ sessionId: "devin", ...terminal });
       const output = yield* terminals.output({ sessionId: "devin", ...terminal });
