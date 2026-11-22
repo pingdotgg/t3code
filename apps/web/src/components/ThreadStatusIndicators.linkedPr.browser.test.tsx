@@ -102,21 +102,23 @@ it("previews eight ordered stack layers and opens the full list from the badge",
     <ThreadPullRequestsMiniList pullRequests={pullRequests} maxItems={8} />,
   );
   const items = screen.getByRole("listitem").elements();
-  expect(items).toHaveLength(9);
-  expect(items.slice(0, 8).map((item) => item.querySelector(".font-mono")?.textContent)).toEqual([
-    "#1",
-    "#2",
-    "#3",
-    "#4",
-    "#5",
-    "#6",
-    "#7",
-    "#8",
-  ]);
-  expect(items[0]?.textContent).toContain("chain · 10");
-  expect(items[1]?.getAttribute("style")).toContain("padding-left: 0.75rem");
-  expect(items[8]).toHaveTextContent("+2 more");
-  expect(screen.getByRole("button", { name: "+2 more" }).query()).toBeNull();
+  await vi.waitFor(() => {
+    expect(items).toHaveLength(9);
+    expect(items.slice(0, 8).map((item) => item.querySelector(".font-mono")?.textContent)).toEqual([
+      "#1",
+      "#2",
+      "#3",
+      "#4",
+      "#5",
+      "#6",
+      "#7",
+      "#8",
+    ]);
+    expect(items[0]?.textContent).toContain("chain · 10");
+    expect(items[1]?.getAttribute("style")).toContain("padding-left: 0.75rem");
+    expect(items[8]).toHaveTextContent("+2 more");
+  });
+  await expect.element(screen.getByRole("button", { name: "+2 more" })).not.toBeInTheDocument();
 
   await screen.rerender(
     <ThreadPullRequestBadgeControl
@@ -131,7 +133,7 @@ it("previews eight ordered stack layers and opens the full list from the badge",
   await userEvent.keyboard("{Tab}");
   const more = page.getByRole("button", { name: "+2 more" });
   await expect.element(more).toBeVisible();
-  expect(page.getByRole("link").elements()).toHaveLength(8);
+  await vi.waitFor(() => expect(page.getByRole("link").elements()).toHaveLength(8));
   await userEvent.click(more);
   expect(onOpenList).toHaveBeenCalledOnce();
 });

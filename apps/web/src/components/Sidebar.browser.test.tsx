@@ -30,7 +30,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -305,6 +305,7 @@ async function renderSettlementSidebar(
   const navigate = stack.use(vi.spyOn(router, "navigate"));
   vi.mocked(DndContext).mockClear();
   vi.mocked(SortableThreadRow).mockClear();
+  // Disable the test harness default router because this test supplies its own RouterProvider.
   const screen = stack.use(await render(<RouterProvider router={router} />, { router: false }));
   await expect.element(screen.getByText("Thread 0").first()).toBeInTheDocument();
 
@@ -749,19 +750,19 @@ describe("sidebar settled pagination", () => {
       viewport.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
     await act(() => vi.advanceTimersByTime(220));
-    expect(document.querySelector('[role="tooltip"]')).toBeNull();
+    await expect.element(page.getByRole("tooltip")).not.toBeInTheDocument();
 
     // Hover until open, then scroll to dismiss the open preview.
     await userEvent.unhover(firstRow);
     await userEvent.hover(firstRow);
     await act(() => vi.advanceTimersByTime(200));
-    expect(document.querySelector('[role="tooltip"][data-open]')?.textContent).toContain(
-      "Scrollable thread 0",
-    );
+    const tooltip = page.getByRole("tooltip");
+    await expect.element(tooltip).toHaveAttribute("data-open");
+    await expect.element(tooltip.getByText("Scrollable thread 0")).toBeVisible();
     await act(() => {
       viewport.scrollTop = 80;
       viewport.dispatchEvent(new Event("scroll", { bubbles: false }));
     });
-    expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
+    await expect.element(tooltip).not.toHaveAttribute("data-open");
   });
 });

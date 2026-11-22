@@ -77,7 +77,7 @@ it("suppresses the row preview while its snooze menu is open", async () => {
   const menu = page.getByRole("menu");
   await expect.element(menu).toBeVisible();
   await act(() => vi.advanceTimersByTime(80));
-  expect(row.element().getAttribute("aria-describedby")).toBeNull();
+  await expect.element(row).not.toHaveAttribute("aria-describedby");
 
   // Dispatch a new entry while the menu's pointer shield covers the row.
   await act(() => {
@@ -87,7 +87,7 @@ it("suppresses the row preview while its snooze menu is open", async () => {
       .dispatchEvent(new PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" }));
     vi.advanceTimersByTime(80);
   });
-  expect(row.element().getAttribute("aria-describedby")).toBeNull();
+  await expect.element(row).not.toHaveAttribute("aria-describedby");
 
   await userEvent.keyboard("{Escape}");
   await expect.element(menu).not.toBeInTheDocument();
@@ -98,5 +98,5 @@ it("suppresses the row preview while its snooze menu is open", async () => {
   await expect.element(page.getByRole("tooltip").getByText("My thread")).toBeVisible();
 
   await userEvent.hover(snooze);
-  expect(row.element().getAttribute("aria-describedby")).toBeNull();
+  await expect.element(row).not.toHaveAttribute("aria-describedby");
 });

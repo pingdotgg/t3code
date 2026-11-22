@@ -86,6 +86,7 @@ export function installSidebarTree(root: HTMLElement) {
 
   const affectsRowStructure = (record: MutationRecord): boolean => {
     if (record.type === "attributes") {
+      if (record.attributeName === "data-sidebar-row") return true;
       if (!(record.target instanceof Element)) return false;
       if (record.target.matches(ROW)) return true;
       if (record.target.closest(ROW) !== null) return false;

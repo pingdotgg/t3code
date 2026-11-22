@@ -281,7 +281,10 @@ it("closes the open tooltip when leaving or unmounting a pending target during s
   await act(() => vi.advanceTimersByTime(40));
   await userEvent.unhover(second);
   await act(() => vi.advanceTimersByTime(100));
-  expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
+  await expect
+    .element(screen.getByRole("button", { name: "First" }))
+    .not.toHaveAttribute("aria-describedby");
+  await expect.element(second).not.toHaveAttribute("aria-describedby");
 
   // Case 2: open First, hover Second, then unmount Second midway through its switch dwell.
   await userEvent.hover(screen.getByRole("button", { name: "First" }));
@@ -292,5 +295,7 @@ it("closes the open tooltip when leaving or unmounting a pending target during s
   await act(() => vi.advanceTimersByTime(40));
   await screen.rerender(view(false));
   await act(() => vi.advanceTimersByTime(100));
-  expect(document.querySelector('[role="tooltip"][data-open]')).toBeNull();
+  await expect
+    .element(screen.getByRole("button", { name: "First" }))
+    .not.toHaveAttribute("aria-describedby");
 });
