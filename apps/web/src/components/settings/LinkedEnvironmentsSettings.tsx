@@ -659,7 +659,7 @@ export function useForgetPeerLink(environmentId: EnvironmentId, link: PeerLinkSu
   const forget = async () => {
     const confirmed = await (requestConfirmDialog(
       gt(
-        "Forget {label}? Agents here stop working there. Revoke \"T3 Code · …\" in {label}''s Sharing & access to end the session there too.",
+        "Forget {label}? Agents here stop working there, and their session on {label} ends too if it answers.",
         { label: link.label },
       ),
       { variant: "destructive" },
