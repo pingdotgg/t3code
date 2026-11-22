@@ -249,7 +249,8 @@ export function ThreadDetailsContext({
             ) : null}
           </span>
         </div>
-        <CollapsiblePanel className="col-span-full">
+        {/* Undoes the usage grid's ps-3 pe-2 (ThreadDetailsPanel) so the breakdown spans the card. */}
+        <CollapsiblePanel className="col-span-full -ms-3 -me-2">
           <div className="px-0.5 pb-0.5">
             <div className="surface-composer rounded-lg p-0.5">
               <dl className="text-meta">
