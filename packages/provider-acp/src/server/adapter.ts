@@ -1934,7 +1934,7 @@ interface ActiveAcpSubagent {
   readonly interruptedToolIds: Set<string>;
   readonly toolSessionIds: Map<string, string>;
   thoughtSegmentIndex: number;
-  thoughtFlushPending: boolean;
+  thoughtEmittedAt: number;
   thoughtText: string;
   thoughtStartedAt: DateTime.Utc | null;
 }
@@ -3567,7 +3567,6 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               streaming: !completed,
             },
           });
-          subagent.thoughtFlushPending = false;
           if (completed) {
             subagent.thoughtSegmentIndex += 1;
             subagent.thoughtText = "";
@@ -3583,16 +3582,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           if (text.length === 0) return;
           const continuing = mode === "append" && subagent.thoughtText.length > 0;
           subagent.thoughtText = mode === "replace" ? text : `${subagent.thoughtText}${text}`;
-          if (!continuing) return yield* writeSubagentThought(subagent, false);
-          // Coalesce follow-up chunks like the assistant stream; each write carries the whole text.
-          if (subagent.thoughtFlushPending) return;
-          subagent.thoughtFlushPending = true;
-          const segment = subagent.thoughtSegmentIndex;
-          yield* Effect.suspend(() =>
-            subagent.thoughtFlushPending && subagent.thoughtSegmentIndex === segment
-              ? writeSubagentThought(subagent, false)
-              : Effect.void,
-          ).pipe(Effect.delay(ACP_SUBAGENT_TEXT_FLUSH_INTERVAL), Effect.forkIn(sessionScope));
+          const now = yield* Clock.currentTimeMillis;
+          // Each write carries the whole text, so throttle follow-up chunks; the write that
+          // completes the segment carries the rest.
+          if (
+            continuing &&
+            now - subagent.thoughtEmittedAt < Duration.toMillis(ACP_SUBAGENT_TEXT_FLUSH_INTERVAL)
+          )
+            return;
+          subagent.thoughtEmittedAt = now;
+          yield* writeSubagentThought(subagent, false);
         });
 
         const projectSubagentNotification = Effect.fnUntraced(function* (
@@ -3925,7 +3924,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             interruptedToolIds: new Set(),
             toolSessionIds: new Map(),
             thoughtSegmentIndex: 0,
-            thoughtFlushPending: false,
+            thoughtEmittedAt: 0,
             thoughtText: "",
             thoughtStartedAt: null,
           };
@@ -7192,19 +7191,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               }
             }
           }
+          // A re-woken parked worker is attached above; emitSubagent drains only new ones.
+          const drainAttachedFrames = Effect.fnUntraced(function* () {
+            if (update.childSessionId === null) return;
+            const attached = context.subagentsBySessionId.get(update.childSessionId);
+            const frames = context.pendingSubagentNotifications.get(update.childSessionId);
+            if (attached === undefined || frames === undefined) return;
+            context.pendingSubagentNotifications.delete(update.childSessionId);
+            for (const frame of frames) {
+              yield* projectSubagentNotification(attached, frame, context);
+            }
+          });
           if (
             update.status === "completed" ||
             update.status === "failed" ||
             update.status === "cancelled"
           ) {
+            yield* drainAttachedFrames();
             const ended =
               context.subagents.get(update.nativeTaskId) ??
               (update.childSessionId === null
                 ? undefined
                 : context.subagentsBySessionId.get(update.childSessionId));
             if (ended !== undefined) yield* terminalizeSubagentTools(ended);
+            yield* emitSubagent(context, update, { allowReopenFromIdle });
+          } else {
+            yield* emitSubagent(context, update, { allowReopenFromIdle });
+            yield* drainAttachedFrames();
           }
-          yield* emitSubagent(context, update, { allowReopenFromIdle });
           if (hasDeferredBackgroundWork(context)) {
             context.backgroundFinalizeGeneration += 1;
           } else {
@@ -7284,7 +7298,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               );
               if (
                 !handledByCarryover &&
-                (queued !== undefined || (postSettleContinuationEnabled && wakeContinuation))
+                (queued !== undefined ||
+                  (postSettleContinuationEnabled &&
+                    wakeContinuation &&
+                    !(yield* Ref.get(loadingSessionId))))
               ) {
                 // A worker first seen between turns has no other lineage; keep its final state
                 // and buffered frames so the next turn still projects it.

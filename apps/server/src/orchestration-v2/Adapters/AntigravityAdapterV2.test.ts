@@ -2884,6 +2884,14 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         // Between turns @beta wakes and is killed; turn 2 must not replay the queued running update.
         // New worker @gamma spawns and finishes in the same gap; turn 2 must still show its report.
         // @delta is first seen already finished, with no running update before it.
+        // Parked @alpha streams a note; it must show once turn 2 wakes @alpha.
+        yield* onSessionUpdate!({
+          sessionId: alphaSessionId,
+          update: {
+            sessionUpdate: "agent_message_chunk",
+            content: { type: "text", text: "Parked note." },
+          },
+        });
         yield* onSwarmNotification!({
           sessionId: rootSessionId,
           head: 4,
@@ -2987,6 +2995,15 @@ describe("AntigravityAdapterV2 native swarm protocol", () => {
         assert.equal(subagentsByTitle().get("@gamma")?.result, "Docs wrap-up.");
         assert.equal(subagentsByTitle().get("@delta")?.status, "completed");
         assert.equal(subagentsByTitle().get("@delta")?.result, "CI wrap-up.");
+        assert.isTrue(
+          collected.some(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.threadId === alphaAfterTurn1?.childThreadId &&
+              event.turnItem.type === "assistant_message" &&
+              event.turnItem.text.includes("Parked note."),
+          ),
+        );
 
         yield* Fiber.interrupt(reader);
       }).pipe(Effect.provide(layerSession), Effect.scoped),
