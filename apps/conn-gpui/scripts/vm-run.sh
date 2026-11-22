@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Runs inside nick-vm (from the private checkout ~/apps/conn-gpui-vm/conn-gpui): builds
+# Runs inside nick-vm (from a private nckrtl/conn checkout, in apps/conn-gpui): builds
 # conn-app with automation + CEF, bundles it, and opens it against the VM's disposable
 # conn-server at a fixed window frame for side-by-side captures with real Conn.
 #

@@ -21,6 +21,7 @@ Keep this file accurate. Update it whenever a milestone lands, a proof passes, o
 
 ## Known decisions & open notes
 
+- **Moved into the `nckrtl/conn` monorepo (2026-11-22):** `conn-gpui` now lives at `apps/conn-gpui`, imported with full history from the standalone repo frozen at `a6511ce`. `conn-wire`/`conn-contract` are path dependencies on `../conn-server/crates/`, `.refs/conn` is gone (Conn's web, desktop and mobile sources are in the same checkout), and root fmt, lint and CI job detection skip `apps/conn-gpui` like `apps/conn-server`. Carried over from the GPUI thread: run the Layer 3 `nick-vm` side-by-side parity capture for `0f054b3` + `a6511ce` (2-line sidebar rows, boxed subagent cards, enrichment-snapshot fix), then update `docs/parity/{shell-sidebar,timeline}.md`. The VM checkout must now be a `nckrtl/conn` checkout so `../conn-server` resolves.
 - **Icons:** superheroicons 16/solid everywhere (Nick, 2026-11-21), copied with provenance in `crates/conn-app/assets/icons/superhero/`; Lucide/Phosphor removed. A test checks every icon the app uses resolves to a drawing. Captures: `.shots/icons/`.
 
 - **Build host:** Approved to build, test, and run locally on this Mac for overnight/dedicated runs (keep all worktrees, build output, and disposable `--state-dir` isolated).
