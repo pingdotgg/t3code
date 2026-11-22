@@ -175,6 +175,26 @@ describe("threadHistoryMerge", () => {
     expect(merged.visibleTurnItems[1]?.item).toBe(preview.item);
     expect(merged.turnItems).toEqual([local.item]);
     expect(mergeOlderHistoryIntoProjection(merged, [inherited(0), inherited(1)])).toBe(merged);
+
+    // Expanding the local deferred work resolves the anchor that carries it.
+    const anchor = {
+      ...local,
+      item: { ...local.item, deferredWork: { cursor: "work", itemCount: 2, lastOrdinal: 3 } },
+    };
+    const expanded = mergeOlderHistoryIntoProjection(
+      { ...projection, turnItems: [anchor.item], visibleTurnItems: [preview, anchor] },
+      [local, row(2)],
+      { anchorId: local.sourceItemId, nextCursor: null },
+    );
+    expect(
+      expanded.visibleTurnItems.map((entry) => [entry.sourceThreadId, entry.sourceItemId]),
+    ).toEqual([
+      ["fork-source", "item-1"],
+      [v2ThreadId, "item-1"],
+      [v2ThreadId, "item-2"],
+    ]);
+    expect(expanded.visibleTurnItems[0]?.item).toBe(preview.item);
+    expect(expanded.visibleTurnItems[1]?.item.deferredWork).toBeUndefined();
   });
 
   it("retains live rows that arrived after the older page was fetched", () => {

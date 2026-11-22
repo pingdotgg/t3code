@@ -83,6 +83,17 @@ function interleavePage(
   return merged;
 }
 
+// Inherited and local rows can share an item id; only the row that carries
+// deferred work owns the work cursor being expanded.
+export function findDeferredWorkAnchorIndex(
+  rows: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
+  anchorId: string,
+): number {
+  return rows.findIndex(
+    (row) => row.sourceItemId === anchorId && row.item.deferredWork !== undefined,
+  );
+}
+
 export function mergeOlderHistoryIntoProjection(
   projection: OrchestrationV2ThreadProjection,
   olderItems: ReadonlyArray<OrchestrationV2ProjectedTurnItem>,
@@ -95,7 +106,7 @@ export function mergeOlderHistoryIntoProjection(
   const start =
     work === undefined
       ? -1
-      : projection.visibleTurnItems.findIndex((row) => row.sourceItemId === work.anchorId);
+      : findDeferredWorkAnchorIndex(projection.visibleTurnItems, work.anchorId);
   const anchor = projection.visibleTurnItems[start];
   const deferred = anchor?.item.deferredWork;
   if (work !== undefined && deferred === undefined) return projection;
@@ -179,7 +190,7 @@ export function mergeOlderHistoryIntoProjection(
         .filter((row) => !pageKeys.has(projectedItemKey(row))),
     ];
     const ordered = section
-      .map((row) => (row.sourceItemId === anchor.sourceItemId ? updated : row))
+      .map((row) => (projectedItemKey(row) === projectedItemKey(anchor) ? updated : row))
       .sort((left, right) => left.item.ordinal - right.item.ordinal);
     visible = [
       ...projection.visibleTurnItems.slice(0, start),
