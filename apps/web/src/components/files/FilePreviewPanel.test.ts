@@ -158,6 +158,11 @@ describe("document preview contents", () => {
       "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+    [
+      "visible text around hidden character formatting",
+      String.raw`{\rtf1 A{\v hidden{\v0 B}hidden}C\v hidden\v0 D\v hidden\plain E}`,
+      "ABCDE",
+    ],
     ["a tracked replacement", String.raw`{\rtf1 aaa{\deleted bbb}{\revised BBB}ccc}`, "aaaBBBccc"],
     [
       "text after a deletion reset",
@@ -232,6 +237,9 @@ Third}`;
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
     const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
     expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
+      lineBreak,
+    );
     expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
     expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
       lineBreak,
