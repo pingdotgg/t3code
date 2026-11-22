@@ -7116,6 +7116,14 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       readOnly: false,
     },
     {
+      case: "Claude's own check and an ask wildcard that repeats a segment and misses its last one",
+      rules: [{ behavior: "ask", rule: "mcp__probe_server__*a*a*a*a*a*a*a*ab" }],
+      tool: "a".repeat(256),
+      checks: "full-access",
+      called: true,
+      readOnly: true,
+    },
+    {
       case: "Claude's own check and an ask rule for a server alias T3 can't list",
       rules: [{ behavior: "ask", rule: "mcp__probe_alias" }],
       checks: "full-access",

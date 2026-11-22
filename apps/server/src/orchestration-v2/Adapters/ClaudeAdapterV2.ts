@@ -1107,13 +1107,23 @@ function claudeAskRuleNamesMcpTool(
     if (entry.behavior !== "ask" || entry.notInEffect === true) return false;
     const name = entry.rule.split("(", 1)[0] ?? entry.rule;
     if (name === toolName || name === serverName) return true;
-    if (!name.includes("*")) return false;
-    const pattern = name
-      .split("*")
-      .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-      .join(".*");
-    return new RegExp(`^${pattern}$`).test(toolName);
+    return name.includes("*") && claudeWildcardMatches(name, toolName);
   });
+}
+
+// Leftmost search per segment, not a regex: a `.*` per `*` backtracks exponentially on a near miss.
+function claudeWildcardMatches(pattern: string, value: string): boolean {
+  const [first = "", ...rest] = pattern.split("*");
+  const last = rest.pop();
+  if (last === undefined) return pattern === value;
+  if (!value.startsWith(first)) return false;
+  let from = first.length;
+  for (const part of rest) {
+    const at = value.indexOf(part, from);
+    if (at === -1) return false;
+    from = at + part.length;
+  }
+  return value.length - last.length >= from && value.endsWith(last);
 }
 
 /**
