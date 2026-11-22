@@ -211,7 +211,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
-    // A stopped provider's processes can hold the folder for a few seconds after its session ends.
+    // Windows frees an ended process's handles a moment later, and scanners hold new files briefly.
     Effect.retry({
       while: (error) => RETRYABLE_REMOVE_ERRORS.has(error.reason._tag),
       schedule: Schedule.spaced("500 millis"),

@@ -267,6 +267,10 @@ export interface ProviderSessionManagerV2Shape {
   readonly closeInstance: (
     instanceId: ProviderInstanceId,
   ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
+  /** Closes every session whose cwd matches, and waits for those already closing, so their processes are gone. */
+  readonly closeInWorkspace: (
+    isInWorkspace: (cwd: string) => boolean,
+  ) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   readonly release: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly reason: ProviderSessionReleaseReason;
@@ -343,6 +347,11 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
+}
+
+interface ClosingSession {
+  readonly cwd: string;
+  readonly closed: Deferred.Deferred<void>;
 }
 
 interface IdleThreadUnload {
@@ -547,6 +556,8 @@ export const layerWithOptions = (
           }),
       );
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+      // Released entries leave `sessions` before their processes exit.
+      const closingSessions = yield* Ref.make(new Set<ClosingSession>());
       // Retry per released entry; reusing ids must not lose cleanup for earlier threads.
       const releaseRecordRetries = yield* FiberSet.make();
       const nextSubscriberId = yield* Ref.make(0);
@@ -1493,7 +1504,16 @@ export const layerWithOptions = (
         readonly eventStreamCause?: Cause.Cause<ProviderAdapter.ProviderAdapterV2Error>;
       }) =>
         Effect.acquireUseRelease(
-          removeLiveEntry(input),
+          Effect.gen(function* () {
+            const [entry, releasedAt] = yield* removeLiveEntry(input);
+            if (Option.isNone(entry)) return [entry, releasedAt, undefined] as const;
+            const closing: ClosingSession = {
+              cwd: entry.value.runtime.providerSession.cwd,
+              closed: yield* Deferred.make<void>(),
+            };
+            yield* Ref.update(closingSessions, (current) => new Set(current).add(closing));
+            return [entry, releasedAt, closing] as const;
+          }),
           ([entry, releasedAt]) =>
             Option.match(entry, {
               onNone: () => Effect.void,
@@ -1566,7 +1586,7 @@ export const layerWithOptions = (
                   }),
                 ),
             }),
-          ([entry]) =>
+          ([entry, , closing]) =>
             Option.match(entry, {
               onNone: () => Effect.void,
               onSome: (entry) =>
@@ -1593,7 +1613,17 @@ export const layerWithOptions = (
                     ),
                   ),
                 ),
-            }),
+            }).pipe(
+              Effect.ensuring(
+                closing === undefined
+                  ? Effect.void
+                  : Ref.update(closingSessions, (current) => {
+                      const remaining = new Set(current);
+                      remaining.delete(closing);
+                      return remaining;
+                    }).pipe(Effect.andThen(Deferred.succeed(closing.closed, undefined))),
+              ),
+            ),
         ).pipe(
           Effect.catchCause((cause) =>
             Effect.fail(
@@ -3379,6 +3409,33 @@ export const layerWithOptions = (
                   }),
               ),
             ),
+        ),
+        closeInWorkspace: Effect.fn("ProviderSessionManager.closeInWorkspace")(
+          function* (isInWorkspace) {
+            const live = [...(yield* Ref.get(sessions)).values()].filter((entry) =>
+              isInWorkspace(entry.runtime.providerSession.cwd),
+            );
+            const closing = [...(yield* Ref.get(closingSessions))].filter((entry) =>
+              isInWorkspace(entry.cwd),
+            );
+            const outcomes = yield* Effect.forEach(
+              live,
+              (entry) =>
+                releaseEntry({
+                  providerSessionId: entry.runtime.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: "Its workspace is being removed.",
+                }).pipe(Effect.exit),
+              { concurrency: "unbounded" },
+            );
+            yield* Effect.forEach(closing, (entry) => Deferred.await(entry.closed), {
+              discard: true,
+            });
+            const failure = outcomes.find(Exit.isFailure);
+            if (failure !== undefined && Exit.isFailure(failure)) {
+              return yield* Effect.failCause(failure.cause);
+            }
+          },
         ),
         release: releaseEntry,
         releaseUnlessBusy: Effect.fn("ProviderSessionManager.releaseUnlessBusy")(function* (input) {

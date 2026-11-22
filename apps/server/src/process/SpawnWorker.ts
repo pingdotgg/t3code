@@ -547,6 +547,12 @@ export const spawnPiped = (
     readonly stderr: NodeStream.Readable;
   };
 
+/** Ends a `spawnPiped` child and its descendants. `taskkill /T` finds them only while the child lives. */
+export const killPipedTree = (pid: number) =>
+  new Promise<void>((resolve) =>
+    (sharedPool ??= new SpawnWorkerPool("win32")).killTree(pid, resolve),
+  );
+
 export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const platform = yield* HostProcess.Platform;

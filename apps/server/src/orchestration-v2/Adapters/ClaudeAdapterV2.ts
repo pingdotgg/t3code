@@ -1613,6 +1613,7 @@ export const layerQueryRunner: Layer.Layer<
         stderrTail = (stderrTail + text).slice(-CLAUDE_STDERR_TAIL_LENGTH);
       };
       let refreshDescendants: Effect.Effect<void> = Effect.void;
+      let stopWindowsTree: () => Promise<void> = () => Promise.resolve();
       const spawnProcess =
         options.spawnClaudeCodeProcess ??
         ((spawnOptions: ClaudeSpawnOptions) => {
@@ -1646,6 +1647,11 @@ export const layerQueryRunner: Layer.Layer<
             windowsHide: true,
           });
           child.stderr.setEncoding("utf8").on("data", (chunk: string) => options.stderr?.(chunk));
+          // Windows has no process group: the CLI's exit leaves its MCP servers running in the cwd.
+          stopWindowsTree = () =>
+            child.exitCode !== null || child.signalCode !== null || child.pid === undefined
+              ? Promise.resolve()
+              : SpawnWorker.killPipedTree(child.pid);
           return child;
         });
       let spawnedProcess: ClaudeSpawnedProcess | undefined;
@@ -2021,6 +2027,7 @@ export const layerQueryRunner: Layer.Layer<
         close: Effect.suspend(() => (processExited ? Effect.void : refreshDescendants)).pipe(
           Effect.andThen(Queue.shutdown(promptQueue)),
           Effect.andThen(closeClaudeQuery(queryRuntime)),
+          Effect.andThen(Effect.promise(() => stopWindowsTree())),
           Effect.tap(() =>
             logProtocolEvent({
               direction: "outgoing",

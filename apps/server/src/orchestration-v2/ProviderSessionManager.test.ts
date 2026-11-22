@@ -1138,6 +1138,59 @@ it.effect("ProviderSessionManagerV2 opens independent sessions concurrently", ()
   }),
 );
 
+// regression: #27018 a worktree is removed only after the processes of its sessions are gone
+it.effect(
+  "ProviderSessionManagerV2 closes a workspace's sessions and waits for one already closing",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const scopeCloseReached = yield* Deferred.make<void>();
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-workspace");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* manager.closeInWorkspace(() => false);
+        assert.isTrue(yield* manager.isLive(providerSessionId));
+
+        // A detach already released the entry, but its processes are still exiting.
+        const detach = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        yield* Deferred.await(scopeCloseReached);
+        assert.isFalse(yield* manager.isLive(providerSessionId));
+        const workspaceClose = yield* manager
+          .closeInWorkspace((cwd) => cwd === runtimePolicy.cwd)
+          .pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.isUndefined(workspaceClose.pollUnsafe());
+
+        yield* TestClock.adjust("30 seconds");
+        yield* Fiber.join(detach);
+        yield* Fiber.join(workspaceClose);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            hangSessionScopeClose: true,
+            scopeCloseReached,
+          }),
+        ),
+      );
+    }),
+);
+
 it.effect("ProviderSessionManagerV2 closes every live session for a provider instance", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
