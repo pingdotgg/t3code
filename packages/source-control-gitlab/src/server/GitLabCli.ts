@@ -21,6 +21,8 @@ import * as SourceControlHost from "@t3tools/source-control-core/server/SourceCo
 import {
   decodeGitLabMergeRequestJson,
   decodeGitLabMergeRequestListJson,
+  type NormalizedGitLabMergeRequestRecord,
+  withSourceProjectPath,
 } from "./gitLabMergeRequests.ts";
 import type * as SourceControlProvider from "@t3tools/source-control-core/server/SourceControlProvider";
 
@@ -377,6 +379,10 @@ const decodeGitLabMergeRequestProject = Schema.decodeEffect(
   Schema.fromJsonString(Schema.Struct({ id: Schema.Number, path: TrimmedNonEmptyString })),
 );
 
+const decodeGitLabProjectPath = Schema.decodeEffect(
+  Schema.fromJsonString(Schema.Struct({ path_with_namespace: TrimmedNonEmptyString })),
+);
+
 const RawGitLabNamespaceSchema = Schema.Struct({
   id: Schema.Number,
 });
@@ -559,6 +565,25 @@ export const make = Effect.gen(function* () {
       ),
     );
 
+  // glab's MR JSON names a fork's source project only by `source_project_id`.
+  const resolveSourceProjectPath = Effect.fn("GitLabCli.resolveSourceProjectPath")(function* (
+    cwd: string,
+    record: NormalizedGitLabMergeRequestRecord,
+    paths: Map<number, string | null>,
+  ) {
+    const id = record.unresolvedSourceProjectId;
+    if (id === undefined) return record;
+    if (!paths.has(id)) {
+      const path = yield* execute({ cwd, args: ["api", `projects/${id}`] }).pipe(
+        Effect.flatMap((result) => decodeGitLabProjectPath(result.stdout.trim())),
+        Effect.map((project) => project.path_with_namespace),
+        Effect.orElseSucceed(() => null),
+      );
+      paths.set(id, path);
+    }
+    return withSourceProjectPath(record, paths.get(id) ?? null);
+  });
+
   return GitLabCli.of({
     execute,
     listMergeRequests: Effect.fn("GitLabCli.listMergeRequests")(function* (input) {
@@ -566,6 +591,7 @@ export const make = Effect.gen(function* () {
       let pageSize = limit;
       let page = 1;
       const items: GitLabMergeRequestSummary[] = [];
+      const sourceProjectPaths = new Map<number, string | null>();
       while (items.length < limit) {
         const result = yield* execute({
           cwd: input.cwd,
@@ -600,7 +626,10 @@ export const make = Effect.gen(function* () {
             cause: Result.isFailure(decoded) ? decoded.failure : "MR list output was truncated",
           });
         }
-        items.push(...decoded.success.map(toSummaryWithOptionalUpdatedAt));
+        const records = yield* Effect.forEach(decoded.success, (record) =>
+          resolveSourceProjectPath(input.cwd, record, sourceProjectPaths),
+        );
+        items.push(...records.map(toSummaryWithOptionalUpdatedAt));
         // Count raw entries: the decoder drops invalid ones, which would end paging early.
         const entries = decodeJsonArray(raw);
         if (
@@ -635,7 +664,9 @@ export const make = Effect.gen(function* () {
                 );
               }
 
-              return Effect.succeed(toSummaryWithOptionalUpdatedAt(decoded.success));
+              return resolveSourceProjectPath(input.cwd, decoded.success, new Map()).pipe(
+                Effect.map(toSummaryWithOptionalUpdatedAt),
+              );
             }),
           ),
         ),
