@@ -4509,9 +4509,8 @@ describe("AcpRegistrySupport", () => {
         expect(yield* fileSystem.readFileString(resolvedDirectDiskSentinel.spawn.command)).toBe(
           "#!/bin/sh\necho archive-a\n",
         );
-        // Now refresh from 1.0.0 archiveA -> 1.0.0 archiveB while 2.0.0 stays unreceipted:
-        // recordDivergingInMemory must record "unknown" (not archiveA) for 2.0.0, and direct
-        // resolve of 2.0.0 hits the in-memory \0* check.
+        // Refreshing 1.0.0 -> 2.0.0 while 2.0.0 stays unreceipted persists a slot-specific
+        // "unknown" baseline for 2.0.0 instead of attributing it to archiveA.
         extraUpstreamAgents = [
           { ...binaryAgent("2.0.0", archiveBUrl), id: "removed-unreadable-agent" },
         ];
@@ -4523,12 +4522,55 @@ describe("AcpRegistrySupport", () => {
         expect(baselinesAfterDiverge["removed-unreadable-agent\u00002.0.0\u0000linux-x86_64"]).toBe(
           "unknown",
         );
+        const resolvedSlotSentinel = yield* directDiskSentinelCatalog.resolve(
+          settings({ agentId: "removed-unreadable-agent" }),
+          "/workspace",
+        );
+        expect(yield* fileSystem.readFileString(resolvedSlotSentinel.spawn.command)).toBe(
+          "#!/bin/sh\necho archive-b\n",
+        );
+        // Resolve an unreceipted 3.0.0 legacy slot absent during the scan with the on-disk \0*
+        // sentinel removed so ONLY the cached in-memory \0* sentinel can reject legacy reuse.
+        extraUpstreamAgents = [
+          { ...binaryAgent("3.0.0", archiveCUrl), id: "removed-unreadable-agent" },
+        ];
+        yield* directDiskSentinelCatalog.invalidateIndex();
+        yield* directDiskSentinelCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const baselinesBeforeV3 = JSON.parse(
+          yield* fileSystem.readFileString(corruptBaselinesPath),
+        ) as Record<string, string>;
+        expect(
+          baselinesBeforeV3["removed-unreadable-agent\u00003.0.0\u0000linux-x86_64"],
+        ).toBeUndefined();
+        const {
+          ["removed-unreadable-agent\u0000*"]: _droppedDiskSentinel,
+          ...baselinesWithoutAgentSentinel
+        } = baselinesBeforeV3;
+        yield* fileSystem.writeFileString(
+          corruptBaselinesPath,
+          JSON.stringify(baselinesWithoutAgentSentinel),
+        );
+        const corruptUnreadableV3Exe = path.join(
+          corruptUnreadableRemovedDir,
+          "3.0.0",
+          "linux-x86_64",
+          "bin",
+          "example-agent",
+        );
+        yield* fileSystem.makeDirectory(path.dirname(corruptUnreadableV3Exe), { recursive: true });
+        yield* fileSystem.writeFileString(corruptUnreadableV3Exe, "#!/bin/sh\necho legacy-v3\n");
+        yield* fileSystem.chmod(corruptUnreadableV3Exe, 0o755);
         const resolvedMemorySentinel = yield* directDiskSentinelCatalog.resolve(
           settings({ agentId: "removed-unreadable-agent" }),
           "/workspace",
         );
         expect(yield* fileSystem.readFileString(resolvedMemorySentinel.spawn.command)).toBe(
-          "#!/bin/sh\necho archive-b\n",
+          "#!/bin/sh\necho archive-c\n",
+        );
+        // Restore the on-disk \0* sentinel to confirm uninstallManagedBinary prunes both keys.
+        yield* fileSystem.writeFileString(
+          corruptBaselinesPath,
+          JSON.stringify(baselinesAfterDiverge),
         );
         expect(
           yield* directDiskSentinelCatalog.uninstallManagedBinary({
@@ -5070,6 +5112,10 @@ describe("AcpRegistrySupport", () => {
         let failReceiptTempWrite = false;
         let failSidecarWrite = false;
         let failSidecarRead = false;
+        let failSidecarReadOnCount: number | null = null;
+        let sidecarReadCount = 0;
+        let failReceiptReadOnCount: number | null = null;
+        let receiptReadCount = 0;
         let receiptRenameCount = 0;
         let onStatPath: {
           readonly matchPath: string;
@@ -5097,10 +5143,22 @@ describe("AcpRegistrySupport", () => {
                   : { ...info, mode: (info.mode & ~0o777) | override };
               }),
             ),
-          readFileString: (filePath, encoding) =>
-            failSidecarRead && path.basename(filePath) === "binary-launch-options.json"
-              ? fileSystem.readFileString(path.dirname(filePath), encoding)
-              : fileSystem.readFileString(filePath, encoding),
+          readFileString: (filePath, encoding) => {
+            const base = path.basename(filePath);
+            if (base === "binary-launch-options.json") {
+              sidecarReadCount += 1;
+              if (failSidecarRead || failSidecarReadOnCount === sidecarReadCount) {
+                return fileSystem.readFileString(path.dirname(filePath), encoding);
+              }
+            }
+            if (base === ".t3-artifact.json") {
+              receiptReadCount += 1;
+              if (failReceiptReadOnCount === receiptReadCount) {
+                return fileSystem.readFileString(path.dirname(filePath), encoding);
+              }
+            }
+            return fileSystem.readFileString(filePath, encoding);
+          },
           writeFileString: (filePath, data, options) =>
             (failReceiptTempWrite && path.basename(filePath).startsWith(".t3-artifact.json.")) ||
             (failSidecarWrite &&
@@ -5962,11 +6020,16 @@ describe("AcpRegistrySupport", () => {
         const releaseUninstallBeforeLock = yield* Deferred.make<void>();
         let gateUninstallExists = true;
         let reinstallEnteredInstall = false;
+        const markReinstallToolsTouch = (filePath: string) => {
+          if (!gateUninstallExists && filePath.startsWith(coordToolsDir)) {
+            reinstallEnteredInstall = true;
+          }
+        };
         const coordUninstallFs: FileSystem.FileSystem = {
           ...posixModeFs,
           exists: (filePath) => {
             // Pause uninstall BEFORE it takes the sidecar lock so an early permit release would
-            // let reinstall run all the way through install + sidecar write while paused.
+            // let reinstall enter installBinary while cleanup is paused.
             if (gateUninstallExists && filePath === coordSidecarPath) {
               gateUninstallExists = false;
               return Deferred.succeed(uninstallBeforeLockStarted, undefined).pipe(
@@ -5974,14 +6037,25 @@ describe("AcpRegistrySupport", () => {
                 Effect.andThen(posixModeFs.exists(filePath)),
               );
             }
+            markReinstallToolsTouch(filePath);
             return posixModeFs.exists(filePath);
           },
+          readFileString: (filePath, encoding) =>
+            Effect.sync(() => markReinstallToolsTouch(filePath)).pipe(
+              Effect.andThen(posixModeFs.readFileString(filePath, encoding)),
+            ),
+          readDirectory: (dirPath, options) =>
+            Effect.sync(() => markReinstallToolsTouch(dirPath)).pipe(
+              Effect.andThen(posixModeFs.readDirectory(dirPath, options)),
+            ),
+          stat: (filePath) =>
+            Effect.sync(() => markReinstallToolsTouch(filePath)).pipe(
+              Effect.andThen(posixModeFs.stat(filePath)),
+            ),
           makeDirectory: (dirPath, options) =>
-            Effect.sync(() => {
-              if (!gateUninstallExists && dirPath.startsWith(coordToolsDir)) {
-                reinstallEnteredInstall = true;
-              }
-            }).pipe(Effect.andThen(posixModeFs.makeDirectory(dirPath, options))),
+            Effect.sync(() => markReinstallToolsTouch(dirPath)).pipe(
+              Effect.andThen(posixModeFs.makeDirectory(dirPath, options)),
+            ),
         };
         const uninstallSchedulerDispatcher = new Scheduler.MixedScheduler("async").makeDispatcher();
         const uninstallScheduler: Scheduler.Scheduler = {
@@ -6090,7 +6164,26 @@ describe("AcpRegistrySupport", () => {
         yield* edgeCatB.resolve(settings(), "/workspace");
         yield* edgeCatB.resolve(settings(), "/workspace");
         expect(receiptRenameCount).toBe(0);
-        // 2) Different target + sidecar io_error must NOT allocate rev 1 below unreadable sidecar rev 2.
+        // 1b) Reverting to matching receipt (--edge-init rev 0) after observing newer sidecar rev 2
+        //     on the fast path, then hitting io_error on the locked read, keeps --edge-init pending.
+        failSidecarRead = false;
+        sidecarReadCount = 0;
+        failSidecarReadOnCount = 2;
+        yield* edgeCatB.resolve(settings(), "/workspace");
+        failSidecarReadOnCount = null;
+        expect(receiptRenameCount).toBe(0);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* edgeCatB.invalidateIndex();
+        yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* edgeCatB.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--edge-init",
+        ]);
+        // 2) Different target + sidecar io_error does not allocate below sidecar rev 2 and keeps
+        //    launch usable via pending options while the sidecar is STILL unreadable.
+        failSidecarRead = true;
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
           cmd: "./bin/example-agent",
@@ -6100,8 +6193,24 @@ describe("AcpRegistrySupport", () => {
         yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* edgeCatB.resolve(settings(), "/workspace");
         expect(receiptRenameCount).toBe(0);
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* edgeCatB.invalidateIndex();
+        yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* edgeCatB.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--edge-after-io",
+        ]);
         // Once reads recover, retrying the same target allocates rev 3 (> sidecar rev 2) cleanly.
         failSidecarRead = false;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--edge-after-io"],
+        });
+        yield* edgeCatB.invalidateIndex();
+        yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* edgeCatB.resolve(settings(), "/workspace");
         expect(receiptRenameCount).toBe(1);
         upstream = makeBinary("2.0.0", {
@@ -6117,9 +6226,8 @@ describe("AcpRegistrySupport", () => {
         expect((yield* edgeVerifyAfterIo.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--edge-after-io",
         ]);
-        // 3) Repeated failed writes (both receipt & sidecar failing twice) must NOT inflate
-        //    committed revisions: in-process fallback uses pending --fail-2 while disk stays at
-        //    rev 3, and once catalog B commits rev 4 (--commit-b), catalog A's fallback yields --commit-b.
+        // 3) Repeated failed writes do not inflate committed revisions, and a transient locked
+        //    receipt reread error keeps pending --fail-2 until another catalog commits rev 4.
         failReceiptTempWrite = true;
         failSidecarWrite = true;
         upstream = makeBinary("1.0.0", {
@@ -6140,6 +6248,11 @@ describe("AcpRegistrySupport", () => {
         yield* edgeCatA.resolve(settings(), "/workspace");
         failReceiptTempWrite = false;
         failSidecarWrite = false;
+        // Transient locked receipt reread failure must preserve pending --fail-2.
+        receiptReadCount = 0;
+        failReceiptReadOnCount = 2;
+        yield* edgeCatA.resolve(settings(), "/workspace");
+        failReceiptReadOnCount = null;
         // Before catalog B commits a newer rev, edgeCatA's in-process fallback uses pending --fail-2.
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -6168,7 +6281,8 @@ describe("AcpRegistrySupport", () => {
         expect((yield* edgeCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--commit-b",
         ]);
-        // 4) Lock timeout after restart with higher-rev sidecar still preserves pending --lock-c in fallback.
+        // 4) Lock timeout preserves pending base rev 7; retrying with unreadable sidecars keeps
+        //    base rev 7 so unchanged rev 7 does not override pending, while rev 8 still wins.
         failReceiptTempWrite = true;
         for (const arg of ["--s5", "--s6", "--s7"]) {
           upstream = makeBinary("1.0.0", {
@@ -6219,6 +6333,75 @@ describe("AcpRegistrySupport", () => {
         yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
           "--lock-c",
+        ]);
+        // Retry with unreadable sidecar keeps baseDurableRevision=7 (not downgraded to receipt rev 4).
+        failSidecarRead = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--lock-c-retry"],
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* lockTimeoutCat.resolve(settings(), "/workspace");
+        failSidecarRead = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--lock-c-retry",
+        ]);
+        // A newer committed rev 8 (--commit-8) still outranks pending base rev 7.
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--commit-8"],
+        });
+        yield* edgeCatB.invalidateIndex();
+        yield* edgeCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* edgeCatB.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* lockTimeoutCat.invalidateIndex();
+        yield* lockTimeoutCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* lockTimeoutCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--commit-8",
+        ]);
+        // 5) Fast-path hasMatchingPending gating: reverting to matching receipt --commit-8 clears
+        //    earlier pending options instead of short-circuiting and leaving them active.
+        failReceiptTempWrite = true;
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--pending-stale"],
+        });
+        yield* edgeCatA.invalidateIndex();
+        yield* edgeCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* edgeCatA.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        failSidecarWrite = false;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--commit-8"],
+        });
+        yield* edgeCatA.invalidateIndex();
+        yield* edgeCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* edgeCatA.resolve(settings(), "/workspace");
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* edgeCatA.invalidateIndex();
+        yield* edgeCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* edgeCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--commit-8",
         ]);
 
         // 3. A superseded primary executable that lost execute permission must not fail inspect()
@@ -6374,9 +6557,12 @@ describe("AcpRegistrySupport", () => {
           "keep-agent\u00001.0.0\u0000linux-x86_64": "holder-2-value",
         });
 
-        // Sidecar lock-ownership fence: losing the sidecar lock before writing leaves holder-2 intact.
+        // Sidecar lock-ownership fence: losing the lock leaves holder-2 intact while recording
+        // pending options in memory, and reverting to the matching receipt clears stale pending
+        // options even if the prune loses the lock.
         yield* fileSystem.remove(fenceLockPath, { force: true });
-        yield* holder1.resolve(settings(), "/workspace");
+        const fenceInstalledB = yield* holder1.resolve(settings(), "/workspace");
+        const fenceSlotRoot = path.dirname(path.dirname(fenceInstalledB.spawn.command));
         failReceiptTempWrite = true;
         upstream = makeBinary("1.0.0", {
           archive: archiveBUrl,
@@ -6413,6 +6599,72 @@ describe("AcpRegistrySupport", () => {
         expect(
           Object.keys(JSON.parse(yield* fileSystem.readFileString(fenceSidecarPath)) as object),
         ).toEqual(["keep-slot"]);
+        // Verify lock-lost resolve recorded pending --fenced-sidecar for in-process fallback.
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* holder1.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--fenced-sidecar",
+        ]);
+        // Reverting to the receipt's no-args target clears stale pending options even on lock loss.
+        yield* fileSystem.remove(fenceSidecarLockPath, { force: true });
+        yield* fileSystem.writeFileString(
+          fenceSidecarPath,
+          JSON.stringify({
+            [fenceSlotRoot]: {
+              version: "1.0.0",
+              archive: archiveBUrl,
+              cmd: "./bin/example-agent",
+              sha256: null,
+              args: ["--stale-rev0"],
+              launchOptionsRevision: 0,
+            },
+          }),
+        );
+        upstream = makeBinary("1.0.0", {
+          archive: archiveBUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const revertEntered = yield* Deferred.make<void>();
+        const releaseRevert = yield* Deferred.make<void>();
+        let revertReadCount = 0;
+        const origFenceRead = fencedFs.readFileString;
+        (fencedFs as { readFileString: FileSystem.FileSystem["readFileString"] }).readFileString = (
+          filePath,
+          encoding,
+        ) => {
+          if (filePath === fenceSidecarPath) {
+            revertReadCount += 1;
+            if (revertReadCount === 2) {
+              return Deferred.succeed(revertEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(releaseRevert)),
+                Effect.andThen(origFenceRead(filePath, encoding)),
+              );
+            }
+          }
+          return origFenceRead(filePath, encoding);
+        };
+        const fencedRevertResolve = yield* holder1
+          .resolve(settings(), "/workspace")
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(revertEntered);
+        yield* fileSystem.writeFileString(fenceSidecarLockPath, "sidecar-holder-3");
+        yield* Deferred.succeed(releaseRevert, undefined);
+        yield* Fiber.join(fencedRevertResolve);
+        (fencedFs as { readFileString: FileSystem.FileSystem["readFileString"] }).readFileString =
+          origFenceRead;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* holder1.invalidateIndex();
+        yield* holder1.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* holder1.resolve(settings(), "/workspace")).spawn.args).toEqual([]);
 
         // Uninstall baselines prune lock-ownership fence: losing the lock leaves holder-2 intact.
         yield* fileSystem.remove(fenceSidecarLockPath, { force: true });

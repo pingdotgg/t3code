@@ -2744,6 +2744,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       const pendingEntry = pendingLaunchOptionsBySlotRoot.get(slot.root);
       const hasMatchingPending =
         pendingEntry !== undefined && receiptMatchesInstall(pendingEntry.receipt, initialReceipt);
+      const initialPriorPendingBase = hasMatchingPending ? pendingEntry.baseDurableRevision : 0;
       const receiptRev = initialReceipt.launchOptionsRevision ?? 0;
       let observedDiskRev = 0;
       if (!hasSidecar) {
@@ -2796,8 +2797,30 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       };
       yield* withBinaryLaunchOptionsLock((isLockOwned) =>
         Effect.gen(function* () {
-          const rawFreshReceipt = yield* fileSystem.readFileString(receiptPath).pipe(Effect.option);
-          const decodedFreshReceipt = Option.flatMap(rawFreshReceipt, decodeBinaryArtifactReceipt);
+          const freshReceiptRead = yield* Effect.result(fileSystem.readFileString(receiptPath));
+          if (Result.isFailure(freshReceiptRead)) {
+            if (freshReceiptRead.failure.reason._tag === "NotFound") {
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
+            } else {
+              const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
+              const currentPriorPendingBase =
+                currentPending !== undefined &&
+                receiptMatchesInstall(currentPending.receipt, initialReceipt)
+                  ? currentPending.baseDurableRevision
+                  : 0;
+              recordPending(
+                initialReceipt,
+                Math.max(
+                  receiptRev,
+                  observedDiskRev,
+                  initialPriorPendingBase,
+                  currentPriorPendingBase,
+                ),
+              );
+            }
+            return;
+          }
+          const decodedFreshReceipt = decodeBinaryArtifactReceipt(freshReceiptRead.success);
           if (
             Option.isNone(decodedFreshReceipt) ||
             !receiptMatchesInstall(decodedFreshReceipt.value, initialReceipt)
@@ -2807,6 +2830,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           }
           const freshReceipt = decodedFreshReceipt.value;
           const freshReceiptRev = freshReceipt.launchOptionsRevision ?? 0;
+          const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
+          const priorPendingBase =
+            currentPending !== undefined &&
+            receiptMatchesInstall(currentPending.receipt, freshReceipt)
+              ? currentPending.baseDurableRevision
+              : 0;
+          const effectiveObservedBase = Math.max(
+            freshReceiptRev,
+            observedDiskRev,
+            priorPendingBase,
+          );
           const diskResult = yield* readBinaryLaunchOptionsFile(
             fileSystem,
             binaryLaunchOptionsPath,
@@ -2814,10 +2848,13 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           if (diskResult.status === "io_error") {
             // Do not rewrite a matching receipt or allocate a revision below an unreadable sidecar;
             // keep launch usable via pending options and retry once sidecar reads recover.
-            if (receiptMatchesLaunchOptions(freshReceipt, target)) {
+            if (
+              receiptMatchesLaunchOptions(freshReceipt, target) &&
+              effectiveObservedBase <= freshReceiptRev
+            ) {
               pendingLaunchOptionsBySlotRoot.delete(slot.root);
             } else {
-              recordPending(freshReceipt, Math.max(freshReceiptRev, observedDiskRev));
+              recordPending(freshReceipt, effectiveObservedBase);
             }
             return;
           }
@@ -2828,12 +2865,12 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           const freshDiskRev = diskMatches ? (diskStored.launchOptionsRevision ?? 0) : 0;
           if (receiptMatchesLaunchOptions(freshReceipt, target)) {
             if (isCorrupt) {
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
               if (!(yield* isLockOwned)) return;
               yield* fileSystem
                 .copyFile(binaryLaunchOptionsPath, `${binaryLaunchOptionsPath}.corrupt`)
                 .pipe(Effect.ignore);
               yield* writeJsonFileAtomically(binaryLaunchOptionsPath, {}).pipe(Effect.ignore);
-              pendingLaunchOptionsBySlotRoot.delete(slot.root);
               return;
             }
             if (diskStored === undefined) {
@@ -2841,10 +2878,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
               return;
             }
             if (freshDiskRev <= freshReceiptRev) {
+              pendingLaunchOptionsBySlotRoot.delete(slot.root);
               if (!(yield* isLockOwned)) return;
               const { [slot.root]: _removed, ...rest } = diskEntries;
               yield* writeJsonFileAtomically(binaryLaunchOptionsPath, rest).pipe(Effect.ignore);
-              pendingLaunchOptionsBySlotRoot.delete(slot.root);
               return;
             }
           }
@@ -2927,7 +2964,21 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       ).pipe(
         Effect.catch(() =>
           Effect.sync(() => {
-            recordPending(initialReceipt, Math.max(receiptRev, observedDiskRev));
+            const currentPending = pendingLaunchOptionsBySlotRoot.get(slot.root);
+            const currentPriorPendingBase =
+              currentPending !== undefined &&
+              receiptMatchesInstall(currentPending.receipt, initialReceipt)
+                ? currentPending.baseDurableRevision
+                : 0;
+            recordPending(
+              initialReceipt,
+              Math.max(
+                receiptRev,
+                observedDiskRev,
+                initialPriorPendingBase,
+                currentPriorPendingBase,
+              ),
+            );
           }),
         ),
       );

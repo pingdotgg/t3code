@@ -1009,6 +1009,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       });
     const clearLearnedModels = Ref.set(learnedModels, []);
     const activeRuntimeIdentity = yield* Ref.make<string | null>(null);
+    // Probes never produce "authenticated" directly; saved confirmation re-promotes "unknown"
+    // in withLiveRuntimeState, so stripping it prevents historical auth surviving logout.
+    const stripConfirmedAuth = (auth: ServerProvider["auth"]): ServerProvider["auth"] =>
+      auth.status === "authenticated" ? { ...auth, status: "unknown" } : auth;
     const lastSuccessfulRuntime = yield* Ref.make<{
       readonly identity: string;
       readonly provider: ServerProvider;
@@ -1180,6 +1184,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return {
                     snapshot: {
                       ...preservedBase,
+                      auth: stripConfirmedAuth(preservedBase.auth),
                       checkedAt: withLocalVersion.checkedAt,
                       installed: true,
                       version: fallbackState.fallbackVersion,
@@ -1206,10 +1211,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ) {
                   const { message: _previousMessage, ...lastProviderWithoutMessage } =
                     lastRuntime.provider;
-                  const preservedAuth =
+                  const preservedAuth = stripConfirmedAuth(
                     acceptedAuth !== null && acceptedAuth.identity === lastRuntime.identity
                       ? acceptedAuth.auth
-                      : lastProviderWithoutMessage.auth;
+                      : lastProviderWithoutMessage.auth,
+                  );
                   return {
                     snapshot: {
                       ...lastProviderWithoutMessage,
@@ -1357,6 +1363,32 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         })),
       ),
     );
+    const invalidateCachedProbeForRuntime = (runtimeIdentity: string | null) =>
+      Ref.update(enrichmentCache, (cache) => {
+        const entryIdentity =
+          cache.entry === null
+            ? null
+            : runtimeIdentityFor(cache.entry.provider, cache.entry.launchIdentity ?? null);
+        const matchesEntry =
+          cache.entry !== null &&
+          (effectiveConfig.source === "local" ||
+            (runtimeIdentity !== null && entryIdentity === runtimeIdentity));
+        let liveGenerationByRuntime = nextLiveGenerationByRuntime(
+          cache.liveGenerationByRuntime,
+          runtimeIdentity,
+        );
+        if (matchesEntry && entryIdentity !== runtimeIdentity) {
+          liveGenerationByRuntime = nextLiveGenerationByRuntime(
+            liveGenerationByRuntime,
+            entryIdentity,
+          );
+        }
+        return {
+          ...cache,
+          liveGenerationByRuntime,
+          ...(matchesEntry ? { entry: null } : {}),
+        };
+      });
     const isProbeStillCurrent = (
       current: AcpRegistryEnrichmentCache,
       captured: {
@@ -1755,10 +1787,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         if (lastRuntime !== null && lastRuntime.identity === previousIdentity) {
                           const { message: _previousMessage, ...base } = lastRuntime.provider;
                           const acceptedAuth = yield* Ref.get(latestAcceptedAuth);
-                          const retainedAuth =
+                          const retainedAuth = stripConfirmedAuth(
                             acceptedAuth !== null && acceptedAuth.identity === previousIdentity
                               ? acceptedAuth.auth
-                              : base.auth;
+                              : base.auth,
+                          );
                           const activeRuntimeUnauthenticated =
                             !isProbedDifferentRuntime && provider.auth.status === "unauthenticated";
                           const preservedBase: ServerProvider = {
@@ -1796,6 +1829,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             if (activeRuntimeUnauthenticated) {
                               yield* confirmedAuthentication.set(false);
                               yield* Ref.set(activeFallback, null);
+                              yield* invalidateCachedProbeForRuntime(previousIdentity);
                               yield* Ref.set(latestAcceptedAuth, {
                                 identity: previousIdentity,
                                 auth: provider.auth,
@@ -1835,11 +1869,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           probedLaunchIdentity ?? failedTargetLaunchIdentity,
                         );
                         if (published) {
-                          if (
-                            !isProbedDifferentRuntime &&
-                            provider.auth.status === "unauthenticated"
-                          ) {
+                          if (provider.auth.status === "unauthenticated") {
                             yield* confirmedAuthentication.set(false);
+                            yield* invalidateCachedProbeForRuntime(failedIdentity);
                             if (failedIdentity !== null) {
                               yield* Ref.set(latestAcceptedAuth, {
                                 identity: failedIdentity,
@@ -1916,6 +1948,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                             const unauthIdentity =
                               resolvedIdentity ??
                               runtimeIdentityFor(providerToPublish, probedLaunchIdentity);
+                            yield* invalidateCachedProbeForRuntime(unauthIdentity);
                             if (unauthIdentity !== null) {
                               yield* Ref.set(latestAcceptedAuth, {
                                 identity: unauthIdentity,
@@ -1988,13 +2021,17 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           }
                           if (!probeFailed && resolvedIdentity !== null) {
                             const { message: _fallbackMsg, ...cleanProvider } = nextSnapshotRaw;
+                            const storedProvider = fallback ? cleanProvider : nextSnapshotRaw;
                             yield* Ref.set(lastSuccessfulRuntime, {
                               identity: resolvedIdentity,
-                              provider: fallback ? cleanProvider : nextSnapshotRaw,
+                              provider: {
+                                ...storedProvider,
+                                auth: stripConfirmedAuth(storedProvider.auth),
+                              },
                             });
                             yield* Ref.set(latestAcceptedAuth, {
                               identity: resolvedIdentity,
-                              auth: nextSnapshot.auth,
+                              auth: stripConfirmedAuth(nextSnapshot.auth),
                             });
                           }
                         }
@@ -2076,6 +2113,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                                   identity: activeId,
                                   provider: {
                                     ...currentClean,
+                                    auth: stripConfirmedAuth(currentClean.auth),
                                     status: current.enabled
                                       ? ("ready" as const)
                                       : ("disabled" as const),
@@ -2155,14 +2193,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           ? {
                               identity: prev.identity,
                               provider: isUnauthenticated
-                                ? { ...appliedClean, auth: prev.provider.auth }
-                                : appliedClean,
+                                ? { ...appliedClean, auth: stripConfirmedAuth(prev.provider.auth) }
+                                : { ...appliedClean, auth: stripConfirmedAuth(appliedClean.auth) },
                             }
                           : prev === null && !isUnauthenticated
                             ? {
                                 identity: activeId,
                                 provider: {
                                   ...appliedClean,
+                                  auth: stripConfirmedAuth(appliedClean.auth),
                                   status: current.enabled
                                     ? ("ready" as const)
                                     : ("disabled" as const),
@@ -2471,14 +2510,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       cwd: host.paths.cwd,
       environment: processEnvironment,
       onChanged: (authenticated) =>
-        confirmedAuthentication
-          .set(authenticated)
-          .pipe(
-            Effect.andThen(authenticated ? Ref.set(latestAcceptedAuth, null) : clearLiveState()),
-            Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
-            Effect.andThen(snapshot.refresh),
-            Effect.asVoid,
-          ),
+        liveSnapshotSemaphore
+          .withPermit(
+            confirmedAuthentication
+              .set(authenticated)
+              .pipe(
+                Effect.andThen(
+                  authenticated ? Ref.set(latestAcceptedAuth, null) : clearLiveState(),
+                ),
+                Effect.andThen(invalidateEnrichmentCache),
+              ),
+          )
+          .pipe(Effect.andThen(snapshot.refresh), Effect.asVoid),
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -2487,9 +2530,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const auth = {
       ...controller,
       invalidate: (controller.invalidate ?? Effect.void).pipe(
-        Effect.andThen(confirmedAuthentication.set(false)),
-        Effect.andThen(clearLiveState()),
-        Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+        Effect.andThen(
+          liveSnapshotSemaphore.withPermit(
+            confirmedAuthentication
+              .set(false)
+              .pipe(Effect.andThen(clearLiveState()), Effect.andThen(invalidateEnrichmentCache)),
+          ),
+        ),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
       ),
@@ -2580,23 +2627,25 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(SecureRandom.SecureRandom, random),
-            Effect.tap(() => confirmedAuthentication.set(false)),
-            Effect.tap(() => Ref.set(latestAcceptedAuth, null)),
             Effect.tap(() =>
               liveSnapshotSemaphore.withPermit(
-                invalidateEnrichmentCache.pipe(
-                  Effect.andThen(
-                    Option.isSome(runtimeCoordinator)
-                      ? Effect.all(
-                          [
-                            runtimeCoordinator.value.clearAvailableCommands(instanceId),
-                            runtimeCoordinator.value.clearLiveConfiguration(instanceId),
-                          ],
-                          { concurrency: "unbounded", discard: true },
-                        )
-                      : Effect.void,
+                confirmedAuthentication
+                  .set(false)
+                  .pipe(
+                    Effect.andThen(Ref.set(latestAcceptedAuth, null)),
+                    Effect.andThen(invalidateEnrichmentCache),
+                    Effect.andThen(
+                      Option.isSome(runtimeCoordinator)
+                        ? Effect.all(
+                            [
+                              runtimeCoordinator.value.clearAvailableCommands(instanceId),
+                              runtimeCoordinator.value.clearLiveConfiguration(instanceId),
+                            ],
+                            { concurrency: "unbounded", discard: true },
+                          )
+                        : Effect.void,
+                    ),
                   ),
-                ),
               ),
             ),
           );
