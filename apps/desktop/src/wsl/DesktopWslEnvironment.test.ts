@@ -554,29 +554,57 @@ describe("parseResolvedPath", () => {
 });
 
 // Path.layer joins with POSIX separators here, so the test windir is a POSIX path.
-const STORE_WSL_EXE = "/program-files/WSL/wsl.exe";
-const INBOX_WSL_SERVICE = "/windows/System32/lxss/LxssManager.dll";
-const WSL_STUB = "/windows/System32/wsl.exe";
+const WSL_EXE = "/windows/System32/wsl.exe";
+const STORE_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService";
+const INBOX_SERVICE = "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager";
+
+const registrySpawner = (keys: ReadonlyArray<string>) =>
+  ChildProcessSpawner.make((command) =>
+    Effect.succeed(
+      ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.empty,
+        stderr: Stream.empty,
+        all: Stream.empty,
+        exitCode: Effect.succeed(
+          ChildProcessSpawner.ExitCode(
+            command._tag === "StandardCommand" &&
+              command.command === "reg.exe" &&
+              keys.some((key) => command.args.includes(key))
+              ? 0
+              : 1,
+          ),
+        ),
+        isRunning: Effect.succeed(false),
+        kill: () => Effect.void,
+        stdin: Sink.drain,
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+        unref: Effect.succeed(Effect.void),
+      }),
+    ),
+  );
 
 const isAvailable = (
   policy?: Parameters<typeof DesktopManagedPolicy.layerTest>[0],
-  files: ReadonlyArray<string> = [WSL_STUB, STORE_WSL_EXE],
+  serviceKeys: ReadonlyArray<string> = [STORE_SERVICE],
 ) =>
-  makeIsAvailable("win32", "/windows", "/program-files").pipe(
+  makeIsAvailable("win32", "/windows").pipe(
     Effect.provide(
       Layer.mergeAll(
-        FileSystem.layerNoop({ exists: (path) => Effect.succeed(files.includes(path)) }),
+        FileSystem.layerNoop({ exists: (path) => Effect.succeed(path === WSL_EXE) }),
         Path.layer,
         DesktopManagedPolicy.layerTest(policy),
       ),
     ),
+    Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, registrySpawner(serviceKeys)),
   );
 
 describe("makeIsAvailable", () => {
-  it.effect("needs an installed WSL, not just the System32 install stub", () =>
+  it.effect("needs a registered WSL service, not just the System32 install stub", () =>
     Effect.gen(function* () {
-      assert.isFalse(yield* isAvailable(undefined, [WSL_STUB]));
-      assert.isTrue(yield* isAvailable(undefined, [WSL_STUB, INBOX_WSL_SERVICE]));
+      assert.isFalse(yield* isAvailable(undefined, []));
+      assert.isTrue(yield* isAvailable(undefined, [INBOX_SERVICE]));
     }),
   );
 

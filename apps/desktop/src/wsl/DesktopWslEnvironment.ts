@@ -1119,28 +1119,60 @@ const getUserHomeImpl = (
     Effect.orElseSucceed(() => Option.none<string>()),
   );
 
+// Store/MSI WSL registers WSLService and inbox WSL registers LxssManager; either key means installed.
+const WSL_SERVICE_KEYS = [
+  "HKLM\\SYSTEM\\CurrentControlSet\\Services\\WSLService",
+  "HKLM\\SYSTEM\\CurrentControlSet\\Services\\LxssManager",
+] as const;
+const SERVICE_QUERY_TIMEOUT = Duration.seconds(5);
+
+const wslServiceRegistered = Effect.scoped(
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const registered = yield* Effect.forEach(
+      WSL_SERVICE_KEYS,
+      (key) =>
+        spawner
+          .spawn(
+            ChildProcess.make("reg.exe", ["query", key], {
+              stdin: "ignore",
+              stdout: "ignore",
+              stderr: "ignore",
+              killSignal: "SIGTERM",
+              forceKillAfter: PROCESS_TERMINATE_GRACE,
+            }),
+          )
+          .pipe(Effect.flatMap((handle) => handle.exitCode)),
+      { concurrency: "unbounded" },
+    );
+    return registered.some((exitCode) => (exitCode as unknown as number) === 0);
+  }),
+).pipe(
+  Effect.timeoutOption(SERVICE_QUERY_TIMEOUT),
+  Effect.map(Option.getOrElse(() => false)),
+  Effect.orElseSucceed(() => false),
+);
+
 export const makeIsAvailable = Effect.fn("DesktopWslEnvironment.makeIsAvailable")(function* (
   platform: NodeJS.Platform,
   windir: string,
-  programFiles: string,
 ): Effect.fn.Return<
   boolean,
   never,
-  FileSystem.FileSystem | Path.Path | DesktopManagedPolicy.DesktopManagedPolicy
+  | FileSystem.FileSystem
+  | Path.Path
+  | DesktopManagedPolicy.DesktopManagedPolicy
+  | ChildProcessSpawner.ChildProcessSpawner
 > {
   if (platform !== "win32") return false;
   const path = yield* Path.Path;
   const fileSystem = yield* FileSystem.FileSystem;
-  // System32\wsl.exe is an install stub on Windows without WSL; look for the Store WSL package
-  // or the inbox WSL service instead.
-  const installed = yield* Effect.forEach(
-    [
-      path.join(programFiles, "WSL", "wsl.exe"),
-      path.join(windir, "System32", "lxss", "LxssManager.dll"),
-    ],
-    (candidate) => fileSystem.exists(candidate).pipe(Effect.orElseSucceed(() => false)),
-  );
-  if (!installed.includes(true)) return false;
+  const wslExePath = path.join(windir, "System32", "wsl.exe");
+  if (!(yield* fileSystem.exists(wslExePath).pipe(Effect.orElseSucceed(() => false)))) {
+    return false;
+  }
+  // System32\wsl.exe is also an install stub on Windows without WSL, so check for its service.
+  if (!(yield* wslServiceRegistered)) return false;
   // A server in WSL reads Linux's policy, never this machine's, so a managed machine runs none.
   return yield* (yield* DesktopManagedPolicy.DesktopManagedPolicy).read.pipe(
     Effect.map((found) => found === undefined),
@@ -1242,9 +1274,7 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
     const fileSystem = yield* FileSystem.FileSystem;
     // Not Config: Windows variable names are case-insensitive only on the live process.env.
-    const hostEnvironment = yield* HostProcess.Environment;
-    const windir = hostEnvironment.WINDIR ?? "C:\\Windows";
-    const programFiles = hostEnvironment.ProgramFiles ?? "C:\\Program Files";
+    const windir = (yield* HostProcess.Environment).WINDIR ?? "C:\\Windows";
 
     const provideSpawner = <A, E>(
       effect: Effect.Effect<A, E, ChildProcessSpawner.ChildProcessSpawner>,
@@ -1252,8 +1282,9 @@ export const layer = Layer.effect(
       effect.pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
 
     // Cache availability so synchronous IPC bootstrap can read it without yielding to filesystem I/O.
-    const wslAvailable = yield* makeIsAvailable(environment.platform, windir, programFiles).pipe(
+    const wslAvailable = yield* makeIsAvailable(environment.platform, windir).pipe(
       Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Path.Path, environment.path),
       Effect.provideService(
         DesktopManagedPolicy.DesktopManagedPolicy,
