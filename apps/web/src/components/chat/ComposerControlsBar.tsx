@@ -210,10 +210,8 @@ export function ComposerControlsBar(props: {
         "group/model-trigger",
         TEXT_CONTROL_STATES,
         "text-meta!",
-        // Icon-only: the 16px icon box already pads its 11px glyph, so 6px matches the other chips' ink inset.
-        "@max-[620px]/composer-surface:min-w-0 @max-[620px]/composer-surface:px-1.5 @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:pointer-events-none @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:invisible @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:absolute @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-max @max-[620px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:max-w-none",
         pickerIconOnly
-          ? "min-w-0 shrink-0 @min-[620px]/composer-surface:[&>span:has(>[data-chat-provider-model-picker-label])]:-mx-0.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
+          ? "min-w-0 shrink-0 [&>span:has(>[data-chat-provider-model-picker-label])]:-mx-0.5 [&_[data-chat-provider-model-picker-label]]:pointer-events-none [&_[data-chat-provider-model-picker-label]]:invisible [&_[data-chat-provider-model-picker-label]]:absolute [&_[data-chat-provider-model-picker-label]]:w-max [&_[data-chat-provider-model-picker-label]]:max-w-none"
           : "shrink-0",
       )}
       effortColumn={
@@ -256,7 +254,6 @@ export function ComposerControlsBar(props: {
           data-composer-block-icon-only={traitsIconOnly ? "true" : "false"}
           className={cn(
             "flex shrink-0 items-center",
-            "@max-[620px]/composer-surface:[&_[data-composer-control-label]]:pointer-events-none @max-[620px]/composer-surface:[&_[data-composer-control-label]]:invisible @max-[620px]/composer-surface:[&_[data-composer-control-label]]:absolute @max-[620px]/composer-surface:[&_[data-composer-control-label]]:w-max @max-[620px]/composer-surface:[&_[data-composer-control-label]]:max-w-none",
             traitsIconOnly &&
               "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none",
           )}
@@ -284,7 +281,6 @@ export function ComposerControlsBar(props: {
               inert={hidden || undefined}
               className={cn(
                 "flex w-max min-w-max shrink-0 items-center gap-1",
-                "@max-[620px]/composer-surface:[&_[data-composer-control-label]]:pointer-events-none @max-[620px]/composer-surface:[&_[data-composer-control-label]]:invisible @max-[620px]/composer-surface:[&_[data-composer-control-label]]:absolute @max-[620px]/composer-surface:[&_[data-composer-control-label]]:w-max @max-[620px]/composer-surface:[&_[data-composer-control-label]]:max-w-none @max-[620px]/composer-surface:[&_[data-composer-control-compact-icon]]:[visibility:inherit] @max-[620px]/composer-surface:[&_[data-composer-control-compact-icon]]:relative",
                 hidden && "pointer-events-none invisible absolute",
                 index >= restingBlockDefs.length - iconOnlyBlockCount &&
                   "[&_[data-composer-control-label]]:pointer-events-none [&_[data-composer-control-label]]:invisible [&_[data-composer-control-label]]:absolute [&_[data-composer-control-label]]:w-max [&_[data-composer-control-label]]:max-w-none [&_[data-composer-control-compact-icon]]:[visibility:inherit] [&_[data-composer-control-compact-icon]]:relative",

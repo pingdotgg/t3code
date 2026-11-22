@@ -3789,7 +3789,7 @@ export function ChatComposer(props: ChatComposerProps) {
             <div
               ref={attachExpandedComposerControls}
               data-chat-composer-resting-controls="true"
-              className="flex min-w-0 items-center gap-0.5 @max-[620px]/composer-surface:[--composer-compact-labels:1]"
+              className="flex min-w-0 items-center gap-0.5"
             >
               {composerControls}
             </div>,
