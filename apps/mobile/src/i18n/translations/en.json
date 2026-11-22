@@ -1360,6 +1360,7 @@
   "1c79d42e902ff431": "Retry",
   "b1687c7b2b91e569": "Open {name}",
   "2ffc366d6a7f88db": "Remove {name}",
+  "ff43c1538698d479": "Preparing pasted image",
   "c04cd8ec791956cb": "The local file is unavailable. Attach it again.",
   "68883cb3342998e5": "Reconnect to the environment and try again.",
   "43f6af4554b019cf": "Could not open attachment",
