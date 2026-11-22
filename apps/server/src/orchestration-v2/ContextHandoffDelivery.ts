@@ -37,7 +37,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         handoff.delivery.status === "pending",
     );
     if (pending.length === 0 || (input.deferInline && input.inject === undefined))
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     let coverage = pending
       .map(
@@ -76,7 +76,8 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void, unsent: Effect.void };
+      if (input.deferInline)
+        return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
       return yield* new ContextHandoffBudgetError();
     }
     const omittedItemIds = new Set(selected.omittedItemIds);
@@ -127,7 +128,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       });
       if (injected) {
         yield* persist("injected");
-        return { context: "", delivered: Effect.void, unsent: Effect.void };
+        return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
       }
     } else {
       yield* persist("pending");
@@ -135,12 +136,13 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
     if (input.deferInline) {
       // Compaction cannot carry inline transcripts; retain for the next turn if native injection is unsupported.
       yield* Effect.forEach(pending, input.persist, { discard: true });
-      return { context: "", delivered: Effect.void, unsent: Effect.void };
+      return { context: "", delivered: Effect.void, unsent: Effect.void, inlineHandoffs: [] };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
       delivered: persist("inline"),
       unsent: Effect.forEach(pending, input.persist, { discard: true }),
+      inlineHandoffs: pending,
     };
   },
 );

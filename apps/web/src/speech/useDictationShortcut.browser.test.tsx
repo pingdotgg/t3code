@@ -4,7 +4,8 @@ import { expect, it, vi } from "vite-plus/test";
 import { render } from "../../test/render";
 import { useDictationShortcut, type DictationKeyHandlers } from "./useDictationShortcut";
 
-vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => "hold" }));
+const settings = vi.hoisted(() => ({ mode: "hold" as "hold" | "auto" | "toggle" }));
+vi.mock("../hooks/useSettings", () => ({ useClientSettings: () => settings.mode }));
 
 type ShortcutInput = Parameters<typeof useDictationShortcut>[0];
 
@@ -42,7 +43,8 @@ const press = (repeat = false) =>
     }),
   );
 
-function actions(available: boolean) {
+function actions(available: boolean, mode: typeof settings.mode = "hold") {
+  settings.mode = mode;
   return {
     available,
     state: { phase: "idle" as const, error: null, errorAction: null },
@@ -93,6 +95,28 @@ it("finishes a released hold after startup even if the chord was pressed again w
   expect(speech.start).toHaveBeenCalledOnce();
   expect(speech.stop).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { mode: "hold", heldMs: 0, stops: 1 },
+  { mode: "auto", heldMs: 300, stops: 1 },
+  { mode: "auto", heldMs: 299, stops: 0 },
+] as const)(
+  "ends a $mode press held $heldMs ms when a chord modifier is released without the letter keyup",
+  async ({ mode, heldMs, stops }) => {
+    const speech = actions(true, mode);
+    using _platform = vi.spyOn(navigator, "platform", "get").mockReturnValue("MacIntel");
+    await using _screen = await render(<Probe speech={speech} />);
+    using clock = vi.spyOn(performance, "now").mockReturnValue(0);
+    press();
+    clock.mockReturnValue(heldMs);
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Alt", code: "AltLeft" }));
+    await speech.start.mock.results[0]?.value;
+    expect(speech.stop).not.toHaveBeenCalled();
+    window.dispatchEvent(new KeyboardEvent("keyup", { key: "Meta", code: "MetaLeft" }));
+    await speech.start.mock.results[0]?.value;
+    expect(speech.stop).toHaveBeenCalledTimes(stops);
+  },
+);
 
 const escape = () =>
   new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true, cancelable: true });

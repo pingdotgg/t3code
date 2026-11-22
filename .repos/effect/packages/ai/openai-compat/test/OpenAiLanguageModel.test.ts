@@ -100,6 +100,51 @@ describe("OpenAiLanguageModel", () => {
   }
 
   describe("generateText", () => {
+    it.effect("advertises and handles non-strict record parameters", () =>
+      Effect.gen(function*() {
+        const received = yield* Ref.make<unknown>(undefined)
+        const toolkit = Toolkit.make(Tool.make("Search", { parameters: Schema.Record(Schema.String, Schema.String) }))
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.gen(function*() {
+                const body = yield* getRequestBody(request)
+                assert.strictEqual(body.tools[0].function.strict, false)
+                assert.deepStrictEqual(body.tools[0].function.parameters, {
+                  type: "object",
+                  additionalProperties: { type: "string" }
+                })
+                return jsonResponse(
+                  request,
+                  makeChatCompletion({
+                    choices: [{
+                      index: 0,
+                      finish_reason: "tool_calls",
+                      message: {
+                        role: "assistant",
+                        content: null,
+                        tool_calls: [{
+                          id: "call_1",
+                          type: "function",
+                          function: { name: "Search", arguments: JSON.stringify({ status: "open" }) }
+                        }]
+                      }
+                    }]
+                  })
+                )
+              })
+            )
+          ))
+        )
+        yield* LanguageModel.generateText({ prompt: "Search", toolkit }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", { strictJsonSchema: false })),
+          Effect.provide(toolkit.toLayer({ Search: (params) => Ref.set(received, params) })),
+          Effect.provide(layer)
+        )
+        assert.deepStrictEqual(yield* Ref.get(received), { status: "open" })
+      }))
+
     it.effect("serializes text-only user messages and decodes text output", () =>
       Effect.gen(function*() {
         let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
@@ -155,6 +200,47 @@ describe("OpenAiLanguageModel", () => {
           { role: "user", content: "" }
         ])
       }))
+
+    for (
+      const [model, role] of [
+        ["o3", "developer"],
+        ["olmo-2", "system"],
+        ["openai/gpt-oss-120b", "system"],
+        ["openai/o3", "system"]
+      ] as const
+    ) {
+      it.effect(`sends the system prompt as a ${role} message for ${model}`, () =>
+        Effect.gen(function*() {
+          let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
+
+          const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+            Layer.provide(Layer.succeed(
+              HttpClient.HttpClient,
+              makeHttpClient((request) => {
+                capturedRequest = request
+                return Effect.succeed(jsonResponse(request, makeChatCompletion()))
+              })
+            ))
+          )
+
+          yield* LanguageModel.generateText({
+            prompt: Prompt.make([
+              { role: "system", content: "Be brief." },
+              { role: "user", content: [Prompt.textPart({ text: "hello" })] }
+            ])
+          }).pipe(
+            Effect.provide(OpenAiLanguageModel.model(model)),
+            Effect.provide(layer)
+          )
+
+          assert.isDefined(capturedRequest)
+          if (capturedRequest === undefined) {
+            return
+          }
+          const requestBody = yield* getRequestBody(capturedRequest)
+          assert.deepStrictEqual(requestBody.messages[0], { role, content: "Be brief." })
+        }))
+    }
 
     it.effect("routes invalid tool call params through failureMode: return without failing the effect", () =>
       Effect.gen(function*() {
@@ -397,6 +483,82 @@ describe("OpenAiLanguageModel", () => {
           }
         ])
       }))
+
+    it.effect("sends PDFs as chat completion file parts", () =>
+      Effect.gen(function*() {
+        const bytes = new Uint8Array([37, 80, 68, 70])
+        const base64 = "JVBERg=="
+        let capturedRequest: HttpClientRequest.HttpClientRequest | undefined
+
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) => {
+              capturedRequest = request
+              return Effect.succeed(jsonResponse(request, makeChatCompletion()))
+            })
+          ))
+        )
+
+        yield* LanguageModel.generateText({
+          prompt: Prompt.make([{
+            role: "user",
+            content: [
+              Prompt.textPart({ text: "Summarise" }),
+              Prompt.filePart({ mediaType: "application/pdf", fileName: "bytes.pdf", data: bytes }),
+              Prompt.filePart({ mediaType: "application/pdf", data: base64 }),
+              Prompt.filePart({ mediaType: "application/pdf", data: `data:application/pdf;base64,${base64}` }),
+              Prompt.filePart({ mediaType: "application/pdf", data: "file-abc123" }),
+              Prompt.filePart({ mediaType: "application/pdf", data: "https://files.example.com/doc.pdf" })
+            ]
+          }])
+        }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini", {
+            fileIdPrefixes: ["file-", "https://files.example.com/"]
+          })),
+          Effect.provide(layer)
+        )
+
+        assert.isDefined(capturedRequest)
+        if (capturedRequest === undefined) {
+          return
+        }
+
+        const requestBody = yield* getRequestBody(capturedRequest)
+        assert.deepStrictEqual(requestBody.messages[0]?.content, [
+          { type: "text", text: "Summarise" },
+          { type: "file", file: { filename: "bytes.pdf", file_data: `data:application/pdf;base64,${base64}` } },
+          { type: "file", file: { filename: "part-2.pdf", file_data: `data:application/pdf;base64,${base64}` } },
+          { type: "file", file: { filename: "part-3.pdf", file_data: `data:application/pdf;base64,${base64}` } },
+          { type: "file", file: { file_id: "file-abc123" } },
+          { type: "file", file: { file_id: "https://files.example.com/doc.pdf" } }
+        ])
+      }))
+
+    for (
+      const data of [
+        new URL("https://example.com/doc.pdf"),
+        "https://example.com/doc.pdf",
+        "http://example.com/doc.pdf"
+      ]
+    ) {
+      it.effect(`rejects PDF URLs before sending a request (${typeof data === "string" ? data : "URL object"})`, () =>
+        Effect.gen(function*() {
+          const error = yield* LanguageModel.generateText({
+            prompt: Prompt.make([{
+              role: "user",
+              content: [Prompt.filePart({ mediaType: "application/pdf", data })]
+            }])
+          }).pipe(
+            Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+            Effect.provide(OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") })),
+            Effect.provideService(HttpClient.HttpClient, makeHttpClient(() => Effect.die("unexpected request"))),
+            Effect.flip
+          )
+
+          assert.strictEqual(error.reason._tag, "InvalidUserInputError")
+        }))
+    }
 
     it.effect("normalizes empty assistant message content to an empty string", () =>
       Effect.gen(function*() {
@@ -1087,6 +1249,95 @@ describe("OpenAiLanguageModel", () => {
         })
       }))
 
+    it.effect("decodes null optional fields in non-streaming responses", () =>
+      Effect.gen(function*() {
+        const toolkit = Toolkit.make(Tool.make("Ping"))
+        const responses = [
+          makeChatCompletion({
+            service_tier: null,
+            choices: [{
+              index: 0,
+              finish_reason: "tool_calls",
+              message: {
+                role: "assistant",
+                content: null,
+                tool_calls: [{ id: null, type: null, function: { name: "Ping", arguments: null } }]
+              }
+            }]
+          }),
+          makeChatCompletion({
+            service_tier: null,
+            choices: [{
+              index: 0,
+              finish_reason: "stop",
+              message: { role: "assistant", content: "Hello", tool_calls: null }
+            }]
+          })
+        ]
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) => Effect.succeed(jsonResponse(request, responses.shift())))
+          ))
+        )
+
+        const toolResult = yield* LanguageModel.generateText({
+          prompt: "ping",
+          toolkit,
+          disableToolCallResolution: true
+        }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+        const textResult = yield* LanguageModel.generateText({ prompt: "hello" }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        assert.deepStrictEqual(
+          toolResult.toolCalls.map(({ id, name, params }) => ({ id, name, params })),
+          [{ id: "chatcmpl_test_1_tool_0", name: "Ping", params: {} }]
+        )
+        assert.strictEqual(textResult.text, "Hello")
+      }))
+
+    it.effect("reports a refusal through the finish part", () =>
+      Effect.gen(function*() {
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(jsonResponse(
+                request,
+                makeChatCompletion({
+                  choices: [{
+                    index: 0,
+                    finish_reason: "stop",
+                    message: { role: "assistant", content: null, refusal: "I'm sorry, I can't help with that." }
+                  }]
+                })
+              ))
+            )
+          ))
+        )
+
+        const result = yield* LanguageModel.generateText({ prompt: "test" }).pipe(
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const finish = result.content.find((part) => part.type === "finish")
+        assert.deepStrictEqual({
+          text: result.text,
+          finishReason: result.finishReason,
+          refusal: finish?.metadata["openai-compat"]?.refusal
+        }, {
+          text: "",
+          finishReason: "content-filter",
+          refusal: "I'm sorry, I can't help with that."
+        })
+      }))
+
     it.effect("surfaces reasoning from non-streaming responses", () =>
       Effect.gen(function*() {
         const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
@@ -1554,6 +1805,49 @@ describe("OpenAiLanguageModel", () => {
         }
       }))
 
+    it.effect("streams a refusal through the finish part", () =>
+      Effect.gen(function*() {
+        const chunk = (delta: Record<string, unknown>, finish_reason: string | null = null) => ({
+          id: "chatcmpl_refusal",
+          object: "chat.completion.chunk",
+          model: "gpt-4o-mini",
+          created: 1,
+          service_tier: "default",
+          choices: [{ index: 0, delta, finish_reason }]
+        })
+        const layer = OpenAiClient.layer({ apiKey: Redacted.make("sk-test-key") }).pipe(
+          Layer.provide(Layer.succeed(
+            HttpClient.HttpClient,
+            makeHttpClient((request) =>
+              Effect.succeed(sseResponse(request, [
+                chunk({ role: "assistant", content: null, refusal: "" }),
+                chunk({ refusal: "I'm sorry," }),
+                chunk({ refusal: " I can't help with that." }),
+                chunk({}, "stop"),
+                "[DONE]"
+              ]))
+            )
+          ))
+        )
+
+        const parts = yield* LanguageModel.streamText({ prompt: "test" }).pipe(
+          Stream.runCollect,
+          Effect.provide(OpenAiLanguageModel.model("gpt-4o-mini")),
+          Effect.provide(layer)
+        )
+
+        const finish = parts.find((part) => part.type === "finish")
+        assert.deepStrictEqual({
+          textParts: parts.filter((part) => part.type.startsWith("text-")).length,
+          reason: finish?.reason,
+          metadata: finish?.metadata["openai-compat"]
+        }, {
+          textParts: 0,
+          reason: "content-filter",
+          metadata: { serviceTier: "default", refusal: "I'm sorry, I can't help with that." }
+        })
+      }))
+
     it.effect("streams undeclared tool calls when tool call validation is deferred", () =>
       Effect.gen(function*() {
         const client = makeHttpClient((request) =>
@@ -1649,6 +1943,7 @@ describe("OpenAiLanguageModel", () => {
           object: "chat.completion.chunk",
           model: "gpt-4o-mini",
           created: 1,
+          service_tier: null,
           choices: [{ index: 0, delta, finish_reason: null }]
         })
 
@@ -1657,6 +1952,7 @@ describe("OpenAiLanguageModel", () => {
             HttpClient.HttpClient,
             makeHttpClient((request) =>
               Effect.succeed(sseResponse(request, [
+                { ...chunk({ role: "assistant" }), service_tier: "priority" },
                 chunk({ content: "Hello", role: null }),
                 chunk({
                   tool_calls: [{
@@ -1664,16 +1960,20 @@ describe("OpenAiLanguageModel", () => {
                     id: "call_1",
                     type: "function",
                     extra_content: extraContent,
-                    function: { name: "TestTool", arguments: "" }
+                    function: { name: "TestTool", arguments: null }
                   }]
                 }),
                 chunk({
                   tool_calls: [{
                     index: 0,
                     id: null,
+                    type: null,
                     extra_content: null,
                     function: { name: null, arguments: "{\"in" }
                   }]
+                }),
+                chunk({
+                  tool_calls: [{ index: 0, id: null, function: { name: null, arguments: null } }]
                 }),
                 chunk({
                   tool_calls: [{ index: 0, id: null, function: { name: null, arguments: "put\":\"hel" } }]
@@ -1711,7 +2011,9 @@ describe("OpenAiLanguageModel", () => {
           .map((part) => part.delta)
           .join("")
         const toolCall = parts.find((part) => part.type === "tool-call")
+        const finish = parts.find((part) => part.type === "finish")
 
+        assert.deepStrictEqual(finish?.metadata["openai-compat"], { serviceTier: "priority" })
         assert.strictEqual(text, "Hello")
         assert.isDefined(toolCall)
         if (toolCall?.type !== "tool-call") {

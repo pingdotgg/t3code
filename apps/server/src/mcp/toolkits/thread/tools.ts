@@ -23,7 +23,7 @@ import {
 } from "@t3tools/contracts";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Schema from "effect/Schema";
-import { Tool, Toolkit } from "effect/ai";
+import { McpSchema, Tool, Toolkit } from "effect/ai";
 
 import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTaskService from "../../../scheduledTasks/ScheduledTaskService.ts";
@@ -232,6 +232,7 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
     threadId: ScheduledTask.fields.threadId,
     link: Schema.optional(Schema.String),
     lastRunStatus: ScheduledTask.fields.lastRunStatus,
+    lastRunError: ScheduledTask.fields.lastRunError,
     runCount: NonNegativeInt,
     nextRunAt: ScheduledTask.fields.nextRunAt,
   }),
@@ -239,6 +240,19 @@ const ScheduledTaskRunTool = Tool.make("run_scheduled_task_now", {
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
+
+const SubmitOutputTool = Tool.make("t3_submit_output", {
+  ...commandTool,
+  description:
+    "Return this turn's result as data, when the message asked for one. `json`: JSON text matching the schema it gave. A rejection says what did not fit; fix it and call again.",
+  // Stored on the run, which every client of the thread holds.
+  parameters: Schema.Struct({ json: Schema.String.check(Schema.isMaxLength(200000)) }),
+  success: Schema.Struct({ runId: RunId }),
+})
+  // It writes only the caller's own run, so a read-only or plan-mode agent can still answer.
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
 export const ThreadToolkit = Toolkit.make(
   ScheduledTaskRunTool,
@@ -248,4 +262,5 @@ export const ThreadToolkit = Toolkit.make(
   ThreadOrganizeTool,
   PendingRequestTool,
   QueueTool,
+  SubmitOutputTool,
 );

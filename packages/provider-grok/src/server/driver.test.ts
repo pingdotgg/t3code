@@ -172,6 +172,98 @@ it.layer(layerTest)("GrokDriver", (it) => {
     });
   }
 
+  // `grok update` installs into `$GROK_HOME/bin`, so an instance GROK_HOME that does not own
+  // binaryPath would update a different copy and leave the verified binary outdated.
+  // `target` is where `bin/grok` links; null is a copied binary, as the Windows installer leaves.
+  const scriptInstallCases = [
+    { target: "grok-1.0.77", downloads: false, owner: ".grok" },
+    { target: "../downloads/grok-linux-x86_64", downloads: true, owner: ".grok" },
+    { target: "../downloads/grok-1.0.88-linux-x86_64", downloads: true, owner: ".grok" },
+    { target: null, downloads: true, owner: ".grok" },
+    { target: null, downloads: false, owner: ".grok-hub" },
+  ] as const;
+  for (const { target, downloads, owner } of scriptInstallCases) {
+    it.effect.skipIf(windowsHost)(
+      `runs grok update with GROK_HOME=${owner} for bin/grok -> ${target ?? "copy"}${downloads ? " beside downloads" : ""}`,
+      () =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const home = yield* fs.realPath(
+            yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-home-" }),
+          );
+          const scriptHome = path.join(home, ".grok");
+          const binaryPath = path.join(scriptHome, "bin", "grok");
+          const targetPath = path.resolve(path.dirname(binaryPath), target ?? "grok");
+          yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+          if (downloads) {
+            yield* fs.makeDirectory(path.join(scriptHome, "downloads"), { recursive: true });
+          }
+          yield* fs.writeFileString(targetPath, "#!/bin/sh\n");
+          yield* fs.chmod(targetPath, 0o755);
+          if (target) yield* fs.symlink(target, binaryPath);
+
+          const instance = yield* GrokDriver.create({
+            instanceId: ProviderInstanceId.make("grok-separate-home"),
+            displayName: "Grok test",
+            enabled: false,
+            environment: [
+              { name: "GROK_HOME", value: path.join(home, ".grok-hub"), sensitive: false },
+            ],
+            config: { ...GrokDriver.defaultConfig(), binaryPath },
+          });
+          const { update } = yield* instance.snapshot.resolveMaintenance();
+
+          expect(update).toEqual(
+            expect.objectContaining({
+              executable: binaryPath,
+              args: ["update"],
+              env: expect.objectContaining({ GROK_HOME: path.join(home, owner) }),
+            }),
+          );
+        }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+    );
+  }
+
+  // An `npx t3` server inherits npm_config_user_agent, which Grok ranks above `[cli] installer`.
+  it.effect.skipIf(windowsHost)("keeps a script install off the npm updater under npx", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.realPath(yield* fs.makeTempDirectoryScoped({ prefix: "t3-grok-" }));
+      const downloaded = path.join(home, ".grok", "downloads", "grok-linux-x86_64");
+      const binaryPath = path.join(home, ".grok", "bin", "grok");
+      yield* fs.makeDirectory(path.dirname(downloaded), { recursive: true });
+      yield* fs.makeDirectory(path.dirname(binaryPath), { recursive: true });
+      yield* fs.writeFileString(downloaded, "#!/bin/sh\n");
+      yield* fs.chmod(downloaded, 0o755);
+      yield* fs.symlink(downloaded, binaryPath);
+
+      const instance = yield* GrokDriver.create({
+        instanceId: ProviderInstanceId.make("grok-script"),
+        displayName: "Grok test",
+        enabled: false,
+        environment: [
+          {
+            name: "npm_config_user_agent",
+            value: "npm/11.6.2 node/v24.11.0 linux x64 workspaces/false",
+            sensitive: false,
+          },
+        ],
+        config: { ...GrokDriver.defaultConfig(), binaryPath },
+      });
+      const updateEnv = (yield* instance.snapshot.resolveMaintenance()).update?.env ?? {};
+      // The maintenance runner spawns with extendEnv, layering this over the server's process.env.
+      const env: NodeJS.ProcessEnv = {
+        npm_config_user_agent: "npm/11.6.2 node/v24.11.0",
+        ...updateEnv,
+      };
+      expect(env.GROK_INSTALLER === "internal" || env.npm_config_user_agent === undefined).toBe(
+        true,
+      );
+    }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noSpawner)),
+  );
+
   it.effect("stays manual-only when the configured executable does not exist", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
