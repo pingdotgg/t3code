@@ -54,6 +54,7 @@ import {
 } from "./GitVcsDriverCore.ts";
 import { autoPullProjects } from "../serverRuntimeStartup.ts";
 import * as GitVcsDriver from "./GitVcsDriver.ts";
+import * as WorktreeRemoval from "./worktreeRemoval.ts";
 import { VcsAutomaticFetchInterval } from "./VcsAutomaticFetchInterval.ts";
 import { gitConfigEnv } from "./VcsProcess.ts";
 
@@ -8294,14 +8295,64 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
           newRefName: "feature/held",
         });
 
-        const removal = yield* driver
-          .removeWorktree({ cwd, path: worktreePath, force: true })
-          .pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.forkChild);
+        const cleared: Array<string> = [];
+        const removal = yield* driver.removeWorktree({ cwd, path: worktreePath, force: true }).pipe(
+          Effect.provideService(HostProcess.Platform, "win32"),
+          // Holders are stopped once, while the folder is still whole, not on every retry.
+          Effect.provideService(WorktreeRemoval.BeforeWorktreeDelete, (target) =>
+            Effect.sync(() => {
+              cleared.push(`${target} ${busyAttempts}`);
+            }),
+          ),
+          Effect.forkChild,
+        );
         yield* TestClock.adjust("5 seconds");
         yield* Fiber.join(removal);
 
+        assert.deepEqual(cleared, [`${worktreePath} 1`]);
         assert.equal(yield* fileSystem.exists(worktreePath), false);
         assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "held");
+      }),
+    );
+
+    it.effect("leaves a Windows worktree's processes running when its removal is refused", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const worktreesRoot = yield* makeTmpDir("git-worktrees-");
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const cleared: Array<string> = [];
+        const refused = Effect.fnUntraced(function* (name: string, force: boolean, why: string) {
+          const worktreePath = pathService.join(worktreesRoot, name);
+          const result = yield* Effect.result(
+            driver.removeWorktree({ cwd, path: worktreePath, force }).pipe(
+              Effect.provideService(HostProcess.Platform, "win32"),
+              Effect.provideService(WorktreeRemoval.BeforeWorktreeDelete, (target) =>
+                Effect.sync(() => {
+                  cleared.push(target);
+                }),
+              ),
+            ),
+          );
+          assert.include(Result.isFailure(result) ? result.failure.detail : "removed", why);
+          assert.isTrue(NodeFS.existsSync(worktreePath), name);
+        });
+        for (const name of ["dirty", "locked"]) {
+          yield* driver.createWorktree({
+            cwd,
+            path: pathService.join(worktreesRoot, name),
+            refName: initialBranch,
+            newRefName: `feature/${name}`,
+          });
+        }
+        yield* writeTextFile(pathService.join(worktreesRoot, "dirty"), "notes.txt", "draft\n");
+        yield* git(cwd, ["worktree", "lock", pathService.join(worktreesRoot, "locked")]);
+
+        yield* refused("dirty", false, "contains modified or untracked files");
+        yield* refused("locked", true, "cannot remove a locked working tree");
+
+        assert.deepEqual(cleared, []);
       }),
     );
 

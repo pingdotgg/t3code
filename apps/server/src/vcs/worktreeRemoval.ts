@@ -1,5 +1,6 @@
 import { GitCommandError } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -9,6 +10,14 @@ import * as Schedule from "effect/Schedule";
 import type * as GitVcsDriver from "./GitVcsDriver.ts";
 
 const INDEX_LIST_MAX_BYTES = 64 * 1024 * 1024;
+
+/**
+ * Runs once a Windows removal has passed every check and is about to delete the folder: the
+ * caller's chance to stop the processes that hold it. A refused removal never reaches it.
+ */
+export class BeforeWorktreeDelete extends Context.Reference<
+  (worktreePath: string) => Effect.Effect<void>
+>("t3/vcs/worktreeRemoval/BeforeWorktreeDelete", { defaultValue: () => () => Effect.void }) {}
 
 /**
  * git-annex replaces a linked worktree's `.git` file with a symlink to its admin
@@ -208,6 +217,7 @@ export const removeLinkedWorktree = Effect.fn("WorktreeRemoval.removeLinkedWorkt
   const gitFileContents = yield* fileSystem
     .readFileString(gitFile)
     .pipe(Effect.mapError(() => notAWorktree));
+  yield* (yield* BeforeWorktreeDelete)(worktreePath);
   yield* fileSystem.remove(worktreePath, { recursive: true }).pipe(
     // Windows frees a folder only once every process holding it has exited, and a stopped
     // provider's children can take seconds. Up to ten seconds, the first retry at once.
