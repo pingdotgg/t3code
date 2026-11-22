@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import {
+  type AtomCommandResult,
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
@@ -24,7 +25,7 @@ import {
   Trash2Icon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 
 import { connectPairing as connectPairingAtom } from "~/connection/onboarding";
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -72,6 +73,23 @@ function formatCommandFailure(error: unknown, fallback: string): string {
     : fallback;
 }
 
+type RowAction = "wake" | "snapshot" | "sleep" | "destroy" | "connect";
+
+function failureToast(
+  result: Extract<AtomCommandResult<unknown, unknown>, { readonly _tag: "Failure" }>,
+  title: string,
+  fallback: string,
+) {
+  if (isAtomCommandInterrupted(result)) return;
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title,
+      description: formatCommandFailure(squashAtomCommandFailure(result), fallback),
+    }),
+  );
+}
+
 export function CloudSandboxesSection({
   environmentId,
   environmentLabel,
@@ -86,7 +104,6 @@ export function CloudSandboxesSection({
   readonly onExternalLaunchOpenChange?: ((open: boolean) => void) | undefined;
 }) {
   const gt = useGT();
-  const messages = useMessages();
   const nowMinute = useNowMinute();
   const nowMs = Date.parse(nowMinute);
 
@@ -111,17 +128,14 @@ export function CloudSandboxesSection({
     onExternalLaunchOpenChange?.(next);
   };
 
-  const [busySandboxAction, setBusySandboxAction] = useState<
-    Readonly<Record<string, "wake" | "snapshot" | "sleep" | "destroy" | "connect">>
-  >({});
+  const [busySandboxAction, setBusySandboxAction] = useState<Readonly<Record<string, RowAction>>>(
+    {},
+  );
   const [pendingPairingUrls, setPendingPairingUrls] = useState<ReadonlyMap<SandboxId, string>>(
     () => new Map(),
   );
 
-  const setRowBusy = (
-    id: SandboxId,
-    action: "wake" | "snapshot" | "sleep" | "destroy" | "connect" | null,
-  ) => {
+  const setRowBusy = (id: SandboxId, action: RowAction | null) => {
     setBusySandboxAction((current) => {
       if (action === null) {
         const next = { ...current };
@@ -191,18 +205,7 @@ export function CloudSandboxesSection({
     setRowBusy(sandbox.id, null);
 
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Could not wake sandbox"),
-            description: formatCommandFailure(
-              squashAtomCommandFailure(result),
-              gt("Failed to wake cloud sandbox."),
-            ),
-          }),
-        );
-      }
+      failureToast(result, gt("Could not wake sandbox"), gt("Failed to wake cloud sandbox."));
       return;
     }
 
@@ -231,18 +234,11 @@ export function CloudSandboxesSection({
     setRowBusy(sandbox.id, null);
 
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Could not snapshot sandbox"),
-            description: formatCommandFailure(
-              squashAtomCommandFailure(result),
-              gt("Failed to capture sandbox snapshot."),
-            ),
-          }),
-        );
-      }
+      failureToast(
+        result,
+        gt("Could not snapshot sandbox"),
+        gt("Failed to capture sandbox snapshot."),
+      );
       return;
     }
 
@@ -260,18 +256,7 @@ export function CloudSandboxesSection({
     setRowBusy(sandbox.id, null);
 
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Could not sleep sandbox"),
-            description: formatCommandFailure(
-              squashAtomCommandFailure(result),
-              gt("Failed to put sandbox to sleep."),
-            ),
-          }),
-        );
-      }
+      failureToast(result, gt("Could not sleep sandbox"), gt("Failed to put sandbox to sleep."));
       return;
     }
 
@@ -300,18 +285,7 @@ export function CloudSandboxesSection({
     setRowBusy(sandbox.id, null);
 
     if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: gt("Could not destroy sandbox"),
-            description: formatCommandFailure(
-              squashAtomCommandFailure(result),
-              gt("Failed to destroy cloud sandbox."),
-            ),
-          }),
-        );
-      }
+      failureToast(result, gt("Could not destroy sandbox"), gt("Failed to destroy cloud sandbox."));
       return;
     }
 
@@ -364,164 +338,24 @@ export function CloudSandboxesSection({
             }
           />
         ) : (
-          sortedSandboxes.map((sandbox) => {
-            const busyAction = busySandboxAction[sandbox.id] ?? null;
-            const actions = resolveSandboxRowActions(sandbox.state, busyAction !== null);
-            const badge = resolveSandboxStatusBadge(sandbox.state, messages);
-            const runtime = formatSandboxRuntimeDuration(sandbox, nowMs);
-            const vercelWarning = isVercelRuntimeWarningActive(sandbox, nowMs);
-            const harnessLabel = formatSandboxAgentHarness(sandbox.agentHarness, messages);
-            const providerLabel = messages(SANDBOX_PROVIDER_META[sandbox.provider].label);
-            const pairingUrl = pendingPairingUrls.get(sandbox.id) ?? null;
-            const isConnected =
-              sandbox.environmentId !== null && connectedEnvironmentIds.has(sandbox.environmentId);
-
-            return (
-              <div
-                key={sandbox.id}
-                className={cn(
-                  ITEM_ROW_CLASSNAME,
-                  "flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between",
-                )}
-              >
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate text-sm font-medium text-foreground">
-                      {sandbox.name}
-                    </span>
-                    <Badge variant={badge.tone} size="sm">
-                      {badge.label}
-                    </Badge>
-                    <Badge variant="outline" size="sm">
-                      {providerLabel}
-                    </Badge>
-                    {isConnected ? (
-                      <Badge variant="secondary" size="sm">
-                        <T>Connected</T>
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    {runtime ? (
-                      <span className="inline-flex items-center gap-1 tabular-nums">
-                        <ClockIcon aria-hidden className="size-3" />
-                        {runtime}
-                      </span>
-                    ) : null}
-                    <span>
-                      {gt("{minutes}m idle timeout", { minutes: sandbox.idleTimeoutMinutes })}
-                    </span>
-                    {harnessLabel ? <span>{harnessLabel}</span> : null}
-                    {sandbox.repoUrl ? (
-                      <span className="max-w-72 truncate">
-                        {sandbox.repoUrl}
-                        {sandbox.branch ? ` (${sandbox.branch})` : ""}
-                      </span>
-                    ) : null}
-                    {sandbox.snapshotId ? (
-                      <span className="max-w-52 truncate">
-                        {gt("Snapshot: {id}", { id: sandbox.snapshotId })}
-                      </span>
-                    ) : null}
-                  </div>
-                  {vercelWarning ? (
-                    <p className="flex items-center gap-1 text-xs text-warning-foreground">
-                      <TriangleAlertIcon aria-hidden className="size-3 shrink-0" />
-                      <T>Approaching Vercel 45m continuous limit. Auto-snapshot imminent.</T>
-                    </p>
-                  ) : null}
-                  {sandbox.lastError ? (
-                    <p className="text-xs text-destructive">{sandbox.lastError}</p>
-                  ) : null}
-                </div>
-
-                <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">
-                  {pairingUrl && !isConnected ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      disabled={busyAction !== null}
-                      onClick={() => void handleConnectPairingUrl(sandbox, pairingUrl)}
-                    >
-                      {busyAction === "connect" ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Link2Icon className="size-3" />
-                      )}
-                      <T>Connect</T>
-                    </Button>
-                  ) : null}
-                  {canResume && actions.canWake ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      disabled={busyAction !== null}
-                      onClick={() => void handleWake(sandbox)}
-                    >
-                      {busyAction === "wake" ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <PlayIcon className="size-3" />
-                      )}
-                      <T>Wake</T>
-                    </Button>
-                  ) : null}
-                  {canSnapshot && actions.canSnapshot ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      disabled={busyAction !== null}
-                      onClick={() => void handleSnapshot(sandbox)}
-                    >
-                      {busyAction === "snapshot" ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <CameraIcon className="size-3" />
-                      )}
-                      <T>Snapshot</T>
-                    </Button>
-                  ) : null}
-                  {canStop && actions.canSleep ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="outline"
-                      disabled={busyAction !== null}
-                      onClick={() => void handleSleep(sandbox)}
-                    >
-                      {busyAction === "sleep" ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <MoonIcon className="size-3" />
-                      )}
-                      <T>Sleep</T>
-                    </Button>
-                  ) : null}
-                  {canDestroy && actions.canDestroy ? (
-                    <Button
-                      type="button"
-                      size="xs"
-                      variant="ghost-muted"
-                      disabled={busyAction !== null}
-                      onClick={() => void handleDestroy(sandbox)}
-                      aria-label={gt("Destroy {name}", { name: sandbox.name })}
-                    >
-                      {busyAction === "destroy" ? (
-                        <Spinner size="sm" />
-                      ) : (
-                        <Trash2Icon className="size-3 text-destructive" />
-                      )}
-                      <span className="text-destructive">
-                        <T>Destroy</T>
-                      </span>
-                    </Button>
-                  ) : null}
-                </div>
-              </div>
-            );
-          })
+          sortedSandboxes.map((sandbox) => (
+            <SandboxRow
+              key={sandbox.id}
+              sandbox={sandbox}
+              busyAction={busySandboxAction[sandbox.id] ?? null}
+              nowMs={nowMs}
+              pairingUrl={pendingPairingUrls.get(sandbox.id) ?? null}
+              isConnected={
+                sandbox.environmentId !== null && connectedEnvironmentIds.has(sandbox.environmentId)
+              }
+              permissions={{ canResume, canSnapshot, canStop, canDestroy }}
+              onConnect={handleConnectPairingUrl}
+              onWake={handleWake}
+              onSnapshot={handleSnapshot}
+              onSleep={handleSleep}
+              onDestroy={handleDestroy}
+            />
+          ))
         )}
       </SettingsSection>
 
@@ -560,6 +394,213 @@ export function CloudSandboxesSection({
         />
       ) : null}
     </>
+  );
+}
+
+function OptionalHint() {
+  return (
+    <span className="font-normal text-muted-foreground">
+      <T>(optional)</T>
+    </span>
+  );
+}
+
+function RowActionButton({
+  busy,
+  disabled,
+  onClick,
+  icon,
+  children,
+  variant,
+  ariaLabel,
+}: {
+  readonly busy: boolean;
+  readonly disabled: boolean;
+  readonly onClick: () => void;
+  readonly icon: ReactNode;
+  readonly children: ReactNode;
+  readonly variant?: "default" | "outline" | "ghost-muted" | undefined;
+  readonly ariaLabel?: string | undefined;
+}) {
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant={variant ?? "outline"}
+      disabled={disabled}
+      onClick={onClick}
+      aria-label={ariaLabel}
+    >
+      {busy ? <Spinner size="sm" /> : icon}
+      {children}
+    </Button>
+  );
+}
+
+function SandboxDetails({
+  sandbox,
+  nowMs,
+  isConnected,
+}: {
+  readonly sandbox: CloudSandboxRecord;
+  readonly nowMs: number;
+  readonly isConnected: boolean;
+}) {
+  const gt = useGT();
+  const messages = useMessages();
+  const badge = resolveSandboxStatusBadge(sandbox.state, messages);
+  const runtime = formatSandboxRuntimeDuration(sandbox, nowMs);
+  const harnessLabel = formatSandboxAgentHarness(sandbox.agentHarness, messages);
+  const providerLabel = messages(SANDBOX_PROVIDER_META[sandbox.provider].label);
+
+  return (
+    <div className="min-w-0 flex-1 space-y-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="truncate text-sm font-medium text-foreground">{sandbox.name}</span>
+        <Badge variant={badge.tone} size="sm">
+          {badge.label}
+        </Badge>
+        <Badge variant="outline" size="sm">
+          {providerLabel}
+        </Badge>
+        {isConnected ? (
+          <Badge variant="secondary" size="sm">
+            <T>Connected</T>
+          </Badge>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+        {runtime ? (
+          <span className="inline-flex items-center gap-1 tabular-nums">
+            <ClockIcon aria-hidden className="size-3" />
+            {runtime}
+          </span>
+        ) : null}
+        <span>{gt("{minutes}m idle timeout", { minutes: sandbox.idleTimeoutMinutes })}</span>
+        {harnessLabel ? <span>{harnessLabel}</span> : null}
+        {sandbox.repoUrl ? (
+          <span className="max-w-72 truncate">
+            {sandbox.repoUrl}
+            {sandbox.branch ? ` (${sandbox.branch})` : ""}
+          </span>
+        ) : null}
+        {sandbox.snapshotId ? (
+          <span className="max-w-52 truncate">
+            {gt("Snapshot: {id}", { id: sandbox.snapshotId })}
+          </span>
+        ) : null}
+      </div>
+      {isVercelRuntimeWarningActive(sandbox, nowMs) ? (
+        <p className="flex items-center gap-1 text-xs text-warning-foreground">
+          <TriangleAlertIcon aria-hidden className="size-3 shrink-0" />
+          <T>Approaching Vercel 45m continuous limit. Auto-snapshot imminent.</T>
+        </p>
+      ) : null}
+      {sandbox.lastError ? <p className="text-xs text-destructive">{sandbox.lastError}</p> : null}
+    </div>
+  );
+}
+
+function SandboxRow({
+  sandbox,
+  busyAction,
+  nowMs,
+  pairingUrl,
+  isConnected,
+  permissions,
+  onConnect,
+  onWake,
+  onSnapshot,
+  onSleep,
+  onDestroy,
+}: {
+  readonly sandbox: CloudSandboxRecord;
+  readonly busyAction: RowAction | null;
+  readonly nowMs: number;
+  readonly pairingUrl: string | null;
+  readonly isConnected: boolean;
+  readonly permissions: {
+    readonly canResume: boolean;
+    readonly canSnapshot: boolean;
+    readonly canStop: boolean;
+    readonly canDestroy: boolean;
+  };
+  readonly onConnect: (sandbox: CloudSandboxRecord, pairingUrl: string) => Promise<boolean>;
+  readonly onWake: (sandbox: CloudSandboxRecord) => Promise<void>;
+  readonly onSnapshot: (sandbox: CloudSandboxRecord) => Promise<void>;
+  readonly onSleep: (sandbox: CloudSandboxRecord) => Promise<void>;
+  readonly onDestroy: (sandbox: CloudSandboxRecord) => Promise<void>;
+}) {
+  const gt = useGT();
+  const actions = resolveSandboxRowActions(sandbox.state, busyAction !== null);
+  const disabled = busyAction !== null;
+
+  return (
+    <div
+      className={cn(
+        ITEM_ROW_CLASSNAME,
+        "flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between",
+      )}
+    >
+      <SandboxDetails sandbox={sandbox} nowMs={nowMs} isConnected={isConnected} />
+      <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">
+        {pairingUrl && !isConnected ? (
+          <RowActionButton
+            busy={busyAction === "connect"}
+            disabled={disabled}
+            onClick={() => void onConnect(sandbox, pairingUrl)}
+            icon={<Link2Icon className="size-3" />}
+            variant="default"
+          >
+            <T>Connect</T>
+          </RowActionButton>
+        ) : null}
+        {permissions.canResume && actions.canWake ? (
+          <RowActionButton
+            busy={busyAction === "wake"}
+            disabled={disabled}
+            onClick={() => void onWake(sandbox)}
+            icon={<PlayIcon className="size-3" />}
+          >
+            <T>Wake</T>
+          </RowActionButton>
+        ) : null}
+        {permissions.canSnapshot && actions.canSnapshot ? (
+          <RowActionButton
+            busy={busyAction === "snapshot"}
+            disabled={disabled}
+            onClick={() => void onSnapshot(sandbox)}
+            icon={<CameraIcon className="size-3" />}
+          >
+            <T>Snapshot</T>
+          </RowActionButton>
+        ) : null}
+        {permissions.canStop && actions.canSleep ? (
+          <RowActionButton
+            busy={busyAction === "sleep"}
+            disabled={disabled}
+            onClick={() => void onSleep(sandbox)}
+            icon={<MoonIcon className="size-3" />}
+          >
+            <T>Sleep</T>
+          </RowActionButton>
+        ) : null}
+        {permissions.canDestroy && actions.canDestroy ? (
+          <RowActionButton
+            busy={busyAction === "destroy"}
+            disabled={disabled}
+            onClick={() => void onDestroy(sandbox)}
+            icon={<Trash2Icon className="size-3 text-destructive" />}
+            variant="ghost-muted"
+            ariaLabel={gt("Destroy {name}", { name: sandbox.name })}
+          >
+            <span className="text-destructive">
+              <T>Destroy</T>
+            </span>
+          </RowActionButton>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -729,10 +770,7 @@ function NewCloudSandboxDialog({
             <div className="grid gap-3 sm:grid-cols-2">
               <label className="block space-y-1.5 sm:col-span-2">
                 <span className="text-sm font-medium text-foreground">
-                  <T>Repository URL</T>{" "}
-                  <span className="font-normal text-muted-foreground">
-                    <T>(optional)</T>
-                  </span>
+                  <T>Repository URL</T> <OptionalHint />
                 </span>
                 <Input
                   value={repoUrl}
@@ -744,10 +782,7 @@ function NewCloudSandboxDialog({
 
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium text-foreground">
-                  <T>Branch</T>{" "}
-                  <span className="font-normal text-muted-foreground">
-                    <T>(optional)</T>
-                  </span>
+                  <T>Branch</T> <OptionalHint />
                 </span>
                 <Input
                   value={branch}
@@ -759,10 +794,7 @@ function NewCloudSandboxDialog({
 
               <label className="block space-y-1.5">
                 <span className="text-sm font-medium text-foreground">
-                  <T>Sandbox name</T>{" "}
-                  <span className="font-normal text-muted-foreground">
-                    <T>(optional)</T>
-                  </span>
+                  <T>Sandbox name</T> <OptionalHint />
                 </span>
                 <Input
                   value={name}
@@ -815,10 +847,7 @@ function NewCloudSandboxDialog({
 
               <label className="block space-y-1.5 sm:col-span-2">
                 <span className="text-sm font-medium text-foreground">
-                  <T>Snapshot / base image</T>{" "}
-                  <span className="font-normal text-muted-foreground">
-                    <T>(optional)</T>
-                  </span>
+                  <T>Snapshot / base image</T> <OptionalHint />
                 </span>
                 <Input
                   value={snapshotId}
