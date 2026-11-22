@@ -30,7 +30,9 @@ export const runtimeModeConfig: Record<
   },
   auto: {
     label: msg("Auto", { $context: "permission mode, provider approves routine actions" }),
-    description: msg("Supported providers approve routine actions; others still ask."),
+    description: msg(
+      "Supported providers approve routine actions; providers without Auto get Full access.",
+    ),
     icon: ShieldCheckIcon,
   },
   "full-access": {

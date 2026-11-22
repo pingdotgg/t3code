@@ -4752,7 +4752,7 @@
   "cceea5cef0684b31": "Accepter les modifications automatiquement",
   "3fe210c30bf00152": "Approuver automatiquement les modifications, demander avant les autres actions.",
   "468986e98d947cb7": "Auto",
-  "451204c240ead696": "Les fournisseurs compatibles approuvent les actions courantes ; les autres demandent toujours.",
+  "d9efd017a6b1f019": "Les fournisseurs compatibles approuvent les actions courantes ; ceux sans Auto obtiennent un Accès complet.",
   "1eed3d794eed6b65": "Accès complet",
   "7f284f51644bb125": "Autoriser les commandes et les modifications sans demander.",
   "4f402027a24d31c4": "{organization} limite les fils au mode {mode}.",

@@ -4917,7 +4917,7 @@
   "cceea5cef0684b31": "Änderungen automatisch annehmen",
   "3fe210c30bf00152": "Änderungen automatisch genehmigen, vor anderen Aktionen nachfragen.",
   "fd064d8807f0aaa2": "Auto",
-  "451204c240ead696": "Unterstützte Anbieter genehmigen Routineaktionen; andere fragen weiterhin nach.",
+  "d9efd017a6b1f019": "Unterstützte Anbieter genehmigen Routineaktionen; Anbieter ohne Auto erhalten Vollzugriff.",
   "1eed3d794eed6b65": "Vollzugriff",
   "7f284f51644bb125": "Befehle und Änderungen ohne Nachfrage erlauben.",
   "3bb848279618550f": "{label}, {summary}",

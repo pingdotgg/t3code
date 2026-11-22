@@ -182,8 +182,16 @@ const RUNTIME_MODES_WITHOUT_AUTO = [
   "auto-accept-edits",
   "full-access",
 ] as const;
+// Before a session reports agy's Auto, Auto is offered: Full access could exceed a native Auto, and a
+// session without it asks about each request under an Auto policy.
+const RUNTIME_MODES_UNKNOWN = [
+  "approval-required",
+  "auto-accept-edits",
+  "auto",
+  "full-access",
+] as const;
 
-/** Auto is offered only where the session advertises agy's own Auto; elsewhere it runs Supervised. */
+/** Auto is offered only where the session advertises agy's own Auto; elsewhere it runs Full access. */
 function antigravityRuntimeModes(
   sessionSetupResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["sessionSetupResult"],
 ): ReadonlyArray<RuntimeMode> {
@@ -212,7 +220,7 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
       presentation: {
         displayName: "Antigravity",
         showInteractionModeToggle: false,
-        supportedRuntimeModes: options.rememberedRuntimeModes ?? RUNTIME_MODES_WITHOUT_AUTO,
+        supportedRuntimeModes: options.rememberedRuntimeModes ?? RUNTIME_MODES_UNKNOWN,
       },
       enabled: settings.enabled,
       checkedAt,
@@ -526,13 +534,13 @@ export const makeAntigravityProvider = Effect.fn("makeAntigravityProvider")(func
           slashCommands: [],
           skills: [],
           workspaceSnapshots: [],
-          supportedRuntimeModes: RUNTIME_MODES_WITHOUT_AUTO,
+          supportedRuntimeModes: RUNTIME_MODES_UNKNOWN,
           supportsTextGeneration: false,
           usageLimits: undefined,
         },
       } satisfies AntigravityProviderState,
     ]);
-    yield* rememberRuntimeModes(previousModes, RUNTIME_MODES_WITHOUT_AUTO);
+    yield* rememberRuntimeModes(previousModes, RUNTIME_MODES_UNKNOWN);
     discoveredSkills.clear();
     thinkingLevels.clear();
   });

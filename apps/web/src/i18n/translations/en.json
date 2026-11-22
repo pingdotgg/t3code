@@ -4753,7 +4753,7 @@
   "cceea5cef0684b31": "Auto-accept edits",
   "3fe210c30bf00152": "Auto-approve edits, ask before other actions.",
   "468986e98d947cb7": "Auto",
-  "451204c240ead696": "Supported providers approve routine actions; others still ask.",
+  "d9efd017a6b1f019": "Supported providers approve routine actions; providers without Auto get Full access.",
   "1eed3d794eed6b65": "Full access",
   "7f284f51644bb125": "Allow commands and edits without prompts.",
   "4f402027a24d31c4": "{organization} limits threads to {mode}.",

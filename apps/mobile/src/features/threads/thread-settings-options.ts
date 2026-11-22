@@ -26,7 +26,9 @@ export const RUNTIME_MODE_CHOICES: ReadonlyArray<{
   {
     mode: "auto",
     label: msg("Auto"),
-    description: msg("Supported providers approve routine actions; others still ask."),
+    description: msg(
+      "Supported providers approve routine actions; providers without Auto get Full access.",
+    ),
   },
   {
     mode: "full-access",

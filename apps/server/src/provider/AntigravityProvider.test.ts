@@ -355,7 +355,7 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
     }),
   );
 
-  it.effect("offers Auto only while the signed-in session advertises agy's own Auto", () =>
+  it.effect("offers Auto until a signed-in session reports it lacks agy's own Auto", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
       yield* harness.initialize;
@@ -363,6 +363,12 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
         Effect.map((snapshot) => snapshot.supportedRuntimeModes),
       );
       const withoutAuto = ["approval-required", "auto-accept-edits", "full-access"];
+      const withAuto: ReadonlyArray<RuntimeMode> = [
+        "approval-required",
+        "auto-accept-edits",
+        "auto",
+        "full-access",
+      ];
       const startedWithAuto = {
         ...started,
         sessionSetupResult: {
@@ -376,30 +382,21 @@ it.layer(layerTest)("Antigravity provider snapshots", (it) => {
           },
         },
       };
+      expect(yield* supportedModes).toEqual(withAuto);
+      yield* harness.provider.onSessionStarted(started);
       expect(yield* supportedModes).toEqual(withoutAuto);
       yield* harness.provider.onSessionStarted(startedWithAuto);
-      expect(yield* supportedModes).toEqual([
-        "approval-required",
-        "auto-accept-edits",
-        "auto",
-        "full-access",
-      ]);
+      expect(yield* supportedModes).toEqual(withAuto);
       yield* harness.provider.onSessionStarted(started);
       expect(yield* supportedModes).toEqual(withoutAuto);
       yield* harness.provider.onSessionStarted(startedWithAuto);
       yield* harness.provider.onSignedOut;
-      expect(yield* supportedModes).toEqual(withoutAuto);
-      const withAuto: ReadonlyArray<RuntimeMode> = [
-        "approval-required",
-        "auto-accept-edits",
-        "auto",
-        "full-access",
-      ];
+      expect(yield* supportedModes).toEqual(withAuto);
       expect(yield* Ref.get(harness.savedRuntimeModes)).toEqual([
-        withAuto,
         withoutAuto,
         withAuto,
         withoutAuto,
+        withAuto,
       ]);
 
       // A restart offers what the last session advertised before any session starts.

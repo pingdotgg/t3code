@@ -29,8 +29,9 @@ capabilities, never the driver kind.
   `supportedRuntimeModes` in the provider presentation ([Grok](../../packages/provider-grok/src/server/status.ts)
   and [Pi](../../packages/provider-pi/src/server/status.ts) are examples). Do not imitate a missing
   mode by answering approvals in T3: T3's check is weaker than the agent's own enforcement. The
-  server runs an unoffered stored mode as Supervised
-  ([`RuntimePolicy.ts`](../../apps/server/src/orchestration-v2/RuntimePolicy.ts)).
+  server runs an unoffered stored mode as Supervised, except Auto, which runs as the broadest
+  offered mode under the managed ceiling
+  ([`providerRuntimeMode`](../../packages/contracts/src/providerPolicy.ts)).
 - **Approval and question options.** Pass the provider's own option IDs through unchanged. Every
   request needs a way to decline that the provider honors.
 - **Interaction modes.** Hide the plan toggle (`showInteractionModeToggle: false`) unless the

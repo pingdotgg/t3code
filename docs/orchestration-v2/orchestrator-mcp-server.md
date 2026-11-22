@@ -355,8 +355,8 @@ this binding.
 Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. A new worktree with `startFromOrigin` omitted follows the new-worktree setting. For stacked PRs, use the parent branch as `baseRef` with
-`startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. As for `delegate_task`, `auto` is always
+`startFromOrigin: false`. The new thread's stored runtime and interaction modes
+may not be broader than the caller's. As for `delegate_task`, `auto` is always
 kept, any other runtime mode the provider does not offer is refused, and an
 inherited or default one steps down to the broadest mode it offers.
 `create_threads` remains the batch option for a shared checkout.

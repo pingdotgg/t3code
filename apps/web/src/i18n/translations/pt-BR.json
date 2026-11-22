@@ -4751,7 +4751,7 @@
   "cceea5cef0684b31": "Aceitar edições automaticamente",
   "3fe210c30bf00152": "Aprova edições automaticamente e pergunta antes de outras ações.",
   "468986e98d947cb7": "Auto",
-  "451204c240ead696": "Os provedores compatíveis aprovam ações rotineiras; os outros continuam perguntando.",
+  "d9efd017a6b1f019": "Os provedores compatíveis aprovam ações rotineiras; os que não têm Auto recebem Acesso total.",
   "1eed3d794eed6b65": "Acesso total",
   "7f284f51644bb125": "Permite comandos e edições sem perguntar.",
   "4f402027a24d31c4": "{organization} limita as threads a {mode}.",

@@ -4917,7 +4917,7 @@
   "cceea5cef0684b31": "Godkänn ändringar automatiskt",
   "3fe210c30bf00152": "Godkänn ändringar automatiskt, fråga före andra åtgärder.",
   "fd064d8807f0aaa2": "Auto",
-  "451204c240ead696": "Leverantörer som stöder det godkänner rutinåtgärder; andra frågar fortfarande.",
+  "d9efd017a6b1f019": "Leverantörer som stöder det godkänner rutinåtgärder; leverantörer utan Auto får full åtkomst.",
   "1eed3d794eed6b65": "Full åtkomst",
   "7f284f51644bb125": "Tillåt kommandon och ändringar utan att fråga.",
   "3bb848279618550f": "{label}, {summary}",

@@ -4751,7 +4751,7 @@
   "cceea5cef0684b31": "Aceptar ediciones automáticamente",
   "3fe210c30bf00152": "Aprueba las ediciones automáticamente y pregunta antes de otras acciones.",
   "468986e98d947cb7": "Automático",
-  "451204c240ead696": "Los proveedores compatibles aprueban las acciones rutinarias; los demás siguen preguntando.",
+  "d9efd017a6b1f019": "Los proveedores compatibles aprueban las acciones rutinarias; los que no tienen Automático obtienen Acceso completo.",
   "1eed3d794eed6b65": "Acceso completo",
   "7f284f51644bb125": "Permite comandos y ediciones sin preguntar.",
   "4f402027a24d31c4": "{organization} limita los hilos a {mode}.",

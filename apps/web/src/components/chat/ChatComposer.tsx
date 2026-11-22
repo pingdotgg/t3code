@@ -1010,11 +1010,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     m,
   );
   // A thread or draft already above the ceiling would be refused; offer the broadest mode left.
-  const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, compatibleRuntimeMode, m);
+  // The server checks the stored mode, not the one a provider without it runs.
+  const runtimeModeCeilingDenial = runtimeModeDenial(managedPolicy, runtimeMode, m);
   const runtimeModeCeilingFallback =
     runtimeModeCeilingDenial === undefined
       ? undefined
-      : clampManagedRuntimeMode(managedPolicy, compatibleRuntimeMode, compatibleRuntimeModes);
+      : clampManagedRuntimeMode(managedPolicy, runtimeMode, compatibleRuntimeModes);
 
   const providerSendBlockReason = getAntigravitySendBlockReason(
     selectedProviderEntry?.snapshot,
