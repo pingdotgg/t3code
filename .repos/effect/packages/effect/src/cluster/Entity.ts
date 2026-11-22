@@ -791,6 +791,11 @@ export const keepAlive: (
   never,
   Sharding | CurrentAddress
 > = Effect.fnUntraced(function*(enabled: boolean) {
+  const ohandler = yield* Effect.serviceOption(KeepAliveHandler)
+  if (ohandler._tag === "Some") {
+    yield* ohandler.value(enabled)
+    return
+  }
   const olatch = yield* Effect.serviceOption(KeepAliveLatch)
   if (olatch._tag === "None") return
   if (!enabled) {
@@ -860,3 +865,22 @@ export const KeepAliveRpc = Rpc.make("Cluster/Entity/keepAlive")
 export class KeepAliveLatch extends Context.Service<KeepAliveLatch, Latch.Latch>()(
   "effect/cluster/Entity/KeepAliveLatch"
 ) {}
+
+/**
+ * Service tag for the runtime hook behind {@link keepAlive}.
+ *
+ * **Details**
+ *
+ * Runtimes that support pinning an entity in memory provide this service; the
+ * handler receives `true` while at least one keep-alive holder exists and
+ * `false` once the last holder is released. When the service is absent,
+ * `keepAlive` is a no-op.
+ *
+ * @stability unstable
+ * @category services
+ * @since 4.1.3
+ */
+export class KeepAliveHandler extends Context.Service<
+  KeepAliveHandler,
+  (enabled: boolean) => Effect.Effect<void>
+>()("effect/cluster/Entity/KeepAliveHandler") {}
