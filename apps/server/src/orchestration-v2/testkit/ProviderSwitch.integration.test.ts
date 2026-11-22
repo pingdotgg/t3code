@@ -6489,10 +6489,7 @@ describe("orchestration v2 provider switching", () => {
           // Run 2: switch to Claude and do real work.
           yield* send("Build live draft b63", CLAUDE_MODEL_SELECTION);
           // Run 3: switch back to Codex (delta handoff covering run 2); fails.
-          const afterRun3 = yield* send("Resume on bad model", {
-            ...CODEX_MODEL_SELECTION,
-            model: "gemini-4-neon",
-          });
+          const afterRun3 = yield* send("Resume after failure", CODEX_MODEL_SELECTION);
           const run3 = afterRun3.runs.find((run) => run.ordinal === 3)!;
           assert.equal(run3.status, "failed");
           const run3Handoff = afterRun3.contextHandoffs.find(
@@ -6515,15 +6512,12 @@ describe("orchestration v2 provider switching", () => {
           }
 
           if (variant === "same-provider-retry") {
-            // Run 4: stay on Codex with a working model; must re-deliver run 2's handoff.
-            const afterRun4 = yield* send("Resume", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
+            // Run 4: stay on Codex; must re-deliver run 2's handoff.
+            const afterRun4 = yield* send("Resume", CODEX_MODEL_SELECTION);
             const turns = yield* Ref.get(capturedTurns);
             const run4Turn = turns.at(-1)!;
             assert.include(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
-            assert.include(run4Turn.text, "Resume on bad model");
+            assert.include(run4Turn.text, "Resume after failure");
             assert.include(run4Turn.text, "User message:\nResume");
             const updatedHandoff = afterRun4.contextHandoffs.find(
               (handoff) => handoff.id === run3Handoff!.id,
@@ -6532,10 +6526,7 @@ describe("orchestration v2 provider switching", () => {
           } else if (variant === "switch-away-and-return") {
             // Run 4: bounce back to Claude, then Run 5: return to Codex.
             yield* send("Continue on Claude", CLAUDE_MODEL_SELECTION);
-            const afterRun5 = yield* send("Back to Codex", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
+            const afterRun5 = yield* send("Back to Codex", CODEX_MODEL_SELECTION);
             const run5 = afterRun5.runs.find((run) => run.ordinal === 5)!;
             const run5Handoff = afterRun5.contextHandoffs.find(
               (handoff) => handoff.targetRunId === run5.id,
@@ -6547,10 +6538,7 @@ describe("orchestration v2 provider switching", () => {
             assert.include(run5Turn.text, "Extra Claude turn after dropped handoff.");
           } else {
             // Control: run 3 persisted its prompt before failing, so run 4 must not re-send run 2.
-            yield* send("Resume", {
-              ...CODEX_MODEL_SELECTION,
-              model: "claude-opus-5-5",
-            });
+            yield* send("Resume", CODEX_MODEL_SELECTION);
             const run4Turn = (yield* Ref.get(capturedTurns)).at(-1)!;
             assert.notInclude(run4Turn.text, "Afternoon Claude shipped b63 live draft.");
           }
