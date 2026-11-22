@@ -1109,6 +1109,16 @@ it("repairs bare local media embeds and file links with spaces across Windows an
 
   const linkedImage = "[![Shot](/tmp/my shot.png)](https://example.test)";
   expect(chatMarkdownImageSources(linkedImage).map(decodeURI)).toEqual(["/tmp/my shot.png"]);
+
+  // Inline code inside a link label is valid CommonMark and must not block spaced-path repair.
+  const codeLabelLink = "[Open `README.md`](/tmp/My Project/README.md)";
+  const codeLabelUrls: string[] = [];
+  const collectCodeLabelLinks = (node: Root | RootContent) => {
+    if (node.type === "link") codeLabelUrls.push(node.url);
+    if ("children" in node) node.children.forEach(collectCodeLabelLinks);
+  };
+  collectCodeLabelLinks(processor.runSync(processor.parse(codeLabelLink), codeLabelLink) as Root);
+  expect(codeLabelUrls.map(decodeURI)).toEqual(["/tmp/My Project/README.md"]);
 });
 
 it("keeps authored offsets after repairing multiple spaced file paths", () => {

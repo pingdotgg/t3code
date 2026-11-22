@@ -593,5 +593,8 @@ describe("wordsHast", () => {
     expect(wordsHtml("~~~\n`unclosed\n~~~\n![real](/tmp/a b.png)\n`tail`")).toContain(
       `src="/tmp/a%20b.png"`,
     );
+    expect(wordsHtml("[Open `README.md`](/tmp/My Project/README.md)")).toContain(
+      `href="/tmp/My%20Project/README.md"`,
+    );
   });
 });

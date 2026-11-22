@@ -143,8 +143,9 @@ function* spacedFilePathCandidates(
       protectedIndex < protectedRanges.length &&
       protectedRanges[protectedIndex]![0] <= match.index
     ) {
-      openBrackets.length = 0;
-      token.lastIndex = protectedRanges[protectedIndex]![1];
+      const [from, to] = protectedRanges[protectedIndex]!;
+      if (source.slice(from, to).includes("\n")) openBrackets.length = 0;
+      token.lastIndex = to;
       continue;
     }
     const ch = match[0];
@@ -219,7 +220,8 @@ export function wrapSpacedFilePathsInProtectedRanges(
     if (
       opener < writtenTo ||
       (mergedAllowed !== undefined && !containsMergedOffset(mergedAllowed, opener)) ||
-      overlapsMergedRanges(mergedProtected, opener, end) ||
+      containsMergedOffset(mergedProtected, opener) ||
+      overlapsMergedRanges(mergedProtected, start, end) ||
       (!isImage &&
         mergedProtectedLinks !== undefined &&
         overlapsMergedRanges(mergedProtectedLinks, opener, end))
