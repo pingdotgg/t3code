@@ -2519,3 +2519,59 @@ it.effect("does not call a valid fj login on an HTTP-only server unauthenticated
     Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
   ),
 );
+
+const fjLogin = (host: string) => ({
+  name: host,
+  url: `https://${host}`,
+  user: "",
+  default: "false",
+});
+
+it.effect.each([
+  { hosts: ["codeberg.org", "forgejo.work"], status: "authenticated", host: "forgejo.work" },
+  { hosts: ["codeberg.org", "forgejo.local:3000"], status: "unknown", host: "forgejo.local:3000" },
+] as const)("tries the next fj login when the first one is rejected ($status)", (expected) =>
+  Effect.gen(function* () {
+    const spec = yield* ForgejoSourceControlProvider.makeDiscovery;
+    assert.strictEqual(spec.type, "managed-cli");
+    if (spec.type !== "managed-cli") return;
+    const result = yield* spec.probe("/repo");
+    assert.strictEqual(result.executable, "fj");
+    assert.strictEqual(result.auth.status, expected.status);
+    assert.deepStrictEqual(result.auth.host, Option.some(expected.host));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Layer.mock(ForgejoCli.ForgejoCli)({
+          listLogins: () => Effect.succeed(expected.hosts.map(fjLogin)),
+          getAccount: () => Effect.succeed("maria"),
+        }),
+        TestSourceControlHost.layer({
+          process: {
+            run: (input) => {
+              // Settings has no project in scope, so there is no origin remote.
+              if (input.command === "git")
+                return Effect.succeed(
+                  processOutput("", { exitCode: ChildProcessSpawner.ExitCode(2) }),
+                );
+              if (input.args[0] === "version") return Effect.succeed(processOutput("fj v0.7.0"));
+              const host = input.args[input.args.indexOf("--host") + 1] ?? "";
+              if (host === "https://forgejo.work")
+                return Effect.succeed(processOutput("currently signed into maria@forgejo.work"));
+              return Effect.succeed(
+                processOutput("", {
+                  exitCode: ChildProcessSpawner.ExitCode(1),
+                  stderr:
+                    host === "https://codeberg.org"
+                      ? "Error: unauthorized: access token does not exist"
+                      : `Error: error sending request for url (${host}/api/v1/user?)`,
+                }),
+              );
+            },
+          },
+        }),
+      ),
+    ),
+    Effect.provideService(HostProcess.HomeDirectory, "/home/maria"),
+  ),
+);
