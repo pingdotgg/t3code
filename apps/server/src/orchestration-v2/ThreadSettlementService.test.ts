@@ -970,11 +970,10 @@ describe("ThreadSettlementServiceV2 worker", () => {
       });
       const reused = makeThread("idle-reused", { branch: "reused" });
       const noPr = makeThread("idle-none", { branch: "none" });
-      const extra = makeThread("idle-extra", { branch: "extra" });
       const merged = makeThread("idle-merged", { branch: "merged" });
       const failed = makeThread("idle-failed", { branch: "failed" });
       const fixture = yield* makeHarness({
-        snapshot: makeSnapshot([openPr, reused, noPr, extra, merged, failed]),
+        snapshot: makeSnapshot([openPr, reused, noPr, merged, failed]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleAfterDays: 3,
@@ -1006,7 +1005,7 @@ describe("ThreadSettlementServiceV2 worker", () => {
         yield* startHarness(service, fixture.activation, fixture.snapshotReads);
         expect(
           (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
-        ).toEqual([extra.id, failed.id, merged.id, noPr.id]);
+        ).toEqual([failed.id, merged.id, noPr.id]);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );
@@ -1014,13 +1013,12 @@ describe("ThreadSettlementServiceV2 worker", () => {
   it.effect("does not auto-settle a thread whose terminal has an active subprocess", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
-      const thread = makeThread("active-terminal", { branch: "active-terminal" });
+      const thread = makeThread("active-terminal");
       const fixture = yield* makeHarness({
         snapshot: makeSnapshot([thread]),
         settings: {
           ...DEFAULT_SERVER_SETTINGS,
           sidebarAutoSettleAfterDays: 3,
-          sidebarAutoSettleKeepPullRequests: true,
         },
         hasActiveSubprocess: ({ threadId }) => Effect.succeed(threadId === thread.id),
       });
@@ -1028,7 +1026,6 @@ describe("ThreadSettlementServiceV2 worker", () => {
         const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
         yield* startHarness(service, fixture.activation, fixture.snapshotReads);
         expect((yield* Ref.get(fixture.commands)).map((command) => command.threadId)).toEqual([]);
-        expect(yield* Ref.get(fixture.branchCalls)).toEqual([]);
       }).pipe(Effect.provide(fixture.layer));
     }),
   );

@@ -463,18 +463,9 @@ export const make = Effect.gen(function* () {
           thread.branch !== null &&
           visibleThreadPullRequests(thread.pullRequests ?? []).length === 0
         ) {
-          return terminals.hasActiveSubprocess({ threadId: thread.id }).pipe(
-            Effect.map((active) => {
-              if (active) return null;
-              // Retention needs the branch lookup to see whether an open PR keeps this thread.
-              deferred.add(thread.id);
-              return thread;
-            }),
-            Effect.catchCauseIf(
-              (cause) => !Cause.hasInterruptsOnly(cause),
-              () => settleThread(thread, null),
-            ),
-          );
+          // Retention needs the branch lookup to see whether an open PR keeps this thread.
+          deferred.add(thread.id);
+          return Effect.succeed(thread);
         }
         return settleThread(thread, null);
       },
