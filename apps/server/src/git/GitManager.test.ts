@@ -237,11 +237,15 @@ const layerGitFixtureTemplates = Layer.effect(
     yield* runGit(repo, ["config", "user.name", "Test User"]);
     // Override global autocrlf on Windows for LF assertions, including linked worktrees.
     yield* runGit(repo, ["config", "core.autocrlf", "false"]);
+    // A commit or push starts a detached `git maintenance` that can lock files in .git/objects
+    // while the test scope deletes the repository.
+    yield* runGit(repo, ["config", "maintenance.auto", "false"]);
     yield* fs.writeFileString(NodePath.join(repo, "README.md"), "hello\n");
     yield* runGit(repo, ["add", "README.md"]);
     yield* runGit(repo, ["commit", "-m", "Initial commit"]);
     const bareRemote = yield* makeTempDir("t3code-git-remote-template-");
     yield* runGit(bareRemote, ["init", "--bare", "--template="]);
+    yield* runGit(bareRemote, ["--git-dir", bareRemote, "config", "maintenance.auto", "false"]);
     yield* fs.makeDirectory(NodePath.join(bareRemote, "hooks"), { recursive: true });
     return { repo, bareRemote };
   }),
@@ -4979,7 +4983,15 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
 
       // A rejected push fails with git's reason and opens nothing; it never forces.
       const otherDir = yield* makeTempDir("t3code-git-manager-other-");
-      yield* runGit(otherDir, ["clone", "--branch", "feature/unpushed", remoteDir, "."]);
+      yield* runGit(otherDir, [
+        "clone",
+        "-c",
+        "maintenance.auto=false",
+        "--branch",
+        "feature/unpushed",
+        remoteDir,
+        ".",
+      ]);
       yield* runGit(otherDir, ["config", "user.email", "other@example.com"]);
       yield* runGit(otherDir, ["config", "user.name", "Other"]);
       NodeFS.writeFileSync(NodePath.join(otherDir, "theirs.txt"), "theirs\n");
@@ -5508,7 +5520,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         yield* runGit(worktreePath, ["commit", "-m", "Feature commit"]);
 
         const peerDir = yield* makeTempDir("t3code-git-peer-");
-        yield* runGit(peerDir, ["clone", remoteDir, "."]);
+        yield* runGit(peerDir, ["clone", "-c", "maintenance.auto=false", remoteDir, "."]);
         yield* runGit(peerDir, ["config", "user.email", "peer@example.com"]);
         yield* runGit(peerDir, ["config", "user.name", "Peer User"]);
         NodeFS.writeFileSync(NodePath.join(peerDir, "remote.txt"), "remote\n");
