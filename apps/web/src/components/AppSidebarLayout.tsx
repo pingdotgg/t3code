@@ -67,6 +67,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { registerCommands, registerMenuAction } from "../shortcuts/dispatcher";
 import { resolveThreadRouteRef } from "../threadRoutes";
+// TRAIL-PATCH: shell mount seam — see PATCHES.md and github.com/Joeydekruis/trail-v2/issues/2
+import { TrailShell } from "../trail/shell/TrailShell";
 
 const MACOS_TRAFFIC_LIGHTS_LEFT_INSET = "var(--desktop-window-controls-inset, 90px)";
 
@@ -499,7 +501,7 @@ export function AppSidebarLayout({
             </Sidebar>
           </>
         ) : null}
-        {children}
+        <TrailShell>{children}</TrailShell>
         <BackgroundThreadAnnouncer />
         <SidebarControl showSidebar={showSidebar} />
         {isElectron ? <HistorySwipeNavigation /> : null}

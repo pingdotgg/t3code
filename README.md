@@ -1,108 +1,157 @@
-<p align="center">
-  <a href="https://t3.codes">
-    <img src="./assets/prod/t3-black-web-icon-192x192.png" width="80" height="80" alt="T3 Code logo" />
-  </a>
-</p>
+<h1 align="center">Trail</h1>
 
-<h1 align="center">T3 Code</h1>
-
-<p align="center">The open-source control plane for coding agents.</p>
+<p align="center">Project management on top of your coding agents — Kanban, dashboard, and one repo per workspace.</p>
 
 <p align="center">
-  <a href="https://t3.codes/download"><strong>Download</strong></a> ·
-  <a href="https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824">iOS</a> ·
-  <a href="https://play.google.com/store/apps/details?id=com.t3tools.t3code">Android</a> ·
-  <a href="https://app.t3.codes">Web</a> ·
-  <a href="./docs/README.md">Docs</a> ·
-  <a href="https://discord.gg/jn4EGJjrvv">Discord</a>
+  <a href="./docs/FORK_PLAN.md"><strong>Fork plan</strong></a> ·
+  <a href="./docs/operations/development.md">Development</a> ·
+  <a href="https://github.com/pingdotgg/t3code">Upstream (T3 Code)</a>
 </p>
 
-<p align="center">
-  <a href="https://t3.codes">
-    <img src="./.github/readme/hero.webp" width="100%" alt="T3 Code on desktop with a finished Claude thread, next to the phone app asking to approve a command from Codex" />
-  </a>
-</p>
+**Trail** is an additive fork of [T3 Code](https://github.com/pingdotgg/t3code). T3 already runs agents in worktrees, ships desktop/web/mobile clients, and talks to Cursor, Claude, Codex, OpenCode, and more. Trail adds the PM layer: a GitHub-issues Kanban board, a project dashboard, docs tied to the repo, and (later) autopilot and decisions — without replacing the agent runtime underneath.
 
-T3 Code runs the coding agents on your machine and gives them one fast interface. Start a thread at your desk, then approve the next step from your phone.
+One **workspace** is one git repository, mapped to a single T3 **project**. The board, dashboard, and files views are per project; issues are tracked by number on the connected issue tracker (GitHub first).
 
-It works with Claude Code, Codex, Cursor, OpenCode, Grok Build, Antigravity, Kiro, Pi, Muse Code, fx, and any [ACP](./docs/user/providers-acp.md) agent. If an agent is set up on your computer, T3 Code can control it.
+The product UI is still largely T3-branded while Trail features land. Design reference: `docs/designs/Trail Desktop — Workspace switcher & Kanban.html` and [FORK_PLAN.md](./docs/FORK_PLAN.md).
 
-## What you get
+## What Trail adds (planned)
 
-- **Your subscriptions.** T3 Code does not resell tokens. It drives the agents you are already signed in to.
-- **Every agent in one place.** Change models in the middle of a thread. Let Claude hand a task to Codex.
-- **Desktop, web, and phone.** One server, and every client shows the same threads. There are apps for iOS and Android.
-- **Remote ready.** Run agents on any machine. Connect over your local network, Tailscale, or [T3 Connect](./docs/user/remote-access.md).
-- **Git built in.** Each thread can work in its own worktree. Review the diff, then commit, push, and open a pull request with one button.
-- **Fast.** Performance is a feature here. We measure it, and we treat a dropped frame as a bug.
-- **Open.** MIT licensed. If you don't like something, fork it.
+| Area             | Direction                                                                        |
+| ---------------- | -------------------------------------------------------------------------------- |
+| **Board**        | Five columns from `status:*` labels; issue drawer; drag to change status         |
+| **Dashboard**    | Latest threads, board activity, snapshot — mostly aggregation over existing data |
+| **Files**        | `docs/` in the repo, with T3’s file preview where possible                       |
+| **Project rail** | Switch projects with per-project accent color (optional after board v1)          |
 
-## Install
+Everything else in the stack — threads, worktrees, diffs, PRs, subagents, terminal — stays T3’s.
 
-### Desktop app
+## Prerequisites
 
-[Download T3 Code](https://t3.codes/download) for macOS, Windows, or Linux. You can also use a package manager:
+Install [Vite+](https://viteplus.dev/) (`vp`) so you get the Node version pinned in this repo:
 
-| Platform       | Command                                                              |
-| -------------- | -------------------------------------------------------------------- |
-| macOS          | `brew install --cask t3-code`                                        |
-| Windows        | `winget install T3Tools.T3Code` or `scoop install extras/t3code`     |
-| Arch Linux     | `yay -S t3code-bin`                                                  |
-| Nix            | `nix profile add github:NixOS/nixpkgs/nixos-unstable#t3code`         |
-| Debian, Ubuntu | `.deb` from [Releases](https://github.com/pingdotgg/t3code/releases) |
-
-### Command line
-
-This installs the `t3` command. Run `t3` to start the server and open the web app.
-
-```bash
-curl -fsSL https://t3.codes/install.sh | sh
+```sh
+curl -fsSL https://vite.plus | bash
 ```
 
-On Windows, in PowerShell:
+From the repository root:
 
-```powershell
-irm https://t3.codes/install.ps1 | iex
+```sh
+vp i
 ```
 
-To try it once without an install, run `npx t3@latest`.
+Use the [development runbook](./docs/operations/development.md#first-checkout) for Windows long-path checkout, dev containers, and isolated state under a worktree’s `.t3` (never develop against `~/.t3/userdata`).
 
-### Phone
+## Run locally
 
-Get the app from the [App Store](https://apps.apple.com/us/app/t3-code-remote-claude-more/id6787819824) or [Google Play](https://play.google.com/store/apps/details?id=com.t3tools.t3code). Then follow [remote access](./docs/user/remote-access.md) to connect it to your computer.
+| Goal                      | Command                                |
+| ------------------------- | -------------------------------------- |
+| Server + web (browser UI) | `vp run dev`                           |
+| **Desktop (Electron)**    | `vp run dev:desktop`                   |
+| Server or web only        | `vp run dev:server` / `vp run dev:web` |
 
-### Sign in to an agent
+Read **ports and the pairing URL** from the `[dev-runner]` line in the terminal. Open the pairing URL in a browser before the UI can talk to the server.
 
-T3 Code needs one agent that is installed and signed in. For example, install [Claude Code](https://claude.com/product/claude-code) and run `claude auth login`, or install [Codex CLI](https://developers.openai.com/codex/cli) and run `codex login`.
+For agent turns without spending on a model, `vp run dev` registers **Replay (dev)**; see [development.md](./docs/operations/development.md#replay-provider).
 
-[Provider setup](./docs/user/install.md#providers) has the steps for each agent. [Install T3 Code](./docs/user/install.md) covers nightly builds, AppImage, WSL, and NixOS.
+## Desktop: how we test
 
-## "Wait, what are you selling me?"
+### Day-to-day development
 
-Nothing. We built T3 Code because we wanted the best possible development experience with agents. We were inspired by existing solutions like the Codex desktop app, Conductor, Claude Desktop and Cursor Glass, but none met our bar.
+`vp run dev:desktop` builds and launches the Electron shell with the same backend as web dev. Renderer hot reload follows the same rules as upstream; macOS passkeys need a signed build — see [Connect setup](./docs/operations/connect-setup.md#desktop-passkeys).
 
-We wanted something performant, remote-ready, and truly open. If we ever go the wrong direction, we want you to have everything you need to fork and build the tool that you want.
+### Unit and integration tests
 
-## Documentation
+Desktop tests live under `apps/desktop` (Vitest). From the repo root:
 
-- [Install and first run](./docs/user/install.md)
-- [Remote access from a phone or another machine](./docs/user/remote-access.md)
-- [Permission modes](./docs/user/permission-modes.md)
-- [Source control](./docs/user/source-control.md)
-- [Connect outside agents over MCP](./docs/user/outside-agents.md)
-- [FAQ](./docs/user/faq.md)
+```sh
+vp test run apps/desktop
+```
 
-[All docs](./docs/README.md) has the full list.
+Before you push, run fast checks on what you changed:
 
-## Contributing
+```sh
+vp run check:changed
+```
 
-We have limited review capacity. Small, focused fixes are the most likely to be merged. Features need an approved discussion first.
+### Launch smoke (packaged or unpackaged)
 
-- Read [CONTRIBUTING.md](./CONTRIBUTING.md) before you report a bug or open a pull request.
-- Put feature requests in [Ideas](https://github.com/pingdotgg/t3code/discussions/categories/ideas).
-- Build from source with the [development runbook](./docs/operations/development.md#first-checkout). The [architecture overview](./docs/internals/overview.md) explains how it works.
-- Get help in [Discord](https://discord.gg/jn4EGJjrvv).
+`scripts/smoke-desktop-app.ts` boots the app against a **seeded older database** in `scripts/fixtures/desktop-launch/`. The packaged server must migrate that DB forward, same as a real upgrade. It opens a known thread and asserts the message renders (Playwright driving Electron).
+
+**CI (Linux):** after `vp run build:desktop`, the workflow runs the smoke unpackaged:
+
+```sh
+electron=$(node -p "require('./apps/desktop/node_modules/electron')")
+xvfb-run -a node scripts/smoke-desktop-app.ts \
+  --executable "$electron" \
+  --app apps/desktop \
+  --artifacts-dir /tmp/desktop-launch-check
+```
+
+**After a local artifact build**, point `--executable` at the packaged binary (AppImage, `.app` inside a DMG, or Windows installer output). Use `--artifacts-dir` to capture a screenshot on failure.
+
+**Release pipeline:** when upstream’s full release runs, macOS arm64 and Linux x64 jobs also run this check before upload. Trail’s fork does not run that pipeline yet (see below).
+
+### Manual UI check
+
+Use server + web or desktop against an isolated `.t3` home. The maintainer skill [test-t3-app](.agents/skills/test-t3-app/SKILL.md) describes pairing, the Browser panel, and the free Replay provider — the same flows apply when exercising Trail UI once routes exist.
+
+## Desktop: how we build and deploy
+
+### Local unsigned artifacts
+
+Default output directory: `release/`. Commands from [development.md](./docs/operations/development.md#desktop-artifacts):
+
+```sh
+vp run dist:desktop:dmg          # macOS (host arch by default)
+vp run dist:desktop:win          # Windows NSIS
+vp run dist:desktop:linux        # Linux AppImage x64
+```
+
+More targets and flags: `vp run dist:desktop:artifact --help`. Builds are **unsigned** unless you pass `--signed` and configure certificates per the [release runbook](./docs/operations/release.md).
+
+Platform prerequisites (Rust, libsecret on Linux, Xcode CLT on macOS, MSVC on Windows) are documented in the same development page.
+
+### What runs on GitHub today (this fork)
+
+| Workflow                                                       | On `Joeydekruis/trail-v2`                                                                         |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| [ci.yml](./.github/workflows/ci.yml)                           | Runs on push/PR — includes `build:desktop` and the launch smoke when desktop-related files change |
+| [release.yml](./.github/workflows/release.yml)                 | **Does not run** — jobs are gated to `github.repository == 'pingdotgg/t3code'`                    |
+| [release-desktop.yml](./.github/workflows/release-desktop.yml) | Reusable workflow only; called from `release.yml` upstream                                        |
+
+So **Trail does not publish installable desktop releases from this repo yet**. Installers are built locally, or you use [T3 Code releases](https://github.com/pingdotgg/t3code/releases) for a stock agent shell while Trail features are in development.
+
+### Planned Trail releases (phase 0)
+
+From [FORK_PLAN.md](./docs/FORK_PLAN.md#deployment):
+
+1. Add a **`trail-release.yml`** that calls `release-desktop.yml` on GitHub-hosted runners (upstream uses Blacksmith and the same gate).
+2. Start with **macOS arm64** and **Windows x64** only; expand the matrix later.
+3. Ship **unsigned** builds first; add Apple notarization and Azure Trusted Signing when certs are ready.
+4. Repoint **electron-updater** from `pingdotgg/t3code` to Trail’s public release feed.
+5. Rename collision-prone identifiers before side-by-side install with stock T3: app ID, `t3code://` protocol, `~/.t3` data path (Trail-specific home).
+6. Audit baked-in T3-only services (Clerk, T3 Connect, marketing telemetry) for what Trail keeps.
+
+Until that ships, treat **local `dist:desktop:*` + launch smoke** as the bar for “good enough to install on a machine.”
+
+### Branching and upstream
+
+- **`upstream`** — `pingdotgg/t3code`, fast-forward only.
+- **`trail/main`** (or `main` carrying Trail work) — our patches; see fork rules in [FORK_PLAN.md](./docs/FORK_PLAN.md#fork-rules-keep-upstream-merges-possible).
+- Mark seams in upstream files with `TRAIL-PATCH`; list them in `PATCHES.md` when that file exists.
+
+## Documentation map
+
+| Doc                                                | Use                                                                    |
+| -------------------------------------------------- | ---------------------------------------------------------------------- |
+| [FORK_PLAN.md](./docs/FORK_PLAN.md)                | Roadmap, design choices, deployment checklist                          |
+| [development.md](./docs/operations/development.md) | Full dev setup, desktop artifacts, signing                             |
+| [release.md](./docs/operations/release.md)         | Upstream’s six-target release train (reference)                        |
+| [AGENTS.md](./AGENTS.md)                           | Contributor agent rules (T3 monorepo conventions)                      |
+| T3 user docs under [docs/user/](./docs/user/)      | Agents, git, remote access — still accurate for the underlying product |
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE) — same as T3 Code. Keep upstream copyright notices in forked files.
+
+Trail is maintained by [Joeydekruis](https://github.com/Joeydekruis); agent and UI foundations are from the T3 Code project.
