@@ -70,6 +70,7 @@ import { AppText as Text } from "../../components/ui/AppText";
 import { T3Wordmark } from "../../components/T3Wordmark";
 import { BrowserAppIcon } from "./BrowserAppIcon";
 import { useAppActive, useReduceMotionEnabled } from "../../lib/appState";
+import { useLowPowerModeEnabled } from "../../lib/lowPowerMode";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
@@ -274,6 +275,7 @@ export function ShimmeringWorkContent(props: {
   const [textWidth, setTextWidth] = useState(0);
   const appIsActive = useAppActive();
   const reducedMotion = useReduceMotionEnabled();
+  const lowPowerMode = useLowPowerModeEnabled();
   const screenIsFocused = useIsFocused();
   // Native from creation, so each setValue updates the view without a React render.
   const progress = useAnimatedValue(0, { useNativeDriver: true });
@@ -289,9 +291,10 @@ export function ShimmeringWorkContent(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- steps the native shimmer value on timers while visible and active, and stops them on cleanup
   useEffect(() => {
     progress.setValue(0);
-    if (contentWidth <= 0 || reducedMotion || !appIsActive || !screenIsFocused) return;
+    if (contentWidth <= 0 || reducedMotion || lowPowerMode || !appIsActive || !screenIsFocused)
+      return;
     return startShimmerSteps(progress);
-  }, [appIsActive, contentWidth, progress, reducedMotion, screenIsFocused]);
+  }, [appIsActive, contentWidth, lowPowerMode, progress, reducedMotion, screenIsFocused]);
 
   // The React Compiler memoizes these, so re-renders don't rebuild the native
   // animation nodes.

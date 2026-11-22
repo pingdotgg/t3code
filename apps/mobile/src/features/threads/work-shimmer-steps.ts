@@ -1,6 +1,8 @@
+// Each step is a native frame for every working row on screen; a 5 s cycle of 6 steps redraws
+// about a quarter as often as the old 2.8 s cycle of 12.
 export const SHIMMER_SWEEP_MS = 1_350;
-export const SHIMMER_PAUSE_MS = 1_450;
-export const SHIMMER_STEPS = 12;
+export const SHIMMER_PAUSE_MS = 3_650;
+export const SHIMMER_STEPS = 6;
 const SHIMMER_STEP_MS = SHIMMER_SWEEP_MS / SHIMMER_STEPS;
 
 // No progress updates run during the pause. Progress 0 and 1 both sit off the

@@ -646,6 +646,9 @@ importers:
       expo-auth-session:
         specifier: ~58.0.17
         version: 58.0.17(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)(supports-color@8.1.1)(typescript@6.0.3)
+      expo-battery:
+        specifier: ~58.0.4
+        version: 58.0.4(expo@58.0.23)(react@19.3.0)
       expo-blur:
         specifier: 58.0.5
         version: 58.0.5(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0)
@@ -9264,6 +9267,12 @@ packages:
     peerDependencies:
       react: '*'
       react-native: '*'
+
+  expo-battery@58.0.4:
+    resolution: {integrity: sha512-yX5n2pAUxY95wfL1CU20E5ZDoIA8P8qV1vMf6yZ6e31gMAUEBSpSbnjKJiA5hflIhWg2V3NsnrDSQGXXXJS43Q==}
+    peerDependencies:
+      expo: '*'
+      react: '*'
 
   expo-blur@58.0.5:
     resolution: {integrity: sha512-l8MEObIh0opwIUf+SD9MfqD0JnOirGuetAW/V3phXQRJaTPKLtb0IukgyLmnOsfWMAWTdJrcl5l/2ezcDHrkHQ==}
@@ -19342,6 +19351,11 @@ snapshots:
       - expo
       - supports-color
       - typescript
+
+  expo-battery@58.0.4(expo@58.0.23)(react@19.3.0):
+    dependencies:
+      expo: 58.0.23(d226faf1ca90e630d8c56a2108dee32d)
+      react: 19.3.0
 
   expo-blur@58.0.5(expo@58.0.23)(react-native@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(@react-native/metro-config@0.88.1(@babel/core@7.29.7(supports-color@8.1.1))(bufferutil@4.1.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(@types/react@19.3.0)(bufferutil@4.1.0)(react@19.3.0)(supports-color@8.1.1)(utf-8-validate@6.0.6))(react@19.3.0):
     dependencies:

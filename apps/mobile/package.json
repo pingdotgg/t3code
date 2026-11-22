@@ -88,6 +88,7 @@
     "expo-asset": "~58.0.20",
     "expo-audio": "58.0.11",
     "expo-auth-session": "~58.0.17",
+    "expo-battery": "~58.0.4",
     "expo-blur": "58.0.5",
     "expo-build-properties": "~58.0.12",
     "expo-camera": "~58.0.14",
