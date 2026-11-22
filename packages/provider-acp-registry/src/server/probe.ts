@@ -43,7 +43,6 @@ import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRunti
 
 const MAX_AUTH_METHODS = 32;
 export const ACP_REGISTRY_MAX_MODELS = 256;
-const MAX_MODELS = ACP_REGISTRY_MAX_MODELS;
 const MAX_ID_LENGTH = 128;
 const MAX_NAME_LENGTH = 160;
 const MAX_DESCRIPTION_LENGTH = 1_024;
@@ -119,17 +118,21 @@ function normalizeModels(
   const seen = new Set<string>();
   const models: Array<AcpRegistryProbeModel> = [];
   for (const candidate of candidates) {
-    if (models.length === MAX_MODELS) break;
+    if (models.length === ACP_REGISTRY_MAX_MODELS) break;
     const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
     if (id === undefined || seen.has(id)) continue;
     seen.add(id);
     models.push(normalizedModel(id, candidate));
   }
   // Keep the running model visible even when its advertised position exceeds the cap.
-  if (currentModelId !== null && models.length === MAX_MODELS && !seen.has(currentModelId)) {
+  if (
+    currentModelId !== null &&
+    models.length === ACP_REGISTRY_MAX_MODELS &&
+    !seen.has(currentModelId)
+  ) {
     const current = candidates.find((candidate) => candidate.id === currentModelId);
     if (current !== undefined) {
-      models[MAX_MODELS - 1] = normalizedModel(currentModelId, current);
+      models[ACP_REGISTRY_MAX_MODELS - 1] = normalizedModel(currentModelId, current);
     }
   }
   return models;
@@ -216,13 +219,27 @@ export interface AcpRegistryLiveConfiguration {
   readonly modelsFromModelSelect?: boolean;
   // Set on retained post-probe overrides so probe-only options stay untouched.
   readonly partialOptions?: boolean;
+  // Set on earlier-model retained overrides so they update model-specific options without stealing isDefault.
+  readonly preserveDefault?: boolean;
   // Non-current per-model reasoning descriptors normalized from `_meta` when an
   // effort selector appears mid-session without re-advertising the frozen model list.
   readonly advertisedReasoning?: Readonly<
     Record<string, NonNullable<AcpRegistryProbeModel["reasoningEffort"]>>
   >;
-  // Selected model beyond MAX_MODELS, carried without re-advertising the capped catalog.
-  readonly currentModel?: AcpRegistryProbeModel;
+  // Stable prefix key (first ACP_REGISTRY_MAX_MODELS - 1 models) for capped overflow updates.
+  readonly cappedPrefixKey?: string;
+  // Last visible model slot when candidates exceed ACP_REGISTRY_MAX_MODELS, carrying either
+  // an overflow selection or the restored tail model when returning to the stable prefix.
+  readonly cappedLastModel?: AcpRegistryProbeModel;
+}
+
+export function cappedAcpRegistryModelPrefixKey(
+  models: ReadonlyArray<{ readonly id: string; readonly name: string }>,
+): string | undefined {
+  if (models.length < ACP_REGISTRY_MAX_MODELS) return undefined;
+  return JSON.stringify(
+    models.slice(0, ACP_REGISTRY_MAX_MODELS - 1).map(({ id, name }) => [id, name]),
+  );
 }
 
 export interface PreparedAcpRegistryLiveConfiguration {
@@ -285,16 +302,23 @@ export function prepareAcpRegistryLiveConfiguration(
     boundedCurrentModelId === null
       ? undefined
       : advertisedModels.find((model) => model.id === boundedCurrentModelId);
-  const currentInStablePrefix =
-    boundedCurrentModelId !== null &&
-    baseModels.slice(0, MAX_MODELS - 1).some((model) => model.id === boundedCurrentModelId);
-  const overflowCurrentModel =
-    currentModel !== undefined &&
-    baseModels.length === MAX_MODELS &&
-    candidates.length > MAX_MODELS &&
-    !currentInStablePrefix
-      ? currentModel
-      : undefined;
+  let hasOverflowCandidates = false;
+  if (
+    baseModels.length === ACP_REGISTRY_MAX_MODELS &&
+    candidates.length > ACP_REGISTRY_MAX_MODELS
+  ) {
+    const baseIds = new Set(baseModels.map((model) => model.id));
+    for (const candidate of candidates) {
+      const id = boundedOpaqueValue(candidate.id, MAX_ID_LENGTH);
+      if (id !== undefined && !baseIds.has(id)) {
+        hasOverflowCandidates = true;
+        break;
+      }
+    }
+  }
+  const cappedLastModel = hasOverflowCandidates
+    ? advertisedModels[ACP_REGISTRY_MAX_MODELS - 1]
+    : undefined;
   const stripCurrentReasoning = currentModel?.reasoningEffort === null;
   const descriptors = acpProviderOptionDescriptors({ configOptions, modeState }).filter(
     (descriptor) =>
@@ -322,13 +346,16 @@ export function prepareAcpRegistryLiveConfiguration(
     advertisedReasoningEntries.length > 0
       ? Object.fromEntries(advertisedReasoningEntries)
       : undefined;
+  const catalogKey = JSON.stringify([
+    hasModelSelect,
+    baseModels.map(({ id, name, description }) => [id, name, description]),
+  ]);
+  const cappedPrefixKey =
+    cappedLastModel === undefined ? undefined : cappedAcpRegistryModelPrefixKey(baseModels);
   return {
     // Key on the uncapped-selection catalog identity and provenance so neither effort
-    // toggles nor selecting a model beyond MAX_MODELS re-advertise a frozen list.
-    catalogKey: JSON.stringify([
-      hasModelSelect,
-      baseModels.map(({ id, name, description }) => [id, name, description]),
-    ]),
+    // toggles nor selecting a model beyond ACP_REGISTRY_MAX_MODELS re-advertise a frozen list.
+    catalogKey,
     toLiveConfiguration: (options) => {
       const includeCatalog = options?.includeCatalog !== false;
       return {
@@ -338,8 +365,8 @@ export function prepareAcpRegistryLiveConfiguration(
         modelOptionIds,
         modelsFromModelSelect: includeCatalog && hasModelSelect,
         ...(!includeCatalog && advertisedReasoning !== undefined ? { advertisedReasoning } : {}),
-        ...(!includeCatalog && overflowCurrentModel !== undefined
-          ? { currentModel: overflowCurrentModel }
+        ...(!includeCatalog && cappedLastModel !== undefined && cappedPrefixKey !== undefined
+          ? { cappedPrefixKey, cappedLastModel }
           : {}),
       };
     },
@@ -439,7 +466,12 @@ export function acpRegistryProbeResult(
       canDelete: started.initializeResult.agentCapabilities?.sessionCapabilities?.delete != null,
       canConfigureProviders: started.initializeResult.agentCapabilities?.providers != null,
     },
-    ...configuration,
+    models: configuration.models,
+    currentModelId: configuration.currentModelId,
+    configOptions: configuration.configOptions,
+    ...(configuration.modelOptionIds === undefined
+      ? {}
+      : { modelOptionIds: configuration.modelOptionIds }),
   });
 }
 

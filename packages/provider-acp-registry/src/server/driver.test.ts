@@ -1633,7 +1633,8 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     expect(preparedM256.catalogKey).toBe(keyM0);
     const overflowOptionsOnly = preparedM256.toLiveConfiguration({ includeCatalog: false });
     expect(overflowOptionsOnly.models).toEqual([]);
-    expect(overflowOptionsOnly.currentModel).toEqual({
+    expect(overflowOptionsOnly.cappedPrefixKey).toBeDefined();
+    expect(overflowOptionsOnly.cappedLastModel).toEqual({
       id: "m256",
       name: "Model 256",
       description: null,
@@ -1654,7 +1655,18 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     expect(withOverflowSelected.models).toHaveLength(256);
     expect(withOverflowSelected.models.at(-1)?.slug).toBe("m256");
     expect(withOverflowSelected.models.at(-1)?.isDefault).toBe(true);
-    // Switching back to m255 restores m255 into the last slot without re-sending the catalog.
+    // Returning to the stable prefix (m0 or m1) restores m255 into the last slot without re-sending the catalog.
+    const withM0Restored = applyAcpRegistryLiveConfiguration(
+      withOverflowSelected,
+      prepareAcpRegistryLiveConfiguration(modelSelect("m0", choices)).toLiveConfiguration({
+        includeCatalog: false,
+      }),
+      [],
+    );
+    expect(withM0Restored.models).toHaveLength(256);
+    expect(withM0Restored.models.at(-1)?.slug).toBe("m255");
+    expect(withM0Restored.models[0]?.isDefault).toBe(true);
+    // Switching back to m255 from m256 also restores m255 and marks it default.
     const withM255Restored = applyAcpRegistryLiveConfiguration(
       withOverflowSelected,
       prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
@@ -1665,6 +1677,22 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     expect(withM255Restored.models).toHaveLength(256);
     expect(withM255Restored.models.at(-1)?.slug).toBe("m255");
     expect(withM255Restored.models.at(-1)?.isDefault).toBe(true);
+    // A different 256-model catalog (mismatched prefix) must never absorb another session's overflow model.
+    const foreign256Provider = providerWithModels(
+      Array.from({ length: 256 }, (_, index) => ({
+        id: `other-${index}`,
+        name: `Other ${index}`,
+        description: null,
+      })),
+      "other-0",
+    );
+    const afterForeignOverflow = applyAcpRegistryLiveConfiguration(
+      foreign256Provider,
+      overflowOptionsOnly,
+      [],
+    );
+    expect(afterForeignOverflow.models.at(-1)?.slug).toBe("other-255");
+    expect(afterForeignOverflow.models[0]?.isDefault).toBe(true);
     // A smaller catalog must never absorb an overflow model from another session.
     const smallProvider = providerWithModels(
       [
@@ -4196,6 +4224,405 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(
           published.models
             .find((m) => m.slug === "live-c")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
+      }),
+  );
+
+  it.effect(
+    "preserves post-probe overflow selection, per-model learned values, and multi-model clear retention",
+    () =>
+      Effect.gen(function* () {
+        const modelIds = Array.from({ length: 257 }, (_, index) => `m${index}`);
+        const choices = modelIds.map((value, index) => ({ value, name: `Model ${index}` }));
+        const modelSelect = (currentValue: string) => [
+          {
+            id: "model",
+            name: "Model",
+            category: "model" as const,
+            type: "select" as const,
+            currentValue,
+            options: choices,
+          },
+        ];
+        const effortSelect = (currentValue: "low" | "high" | "removed") => ({
+          id: "effort",
+          name: "Effort",
+          category: "thought_level" as const,
+          type: "select" as const,
+          currentValue,
+          options: [
+            { value: "low", name: "Low" },
+            { value: "high", name: "High" },
+          ],
+        });
+        const variantSelect = {
+          id: "variant",
+          name: "Variant",
+          category: "model_config" as const,
+          type: "select" as const,
+          currentValue: "v1",
+          options: [{ value: "v1", name: "V1" }],
+        };
+
+        const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
+          prefix: "acp-driver-overflow-post-probe-",
+          initialModels: {
+            models: modelIds,
+            configOptions: [...modelSelect("m0"), effortSelect("low")],
+          },
+        });
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        // Publish initial live catalog for m0, then supersede with a fresh 257-model probe.
+        const initialLive = prepareAcpRegistryLiveConfiguration([
+          ...modelSelect("m0"),
+          effortSelect("low"),
+        ]).toLiveConfiguration({ includeCatalog: true });
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, initialLive);
+        yield* writeModels({
+          models: modelIds,
+          configOptions: [...modelSelect("m0"), effortSelect("low")],
+        });
+        yield* TestClock.adjust("16 minutes");
+        const superseded = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(superseded);
+
+        // Selecting overflow model m256 after a superseding probe must swap slot 255 and mark m256 default.
+        const sawM256 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models.at(-1)?.slug === "m256" && snapshot.models.at(-1)?.isDefault === true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration([
+            ...modelSelect("m256"),
+            variantSelect,
+          ]).toLiveConfiguration({ includeCatalog: false }),
+        );
+        const afterM256 = Option.getOrThrow(yield* Fiber.join(sawM256));
+        expect(afterM256.models).toHaveLength(256);
+        expect(
+          afterM256.models
+            .at(-1)
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["variant", "v1"]]);
+
+        // Refresh must keep m256 selected in slot 255.
+        const refreshM256 = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const refreshedM256 = Option.getOrThrow(yield* Fiber.join(refreshM256));
+        expect(refreshedM256.models.at(-1)?.slug).toBe("m256");
+        expect(refreshedM256.models.at(-1)?.isDefault).toBe(true);
+
+        // Returning to m0 with effort=high restores m255 in slot 255 and learns m0 effort=high.
+        const sawM0High = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models[0]?.isDefault === true &&
+              snapshot.models.at(-1)?.slug === "m255" &&
+              snapshot.models[0]?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")
+                ?.currentValue === "high",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration([
+            ...modelSelect("m0"),
+            effortSelect("high"),
+          ]).toLiveConfiguration({ includeCatalog: false }),
+        );
+        yield* Fiber.join(sawM0High);
+
+        // Switching to m1 must keep m0's learned effort=high instead of reverting m0 to probe default low.
+        const sawM1 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models[1]?.isDefault === true),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration(modelSelect("m1")).toLiveConfiguration({
+            includeCatalog: false,
+          }),
+        );
+        const afterM1 = Option.getOrThrow(yield* Fiber.join(sawM1));
+        expect(
+          afterM1.models[0]?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
+
+        // Sending an invalid value for probe's default model m0 resets m0 back to probe default low.
+        const sawM0Reset = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models[0]?.isDefault === true &&
+              snapshot.models[0]?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")
+                ?.currentValue === "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          prepareAcpRegistryLiveConfiguration([
+            ...modelSelect("m0"),
+            effortSelect("removed"),
+          ]).toLiveConfiguration({ includeCatalog: false }),
+        );
+        yield* Fiber.join(sawM0Reset);
+      }),
+  );
+
+  it.effect(
+    "retains all models' pending options across probe clear and keeps cache-hit commits consistent with concurrent live updates",
+    () =>
+      Effect.gen(function* () {
+        const probeStarted = yield* Deferred.make<void>();
+        const releaseProbe = yield* Deferred.make<void>();
+        const watcherBlocked = yield* Deferred.make<void>();
+        const releaseWatcher = yield* Deferred.make<void>();
+        const cacheHitRead = yield* Deferred.make<void>();
+        const releaseCacheHit = yield* Deferred.make<void>();
+        let gateProbe = false;
+        let blockWatcher = false;
+        let gateAfterCacheRead = false;
+        const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
+          prefix: "acp-driver-multi-clear-",
+          initialModels: ["model-a", "model-b"],
+          wrapCoordinator: (base) => ({
+            ...base,
+            runBackgroundProbe: (agentId, effect) =>
+              base.runBackgroundProbe(
+                agentId,
+                gateProbe
+                  ? Effect.sync(() => {
+                      gateProbe = false;
+                    }).pipe(
+                      Effect.andThen(Deferred.succeed(probeStarted, undefined)),
+                      Effect.andThen(Deferred.await(releaseProbe)),
+                      Effect.andThen(effect),
+                    )
+                  : gateAfterCacheRead
+                    ? Effect.sync(() => {
+                        gateAfterCacheRead = false;
+                      }).pipe(
+                        Effect.andThen(effect),
+                        Effect.tap(() =>
+                          Deferred.succeed(cacheHitRead, undefined).pipe(
+                            Effect.andThen(Deferred.await(releaseCacheHit)),
+                          ),
+                        ),
+                      )
+                    : effect,
+              ),
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              base.watchLiveConfiguration(
+                instanceId,
+                (configuration, revision) =>
+                  blockWatcher
+                    ? Effect.sync(() => {
+                        blockWatcher = false;
+                      }).pipe(
+                        Effect.andThen(Deferred.succeed(watcherBlocked, undefined)),
+                        Effect.andThen(Deferred.await(releaseWatcher)),
+                        Effect.andThen(onUpdate(configuration, revision)),
+                      )
+                    : onUpdate(configuration, revision),
+                options,
+              ),
+          }),
+        });
+        const effortOpt = (currentValue: "low" | "high") => ({
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue,
+          options: [
+            { id: "low", label: "Low" },
+            { id: "high", label: "High" },
+          ],
+        });
+        const variantOpt = {
+          id: "variant",
+          label: "Variant",
+          type: "select" as const,
+          currentValue: "v1",
+          options: [{ id: "v1", label: "V1" }],
+        };
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
+
+        // Publish live catalog [model-a, model-b], then start a gated superseding probe.
+        const sawCatalog = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "model-a")
+                ?.capabilities?.optionDescriptors?.some((d) => d.id === "effort") === true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null },
+            { id: "model-b", name: "Model B", description: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [effortOpt("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(sawCatalog);
+
+        yield* writeModels({
+          models: ["model-a", "model-b"],
+          configOptions: [
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "low",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        });
+        yield* TestClock.adjust("16 minutes");
+        gateProbe = true;
+        const probeDone = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(probeStarted);
+
+        // Block the watcher so neither model-b nor model-a is applied before the probe clears.
+        blockWatcher = true;
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-b",
+          configOptions: [variantOpt],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+        });
+        yield* Deferred.await(watcherBlocked);
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [effortOpt("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+
+        // Release probe before watcher resumes: clearLiveConfigurationIfRevision must retain
+        // both model-b (variant=v1) and model-a (effort=high) across commit and later refreshes.
+        yield* Deferred.succeed(releaseProbe, undefined);
+        const afterProbe = Option.getOrThrow(yield* Fiber.join(probeDone));
+        expect(
+          afterProbe.models
+            .find((m) => m.slug === "model-b")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["variant", "v1"]]);
+        expect(
+          afterProbe.models
+            .find((m) => m.slug === "model-a")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
+        yield* Deferred.succeed(releaseWatcher, undefined);
+
+        const afterProbeRefresh = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const refreshedAfterProbe = Option.getOrThrow(yield* Fiber.join(afterProbeRefresh));
+        expect(
+          refreshedAfterProbe.models
+            .find((m) => m.slug === "model-b")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["variant", "v1"]]);
+        expect(
+          refreshedAfterProbe.models
+            .find((m) => m.slug === "model-a")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([["effort", "high"]]);
+
+        // Verify a cache-hit commit (probeOptions=null) whose watcher applies effort=high after
+        // enrichProviderCached reads effort=low still publishes effort=high rather than reverting.
+        const sawFreshCatalog = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.models.some((m) => m.slug === "fresh-b")),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [
+            { id: "fresh-a", name: "Fresh A", description: null },
+            { id: "fresh-b", name: "Fresh B", description: null },
+          ],
+          currentModelId: "fresh-a",
+          configOptions: [effortOpt("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        yield* Fiber.join(sawFreshCatalog);
+
+        gateAfterCacheRead = true;
+        const cachedCommitDone = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        // Wait until enrichProviderCached has read effort=low from enrichmentCache, before commitEnrichment runs.
+        yield* Deferred.await(cacheHitRead);
+
+        const sawFreshHigh = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "fresh-a")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+              "high",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "fresh-a",
+          configOptions: [effortOpt("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        yield* Fiber.join(sawFreshHigh);
+
+        // Release the cache-hit commit: it must publish effort=high, never reverting to effort=low.
+        yield* Deferred.succeed(releaseCacheHit, undefined);
+        const afterCachedCommit = Option.getOrThrow(yield* Fiber.join(cachedCommitDone));
+        expect(
+          afterCachedCommit.models
+            .find((m) => m.slug === "fresh-a")
             ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
         ).toEqual([["effort", "high"]]);
       }),

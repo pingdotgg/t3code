@@ -55,6 +55,7 @@ import {
   type AcpRegistryConfigurationProbe,
   type AcpRegistryConfigurationProbeResult,
   type AcpRegistryLiveConfiguration,
+  cappedAcpRegistryModelPrefixKey,
   deleteAcpRegistrySession,
   disableAcpRegistryProvider,
   listAcpRegistrySessions,
@@ -190,7 +191,11 @@ export function updateAcpRegistryEnrichmentCache(input: {
     configuration,
     customModels,
     undefined,
-    { preserveSingleModelCatalog, reasoningDisabledModelSlugs, hasDiscoveredCatalog },
+    {
+      preserveSingleModelCatalog,
+      reasoningDisabledModelSlugs,
+      hasDiscoveredCatalog,
+    },
   );
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   const previousBuiltIn = cache.entry.provider.models.filter((model) => !model.isCustom);
@@ -353,8 +358,20 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
   probe: AcpRegistryProbeOptionSchema,
 ): Option.Option<AcpRegistryLiveConfiguration> {
   const probedModelById = new Map(probe.models.map((model) => [model.id, model]));
+  const matchingCappedLastModel =
+    live.cappedLastModel !== undefined &&
+    live.cappedPrefixKey !== undefined &&
+    cappedAcpRegistryModelPrefixKey(probe.models) === live.cappedPrefixKey &&
+    probe.models[ACP_REGISTRY_MAX_MODELS - 1]?.id !== live.cappedLastModel.id
+      ? live.cappedLastModel
+      : undefined;
   const currentProbedModel =
-    live.currentModelId === null ? undefined : probedModelById.get(live.currentModelId);
+    live.currentModelId === null
+      ? undefined
+      : (probedModelById.get(live.currentModelId) ??
+        (matchingCappedLastModel !== undefined && matchingCappedLastModel.id === live.currentModelId
+          ? matchingCappedLastModel
+          : undefined));
   const liveById = new Map(live.configOptions.map((descriptor) => [descriptor.id, descriptor]));
   const liveModelOptionIds = new Set(live.modelOptionIds ?? []);
 
@@ -405,20 +422,28 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     }
   }
 
+  const overflowFields =
+    matchingCappedLastModel !== undefined && live.cappedPrefixKey !== undefined
+      ? { cappedPrefixKey: live.cappedPrefixKey, cappedLastModel: matchingCappedLastModel }
+      : {};
   const configOptions = [...sharedDescriptors, ...modelDescriptors];
   if (configOptions.length === 0) {
-    // Keep the running session's model selection moving isDefault even when no
-    // options survive, unless it already matches the probe's default model.
-    if (currentProbedModel === undefined || currentProbedModel.id === probe.currentModelId) {
+    // Keep the running session's model selection moving isDefault (or restoring the
+    // capped tail slot) even when no options survive, unless nothing differs from probe default.
+    if (
+      matchingCappedLastModel === undefined &&
+      (currentProbedModel === undefined || currentProbedModel.id === probe.currentModelId)
+    ) {
       return Option.none();
     }
     return Option.some({
       models: [],
-      currentModelId: currentProbedModel.id,
+      currentModelId: currentProbedModel?.id ?? live.currentModelId,
       configOptions: [],
       modelOptionIds: [],
       modelsFromModelSelect: false,
       partialOptions: true,
+      ...overflowFields,
     });
   }
   return Option.some({
@@ -430,6 +455,7 @@ export function retainAcpRegistryLiveOptionsAfterProbe(
     modelOptionIds: modelDescriptors.map((descriptor) => descriptor.id),
     modelsFromModelSelect: false,
     partialOptions: true,
+    ...overflowFields,
   });
 }
 
@@ -440,12 +466,14 @@ function mergeLearnedModelOptions(
     readonly currentModelId?: string | null;
     readonly skipModelSlugs?: ReadonlySet<string>;
     readonly reasoningDisabledModelSlugs?: ReadonlySet<string>;
+    readonly overlayLearnedValues?: boolean;
   },
 ): ReadonlyArray<ServerProviderModel> {
   if (learned.length === 0) return models;
   const currentModelId = options?.currentModelId ?? null;
   const skipModelSlugs = options?.skipModelSlugs ?? EMPTY_SLUG_SET;
   const reasoningDisabledModelSlugs = options?.reasoningDisabledModelSlugs ?? EMPTY_SLUG_SET;
+  const overlayLearnedValues = options?.overlayLearnedValues === true;
   const learnedBySlug = new Map(
     learned.filter((model) => !model.isCustom).map((model) => [model.slug, model] as const),
   );
@@ -463,6 +491,24 @@ function mergeLearnedModelOptions(
       learnedBySlug.get(model.slug)?.capabilities?.optionDescriptors ?? [];
     if (previousDescriptors.length === 0) return model;
     const currentDescriptors = model.capabilities?.optionDescriptors ?? [];
+    const previousById = overlayLearnedValues
+      ? new Map(previousDescriptors.map((descriptor) => [descriptor.id, descriptor] as const))
+      : undefined;
+    const nextCurrentDescriptors =
+      previousById === undefined
+        ? currentDescriptors
+        : currentDescriptors.map((descriptor) => {
+            if (reasoningDisabledModelSlugs.has(model.slug) && isReasoningDescriptor(descriptor)) {
+              return descriptor;
+            }
+            const learnedDescriptor = previousById.get(descriptor.id);
+            return learnedDescriptor === undefined
+              ? descriptor
+              : Option.getOrElse(
+                  compatibleLiveOptionValue(descriptor, learnedDescriptor),
+                  () => descriptor,
+                );
+          });
     const currentIds = new Set(currentDescriptors.map((descriptor) => descriptor.id));
     const hasExplicitReasoningState =
       reasoningDisabledModelSlugs.has(model.slug) ||
@@ -476,12 +522,14 @@ function mergeLearnedModelOptions(
           descriptor.type !== "select" ||
           descriptor.role !== "reasoning"),
     );
-    if (extra.length === 0) return model;
+    const combined =
+      extra.length === 0 ? nextCurrentDescriptors : [...nextCurrentDescriptors, ...extra];
+    if (Equal.equals(currentDescriptors, combined)) return model;
     changed = true;
     return {
       ...model,
       capabilities: createModelCapabilities({
-        optionDescriptors: [...currentDescriptors, ...extra],
+        optionDescriptors: combined,
       }),
     };
   });
@@ -818,7 +866,22 @@ function overlayPartialLiveOptions(
           : createModelCapabilities({ optionDescriptors: nextDescriptors }),
     };
   });
-  return withAcpRegistryDefaultModel(updated, selectedProbedModelId);
+  return configuration.preserveDefault === true
+    ? updated
+    : withAcpRegistryDefaultModel(updated, selectedProbedModelId);
+}
+
+function replaceLastCappedBuiltInModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  replacement: ServerProviderModel,
+): ReadonlyArray<ServerProviderModel> {
+  let builtInIndex = 0;
+  return models.map((model) => {
+    if (model.isCustom) return model;
+    const isTarget = builtInIndex === ACP_REGISTRY_MAX_MODELS - 1;
+    builtInIndex += 1;
+    return isTarget ? replacement : model;
+  });
 }
 
 export function applyAcpRegistryLiveConfiguration(
@@ -830,6 +893,7 @@ export function applyAcpRegistryLiveConfiguration(
     readonly preserveSingleModelCatalog?: boolean | undefined;
     readonly reasoningDisabledModelSlugs?: ReadonlySet<string> | undefined;
     readonly hasDiscoveredCatalog?: boolean | undefined;
+    readonly probeSharedDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
   },
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
@@ -849,29 +913,53 @@ export function applyAcpRegistryLiveConfiguration(
   const disabledReasoningSlugs: ReadonlySet<string> = useLiveCatalog
     ? EMPTY_SLUG_SET
     : (options?.reasoningDisabledModelSlugs ?? EMPTY_SLUG_SET);
-  const overflowCurrentModel =
+  const cappedLastModel =
     !useLiveCatalog &&
-    configuration.currentModel !== undefined &&
-    probedModels.length >= ACP_REGISTRY_MAX_MODELS &&
-    !probedModels.some((model) => model.slug === configuration.currentModel!.id)
-      ? configuration.currentModel
+    configuration.cappedLastModel !== undefined &&
+    configuration.cappedPrefixKey !== undefined &&
+    cappedAcpRegistryModelPrefixKey(
+      probedModels.map((model) => ({ id: model.slug, name: model.name })),
+    ) === configuration.cappedPrefixKey
+      ? configuration.cappedLastModel
       : undefined;
+  const replaceLastSlot =
+    cappedLastModel !== undefined &&
+    probedModels[ACP_REGISTRY_MAX_MODELS - 1]?.slug !== cappedLastModel.id;
   const liveCurrentModelInProbed =
-    overflowCurrentModel !== undefined ||
+    (cappedLastModel !== undefined && configuration.currentModelId === cappedLastModel.id) ||
     (configuration.currentModelId !== null &&
       probedModels.some((model) => model.slug === configuration.currentModelId));
   const selectedProbedModelId = liveCurrentModelInProbed
     ? configuration.currentModelId
     : (probedModels.find((model) => model.isDefault)?.slug ?? null);
   if (!useLiveCatalog && configuration.partialOptions === true) {
+    const modelsForOverlay =
+      replaceLastSlot && cappedLastModel !== undefined
+        ? replaceLastCappedBuiltInModel(
+            provider.models,
+            modelsFromDiscovery(
+              {
+                models: [cappedLastModel],
+                currentModelId: null,
+                configOptions: options?.probeSharedDescriptors ?? [],
+              },
+              [],
+              previousModels.filter((model) => !model.isCustom),
+            )[0]!,
+          )
+        : provider.models;
+    const partialDisabledReasoning =
+      cappedLastModel?.reasoningEffort === null
+        ? new Set([...disabledReasoningSlugs, cappedLastModel.id])
+        : disabledReasoningSlugs;
     return {
       ...snapshot,
       status: provider.enabled ? "ready" : provider.status,
       models: overlayPartialLiveOptions(
-        provider.models,
+        modelsForOverlay,
         configuration,
         selectedProbedModelId,
-        disabledReasoningSlugs,
+        partialDisabledReasoning,
       ),
     };
   }
@@ -915,8 +1003,8 @@ export function applyAcpRegistryLiveConfiguration(
       ...(advertised === undefined ? {} : { reasoningEffort: advertised }),
     };
   });
-  if (overflowCurrentModel !== undefined) {
-    retainedDiscoveryModels[ACP_REGISTRY_MAX_MODELS - 1] = overflowCurrentModel;
+  if (replaceLastSlot && cappedLastModel !== undefined) {
+    retainedDiscoveryModels[ACP_REGISTRY_MAX_MODELS - 1] = cappedLastModel;
   }
   const discovery = useLiveCatalog
     ? configuration
@@ -932,7 +1020,7 @@ export function applyAcpRegistryLiveConfiguration(
     !useLiveCatalog &&
     effectiveConfigOptions.length === 0 &&
     !hasAdvertisedReasoning &&
-    overflowCurrentModel === undefined
+    !replaceLastSlot
       ? stripReasoningForDisabledModels(
           withAcpRegistryDefaultModel(provider.models, selectedProbedModelId),
           disabledReasoningSlugs,
@@ -1319,6 +1407,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         readonly reasoningDisabledModelSlugs?: ReadonlySet<string> | undefined;
         readonly hasDiscoveredCatalog?: boolean | undefined;
         readonly replaceCurrentLearnedOptions?: boolean | undefined;
+        readonly probeSharedDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
       },
     ) =>
       Ref.get(acceptedCatalog).pipe(
@@ -1332,12 +1421,23 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           const disabledForLearning =
             configuration.models.length > 0 ? EMPTY_SLUG_SET : reasoningDisabledModelSlugs;
           return Ref.modify(learnedModels, (learned) => {
+            const basePrevious = learned.length > 0 ? learned : provider.models;
+            const previousModels =
+              options?.replaceCurrentLearnedOptions === true &&
+              configuration.currentModelId !== null
+                ? basePrevious.filter((model) => model.slug !== configuration.currentModelId)
+                : basePrevious;
             const next = applyAcpRegistryLiveConfiguration(
               provider,
               configuration,
               effectiveConfig.customModels,
-              learned.length > 0 ? learned : provider.models,
-              { preserveSingleModelCatalog, reasoningDisabledModelSlugs, hasDiscoveredCatalog },
+              previousModels,
+              {
+                preserveSingleModelCatalog,
+                reasoningDisabledModelSlugs,
+                hasDiscoveredCatalog,
+                probeSharedDescriptors: options?.probeSharedDescriptors,
+              },
             );
             return [
               next,
@@ -1397,30 +1497,33 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           const replacedLiveModelId =
             configuration.partialOptions !== true &&
             configuration.currentModelId !== null &&
-            configuration.currentModelId !== probeOptions.currentModelId &&
-            probeOptions.models.some((model) => model.id === configuration.currentModelId)
+            (probeOptions.models.some((model) => model.id === configuration.currentModelId) ||
+              (configuration.cappedLastModel !== undefined &&
+                configuration.cappedPrefixKey !== undefined &&
+                cappedAcpRegistryModelPrefixKey(probeOptions.models) ===
+                  configuration.cappedPrefixKey &&
+                configuration.currentModelId === configuration.cappedLastModel.id))
               ? configuration.currentModelId
               : null;
-          const skipModelSlugs = new Set<string>();
-          if (probeOptions.currentModelId !== null) {
-            skipModelSlugs.add(probeOptions.currentModelId);
-          }
-          if (replacedLiveModelId !== null) {
-            skipModelSlugs.add(replacedLiveModelId);
-          }
-          // Rebuild from the pure probe baseline so rejected values restore probe
-          // defaults and options a live model stops reporting are removed.
+          const skipModelSlugs =
+            replacedLiveModelId === null ? EMPTY_SLUG_SET : new Set([replacedLiveModelId]);
+          // Rebuild from the pure probe baseline so rejected values restore probe defaults,
+          // other models preserve learned values, and dropped options on the reporting model clear.
           const pureBaseline = acceptedBefore.probeBaselineModels ?? acceptedBefore.models;
           const baselineModels = yield* Ref.get(learnedModels).pipe(
             Effect.map((learned) =>
               mergeLearnedModelOptions(pureBaseline, learned, {
                 skipModelSlugs,
                 reasoningDisabledModelSlugs,
+                overlayLearnedValues: true,
               }),
             ),
           );
           const baselineProvider =
             pureBaseline.length > 0 ? { ...current, models: baselineModels } : current;
+          const probeSharedDescriptors = probeOptions.configOptions.filter(
+            (descriptor) => !isModelSpecificDescriptor(descriptor, probeOptions.modelOptionIds),
+          );
           const applied = yield* Option.match(effectiveConfiguration, {
             onNone: () =>
               replacedLiveModelId === null
@@ -1433,7 +1536,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         models: [],
                         currentModelId: replacedLiveModelId,
                         configOptions: [],
-                        modelOptionIds: [],
+                        modelOptionIds: Array.from(probeOptions.modelOptionIds),
                         modelsFromModelSelect: false,
                       },
                       reasoningDisabledModelSlugs,
@@ -1445,6 +1548,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 reasoningDisabledModelSlugs,
                 hasDiscoveredCatalog,
                 replaceCurrentLearnedOptions: replacedLiveModelId !== null,
+                probeSharedDescriptors,
               }),
           });
           if (options?.updateAcceptedAndCache === true && options.revision !== undefined) {
@@ -1575,7 +1679,13 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         const hasNewCatalogStep = steps.length > 0;
         if (accepted.probeOptions !== null && !hasNewCatalogStep) {
           for (const entry of liveConfiguration.pendingOptions) {
-            steps.push(entry);
+            if (entry.revision > appliedRev) {
+              steps.push(entry);
+            }
+          }
+          const latestPending = liveConfiguration.pendingOptions.at(-1);
+          if (latestPending !== undefined && steps.at(-1) !== latestPending) {
+            steps.push(latestPending);
           }
         } else {
           for (const entry of liveConfiguration.pendingOptions) {
@@ -1599,8 +1709,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               reasoningDisabledModelSlugs: options?.reasoningDisabledModelSlugs,
               hasDiscoveredCatalog: options?.hasDiscoveredCatalog,
               preserveStatus: options?.preserveStatus,
-              // Readiness records lastObservedLiveRevision before the replacement watcher
-              // starts, so sync acceptedCatalog and enrichmentCache before skipping it.
+              // Readiness advances lastObservedLiveRevision before the replacement watcher
+              // starts, so persist accepted state and applied revisions now.
               updateAcceptedAndCache: options?.recordLiveRevision === true,
               ignoreProbeBaseline: catalogReplacedInReplay && !stepReplacesCatalog,
               revision: step.revision,
@@ -1750,6 +1860,20 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   return;
                 }
                 let resolved = provider;
+                if (!fresh) {
+                  if (current.entry === null) return;
+                  const accepted = yield* Ref.get(acceptedCatalog);
+                  resolved = {
+                    ...current.entry.provider,
+                    checkedAt: provider.checkedAt,
+                    ...(accepted.probeOptions === null &&
+                    accepted.models.length > 0 &&
+                    current.entry.provider.enabled &&
+                    current.entry.provider.installed
+                      ? { models: accepted.models }
+                      : {}),
+                  };
+                }
                 if (fresh && provider.status === "ready") {
                   const accepted = yield* Ref.get(acceptedCatalog);
                   const liveCatalog = Option.filter(
@@ -1815,18 +1939,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     });
                     resolved = models === provider.models ? provider : { ...provider, models };
                   }
+                  let clearedThroughRevision = 0;
                   if (cleared) {
                     const afterClear = Option.isSome(runtimeCoordinator)
                       ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
                       : liveSnapshot;
+                    clearedThroughRevision = afterClear.clearedThroughRevision;
                     const supersededLiveSession =
                       Option.isSome(liveSnapshot.catalog) ||
                       Option.isSome(liveSnapshot.configuration) ||
                       Option.isSome(afterClear.configuration) ||
                       afterClear.revision > liveSnapshot.revision ||
                       accepted.probeOptions !== null;
-                    yield* Ref.set(lastAppliedLiveCatalogRevision, 0);
-                    yield* Ref.set(lastAppliedLiveRevision, afterClear.clearedThroughRevision);
+                    yield* resetAppliedLiveRevisions;
                     yield* Ref.set(acceptedCatalog, {
                       models: resolved.models,
                       builtInModelCount: probedModelCount,
@@ -1848,6 +1973,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     reasoningDisabledModelSlugs: cleared ? reasoningDisabledModelSlugs : undefined,
                     hasDiscoveredCatalog: cleared ? probedModelCount > 0 : undefined,
                   });
+                  if (cleared) {
+                    yield* Ref.update(lastAppliedLiveRevision, (prev) =>
+                      Math.max(prev, clearedThroughRevision),
+                    );
+                  }
                   const completedAt = yield* Clock.currentTimeMillis;
                   yield* Ref.set(enrichmentCache, {
                     ...current,
@@ -1931,10 +2061,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(
                           instanceId,
                         );
+                      const appliedRevision = yield* Ref.get(lastAppliedLiveRevision);
                       if (
                         (Option.isNone(currentLive.catalog) &&
                           Option.isNone(currentLive.configuration)) ||
-                        revision <= currentLive.clearedThroughRevision
+                        revision <= currentLive.clearedThroughRevision ||
+                        revision <= appliedRevision
                       ) {
                         return;
                       }

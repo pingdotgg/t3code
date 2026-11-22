@@ -321,27 +321,68 @@ const make = Effect.gen(function* () {
           // Every revision through current.revision is either cleared or reconciled by retain.
           const nextCleared = Math.max(current.clearedThroughRevision, current.revision);
           const retain = options.retain;
-          const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> =
-            retain === undefined
-              ? Option.none()
-              : Option.flatMap(current.configuration, (configuration) =>
-                  retain({
-                    ...configuration,
-                    models: [],
-                    modelsFromModelSelect: false,
-                  }),
-                );
           const nextOptionsByModel: ReadonlyMap<
             string | null,
             AcpRegistryRevisionedLiveConfiguration
-          > = Option.isSome(nextConfiguration)
-            ? new Map([
-                [
-                  nextConfiguration.value.currentModelId,
-                  { configuration: nextConfiguration.value, revision: current.revision },
-                ],
-              ])
-            : EMPTY_OPTIONS_BY_MODEL;
+          > = (() => {
+            if (retain === undefined) return EMPTY_OPTIONS_BY_MODEL;
+            const candidates = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
+            if (current.catalog !== null) {
+              candidates.set(current.catalog.configuration.currentModelId, {
+                configuration: {
+                  ...current.catalog.configuration,
+                  models: [],
+                  modelsFromModelSelect: false,
+                },
+                revision: current.catalog.revision,
+              });
+            }
+            for (const [key, entry] of current.optionsByModel) {
+              candidates.set(key, entry);
+            }
+            const retained = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
+            for (const entry of sortedPendingOptions(candidates)) {
+              const kept = retain({
+                ...entry.configuration,
+                models: [],
+                modelsFromModelSelect: false,
+              });
+              if (Option.isNone(kept)) continue;
+              if (entry.revision < current.revision) {
+                // Earlier models keep only model-specific options without stealing default selection or shared options.
+                const modelOptionIds = new Set(kept.value.modelOptionIds ?? []);
+                const modelOnlyOptions = kept.value.configOptions.filter((descriptor) =>
+                  modelOptionIds.has(descriptor.id),
+                );
+                if (modelOnlyOptions.length === 0) continue;
+                const {
+                  cappedLastModel: _droppedOverflow,
+                  cappedPrefixKey: _droppedPrefix,
+                  ...rest
+                } = kept.value;
+                retained.delete(kept.value.currentModelId);
+                retained.set(kept.value.currentModelId, {
+                  configuration: {
+                    ...rest,
+                    configOptions: modelOnlyOptions,
+                    modelOptionIds: modelOnlyOptions.map((descriptor) => descriptor.id),
+                    preserveDefault: true,
+                  },
+                  revision: entry.revision,
+                });
+                continue;
+              }
+              retained.delete(kept.value.currentModelId);
+              retained.set(kept.value.currentModelId, {
+                configuration: kept.value,
+                revision: entry.revision,
+              });
+            }
+            return retained.size === 0 ? EMPTY_OPTIONS_BY_MODEL : retained;
+          })();
+          const lastRetained = sortedPendingOptions(nextOptionsByModel).at(-1);
+          const nextConfiguration: Option.Option<AcpRegistryLiveConfiguration> =
+            lastRetained === undefined ? Option.none() : Option.some(lastRetained.configuration);
           if (
             current.catalog === null &&
             Equal.equals(current.configuration, nextConfiguration) &&
@@ -378,8 +419,8 @@ const make = Effect.gen(function* () {
             const catalogRevision = hasCatalog
               ? current.catalogRevision + 1
               : current.catalogRevision;
-            // Store the active catalog and per-model options separately so an unrelated
-            // session's options update never discards the catalog or drops earlier models' options.
+            // Keep the active catalog and per-model options separate; a new catalog replaces
+            // prior per-model options while options-only updates preserve earlier models' entries.
             const catalog = hasCatalog ? { configuration, revision } : current.catalog;
             const optionsByModel = hasCatalog
               ? EMPTY_OPTIONS_BY_MODEL

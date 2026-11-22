@@ -464,7 +464,6 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v1"));
         const first = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, configFor("model-v2"));
-        const second = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
 
         // Outdated catalogRevision cannot clear a newer catalog or advance clearedThroughRevision.
         expect(
@@ -476,43 +475,125 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           (yield* coordinator.getLiveConfigurationWithRevision(instanceId)).clearedThroughRevision,
         ).toBe(0);
 
-        // Catalog-scoped clear reconciles newer in-flight options-only updates through retain,
-        // clears the stored catalog, and advances clearedThroughRevision past them.
-        const optionsOnlyConfig = {
+        // Catalog-scoped clear reconciles catalog options plus newer per-model options-only
+        // updates in revision order, stripping catalog models before passing to retain.
+        const modeOption = (currentValue: "ask" | "code") => ({
+          id: "mode",
+          label: "Mode",
+          type: "select" as const,
+          currentValue,
+          options: [
+            { id: "ask", label: "Ask" },
+            { id: "code", label: "Code" },
+          ],
+        });
+        const variantOption = {
+          id: "variant",
+          label: "Variant",
+          type: "select" as const,
+          currentValue: "v1",
+          options: [{ id: "v1", label: "V1" }],
+        };
+        const multiCatalog = {
+          models: [
+            { id: "model-v1", name: "model-v1", description: null },
+            { id: "model-v2", name: "model-v2", description: null },
+            { id: "model-v3", name: "model-v3", description: null },
+          ],
+          currentModelId: "model-v3",
+          configOptions: [modeOption("code"), effortOption("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        };
+        yield* coordinator.publishLiveConfiguration(instanceId, multiCatalog);
+        const third = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+
+        const modelV1Options = {
+          models: [],
+          currentModelId: "model-v1",
+          configOptions: [modeOption("code"), variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+        };
+        yield* coordinator.publishLiveConfiguration(instanceId, modelV1Options);
+        const v1Snap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+
+        const modelV2Options = {
           models: [],
           currentModelId: "model-v2",
-          configOptions: [effortOption("high")],
+          configOptions: [modeOption("ask"), effortOption("high")],
           modelOptionIds: ["effort"],
           modelsFromModelSelect: false,
         };
-        yield* coordinator.publishLiveConfiguration(instanceId, optionsOnlyConfig);
+        yield* coordinator.publishLiveConfiguration(instanceId, modelV2Options);
         const optionsSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
-        const retainedConfig = {
-          ...optionsOnlyConfig,
-          configOptions: [effortOption("low")],
-        };
+
+        const seenRetainInputs: Array<readonly [string | null, number, boolean]> = [];
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: second.catalogRevision,
-            retain: (live) =>
-              Option.some({
-                ...live,
-                configOptions: [effortOption("low")],
-              }),
+            catalogRevision: third.catalogRevision,
+            retain: (live) => {
+              seenRetainInputs.push([
+                live.currentModelId,
+                live.models.length,
+                live.modelsFromModelSelect === true,
+              ]);
+              if (live.currentModelId === "model-v2") {
+                return Option.some({
+                  ...live,
+                  configOptions: [modeOption("ask"), effortOption("low")],
+                  partialOptions: true,
+                });
+              }
+              return Option.some({ ...live, partialOptions: true });
+            },
           }),
         ).toBe(true);
+        // Every candidate passed to retain has catalog models and provenance stripped.
+        expect(seenRetainInputs).toEqual([
+          ["model-v3", 0, false],
+          ["model-v1", 0, false],
+          ["model-v2", 0, false],
+        ]);
+        const retainedV3 = {
+          models: [],
+          currentModelId: "model-v3",
+          configOptions: [effortOption("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
+        };
+        const retainedV1 = {
+          models: [],
+          currentModelId: "model-v1",
+          configOptions: [variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
+        };
+        const retainedV2 = {
+          ...modelV2Options,
+          configOptions: [modeOption("ask"), effortOption("low")],
+          partialOptions: true,
+        };
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
           ...optionsSnap,
           catalog: Option.none(),
-          configuration: Option.some(retainedConfig),
-          pendingOptions: [{ configuration: retainedConfig, revision: optionsSnap.revision }],
+          configuration: Option.some(retainedV2),
+          pendingOptions: [
+            { configuration: retainedV3, revision: third.revision },
+            { configuration: retainedV1, revision: v1Snap.revision },
+            { configuration: retainedV2, revision: optionsSnap.revision },
+          ],
           clearedThroughRevision: optionsSnap.revision,
         });
 
         // Omitting retain wipes both catalog and options while keeping clearedThroughRevision.
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: second.catalogRevision,
+            catalogRevision: third.catalogRevision,
           }),
         ).toBe(true);
         expect(yield* coordinator.getLiveConfigurationWithRevision(instanceId)).toEqual({
@@ -522,6 +603,20 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           pendingOptions: [],
           clearedThroughRevision: optionsSnap.revision,
         });
+
+        // Per-model pending options are bounded at 256 models, evicting the oldest entry first.
+        for (let index = 0; index < 257; index += 1) {
+          yield* coordinator.publishLiveConfiguration(instanceId, {
+            models: [],
+            currentModelId: `m${index}`,
+            configOptions: [],
+            modelsFromModelSelect: false,
+          });
+        }
+        const bounded = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(bounded.pendingOptions).toHaveLength(256);
+        expect(bounded.pendingOptions[0]?.configuration.currentModelId).toBe("m1");
+        expect(bounded.pendingOptions.at(-1)?.configuration.currentModelId).toBe("m256");
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });
