@@ -45,7 +45,7 @@ export async function downloadRest(input: {
   let bytes = text === "" ? 0 : offset;
   const reader = response.body
     .pipeThrough(
-      new TransformStream<Uint8Array, Uint8Array>({
+      new TransformStream<Uint8Array<ArrayBuffer>, Uint8Array<ArrayBuffer>>({
         transform(chunk, controller) {
           bytes += chunk.byteLength;
           controller.enqueue(chunk);
