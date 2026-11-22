@@ -1,8 +1,9 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { ComposerContextId, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import type { FilePreviewItem } from "../components/ui/FilePreviewModal.types";
 import type { DraftComposerAttachment } from "./composerImages";
 import { composerImageGallery } from "./composerImageGallery";
+import { contextImageGallery } from "./contextImageGallery";
 import { messageImageGallery } from "../features/threads/messageImageGallery";
 import { filePreviewGallery, filePreviewKey } from "./filePreviewGallery";
 
@@ -77,6 +78,36 @@ describe("image preview groups", () => {
       expect(composerImageGallery(attachments)).toEqual(local);
     },
   );
+
+  it("keeps media actions when swiping to another remote context image", () => {
+    const environmentId = EnvironmentId.make("test");
+    const contextImages = contextImageGallery(
+      ["a", "b"].map((id) => ({
+        version: 1,
+        kind: "image",
+        contextId: ComposerContextId.make(`context-${id}`),
+        label: `Screenshot ${id}`,
+        attachmentId: `uploaded-${id}`,
+        name: `${id}.png`,
+        mimeType: "image/png",
+        sizeBytes: 3,
+      })),
+      [],
+      environmentId,
+    );
+
+    expect(filePreviewGallery(contextImages[0]!, contextImages)[1]?.actionsSource).toEqual({
+      name: "b.png",
+      mimeType: "image/png",
+      environmentId,
+      resource: {
+        _tag: "attachment",
+        attachmentId: "uploaded-b",
+        fileName: "b.png",
+        mimeType: "image/png",
+      },
+    });
+  });
 
   it("matches remote originals despite metadata and property order differences", () => {
     const environmentId = EnvironmentId.make("test");
