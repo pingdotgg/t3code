@@ -1561,39 +1561,37 @@ it.effect(
         );
         yield* Effect.yieldNow;
 
-        const runA = yield* registry.issue({
-          threadId: scope.thread.threadId,
-          providerInstanceId: scope.thread.providerInstanceId,
-          capabilities: new Set(["preview"]),
-          runId: RunId.make("run-a"),
-        });
-        const scopeA = yield* registry.resolve(
-          runA.config.authorizationHeader.replace(/^Bearer\s+/, ""),
-        );
-        expect(scopeA).toBeDefined();
+        const issueScope = (runId: string, providerSessionId?: string) =>
+          Effect.gen(function* () {
+            const issued = yield* registry.issue({
+              threadId: scope.thread.threadId,
+              providerInstanceId: scope.thread.providerInstanceId,
+              capabilities: new Set(["preview"]),
+              ...(providerSessionId === undefined ? {} : { providerSessionId }),
+              runId: RunId.make(runId),
+            });
+            const resolved = yield* registry.resolve(
+              issued.config.authorizationHeader.replace(/^Bearer\s+/, ""),
+            );
+            return { config: issued.config, scope: resolved };
+          });
+
+        const runA = yield* issueScope("run-a");
+        expect(runA.scope).toBeDefined();
         const opened = yield* broker.invoke<PreviewAutomationStatus>({
-          scope: scopeA!,
+          scope: runA.scope!,
           operation: "open",
           input: { reuseExistingTab: false, show: false },
         });
         const tabId = PreviewTabId.make(opened.tabId!);
 
-        const runB = yield* registry.issue({
-          threadId: scope.thread.threadId,
-          providerInstanceId: scope.thread.providerInstanceId,
-          capabilities: new Set(["preview"]),
-          providerSessionId: runA.config.providerSessionId,
-          runId: RunId.make("run-b"),
-        });
+        const runB = yield* issueScope("run-b", runA.config.providerSessionId);
         expect(runB.config.providerSessionId).toBe(runA.config.providerSessionId);
         expect(runB.config.credentialId).not.toBe(runA.config.credentialId);
-        const scopeB = yield* registry.resolve(
-          runB.config.authorizationHeader.replace(/^Bearer\s+/, ""),
-        );
-        expect(scopeB?.thread.runId).toBe("run-b");
+        expect(runB.scope?.thread.runId).toBe("run-b");
 
         yield* broker.invoke({
-          scope: scopeB!,
+          scope: runB.scope!,
           tabId,
           operation: "navigate",
           input: { url: "http://localhost:5173/after-rotation" },
@@ -1603,26 +1601,18 @@ it.effect(
           expect.anything(),
         );
         const evaluated = yield* broker.invoke({
-          scope: scopeB!,
+          scope: runB.scope!,
           tabId,
           operation: "evaluate",
           input: { expression: "ownedAfterRotation()" },
         });
         expect(evaluated).toBe("evaluated");
 
-        const separateSession = yield* registry.issue({
-          threadId: scope.thread.threadId,
-          providerInstanceId: scope.thread.providerInstanceId,
-          capabilities: new Set(["preview"]),
-          runId: RunId.make("run-c"),
-        });
+        const separateSession = yield* issueScope("run-c");
         expect(separateSession.config.providerSessionId).not.toBe(runA.config.providerSessionId);
-        const scopeOther = yield* registry.resolve(
-          separateSession.config.authorizationHeader.replace(/^Bearer\s+/, ""),
-        );
         const foreign = yield* broker
           .invoke<void>({
-            scope: scopeOther!,
+            scope: separateSession.scope!,
             tabId,
             operation: "navigate",
             input: { url: "http://localhost:5173/separate-session" },

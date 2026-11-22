@@ -178,17 +178,14 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
           lastAlive: issuedAlive,
           expired: false,
         });
-        let retainedForThread = 0;
         const threadTokens: Array<string> = [];
         for (const [hash, record] of next) {
           if (record.scope.thread.threadId === scope.thread.threadId) {
-            retainedForThread += 1;
             threadTokens.push(hash);
           }
         }
-        for (let index = 0; index < retainedForThread - MAX_CREDENTIALS_PER_THREAD; index += 1) {
-          const evicted = threadTokens[index];
-          if (evicted !== undefined) next.delete(evicted);
+        for (let index = 0; index < threadTokens.length - MAX_CREDENTIALS_PER_THREAD; index += 1) {
+          next.delete(threadTokens[index]!);
         }
         return { records: next };
       });

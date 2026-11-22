@@ -25425,29 +25425,39 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               });
         const isContinuationMode =
           mode === "continuation-refresh-failed" || mode === "continuation-no-live-refresh";
-        const envSlug = `environment-claude-mcp-${mode}`;
-        yield* mcpSessions.set({
-          environmentId: EnvironmentId.make(envSlug),
-          threadId: harness.threadId,
-          providerSessionId: `mcp-session-claude-${mode}-1`,
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          runId: RunId.make(`claude-mcp-${mode}-run-1`),
-          attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-1`),
-          endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: `Bearer claude-${mode}-run-1`,
-          browserToolsAvailable: false,
-        });
-
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
+        const setMcp = (ordinal: number) =>
+          mcpSessions.set({
+            environmentId: EnvironmentId.make(`environment-claude-mcp-${mode}`),
             threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-1`),
-            text: "First turn.",
-            attachments: [],
-          }),
-        );
+            providerSessionId: `mcp-session-claude-${mode}-${ordinal}`,
+            providerInstanceId: ProviderInstanceId.make("claudeAgent"),
+            runId: RunId.make(`claude-mcp-${mode}-run-${ordinal}`),
+            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-${ordinal}`),
+            endpoint: "http://127.0.0.1:43123/mcp",
+            authorizationHeader: `Bearer claude-${mode}-run-${ordinal}`,
+            browserToolsAvailable: false,
+          });
+        const turnInput = (
+          ordinal: number,
+          text: string,
+          extra?: Partial<Parameters<typeof makeClaudeTestTurnInput>[0]>,
+        ) =>
+          DateTime.now.pipe(
+            Effect.map((now) =>
+              makeClaudeTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-${ordinal}`),
+                text,
+                attachments: [],
+                ...extra,
+              }),
+            ),
+          );
+
+        yield* setMcp(1);
+        yield* harness.runtime.startTurn(yield* turnInput(1, "First turn."));
         if (mode === "blocked-by-background-work" || isContinuationMode) {
           yield* harness.offerAndWait(wakeTaskStarted);
         }
@@ -25474,26 +25484,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Queue.take(harness.continuationReceipts);
         }
 
-        yield* mcpSessions.set({
-          environmentId: EnvironmentId.make(envSlug),
-          threadId: harness.threadId,
-          providerSessionId: `mcp-session-claude-${mode}-2`,
-          providerInstanceId: ProviderInstanceId.make("claudeAgent"),
-          runId: RunId.make(`claude-mcp-${mode}-run-2`),
-          attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
-          endpoint: "http://127.0.0.1:43123/mcp",
-          authorizationHeader: `Bearer claude-${mode}-run-2`,
-          browserToolsAvailable: false,
-        });
+        yield* setMcp(2);
 
         if (isContinuationMode) {
-          const continuationTurn = makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
-            text: "Background task completed.",
-            attachments: [],
+          const continuationTurn = yield* turnInput(2, "Background task completed.", {
             providerTurnOrdinal: 2,
             messageCreatedBy: "agent",
             messageCreationSource: "provider",
@@ -25526,16 +25520,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
 
         if (mode === "blocked-by-background-work") {
           const rejected = yield* harness.runtime
-            .startTurn(
-              makeClaudeTestTurnInput({
-                threadId: harness.threadId,
-                providerThread: harness.providerThread,
-                now: yield* DateTime.now,
-                attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
-                text: "Second turn.",
-                attachments: [],
-              }),
-            )
+            .startTurn(yield* turnInput(2, "Second turn."))
             .pipe(Effect.flip);
           assert.instanceOf(
             rejected.cause,
@@ -25546,16 +25531,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           return;
         }
 
-        yield* harness.runtime.startTurn(
-          makeClaudeTestTurnInput({
-            threadId: harness.threadId,
-            providerThread: harness.providerThread,
-            now: yield* DateTime.now,
-            attemptId: RunAttemptId.make(`claude-mcp-${mode}-attempt-2`),
-            text: "Second turn.",
-            attachments: [],
-          }),
-        );
+        yield* harness.runtime.startTurn(yield* turnInput(2, "Second turn."));
         if (mode === "fallback-replace") {
           assert.equal(harness.processQueues.length, 2);
           yield* Queue.offer(

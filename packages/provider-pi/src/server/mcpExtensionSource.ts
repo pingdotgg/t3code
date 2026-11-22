@@ -180,21 +180,17 @@ function createMcpClient(endpoint: string, initialToken: string, tokenFile: stri
   let needsReconnect = false;
   let connectInFlight: { readonly generation: number; readonly promise: Promise<void> } | undefined;
 
-  const setToken = (nextToken: string) => {
-    if (nextToken === currentToken) return;
-    currentToken = nextToken;
-    process.env[TOKEN_ENV] = nextToken;
-    authGeneration += 1;
-    sessionId = undefined;
-    connectInFlight = undefined;
-    needsReconnect = true;
-  };
-
   const syncToken = async () => {
     if (tokenFile === undefined) return;
     try {
       const next = (await NodeFSP.readFile(tokenFile, "utf8")).trim();
-      if (next.length > 0 && next !== currentToken) setToken(next);
+      if (next.length === 0 || next === currentToken) return;
+      currentToken = next;
+      process.env[TOKEN_ENV] = next;
+      authGeneration += 1;
+      sessionId = undefined;
+      connectInFlight = undefined;
+      needsReconnect = true;
     } catch {
       // Missing or transient file read keeps the current in-memory bearer.
     }
@@ -299,19 +295,13 @@ function createMcpClient(endpoint: string, initialToken: string, tokenFile: stri
     },
     async callTool(name: string, args: Record<string, unknown>, signal?: AbortSignal) {
       const pinnedGeneration = authGeneration;
-      await syncToken();
-      if (authGeneration !== pinnedGeneration) {
-        throw new Error("MCP credentials rotated while the tool call was waiting to send.");
-      }
-      while (needsReconnect) {
+      while (true) {
+        await syncToken();
         if (authGeneration !== pinnedGeneration) {
           throw new Error("MCP credentials rotated while the tool call was waiting to send.");
         }
+        if (!needsReconnect) break;
         await connect(signal);
-        await syncToken();
-      }
-      if (authGeneration !== pinnedGeneration) {
-        throw new Error("MCP credentials rotated while the tool call was waiting to send.");
       }
       return request("tools/call", { name, arguments: args }, signal);
     },

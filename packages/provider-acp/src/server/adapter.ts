@@ -9421,17 +9421,16 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
             const isContinuationTurn =
               (postSettleContinuationEnabled || followsAgentWorkState) &&
               acpIsProviderContinuationMessage(turnInput.message);
+            const currentSessionId = yield* Ref.get(activeSessionId);
             const mcpReloadRequired =
               !restartAfterInterrupt &&
-              (yield* Ref.get(activeSessionId)) === requestedSessionId &&
+              currentSessionId === requestedSessionId &&
               (yield* syncMcpCredentialForSession(requestedSessionId, turnInput.threadId, {
                 allowReload: !isContinuationTurn,
                 providerThreadId: turnInput.providerThread.id,
               }));
             const needsSessionActivation =
-              (yield* Ref.get(activeSessionId)) !== requestedSessionId ||
-              restartAfterInterrupt ||
-              mcpReloadRequired;
+              currentSessionId !== requestedSessionId || restartAfterInterrupt || mcpReloadRequired;
             if (needsSessionActivation) {
               const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
               yield* Ref.set(activeSessionId, activated.sessionId);
@@ -10132,16 +10131,17 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
                     threadInput.providerThread.appThreadId,
                   ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                  const currentSessionId = yield* Ref.get(activeSessionId);
                   const mcpReloadRequired =
                     !restartAfterInterrupt &&
-                    (yield* Ref.get(activeSessionId)) === sessionId &&
+                    currentSessionId === sessionId &&
                     (yield* syncMcpCredentialForSession(
                       sessionId,
                       threadInput.providerThread.appThreadId,
                       { providerThreadId: threadInput.providerThread.id },
                     ).pipe(Effect.tapError(() => restorePreviousItemIdentity)));
                   if (
-                    (yield* Ref.get(activeSessionId)) !== sessionId ||
+                    currentSessionId !== sessionId ||
                     restartAfterInterrupt ||
                     mcpReloadRequired
                   ) {

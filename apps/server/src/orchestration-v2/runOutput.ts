@@ -15,14 +15,18 @@ export function latestOwedOutputRun<
     readonly output?: unknown;
   },
 >(runs: ReadonlyArray<TRun>): TRun | undefined {
-  return runs
-    .filter(
-      (candidate) =>
-        candidate.outputSchema !== undefined &&
-        candidate.output === undefined &&
-        candidate.status === "completed",
-    )
-    .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+  let latest: TRun | undefined;
+  for (const candidate of runs) {
+    if (
+      candidate.outputSchema !== undefined &&
+      candidate.output === undefined &&
+      candidate.status === "completed" &&
+      (latest === undefined || candidate.ordinal > latest.ordinal)
+    ) {
+      latest = candidate;
+    }
+  }
+  return latest;
 }
 
 /** Whether a turn needs its MCP credential rotated to match its run/attempt identity. */

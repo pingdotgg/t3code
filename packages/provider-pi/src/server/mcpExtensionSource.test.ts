@@ -191,19 +191,20 @@ describe("Pi MCP tool results", () => {
         "rejects a waiting tool call if the MCP bearer token rotates during its first read or connect",
     },
   ])("$description", async ({ scenario }) => {
+    const startTurn = (bridge: Awaited<ReturnType<typeof loadMcpBridge>>) =>
+      bridge.handlers.get("before_agent_start")!(
+        { systemPrompt: "" },
+        { ui: { notify: assert.fail } },
+      );
+
     if (scenario === "rotate-and-coalesce") {
       const bridge = await loadMcpBridge();
-      const startTurn = () =>
-        bridge.handlers.get("before_agent_start")!(
-          { systemPrompt: "" },
-          { ui: { notify: assert.fail } },
-        );
       const tool = bridge.tools[0]!;
       await tool.execute("call-1", {});
       assert.equal(bridge.transports.at(-1)?.authorization, "Bearer fixture-token");
 
       bridge.setBearerTokenFile("rotated-run-2-token");
-      await startTurn();
+      await startTurn(bridge);
 
       const requestCountBefore = bridge.requests.length;
       await tool.execute("call-2", {});
@@ -216,7 +217,7 @@ describe("Pi MCP tool results", () => {
 
       // Concurrent calls after a rotation coalesce into a single initialize handshake.
       bridge.setBearerTokenFile("rotated-run-3-token");
-      await startTurn();
+      await startTurn(bridge);
       const concurrentStart = bridge.requests.length;
       await Promise.all([tool.execute("call-3a", {}), tool.execute("call-3b", {})]);
       const concurrentMethods = bridge.requests.slice(concurrentStart).map((req) => req.method);
@@ -271,10 +272,7 @@ describe("Pi MCP tool results", () => {
       bridge.setBearerTokenFile("run-2-token");
       releaseSlow.resolve();
       await inFlight;
-      await bridge.handlers.get("before_agent_start")!(
-        { systemPrompt: "" },
-        { ui: { notify: assert.fail } },
-      );
+      await startTurn(bridge);
 
       const beforeGen2 = seen.length;
       await tool.execute("fresh-2", {});
@@ -316,11 +314,14 @@ describe("Pi MCP tool results", () => {
       },
     });
     const tool = bridge.tools[0]!;
-    const startTurn = () =>
-      bridge.handlers.get("before_agent_start")!(
-        { systemPrompt: "" },
-        { ui: { notify: assert.fail } },
+    const expectRotatedRejection = async (pending: Promise<unknown>) => {
+      const error = await pending.then(
+        () => undefined,
+        (caught: unknown) => caught,
       );
+      assert.include(String(error), "rotated");
+      assert.deepEqual(postedCalls, []);
+    };
 
     // 1. Run A's call starts before Run B's turn; Run B renames the token file while Run A reads it.
     interceptFirstRead = true;
@@ -328,29 +329,15 @@ describe("Pi MCP tool results", () => {
     await firstReadStarted.promise;
     bridge.setBearerTokenFile("run-2-token");
     releaseFirstRead.resolve();
-    let firstReadError: unknown;
-    try {
-      await waitingFirstRead;
-    } catch (caught) {
-      firstReadError = caught;
-    }
-    assert.include(String(firstReadError), "rotated");
-    assert.deepEqual(postedCalls, []);
+    await expectRotatedRejection(waitingFirstRead);
 
     // 2. Run B's turn starts and syncs run-2-token, then token rotates to run-3-token during connect.
-    await startTurn();
+    await startTurn(bridge);
     const waitingGen2 = tool.execute("waiting-gen2", { stale: true });
     await initStarted.promise;
     bridge.setBearerTokenFile("run-3-token");
     releaseInit.resolve();
-    let error: unknown;
-    try {
-      await waitingGen2;
-    } catch (caught) {
-      error = caught;
-    }
-    assert.include(String(error), "rotated");
-    assert.deepEqual(postedCalls, []);
+    await expectRotatedRejection(waitingGen2);
   });
 });
 

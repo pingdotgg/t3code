@@ -13242,16 +13242,18 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
           );
-          const queryPolicyKeyWithoutMcpAuth = claudeEffectiveQueryPolicyKeyWithoutMcpAuth(
-            queryPolicy,
-            mcpOverrides,
-            turnInput.runtimePolicy.workspace,
-          );
+          let cachedQueryPolicyKeyWithoutMcpAuth: string | undefined;
+          const getQueryPolicyKeyWithoutMcpAuth = () =>
+            (cachedQueryPolicyKeyWithoutMcpAuth ??= claudeEffectiveQueryPolicyKeyWithoutMcpAuth(
+              queryPolicy,
+              mcpOverrides,
+              turnInput.runtimePolicy.workspace,
+            ));
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
           const canUpdateMcpLive = (candidate: ClaudeLiveQueryContext) =>
             candidate.queryPolicyKey !== queryPolicyKey &&
-            candidate.queryPolicyKeyWithoutMcpAuth === queryPolicyKeyWithoutMcpAuth &&
+            candidate.queryPolicyKeyWithoutMcpAuth === getQueryPolicyKeyWithoutMcpAuth() &&
             mcpOverrides.mcpServers !== undefined &&
             candidate.query.setMcpServers !== undefined;
           const syncMcpServersLive = Effect.fnUntraced(function* (
@@ -13264,7 +13266,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
               return;
             yield* candidate.query.setMcpServers(mcpOverrides.mcpServers);
             candidate.mcpAuthorization = mcpSession?.authorizationHeader;
-            if (candidate.queryPolicyKeyWithoutMcpAuth === queryPolicyKeyWithoutMcpAuth) {
+            if (candidate.queryPolicyKeyWithoutMcpAuth === getQueryPolicyKeyWithoutMcpAuth()) {
               candidate.queryPolicyKey = queryPolicyKey;
             }
           });
@@ -13536,7 +13538,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             launchArgSettings,
             query: querySession,
             queryPolicyKey,
-            queryPolicyKeyWithoutMcpAuth,
+            queryPolicyKeyWithoutMcpAuth: getQueryPolicyKeyWithoutMcpAuth(),
             mcpAuthorization: mcpSession?.authorizationHeader,
             selection: compiledSelection,
             closed,

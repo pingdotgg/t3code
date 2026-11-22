@@ -607,7 +607,8 @@ export const layerWithOptions = (
       ): ReadonlyMap<ThreadId, ReadonlySet<string>> => {
         const existing = current.get(threadId);
         if (existing?.has(mcpCredentialId) === true) return current;
-        const ids = new Set([...(existing ?? []), mcpCredentialId]);
+        const ids = new Set(existing);
+        ids.add(mcpCredentialId);
         for (const oldest of ids) {
           if (ids.size <= McpSessionRegistry.MAX_CREDENTIALS_PER_THREAD) break;
           ids.delete(oldest);
@@ -2083,10 +2084,10 @@ export const layerWithOptions = (
           }
           const loadedProviderThreadKeyByThread = new Map(entry.loadedProviderThreadKeyByThread);
           loadedProviderThreadKeyByThread.set(input.threadId, input.providerThreadKey);
-          const loadedMcpCredentialByThread = new Map(entry.loadedMcpCredentialByThread);
-          if (input.mcpCredential !== undefined) {
-            loadedMcpCredentialByThread.set(input.threadId, input.mcpCredential);
-          }
+          const loadedMcpCredentialByThread =
+            input.mcpCredential === undefined
+              ? entry.loadedMcpCredentialByThread
+              : new Map(entry.loadedMcpCredentialByThread).set(input.threadId, input.mcpCredential);
           const linkedEnvironmentsByThread = new Map(entry.linkedEnvironmentsByThread);
           if (
             input.linkedEnvironments !== undefined &&
@@ -2304,6 +2305,7 @@ export const layerWithOptions = (
                     yield* mcpSessions.set(updated);
                     yield* syncLoadedMcpCredential(input.threadId, currentCredentialId, updated);
                   }
+                  yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
                   return true;
                 }),
               );
@@ -2315,10 +2317,7 @@ export const layerWithOptions = (
                 current.runId === input.runId &&
                 (input.attemptId === undefined || current.attemptId === input.attemptId)
               ) {
-                if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) {
-                  yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
-                  return;
-                }
+                if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
               const rotateOnRunChange =
@@ -2341,10 +2340,7 @@ export const layerWithOptions = (
                       ),
                     );
               if (!rotateOnRunChange && current !== undefined) {
-                if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) {
-                  yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
-                  return;
-                }
+                if (yield* retainCurrentMcpCredential(current, { unbindRun: false })) return;
                 continue;
               }
               // A runtime that cannot take a new credential now (no way to deliver one, or a reload that
@@ -2359,10 +2355,7 @@ export const layerWithOptions = (
                     ),
                   )));
               if (cannotRotate && current !== undefined) {
-                if (yield* retainCurrentMcpCredential(current, { unbindRun: true })) {
-                  yield* recordMcpTurnChecked(input.providerSessionId, input.threadId, turnKey);
-                  return;
-                }
+                if (yield* retainCurrentMcpCredential(current, { unbindRun: true })) return;
                 continue;
               }
               const ownerSessionId = (yield* Ref.get(sessions))
@@ -3068,6 +3061,31 @@ export const layerWithOptions = (
               modelFamily: normalizeModelMetricLabel(model),
             },
           });
+        const ensureTurnMcp = (
+          input: Pick<
+            ProviderAdapter.ProviderAdapterV2TurnInput,
+            "threadId" | "providerThread" | "runId" | "attemptId"
+          >,
+        ) =>
+          ensureTurnMcpSession({
+            providerSessionId,
+            threadId: input.threadId,
+            providerInstanceId: runtime.instanceId,
+            runtime,
+            runId: input.runId,
+            attemptId: input.attemptId,
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderAdapter.ProviderAdapterTurnStartError({
+                  driver: runtime.driver,
+                  threadId: input.threadId,
+                  providerThreadId: input.providerThread.id,
+                  runId: input.runId,
+                  cause,
+                }),
+            ),
+          );
         return {
           ...runtime,
           // Pi replaces its session snapshot as metadata changes.
@@ -3218,27 +3236,7 @@ export const layerWithOptions = (
                 providerInstanceId: runtime.instanceId,
               }),
             ).pipe(
-              Effect.andThen(
-                ensureTurnMcpSession({
-                  providerSessionId,
-                  threadId: input.threadId,
-                  providerInstanceId: runtime.instanceId,
-                  runtime,
-                  runId: input.runId,
-                  attemptId: input.attemptId,
-                }).pipe(
-                  Effect.mapError(
-                    (cause) =>
-                      new ProviderAdapter.ProviderAdapterTurnStartError({
-                        driver: runtime.driver,
-                        threadId: input.threadId,
-                        providerThreadId: input.providerThread.id,
-                        runId: input.runId,
-                        cause,
-                      }),
-                  ),
-                ),
-              ),
+              Effect.andThen(ensureTurnMcp(input)),
               // Failed or stopped starts may omit turn.terminal; clear their turns so sessions can idle.
               Effect.andThen(
                 holdThreadLoaded({
@@ -3310,27 +3308,7 @@ export const layerWithOptions = (
                       providerInstanceId: runtime.instanceId,
                     }),
                   ).pipe(
-                    Effect.andThen(
-                      ensureTurnMcpSession({
-                        providerSessionId,
-                        threadId: input.threadId,
-                        providerInstanceId: runtime.instanceId,
-                        runtime,
-                        runId: input.runId,
-                        attemptId: input.attemptId,
-                      }).pipe(
-                        Effect.mapError(
-                          (cause) =>
-                            new ProviderAdapter.ProviderAdapterTurnStartError({
-                              driver: runtime.driver,
-                              threadId: input.threadId,
-                              providerThreadId: input.providerThread.id,
-                              runId: input.runId,
-                              cause,
-                            }),
-                        ),
-                      ),
-                    ),
+                    Effect.andThen(ensureTurnMcp(input)),
                     Effect.andThen(
                       holdThreadLoaded({
                         providerSessionId,

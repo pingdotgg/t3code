@@ -2730,15 +2730,30 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const nativeThreadId = "rotate-mcp-thread";
       const threadId = ThreadId.make(`thread-${scenario}`);
       const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-codex-mcp-rotate"),
-        threadId,
-        providerSessionId: "provider-session-rotate-1",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer codex-run-1-token",
-        browserToolsAvailable: false,
-      });
+      const setMcp = (ordinal: number) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("environment-codex-mcp-rotate"),
+          threadId,
+          providerSessionId: `provider-session-rotate-${ordinal}`,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: `Bearer codex-run-${ordinal}-token`,
+          browserToolsAvailable: false,
+        });
+      const configRead = (id: number, label: string) =>
+        [
+          {
+            type: "expect_outbound",
+            label,
+            frame: { id, method: "config/read", params: { includeLayers: false } },
+          },
+          {
+            type: "emit_inbound",
+            label,
+            frame: { id, result: { config: {}, origins: {} } },
+          },
+        ] as const;
+      yield* setMcp(1);
       const resumedConfigs: Array<unknown> = [];
       const preamble = codexReplayPreamble({
         nativeThreadId,
@@ -2758,16 +2773,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           scenario,
           entries: [
             ...preamble.slice(0, 3),
-            {
-              type: "expect_outbound",
-              label: "config/read initial",
-              frame: { id: 2, method: "config/read", params: { includeLayers: false } },
-            },
-            {
-              type: "emit_inbound",
-              label: "config/read initial",
-              frame: { id: 2, result: { config: {}, origins: {} } },
-            },
+            ...configRead(2, "config/read initial"),
             ...preamble.slice(3, 5).map((entry) => withReplayRequestId(entry, 3)),
             {
               type: "expect_outbound",
@@ -2783,16 +2789,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               label: "thread/unsubscribe result",
               frame: { id: 4, result: { status: "unsubscribed" } },
             },
-            {
-              type: "expect_outbound",
-              label: "config/read reload",
-              frame: { id: 5, method: "config/read", params: { includeLayers: false } },
-            },
-            {
-              type: "emit_inbound",
-              label: "config/read reload",
-              frame: { id: 5, result: { config: {}, origins: {} } },
-            },
+            ...configRead(5, "config/read reload"),
             {
               type: "expect_outbound",
               label: "thread/resume with rotated token",
@@ -2863,15 +2860,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           }),
       );
 
-      yield* mcpSessions.set({
-        environmentId: EnvironmentId.make("environment-codex-mcp-rotate"),
-        threadId,
-        providerSessionId: "provider-session-rotate-2",
-        providerInstanceId: ProviderInstanceId.make("codex"),
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorizationHeader: "Bearer codex-run-2-token",
-        browserToolsAvailable: false,
-      });
+      yield* setMcp(2);
       yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
       const resumedThread = yield* harness.runtime.resumeThread({
         threadId,

@@ -175,10 +175,7 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
 
   const reconnectIfNeeded = Effect.fn("AcpMcpOverAcpBridge.reconnectIfNeeded")(function* (
     connection: Connection,
-    message: unknown,
   ) {
-    const method = asEnvelope(message)?.method;
-    if (!connection.needsReconnect || method === "initialize") return;
     const reconnectGeneration = authorizationGeneration;
     const reconnectAuth = authorization;
     const initId = ++connection.nextRequestId;
@@ -234,18 +231,14 @@ export const makeAcpMcpOverAcpBridge = Effect.fn("AcpMcpOverAcpBridge.make")(fun
       connection,
       Effect.gen(function* () {
         if (method !== "initialize") {
-          while (connection.needsReconnect) {
+          while (true) {
             if (authorizationGeneration !== pinnedGeneration) {
               return yield* new AcpMcpOverAcpError({
                 message: "MCP credentials rotated while the request was waiting to send.",
               });
             }
-            yield* reconnectIfNeeded(connection, message);
-          }
-          if (authorizationGeneration !== pinnedGeneration) {
-            return yield* new AcpMcpOverAcpError({
-              message: "MCP credentials rotated while the request was waiting to send.",
-            });
+            if (!connection.needsReconnect) break;
+            yield* reconnectIfNeeded(connection);
           }
         }
         const requestGeneration = authorizationGeneration;

@@ -12236,9 +12236,15 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     if (command.callerRunId !== undefined || command.callerAttemptId !== undefined) {
-      const active = projection.runs
-        .filter(isActiveRun)
-        .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+      let active: OrchestrationV2Run | undefined;
+      for (const candidate of projection.runs) {
+        if (
+          isActiveRun(candidate) &&
+          (active === undefined || candidate.ordinal > active.ordinal)
+        ) {
+          active = candidate;
+        }
+      }
       const matchesRun = (candidate: OrchestrationV2Run | undefined) =>
         candidate !== undefined &&
         (command.callerRunId === undefined || candidate.id === command.callerRunId) &&

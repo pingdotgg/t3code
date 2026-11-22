@@ -273,69 +273,97 @@ describe("AcpMcpOverAcpBridge", () => {
     },
   ])("$description", ({ scenario }) =>
     Effect.gen(function* () {
+      const INIT_PARAMS = {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "acp" },
+      };
+      const jsonResponse = (body: unknown, headers?: Record<string, string>) =>
+        new Response(JSON.stringify(body), {
+          headers: { "content-type": "application/json", ...headers },
+        });
+      const makeStatefulBridge = (opts?: {
+        readonly onRequest?: (
+          auth: string | null,
+          body: {
+            readonly id?: unknown;
+            readonly method: string;
+            readonly params?: { readonly name?: string };
+          },
+        ) => Promise<Response | undefined>;
+      }) =>
+        Effect.gen(function* () {
+          const seen: Array<{
+            readonly authorization: string | null;
+            readonly sessionId: string | null;
+            readonly method: string;
+          }> = [];
+          let sessionCounter = 0;
+          const sessionAuth = new Map<string, string>();
+          const bridge = yield* makeAcpMcpOverAcpBridge({
+            endpoint: "http://127.0.0.1:1/mcp",
+            authorization: "Bearer run-1-token",
+            allocateConnectionId: Effect.succeed(`conn-${scenario}`),
+            fetchImplementation: async (_url, init) => {
+              const headers = new Headers(init?.headers);
+              const auth = headers.get("authorization");
+              const incomingSid = headers.get("mcp-session-id");
+              const body = JSON.parse(String(init?.body)) as {
+                readonly id?: unknown;
+                readonly method: string;
+                readonly params?: { readonly name?: string };
+              };
+              seen.push({ authorization: auth, sessionId: incomingSid, method: body.method });
+              const override = await opts?.onRequest?.(auth, body);
+              if (override !== undefined) return override;
+              if (body.method === "initialize") {
+                const sid = `session-${++sessionCounter}`;
+                sessionAuth.set(sid, auth ?? "");
+                return jsonResponse(
+                  {
+                    jsonrpc: "2.0",
+                    id: body.id,
+                    result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} },
+                  },
+                  { "mcp-session-id": sid },
+                );
+              }
+              // Stateful MCP 2025-06-18 rejects non-initialize requests without a valid session id.
+              if (incomingSid === null || sessionAuth.get(incomingSid) !== auth) {
+                return new Response("Mcp-Session-Id does not exist", { status: 400 });
+              }
+              if (body.method === "notifications/initialized") {
+                return new Response(null, { status: 202 });
+              }
+              return jsonResponse(
+                { jsonrpc: "2.0", id: body.id, result: { content: [] } },
+                { "mcp-session-id": incomingSid },
+              );
+            },
+          });
+          const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
+          const init = () =>
+            bridge.message({ connectionId, method: "initialize", params: INIT_PARAMS });
+          const callTool = (name = "t3_submit_output") =>
+            bridge.message({ connectionId, method: "tools/call", params: { name } });
+          return { bridge, seen, init, callTool };
+        });
+
       if (scenario === "reinitialize-and-stale-headers") {
-        const seen: Array<{
-          readonly authorization: string | null;
-          readonly sessionId: string | null;
-          readonly method: unknown;
-        }> = [];
         const slowCallStarted = Promise.withResolvers<void>();
         const releaseSlowCall = Promise.withResolvers<void>();
-        let sessionCounter = 0;
-        const sessionAuth = new Map<string, string>();
-        const bridge = yield* makeAcpMcpOverAcpBridge({
-          endpoint: "http://127.0.0.1:1/mcp",
-          authorization: "Bearer run-1-token",
-          allocateConnectionId: Effect.succeed("connection-1"),
-          fetchImplementation: async (_url, init) => {
-            const headers = new Headers(init?.headers);
-            const auth = headers.get("authorization");
-            const incomingSid = headers.get("mcp-session-id");
-            const body = JSON.parse(String(init?.body)) as {
-              readonly id?: unknown;
-              readonly method?: unknown;
-              readonly params?: { readonly name?: string };
-            };
-            seen.push({ authorization: auth, sessionId: incomingSid, method: body.method });
-            if (body.method === "initialize") {
-              const sid = `session-${++sessionCounter}`;
-              sessionAuth.set(sid, auth ?? "");
-              return new Response(
-                JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: body.id,
-                  result: { protocolVersion: "2025-06-18", capabilities: {}, serverInfo: {} },
-                }),
-                { headers: { "content-type": "application/json", "mcp-session-id": sid } },
-              );
-            }
-            // Stateful MCP 2025-06-18 rejects non-initialize requests without a valid session id.
-            if (incomingSid === null || sessionAuth.get(incomingSid) !== auth) {
-              return new Response("Mcp-Session-Id does not exist", { status: 400 });
-            }
-            if (body.method === "notifications/initialized") {
-              return new Response(null, { status: 202 });
-            }
+        const { bridge, seen, init, callTool } = yield* makeStatefulBridge({
+          onRequest: async (_auth, body) => {
             if (body.params?.name === "slow_call") {
               slowCallStarted.resolve();
               await releaseSlowCall.promise;
             }
-            return new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
-              { headers: { "content-type": "application/json", "mcp-session-id": incomingSid } },
-            );
+            return undefined;
           },
         });
 
-        const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
-        yield* bridge.message({
-          connectionId,
-          method: "initialize",
-          params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "acp" } },
-        });
-        const inFlight = yield* bridge
-          .message({ connectionId, method: "tools/call", params: { name: "slow_call" } })
-          .pipe(Effect.forkChild);
+        yield* init();
+        const inFlight = yield* callTool("slow_call").pipe(Effect.forkChild);
         yield* Effect.promise(() => slowCallStarted.promise);
 
         // Rotate auth while generation-1 call is in flight, then let generation-1 finish.
@@ -344,14 +372,7 @@ describe("AcpMcpOverAcpBridge", () => {
         yield* Fiber.join(inFlight);
 
         // Generation-2 call must transparently re-initialize with run-2-token, not reuse session-1.
-        expect(
-          yield* bridge.message({
-            connectionId,
-            method: "tools/call",
-            params: { name: "t3_submit_output" },
-          }),
-        ).toEqual({ content: [] });
-
+        expect(yield* callTool()).toEqual({ content: [] });
         expect(seen).toEqual([
           { authorization: "Bearer run-1-token", sessionId: null, method: "initialize" },
           { authorization: "Bearer run-1-token", sessionId: "session-1", method: "tools/call" },
@@ -367,96 +388,36 @@ describe("AcpMcpOverAcpBridge", () => {
       }
 
       if (scenario === "init-race-and-waiting-rejection") {
-        const seen: Array<{
-          readonly authorization: string | null;
-          readonly sessionId: string | null;
-          readonly method: string;
-        }> = [];
         const initStarted = Promise.withResolvers<void>();
         const releaseInit = Promise.withResolvers<void>();
         const reconnect3Started = Promise.withResolvers<void>();
         const releaseReconnect3 = Promise.withResolvers<void>();
-        let nextSessionOrdinal = 0;
-        const activeSessionByAuth = new Map<string, string>();
-        const bridge = yield* makeAcpMcpOverAcpBridge({
-          endpoint: "http://127.0.0.1:43123/mcp",
-          authorization: "Bearer run-1-token",
-          allocateConnectionId: Effect.succeed("conn-init-race"),
-          fetchImplementation: async (_input, init) => {
-            const headers = new Headers(init?.headers);
-            const auth = headers.get("authorization") ?? "";
-            const incomingSid = headers.get("mcp-session-id");
-            const body = JSON.parse(String(init?.body)) as {
-              id?: number;
-              method: string;
-              params?: { name?: string };
-            };
-            seen.push({ authorization: auth, sessionId: incomingSid, method: body.method });
-            if (body.method === "initialize") {
-              if (auth === "Bearer run-1-token") {
-                initStarted.resolve();
-                await releaseInit.promise;
-              }
-              if (auth === "Bearer run-3-token") {
-                reconnect3Started.resolve();
-                await releaseReconnect3.promise;
-              }
-              const sid = `session-${++nextSessionOrdinal}`;
-              activeSessionByAuth.set(auth, sid);
-              return new Response(
-                JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: body.id,
-                  result: { protocolVersion: "2025-06-18", capabilities: {} },
-                }),
-                { headers: { "content-type": "application/json", "mcp-session-id": sid } },
-              );
+        const { bridge, seen, init, callTool } = yield* makeStatefulBridge({
+          onRequest: async (auth, body) => {
+            if (body.method === "initialize" && auth === "Bearer run-1-token") {
+              initStarted.resolve();
+              await releaseInit.promise;
             }
-            const expectedSid = activeSessionByAuth.get(auth);
-            if (!incomingSid || incomingSid !== expectedSid) {
-              return new Response("Mcp-Session-Id does not exist", { status: 400 });
+            if (body.method === "initialize" && auth === "Bearer run-3-token") {
+              reconnect3Started.resolve();
+              await releaseReconnect3.promise;
             }
-            if (body.method === "notifications/initialized") {
-              return new Response(null, { status: 202 });
-            }
-            return new Response(
-              JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
-              { headers: { "content-type": "application/json", "mcp-session-id": incomingSid } },
-            );
+            return undefined;
           },
         });
 
         // 1. Auth rotates while initial initialize is still in flight; subsequent call must reconnect.
-        const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
-        const initFiber = yield* bridge
-          .message({
-            connectionId,
-            method: "initialize",
-            params: {
-              protocolVersion: "2025-06-18",
-              capabilities: {},
-              clientInfo: { name: "acp" },
-            },
-          })
-          .pipe(Effect.forkChild);
+        const initFiber = yield* init().pipe(Effect.forkChild);
         yield* Effect.promise(() => initStarted.promise);
         bridge.setAuthorization("Bearer run-2-token");
         releaseInit.resolve();
         yield* Fiber.join(initFiber);
 
-        expect(
-          yield* bridge.message({
-            connectionId,
-            method: "tools/call",
-            params: { name: "after_init_race" },
-          }),
-        ).toEqual({ content: [] });
+        expect(yield* callTool("after_init_race")).toEqual({ content: [] });
 
         // 2. A gen-3 call waiting on reconnect while auth rotates to gen-4 is rejected before posting.
         bridge.setAuthorization("Bearer run-3-token");
-        const waitingGen3 = yield* bridge
-          .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
-          .pipe(Effect.flip, Effect.forkChild);
+        const waitingGen3 = yield* callTool().pipe(Effect.flip, Effect.forkChild);
         yield* Effect.promise(() => reconnect3Started.promise);
         bridge.setAuthorization("Bearer run-4-token");
         releaseReconnect3.resolve();
@@ -467,78 +428,35 @@ describe("AcpMcpOverAcpBridge", () => {
         return;
       }
 
-      const methods: Array<string> = [];
       let nextInitMode: "ok" | "error" | "malformed" = "ok";
-      const bridge = yield* makeAcpMcpOverAcpBridge({
-        endpoint: "http://127.0.0.1:43123/mcp",
-        authorization: "Bearer run-1-token",
-        allocateConnectionId: Effect.succeed("conn-init-err"),
-        fetchImplementation: async (_input, init) => {
-          const body = JSON.parse(String(init?.body)) as { id?: number; method: string };
-          methods.push(body.method);
-          if (body.method === "initialize") {
-            const mode = nextInitMode;
-            nextInitMode = "ok";
-            if (mode === "error") {
-              return new Response(
-                JSON.stringify({
-                  jsonrpc: "2.0",
-                  id: body.id,
-                  error: { code: -32000, message: "initialize rejected" },
-                }),
-                { headers: { "content-type": "application/json" } },
-              );
-            }
-            if (mode === "malformed") {
-              return new Response(JSON.stringify({ jsonrpc: "2.0", id: body.id }), {
-                headers: { "content-type": "application/json" },
-              });
-            }
-            return new Response(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                id: body.id,
-                result: { protocolVersion: "2025-06-18", capabilities: {} },
-              }),
-              { headers: { "content-type": "application/json", "mcp-session-id": "sid-ok" } },
-            );
+      const { bridge, seen, init, callTool } = yield* makeStatefulBridge({
+        onRequest: async (_auth, body) => {
+          if (body.method !== "initialize") return undefined;
+          const mode = nextInitMode;
+          nextInitMode = "ok";
+          if (mode === "error") {
+            return jsonResponse({
+              jsonrpc: "2.0",
+              id: body.id,
+              error: { code: -32000, message: "initialize rejected" },
+            });
           }
-          if (body.method === "notifications/initialized") {
-            return new Response(null, { status: 202 });
+          if (mode === "malformed") {
+            return jsonResponse({ jsonrpc: "2.0", id: body.id });
           }
-          return new Response(
-            JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { content: [] } }),
-            { headers: { "content-type": "application/json", "mcp-session-id": "sid-ok" } },
-          );
+          return undefined;
         },
       });
-      const { connectionId } = yield* bridge.connect({ serverId: "t3-code" });
-      yield* bridge.message({
-        connectionId,
-        method: "initialize",
-        params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "acp" } },
-      });
+      yield* init();
       bridge.setAuthorization("Bearer run-2-token");
       nextInitMode = "error";
-      const failedError = yield* bridge
-        .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
-        .pipe(Effect.flip);
-      expect(failedError.message).toContain("initialize rejected");
+      expect((yield* callTool().pipe(Effect.flip)).message).toContain("initialize rejected");
       nextInitMode = "malformed";
-      const failedMalformed = yield* bridge
-        .message({ connectionId, method: "tools/call", params: { name: "t3_submit_output" } })
-        .pipe(Effect.flip);
-      expect(failedMalformed.message).toContain("valid initialize response");
-      expect(methods).toEqual(["initialize", "initialize", "initialize"]);
+      expect((yield* callTool().pipe(Effect.flip)).message).toContain("valid initialize response");
+      expect(seen.map((entry) => entry.method)).toEqual(["initialize", "initialize", "initialize"]);
       // Next call still retries reconnect because needsReconnect stayed true.
-      expect(
-        yield* bridge.message({
-          connectionId,
-          method: "tools/call",
-          params: { name: "t3_submit_output" },
-        }),
-      ).toEqual({ content: [] });
-      expect(methods).toEqual([
+      expect(yield* callTool()).toEqual({ content: [] });
+      expect(seen.map((entry) => entry.method)).toEqual([
         "initialize",
         "initialize",
         "initialize",
@@ -550,41 +468,14 @@ describe("AcpMcpOverAcpBridge", () => {
       // An agent-issued initialize with an error or malformed response does not clear needsReconnect.
       bridge.setAuthorization("Bearer run-3-token");
       nextInitMode = "error";
-      const explicitError = yield* bridge
-        .message({
-          connectionId,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            clientInfo: { name: "acp" },
-          },
-        })
-        .pipe(Effect.flip);
-      expect(explicitError.message).toContain("initialize rejected");
+      expect((yield* init().pipe(Effect.flip)).message).toContain("initialize rejected");
       nextInitMode = "malformed";
-      const explicitMalformed = yield* bridge
-        .message({
-          connectionId,
-          method: "initialize",
-          params: {
-            protocolVersion: "2025-06-18",
-            capabilities: {},
-            clientInfo: { name: "acp" },
-          },
-        })
-        .pipe(Effect.flip);
+      const explicitMalformed = yield* init().pipe(Effect.flip);
       expect(explicitMalformed._tag).toBe("AcpMcpOverAcpError");
       expect(explicitMalformed.message).toContain("valid initialize response");
-      const methodsBeforeRecovery = methods.length;
-      expect(
-        yield* bridge.message({
-          connectionId,
-          method: "tools/call",
-          params: { name: "t3_submit_output" },
-        }),
-      ).toEqual({ content: [] });
-      expect(methods.slice(methodsBeforeRecovery)).toEqual([
+      const methodsBeforeRecovery = seen.length;
+      expect(yield* callTool()).toEqual({ content: [] });
+      expect(seen.slice(methodsBeforeRecovery).map((entry) => entry.method)).toEqual([
         "initialize",
         "notifications/initialized",
         "tools/call",

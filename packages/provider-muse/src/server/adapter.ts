@@ -1928,15 +1928,14 @@ export const makeMuseAdapterV2 = Effect.fn("makeMuseAdapterV2")(function* (
           thread !== undefined &&
           (!requestedId || requestedId === nativeSessionId) &&
           thread.appThreadId === args.threadId;
+        if (thread && !sameThread) {
+          return yield* protocolError("Open a new host to attach another Muse session");
+        }
         if (
           thread !== undefined &&
-          sameThread &&
           registeredMcpAuthorization === mcpSession?.authorizationHeader
         ) {
           return thread;
-        }
-        if (thread && !sameThread) {
-          return yield* protocolError("Open a new host to attach another Muse session");
         }
         let missingNativeSession = false;
         return yield* Effect.gen(function* () {
