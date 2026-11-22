@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   applyPullRequestSummaryEdits,
   createLinkedPullRequestSummaryAtomFamily,
@@ -538,31 +539,45 @@ function savedPullRequestKey(
     : `${environmentId}:${threadPullRequestKeyOf({ ...reference, host: reference.host })}`;
 }
 
-// Any thread's streaming tick rebuilds the map below from every linked pull request. Links keep
-// their identity until they change, so each link's URL is parsed once, not once per tick.
-const savedLinkSummaries = new WeakMap<
-  ThreadPullRequestLink,
-  { readonly projectId: ProjectId; readonly summary: PullRequestSummary | null }
->();
-
-function savedLinkSummary(link: ThreadPullRequestLink, projectId: ProjectId) {
-  const cached = savedLinkSummaries.get(link);
-  if (cached?.projectId === projectId) return cached.summary;
-  const summary = threadPullRequestLinkToSummary(link, projectId);
-  savedLinkSummaries.set(link, { projectId, summary });
-  return summary;
+function sameSavedLinkSources(
+  previous: ReadonlyArray<EnvironmentThreadShell>,
+  next: ReadonlyArray<EnvironmentThreadShell>,
+): boolean {
+  return (
+    previous.length === next.length &&
+    next.every((thread, index) => {
+      const before = previous[index]!;
+      return (
+        before.environmentId === thread.environmentId &&
+        before.projectId === thread.projectId &&
+        (before.pullRequests === thread.pullRequests ||
+          (before.pullRequests.length === 0 && thread.pullRequests.length === 0))
+      );
+    })
+  );
 }
 
+// Every streaming tick replaces a thread shell. The shell reducer keeps unchanged links arrays,
+// so the map, and every summary atom reading it, stays put until a link actually changes.
+let previousSavedLinkSources: ReadonlyArray<EnvironmentThreadShell> = [];
+let previousSavedSummaries = new Map<string, PullRequestSummary>();
 const savedPullRequestSummariesAtom = Atom.make((get) => {
+  const threads = get(environmentThreadShells.threadShellsAtom);
+  if (sameSavedLinkSources(previousSavedLinkSources, threads)) {
+    previousSavedLinkSources = threads;
+    return previousSavedSummaries;
+  }
   const summaries = new Map<string, PullRequestSummary>();
-  for (const thread of get(environmentThreadShells.threadShellsAtom)) {
+  for (const thread of threads) {
     for (const link of visibleThreadPullRequests(thread.pullRequests)) {
-      const summary = savedLinkSummary(link, thread.projectId);
+      const summary = threadPullRequestLinkToSummary(link, thread.projectId);
       if (summary === null) continue;
-      const key = `${thread.environmentId}:${threadPullRequestKeyOf(link)}`;
+      const key = savedPullRequestKey(thread.environmentId, link);
       summaries.set(key, newestPullRequestSummary(summaries.get(key) ?? null, summary) ?? summary);
     }
   }
+  previousSavedLinkSources = threads;
+  previousSavedSummaries = summaries;
   return summaries;
 });
 
