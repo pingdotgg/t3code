@@ -260,7 +260,7 @@ function safeDimensions(
   );
 }
 
-function pngDimensions(buffer: Buffer): ImageDimensions | null {
+export function pngDimensions(buffer: Buffer): ImageDimensions | null {
   if (!buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE) || buffer.byteLength < 24) {
     return null;
   }

@@ -76,7 +76,7 @@ it.each(["https://example.com/image.png", `data:image/png;base64,${sourcePng.toS
     expect(native.createFromBuffer).toHaveBeenCalledWith(sourcePng);
     const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
     expect(blob.type).toBe("image/png");
-    expect(Buffer.from(await blob.arrayBuffer())).toEqual(Buffer.from("png"));
+    expect(Buffer.from(await blob.arrayBuffer())).toEqual(sourcePng);
   },
 );
 
@@ -93,6 +93,12 @@ it.each([
   expect(contents.copyImageAt).not.toHaveBeenCalled();
   const blob = native.write.mock.calls[0]?.[0][0].blobs["image/png"] as Blob;
   expect(Buffer.from(await blob.arrayBuffer())).toEqual(pngWithText);
+});
+
+it("falls back to Chromium's copy for a thread image it cannot fetch", async () => {
+  await copyImage({ frame: mainFrame, srcURL: "blob:https://example.com/image" });
+  expect(native.fetch).not.toHaveBeenCalled();
+  expect(contents.copyImageAt).toHaveBeenCalledWith(12, 34);
 });
 
 it.each([
@@ -188,6 +194,11 @@ it("rejects large decoded dimensions before image allocation", async () => {
 });
 
 it("preserves the clipboard when the encoded PNG exceeds the limit", async () => {
+  native.fetch.mockResolvedValue(
+    new Response(
+      Uint8Array.from(Buffer.from("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAkQBADs=", "base64")),
+    ),
+  );
   native.image.toPNG.mockReturnValueOnce(Buffer.alloc(32 * 1024 * 1024 + 1));
   await expect(copyImage()).rejects.toThrow("size limit");
   expect(native.write).not.toHaveBeenCalled();

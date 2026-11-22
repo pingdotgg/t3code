@@ -1,5 +1,5 @@
 import * as Electron from "electron";
-import { sourceDimensions } from "../preview/FaviconCapture.ts";
+import { pngDimensions, sourceDimensions } from "../preview/FaviconCapture.ts";
 
 const MAX_IMAGE_BYTES = 32 * 1024 * 1024;
 
@@ -9,17 +9,26 @@ export async function copyContextMenuImage(
 ): Promise<void> {
   const frame = params.frame;
   if (contents.isDestroyed() || !frame || frame.isDestroyed()) return;
-  if (frame === contents.mainFrame) {
-    contents.copyImageAt(params.x, params.y);
-    return;
+  if (frame !== contents.mainFrame) return copyFetchedImage(contents, frame, params.srcURL);
+  // copyImageAt re-encodes the decoded bitmap, dropping PNG metadata; keep it for unfetchable URLs.
+  try {
+    await copyFetchedImage(contents, frame, params.srcURL);
+  } catch {
+    if (!contents.isDestroyed() && !frame.isDestroyed()) contents.copyImageAt(params.x, params.y);
   }
+}
 
-  const url = new URL(params.srcURL);
+async function copyFetchedImage(
+  contents: Electron.WebContents,
+  frame: Electron.WebFrameMain,
+  srcURL: string,
+): Promise<void> {
+  const url = new URL(srcURL);
   if (
     !["https:", "http:", "data:"].includes(url.protocol) ||
     url.username ||
     url.password ||
-    (url.protocol === "data:" && params.srcURL.length > MAX_IMAGE_BYTES * 3)
+    (url.protocol === "data:" && srcURL.length > MAX_IMAGE_BYTES * 3)
   ) {
     throw new Error("Unsupported image URL");
   }
@@ -92,7 +101,7 @@ export async function copyContextMenuImage(
     if (!(decoded instanceof ArrayBuffer)) throw new Error("Image could not be decoded");
     png = Buffer.from(decoded);
   } else {
-    png = image.toPNG();
+    png = pngDimensions(bytes) ? bytes : image.toPNG();
   }
   if (png.byteLength > MAX_IMAGE_BYTES) throw new Error("PNG exceeded the size limit");
   if (contents.isDestroyed() || frame.isDestroyed()) return;
