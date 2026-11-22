@@ -8,6 +8,14 @@
  * list of keys. The module also includes type-level helpers for simplifying and
  * merging object shapes.
  *
+ * Field traversal uses own enumerable string and symbol properties, matching
+ * object spread. Non-enumerable and inherited properties are ignored. This also
+ * applies to the field definitions passed to comparison and combination
+ * constructors. These constructors read selected properties from their input
+ * values even when those properties are non-enumerable or inherited. `keys`
+ * deliberately lists only own enumerable string keys, and `get` performs direct
+ * property access.
+ *
  * @stability stable
  * @since 2.0.0
  */
@@ -130,6 +138,7 @@ export type Assign<T, U> = Simplify<keyof T & keyof U extends never ? T & U : Om
  * **Details**
  *
  * The return type is narrowed to `S[K]`.
+ * The selected property may be non-enumerable or inherited; keys are not enumerated.
  *
  * **Example** (Extracting a property in a pipeline)
  *
@@ -160,7 +169,8 @@ export const get: {
  *
  * **Gotchas**
  *
- * Symbol keys are excluded; only string keys are returned.
+ * Only own enumerable string keys are returned. Symbol keys, non-enumerable
+ * properties, and inherited properties are excluded.
  *
  * **Example** (Reading typed keys)
  *
@@ -188,6 +198,11 @@ export const keys = <S extends object>(self: S): Array<(keyof S) & string> =>
  * **When to use**
  *
  * Use to narrow a struct down to a subset of its properties.
+ *
+ * **Details**
+ *
+ * Copies only own enumerable string and symbol properties of the input.
+ * Non-enumerable and inherited properties are ignored even if listed in `keys`.
  *
  * **Gotchas**
  *
@@ -226,6 +241,11 @@ export const pick: {
  * **When to use**
  *
  * Use to exclude sensitive or irrelevant fields from a struct.
+ *
+ * **Details**
+ *
+ * Copies only own enumerable string and symbol properties of the input, except
+ * for the specified keys. Non-enumerable and inherited properties are ignored.
  *
  * **Gotchas**
  *
@@ -268,6 +288,8 @@ export const omit: {
  * **Details**
  *
  * The result type is `Simplify<Assign<S, O>>`.
+ * Copies only own enumerable string and symbol properties from each input.
+ * Non-enumerable and inherited properties are ignored.
  *
  * **Example** (Merging structs with overlapping keys)
  *
@@ -313,6 +335,9 @@ type Evolved<S, E> = Simplify<
  *
  * Each transform function receives the current value and returns the new value;
  * the return type can differ from the input type.
+ * Traverses only own enumerable string and symbol properties of `self`.
+ * Non-enumerable and inherited source properties are ignored. Matching functions
+ * must be own properties of `e`, but may be non-enumerable.
  *
  * **Example** (Transforming selected values)
  *
@@ -364,6 +389,9 @@ type KeyEvolved<S, E> = Simplify<
  *
  * Each transform function receives the key name and must return a new
  * `PropertyKey`.
+ * Traverses only own enumerable string and symbol properties of `self`.
+ * Non-enumerable and inherited source properties are ignored. Matching functions
+ * must be own properties of `e`, but may be non-enumerable.
  *
  * **Example** (Renaming keys with functions)
  *
@@ -420,6 +448,9 @@ type EntryEvolved<S, E> = {
  * **Details**
  *
  * The return type is fully tracked at the type level.
+ * Traverses only own enumerable string and symbol properties of `self`.
+ * Non-enumerable and inherited source properties are ignored. Matching functions
+ * must be own properties of `e`, but may be non-enumerable.
  *
  * **Example** (Transforming keys and values together)
  *
@@ -463,6 +494,9 @@ export const evolveEntries: {
  * **Details**
  *
  * For computed key names, use {@link evolveKeys} instead.
+ * Traverses only own enumerable string and symbol properties of `self`.
+ * Non-enumerable and inherited source properties are ignored. Matching entries
+ * must be own properties of `mapping`, but may be non-enumerable.
  *
  * **Example** (Renaming keys)
  *
@@ -509,6 +543,9 @@ export const renameKeys: {
  * This is an alias of `Equivalence.Struct`. Each property's equivalence is
  * checked independently; all must return `true` for the overall result to be
  * `true`.
+ * Only own enumerable string and symbol properties of `fields` define
+ * comparisons. Non-enumerable and inherited definitions are ignored.
+ * Selected properties on the compared values may be non-enumerable or inherited.
  *
  * **Example** (Comparing structs for equivalence)
  *
@@ -545,6 +582,10 @@ export const makeEquivalence = Equivalence.Struct
  *
  * This is an alias of `Order.Struct`. The order of keys in the `fields` object
  * determines comparison priority.
+ * Only own enumerable string and symbol properties of `fields` define
+ * comparisons. Non-enumerable and inherited definitions are ignored. String
+ * fields take precedence over symbol fields.
+ * Selected properties on the compared values may be non-enumerable or inherited.
  *
  * **Example** (Ordering structs by name then age)
  *
@@ -693,6 +734,8 @@ export const lambda = <L extends (a: any) => any>(
  *
  * The lambda must be created with {@link lambda} so the compiler can track the
  * output types.
+ * Only own enumerable string and symbol properties of the input are mapped.
+ * Non-enumerable and inherited properties are ignored.
  *
  * **Example** (Wrapping every value in an array)
  *
@@ -738,6 +781,11 @@ export const map: {
  * **When to use**
  *
  * Use when you want to apply the same transformation to a subset of properties.
+ *
+ * **Details**
+ *
+ * Traverses only own enumerable string and symbol properties of the input.
+ * Non-enumerable and inherited properties are ignored even if listed in `keys`.
  *
  * **Example** (Wrapping only selected values in arrays)
  *
@@ -793,6 +841,11 @@ export const mapPick: {
  * **When to use**
  *
  * Use when most keys should be transformed but a few should be preserved.
+ *
+ * **Details**
+ *
+ * Traverses only own enumerable string and symbol properties of the input.
+ * Non-enumerable and inherited properties are ignored, whether mapped or copied.
  *
  * **Example** (Wrapping all values except one in arrays)
  *
@@ -862,8 +915,7 @@ function buildStruct<
   f: f
 ): any {
   const out: Record<PropertyKey, unknown> = {}
-  for (const k of Reflect.ownKeys(source) as Array<keyof S>) {
-    if (!Object.prototype.propertyIsEnumerable.call(source, k)) continue
+  for (const k of InternalRecord.ownEnumerableKeys(source) as Array<keyof S>) {
     const res = f(k, source[k])
     if (res) {
       const [nk, nv] = res
@@ -887,6 +939,9 @@ function buildStruct<
  *
  * Pass `omitKeyWhen` to drop properties whose merged value matches a predicate,
  * such as omitting zero counters.
+ * Only own enumerable string and symbol properties of `combiners` define fields.
+ * Non-enumerable and inherited definitions are ignored. Selected properties
+ * on the combined values may be non-enumerable or inherited.
  *
  * **Example** (Combining struct properties)
  *
@@ -914,7 +969,7 @@ export function makeCombiner<A>(
 ): Combiner.Combiner<A> {
   const omitKeyWhen = options?.omitKeyWhen ?? (() => false)
   return Combiner.make((self, that) => {
-    const keys = Reflect.ownKeys(combiners) as Array<keyof A>
+    const keys = InternalRecord.ownEnumerableKeys(combiners) as Array<keyof A>
     const out = {} as A
     for (const key of keys) {
       const merge = combiners[key].combine(self[key], that[key])
@@ -940,6 +995,10 @@ export function makeCombiner<A>(
  *
  * Pass `omitKeyWhen` to drop properties whose reduced value matches a
  * predicate.
+ * Only own enumerable string and symbol properties of `reducers` define fields,
+ * both for the initial value and for combination. Non-enumerable and inherited
+ * definitions are ignored. Selected properties on the combined values may be
+ * non-enumerable or inherited.
  *
  * **Example** (Reducing a collection of structs)
  *
@@ -972,7 +1031,7 @@ export function makeReducer<A>(
 ): Reducer.Reducer<A> {
   const combine = makeCombiner(reducers, options).combine
   const initialValue = {} as A
-  for (const key of Reflect.ownKeys(reducers) as Array<keyof A>) {
+  for (const key of InternalRecord.ownEnumerableKeys(reducers) as Array<keyof A>) {
     const iv = reducers[key].initialValue
     if (options?.omitKeyWhen?.(iv)) continue
     InternalRecord.assignProperty(initialValue as object, key, iv)

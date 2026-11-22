@@ -89,6 +89,15 @@ Claude Code holds the turn until that window reopens, so it can keep showing as
 working. Wait for the reset, or stop the turn and continue later. The warning's
 timestamp shows when the displayed wait started.
 
+## Steering
+
+A steer waits until Claude finishes the tool calls it is running, then Claude reads it
+in the same turn. The message shows as unread until then. If Claude drops it before
+reading it, the message is sent as the next turn, after any messages queued before it.
+If Claude exits or the server restarts first, the message waits in the queue in that
+same place until you resume it. If you press Stop, T3 Code shows a notice with the text
+of any steer Claude had not read.
+
 ## Skills
 
 Claude skills come from the config directory's `skills` folder and the project's
@@ -108,6 +117,15 @@ To show Claude task lists in the web and desktop apps, add
 `CLAUDE_CODE_ENABLE_TODO_TOOLS=1` under **Variables** in the Claude instance's
 **Environment** section in **Settings > Providers**. Each update shows as a Tasks
 row in the thread; open it to see every step.
+
+## Sign in to an MCP server
+
+When an MCP server you added to Claude needs you to sign in, the thread shows a notice with
+**Sign in**, once per session; on mobile, tap the notice. Approve access on the page it opens. Your
+browser then goes to a page that may not load, especially when Claude runs on another machine:
+copy that page's address, paste it into T3 Code, and choose **Finish sign-in**. Claude keeps the
+sign-in and reconnects the server. Connectors you added on claude.ai are signed in on claude.ai,
+so T3 Code doesn't ask about them. Signing in needs permission to manage providers.
 
 ## Claude in Chrome
 
