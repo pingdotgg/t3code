@@ -569,4 +569,97 @@ describe("Electronics parsers, path tracer, validator, and MNA simulator", () =>
     expect(cjTrace.connected).toBe(true);
     expect(cjTrace.directNet).toBe("SHARED_BUS");
   });
+
+  it("handles deep (extends ...) chains in O(N), PCB T-junctions, PCB passive copper checks, and exact AC ranges", () => {
+    // Deep 30-level derived symbol chain must resolve quickly without exponential blowup
+    const libEntries: string[] = [
+      `    (symbol "Base:Sym0" (symbol "Sym0_1_1" (pin passive line (at 0 0 0) (length 1) (name "1") (number "1"))))`,
+    ];
+    for (let i = 1; i <= 30; i += 1) {
+      libEntries.push(`    (symbol "Base:Sym${i}" (extends "Base:Sym${i - 1}"))`);
+    }
+    const deepExtendsSch = `(kicad_sch
+  (lib_symbols
+${libEntries.join("\n")}
+  )
+  (symbol (lib_id "Base:Sym30") (at 10 10 0) (unit 1) (property "Reference" "R1") (property "Value" "10k"))
+)`;
+    const deepModel = parseElectronicsFile("sch/deep_extends.kicad_sch", deepExtendsSch);
+    expect(deepModel.components.find((c) => c.ref === "R1")?.pins).toHaveLength(1);
+
+    // PCB T-junction: (0,0)->(10,0) with branch (5,0)->(5,5) must connect R1.1, R2.1, and R3.1
+    const tJunctionPcb = `(kicad_pcb
+  (footprint "R_0603" (layer "F.Cu") (at 0 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "BUS"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R2") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "BUS"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 5 5)
+    (property "Reference" "R3") (property "Value" "1k")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "BUS"))
+  )
+  (segment (start 0 0) (end 10 0) (width 0.25) (layer "F.Cu") (net "BUS"))
+  (segment (start 5 0) (end 5 5) (width 0.25) (layer "F.Cu") (net "BUS"))
+)`;
+    const tjModel = parseElectronicsFile("pcb/tjunction.kicad_pcb", tJunctionPcb);
+    const tjVal = runBuiltinCircuitValidation(tjModel);
+    expect(tjVal.issues.some((i) => i.code === "unrouted_pcb_net")).toBe(false);
+    expect(traceCircuitPath(tjModel, { from: "R1.1", to: "R3.1" }).connected).toBe(true);
+
+    // PCB multi-hop passive trace: J1.1 -> R1 -> J2.1 with ZERO tracks must return connected: false
+    const unroutedPassivePcb = `(kicad_pcb
+  (footprint "Conn" (layer "F.Cu") (at 0 0)
+    (property "Reference" "J1") (property "Value" "IN")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "NET_A"))
+  )
+  (footprint "R_0603" (layer "F.Cu") (at 10 0)
+    (property "Reference" "R1") (property "Value" "1k")
+    (pad "1" smd rect (at -1 0) (size 0.6 0.6) (layers "F.Cu") (net "NET_A"))
+    (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "NET_B"))
+  )
+  (footprint "Conn" (layer "F.Cu") (at 20 0)
+    (property "Reference" "J2") (property "Value" "OUT")
+    (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "NET_B"))
+  )
+)`;
+    const unroutedModel = parseElectronicsFile(
+      "pcb/unrouted_passive.kicad_pcb",
+      unroutedPassivePcb,
+    );
+    const unroutedTrace = traceCircuitPath(unroutedModel, { from: "J1.1", to: "J2.1" });
+    expect(unroutedTrace.connected).toBe(false);
+    expect(unroutedTrace.warnings.some((w) => /unrouted/i.test(w))).toBe(true);
+
+    // Once copper tracks route both NET_A and NET_B, the same passive path connects with 1000 Ω
+    const routedPassivePcb = `${unroutedPassivePcb.slice(0, -1)}
+  (segment (start 0 0) (end 9 0) (width 0.25) (layer "F.Cu") (net "NET_A"))
+  (segment (start 11 0) (end 20 0) (width 0.25) (layer "F.Cu") (net "NET_B"))
+)`;
+    const routedModel = parseElectronicsFile("pcb/routed_passive.kicad_pcb", routedPassivePcb);
+    const routedTrace = traceCircuitPath(routedModel, { from: "J1.1", to: "J2.1" });
+    expect(routedTrace.connected).toBe(true);
+    expect(routedTrace.estimatedResistanceOhms).toBeCloseTo(1000, 3);
+
+    // Explicit narrow AC sweep 100..200 Hz must stop at 200 Hz (not 1000 Hz) and reject reversed range
+    const rcModel = parseElectronicsFile(
+      "sim/narrow_ac.cir",
+      "* Narrow AC\nV1 in 0 AC 1\nR1 in out 1k\nC1 out 0 100n\n.end\n",
+    );
+    const narrowAc = runBuiltinMnaSimulation(rcModel, {
+      kind: "ac_sweep",
+      outputNode: "OUT",
+      startFreqHz: 100,
+      stopFreqHz: 200,
+      pointsPerDecade: 12,
+    });
+    const pts = narrowAc.series[0]!.points;
+    expect(pts[0]!.x).toBeCloseTo(100, 1);
+    expect(pts[pts.length - 1]!.x).toBeCloseTo(200, 1);
+    expect(() =>
+      runBuiltinMnaSimulation(rcModel, { kind: "ac_sweep", startFreqHz: 200, stopFreqHz: 100 }),
+    ).toThrow(/stopFreqHz > startFreqHz/i);
+  });
 });

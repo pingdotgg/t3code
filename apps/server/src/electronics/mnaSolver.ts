@@ -525,10 +525,19 @@ export function runBuiltinMnaSimulation(
   };
 
   const dc = solveDc();
+  const resolveRequestedOutputNode = (raw?: string): string | undefined => {
+    if (!raw) return undefined;
+    if (nodeIndex.has(raw)) return raw;
+    if (model.format === "spice") {
+      const lower = raw.trim().toLowerCase();
+      if (nodeIndex.has(lower)) return lower;
+    }
+    const ciMatches = nonGroundNodes.filter((n) => n.toLowerCase() === raw.trim().toLowerCase());
+    return ciMatches.length === 1 ? ciMatches[0] : undefined;
+  };
   const targetNode =
-    options.outputNode && nodeIndex.has(options.outputNode)
-      ? options.outputNode
-      : chooseDefaultOutputNode(nonGroundNodes, voltageSources, isRefNode);
+    resolveRequestedOutputNode(options.outputNode) ??
+    chooseDefaultOutputNode(nonGroundNodes, voltageSources, isRefNode);
 
   if (kind === "dc_op") {
     const totalPowerW = dc.componentReadings
@@ -568,8 +577,18 @@ export function runBuiltinMnaSimulation(
       );
     }
 
-    const startFreq = Math.max(0.1, options.startFreqHz ?? 10);
-    const stopFreq = Math.max(startFreq * 10, options.stopFreqHz ?? 1_000_000);
+    const startFreq = options.startFreqHz ?? 10;
+    const stopFreq = options.stopFreqHz ?? Math.max(1_000_000, startFreq * 10);
+    if (
+      !Number.isFinite(startFreq) ||
+      !Number.isFinite(stopFreq) ||
+      startFreq <= 0 ||
+      stopFreq <= startFreq
+    ) {
+      throw new Error(
+        "AC sweep requires positive finite startFreqHz and stopFreqHz with stopFreqHz > startFreqHz.",
+      );
+    }
     const ptsPerDecade = options.pointsPerDecade ?? 12;
     const decades = Math.log10(stopFreq / startFreq);
     const totalPts = Math.min(200, Math.max(10, Math.round(decades * ptsPerDecade) + 1));

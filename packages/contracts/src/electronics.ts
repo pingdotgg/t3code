@@ -320,6 +320,7 @@ export const ElectronicsThreadSession = Schema.Struct({
   lastValidation: Schema.optional(ElectronicsValidationReport),
   lastSimulation: Schema.optional(ElectronicsSimulationResult),
   openedAt: Schema.String,
+  panelOpenedAt: Schema.optional(Schema.String),
   updatedAt: Schema.String,
 });
 export type ElectronicsThreadSession = typeof ElectronicsThreadSession.Type;
@@ -380,18 +381,18 @@ export const ElectronicsValidateInput = Schema.Struct({
 });
 export type ElectronicsValidateInput = typeof ElectronicsValidateInput.Type;
 
-const PositiveFiniteNumber = Schema.Finite.check(Schema.isGreaterThan(0));
+export const ElectronicsPositiveFiniteNumber = Schema.Finite.check(Schema.isGreaterThan(0));
 
 export const ElectronicsSimulateInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   filePath: TrimmedNonEmptyString,
   kind: Schema.optional(ElectronicsSimulationKind),
   outputNode: Schema.optional(TrimmedNonEmptyString),
-  startFreqHz: Schema.optional(PositiveFiniteNumber),
-  stopFreqHz: Schema.optional(PositiveFiniteNumber),
+  startFreqHz: Schema.optional(ElectronicsPositiveFiniteNumber),
+  stopFreqHz: Schema.optional(ElectronicsPositiveFiniteNumber),
   pointsPerDecade: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 2, maximum: 50 }))),
-  stopTimeSeconds: Schema.optional(PositiveFiniteNumber),
-  stepTimeSeconds: Schema.optional(PositiveFiniteNumber),
+  stopTimeSeconds: Schema.optional(ElectronicsPositiveFiniteNumber),
+  stepTimeSeconds: Schema.optional(ElectronicsPositiveFiniteNumber),
   useExternalToolchain: Schema.optional(Schema.Boolean),
 });
 export type ElectronicsSimulateInput = typeof ElectronicsSimulateInput.Type;

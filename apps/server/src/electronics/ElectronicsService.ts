@@ -32,7 +32,12 @@ import * as ServerSettings from "../serverSettings.ts";
 import { runBuiltinMnaSimulation } from "./mnaSolver.ts";
 import { detectElectronicsFormat, parseElectronicsFile } from "./parsers.ts";
 import { traceCircuitPath } from "./pathTracer.ts";
-import { probeBinary, runKiCadExternalValidation, runNgspiceSimulation } from "./toolchain.ts";
+import {
+  expandSpiceWorkspaceDeck,
+  probeBinary,
+  runKiCadExternalValidation,
+  runNgspiceSimulation,
+} from "./toolchain.ts";
 import { assembleValidationReport, runBuiltinCircuitValidation } from "./validator.ts";
 
 const MAX_CIRCUIT_FILE_BYTES = 5 * 1024 * 1024;
@@ -70,7 +75,7 @@ export class ElectronicsService extends Context.Service<
     readonly getState: Effect.Effect<ElectronicsServiceState>;
     readonly subscribeState: Stream.Stream<ElectronicsServiceState>;
     readonly getToolchainStatus: (
-      refresh?: boolean,
+      options?: boolean | { readonly refresh?: boolean; readonly allowSpawn?: boolean },
     ) => Effect.Effect<ElectronicsToolchainStatus, ElectronicsError>;
     readonly listFiles: (
       cwd: string,
@@ -147,8 +152,10 @@ export const layer = Layer.effect(
     });
 
     const probeToolchain = Effect.fn("ElectronicsService.probeToolchain")(function* (
-      forceRefresh = false,
+      options: { readonly forceRefresh?: boolean; readonly allowSpawn?: boolean } = {},
     ) {
+      const forceRefresh = options.forceRefresh ?? false;
+      const allowSpawn = options.allowSpawn ?? true;
       const settings = yield* getSettings;
       const kicadPath = settings.electronicsKicadCliPath.trim();
       const ngspicePath = settings.electronicsNgspicePath.trim();
@@ -164,27 +171,55 @@ export const layer = Layer.effect(
       ) {
         return cached.status;
       }
-      const [kicadCli, ngspice] = settings.electronicsAllowExternalTools
-        ? yield* Effect.all([
-            probeBinary("kicad-cli", kicadPath).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            ),
-            probeBinary("ngspice", ngspicePath).pipe(
-              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-            ),
-          ])
-        : [
-            {
-              name: "kicad-cli" as const,
-              available: false,
-              error: "External tools disabled in Settings → Electronics.",
-            },
-            {
-              name: "ngspice" as const,
-              available: false,
-              error: "External tools disabled in Settings → Electronics.",
-            },
-          ];
+      if (!settings.electronicsAllowExternalTools) {
+        const status: ElectronicsToolchainStatus = {
+          enabled: settings.enableElectronicsWorkbench,
+          allowExternalTools: false,
+          agentAccessEnabled: settings.enableAgentElectronicsAccess,
+          kicadCli: {
+            name: "kicad-cli" as const,
+            available: false,
+            error: "External tools disabled in Settings → Electronics.",
+          },
+          ngspice: {
+            name: "ngspice" as const,
+            available: false,
+            error: "External tools disabled in Settings → Electronics.",
+          },
+          checkedAt: DateTime.formatIso(yield* DateTime.now),
+        };
+        yield* Ref.set(toolchainCacheRef, { status, kicadPath, ngspicePath });
+        return status;
+      }
+      if (!allowSpawn) {
+        return {
+          enabled: settings.enableElectronicsWorkbench,
+          allowExternalTools: true,
+          agentAccessEnabled: settings.enableAgentElectronicsAccess,
+          kicadCli: {
+            name: "kicad-cli" as const,
+            available: false,
+            error: "Not yet probed.",
+          },
+          ngspice: {
+            name: "ngspice" as const,
+            available: false,
+            error: "Not yet probed.",
+          },
+          checkedAt: DateTime.formatIso(yield* DateTime.now),
+        } satisfies ElectronicsToolchainStatus;
+      }
+
+      const [kicadCli, ngspice] = yield* externalToolSemaphore.withPermits(1)(
+        Effect.all([
+          probeBinary("kicad-cli", kicadPath).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+          probeBinary("ngspice", ngspicePath).pipe(
+            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          ),
+        ]),
+      );
 
       const status: ElectronicsToolchainStatus = {
         enabled: settings.enableElectronicsWorkbench,
@@ -200,7 +235,7 @@ export const layer = Layer.effect(
 
     const buildState = Effect.gen(function* () {
       const nowIso = DateTime.formatIso(yield* DateTime.now);
-      const toolchain = yield* probeToolchain(false).pipe(
+      const toolchain = yield* probeToolchain({ forceRefresh: false, allowSpawn: false }).pipe(
         Effect.orElseSucceed((): ElectronicsToolchainStatus => ({
           enabled: true,
           allowExternalTools: false,
@@ -402,7 +437,7 @@ export const layer = Layer.effect(
 
       yield* walk(rootReal, 0);
       found.sort((a, b) => a.relativePath.localeCompare(b.relativePath));
-      const toolchain = yield* probeToolchain(false);
+      const toolchain = yield* probeToolchain({ forceRefresh: false, allowSpawn: false });
       return { files: found, toolchain } satisfies ElectronicsListFilesResult;
     });
 
@@ -492,6 +527,9 @@ export const layer = Layer.effect(
               ? { lastSimulation: existing.lastSimulation }
               : {}),
             openedAt: existing?.openedAt ?? now,
+            ...(existing?.panelOpenedAt !== undefined
+              ? { panelOpenedAt: existing.panelOpenedAt }
+              : {}),
             updatedAt: now,
           }),
           startGen,
@@ -516,7 +554,7 @@ export const layer = Layer.effect(
         (input.useExternalToolchain ?? true) && settings.electronicsAllowExternalTools;
 
       if (wantExternal && (loaded.format === "kicad_sch" || loaded.format === "kicad_pcb")) {
-        const toolchain = yield* probeToolchain(false);
+        const toolchain = yield* probeToolchain({ forceRefresh: false, allowSpawn: true });
         if (toolchain.kicadCli.available) {
           const ext = yield* externalToolSemaphore.withPermits(1)(
             runKiCadExternalValidation({
@@ -572,6 +610,9 @@ export const layer = Layer.effect(
               ? { lastSimulation: existing.lastSimulation }
               : {}),
             openedAt: existing?.openedAt ?? now,
+            ...(existing?.panelOpenedAt !== undefined
+              ? { panelOpenedAt: existing.panelOpenedAt }
+              : {}),
             updatedAt: now,
           }),
           startGen,
@@ -596,7 +637,7 @@ export const layer = Layer.effect(
         (input.useExternalToolchain ?? true) && settings.electronicsAllowExternalTools;
 
       if (wantExternal && loaded.format === "spice") {
-        const toolchain = yield* probeToolchain(false);
+        const toolchain = yield* probeToolchain({ forceRefresh: false, allowSpawn: true });
         if (toolchain.ngspice.available) {
           const outcome = yield* externalToolSemaphore.withPermits(1)(
             runNgspiceSimulation({
@@ -632,9 +673,39 @@ export const layer = Layer.effect(
       }
 
       if (result === null) {
+        let simModel = loaded.model;
+        if (loaded.format === "spice" && /^\s*\.(include|inc|lib)\b/imu.test(loaded.content)) {
+          const expanded = yield* expandSpiceWorkspaceDeck({
+            spiceSource: loaded.content,
+            workspaceRoot: input.cwd,
+            sourceFilePath: loaded.absolutePath,
+          }).pipe(
+            Effect.provideService(FileSystem.FileSystem, fs),
+            Effect.provideService(Path.Path, path),
+          );
+          if (!expanded.ok) {
+            return yield* new ElectronicsError({
+              code: "simulation_failed",
+              message: `Cannot simulate SPICE deck with unresolved includes: ${expanded.reason}`,
+            });
+          }
+          if (expanded.includedCount > 0) {
+            const expandedText = `* expanded\n${expanded.lines.join("\n")}\n.end\n`;
+            simModel = yield* Effect.try({
+              try: () => parseElectronicsFile(loaded.relativePath, expandedText),
+              catch: (cause) =>
+                new ElectronicsError({
+                  code: "simulation_failed",
+                  message:
+                    cause instanceof Error ? cause.message : "Failed to parse expanded SPICE deck.",
+                  cause,
+                }),
+            });
+          }
+        }
         const builtinResult = yield* Effect.try({
           try: () =>
-            runBuiltinMnaSimulation(loaded.model, {
+            runBuiltinMnaSimulation(simModel, {
               kind,
               ...(input.outputNode !== undefined ? { outputNode: input.outputNode } : {}),
               ...(input.startFreqHz !== undefined ? { startFreqHz: input.startFreqHz } : {}),
@@ -694,6 +765,9 @@ export const layer = Layer.effect(
               : {}),
             lastSimulation: result,
             openedAt: existing?.openedAt ?? now,
+            ...(existing?.panelOpenedAt !== undefined
+              ? { panelOpenedAt: existing.panelOpenedAt }
+              : {}),
             updatedAt: now,
           }),
           startGen,
@@ -736,6 +810,7 @@ export const layer = Layer.effect(
           ? { lastSimulation: existing.lastSimulation }
           : {}),
         openedAt: existing?.openedAt ?? now,
+        panelOpenedAt: now,
         updatedAt: now,
       });
       const committed = yield* updateThreadSession(input.threadId, nextSession, startGen);
@@ -769,9 +844,11 @@ export const layer = Layer.effect(
     );
 
     const getToolchainStatus = Effect.fn("ElectronicsService.getToolchainStatus")(function* (
-      refresh = false,
+      options: boolean | { readonly refresh?: boolean; readonly allowSpawn?: boolean } = false,
     ) {
-      const status = yield* probeToolchain(refresh);
+      const refresh = typeof options === "boolean" ? options : (options.refresh ?? false);
+      const allowSpawn = typeof options === "boolean" ? true : (options.allowSpawn ?? true);
+      const status = yield* probeToolchain({ forceRefresh: refresh, allowSpawn });
       if (refresh) yield* broadcast;
       return status;
     });

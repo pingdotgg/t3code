@@ -229,13 +229,14 @@ function applyElectronicsSnapshot(
   const previous = electronicsSessionBaselines.get(environmentId);
   const next = new Map<ThreadId, string>();
   for (const session of state.sessions) {
-    // Track session identity by `openedAt` so only newly opened sessions auto-open the panel;
-    // subsequent read-only updates (trace/validate/simulate) do not steal focus or undo dismissal.
-    next.set(session.threadId, session.openedAt);
+    // Track explicit panel opens via `panelOpenedAt` so read-only trace/validate/simulate
+    // updates never auto-open or steal focus, while repeated explicit `openPanel` calls reopen cleanly.
+    if (session.panelOpenedAt === undefined) continue;
+    next.set(session.threadId, session.panelOpenedAt);
     if (
       !options.sheetLayout &&
       previous !== undefined &&
-      previous.get(session.threadId) !== session.openedAt
+      previous.get(session.threadId) !== session.panelOpenedAt
     ) {
       useRightPanelStore
         .getState()

@@ -17,9 +17,16 @@ const TRAVERSABLE_SERIES_KINDS: ReadonlySet<ElectronicsComponentKind> = new Set(
   "diode",
 ]);
 
+interface ResolvedPin {
+  readonly ref: string;
+  readonly pin: string;
+  readonly net: string;
+}
+
 interface ResolvedEndpoint {
   readonly query: string;
   readonly nets: ReadonlySet<string>;
+  readonly matchedPins: ReadonlyArray<ResolvedPin>;
   readonly componentRef?: string;
   readonly pinNumber?: string;
   readonly warnings: string[];
@@ -34,19 +41,19 @@ function resolveEndpoint(model: ElectronicsCircuitModel, rawQuery: string): Reso
   const exactCaseNet = model.nets.find((n) => n.name === query);
   if (exactCaseNet) {
     nets.add(exactCaseNet.name);
-    return { query, nets, warnings };
+    return { query, nets, matchedPins: [], warnings };
   }
   const lowerQuery = query.toLowerCase();
   const ciNetMatches = model.nets.filter((n) => n.name.toLowerCase() === lowerQuery);
   if (ciNetMatches.length === 1) {
     nets.add(ciNetMatches[0]!.name);
-    return { query, nets, warnings };
+    return { query, nets, matchedPins: [], warnings };
   }
   if (ciNetMatches.length > 1) {
     warnings.push(
       `Net query "${query}" matched multiple nets differing only by case (${ciNetMatches.map((n) => n.name).join(", ")}); specify exact case.`,
     );
-    return { query, nets, warnings };
+    return { query, nets, matchedPins: [], warnings };
   }
 
   // 2. Component.Pin or Component:Pin syntax (e.g. U1.3, U1.VOUT, J1:1) — search across all units of a multi-unit ref
@@ -59,7 +66,7 @@ function resolveEndpoint(model: ElectronicsCircuitModel, rawQuery: string): Reso
     );
     if (matchingUnits.length === 0) {
       warnings.push(`Component "${refPart}" was not found in ${model.filePath}.`);
-      return { query, nets, warnings };
+      return { query, nets, matchedPins: [], warnings };
     }
     const primaryRef = matchingUnits[0]!.ref;
     const allPins = matchingUnits.flatMap((c) => c.pins);
@@ -70,37 +77,50 @@ function resolveEndpoint(model: ElectronicsCircuitModel, rawQuery: string): Reso
     );
     if (!pin) {
       warnings.push(`Pin "${pinPart}" was not found on component ${primaryRef}.`);
-      return { query, nets, componentRef: primaryRef, warnings };
+      return { query, nets, matchedPins: [], componentRef: primaryRef, warnings };
     }
+    const matchedPins: ResolvedPin[] = [];
     if (pin.net) {
       nets.add(pin.net);
+      matchedPins.push({ ref: primaryRef, pin: pin.number, net: pin.net });
     } else {
       warnings.push(
         `Pin ${primaryRef}.${pin.number}${pin.name ? ` (${pin.name})` : ""} is unconnected.`,
       );
     }
-    return { query, nets, componentRef: primaryRef, pinNumber: pin.number, warnings };
+    return {
+      query,
+      nets,
+      matchedPins,
+      componentRef: primaryRef,
+      pinNumber: pin.number,
+      warnings,
+    };
   }
 
   // 3. Component reference match (aggregate all nets across all units of a multi-unit symbol)
   const matchingUnits = model.components.filter((c) => c.ref.toLowerCase() === query.toLowerCase());
   if (matchingUnits.length > 0) {
     const primaryRef = matchingUnits[0]!.ref;
+    const matchedPins: ResolvedPin[] = [];
     for (const unit of matchingUnits) {
       for (const pin of unit.pins) {
-        if (pin.net) nets.add(pin.net);
+        if (pin.net) {
+          nets.add(pin.net);
+          matchedPins.push({ ref: unit.ref, pin: pin.number, net: pin.net });
+        }
       }
     }
     if (nets.size === 0) {
       warnings.push(`Component ${primaryRef} has no connected nets.`);
     }
-    return { query, nets, componentRef: primaryRef, warnings };
+    return { query, nets, matchedPins, componentRef: primaryRef, warnings };
   }
 
   warnings.push(
     `Endpoint "${query}" did not match any net, component, or pin in ${model.filePath}.`,
   );
-  return { query, nets, warnings };
+  return { query, nets, matchedPins: [], warnings };
 }
 
 function isSeriesTraversable(comp: ElectronicsComponent): boolean {
@@ -177,6 +197,71 @@ export function traceCircuitPath(
     };
   }
 
+  // Helper for PCB physical copper-island keying so both direct and multi-hop passive traces
+  // verify real copper continuity on kicad_pcb boards.
+  const isPcb = model.format === "kicad_pcb";
+  const pcbCopperCache = new Map<string, ReturnType<typeof computePcbCopperIslands>>();
+  const getPcbCopper = (netName: string) => {
+    let cached = pcbCopperCache.get(netName);
+    if (!cached) {
+      cached = computePcbCopperIslands(model, netName);
+      pcbCopperCache.set(netName, cached);
+    }
+    return cached;
+  };
+  const islandKey = (netName: string, islandId: number) => `${netName}\0${islandId}`;
+
+  const resolveEndpointNodes = (
+    resolved: ResolvedEndpoint,
+  ): Array<{ readonly key: string; readonly net: string }> => {
+    if (!isPcb) {
+      return Array.from(resolved.nets, (net) => ({ key: net, net }));
+    }
+    const out: Array<{ readonly key: string; readonly net: string }> = [];
+    const seen = new Set<string>();
+    if (resolved.matchedPins.length > 0) {
+      for (const pin of resolved.matchedPins) {
+        const copper = getPcbCopper(pin.net);
+        const islandId = copper.padIslandByRefPin.get(
+          `${pin.ref.toLowerCase()}:${pin.pin.toLowerCase()}`,
+        );
+        const key =
+          islandId !== undefined
+            ? islandKey(pin.net, islandId)
+            : `${pin.net}\0pin:${pin.ref}:${pin.pin}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          out.push({ key, net: pin.net });
+        }
+      }
+      return out;
+    }
+    // Net-name endpoint on PCB: collect all copper islands of the net
+    for (const netName of resolved.nets) {
+      const copper = getPcbCopper(netName);
+      const uniqueIslands = new Set(copper.padIslandByRefPin.values());
+      if (uniqueIslands.size === 0) {
+        if (!seen.has(netName)) {
+          seen.add(netName);
+          out.push({ key: netName, net: netName });
+        }
+      } else {
+        for (const id of uniqueIslands) {
+          const key = islandKey(netName, id);
+          if (!seen.has(key)) {
+            seen.add(key);
+            out.push({ key, net: netName });
+          }
+        }
+      }
+    }
+    return out;
+  };
+
+  const fromNodes = resolveEndpointNodes(fromResolved);
+  const toNodes = resolveEndpointNodes(toResolved);
+  const toNodeKeySet = new Set(toNodes.map((n) => n.key));
+
   // 1. Check direct same-net connectivity (and verify physical copper continuity on PCBs)
   for (const netName of fromNets) {
     if (toResolved.nets.has(netName)) {
@@ -185,21 +270,11 @@ export function traceCircuitPath(
       if (toResolved.componentRef) highlightedComponents.add(toResolved.componentRef);
 
       let physicallyConnected = true;
-      if (model.format === "kicad_pcb") {
-        const copper = computePcbCopperIslands(model, netName);
-        if (
-          fromResolved.componentRef &&
-          fromResolved.pinNumber &&
-          toResolved.componentRef &&
-          toResolved.pinNumber
-        ) {
-          const islandA = copper.padIslandByRefPin.get(
-            `${fromResolved.componentRef.toLowerCase()}:${fromResolved.pinNumber.toLowerCase()}`,
-          );
-          const islandB = copper.padIslandByRefPin.get(
-            `${toResolved.componentRef.toLowerCase()}:${toResolved.pinNumber.toLowerCase()}`,
-          );
-          if (islandA !== undefined && islandB !== undefined && islandA !== islandB) {
+      if (isPcb) {
+        const copper = getPcbCopper(netName);
+        if (fromResolved.matchedPins.length > 0 && toResolved.matchedPins.length > 0) {
+          const sameIsland = fromNodes.some((fn) => fn.net === netName && toNodeKeySet.has(fn.key));
+          if (!sameIsland) {
             physicallyConnected = false;
             warnings.push(
               `Endpoints share logical PCB net "${netName}", but their pads sit on disconnected copper islands (unrouted copper).`,
@@ -251,20 +326,21 @@ export function traceCircuitPath(
     };
   }
 
-  // 2. Build net-to-net adjacency through 2-pin series passives
+  // 2. Build adjacency through 2-pin series passives (keyed by copper island on PCBs)
   interface Edge {
     readonly comp: ElectronicsComponent;
     readonly fromPin: string;
     readonly toPin: string;
+    readonly nextKey: string;
     readonly nextNet: string;
   }
 
   const adj = new Map<string, Edge[]>();
-  const addEdge = (net: string, edge: Edge) => {
-    let list = adj.get(net);
+  const addEdge = (key: string, edge: Edge) => {
+    let list = adj.get(key);
     if (!list) {
       list = [];
-      adj.set(net, list);
+      adj.set(key, list);
     }
     list.push(edge);
   };
@@ -274,23 +350,35 @@ export function traceCircuitPath(
     const p1 = comp.pins[0]!;
     const p2 = comp.pins[1]!;
     if (!p1.net || !p2.net || p1.net === p2.net) continue;
-    addEdge(p1.net, { comp, fromPin: p1.number, toPin: p2.number, nextNet: p2.net });
-    addEdge(p2.net, { comp, fromPin: p2.number, toPin: p1.number, nextNet: p1.net });
+    let key1 = p1.net;
+    let key2 = p2.net;
+    if (isPcb) {
+      const c1 = getPcbCopper(p1.net);
+      const c2 = getPcbCopper(p2.net);
+      const id1 = c1.padIslandByRefPin.get(`${comp.ref.toLowerCase()}:${p1.number.toLowerCase()}`);
+      const id2 = c2.padIslandByRefPin.get(`${comp.ref.toLowerCase()}:${p2.number.toLowerCase()}`);
+      key1 = id1 !== undefined ? islandKey(p1.net, id1) : `${p1.net}\0pin:${comp.ref}:${p1.number}`;
+      key2 = id2 !== undefined ? islandKey(p2.net, id2) : `${p2.net}\0pin:${comp.ref}:${p2.number}`;
+    }
+    addEdge(key1, { comp, fromPin: p1.number, toPin: p2.number, nextKey: key2, nextNet: p2.net });
+    addEdge(key2, { comp, fromPin: p2.number, toPin: p1.number, nextKey: key1, nextNet: p1.net });
   }
 
-  // BFS from all source nets to any target net
+  // BFS from all source nodes to any target node
   interface QueueNode {
+    readonly key: string;
     readonly net: string;
     readonly depth: number;
     readonly hops: ElectronicsPathHop[];
   }
 
   const targetIsGround = toNets.some((n) => isGroundNetName(n));
-  const visited = new Set<string>(fromNets);
-  const queue: QueueNode[] = fromNets.map((net) => ({
-    net,
+  const visited = new Set<string>(fromNodes.map((n) => n.key));
+  const queue: QueueNode[] = fromNodes.map((n) => ({
+    key: n.key,
+    net: n.net,
     depth: 0,
-    hops: [{ kind: "net", name: net }],
+    hops: [{ kind: "net", name: n.net }],
   }));
 
   let winningHops: ElectronicsPathHop[] | null = null;
@@ -298,7 +386,7 @@ export function traceCircuitPath(
     const current = queue.shift()!;
     if (current.depth >= maxHops) continue;
 
-    for (const edge of adj.get(current.net) ?? []) {
+    for (const edge of adj.get(current.key) ?? []) {
       // Do not route through GND as an intermediate node unless GND is the target
       if (isGroundNetName(edge.nextNet) && !toResolved.nets.has(edge.nextNet) && !targetIsGround) {
         continue;
@@ -315,19 +403,63 @@ export function traceCircuitPath(
         },
         { kind: "net", name: edge.nextNet },
       ];
-      if (toResolved.nets.has(edge.nextNet)) {
+      if (toNodeKeySet.has(edge.nextKey)) {
         winningHops = nextHops;
         break;
       }
-      if (!visited.has(edge.nextNet)) {
-        visited.add(edge.nextNet);
-        queue.push({ net: edge.nextNet, depth: current.depth + 1, hops: nextHops });
+      if (!visited.has(edge.nextKey)) {
+        visited.add(edge.nextKey);
+        queue.push({
+          key: edge.nextKey,
+          net: edge.nextNet,
+          depth: current.depth + 1,
+          hops: nextHops,
+        });
       }
     }
     if (winningHops) break;
   }
 
   if (!winningHops) {
+    if (isPcb) {
+      // Check if a logical-only passive path exists so we can emit a clear unrouted-copper warning
+      const logicalAdj = new Map<string, string[]>();
+      for (const comp of model.components) {
+        if (!isSeriesTraversable(comp)) continue;
+        const p1 = comp.pins[0]!;
+        const p2 = comp.pins[1]!;
+        if (!p1.net || !p2.net || p1.net === p2.net) continue;
+        logicalAdj.set(p1.net, [...(logicalAdj.get(p1.net) ?? []), p2.net]);
+        logicalAdj.set(p2.net, [...(logicalAdj.get(p2.net) ?? []), p1.net]);
+      }
+      const lVisited = new Set<string>(fromNets);
+      const lQueue: Array<{ net: string; depth: number }> = fromNets.map((net) => ({
+        net,
+        depth: 0,
+      }));
+      let logicalConnected = false;
+      while (lQueue.length > 0 && !logicalConnected) {
+        const cur = lQueue.shift()!;
+        if (cur.depth >= maxHops) continue;
+        for (const nextNet of logicalAdj.get(cur.net) ?? []) {
+          if (isGroundNetName(nextNet) && !toResolved.nets.has(nextNet) && !targetIsGround)
+            continue;
+          if (toResolved.nets.has(nextNet)) {
+            logicalConnected = true;
+            break;
+          }
+          if (!lVisited.has(nextNet)) {
+            lVisited.add(nextNet);
+            lQueue.push({ net: nextNet, depth: cur.depth + 1 });
+          }
+        }
+      }
+      if (logicalConnected) {
+        warnings.push(
+          `A logical passive path exists between "${options.from}" and "${options.to}", but required PCB copper tracks are missing (unrouted copper).`,
+        );
+      }
+    }
     warnings.push(
       `No electrical path found from "${options.from}" to "${options.to}" within ${maxHops} passive hops.`,
     );

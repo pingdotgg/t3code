@@ -47,6 +47,69 @@ function viaMatchesTrackLayer(
   return false;
 }
 
+function pointToSegmentDistance(
+  px: number,
+  py: number,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq <= 1e-12) return Math.hypot(px - x1, py - y1);
+  const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq));
+  return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+}
+
+function segmentsIntersect(
+  ax1: number,
+  ay1: number,
+  ax2: number,
+  ay2: number,
+  bx1: number,
+  by1: number,
+  bx2: number,
+  by2: number,
+): boolean {
+  const orient = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    (qy - py) * (rx - qx) - (qx - px) * (ry - qy);
+  const onSeg = (px: number, py: number, qx: number, qy: number, rx: number, ry: number) =>
+    qx <= Math.max(px, rx) + 1e-9 &&
+    qx >= Math.min(px, rx) - 1e-9 &&
+    qy <= Math.max(py, ry) + 1e-9 &&
+    qy >= Math.min(py, ry) - 1e-9;
+
+  const o1 = orient(ax1, ay1, ax2, ay2, bx1, by1);
+  const o2 = orient(ax1, ay1, ax2, ay2, bx2, by2);
+  const o3 = orient(bx1, by1, bx2, by2, ax1, ay1);
+  const o4 = orient(bx1, by1, bx2, by2, ax2, ay2);
+
+  if (((o1 > 0 && o2 < 0) || (o1 < 0 && o2 > 0)) && ((o3 > 0 && o4 < 0) || (o3 < 0 && o4 > 0))) {
+    return true;
+  }
+  if (Math.abs(o1) <= 1e-9 && onSeg(ax1, ay1, bx1, by1, ax2, ay2)) return true;
+  if (Math.abs(o2) <= 1e-9 && onSeg(ax1, ay1, bx2, by2, ax2, ay2)) return true;
+  if (Math.abs(o3) <= 1e-9 && onSeg(bx1, by1, ax1, ay1, bx2, by2)) return true;
+  if (Math.abs(o4) <= 1e-9 && onSeg(bx1, by1, ax2, ay2, bx2, by2)) return true;
+  return false;
+}
+
+function segmentsWithinTolerance(
+  a: { readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number },
+  b: { readonly x1: number; readonly y1: number; readonly x2: number; readonly y2: number },
+  tol: number,
+): boolean {
+  if (segmentsIntersect(a.x1, a.y1, a.x2, a.y2, b.x1, b.y1, b.x2, b.y2)) return true;
+  return (
+    pointToSegmentDistance(a.x1, a.y1, b.x1, b.y1, b.x2, b.y2) <= tol ||
+    pointToSegmentDistance(a.x2, a.y2, b.x1, b.y1, b.x2, b.y2) <= tol ||
+    pointToSegmentDistance(b.x1, b.y1, a.x1, a.y1, a.x2, a.y2) <= tol ||
+    pointToSegmentDistance(b.x2, b.y2, a.x1, a.y1, a.x2, a.y2) <= tol
+  );
+}
+
 export interface PcbCopperIslandResult {
   readonly padPoints: ReadonlyArray<{
     readonly x: number;
@@ -135,10 +198,10 @@ export function computePcbCopperIslands(
   const trackOffset = padPoints.length;
   const viaOffset = padPoints.length + netTracks.length;
 
-  const PCB_CELL = 1.0;
+  const PCB_CELL = 5.0;
   const cellOf = (x: number, y: number) =>
     [Math.floor(x / PCB_CELL), Math.floor(y / PCB_CELL)] as const;
-  const addToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
+  const addPointToGrid = <T>(grid: Map<string, T[]>, x: number, y: number, item: T) => {
     const [cx, cy] = cellOf(x, y);
     const key = `${cx},${cy}`;
     let bucket = grid.get(key);
@@ -148,29 +211,51 @@ export function computePcbCopperIslands(
     }
     bucket.push(item);
   };
-  const forNearby = <T>(grid: Map<string, T[]>, x: number, y: number, fn: (item: T) => void) => {
-    const [cx, cy] = cellOf(x, y);
-    for (let dx = -1; dx <= 1; dx += 1) {
-      for (let dy = -1; dy <= 1; dy += 1) {
-        const bucket = grid.get(`${cx + dx},${cy + dy}`);
-        if (!bucket) continue;
-        for (const item of bucket) fn(item);
-      }
-    }
-  };
 
   const padGrid = new Map<string, number[]>();
   for (let p = 0; p < padPoints.length; p += 1) {
-    addToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
+    addPointToGrid(padGrid, padPoints[p]!.x, padPoints[p]!.y, p);
   }
   const viaGrid = new Map<string, number[]>();
   for (let v = 0; v < netVias.length; v += 1) {
-    addToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
+    addPointToGrid(viaGrid, netVias[v]!.x, netVias[v]!.y, v);
   }
-  const trackGridByLayer = new Map<
-    string,
-    Map<string, Array<{ idx: number; x: number; y: number; width: number }>>
-  >();
+
+  // Direct via-in-pad contact (on matching copper layer)
+  for (let v = 0; v < netVias.length; v += 1) {
+    const via = netVias[v]!;
+    const [cx, cy] = cellOf(via.x, via.y);
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const bucket = padGrid.get(`${cx + dx},${cy + dy}`);
+        if (!bucket) continue;
+        for (const p of bucket) {
+          const pad = padPoints[p]!;
+          const padViaTol = Math.max(0.5, via.size / 2);
+          if (
+            nearPoint(pad.x, pad.y, via.x, via.y, padViaTol) &&
+            (pad.layers === undefined ||
+              pad.layers.length === 0 ||
+              pad.layers.some((layer) => viaMatchesTrackLayer(via.layers, layer)))
+          ) {
+            union(p, viaOffset + v);
+          }
+        }
+      }
+    }
+  }
+
+  interface IndexedTrack {
+    readonly idx: number;
+    readonly x1: number;
+    readonly y1: number;
+    readonly x2: number;
+    readonly y2: number;
+    readonly width: number;
+  }
+
+  const trackGridByLayer = new Map<string, Map<string, IndexedTrack[]>>();
+  const largeTracksByLayer = new Map<string, IndexedTrack[]>();
   const getLayerGrid = (layerKey: string) => {
     let g = trackGridByLayer.get(layerKey);
     if (!g) {
@@ -179,42 +264,108 @@ export function computePcbCopperIslands(
     }
     return g;
   };
+  const getLayerLarge = (layerKey: string) => {
+    let list = largeTracksByLayer.get(layerKey);
+    if (!list) {
+      list = [];
+      largeTracksByLayer.set(layerKey, list);
+    }
+    return list;
+  };
 
   for (let t = 0; t < netTracks.length; t += 1) {
     const seg = netTracks[t]!;
     const segWidth = seg.width ?? 0.2;
-    const endpoints = [
-      [seg.x1, seg.y1],
-      [seg.x2, seg.y2],
-    ] as const;
+    const margin = Math.max(0.5, segWidth / 2);
+    const minCx = Math.floor((Math.min(seg.x1, seg.x2) - margin) / PCB_CELL);
+    const maxCx = Math.floor((Math.max(seg.x1, seg.x2) + margin) / PCB_CELL);
+    const minCy = Math.floor((Math.min(seg.y1, seg.y2) - margin) / PCB_CELL);
+    const maxCy = Math.floor((Math.max(seg.y1, seg.y2) + margin) / PCB_CELL);
+    const cellCount = (maxCx - minCx + 1) * (maxCy - minCy + 1);
+    const isLarge = cellCount > 256;
 
-    for (const [ex, ey] of endpoints) {
-      forNearby(padGrid, ex, ey, (p) => {
-        const pad = padPoints[p]!;
-        if (padMatchesTrackLayer(pad.layers, seg.layer) && nearPoint(pad.x, pad.y, ex, ey, 0.5)) {
-          union(p, trackOffset + t);
+    const entry: IndexedTrack = {
+      idx: t,
+      x1: seg.x1,
+      y1: seg.y1,
+      x2: seg.x2,
+      y2: seg.y2,
+      width: segWidth,
+    };
+
+    const testPad = (p: number) => {
+      const pad = padPoints[p]!;
+      const padTol = Math.max(0.5, segWidth / 2);
+      if (
+        padMatchesTrackLayer(pad.layers, seg.layer) &&
+        pointToSegmentDistance(pad.x, pad.y, seg.x1, seg.y1, seg.x2, seg.y2) <= padTol
+      ) {
+        union(p, trackOffset + t);
+      }
+    };
+    const testVia = (v: number) => {
+      const via = netVias[v]!;
+      const viaTol = Math.max(0.05, via.size / 2 + segWidth / 2);
+      if (
+        viaMatchesTrackLayer(via.layers, seg.layer) &&
+        pointToSegmentDistance(via.x, via.y, seg.x1, seg.y1, seg.x2, seg.y2) <= viaTol
+      ) {
+        union(trackOffset + t, viaOffset + v);
+      }
+    };
+
+    const layerKey = seg.layer ?? "__any__";
+    const layerGrid = getLayerGrid(layerKey);
+    const layerLarge = getLayerLarge(layerKey);
+    const checkedTracks = new Set<number>();
+
+    const testTrack = (other: IndexedTrack) => {
+      if (checkedTracks.has(other.idx)) return;
+      checkedTracks.add(other.idx);
+      const copperTol = Math.max(0.02, (segWidth + other.width) / 2);
+      if (segmentsWithinTolerance(entry, other, copperTol)) {
+        union(trackOffset + t, trackOffset + other.idx);
+      }
+    };
+
+    if (isLarge) {
+      for (let p = 0; p < padPoints.length; p += 1) testPad(p);
+      for (let v = 0; v < netVias.length; v += 1) testVia(v);
+      for (const bucket of layerGrid.values()) {
+        for (const other of bucket) testTrack(other);
+      }
+      for (const other of layerLarge) testTrack(other);
+      layerLarge.push(entry);
+    } else {
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        for (let cy = minCy; cy <= maxCy; cy += 1) {
+          const cellKey = `${cx},${cy}`;
+          const padsInCell = padGrid.get(cellKey);
+          if (padsInCell) {
+            for (const p of padsInCell) testPad(p);
+          }
+          const viasInCell = viaGrid.get(cellKey);
+          if (viasInCell) {
+            for (const v of viasInCell) testVia(v);
+          }
+          const tracksInCell = layerGrid.get(cellKey);
+          if (tracksInCell) {
+            for (const other of tracksInCell) testTrack(other);
+          }
         }
-      });
-      forNearby(viaGrid, ex, ey, (v) => {
-        const via = netVias[v]!;
-        const viaTol = Math.max(0.05, via.size / 2 + segWidth / 2);
-        if (
-          viaMatchesTrackLayer(via.layers, seg.layer) &&
-          nearPoint(via.x, via.y, ex, ey, viaTol)
-        ) {
-          union(trackOffset + t, viaOffset + v);
+      }
+      for (const other of layerLarge) testTrack(other);
+      for (let cx = minCx; cx <= maxCx; cx += 1) {
+        for (let cy = minCy; cy <= maxCy; cy += 1) {
+          const cellKey = `${cx},${cy}`;
+          let bucket = layerGrid.get(cellKey);
+          if (!bucket) {
+            bucket = [];
+            layerGrid.set(cellKey, bucket);
+          }
+          bucket.push(entry);
         }
-      });
-      const layerKey = seg.layer ?? "__any__";
-      const layerGrid = getLayerGrid(layerKey);
-      forNearby(layerGrid, ex, ey, (other) => {
-        // Use actual copper overlap radius (half-width sum) rather than a fixed 0.25mm gap
-        const copperTol = Math.max(0.02, (segWidth + other.width) / 2);
-        if (nearPoint(other.x, other.y, ex, ey, copperTol)) {
-          union(trackOffset + t, trackOffset + other.idx);
-        }
-      });
-      addToGrid(layerGrid, ex, ey, { idx: t, x: ex, y: ey, width: segWidth });
+      }
     }
   }
 

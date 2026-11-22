@@ -437,23 +437,39 @@ function extractLibSymbols(schRoot: SExprList): Map<string, LibPinDef[]> {
     libMap.set(libId, pins);
   }
 
-  // Resolve KiCad derived symbols `(extends "Parent")` with cycle protection
-  const resolveDerived = (id: string, stack: Set<string>): LibPinDef[] => {
+  // Resolve KiCad derived symbols `(extends "Parent")` with O(N) memoization, depth cap, and cycle protection
+  const MAX_EXTENDS_DEPTH = 32;
+  const resolvedCache = new Map<string, LibPinDef[]>();
+  const resolveDerived = (id: string, stack: Set<string>, depth: number): LibPinDef[] => {
+    const cached = resolvedCache.get(id);
+    if (cached !== undefined) return cached;
     const own = libMap.get(id) ?? [];
     const parentId = extendsMap.get(id);
-    if (!parentId || stack.has(parentId)) return own;
-    const nextStack = new Set(stack);
-    nextStack.add(id);
-    const parentPins =
-      resolveDerived(parentId, nextStack).length > 0
-        ? resolveDerived(parentId, nextStack)
-        : resolveDerived(parentId.split(":").pop() ?? parentId, nextStack);
+    if (!parentId || stack.has(parentId) || depth >= MAX_EXTENDS_DEPTH) {
+      if (stack.size === 0) resolvedCache.set(id, own);
+      return own;
+    }
+    stack.add(id);
+    let parentPins = resolveDerived(parentId, stack, depth + 1);
+    if (parentPins.length === 0) {
+      const shortParent = parentId.split(":").pop() ?? parentId;
+      if (shortParent !== parentId && !stack.has(shortParent)) {
+        parentPins = resolveDerived(shortParent, stack, depth + 1);
+      }
+    }
+    stack.delete(id);
     const ownKeys = new Set(own.map((p) => `${p.unit}:${p.style}:${p.number}`));
-    return [...parentPins.filter((p) => !ownKeys.has(`${p.unit}:${p.style}:${p.number}`)), ...own];
+    const merged = [
+      ...parentPins.filter((p) => !ownKeys.has(`${p.unit}:${p.style}:${p.number}`)),
+      ...own,
+    ];
+    // Only memoize cycle-free resolutions (when not currently inside an active cycle)
+    resolvedCache.set(id, merged);
+    return merged;
   };
 
   for (const id of extendsMap.keys()) {
-    libMap.set(id, resolveDerived(id, new Set()));
+    libMap.set(id, resolveDerived(id, new Set(), 0));
   }
   return libMap;
 }
@@ -1278,6 +1294,14 @@ function parseSpiceNetlist(filePath: string, content: string): ElectronicsCircui
       const rest = line.slice(6);
       for (const m of rest.matchAll(/([A-Za-z_]\w*)\s*=\s*([^\s]+)/gu)) {
         params.set(m[1]!.toLowerCase(), m[2]!);
+      }
+      continue;
+    }
+    if (/^\.(include|inc|lib)\b/iu.test(lower)) {
+      if (!parseWarnings.some((w) => w.includes("SPICE .include/.lib"))) {
+        parseWarnings.push(
+          "Deck references external SPICE .include/.lib files; included circuitry is expanded during simulation.",
+        );
       }
       continue;
     }

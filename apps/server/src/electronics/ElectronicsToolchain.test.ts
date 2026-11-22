@@ -52,20 +52,37 @@ const makeMockSpawner = (
   );
 
 describe("ElectronicsToolchain", () => {
-  it("blocks dangerous SPICE directives (.codemodel, .control, .shell, filesource, file=)", () => {
+  it("blocks dangerous SPICE directives, XSPICE A-elements, comment commands, and ';'-hidden tokens", () => {
     for (const bad of [
       "* bad\n.codemodel /tmp/evil.cm\nV1 in 0 5\n.end",
       "* bad\n.control\nshell id\n.endc\nV1 in 0 5\n.end",
       "* bad\n.shell whoami\nV1 in 0 5\n.end",
       '* bad\nA1 [out] fs\n.model fs filesource(file="/etc/passwd")\n.end',
       '* bad\n.model fs\n+ filesource(file="/etc/passwd")\n.end',
+      '* bad\n.model p d_process(process_file="/bin/sh")\n.end',
+      '* bad\n.model c d_cosim(simulation="./evil.so")\n.end',
+      '* bad\n.model s d_state(state_file="/etc/passwd")\n.end',
+      "* bad\nA1 [in] [out] my_xspice_model\n.end",
+      '* bad\nR1 in out 1k ; file="/etc/passwd"\n.end',
     ]) {
       const res = sanitizeSpiceDeckLines(bad);
       expect(res.blockedReasons.length).toBeGreaterThan(0);
     }
+
+    // Comment lines including ngspice '*#' control directives are stripped completely
+    const commentDeck = sanitizeSpiceDeckLines("* Title\n*#shell id\nV1 in 0 5\nR1 in 0 1k\n.end");
+    expect(commentDeck.blockedReasons).toEqual([]);
+    expect(commentDeck.lines.some((l) => l.startsWith("*"))).toBe(false);
+    expect(commentDeck.lines).toEqual(["V1 in 0 5", "R1 in 0 1k"]);
+
+    // Included files (allowTitleLine: false) must NEVER exempt line 0
+    const incFirstLine = sanitizeSpiceDeckLines('V1 in 0 PWL file="/etc/passwd"\n', {
+      allowTitleLine: false,
+    });
+    expect(incFirstLine.blockedReasons.length).toBeGreaterThan(0);
   });
 
-  it("parses real ngspice .op output and comma-separated .ac tuples with radians->degrees", () => {
+  it("parses real ngspice .op tables (including numeric nodes) and .ac tuples with spaces/tabs after commas", () => {
     const opOut = ["Circuit: * Divider", "v(in) = 5.000000e+00", "v(out) = 2.500000e+00"].join(
       "\n",
     );
@@ -75,9 +92,26 @@ describe("ElectronicsToolchain", () => {
       { node: "out", voltageV: 2.5 },
     ]);
 
+    const tabularOp = [
+      "Node                                  Voltage",
+      "----                                  -------",
+      "1                                 5.000000e+00",
+      "2                                 2.500000e+00",
+      "",
+      "Source                                Current",
+      "------                                -------",
+      "v1#branch                        -2.500000e-04",
+    ].join("\n");
+    const parsedTab = parseNgspiceBatchOutput(tabularOp, "dc_op");
+    expect(parsedTab.nodeVoltages).toEqual([
+      { node: "1", voltageV: 5 },
+      { node: "2", voltageV: 2.5 },
+    ]);
+
+    // Real ngspice -b places whitespace/tab after comma in complex AC output
     const acOut = [
       "Index   frequency   vdb(out)   vp(out)",
-      "0   1.000000e+02   -3.010300e+00,0.000000e+00   -7.853982e-01,0.000000e+00",
+      "0   1.000000e+02,\t0.000000e+00   -3.010300e+00,\t0.000000e+00   -7.853982e-01,  0.000000e+00",
     ].join("\n");
     const parsedAc = parseNgspiceBatchOutput(acOut, "ac_sweep");
     expect(parsedAc.points.length).toBe(1);
@@ -168,6 +202,63 @@ describe("ElectronicsToolchain", () => {
         }).pipe(Effect.provide(spawnerLayer));
         expect(initOutcome.result).toBeNull();
         expect(initOutcome.rejectionNote).toMatch(/Disallowed/i);
+
+        // First-line unsafe element in an included file AND cross-file '+' continuation attack must be rejected
+        yield* fs.writeFileString(
+          path.join(root, "firstline_bad.lib"),
+          'Vleak a 0 PWL file="/etc/passwd"\n',
+        );
+        const firstLineOutcome = yield* runNgspiceSimulation({
+          model,
+          spiceSource: `* Test\nV1 in 0 5\n.include "firstline_bad.lib"\n.end\n`,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "firstline.cir"),
+          kind: "dc_op",
+        }).pipe(Effect.provide(spawnerLayer));
+        expect(firstLineOutcome.result).toBeNull();
+        expect(firstLineOutcome.rejectionNote).toMatch(/Disallowed/i);
+
+        yield* fs.writeFileString(
+          path.join(root, "cont_bad.lib"),
+          '+ filesource(file="/etc/passwd")\n',
+        );
+        const contOutcome = yield* runNgspiceSimulation({
+          model,
+          spiceSource: `* Test\n.model leak\n.include "cont_bad.lib"\nV1 in 0 5\n.end\n`,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "cont.cir"),
+          kind: "dc_op",
+        }).pipe(Effect.provide(spawnerLayer));
+        expect(contOutcome.result).toBeNull();
+        expect(contOutcome.rejectionNote).toMatch(/Disallowed/i);
+
+        // Non-zero ngspice exit code must be rejected even if partial stdout looks parseable
+        const failingSpawner = makeMockSpawner(() => ({
+          stdout: "v(out) = 2.500000e+00\n",
+          exitCode: 1,
+        }));
+        const nonzeroOutcome = yield* runNgspiceSimulation({
+          model,
+          spiceSource: goodDeck,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "div.cir"),
+          kind: "dc_op",
+        }).pipe(Effect.provide(failingSpawner));
+        expect(nonzeroOutcome.result).toBeNull();
+        expect(nonzeroOutcome.rejectionNote).toMatch(/non-zero status 1/i);
+
+        // Reversed AC frequency range must be rejected
+        const reversedAc = yield* runNgspiceSimulation({
+          model,
+          spiceSource: goodDeck,
+          workspaceRoot: root,
+          sourceFilePath: path.join(root, "div.cir"),
+          kind: "ac_sweep",
+          startFreqHz: 200,
+          stopFreqHz: 100,
+        }).pipe(Effect.provide(spawnerLayer));
+        expect(reversedAc.result).toBeNull();
+        expect(reversedAc.rejectionNote).toMatch(/startFreqHz < stopFreqHz/i);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

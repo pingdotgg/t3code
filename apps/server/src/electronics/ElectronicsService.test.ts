@@ -82,12 +82,69 @@ it.effect(
       expect(events[1]?.sessions[0]?.filePath).toBe("hw/divider.cir");
       expect(events[1]?.sessions[0]?.activeTab).toBe("simulate");
 
+      // Read-only simulation does NOT set panelOpenedAt; explicit openPanel sets and advances it
+      expect(events[1]?.sessions[0]?.panelOpenedAt).toBeUndefined();
+      const firstOpen = yield* service.openPanel({
+        threadId,
+        cwd: dir,
+        filePath: "hw/divider.cir",
+      });
+      expect(firstOpen.panelOpenedAt).toBeDefined();
+      const secondOpen = yield* service.openPanel({
+        threadId,
+        cwd: dir,
+        filePath: "hw/divider.cir",
+      });
+      expect(secondOpen.panelOpenedAt).toBeDefined();
+      expect(secondOpen.panelOpenedAt! > firstOpen.panelOpenedAt!).toBe(true);
+
       // Reconnecting subscriber immediately receives the latest session snapshot
       const reconnectSnap = yield* service.subscribeState.pipe(Stream.take(1), Stream.runCollect);
       expect(Array.from(reconnectSnap)[0]?.sessions[0]?.threadId).toBe(threadId);
 
       yield* service.closePanel(threadId);
       expect(yield* service.getThreadSession(threadId)).toBeUndefined();
+    }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
+);
+
+it.effect(
+  "expands workspace SPICE .include files for built-in MNA and fails on unresolved includes",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const service = yield* ElectronicsService.ElectronicsService;
+
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-inc-" });
+      yield* fs.writeFileString(path.join(dir, "load.inc"), "R2 out 0 10k\n");
+      yield* fs.writeFileString(
+        path.join(dir, "with_inc.cir"),
+        '* Divider with include\nV1 in 0 5\nR1 in out 10k\n.include "load.inc"\n.end\n',
+      );
+      yield* fs.writeFileString(
+        path.join(dir, "missing_inc.cir"),
+        '* Missing include\nV1 in 0 5\nR1 in out 10k\n.include "does_not_exist.inc"\n.end\n',
+      );
+
+      const sim = yield* service.simulate({
+        cwd: dir,
+        filePath: "with_inc.cir",
+        kind: "dc_op",
+        outputNode: "out",
+        useExternalToolchain: false,
+      });
+      expect(sim.nodeVoltages.find((n) => n.node === "out")?.voltageV).toBeCloseTo(2.5, 4);
+
+      const missingErr = yield* service
+        .simulate({
+          cwd: dir,
+          filePath: "missing_inc.cir",
+          kind: "dc_op",
+          useExternalToolchain: false,
+        })
+        .pipe(Effect.flip);
+      expect(missingErr.code).toBe("simulation_failed");
+      expect(missingErr.message).toMatch(/unresolved includes/i);
     }).pipe(Effect.scoped, Effect.provide(makeTestLayer())),
 );
 
@@ -99,4 +156,36 @@ it.effect("refuses operations when Electronics Workbench is disabled in settings
     const err = yield* service.listFiles(dir).pipe(Effect.flip);
     expect(err.code).toBe("disabled");
   }).pipe(Effect.scoped, Effect.provide(makeTestLayer({ enableElectronicsWorkbench: false }))),
+);
+
+it.effect("does not spawn external binary probes on read-only status or listFiles calls", () =>
+  Effect.gen(function* () {
+    let spawnCount = 0;
+    const mockSettings = ServerSettings.layerTest({ electronicsAllowExternalTools: true });
+    const countingSpawner = Layer.succeed(
+      ChildProcessSpawner.ChildProcessSpawner,
+      ChildProcessSpawner.make(() => {
+        spawnCount += 1;
+        return Effect.fail(new Error("ENOENT") as never);
+      }),
+    );
+    const layer = ElectronicsService.layer.pipe(
+      Layer.provide(mockSettings),
+      Layer.provide(countingSpawner),
+      Layer.provideMerge(NodeServices.layer),
+    );
+
+    yield* Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const service = yield* ElectronicsService.ElectronicsService;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-electronics-ro-" });
+      yield* service.getToolchainStatus({ refresh: false, allowSpawn: false });
+      yield* service.listFiles(dir);
+      expect(spawnCount).toBe(0);
+
+      // Explicit operate-scoped refresh DOES probe binaries (once each for kicad-cli + ngspice)
+      yield* service.getToolchainStatus({ refresh: true, allowSpawn: true });
+      expect(spawnCount).toBe(2);
+    }).pipe(Effect.scoped, Effect.provide(layer));
+  }),
 );

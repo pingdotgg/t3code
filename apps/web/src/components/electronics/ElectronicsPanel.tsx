@@ -402,6 +402,7 @@ export function ElectronicsPanel(props: ElectronicsPanelProps) {
             const next = e.target.value;
             setSelectedFile(next);
             setModel(null);
+            setLoadingModel(next.length > 0);
             setSelectedNet(null);
             setSelectedRef(null);
             setTraceResult(null);

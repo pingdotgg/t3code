@@ -3427,8 +3427,19 @@ export const layerWsRpc = (
               ? input
               : { ...input, useExternalToolchain: false },
           ),
-        [WS_METHODS.electronicsToolchainStatus]: (input) =>
-          electronicsService.getToolchainStatus(input.refresh ?? false),
+        [WS_METHODS.electronicsToolchainStatus]: (input) => {
+          const canOperate = currentSession.scopes.includes(AuthOrchestrationOperateScope);
+          if (input.refresh) {
+            return authorizeEffect(
+              AuthOrchestrationOperateScope,
+              electronicsService.getToolchainStatus({ refresh: true, allowSpawn: true }),
+            );
+          }
+          return electronicsService.getToolchainStatus({
+            refresh: false,
+            allowSpawn: canOperate,
+          });
+        },
         [WS_METHODS.electronicsOpenPanel]: (input) =>
           authorizeEffect(AuthFilesystemReadScope, electronicsService.openPanel(input)),
         [WS_METHODS.electronicsClosePanel]: (input) =>

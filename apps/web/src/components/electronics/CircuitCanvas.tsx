@@ -159,9 +159,18 @@ export function CircuitCanvas(props: CircuitCanvasProps) {
     const units = model.components.filter((c) => c.ref === selectedRef);
     if (units.length === 0) return null;
     if (units.length === 1) return units[0]!;
+    const dedupedPins: ElectronicsCircuitModel["components"][number]["pins"][number][] = [];
+    const seenPinNumbers = new Set<string>();
+    for (const unit of units) {
+      for (const pin of unit.pins) {
+        if (seenPinNumbers.has(pin.number)) continue;
+        seenPinNumbers.add(pin.number);
+        dedupedPins.push(pin);
+      }
+    }
     return {
       ...units[0]!,
-      pins: units.flatMap((u) => u.pins),
+      pins: dedupedPins,
     };
   })();
   const selectedNetObj = selectedNet

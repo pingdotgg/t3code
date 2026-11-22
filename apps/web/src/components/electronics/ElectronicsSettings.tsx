@@ -1,7 +1,7 @@
 import { AuthSettingsWriteScope } from "@t3tools/contracts";
 import { T, useGT } from "gt-react";
 import { CheckCircle2Icon, CircuitBoardIcon, RefreshCwIcon, XCircleIcon } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -39,17 +39,30 @@ export function ElectronicsSettings() {
   }
   const [probing, setProbing] = useState(false);
 
+  const committedToolchainKey = `${settings.electronicsAllowExternalTools}:${settings.electronicsKicadCliPath}:${settings.electronicsNgspicePath}`;
+  const lastEnvIdRef = useRef(environmentId);
+  const lastCommittedToolchainKeyRef = useRef(committedToolchainKey);
+
+  // Re-probe only after the server commits updated toolchain settings for the current environment
+  // (avoids save-then-probe races and also re-probes when toggling `electronicsAllowExternalTools`).
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- triggers RPC probe when persisted toolchain settings change
+  useEffect(() => {
+    if (lastEnvIdRef.current !== environmentId) {
+      lastEnvIdRef.current = environmentId;
+      lastCommittedToolchainKeyRef.current = committedToolchainKey;
+      return;
+    }
+    if (lastCommittedToolchainKeyRef.current === committedToolchainKey) return;
+    lastCommittedToolchainKeyRef.current = committedToolchainKey;
+    if (!environmentId || !canWrite) return;
+    void probeToolchain({ environmentId, input: { refresh: true } });
+  }, [canWrite, committedToolchainKey, environmentId, probeToolchain]);
+
   const handleSavePaths = () => {
     updateSettings({
       electronicsKicadCliPath: kicadPathDraft.trim(),
       electronicsNgspicePath: ngspicePathDraft.trim(),
     });
-    if (environmentId) {
-      setProbing(true);
-      void probeToolchain({ environmentId, input: { refresh: true } }).then(() => {
-        setProbing(false);
-      });
-    }
   };
 
   const handleReprobe = () => {
