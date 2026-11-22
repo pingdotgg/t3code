@@ -1,4 +1,8 @@
 import type { OrchestrationV2RunStatus, RunId } from "@t3tools/contracts";
+import {
+  backgroundWorkHoldsCompletion,
+  monitorHoldsWakeCompletion,
+} from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 import { msg } from "gt-react";
 
@@ -38,6 +42,27 @@ export function resolveBackgroundThreadRequest(
   if (thread.hasPendingUserInput) return { request: "input", requestId: ownRequestId };
   if (thread.pendingSubagentRequest === "user_input") return { request: "input", requestId: null };
   return { request: null, requestId: null };
+}
+
+/** Suppresses Done announcements for stopped runs, awaited background work, and monitor wakes. */
+export function resolveBackgroundThreadRunStatus(thread: {
+  readonly latestRun: { readonly status: OrchestrationV2RunStatus } | null;
+  readonly pendingBackgroundTasks: SidebarThreadSummary["pendingBackgroundTasks"];
+  readonly source: Pick<
+    SidebarThreadSummary["source"],
+    "latestRunBackgroundWake" | "latestRunStopRequested" | "pendingBackgroundTasks"
+  >;
+}): OrchestrationV2RunStatus | null {
+  const status = thread.latestRun?.status ?? null;
+  if (
+    status === "completed" &&
+    (thread.source.latestRunStopRequested === true ||
+      backgroundWorkHoldsCompletion(thread.pendingBackgroundTasks) ||
+      monitorHoldsWakeCompletion(thread.source))
+  ) {
+    return null;
+  }
+  return status;
 }
 
 interface BackgroundThreadMemoryEntry {

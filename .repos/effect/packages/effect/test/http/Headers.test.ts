@@ -42,6 +42,11 @@ describe("Headers", () => {
     deepStrictEqual(keys, ["foo"])
   })
 
+  it("fromInput joins repeated names in iterable input", () => {
+    const headers = Headers.fromInput([["Accept", "text/html"], ["accept", "application/json"]])
+    deepStrictEqual({ ...headers }, { accept: "text/html, application/json" })
+  })
+
   it("remove", () => {
     const headers = Headers.fromInput({ foo: "bar", baz: "qux", hello: "world" })
     const result = Headers.remove(headers, "baz")
