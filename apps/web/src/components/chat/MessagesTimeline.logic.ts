@@ -1145,8 +1145,9 @@ function failedTimelineRunIds(
 function itemizedFailedRunIds(
   entries: ReadonlyArray<TimelineEntry>,
   failedRunIds: ReadonlySet<RunId>,
+  usageLimitRunId: RunId | null,
 ) {
-  const usageLimited = new Set<RunId>();
+  const usageLimited = new Set<RunId>(usageLimitRunId ? [usageLimitRunId] : []);
   const otherFailures = new Set<RunId>();
   for (const entry of entries) {
     const item = timelineEntryFailedItem(entry);
@@ -1185,8 +1186,11 @@ function timelineEntryTurnItem(entry: TimelineEntry) {
 }
 
 /** Runs whose terminal failure is a provider usage limit. */
-function usageLimitedTimelineRunIds(entries: ReadonlyArray<TimelineEntry>): ReadonlySet<RunId> {
-  const limited = new Set<RunId>();
+function usageLimitedTimelineRunIds(
+  entries: ReadonlyArray<TimelineEntry>,
+  usageLimitRunId: RunId | null = null,
+): ReadonlySet<RunId> {
+  const limited = new Set<RunId>(usageLimitRunId ? [usageLimitRunId] : []);
   for (const entry of entries) {
     const item = timelineEntryTurnItem(entry);
     if (
@@ -1254,6 +1258,7 @@ function deriveTurnFolds(input: {
   unfoldedRunIds: ReadonlySet<RunId>;
   runlessWorkActive: boolean;
   failedRunIds: ReadonlySet<RunId>;
+  usageLimitRunId?: RunId | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   liveSubagentEntryIds: ReadonlySet<string>;
   retainedAssistantReplyEntryIds: ReadonlySet<string>;
@@ -1262,7 +1267,10 @@ function deriveTurnFolds(input: {
   resolve: MessageResolver;
 }): ReadonlyMap<string, TurnFold> {
   const interruptedRunIds = new Set<RunId>();
-  const usageLimitedRunIds = usageLimitedTimelineRunIds(input.timelineEntries);
+  const usageLimitedRunIds = usageLimitedTimelineRunIds(
+    input.timelineEntries,
+    input.usageLimitRunId ?? null,
+  );
   const promptIndexByRunId = new Map<RunId, number>();
   for (const [index, entry] of input.timelineEntries.entries()) {
     if (timelineEntryStartsResponse(entry)) {
@@ -1838,6 +1846,7 @@ function deriveTimelineTurnFolds(
     MessagesTimelineRowsInput,
     | "timelineEntries"
     | "latestRun"
+    | "usageLimitRunId"
     | "isWorking"
     | "runlessWorkActive"
     | "runningRunId"
@@ -1860,6 +1869,7 @@ function deriveTimelineTurnFolds(
     latestRun: input.latestRun ?? null,
     unfoldedRunIds: activeVisualResponseRunIds,
     failedRunIds,
+    usageLimitRunId: input.usageLimitRunId ?? null,
     runlessWorkActive: input.isWorking && input.runlessWorkActive === true,
     // Fold membership does not depend on the diff stat the fold header shows.
     turnDiffSummaries: [],
@@ -1875,6 +1885,8 @@ export function deriveMessagesTimelineRows(
     timelineEntries: ReadonlyArray<TimelineEntry>;
     pendingApprovalRequestIds?: ReadonlySet<RuntimeRequestId>;
     latestRun?: TimelineLatestRun | null;
+    /** The usage-limited run whose failure row the recovery notice replaces. */
+    usageLimitRunId?: RunId | null;
     runningRunId?: RunId | null;
     expandedRunIds?: ReadonlySet<RunId>;
     expandedAttemptIds?: ReadonlySet<RunAttemptId>;
@@ -1928,7 +1940,11 @@ export function deriveMessagesTimelineRows(
   const nextRows: MessagesTimelineRow[] = [];
   const terminalAssistantMessageIds = deriveTerminalAssistantMessageIds(timelineEntries);
   const failedRunIds = failedTimelineRunIds(timelineEntries, input.latestRun ?? null);
-  const itemizedRunIds = itemizedFailedRunIds(timelineEntries, failedRunIds);
+  const itemizedRunIds = itemizedFailedRunIds(
+    timelineEntries,
+    failedRunIds,
+    input.usageLimitRunId ?? null,
+  );
   const stoppedRunIds = stoppedTimelineRunIds(timelineEntries, input.latestRun ?? null);
   // A standalone `/compact` and the compaction its run reports are one row.
   const compactionByRunId = new Map<RunId, WorkLogEntry>();
@@ -1964,6 +1980,7 @@ export function deriveMessagesTimelineRows(
           latestRun: input.latestRun ?? null,
           unfoldedRunIds: activeVisualResponseRunIds,
           failedRunIds,
+          usageLimitRunId: input.usageLimitRunId ?? null,
           runlessWorkActive,
           turnDiffSummaries: input.turnDiffSummaries,
           liveSubagentEntryIds,
