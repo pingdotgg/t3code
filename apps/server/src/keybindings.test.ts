@@ -544,10 +544,20 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
       const keybindings = yield* Keybindings.Keybindings;
       yield* writeKeybindingsConfig(
         keybindingsConfigPath,
-        Array.from({ length: 210 }, (_, index) => ({
-          key: "mod+alt+f1",
-          command: `script.filler-${index}.run` as const,
-        })),
+        Array.from(
+          {
+            length:
+              MAX_KEYBINDINGS_COUNT -
+              SharedKeybindings.DEFAULT_KEYBINDINGS.length +
+              SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
+                (rule) => rule.command === "chat.new" && rule.key === "mod+shift+o",
+              ),
+          },
+          (_, index) => ({
+            key: "mod+alt+f1",
+            command: `script.filler-${index}.run` as const,
+          }),
+        ),
       );
 
       const target = { key: "mod+shift+o", command: "chat.new", when: "!terminalFocus" } as const;
@@ -577,10 +587,20 @@ it.layer(NodeServices.layer)("keybindings", (it) => {
         const keybindings = yield* Keybindings.Keybindings;
         yield* writeKeybindingsConfig(
           keybindingsConfigPath,
-          Array.from({ length: 209 }, (_, index) => ({
-            key: "mod+alt+f1",
-            command: `script.filler-${index}.run` as const,
-          })),
+          Array.from(
+            {
+              length:
+                MAX_KEYBINDINGS_COUNT -
+                SharedKeybindings.DEFAULT_KEYBINDINGS.length +
+                SharedKeybindings.DEFAULT_KEYBINDINGS.findIndex(
+                  (rule) => rule.command === "chat.new",
+                ),
+            },
+            (_, index) => ({
+              key: "mod+alt+f1",
+              command: `script.filler-${index}.run` as const,
+            }),
+          ),
         );
 
         const target = { key: "mod+n", command: "chat.new", when: "!terminalFocus" } as const;
