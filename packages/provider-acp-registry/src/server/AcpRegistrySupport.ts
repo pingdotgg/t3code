@@ -525,6 +525,9 @@ export class AcpRegistryCatalog extends Context.Service<
     readonly prepare: (
       input: AcpRegistryPrepareInput,
     ) => Effect.Effect<AcpRegistryPrepareResult, AcpRegistryError>;
+    readonly refreshIndex: (options?: {
+      readonly maxAgeMs?: number;
+    }) => Effect.Effect<void, AcpRegistryError>;
     readonly inspect: (
       settings: AcpRegistrySettings,
       environment?: NodeJS.ProcessEnv,
@@ -974,7 +977,9 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     );
   });
 
-  const recentRegistry = Effect.fn("AcpRegistryCatalog.recentRegistry")(function* () {
+  const recentRegistry = Effect.fn("AcpRegistryCatalog.recentRegistry")(function* (
+    maxAgeMs = REGISTRY_SEARCH_MAX_AGE_MS,
+  ) {
     const current = yield* Ref.get(registryRef);
     const fetchedAtMs = yield* Ref.get(registryFetchedAtMs);
     const now = yield* Clock.currentTimeMillis;
@@ -983,11 +988,17 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
       current !== undefined &&
       fetchedAtMs !== undefined &&
       now >= fetchedAtMs &&
-      now - fetchedAtMs < REGISTRY_SEARCH_MAX_AGE_MS
+      now - fetchedAtMs < maxAgeMs
     ) {
       return current;
     }
     return yield* refreshRegistry();
+  });
+
+  const refreshIndex: AcpRegistryCatalog["Service"]["refreshIndex"] = Effect.fn(
+    "AcpRegistryCatalog.refreshIndex",
+  )(function* (options) {
+    yield* options?.maxAgeMs === undefined ? refreshRegistry() : recentRegistry(options.maxAgeMs);
   });
 
   const loadRegistry = Effect.fn("AcpRegistryCatalog.loadRegistry")(function* () {
@@ -2154,6 +2165,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   return AcpRegistryCatalog.of({
     search,
     prepare,
+    refreshIndex,
     inspect,
     resolve,
     uninstallManagedBinary,

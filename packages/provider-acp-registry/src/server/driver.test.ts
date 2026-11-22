@@ -9,12 +9,15 @@ import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { toCustomModelSetting } from "@t3tools/shared/model";
 import { AcpRegistrySettings } from "../settings.ts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as HttpClient from "effect/http/HttpClient";
+import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -61,6 +64,7 @@ function catalogWithInspection(
   return {
     search: () => Effect.die("unused search"),
     prepare: () => Effect.die("unused prepare"),
+    refreshIndex: () => Effect.void,
     inspect: () => Effect.succeed(inspection),
     resolve: () => Effect.die("unused resolve"),
     uninstallManagedBinary: () => Effect.die("unused uninstall"),
@@ -1186,6 +1190,148 @@ it.layer(driverLayer, { excludeTestServices: true })("AcpRegistryDriver", (it) =
       expect(effortBySlug(yield* instance.snapshot.getSnapshot)).toBe(
         "model-a:effort,model-b:effort",
       );
+    }),
+  );
+
+  it.effect("refreshes a cached registry index on enrichment and explicit cache invalidation", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({ prefix: "acp-driver-update-" });
+      const agentPath = path.join(directory, "agent.mjs");
+      const modelsPath = path.join(directory, "models.json");
+      const registryUrl = "https://registry.test/registry.json";
+      const makeRegistry = (version: string) =>
+        JSON.stringify({
+          version: "1.0.0",
+          agents: [
+            {
+              id: "test-agent",
+              name: "Test Agent",
+              version,
+              description: "Test binary agent",
+              distribution: {
+                binary: {
+                  "linux-x86_64": {
+                    archive: `https://registry.test/test-agent-${version}.bin`,
+                    cmd: "./bin/test-agent",
+                  },
+                },
+              },
+            },
+          ],
+        });
+      yield* fileSystem.writeFileString(agentPath, fakeAgentSource);
+      yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["model-a", "model-b"]));
+      yield* fileSystem.makeDirectory(path.join(directory, "acp-registry"), { recursive: true });
+      yield* fileSystem.writeFileString(
+        path.join(directory, "acp-registry", "registry.json"),
+        makeRegistry("1.0.0"),
+      );
+      const installedV1 = path.join(
+        directory,
+        "tools",
+        "test-agent",
+        "1.0.0",
+        "linux-x86_64",
+        "bin",
+        "test-agent",
+      );
+      yield* fileSystem.makeDirectory(path.dirname(installedV1), { recursive: true });
+      yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.0.0\n");
+      yield* fileSystem.chmod(installedV1, 0o755);
+
+      let latestVersion = "2.0.0";
+      let registryRequests = 0;
+      const realCatalog = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: directory,
+        toolsDir: path.join(directory, "tools"),
+        registryUrl,
+      }).pipe(
+        Effect.provideService(HostProcess.Platform, "linux"),
+        Effect.provideService(HostProcess.Architecture, "x64"),
+        Effect.provideService(
+          HttpClient.HttpClient,
+          HttpClient.make((request) => {
+            if (request.url === registryUrl) {
+              registryRequests += 1;
+              return Effect.succeed(
+                HttpClientResponse.fromWeb(request, new Response(makeRegistry(latestVersion))),
+              );
+            }
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                new Response(`#!/bin/sh\necho ${latestVersion}\n`),
+              ),
+            );
+          }),
+        ),
+      );
+      const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
+        ...realCatalog,
+        resolve: (settings, cwd, environment) =>
+          realCatalog.resolve(settings, cwd, environment).pipe(
+            Effect.map((resolved) => ({
+              ...resolved,
+              spawn: { command: process.execPath, args: [agentPath, modelsPath] },
+            })),
+          ),
+      };
+
+      const instance = yield* AcpRegistryDriver.create({
+        instanceId: identity.instanceId,
+        displayName: identity.displayName,
+        enabled: true,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+
+      const waitForEnriched = () =>
+        instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.nativeSessions !== undefined),
+          Stream.runHead,
+        );
+
+      // Initial enrichment refreshes the disk-cached 1.0.0 index and installs 2.0.0.
+      const upgradedToV2 = yield* waitForEnriched().pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      const first = Option.getOrThrow(yield* Fiber.join(upgradedToV2));
+      expect(first.version).toBe("2.0.0");
+      expect(
+        yield* fileSystem.exists(
+          path.join(directory, "tools", "test-agent", "2.0.0", "linux-x86_64", "bin", "test-agent"),
+        ),
+      ).toBe(true);
+
+      // Explicit cache invalidation refreshes past the in-memory reuse window and installs 3.0.0.
+      latestVersion = "3.0.0";
+      const upgradedToV3 = yield* waitForEnriched().pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.invalidateCaches ?? Effect.void;
+      yield* instance.snapshot.refresh;
+      const second = Option.getOrThrow(yield* Fiber.join(upgradedToV3));
+      expect(second.version).toBe("3.0.0");
+      expect(
+        yield* fileSystem.exists(
+          path.join(directory, "tools", "test-agent", "3.0.0", "linux-x86_64", "bin", "test-agent"),
+        ),
+      ).toBe(true);
+
+      // Disabled instances must not fetch the registry on cache invalidation.
+      const disabledRequestsBefore = registryRequests;
+      const disabled = yield* AcpRegistryDriver.create({
+        instanceId: ProviderInstanceId.make("acpRegistry_disabled"),
+        displayName: "Disabled ACP",
+        enabled: false,
+        environment: [],
+        config: decodeSettings({ agentId: "test-agent" }),
+      }).pipe(Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog));
+      yield* disabled.invalidateCaches ?? Effect.void;
+      expect(registryRequests).toBe(disabledRequestsBefore);
     }),
   );
 });

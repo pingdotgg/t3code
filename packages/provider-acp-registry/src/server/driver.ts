@@ -793,6 +793,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           generation: cacheState.generation,
         };
       }
+      if (effectiveConfig.enabled && effectiveConfig.source !== "local") {
+        yield* catalog.refreshIndex({ maxAgeMs: PROBE_SUCCESS_TTL_MS }).pipe(Effect.ignore);
+      }
       const enriched = yield* enrichProvider;
       if (effectiveConfig.source === "local" && enriched.status === "ready") {
         yield* Ref.set(reportedLocalVersion, enriched.version);
@@ -1009,6 +1012,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       ).pipe(
         Effect.andThen(clearLearnedModels),
         Effect.andThen(liveSnapshotSemaphore.withPermit(invalidateEnrichmentCache)),
+        Effect.andThen(
+          effectiveConfig.enabled && effectiveConfig.source !== "local"
+            ? catalog.refreshIndex().pipe(Effect.ignore)
+            : Effect.void,
+        ),
       ),
       orchestrationAdapter,
       textGeneration: makeUnsupportedTextGeneration(),

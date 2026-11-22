@@ -960,6 +960,116 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
+  it.effect("refreshes a cached registry index according to maxAgeMs and explicit refresh", () => {
+    const makeBinaryAgent = (version: string) => ({
+      ...makeAgent({
+        binary: {
+          "linux-x86_64": {
+            archive: `https://registry.test/example-agent-${version}.bin`,
+            cmd: "./bin/example-agent",
+          },
+        },
+      }),
+      version,
+    });
+    let upstream = makeBinaryAgent("1.2.4");
+    let online = true;
+    let registryRequests = 0;
+    return Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const cacheDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-acp-registry-refresh-index-",
+      });
+      yield* fileSystem.makeDirectory(`${cacheDir}/acp-registry`, { recursive: true });
+      yield* fileSystem.writeFileString(
+        `${cacheDir}/acp-registry/registry.json`,
+        makeRegistry(makeBinaryAgent("1.2.3")),
+      );
+      const installedV1 = `${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/bin/example-agent`;
+      yield* fileSystem.makeDirectory(`${cacheDir}/tools/example-agent/1.2.3/linux-x86_64/bin`, {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(installedV1, "#!/bin/sh\necho 1.2.3\n");
+      yield* fileSystem.chmod(installedV1, 0o755);
+
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir,
+        toolsDir: `${cacheDir}/tools`,
+        registryUrl,
+      });
+
+      // Cold inspection stays on disk with no network request.
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.3",
+      });
+      expect(registryRequests).toBe(0);
+
+      // Refreshing a disk-loaded index fetches the latest version once, then reuses it until maxAgeMs.
+      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(registryRequests).toBe(1);
+      expect(yield* resolver.inspect(settings())).toMatchObject({
+        status: "ready",
+        version: "1.2.4",
+      });
+
+      upstream = makeBinaryAgent("1.2.5");
+      yield* TestClock.adjust("14 minutes");
+      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(registryRequests).toBe(1);
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.4" });
+
+      yield* TestClock.adjust("1 minute");
+      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(registryRequests).toBe(2);
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.5" });
+
+      // Explicit refresh bypasses the reuse window and lets resolve install the new binary.
+      upstream = makeBinaryAgent("1.2.6");
+      yield* resolver.refreshIndex();
+      expect(registryRequests).toBe(3);
+      const resolved = yield* resolver.resolve(settings(), "/workspace", {});
+      expect(resolved.spawn.command).toContain(
+        "/tools/example-agent/1.2.6/linux-x86_64/bin/example-agent",
+      );
+
+      // Offline refresh keeps the cached index and retries on the next refreshIndex call.
+      online = false;
+      yield* resolver.refreshIndex();
+      expect(registryRequests).toBe(4);
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.6" });
+
+      online = true;
+      upstream = makeBinaryAgent("1.2.7");
+      yield* resolver.refreshIndex({ maxAgeMs: 15 * 60 * 1_000 });
+      expect(registryRequests).toBe(5);
+      expect(yield* resolver.inspect(settings())).toMatchObject({ version: "1.2.7" });
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        layerResolver((request) => {
+          if (request.url === registryUrl) {
+            registryRequests += 1;
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                online
+                  ? new Response(makeRegistry(upstream))
+                  : new Response("unavailable", { status: 503 }),
+              ),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              new Response(`#!/bin/sh\necho ${upstream.version}\n`),
+            ),
+          );
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "prepares the registry version despite an older PATH binary and permits explicit overrides",
     () => {
