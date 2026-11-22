@@ -15,6 +15,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as EffectAcpErrors from "effect-acp/errors";
 
+import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { PULL_REQUEST_LINKING_INSTRUCTIONS } from "@t3tools/provider-core/server/runtimeInstructions";
 import type { AntigravityAuth } from "../../provider/AntigravityAuth.ts";
@@ -36,6 +37,7 @@ import {
   readAntigravityChildrenAtWork,
   readAntigravityPendingReply,
 } from "../../provider/acp/AntigravityChildWork.ts";
+import { rewindAntigravitySession } from "../../provider/acp/AntigravitySessionFiles.ts";
 import { readAntigravityClientTextFile } from "../../provider/acp/AntigravityClientFiles.ts";
 import { watchAntigravityPromptOutcome } from "../../provider/acp/AntigravityTurnOutcome.ts";
 import {
@@ -317,6 +319,19 @@ export function makeAntigravityAcpAdapterFlavor(
               profileDirectory,
               sessionId,
             }),
+          rewindSession: ({ sessionId, before }) =>
+            rewindAntigravitySession({ profileDirectory, sessionId, before }).pipe(
+              Effect.provideService(FileSystem.FileSystem, options.fileSystem),
+              Effect.provideService(Path.Path, options.path),
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterProtocolError({
+                    driver: ANTIGRAVITY_PROVIDER,
+                    detail: cause.message,
+                    cause,
+                  }),
+              ),
+            ),
         }),
   };
 }

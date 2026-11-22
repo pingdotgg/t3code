@@ -79,9 +79,11 @@ export function describeAntigravitySubagentLaunches(
       };
 }
 
-/** Length-delimited fields only; varints and fixed values are skipped. */
-export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
-  const fields: Array<readonly [number, Uint8Array]> = [];
+/** Each field's varint or length-delimited value; fixed-width values are skipped. */
+export function protoEntries(
+  bytes: Uint8Array,
+): ReadonlyArray<readonly [number, number | Uint8Array]> {
+  const entries: Array<readonly [number, number | Uint8Array]> = [];
   let offset = 0;
   const varint = () => {
     let value = 0;
@@ -97,18 +99,25 @@ export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, 
     const key = varint();
     const wire = key % 8;
     const field = Math.floor(key / 8);
-    if (wire === 0) varint();
+    if (wire === 0) entries.push([field, varint()]);
     else if (wire === 1) offset += 8;
     else if (wire === 5) offset += 4;
     else if (wire === 2) {
       const length = varint();
       if (offset + length > bytes.length) throw new Error("Truncated field");
-      fields.push([field, bytes.subarray(offset, offset + length)]);
+      entries.push([field, bytes.subarray(offset, offset + length)]);
       offset += length;
     } else throw new Error("Unsupported wire type");
   }
   if (offset > bytes.length) throw new Error("Truncated field");
-  return fields;
+  return entries;
+}
+
+/** Length-delimited fields only. */
+export function protoFields(bytes: Uint8Array): ReadonlyArray<readonly [number, Uint8Array]> {
+  return protoEntries(bytes).flatMap(([field, value]) =>
+    typeof value === "number" ? [] : [[field, value] as const],
+  );
 }
 
 // Keep a leading byte order mark: T3 stores launch text with it.

@@ -86,9 +86,9 @@ Questions with fixed choices still need one of the offered answers, even in
 **Full access**.
 
 On web and desktop, [Edit from here](./composer.md#edit-an-earlier-prompt) works with
-Antigravity. Antigravity cannot rewind its own conversation, so the next turn
-starts a fresh Antigravity session and T3 Code sends it the kept conversation,
-without the turns you removed.
+Antigravity. T3 Code rewinds the Antigravity session itself, as its `/rewind` does, so
+the next turn continues it with its full history of the kept turns, tool calls and
+thinking included.
 
 Use `/compact` to summarize a long conversation when your Antigravity runtime
 offers that command. If it is unavailable, update Antigravity in provider settings

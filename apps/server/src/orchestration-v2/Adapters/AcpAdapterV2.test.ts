@@ -27,12 +27,15 @@ import {
   EnvironmentId,
   MessageId,
   type ModelSelection,
+  NodeId,
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSessionId,
+  ProviderTurnId,
   RunId,
   ThreadId,
   type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderTurn,
   type OrchestrationV2TurnItem,
   type OrchestrationV2UserInputQuestion,
   type ProviderOptionDescriptor,
@@ -7366,6 +7369,99 @@ describe("AcpAdapterV2", () => {
       assert.lengthOf(prompts, 2);
       // The mock agent reuses its session id, so only the rollback reset resends these notes.
       assert.include(prompts[1]?.at(-1)?.text ?? "", "<runtime_info>");
+    }).pipe(Effect.provide(layerTest)),
+  );
+
+  it.effect("rewinds and resumes its own ACP session on rollback when the flavor can", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const selfInvocation = yield* resolveSelfInvocation();
+      const mockAgentPath = yield* bundledMockAgentPath;
+      const instanceId = ProviderInstanceId.make("acp-test-rewind-session");
+      const runtimeInputs: Array<AcpAdapterV2RuntimeInput> = [];
+      const rewinds: Array<{ readonly sessionId: string; readonly before: DateTime.Utc }> = [];
+      const makeRuntime = makeMockRuntime({
+        childProcessSpawner,
+        mockAgentPath,
+        protocolEvents: yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>(),
+      });
+      const adapter = yield* makeAcpAdapterV2({
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => runtimeInputs.push(runtimeInput)).pipe(
+              Effect.andThen(makeRuntime(runtimeInput)),
+            ),
+          rewindSession: (rewind) => Effect.sync(() => rewinds.push(rewind)),
+        },
+        selfInvocation,
+      });
+      const threadId = ThreadId.make("thread-acp-rewind-session");
+      const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-rewind-session"),
+        modelSelection,
+        runtimePolicy,
+      });
+      assert.isTrue(
+        runtime.providerSession.capabilities.checkpointing.providerCanRollbackConversation,
+      );
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const sessionId = providerThread.nativeThreadRef?.nativeId;
+      const turn = (ordinal: number, startedAt: string): OrchestrationV2ProviderTurn => ({
+        id: ProviderTurnId.make(`provider-turn-rewind-${ordinal}`),
+        providerThreadId: providerThread.id,
+        nodeId: NodeId.make(`node-rewind-${ordinal}`),
+        runAttemptId: null,
+        nativeTurnRef: null,
+        ordinal,
+        status: "completed",
+        startedAt: DateTime.makeUnsafe(startedAt),
+        completedAt: DateTime.makeUnsafe(startedAt),
+      });
+      const kept = turn(1, "2026-01-01T00:00:00Z");
+      const turns = [kept, turn(3, "2026-01-01T00:03:00Z"), turn(2, "2026-01-01T00:02:00Z")];
+
+      const rolledBack = yield* runtime.rollbackThread({
+        providerThread,
+        providerThreadTurns: turns,
+        target: {
+          type: "provider_turn",
+          checkpointId: CheckpointId.make("checkpoint-acp-rewind-session"),
+          appRunOrdinal: 1,
+          providerTurn: kept,
+        },
+      });
+      assert.deepEqual(
+        rewinds.map((rewind) => [rewind.sessionId, DateTime.formatIso(rewind.before)]),
+        [[sessionId, "2026-01-01T00:02:00.000Z"]],
+      );
+      assert.equal(runtimeInputs[1]?.resumeSessionId, sessionId);
+      assert.equal(rolledBack.providerThread.nativeThreadRef?.nativeId, sessionId);
+
+      yield* runtime.rollbackThread({
+        providerThread: rolledBack.providerThread,
+        providerThreadTurns: [],
+        target: {
+          type: "thread_start",
+          checkpointId: CheckpointId.make("checkpoint-acp-rewind-session-start"),
+          appRunOrdinal: 0,
+        },
+      });
+      assert.lengthOf(rewinds, 1);
+      assert.isUndefined(runtimeInputs[2]?.resumeSessionId);
     }).pipe(Effect.provide(layerTest)),
   );
 

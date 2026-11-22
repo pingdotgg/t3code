@@ -5,6 +5,7 @@ import * as NodeURL from "node:url";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -13,6 +14,7 @@ import * as PlatformError from "effect/PlatformError";
 import {
   removeAntigravitySessionFiles,
   retireAntigravityRuntimeTempDirs,
+  rewindAntigravitySession,
 } from "./AntigravitySessionFiles.ts";
 
 const SESSION_ID = "047c62f6-607b-44db-bfbe-f83b67e9e8b1";
@@ -274,6 +276,157 @@ it.layer(NodeServices.layer)("retireAntigravityRuntimeTempDirs", (it) => {
         ).pipe(Effect.provideService(FileSystem.FileSystem, fs));
         yield* removeRetired;
         expect(removed).toEqual(["/state/antigravity-tmp/abc123"]);
+      }),
+  );
+});
+
+const USER_INPUT = 14;
+const PLANNER_RESPONSE = 15;
+const protoVarint = (number: number, value: number) => [...varint(number * 8), ...varint(value)];
+
+/** Three native turns, whose prompts arrive at 1000s, 2000s and 3000s. */
+const makeRewindFixture = Effect.fn("makeRewindFixture")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-session-rewind-" });
+  const acp = path.join(root, "antigravity-acp");
+  const generated = path.join(acp, "brain", SESSION_ID, ".system_generated");
+  const steps: ReadonlyArray<readonly [type: number, seconds: number, generation: number]> = [
+    [USER_INPUT, 1000, 0],
+    [PLANNER_RESPONSE, 1001, 0],
+    [132, 1002, 0],
+    [USER_INPUT, 2000, 1],
+    [PLANNER_RESPONSE, 2001, 1],
+    [USER_INPUT, 3000, 2],
+    [PLANNER_RESPONSE, 3001, 2],
+  ];
+  yield* fs.makeDirectory(path.join(acp, "conversations"), { recursive: true });
+  const database = new NodeSqlite.DatabaseSync(path.join(acp, "conversations", `${SESSION_ID}.db`));
+  try {
+    database.exec(`
+      CREATE TABLE trajectory_meta (trajectory_id TEXT PRIMARY KEY, cascade_id TEXT);
+      CREATE TABLE steps (idx INTEGER PRIMARY KEY, step_type INTEGER, metadata BLOB);
+      CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB);
+      CREATE TABLE executor_metadata (idx INTEGER PRIMARY KEY, data BLOB);
+    `);
+    database.prepare("INSERT INTO trajectory_meta VALUES (?, ?)").run("trajectory", SESSION_ID);
+    for (const [idx, [type, seconds, generation]] of steps.entries()) {
+      database
+        .prepare("INSERT INTO steps VALUES (?, ?, ?)")
+        .run(
+          idx,
+          type,
+          proto(
+            protoField(1, proto(protoVarint(1, seconds), protoVarint(2, 500_000_000))),
+            protoField(20, proto(protoVarint(2, idx), protoVarint(3, generation))),
+          ),
+        );
+    }
+    for (const [run, lastStep] of [2, 4, 6].entries()) {
+      database.prepare("INSERT INTO gen_metadata VALUES (?, ?)").run(run, proto());
+      database
+        .prepare("INSERT INTO executor_metadata VALUES (?, ?)")
+        .run(run, proto(protoVarint(3, lastStep)));
+    }
+  } finally {
+    database.close();
+  }
+  const transcript = steps.map((_, idx) => `{"step_index":${idx},"type":"STEP"}\n`).join("");
+  for (const name of ["transcript", "transcript_full"]) {
+    yield* fs.makeDirectory(path.join(generated, "logs", "chunks", name), { recursive: true });
+    yield* fs.writeFileString(path.join(generated, "logs", `${name}.jsonl`), transcript);
+    yield* fs.writeFileString(
+      path.join(generated, "logs", "chunks", name, "00000000.jsonl"),
+      transcript,
+    );
+  }
+  for (const step of [2, 6]) {
+    yield* fs.makeDirectory(path.join(generated, "steps", String(step)), { recursive: true });
+    yield* fs.writeFileString(path.join(generated, "steps", String(step), "output.txt"), "output");
+  }
+  yield* fs.makeDirectory(path.join(generated, "logs", "media"), { recursive: true });
+  for (const step of [1, 6]) {
+    yield* fs.writeFileString(
+      path.join(generated, "logs", "media", `step_${step}_media_0.jpg`),
+      "",
+    );
+  }
+  const read = () => {
+    const database = new NodeSqlite.DatabaseSync(
+      path.join(acp, "conversations", `${SESSION_ID}.db`),
+      { readOnly: true },
+    );
+    try {
+      const column = (sql: string) =>
+        database
+          .prepare(sql)
+          .all()
+          .map((row) => Object.values(row)[0]);
+      return {
+        steps: column("SELECT idx FROM steps ORDER BY idx"),
+        generations: column("SELECT idx FROM gen_metadata ORDER BY idx"),
+        runs: column("SELECT idx FROM executor_metadata ORDER BY idx"),
+        trajectory: column("SELECT trajectory_id FROM trajectory_meta"),
+      };
+    } finally {
+      database.close();
+    }
+  };
+  return { profileDirectory: root, generated, read };
+});
+
+it.layer(NodeServices.layer)("rewindAntigravitySession", (it) => {
+  it.effect("cuts the session and its brain files back to the turns before a time", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const fixture = yield* makeRewindFixture();
+
+      yield* rewindAntigravitySession({
+        profileDirectory: fixture.profileDirectory,
+        sessionId: SESSION_ID,
+        before: DateTime.makeUnsafe(2500_000),
+      });
+
+      const after = fixture.read();
+      expect(after).toMatchObject({ steps: [0, 1, 2, 3, 4], generations: [0, 1], runs: [0, 1] });
+      expect(after.trajectory).not.toEqual(["trajectory"]);
+      const kept = [0, 1, 2, 3, 4].map((idx) => `{"step_index":${idx},"type":"STEP"}\n`).join("");
+      for (const name of ["transcript", "transcript_full"]) {
+        const logs = path.join(fixture.generated, "logs");
+        expect(yield* fs.readFileString(path.join(logs, `${name}.jsonl`))).toBe(kept);
+        expect(yield* fs.readDirectory(path.join(logs, "chunks", name))).toEqual([
+          "00000000.jsonl",
+        ]);
+        expect(yield* fs.readFileString(path.join(logs, "chunks", name, "00000000.jsonl"))).toBe(
+          kept,
+        );
+      }
+      expect(yield* fs.readDirectory(path.join(fixture.generated, "steps"))).toEqual(["2"]);
+      expect(yield* fs.readDirectory(path.join(fixture.generated, "logs", "media"))).toEqual([
+        "step_1_media_0.jpg",
+      ]);
+    }),
+  );
+
+  it.effect(
+    "keeps a session no later prompt reached, and refuses one that would keep nothing",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* makeRewindFixture();
+        const before = fixture.read();
+        const rewind = (seconds: number) =>
+          rewindAntigravitySession({
+            profileDirectory: fixture.profileDirectory,
+            sessionId: SESSION_ID,
+            before: DateTime.makeUnsafe(seconds * 1000),
+          });
+
+        yield* rewind(4000);
+        expect(fixture.read()).toEqual(before);
+        const refused = yield* Effect.flip(rewind(500));
+        expect(refused.message).toContain("holds none of the kept turns");
+        expect(fixture.read()).toEqual(before);
       }),
   );
 });

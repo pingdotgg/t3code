@@ -602,6 +602,14 @@ export interface AcpAdapterV2Flavor {
     initializeResult: AcpSessionRuntime.AcpSessionRuntimeStartResult["initializeResult"],
   ) => boolean;
   /**
+   * Cuts a stored native session back to the turns it held before `before`, so rolling back
+   * resumes that session with its native history instead of starting a fresh one.
+   */
+  readonly rewindSession?: (input: {
+    readonly sessionId: string;
+    readonly before: DateTime.Utc;
+  }) => Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
+  /**
    * Native fork from an earlier turn. `nativeTurnId` reads the agent's id for a running
    * turn's prompt, which the turn keeps as its native ref; forking from that turn sends
    * `forkMeta(id)` as the `session/fork` `_meta`.
@@ -986,6 +994,36 @@ function forkFromTurnMetaFor(input: {
     return null;
   }
   return input.flavor.forkFromTurn.forkMeta(ref.nativeId);
+}
+
+/**
+ * The native session a rollback to a turn resumes, cut back before the earliest later turn
+ * started. A rollback to the thread start keeps nothing, so it starts a fresh session.
+ */
+function keptSession(
+  input: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+  rewindSession: AcpAdapterV2Flavor["rewindSession"],
+):
+  | {
+      readonly sessionId: string;
+      readonly rewind: Effect.Effect<void, ProviderAdapter.ProviderAdapterProtocolError>;
+    }
+  | undefined {
+  const sessionId = input.providerThread.nativeThreadRef?.nativeId;
+  if (rewindSession === undefined || input.target.type !== "provider_turn" || sessionId == null) {
+    return undefined;
+  }
+  const kept = input.target.providerTurn.ordinal;
+  const dropped = input.providerThreadTurns.flatMap((turn) =>
+    turn.ordinal > kept && turn.startedAt !== null ? [turn.startedAt] : [],
+  );
+  return {
+    sessionId,
+    rewind:
+      dropped.length === 0
+        ? Effect.void
+        : rewindSession({ sessionId, before: dropped.reduce((a, b) => DateTime.min(a, b)) }),
+  };
 }
 
 function isCompactionMessage(message: ProviderAdapter.ProviderAdapterV2TurnMessage): boolean {
@@ -2097,12 +2135,22 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
   const driver = flavor.driver;
   const continuationRequests = options.continuationRequests;
 
+  const flavorCapabilities: OrchestrationV2ProviderCapabilities =
+    flavor.rewindSession === undefined
+      ? flavor.capabilities
+      : {
+          ...flavor.capabilities,
+          checkpointing: {
+            ...flavor.capabilities.checkpointing,
+            providerCanRollbackConversation: true,
+          },
+        };
   const readCapabilities = Effect.gen(function* () {
-    if (flavor.supportsNativeGoals === undefined) return flavor.capabilities;
+    if (flavor.supportsNativeGoals === undefined) return flavorCapabilities;
     return {
-      ...flavor.capabilities,
+      ...flavorCapabilities,
       turns: {
-        ...flavor.capabilities.turns,
+        ...flavorCapabilities.turns,
         supportsNativeGoals: yield* flavor.supportsNativeGoals,
       },
     };
@@ -7974,6 +8022,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           commitSessionState: (
             replacement: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) => Effect.Effect<void>,
+          resumeSessionId?: string,
         ) {
           const previousScope = runtimeScope;
           const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
@@ -8020,7 +8069,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   replacementGeneration,
                   replacementAgentRequests,
                   mcpContext,
-                  undefined,
+                  resumeSessionId,
                   handleCandidateTermination,
                 ),
               )
@@ -11081,10 +11130,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   prepareTerminalEnvironment(
                     yield* readMcpContext(rollbackInput.providerThread.appThreadId),
                   );
+                  const kept = keptSession(rollbackInput, flavor.rewindSession);
+                  if (kept !== undefined) yield* kept.rewind;
                   const replacement = yield* startReplacementAcpRuntime(
                     rollbackInput.providerThread.appThreadId,
                     (candidate) =>
                       commitReplacementSession(rollbackInput.providerThread.appThreadId, candidate),
+                    kept?.sessionId,
                   ).pipe(Effect.retry({ times: 1 }));
                   const now = yield* DateTime.now;
                   return {
