@@ -4387,9 +4387,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               ? sql<PayloadRow>`
             SELECT payload_json
             FROM orchestration_v2_projection_provider_threads
-            -- Most provider threads have no owner node or session, so ANALYZE rates those
-            -- indexes as matching every row and SQLite scans the table for an OR of them.
-            WHERE rowid IN (
+            WHERE ${
+              filter?.omitSettledSubagentRecords === true
+                ? // A dispatcher's settled tasks' provider threads belong to the child threads;
+                  // only a session this thread also uses is probed when it detaches. Most rows
+                  // lack an owner or session, so ANALYZE rates those indexes as matching every
+                  // row and SQLite scans for an OR of them; each union branch seeks instead.
+                  sql`rowid IN (
               SELECT rowid FROM orchestration_v2_projection_provider_threads
               WHERE thread_id = ${threadId}
               UNION
@@ -4397,12 +4401,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 INDEXED BY orchestration_v2_projection_provider_threads_owner_idx
               WHERE owner_node_id IN (${nodesOwningProviderThreads(threadId)})
               UNION
-              ${
-                filter?.omitSettledSubagentRecords === true
-                  ? // A dispatcher thread holds thousands of settled tasks. Their provider
-                    // threads belong to the child threads; only a session this thread also
-                    // uses is probed for background work when the thread detaches it.
-                    sql`SELECT rowid FROM orchestration_v2_projection_provider_threads
+              SELECT rowid FROM orchestration_v2_projection_provider_threads
               WHERE provider_thread_id IN (
                 SELECT provider_thread_id
                 FROM orchestration_v2_projection_subagents
@@ -4421,15 +4420,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   SELECT 1 FROM orchestration_v2_projection_subagents AS owner
                   WHERE owner.provider_thread_id = shared.provider_thread_id
                     AND owner.thread_id = ${threadId}
-                )`
-                  : sql`SELECT rowid FROM orchestration_v2_projection_provider_threads
-              WHERE provider_thread_id IN (
-                SELECT provider_thread_id
-                FROM orchestration_v2_projection_subagents
-                WHERE thread_id = ${threadId}
-                  AND provider_thread_id IS NOT NULL
-              )`
-              })
+                )
+            )`
+                : sql`(thread_id = ${threadId}
+               OR owner_node_id IN (${nodesOwningProviderThreads(threadId)})
+               OR provider_thread_id IN (
+                 SELECT provider_thread_id
+                 FROM orchestration_v2_projection_subagents
+                 WHERE thread_id = ${threadId}
+                   AND provider_thread_id IS NOT NULL
+               ))`
+            }
               ${filter?.providerThreadIds === undefined ? sql`` : sql`AND provider_thread_id IN (SELECT value FROM json_each(${encodeIdList(filter.providerThreadIds)}))`}
             ORDER BY COALESCE(first_run_ordinal, 0), provider_thread_id ASC
           `
