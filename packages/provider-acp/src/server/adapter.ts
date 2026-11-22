@@ -9970,6 +9970,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           ...(canReportBackgroundWork
             ? {
                 hasPendingBackgroundWork: Effect.gen(function* () {
+                  if (carryoverBackgroundTools.size > 0) return true;
                   if (!postSettleContinuationEnabled && !followsAgentWorkState) return false;
                   const rootSessionId = yield* Ref.get(activeSessionId);
                   if (
@@ -10007,24 +10008,26 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 }),
               }
             : carriesBackgroundTools
-              ? {
-                  hasPendingBackgroundWork: Effect.sync(() => carryoverBackgroundTools.size > 0),
-                  retireBackgroundWork: runtimeCallbackPermit.withPermit(
-                    Effect.suspend(() => {
-                      const retired: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
-                      retiredEvents = retired;
-                      return endCarriedBackgroundTools().pipe(
-                        Effect.ensuring(
-                          Effect.sync(() => {
-                            retiredEvents = undefined;
-                          }),
-                        ),
-                        Effect.as(retired),
-                      );
-                    }),
-                  ),
-                }
+              ? { hasPendingBackgroundWork: Effect.sync(() => carryoverBackgroundTools.size > 0) }
               : {}),
+          ...(carriesBackgroundTools
+            ? {
+                retireBackgroundWork: runtimeCallbackPermit.withPermit(
+                  Effect.suspend(() => {
+                    const retired: Array<ProviderAdapter.ProviderAdapterV2Event> = [];
+                    retiredEvents = retired;
+                    return endCarriedBackgroundTools().pipe(
+                      Effect.ensuring(
+                        Effect.sync(() => {
+                          retiredEvents = undefined;
+                        }),
+                      ),
+                      Effect.as(retired),
+                    );
+                  }),
+                ),
+              }
+            : {}),
           ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
             function* (threadInput: ProviderAdapter.ProviderAdapterV2EnsureThreadInput) {
               return yield* runtimeTransitionPermit.withPermit(

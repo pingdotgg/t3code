@@ -4282,6 +4282,7 @@ describe("AcpAdapterV2", () => {
       selfInvocation: yield* resolveSelfInvocation(),
       settings: DEVIN_SETTINGS,
       environment: {},
+      continuationRequests: { offer: () => Effect.void },
       makeRuntime: (runtimeInput) =>
         Effect.sync(() => {
           runtimeInputs.push(runtimeInput);
@@ -4487,12 +4488,9 @@ describe("AcpAdapterV2", () => {
       assert.isFalse(yield* shell.runtime.hasPendingBackgroundWork!);
       const { seen } = yield* shell.runTurn();
       assert.equal(shell.execItems(seen, "exec-2").at(-1)?.status, "running");
-      yield* Scope.close(shell.sessionScope, Exit.void);
-      const closed = yield* shell.until(
-        (event) =>
-          event.type === "turn_item.updated" && event.turnItem.nativeItemRef?.nativeId === "exec-2",
-      );
-      assert.equal(shell.execItems(closed, "exec-2").at(-1)?.status, "interrupted");
+      assert.isTrue(yield* shell.runtime.hasPendingBackgroundWork!);
+      const retired = yield* shell.runtime.retireBackgroundWork!;
+      assert.equal(shell.execItems(retired, "exec-2").at(-1)?.status, "interrupted");
       assert.isFalse(yield* shell.runtime.hasPendingBackgroundWork!);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
