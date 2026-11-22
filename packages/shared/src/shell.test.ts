@@ -1187,14 +1187,18 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
       readonly platform?: NodeJS.Platform;
       readonly gitOnPath: string;
       readonly xcrunGit: string | undefined;
+      readonly asyncPathLookup?: boolean;
     }) => {
       const files = new Set([options.gitOnPath, ...(options.xcrunGit ? [options.xcrunGit] : [])]);
       const host = { xcrunGit: options.xcrunGit, xcrunCalls: 0 };
+      const lookUp = (command: string) =>
+        command === "git" ? options.gitOnPath : files.has(command) ? command : undefined;
       const resolve = resolveSpawnCommand("git", ["status"], { env: { PATH: "/fake/bin" } }).pipe(
         Effect.map((resolved) => resolved.command),
         Effect.provideService(HostProcess.Platform, options.platform ?? "darwin"),
-        Effect.provideService(SpawnExecutableResolution, (command) =>
-          command === "git" ? options.gitOnPath : files.has(command) ? command : undefined,
+        Effect.provideService(
+          SpawnExecutableResolution,
+          options.asyncPathLookup ? async (command) => lookUp(command) : lookUp,
         ),
         Effect.provideService(XcodeGitLocation, () =>
           Effect.sync(() => {
@@ -1214,6 +1218,28 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
         expect(yield* resolve).toBe(XCODE_GIT);
         expect(yield* resolve).toBe(XCODE_GIT);
         expect(host.xcrunCalls).toBe(1);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
+
+    // The default PATH lookup answers asynchronously.
+    it.effect("checks the Xcode git through an asynchronous PATH lookup", () =>
+      Effect.gen(function* () {
+        const found = setup({
+          gitOnPath: "/usr/bin/git",
+          xcrunGit: XCODE_GIT,
+          asyncPathLookup: true,
+        });
+        expect(yield* found.resolve).toBe(XCODE_GIT);
+        expect(yield* found.resolve).toBe(XCODE_GIT);
+        expect(found.host.xcrunCalls).toBe(1);
+
+        const missing = setup({
+          gitOnPath: "/usr/bin/git",
+          xcrunGit: XCODE_GIT,
+          asyncPathLookup: true,
+        });
+        missing.files.delete(XCODE_GIT);
+        expect(yield* missing.resolve).toBe("git");
       }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
 
