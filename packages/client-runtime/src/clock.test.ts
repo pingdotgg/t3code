@@ -193,11 +193,9 @@ describe("server clock", () => {
 
     observeServerTime(environmentId, 5_000, 2 * HOUR + 20_100);
     expect(toServerClock(environmentId, 2 * HOUR + 20_050)).toBe(2 * HOUR + 20_000);
-  });
 
-  it("ignores observed host timestamps before any clock offset is recorded", () => {
-    const environmentId = EnvironmentId.make("unrecorded");
-    observeServerTime(environmentId, HOUR, 1_000);
-    expect(toServerClock(environmentId, 1_000)).toBe(1_000);
+    const unrecorded = EnvironmentId.make("unrecorded");
+    observeServerTime(unrecorded, HOUR, 1_000);
+    expect(toServerClock(unrecorded, 1_000)).toBe(1_000);
   });
 });
