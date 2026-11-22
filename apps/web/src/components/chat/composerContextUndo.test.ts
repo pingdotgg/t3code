@@ -153,7 +153,6 @@ describe("reconcileAttachmentContextReferences", () => {
         { attachment: rowRemovedImage, contextIds: [imageContextId] },
       ],
       isHistory: true,
-      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -161,7 +160,25 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(restored.queuedAttachmentIdsToRemove).toEqual([]);
     expect(restored.queuedAttachmentsToRestore).toEqual([chipFile, rowRemovedImage]);
 
-    // Redoing removes both the file and the row-removed image that undo brought back,
+    // Typing around a restored image chip (non-history change while chip stays referenced)
+    // does not lose history-undo tracking when a subsequent Undo removes the pasted/restored chip.
+    const typed = reconcileAttachmentContextReferences({
+      referencedContextIds: new Set([chipContextId, imageContextId]),
+      files: [],
+      queuedAttachments: [
+        { attachment: chipFile, contextIds: [chipContextId] },
+        { attachment: plainFile, contextIds: [] },
+        { attachment: rowRemovedImage, contextIds: [imageContextId] },
+      ],
+      removedQueuedAttachments: [],
+      isHistory: false,
+      images: [],
+      previewAnnotations: [],
+      retained,
+    });
+    expect(typed.queuedAttachmentIdsToRemove).toEqual([]);
+
+    // Redoing or undoing past the restoration removes both the file and the restored image,
     // while keeping an unreferenced file intact.
     const redone = reconcileAttachmentContextReferences({
       referencedContextIds: new Set(),
@@ -173,7 +190,6 @@ describe("reconcileAttachmentContextReferences", () => {
       ],
       removedQueuedAttachments: [],
       isHistory: true,
-      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -182,14 +198,13 @@ describe("reconcileAttachmentContextReferences", () => {
     expect(redone.queuedAttachmentsToRestore).toEqual([]);
 
     // Undoing again and then deleting the image chip directly via Backspace (non-history edit)
-    // keeps the image on the thumbnail shelf.
+    // keeps the image on the thumbnail shelf and clears its history-removal flag.
     reconcileAttachmentContextReferences({
       referencedContextIds: new Set([imageContextId]),
       files: [],
       queuedAttachments: [{ attachment: plainFile, contextIds: [] }],
       removedQueuedAttachments: [{ attachment: rowRemovedImage, contextIds: [imageContextId] }],
       isHistory: true,
-      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
@@ -203,12 +218,12 @@ describe("reconcileAttachmentContextReferences", () => {
       ],
       removedQueuedAttachments: [],
       isHistory: false,
-      textChanged: true,
       images: [],
       previewAnnotations: [],
       retained,
     });
     expect(backspaced.queuedAttachmentIdsToRemove).toEqual([]);
     expect(backspaced.queuedAttachmentsToRestore).toEqual([]);
+    expect(retained.restoredQueuedImageIds.size).toBe(0);
   });
 });

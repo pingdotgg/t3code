@@ -74,7 +74,6 @@ export function reconcileAttachmentContextReferences(input: {
   queuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
   removedQueuedAttachments?: ReadonlyArray<QueuedAttachmentContextBinding>;
   isHistory?: boolean;
-  textChanged?: boolean;
   images: ReadonlyArray<ComposerImageAttachment>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   retained: RetainedAttachmentContextPayloads;
@@ -102,9 +101,6 @@ export function reconcileAttachmentContextReferences(input: {
     return file ? [file] : [];
   });
 
-  if (input.textChanged && !input.isHistory) {
-    input.retained.restoredQueuedImageIds.clear();
-  }
   const liveQueuedAttachments = input.queuedAttachments ?? [];
   const liveQueuedAttachmentIds = new Set<string>(
     liveQueuedAttachments.map((entry) => entry.attachment.id),
@@ -116,12 +112,13 @@ export function reconcileAttachmentContextReferences(input: {
     if (isQueuedFileAttachment(entry.attachment)) {
       queuedAttachmentIdsToRemove.push(entry.attachment.id);
     } else if (
-      input.isHistory === true &&
       isQueuedImageAttachment(entry.attachment) &&
       input.retained.restoredQueuedImageIds.has(entry.attachment.id)
     ) {
       input.retained.restoredQueuedImageIds.delete(entry.attachment.id);
-      queuedAttachmentIdsToRemove.push(entry.attachment.id);
+      if (input.isHistory === true) {
+        queuedAttachmentIdsToRemove.push(entry.attachment.id);
+      }
     }
   }
   const restoredQueuedAttachmentIds = new Set<string>();

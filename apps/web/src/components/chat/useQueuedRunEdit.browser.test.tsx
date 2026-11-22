@@ -344,7 +344,7 @@ describe("useQueuedRunEdit", () => {
     );
   });
 
-  it("binds existing attachment context ids, restores removed files on undo, and saves without removed chips or records", async () => {
+  it("binds existing attachment context ids for inline chips, preserves original order on restore, and omits removed chips and records on save", async () => {
     const { hook } = setup();
     mocks.editQueuedRun.mockResolvedValue({ _tag: "Success" });
     const messageId = MessageId.make("message-1");

@@ -1488,7 +1488,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     pendingThreadImportsRef,
     addComposerFilesToDraft,
     removedQueuedAttachments: removedEditingQueuedAttachments,
-    onRestoreQueuedAttachment: onRestoreEditingQueuedAttachment,
+    onRestoreQueuedAttachment: (attachment) => {
+      if (isQueuedImageAttachment(attachment)) {
+        retainedContextPayloads.restoredQueuedImageIds.add(attachment.id);
+      }
+      onRestoreEditingQueuedAttachment?.(attachment);
+    },
   });
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps the shared prompt ref in step with the committed draft prompt for imperative handlers
@@ -1811,7 +1816,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       })),
       removedQueuedAttachments: removedEditingQueuedAttachments ?? [],
       isHistory,
-      textChanged,
       images: composerImages,
       previewAnnotations: composerPreviewAnnotations,
       retained: retainedContextPayloads,
