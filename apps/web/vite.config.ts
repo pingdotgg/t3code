@@ -433,6 +433,14 @@ export default defineConfig(({ command }) => {
             asset.originalFileNames.some((path) => /[/\\]pdfjs-dist[/\\]wasm[/\\]/.test(path))
               ? `assets/pdfjs-${pdfjsPkg.version}/[name][extname]`
               : "assets/[name]-[hash][extname]",
+          // Per-icon chunks multiplied startup requests, overflowing proxies like Tailscale Serve
+          // on macOS. minShareCount 3 leaves out icons only the lazy whole-set entries reach
+          // (lucideIconByName and its picker); otherwise ~550 KB of icons would load at startup.
+          codeSplitting: {
+            groups: [
+              { name: "icons", test: /[\\/]node_modules[\\/]lucide-react[\\/]/, minShareCount: 3 },
+            ],
+          },
         },
       },
     },
