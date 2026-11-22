@@ -7,6 +7,7 @@ import { useServerConfigs } from "../../state/entities";
 import { orchestrationEnvironment } from "../../state/orchestration";
 import { useEnvironmentQuery } from "../../state/query";
 import { announcedRun } from "@t3tools/client-runtime/state/thread-activity-announcement";
+import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 
 // Dismissed suggestions, keyed by environment and run, shared by every mounted composer and kept
 // across remounts. Run ids derive from thread ids, which can repeat across environments.
@@ -23,13 +24,15 @@ const dismissKey = (environmentId: EnvironmentId, runId: RunId) => `${environmen
  * The suggestion while the run that produced it is the thread's latest completed run. A message
  * promoted to Steer leaves its queued run cancelled before it started, still the latest run, so
  * the comparison skips to the last run that ran. Detail can lag the shell, so it skips only once
- * the runs include that cancelled run.
+ * the runs include that cancelled run. Background work that will resume the thread withholds it.
  */
 export function offeredPromptSuggestion<Suggestion extends { readonly runId: RunId }>(
   suggestion: Suggestion | null | undefined,
   latestRun: Thread["latestRun"] | undefined,
   runs: ReadonlyArray<OrchestrationV2Run>,
+  pendingBackgroundTasks: Thread["pendingBackgroundTasks"] = [],
 ): Suggestion | null {
+  if (backgroundWorkHoldsCompletion(pendingBackgroundTasks ?? [])) return null;
   const run = announcedRun(latestRun ?? null, runs);
   const skippedUnseenRun =
     latestRun != null &&
@@ -79,7 +82,12 @@ export function usePromptSuggestion(
       : null,
   );
   const dismissed = useSyncExternalStore(subscribeDismissed, readDismissed);
-  const offered = offeredPromptSuggestion(data, thread?.latestRun, runs);
+  const offered = offeredPromptSuggestion(
+    data,
+    thread?.latestRun,
+    runs,
+    thread?.pendingBackgroundTasks,
+  );
   return {
     suggestion:
       offered && !dismissed.has(dismissKey(environmentId, offered.runId)) ? offered.text : null,
