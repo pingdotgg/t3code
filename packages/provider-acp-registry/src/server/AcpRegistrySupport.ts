@@ -3749,11 +3749,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
                 (!durableFromSidecar ||
                   (durableReceipt.launchOptionsRecoveryId ?? null) ===
                     pendingOverride.baseRecoveryId);
-              if (
-                pendingOverride !== undefined &&
-                !usePendingOverride &&
-                pendingLaunchOptionsBySlotRoot.get(dir) === pendingOverride
-              ) {
+              if (pendingOverride !== undefined && !usePendingOverride) {
                 pendingLaunchOptionsBySlotRoot.delete(dir);
               }
               const effectiveReceipt = usePendingOverride

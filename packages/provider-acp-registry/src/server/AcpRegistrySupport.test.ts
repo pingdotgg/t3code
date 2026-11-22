@@ -7078,7 +7078,8 @@ describe("AcpRegistrySupport", () => {
         yield* obsCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* obsCatB.resolve(settings(), "/workspace");
         failReceiptTempWrite = false;
-        // (i) Locked sidecar io_error path on obsCatA: verify fallback immediately picks --b-s3.
+        // (i) Locked sidecar io_error path on obsCatA: verify pending is recorded while unreadable,
+        //     then superseded by --b-s3 once sidecar reads recover.
         failSidecarRead = true;
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
@@ -7088,15 +7089,19 @@ describe("AcpRegistrySupport", () => {
         yield* obsCatA.invalidateIndex();
         yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* obsCatA.resolve(settings(), "/workspace");
-        failSidecarRead = false;
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
           cmd: "./bin/example-agent",
         });
         yield* obsCatA.invalidateIndex();
         yield* obsCatA.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* obsCatA.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--a-io-after-r2",
+        ]);
+        failSidecarRead = false;
         expect((yield* obsCatA.resolve(settings(), "/workspace")).spawn.args).toEqual(["--b-s3"]);
-        // (ii) Locked receipt-reread path on obsCatA2: verify fault count and --b-s3 on fallback.
+        // (ii) Locked receipt-reread path on obsCatA2: verify fault count, pending recording while
+        //      unreadable, and --b-s3 once sidecar reads recover.
         failSidecarRead = true;
         injectedReceiptReadFailures = 0;
         failReceiptReadWhileLockedPath = obsLockPath;
@@ -7109,7 +7114,6 @@ describe("AcpRegistrySupport", () => {
         yield* obsCatA2.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
         yield* obsCatA2.resolve(settings(), "/workspace");
         failReceiptReadWhileLockedPath = null;
-        failSidecarRead = false;
         expect(injectedReceiptReadFailures).toBe(1);
         upstream = makeBinary("2.0.0", {
           archive: archiveFailUrl,
@@ -7117,7 +7121,149 @@ describe("AcpRegistrySupport", () => {
         });
         yield* obsCatA2.invalidateIndex();
         yield* obsCatA2.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* obsCatA2.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--a-reread-after-r2",
+        ]);
+        failSidecarRead = false;
         expect((yield* obsCatA2.resolve(settings(), "/workspace")).spawn.args).toEqual(["--b-s3"]);
+
+        // (f) Cross-chain sidecar repair: fallback retires old-chain pending on recovery-ID
+        //     mismatch, and retries on the new chain (both locked write failure and fast-path ok +
+        //     locked io_error) adopt the new chain's revision and recovery ID without old-chain base.
+        const xcDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-acp-registry-cross-chain-",
+        });
+        const xcToolsDir = path.join(xcDir, "tools");
+        const xcSidecarPath = path.join(xcDir, "acp-registry", "binary-launch-options.json");
+        const xcLockPath = `${xcSidecarPath}.lock`;
+        const makeXcCat = () =>
+          AcpRegistrySupport.makeAcpRegistryCatalog({
+            cacheDir: xcDir,
+            toolsDir: xcToolsDir,
+            registryUrl,
+          }).pipe(Effect.provideService(FileSystem.FileSystem, posixModeFs));
+        const xcCatB = yield* makeXcCat();
+        const xcRetireCat = yield* makeXcCat();
+        const xcLockedCat = yield* makeXcCat();
+        const xcUnreadableCat = yield* makeXcCat();
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--xc-init"],
+        });
+        yield* xcCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = true;
+        for (const arg of ["--xc-y1", "--xc-y2", "--xc-y3", "--xc-y4"]) {
+          upstream = makeBinary("1.0.0", {
+            archive: archiveAUrl,
+            cmd: "./bin/example-agent",
+            args: [arg],
+          });
+          yield* xcCatB.invalidateIndex();
+          yield* xcCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          yield* xcCatB.resolve(settings(), "/workspace");
+        }
+        failSidecarWrite = true;
+        for (const [cat, arg] of [
+          [xcRetireCat, "--xc-stale-retire"],
+          [xcLockedCat, "--xc-stale-locked"],
+          [xcUnreadableCat, "--xc-stale-unreadable"],
+        ] as const) {
+          upstream = makeBinary("1.0.0", {
+            archive: archiveAUrl,
+            cmd: "./bin/example-agent",
+            args: [arg],
+          });
+          yield* cat.invalidateIndex();
+          yield* cat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+          yield* cat.resolve(settings(), "/workspace");
+        }
+        failSidecarWrite = false;
+        // Corrupt sidecar and repair into chain Z at rev 1 (< old chain Y base rev 4).
+        yield* fileSystem.writeFileString(xcSidecarPath, "{corrupt-xc");
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--xc-b-z1"],
+        });
+        yield* xcCatB.invalidateIndex();
+        yield* xcCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* xcCatB.resolve(settings(), "/workspace");
+        // Retire-chain variant: recovery-ID mismatch retires stale pending so unreadable fallback
+        // cannot resurrect --xc-stale-retire.
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* xcRetireCat.invalidateIndex();
+        yield* xcRetireCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* xcRetireCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-b-z1",
+        ]);
+        failSidecarRead = true;
+        expect((yield* xcRetireCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-init",
+        ]);
+        failSidecarRead = false;
+        // Locked-write-failure and fast-path-ok/locked-io_error retries adopt chain Z (rev 1, Z).
+        failSidecarWrite = true;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--xc-a-locked-on-z"],
+        });
+        yield* xcLockedCat.invalidateIndex();
+        yield* xcLockedCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* xcLockedCat.resolve(settings(), "/workspace");
+        failSidecarWrite = false;
+        failSidecarReadWhileLockedPath = xcLockPath;
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--xc-a-unreadable-on-z"],
+        });
+        yield* xcUnreadableCat.invalidateIndex();
+        yield* xcUnreadableCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* xcUnreadableCat.resolve(settings(), "/workspace");
+        failSidecarReadWhileLockedPath = null;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* xcLockedCat.invalidateIndex();
+        yield* xcLockedCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* xcLockedCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-a-locked-on-z",
+        ]);
+        yield* xcUnreadableCat.invalidateIndex();
+        yield* xcUnreadableCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* xcUnreadableCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-a-unreadable-on-z",
+        ]);
+        // B writes chain Z rev 2 (< old chain Y rev 4) -> beats both catalogs' rev-1 pending entries.
+        upstream = makeBinary("1.0.0", {
+          archive: archiveAUrl,
+          cmd: "./bin/example-agent",
+          args: ["--xc-b-z2"],
+        });
+        yield* xcCatB.invalidateIndex();
+        yield* xcCatB.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        yield* xcCatB.resolve(settings(), "/workspace");
+        failReceiptTempWrite = false;
+        upstream = makeBinary("2.0.0", {
+          archive: archiveFailUrl,
+          cmd: "./bin/example-agent",
+        });
+        yield* xcLockedCat.invalidateIndex();
+        yield* xcLockedCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* xcLockedCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-b-z2",
+        ]);
+        yield* xcUnreadableCat.invalidateIndex();
+        yield* xcUnreadableCat.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        expect((yield* xcUnreadableCat.resolve(settings(), "/workspace")).spawn.args).toEqual([
+          "--xc-b-z2",
+        ]);
         // Restore upstream to --commit-8 before step 5 below.
         upstream = makeBinary("1.0.0", {
           archive: archiveAUrl,
