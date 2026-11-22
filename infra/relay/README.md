@@ -1,7 +1,7 @@
 # T3 Connect Relay
 
 > [!NOTE]
-> Sign in to T3 Connect from the app under Settings > Connections.
+> Sign in to T3 Connect from the app under Settings > Sharing & access.
 
 The relay is the hosted control plane for T3 Connect. It helps clients discover and connect to
 remote environments, manages the cloud-side records needed for those connections, and delivers

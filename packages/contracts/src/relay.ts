@@ -352,6 +352,7 @@ export const RelayEnvironmentLinkProofInvalidReason = Schema.Literals([
   "challenge_invalid",
   "origin_not_allowed",
   "endpoint_not_secure",
+  "environment_key_mismatch",
 ]);
 export type RelayEnvironmentLinkProofInvalidReason =
   typeof RelayEnvironmentLinkProofInvalidReason.Type;
@@ -981,6 +982,8 @@ export const RelayT3ChatLinkResponse = Schema.Struct({
   // False when this relay has no T3 Chat secret, so clients hide the feature.
   available: Schema.Boolean,
   link: Schema.NullOr(RelayT3ChatLink),
+  // A manual cap that replaces the plan's; T3 Chat upgrades do not raise it.
+  maxTunnelsOverride: Schema.optionalKey(Schema.Number),
 });
 export type RelayT3ChatLinkResponse = typeof RelayT3ChatLinkResponse.Type;
 
@@ -1260,6 +1263,19 @@ const RelayServerGroup = HttpApiGroup.make("server")
         error: RelayAuthAndInternalErrors,
       },
     ).annotate(OpenApi.Summary, "Update an environment's link preferences"),
+    HttpApiEndpoint.post(
+      "updateLiveActivityPreference",
+      "/v1/environments/:environmentId/live-activity-preference",
+      {
+        params: Schema.Struct({ environmentId: EnvironmentId }),
+        payload: Schema.Struct({
+          cloudUserId: Schema.String,
+          liveActivitiesEnabled: Schema.Boolean,
+        }),
+        success: RelayOkResponse,
+        error: RelayAuthAndInternalErrors,
+      },
+    ),
     HttpApiEndpoint.post("wakeHeldHooks", "/v1/environments/:environmentId/hooks/wake", {
       params: Schema.Struct({ environmentId: EnvironmentId }),
       success: RelayWakeHeldHooksResponse,

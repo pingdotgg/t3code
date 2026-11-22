@@ -19,6 +19,10 @@
       "types": "./src/server/attachmentPrompt.ts",
       "import": "./src/server/attachmentPrompt.ts"
     },
+    "./server/compatibility": {
+      "types": "./src/server/compatibility.ts",
+      "import": "./src/server/compatibility.ts"
+    },
     "./server/auth": {
       "types": "./src/server/auth.ts",
       "import": "./src/server/auth.ts"
@@ -189,7 +193,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

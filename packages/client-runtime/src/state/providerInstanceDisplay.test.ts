@@ -12,13 +12,18 @@ const codex = ProviderDriverKind.make("codex");
 const acpRegistry = ProviderDriverKind.make("acpRegistry");
 
 describe("providerInstanceInitials", () => {
-  it("treats punctuation as a word break but keeps apostrophes between letters", () => {
+  it("treats punctuation and camel-case humps as word breaks but keeps apostrophes between letters", () => {
     expect(providerInstanceInitials("Codex (hub)")).toBe("CH");
     expect(providerInstanceInitials("work_codex")).toBe("WC");
     expect(providerInstanceInitials("Theo's Codex")).toBe("TC");
     expect(providerInstanceInitials("Codex 'hub'")).toBe("CH");
     expect(providerInstanceInitials("‘hub’")).toBe("HU");
     expect(providerInstanceInitials("(hub)")).toBe("HU");
+    expect(providerInstanceInitials("ClaudeProx")).toBe("CP");
+    expect(providerInstanceInitials("ClaudeAPI")).toBe("CA");
+    expect(providerInstanceInitials("API")).toBe("AP");
+    expect(providerInstanceInitials("ClaudeProx Work")).toBe("CW");
+    expect(providerInstanceInitials("(ClaudeProx)")).toBe("CP");
   });
 
   it("keeps an emoji whole instead of splitting its surrogate pair", () => {
@@ -60,6 +65,11 @@ describe("shouldShowInstanceBadge", () => {
   it("shows the badge when the entry has an accent color", () => {
     const entry = { driverKind: codex, accentColor: "#ff8800", enabled: true };
     expect(shouldShowInstanceBadge(entry, [entry])).toBe(true);
+  });
+
+  it("ignores a non-hex accent color", () => {
+    const entry = { driverKind: codex, accentColor: "blue", enabled: true };
+    expect(shouldShowInstanceBadge(entry, [entry])).toBe(false);
   });
 
   it("shows the badge when two entries share a driver, even without an accent", () => {

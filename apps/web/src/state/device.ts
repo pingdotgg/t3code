@@ -4,10 +4,7 @@ import {
   type DeviceHubAccess,
   resolveDeviceHubAccess,
 } from "@t3tools/client-runtime/state/deviceHubAccess";
-import {
-  createEnvironmentRpcQueryAtomFamily,
-  runAtomCommand,
-} from "@t3tools/client-runtime/state/runtime";
+import { createEnvironmentRpcQueryAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   type DeviceDetail,
   type DeviceServiceState,
@@ -15,6 +12,7 @@ import {
   WS_METHODS,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import { useMessages } from "gt-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
 
@@ -40,11 +38,20 @@ const EMPTY_DEVICE_STATE: DeviceServiceState = {
 export function useDeviceState(environmentId: EnvironmentId | null): {
   readonly state: DeviceServiceState;
   readonly loaded: boolean;
+  readonly error: string | null;
+  readonly refresh: () => void;
 } {
+  const resolve = useMessages();
   const query = useEnvironmentQuery(
     environmentId === null ? null : deviceEnvironment.state({ environmentId, input: {} }),
+    resolve,
   );
-  return { state: query.data ?? EMPTY_DEVICE_STATE, loaded: query.data !== undefined };
+  return {
+    state: query.data ?? EMPTY_DEVICE_STATE,
+    loaded: query.data !== null,
+    error: query.error,
+    refresh: query.refresh,
+  };
 }
 
 const deviceHubAccessAtom = Atom.family((environmentId: EnvironmentId) =>
@@ -120,23 +127,21 @@ export const deviceDetailAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
   Atom.make((get) =>
-    Effect.promise(() =>
-      runAtomCommand(
-        get.registry,
-        deviceEnvironment.detail,
-        { environmentId: key.environmentId, input: { hostId: key.hostId, deviceId: key.deviceId } },
-        { reportFailure: false },
+    deviceEnvironment.detail
+      .run(get.registry, {
+        environmentId: key.environmentId,
+        input: { hostId: key.hostId, deviceId: key.deviceId },
+      })
+      .pipe(
+        Effect.matchCause({
+          onSuccess: (detail) => get.set(deviceDetailAtom(key), { detail, error: null }),
+          onFailure: (cause) =>
+            get.set(deviceDetailAtom(key), {
+              detail: null,
+              error: formatEnvironmentQueryError(cause),
+            }),
+        }),
       ),
-    ).pipe(
-      Effect.map((result) =>
-        get.set(
-          deviceDetailAtom(key),
-          result._tag === "Success"
-            ? { detail: result.value, error: null }
-            : { detail: null, error: formatEnvironmentQueryError(result.cause) },
-        ),
-      ),
-    ),
   ).pipe(Atom.withLabel(`device-detail-read:${key.hostId}:${key.deviceId}`)),
 );
 
@@ -146,14 +151,7 @@ export const deviceDetailReadAtom = Atom.family((key: DeviceDetailKey) =>
  */
 export const deviceHostProbeAtom = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) =>
-    Effect.promise(() =>
-      runAtomCommand(
-        get.registry,
-        deviceEnvironment.list,
-        { environmentId, input: {} },
-        { reportFailure: false },
-      ),
-    ).pipe(Effect.asVoid),
+    deviceEnvironment.list.run(get.registry, { environmentId, input: {} }).pipe(Effect.ignore),
   ).pipe(Atom.withLabel(`device-host-probe:${environmentId}`)),
 );
 
@@ -162,7 +160,7 @@ export const NO_DEVICE_PROBE_ATOM = Atom.make(AsyncResult.initial<void, never>()
 );
 
 /**
- * The Expo account an EAS host editor shows as it opens, for the saved
+ * The Expo account an Expo host editor shows as it opens, for the saved
  * credential. Each open checks again; edits and manual checks use the command.
  */
 export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connectionAtomRuntime, {
@@ -171,3 +169,14 @@ export const deviceEasAccountCheck = createEnvironmentRpcQueryAtomFamily(connect
   staleTimeMs: 0,
   idleTtlMs: 0,
 });
+
+/** Who a Simlock token is, checked as the host editor's URL and token fields change. */
+export const deviceSimlockIdentityCheck = createEnvironmentRpcQueryAtomFamily(
+  connectionAtomRuntime,
+  {
+    label: "environment-data:device:simlock-identity-check",
+    tag: WS_METHODS.deviceSimlockIdentity,
+    staleTimeMs: 0,
+    idleTtlMs: 0,
+  },
+);

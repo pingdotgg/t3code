@@ -24,6 +24,58 @@ describe("deriveAuthClientMetadata", () => {
     });
   });
 
+  it("records the forwarded client address of a request proxied by Tailscale Serve", () => {
+    const metadata = deriveAuthClientMetadata({
+      request: {
+        headers: {
+          "x-forwarded-for": "100.64.0.2",
+          "x-forwarded-host": "host-a.tailnet-name.ts.net",
+          "x-forwarded-proto": "https",
+        },
+        source: { remoteAddress: "127.0.0.1" },
+      } as never,
+    });
+
+    expect(metadata.ipAddress).toBe("100.64.0.2");
+
+    const direct = deriveAuthClientMetadata({
+      request: {
+        headers: { "x-forwarded-for": "100.64.0.2" },
+        source: { remoteAddress: "192.168.1.20" },
+      } as never,
+    });
+    expect(direct.ipAddress).toBe("192.168.1.20");
+  });
+
+  it.each([
+    [
+      "Edge on Android",
+      "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Mobile Safari/537.36 EdgA/129.0.0.0",
+      "Edge",
+    ],
+    [
+      "Edge on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 EdgiOS/129.0.2792.84 Mobile/15E148 Safari/605.1.15",
+      "Edge",
+    ],
+    [
+      "Firefox on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) FxiOS/131.0 Mobile/15E148 Safari/605.1.15",
+      "Firefox",
+    ],
+    [
+      "Opera on iOS",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 OPiOS/5.0.0 Mobile/15E148 Safari/605.1.15",
+      "Opera",
+    ],
+  ])("labels %s by its own browser token", (_name, userAgent, browser) => {
+    const metadata = deriveAuthClientMetadata({
+      request: { headers: { "user-agent": userAgent }, source: {} } as never,
+    });
+
+    expect(metadata.browser).toBe(browser);
+  });
+
   it("applies client-presented display identity without replacing transport metadata", () => {
     const metadata = deriveAuthClientMetadata({
       request: {

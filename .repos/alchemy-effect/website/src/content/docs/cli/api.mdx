@@ -1,0 +1,208 @@
+---
+title: Programmatic API
+description: Run deploy, plan, destroy, drift, nuke, logs, and state from your own scripts with alchemy/Alchemist.
+---
+
+Every stack command has a programmatic counterpart in `alchemy/Alchemist`. The CLI is built on the same functions. They take the stack value your `alchemy.run.ts` exports, return plain results, and never prompt. Approval, rendering and printing are up to you.
+
+```typescript
+import * as Alchemist from "alchemy/Alchemist";
+import * as Effect from "effect/Effect";
+import stack from "./alchemy.run.ts";
+
+const program = Effect.gen(function* () {
+  const plan = yield* Alchemist.plan({ stack, operation: "deploy", stage: "prod" });
+  return yield* Alchemist.apply(plan);
+});
+
+await Effect.runPromise(program.pipe(Effect.provide(Alchemist.layer()), Effect.scoped));
+```
+
+`Alchemist.layer()` provides everything the operations need: platform services, HTTP, config from the environment, profiles and credentials. Each operation takes the stack module and builds only what it needs. Deploy and logs run your stack program. Destroy, drift and nuke only build its providers and state store, and nuke never reads state.
+
+## Plan, then apply
+
+Deploy and destroy are a `plan` and an `apply`. Drift and nuke don't plan changes to a stack; they look at what is there, so they are a `scan` and an `execute`. Each takes one object with the `stack` and its options:
+
+| CLI                      | Read                                                     | Change                    |
+| ------------------------ | -------------------------------------------------------- | ------------------------- |
+| `alchemy deploy`         | `Alchemist.plan({ stack, operation: "deploy", ... })`    | `Alchemist.apply`         |
+| `alchemy plan`           | `Alchemist.plan({ stack, operation: "deploy", ... })`    | —                         |
+| `alchemy destroy`        | `Alchemist.plan({ stack, operation: "destroy", ... })`   | `Alchemist.apply`         |
+| `alchemy drift --repair` | `Alchemist.Drift.scan({ stack, ... })`                   | `Alchemist.Drift.execute` |
+| `alchemy unsafe nuke`    | `Alchemist.Nuke.scan({ stack, ... })`                    | `Alchemist.Nuke.execute`  |
+
+Alongside the operations, `Alchemist` holds what they share: `layer`, `importStack`, `hasChanges`, and `onEvent`.
+
+`plan` and `scan` don't change your resources. They return everything the next step needs, so you can inspect the result, ask for approval, or drop it. The one write they can make is to the state store itself: creating it on first use, or upgrading an outdated one when you pass `updateStateStore: true`.
+
+Plans report what they would change:
+
+```typescript
+const plan = yield* Alchemist.plan({ stack, operation: "deploy", stage: "prod" });
+if (Alchemist.hasChanges(plan)) {
+  for (const resource of plan.resources) console.log(resource.action, resource.fqn);
+  yield* Alchemist.apply(plan);
+}
+```
+
+## Options
+
+| CLI flag            | Option                                       |
+| ------------------- | -------------------------------------------- |
+| `deploy` / `destroy` | `operation: "deploy"` or `"destroy"` (required) |
+| `--stage <name>`    | `stage: "prod"` (required, no fallback)      |
+| `--profile <name>`  | `profile: "ci"`                              |
+| `--env-file <path>` | `envFile: ".env.prod"`                       |
+| `--adopt`           | `adopt: true`                                |
+| `--yes`             | `updateStateStore: true` upgrades an outdated state store without asking; approval is yours |
+| `--force`           | `force: true`                                |
+| `--include`         | `include: ["Api"]` (deploy only)             |
+| `--exclude`         | `exclude: ["Legacy/**"]` (deploy only)       |
+| `--config <file>`   | the stack you import, or `yield* Alchemist.importStack(path)` |
+
+`apply` returns the stack's output for a deploy plan and `undefined` for a destroy plan, typed from the stack. A plan filtered with `include` or `exclude` applies to `undefined` and leaves the persisted output untouched.
+
+## Scopes
+
+A plan or scan keeps what it built open until the surrounding `Effect.scoped` closes, so its `apply` or `execute` can run later in the same scope. That includes the stage's state-store lease: a remote state store lets one build per stage hold it. To run another operation on the same stage, close the first one's scope. This is how `alchemy deploy --detect-drift` checks drift before deploying:
+
+```typescript
+yield* Effect.scoped(
+  Effect.gen(function* () {
+    const drift = yield* Alchemist.Drift.scan({ stack, stage: "prod" });
+    if (Alchemist.Drift.hasDrift(drift)) yield* Alchemist.Drift.execute(drift);
+  }),
+);
+
+yield* Alchemist.apply(yield* Alchemist.plan({ stack, operation: "deploy", stage: "prod" }));
+```
+
+Running a second operation on a stage whose first build is still open fails with a `StateStoreError` saying this process holds the stage's lock.
+
+A `destroy` plan and `Alchemist.Drift.scan` never run the stack program, so they work even when the program no longer does.
+
+## Drift
+
+`Alchemist.Drift.scan` reads every resource the stage owns and compares it with state. Each row's `status` is `in-sync`, `drifted`, `missing`, or `skipped` when it could not be checked (its provider can't read it, or a deploy was interrupted); `reason` says which. `Alchemist.Drift.hasDrift(scan)` is true when any row is `drifted` or `missing`.
+
+`Alchemist.Drift.execute(scan)` repairs only the rows the scan reported as drifted or missing, back to their last-deployed state. It reads each one again first, so a resource that is back in sync is left alone, and drift that appeared after the scan waits for the next scan.
+
+## Nuke
+
+`Alchemist.Nuke.scan` lists everything the stack's providers can see in the account, and `Alchemist.Nuke.execute` deletes it. Like the CLI, it ignores the state store and is not scoped to a stage. Spare resources by filtering the scan:
+
+```typescript
+const scan = yield* Alchemist.Nuke.scan({ stack, include: ["Cloudflare.*"] });
+const result = yield* Alchemist.Nuke.execute({
+  scan,
+  resources: scan.resources.filter(
+    (resource) => !String(resource.attributes.workerName).startsWith("prod-"),
+  ),
+});
+```
+
+| CLI flag                      | Option                                                     |
+| ----------------------------- | ---------------------------------------------------------- |
+| `--local`                     | `dev: true`                                                |
+| `--include`/`--exclude`       | `include`/`exclude` on `scan`                                |
+| `--filter`                    | `resources` on `execute`                                     |
+| `--independent --retries <n>` | `strategy: { type: "independent", retries: n }` on `execute` |
+| `--concurrency <n>`           | `concurrency: n`                                           |
+| `--timeout <s>`               | `providerTimeoutSeconds: s`                                |
+
+## Dev
+
+`dev: true` plans with local providers, as `alchemy dev` does. Local processes the deploy starts, such as dev servers and workerd, run until the scope closes.
+
+```typescript
+yield* Alchemist.apply(
+  yield* Alchemist.plan({ stack, operation: "deploy", stage: "dev_sam", dev: true }),
+);
+```
+
+This is one deploy, not a dev loop. The API doesn't watch files or reload. That loop needs the CLI: `alchemy dev` runs your stack in a child process with module loader hooks, so an edit re-imports it, and keeps local providers in a sidecar process that survives each reload. For a dev loop, run [`alchemy dev`](/cli/dev).
+
+## Logs
+
+`Alchemist.Logs.entries` queries past entries, and `Alchemist.Logs.tail` returns a `Stream` of live ones. `Alchemist.Logs.resources` lists what can be queried. Each call closes its build when it finishes; `tail` closes its build when the stream ends.
+
+```typescript
+const entries = yield* Alchemist.Logs.entries({
+  stack,
+  stage: "prod",
+  resources: ["Api"],
+  limit: 50,
+});
+```
+
+## State
+
+`Alchemist.State.store` returns the state store a command would use. The `type` picks it, like `--backend`: `configured` uses the entrypoint's store, `local` uses `.alchemy/state`, and `provider` reaches a provider's store from the profile alone.
+
+```typescript
+const state = yield* Alchemist.State.store({ type: "configured", entrypoint: "alchemy.run.ts" });
+
+yield* state.listStacks(); // state list
+yield* state.get({ stack: "my-app", stage: "prod", fqn: "Api" }); // state read
+yield* state.delete({ stack: "my-app", stage: "prod", fqn: "Api" }); // state delete
+
+yield* Alchemist.State.bootstrap({ type: "provider", backend: "aws" }); // state bootstrap
+```
+
+The `provider` source needs no stack file, so a script can manage state on its own. See [Use a store without a stack file](/state-store#use-a-store-without-a-stack-file).
+
+## Events
+
+Operations report progress as typed events instead of rendering it. Events are log records: the CLI's run log and `--log-format json` carry them, and `Alchemist.onEvent` subscribes to the ones an effect emits. `Alchemist.Event` is one Schema union discriminated by `type`, so a reader can decode events with it:
+
+```typescript
+yield* Alchemist.apply(plan).pipe(
+  Alchemist.onEvent((event) =>
+    event.type === "apply.resource.status"
+      ? Effect.log(`${event.fqn}: ${event.status}`)
+      : Effect.void,
+  ),
+);
+```
+
+Any Effect logger you install sees every event too, as a record whose message is the event. Events are logged at `info`, except failures: a resource that fails to apply at `error`, and a nuke deletion or provider scan that fails at `warn`.
+
+A handler runs for each event in order, and the operation waits for every handler before it returns. Keep handlers quick: a slow one delays the operation's end, and one that dies fails the operation.
+
+## Terminal UI
+
+`alchemy/Cli/SigilRenderer` reuses the CLI's terminal views in your own script: the Sigil UI on an interactive terminal, plain log lines everywhere else. Provide `SigilRenderer.layer()` after `Alchemist.layer()` and wrap each step:
+
+```typescript
+import * as SigilRenderer from "alchemy/Cli/SigilRenderer";
+
+const program = Effect.gen(function* () {
+  const plan = yield* Alchemist.plan({ stack, operation: "deploy", stage }).pipe(
+    SigilRenderer.planning({ operation: "Deploy", stage }),
+  );
+  if (!(yield* SigilRenderer.approve(plan, { stage }))) return;
+  const output = yield* Alchemist.apply(plan).pipe(SigilRenderer.apply(plan, { stage }));
+  yield* SigilRenderer.outputs(output);
+});
+
+await Effect.runPromise(
+  program.pipe(
+    Effect.provide([Alchemist.layer(), SigilRenderer.layer()]),
+    Effect.scoped,
+  ),
+);
+```
+
+| Step | Renderer |
+| --- | --- |
+| any `plan` or drift `scan` | `SigilRenderer.planning({ operation, stage })` |
+| approval prompt | `SigilRenderer.approve(plan)`, or `SigilRenderer.display(plan)` to only show it |
+| `apply`, or drift `execute` | `SigilRenderer.apply(plan)`, or `SigilRenderer.apply(scan)` for drift |
+| stack outputs | `SigilRenderer.outputs(output)` |
+| nuke | `SigilRenderer.Nuke.scan()`, `.review(resources, options)`, `.delete(resources, mode)` |
+
+## Where next
+
+- [deploy](/cli/deploy), [destroy](/cli/destroy), [drift](/cli/drift), [unsafe nuke](/cli/nuke), [state](/cli/state) — what each command does
+- [State Store](/state-store) — where plans read and applies write
