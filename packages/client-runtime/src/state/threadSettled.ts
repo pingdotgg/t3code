@@ -6,6 +6,21 @@ import type { EnvironmentThreadShell, PendingSubagentRequest } from "./models.ts
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 
+export function settlingStopsPullRequestWatch(
+  thread:
+    | Pick<EnvironmentThreadShell, "archivedAt" | "settledAt" | "settledOverride" | "pullRequests">
+    | null
+    | undefined,
+): boolean {
+  return Boolean(
+    thread &&
+    thread.archivedAt == null &&
+    thread.settledAt == null &&
+    thread.settledOverride !== "settled" &&
+    thread.pullRequests?.some((link) => link.watch != null),
+  );
+}
+
 interface SettlementRunLike {
   readonly turnId?: unknown;
   readonly assistantMessageId?: unknown;
