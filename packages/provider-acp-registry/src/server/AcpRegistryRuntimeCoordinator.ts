@@ -335,10 +335,33 @@ const make = Effect.gen(function* () {
             }
             const retained = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             for (const entry of sortedPendingOptions(candidates)) {
+              const catalogAdvertisedReasoning = (() => {
+                if (entry.configuration.advertisedReasoning !== undefined) {
+                  return entry.configuration.advertisedReasoning;
+                }
+                const entries: Array<
+                  readonly [
+                    string,
+                    NonNullable<AcpRegistryLiveConfiguration["models"][number]["reasoningEffort"]>,
+                  ]
+                > = [];
+                for (const model of entry.configuration.models) {
+                  if (
+                    model.id !== entry.configuration.currentModelId &&
+                    model.reasoningEffort != null
+                  ) {
+                    entries.push([model.id, model.reasoningEffort]);
+                  }
+                }
+                return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+              })();
               const kept = retain({
                 ...entry.configuration,
                 models: [],
                 modelsFromModelSelect: false,
+                ...(catalogAdvertisedReasoning === undefined
+                  ? {}
+                  : { advertisedReasoning: catalogAdvertisedReasoning }),
               });
               if (Option.isNone(kept)) continue;
               if (entry.revision < current.revision) {
@@ -352,9 +375,15 @@ const make = Effect.gen(function* () {
                   kept.value.advertisedReasoning !== undefined &&
                   Object.keys(kept.value.advertisedReasoning).length > 0;
                 if (modelOnlyOptions.length === 0 && !hasAdvertisedReasoning) continue;
+                const keepOverflowModel =
+                  kept.value.cappedTailIsOverflow === true &&
+                  kept.value.cappedLastModel !== undefined &&
+                  kept.value.cappedPrefixKey !== undefined &&
+                  kept.value.cappedLastModel.id === kept.value.currentModelId &&
+                  modelOnlyOptions.length > 0;
                 const {
-                  cappedLastModel: _droppedOverflow,
-                  cappedPrefixKey: _droppedPrefix,
+                  cappedLastModel,
+                  cappedPrefixKey,
                   cappedTailIsOverflow: _droppedOverflowFlag,
                   ...rest
                 } = kept.value;
@@ -365,6 +394,9 @@ const make = Effect.gen(function* () {
                     configOptions: modelOnlyOptions,
                     modelOptionIds: modelOnlyOptions.map((descriptor) => descriptor.id),
                     preserveDefault: true,
+                    ...(keepOverflowModel
+                      ? { cappedPrefixKey, cappedLastModel, cappedTailIsOverflow: true }
+                      : {}),
                   },
                   revision: entry.revision,
                 });

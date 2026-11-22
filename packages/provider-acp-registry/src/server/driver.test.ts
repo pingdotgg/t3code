@@ -37,9 +37,11 @@ import {
   isAcpRegistryCacheValid,
   retainAcpRegistryLiveOptionsAfterProbe,
   updateAcpRegistryEnrichmentCache,
+  updateAcpRegistryLearnedModelsFromLive,
   updateAcpRegistryLearnedModelsFromProbe,
 } from "./driver.ts";
 import {
+  ACP_REGISTRY_MAX_MODELS,
   acpRegistryAdvertisesModelCatalog,
   acpRegistryProbeResult,
   normalizeAcpRegistryLiveConfiguration,
@@ -1733,8 +1735,16 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     expect(withRenamedOverflow.models.at(-1)?.slug).toBe("m256");
     expect(withRenamedOverflow.models.at(-1)?.isDefault).toBe(true);
     // An overflow model that is also configured as custom must appear once with its custom
-    // display name in partial overlays, and reappear as custom when m255 returns to slot 255.
+    // display name in partial overlays, and reappear as custom when m255 returns to slot 255
+    // without inheriting another custom model's bespoke capabilities.
     const customM256 = [
+      toCustomModelSetting({
+        slug: "gateway/fast",
+        name: "Fast",
+        capabilities: {
+          optionDescriptors: [{ id: "fast", label: "Fast", type: "boolean" }],
+        },
+      }),
       toCustomModelSetting({ slug: "m256", name: "Custom M256", capabilities: null }),
     ];
     const effortOption = (currentValue: "low" | "high") => ({
@@ -1829,6 +1839,190 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
       name: "Custom M256",
       isCustom: true,
     });
+    const restoredWithoutProbeCaps = applyAcpRegistryLiveConfiguration(
+      partialCustomOverflow,
+      {
+        ...prepareAcpRegistryLiveConfiguration(modelSelect("m0", choices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+        partialOptions: true,
+      },
+      customM256,
+      partialCustomOverflow.models,
+    );
+    expect(
+      restoredWithoutProbeCaps.models
+        .find((m) => m.slug === "m256" && m.isCustom)
+        ?.capabilities?.optionDescriptors?.map((d) => d.id),
+    ).toEqual([]);
+    // Retained overflow options replace an older learned schema for the same ID while keeping
+    // unrelated learned options and validating shared descriptors against the probe.
+    const modeSelect = (currentValue: "ask" | "code", values: ReadonlyArray<"ask" | "code">) => ({
+      id: "mode",
+      name: "Mode",
+      category: "mode" as const,
+      type: "select" as const,
+      currentValue,
+      options: values.map((value) => ({ value, name: value })),
+    });
+    const probeModeOnly = prepareAcpRegistryLiveConfiguration([
+      ...modelSelect("m0", choices),
+      modeSelect("ask", ["ask"]),
+    ]).toLiveConfiguration({ includeCatalog: true });
+    const retainedV2Overflow = Option.getOrThrow(
+      retainAcpRegistryLiveOptionsAfterProbe(
+        prepareAcpRegistryLiveConfiguration([
+          ...modelSelect("m256", choices),
+          modeSelect("code", ["ask", "code"]),
+          {
+            id: "variant",
+            name: "Variant",
+            category: "model_config" as const,
+            type: "select" as const,
+            currentValue: "v2",
+            options: [{ value: "v2", name: "V2" }],
+          },
+        ]).toLiveConfiguration({ includeCatalog: false }),
+        {
+          models: probeModeOnly.models,
+          currentModelId: probeModeOnly.currentModelId,
+          configOptions: probeModeOnly.configOptions,
+          modelOptionIds: new Set(probeModeOnly.modelOptionIds ?? []),
+        },
+      ),
+    );
+    const oldLearnedM256 = [
+      {
+        slug: "m256",
+        name: "Model 256",
+        isCustom: false,
+        capabilities: {
+          optionDescriptors: [
+            {
+              id: "variant",
+              label: "Variant",
+              type: "select" as const,
+              currentValue: "v1",
+              options: [{ id: "v1", label: "V1" }],
+            },
+            {
+              id: "style",
+              label: "Style",
+              type: "select" as const,
+              currentValue: "s1",
+              options: [{ id: "s1", label: "S1" }],
+            },
+          ],
+        },
+      },
+    ];
+    const appliedV2Overflow = applyAcpRegistryLiveConfiguration(
+      cappedProvider,
+      retainedV2Overflow,
+      [],
+      oldLearnedM256,
+      { probeSharedDescriptors: probeModeOnly.configOptions },
+    );
+    expect(
+      appliedV2Overflow.models
+        .at(-1)
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([
+      ["mode", "ask"],
+      ["style", "s1"],
+      ["variant", "v2"],
+    ]);
+    // A probe starting on overflow m256 tags its tail so retained live updates on m5 or m255
+    // restore m255 into slot 255 while keeping the running session's default and effort.
+    const probeOverflowM256 = prepareAcpRegistryLiveConfiguration([
+      ...modelSelect("m256", choices),
+      effortOption("low"),
+    ]).toLiveConfiguration({ includeCatalog: true });
+    expect(probeOverflowM256.cappedTailIsOverflow).toBe(true);
+    const probeOverflowSnapshot = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "test-agent" }),
+      checkedAt: "2026-08-13T10:00:00.000Z",
+      inspection: { status: "ready", agentId: "test-agent", version: "1.0.0", distribution: "npx" },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: null,
+          authMethods: [],
+          sessionManagement: noSessionManagement,
+          models: probeOverflowM256.models,
+          currentModelId: probeOverflowM256.currentModelId,
+          configOptions: probeOverflowM256.configOptions,
+          ...(probeOverflowM256.modelOptionIds === undefined
+            ? {}
+            : { modelOptionIds: probeOverflowM256.modelOptionIds }),
+        },
+        slashCommands: [],
+        skills: [],
+        cappedTailIsOverflow: true,
+      },
+    });
+    const probeOverflowSchema = {
+      models: probeOverflowM256.models,
+      currentModelId: probeOverflowM256.currentModelId,
+      configOptions: probeOverflowM256.configOptions,
+      modelOptionIds: new Set(probeOverflowM256.modelOptionIds ?? []),
+      cappedTailIsOverflow: true,
+    };
+    for (const activeSlug of ["m5", "m255"] as const) {
+      const retainedOverOverflowProbe = Option.getOrThrow(
+        retainAcpRegistryLiveOptionsAfterProbe(
+          prepareAcpRegistryLiveConfiguration([
+            ...modelSelect(activeSlug, choices),
+            effortOption("high"),
+          ]).toLiveConfiguration({ includeCatalog: false }),
+          probeOverflowSchema,
+        ),
+      );
+      const appliedOverOverflowProbe = applyAcpRegistryLiveConfiguration(
+        probeOverflowSnapshot,
+        retainedOverOverflowProbe,
+        [],
+        probeOverflowSnapshot.models,
+        { probeConfigOptions: probeOverflowM256.configOptions },
+      );
+      expect(appliedOverOverflowProbe.models.at(-1)?.slug).toBe("m255");
+      const defaultModel = appliedOverOverflowProbe.models.find((m) => m.isDefault);
+      expect(defaultModel?.slug).toBe(activeSlug);
+      expect(
+        defaultModel?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue,
+      ).toBe("high");
+    }
+    // Cache equality shortcuts must not drop an overflow-tail tag change when a model is
+    // inserted at index 255 while keeping the same visible list [m0..m254, m256].
+    const catalogWithoutM255 = [...choices.slice(0, 255), choices[256]!];
+    const untaggedM256Snapshot = providerWithModels(
+      catalogWithoutM255.map((choice) => ({
+        id: choice.value,
+        name: choice.name,
+        description: null,
+      })),
+      "m256",
+    );
+    const cacheAfterOverflowTag = updateAcpRegistryEnrichmentCache({
+      cache: { generation: 1, entry: { provider: untaggedM256Snapshot, expiresAt: 100_000 } },
+      configuration: prepareAcpRegistryLiveConfiguration(
+        modelSelect("m256", choices),
+      ).toLiveConfiguration({ includeCatalog: true }),
+      customModels: [],
+      now: 1_000,
+    });
+    expect(cacheAfterOverflowTag.generation).toBe(2);
+    const cacheAfterM0Restore = updateAcpRegistryEnrichmentCache({
+      cache: cacheAfterOverflowTag,
+      configuration: prepareAcpRegistryLiveConfiguration(
+        modelSelect("m0", choices),
+      ).toLiveConfiguration({ includeCatalog: false }),
+      customModels: [],
+      now: 2_000,
+    });
+    expect(cacheAfterM0Restore.entry?.provider.models.at(-1)?.slug).toBe("m255");
     // A session initialized directly on an overflow model (includeCatalog: true) keeps its
     // overflow metadata so a superseding probe on m0 retains the overflow model and its options.
     const choices300 = Array.from({ length: 300 }, (_, index) => ({
@@ -2009,6 +2203,79 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
     expect(learnedAfterProbe2).toHaveLength(MAX_DISPLACED_LEARNED_MODELS);
     expect(learnedAfterProbe2[0]?.slug).toBe("old-11");
     expect(learnedAfterProbe2.at(-1)?.slug).toBe("m255");
+    // An earlier-model overflow entry with preserveDefault does not swap slot 255 or default,
+    // yet updateAcpRegistryLearnedModelsFromLive still learns its validated options for m256.
+    const earlierOverflowEntry = {
+      ...prepareAcpRegistryLiveConfiguration([
+        ...modelSelect("m256", choices),
+        {
+          id: "variant",
+          name: "Variant",
+          category: "model_config" as const,
+          type: "select" as const,
+          currentValue: "v2",
+          options: [{ value: "v2", name: "V2" }],
+        },
+      ]).toLiveConfiguration({ includeCatalog: false }),
+      partialOptions: true,
+      preserveDefault: true,
+    };
+    const afterEarlierOverflow = applyAcpRegistryLiveConfiguration(
+      cappedProvider,
+      earlierOverflowEntry,
+      [],
+    );
+    expect(afterEarlierOverflow.models.at(-1)?.slug).toBe("m255");
+    expect(afterEarlierOverflow.models[0]?.isDefault).toBe(true);
+    const learnedWithEarlierOverflow = updateAcpRegistryLearnedModelsFromLive(
+      [],
+      afterEarlierOverflow.models,
+      earlierOverflowEntry,
+    );
+    expect(
+      learnedWithEarlierOverflow
+        .find((m) => m.slug === "m256")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([["variant", "v2"]]);
+    // Live learning caps total entries at 256 + MAX_DISPLACED_LEARNED_MODELS and refreshes LRU
+    // order when an unchanged model is observed again so older untouched models evict first.
+    const maxLiveLearned = ACP_REGISTRY_MAX_MODELS + MAX_DISPLACED_LEARNED_MODELS;
+    const fullLearned = Array.from({ length: maxLiveLearned }, (_, index) => ({
+      slug: `live-${index}`,
+      name: `Live ${index}`,
+      isCustom: false,
+      capabilities: variantCapabilities,
+    }));
+    const touchedOldest = updateAcpRegistryLearnedModelsFromLive(fullLearned, [fullLearned[0]!], {
+      models: [],
+      currentModelId: "live-0",
+      configOptions: variantCapabilities.optionDescriptors,
+      modelOptionIds: ["variant"],
+      modelsFromModelSelect: false,
+    });
+    expect(touchedOldest.at(-1)?.slug).toBe("live-0");
+    const afterLiveCap = updateAcpRegistryLearnedModelsFromLive(
+      touchedOldest,
+      [
+        {
+          slug: "live-new",
+          name: "Live New",
+          isCustom: false,
+          capabilities: variantCapabilities,
+        },
+      ],
+      {
+        models: [],
+        currentModelId: "live-new",
+        configOptions: variantCapabilities.optionDescriptors,
+        modelOptionIds: ["variant"],
+        modelsFromModelSelect: false,
+      },
+    );
+    expect(afterLiveCap).toHaveLength(maxLiveLearned);
+    expect(afterLiveCap.some((m) => m.slug === "live-0")).toBe(true);
+    expect(afterLiveCap.some((m) => m.slug === "live-1")).toBe(false);
+    expect(afterLiveCap.at(-1)?.slug).toBe("live-new");
 
     // Toggling an effort selector on a session with a fixed modelState must keep catalogKey
     // stable (so frozen lists never re-advertise over a newer probe) while projecting newly
@@ -4756,6 +5023,57 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           .at(-1)
           ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
       ).toEqual([["variant", "v1"]]);
+
+      // When a probe itself starts on overflow m256 while a live session is on m255,
+      // probedCappedTailIsOverflow lets m255 stay visible and clears dropped options on update.
+      const sawM255Selected = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.at(-1)?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration([
+          ...modelSelect("m255"),
+          variantSelect,
+        ]).toLiveConfiguration({ includeCatalog: false }),
+      );
+      yield* Fiber.join(sawM255Selected);
+      yield* writeModels({
+        models: modelIds,
+        configOptions: [...modelSelect("m256")],
+      });
+      yield* TestClock.adjust("16 minutes");
+      const probeOverflowWhileLiveM255 = yield* waitForEnriched().pipe(
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* instance.snapshot.refresh;
+      const afterProbeOverflowWhileLiveM255 = Option.getOrThrow(
+        yield* Fiber.join(probeOverflowWhileLiveM255),
+      );
+      expect(afterProbeOverflowWhileLiveM255.models.at(-1)?.slug).toBe("m255");
+      expect(afterProbeOverflowWhileLiveM255.models.at(-1)?.isDefault).toBe(true);
+      expect(
+        afterProbeOverflowWhileLiveM255.models
+          .at(-1)
+          ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+      ).toEqual([["variant", "v1"]]);
+      const sawVariantCleared = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter(
+          (snapshot) =>
+            snapshot.models.at(-1)?.slug === "m255" &&
+            (snapshot.models.at(-1)?.capabilities?.optionDescriptors?.length ?? 0) === 0,
+        ),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(modelSelect("m255")).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+      );
+      yield* Fiber.join(sawVariantCleared);
     }),
   );
 

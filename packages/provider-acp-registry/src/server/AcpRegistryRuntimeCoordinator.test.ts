@@ -736,6 +736,82 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const afterDisabledClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         expect(afterDisabledClear.pendingOptions).toHaveLength(1);
         expect(afterDisabledClear.pendingOptions[0]?.configuration.currentModelId).toBe("model-a");
+
+        // Stripping a catalog entry extracts non-current models' reasoningEffort into
+        // advertisedReasoning for retain, while excluding currentModelId and reasoningEffort: null.
+        const highEffort = effortOption("high");
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: highEffort },
+            { id: "model-c", name: "Model C", description: null, reasoningEffort: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [effortOption("low")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        const reasoningCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: reasoningCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterCatalogReasoningClear =
+          yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterCatalogReasoningClear.pendingOptions[0]?.configuration.advertisedReasoning,
+        ).toEqual({
+          "model-b": highEffort,
+        });
+
+        // An earlier overflow model update keeps its overflow metadata alongside preserveDefault
+        // so the driver can learn its options on replay without swapping slot 255 or default.
+        const overflowModel = { id: "m256", name: "Model 256", description: null };
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "m256",
+          configOptions: [modeOption("code"), variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: overflowModel,
+          cappedTailIsOverflow: true,
+        });
+        const overflowSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "m0",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: { id: "m255", name: "Model 255", description: null },
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: reasoningCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterOverflowClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(
+          afterOverflowClear.pendingOptions.find(
+            (entry) => entry.revision === overflowSnap.revision,
+          )?.configuration,
+        ).toEqual({
+          models: [],
+          currentModelId: "m256",
+          configOptions: [variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: overflowModel,
+          cappedTailIsOverflow: true,
+        });
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
 });
