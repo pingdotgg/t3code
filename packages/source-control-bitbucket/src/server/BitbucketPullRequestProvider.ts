@@ -44,9 +44,10 @@ const COMMIT_READ_CAPACITY = 256;
 const COMMIT_READ_TTL = Duration.minutes(15);
 
 const UNAVAILABLE_REQUIREMENT = {
-  missing: "Bitbucket needs API credentials on the server. Add them in Settings → Source Control.",
+  missing:
+    "Bitbucket needs API credentials on the server. Add them in Settings → Source control & issues.",
   unauthenticated:
-    "Bitbucket rejected the configured credentials. Check them in Settings → Source Control.",
+    "Bitbucket rejected the configured credentials. Check them in Settings → Source control & issues.",
 };
 
 /**
