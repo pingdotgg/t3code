@@ -1813,7 +1813,11 @@ const make = Effect.gen(function* () {
     const { subagents } = yield* loadThreadRecords(scope.thread.threadId, ["subagents"], {
       omitSettledSubagents: true,
     });
-    const open = subagents.filter((task) => task.origin === "app_owned");
+    const open = subagents.filter(
+      (task) =>
+        task.origin === "app_owned" &&
+        (task.childThreadId !== null || task.remoteChild !== undefined),
+    );
     const listed = open
       .slice(0, MAX_LISTED_TASKS)
       .map((task) => (task.title ? `${task.id} (${task.title})` : task.id))
