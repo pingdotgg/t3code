@@ -2420,6 +2420,26 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
       { replaceCurrentLearnedOptions: true },
     );
     expect(clearedDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
+    // Even without replacement intent, an empty displaced-tail update strips reasoning when
+    // reasoning is disabled on that model.
+    const disabledReasoningDisplacedTail = updateAcpRegistryLearnedModelsFromLive(
+      replacedDisplacedTail,
+      afterEarlierOrdinaryTail.models,
+      {
+        ...prepareAcpRegistryLiveConfiguration(modelSelect("m255", choices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+        cappedLastModel: {
+          id: "m255",
+          name: "Model 255",
+          description: null,
+          reasoningEffort: null,
+        },
+        partialOptions: true,
+        preserveDefault: true,
+      },
+    );
+    expect(disabledReasoningDisplacedTail.some((m) => m.slug === "m255")).toBe(false);
     // Restoring m255 into slot 255 while a different model (m0) is current with its own
     // `variant` option must keep m255's off-screen learned `variant=v2` intact.
     const m0RestoringM255 = {
@@ -3813,6 +3833,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const afterUninstalledLive = yield* instance.snapshot.getSnapshot;
         expect(afterUninstalledLive.installed).toBe(false);
         expect(afterUninstalledLive.status).toBe("error");
+        expect(afterUninstalledLive.models).toEqual(uninstalledSnap.models);
 
         // Direct readiness refresh while not_found also stays error/uninstalled despite live config.
         inspectHandler = () => notFoundInspection;
@@ -3843,8 +3864,10 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const probeEntered = yield* Deferred.make<void>();
         const releaseProbe = yield* Deferred.make<void>();
         const signOutRejected = yield* Deferred.make<void>();
+        const unauthLiveProcessed = yield* Deferred.make<void>();
         let gateNextResolve = false;
         let injectCatalogBeforeSignOutClear = false;
+        let trackUnauthLiveUpdate = false;
         const {
           directory,
           coordinator,
@@ -3857,6 +3880,19 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           initialModels: ["new-model", "old-model", "other-model"],
           wrapCoordinator: (base) => ({
             ...base,
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              base.watchLiveConfiguration(
+                instanceId,
+                (configuration, revision) =>
+                  onUpdate(configuration, revision).pipe(
+                    Effect.tap(() =>
+                      trackUnauthLiveUpdate
+                        ? Deferred.succeed(unauthLiveProcessed, undefined).pipe(Effect.asVoid)
+                        : Effect.void,
+                    ),
+                  ),
+                options,
+              ),
             clearLiveConfigurationIfRevision: (instanceId, options) =>
               Effect.gen(function* () {
                 if (injectCatalogBeforeSignOutClear && options.retain === undefined) {
@@ -3967,6 +4003,35 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         yield* instance.snapshot.refresh;
         yield* Fiber.join(restored);
 
+        // Sign-out cleared liveSessionResetRevision, so a fresh options-only update on the
+        // re-authenticated probe is accepted rather than filtered against an empty probe schema.
+        const sawFreshAfterSignOut = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "new-model")
+                ?.capabilities?.optionDescriptors?.some((d) => d.id === "fresh-after-signout") ===
+              true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "new-model",
+          configOptions: [
+            {
+              id: "fresh-after-signout",
+              label: "Fresh After Signout",
+              type: "boolean",
+              currentValue: true,
+            },
+          ],
+          modelOptionIds: ["fresh-after-signout"],
+          modelsFromModelSelect: false,
+        });
+        expect(Option.isSome(yield* Fiber.join(sawFreshAfterSignOut))).toBe(true);
+
         const liveBeforeDisable = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
             (snapshot) =>
@@ -4013,6 +4078,35 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         yield* instance.snapshot.refresh;
         yield* Fiber.join(restored2);
+
+        // disableProvider cleared liveSessionResetRevision, so a fresh options-only update on
+        // the new probe is accepted rather than filtered against the probe's empty option schema.
+        const sawFreshAfterDisable = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "new-model")
+                ?.capabilities?.optionDescriptors?.some((d) => d.id === "fresh-after-disable") ===
+              true,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "new-model",
+          configOptions: [
+            {
+              id: "fresh-after-disable",
+              label: "Fresh After Disable",
+              type: "boolean",
+              currentValue: true,
+            },
+          ],
+          modelOptionIds: ["fresh-after-disable"],
+          modelsFromModelSelect: false,
+        });
+        expect(Option.isSome(yield* Fiber.join(sawFreshAfterDisable))).toBe(true);
 
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
@@ -4173,6 +4267,105 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           ["new-model", ["effort"]],
           ["old-model", ["effort"]],
         ]);
+
+        // Even when a superseding probe after invalidateCaches drops the last pending override
+        // (leaving pendingOptions empty and configuration None), probeOptions must remain stored
+        // so later options-only updates from the old session still filter out stale options.
+        yield* writeModels({
+          models: [
+            { modelId: "replaced-model-a", name: "Replaced Model A" },
+            { modelId: "replaced-model-b", name: "Replaced Model B" },
+          ],
+          configOptions: [
+            {
+              id: "model",
+              name: "Model",
+              category: "model",
+              type: "select",
+              currentValue: "replaced-model-a",
+              options: [
+                { value: "replaced-model-a", name: "Replaced Model A" },
+                { value: "replaced-model-b", name: "Replaced Model B" },
+              ],
+            },
+            {
+              id: "effort",
+              name: "Effort",
+              category: "thought_level",
+              type: "select",
+              currentValue: "high",
+              options: [
+                { value: "low", name: "Low" },
+                { value: "high", name: "High" },
+              ],
+            },
+          ],
+        });
+        yield* instance.invalidateCaches ?? Effect.void;
+        const droppedLastOverride = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(droppedLastOverride);
+        expect(
+          (yield* coordinator.getLiveConfigurationWithRevision(identity.instanceId)).pendingOptions,
+        ).toEqual([]);
+
+        // A second invalidateCaches + probe with zero pending overrides left still remembers the
+        // superseded live session and filters legacy options on subsequent live updates.
+        yield* instance.invalidateCaches ?? Effect.void;
+        const secondEmptyClear = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(secondEmptyClear);
+
+        const sawStillFilteredLegacy = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "replaced-model-a")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+              "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "replaced-model-a",
+          configOptions: [
+            {
+              id: "effort",
+              label: "Effort",
+              type: "select",
+              role: "reasoning",
+              currentValue: "low",
+              options: [
+                { id: "low", label: "Low" },
+                { id: "high", label: "High" },
+              ],
+            },
+            {
+              id: "legacy",
+              label: "Legacy",
+              type: "boolean",
+              currentValue: true,
+            },
+          ],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+        });
+        const stillFilteredSnap = Option.getOrThrow(yield* Fiber.join(sawStillFilteredLegacy));
+        expect(
+          stillFilteredSnap.models.map((m) => [
+            m.slug,
+            (m.capabilities?.optionDescriptors ?? []).map((d) => d.id),
+          ]),
+        ).toEqual([
+          ["replaced-model-a", ["effort"]],
+          ["replaced-model-b", []],
+        ]);
         yield* writeModels(["new-model", "old-model", "other-model"]);
         yield* TestClock.adjust("16 minutes");
 
@@ -4233,6 +4426,35 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(Option.isSome(yield* coordinator.getLiveConfiguration(identity.instanceId))).toBe(
           true,
         );
+
+        // An options-only update arriving while unauthenticated must be ignored by the watcher.
+        yield* TestClock.adjust("16 minutes");
+        const signedOutForWatcher = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) => snapshot.auth.status === "unauthenticated"),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const unauthSnap = Option.getOrThrow(yield* Fiber.join(signedOutForWatcher));
+        trackUnauthLiveUpdate = true;
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: null,
+          configOptions: [
+            {
+              id: "mode",
+              label: "Mode",
+              type: "select",
+              currentValue: "plan",
+              options: [{ id: "plan", label: "Plan" }],
+            },
+          ],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        yield* Deferred.await(unauthLiveProcessed);
+        trackUnauthLiveUpdate = false;
+        expect((yield* instance.snapshot.getSnapshot).models).toEqual(unauthSnap.models);
       }),
   );
 
@@ -4981,8 +5203,9 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ]);
 
             // If the retiring live watcher applies a newer catalog (R2) and options update (R3)
-            // after readiness reads R1 and applySnapshotBase commits R1, the replacement watcher
-            // must restore the already-accepted catalog instead of leaving R1 visible.
+            // after readiness reads R1 and applySnapshotBase commits R1, basing live watcher steps
+            // on acceptedCatalog.models keeps R3 from corrupting acceptedCatalog back to R1 and
+            // lets the replacement watcher's R3 replay publish the already-accepted catalog.
             const sawRacedRestored = yield* instance.snapshot.streamChanges.pipe(
               Stream.filter(
                 (snapshot) =>

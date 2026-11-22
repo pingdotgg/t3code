@@ -395,38 +395,36 @@ export function updateAcpRegistryLearnedModelsFromLive(
     );
     const previous = learnedBySlug.get(slug);
     const replace = options?.replaceCurrentLearnedOptions === true;
-    if (incoming.length === 0) {
-      if (replace && previous !== undefined) {
+    const incomingIds = new Set(incoming.map((descriptor) => descriptor.id));
+    const preservedPrevious = replace
+      ? []
+      : (previous?.capabilities?.optionDescriptors ?? []).filter(
+          (descriptor) =>
+            !incomingIds.has(descriptor.id) &&
+            (!isReasoningDisabled || !isReasoningDescriptor(descriptor)),
+        );
+    const combined = [...preservedPrevious, ...incoming];
+    if (combined.length === 0) {
+      if (previous !== undefined) {
         learnedBySlug.delete(slug);
-        if (slug === lastLearnedSlug) lastLearnedSlug = undefined;
         dataChanged = true;
       }
     } else {
-      const incomingIds = new Set(incoming.map((descriptor) => descriptor.id));
-      const preservedPrevious = replace
-        ? []
-        : (previous?.capabilities?.optionDescriptors ?? []).filter(
-            (descriptor) =>
-              !incomingIds.has(descriptor.id) &&
-              (!isReasoningDisabled || !isReasoningDescriptor(descriptor)),
-          );
       const updated: ServerProviderModel = {
         slug,
         name: configuration.cappedLastModel.name,
         isCustom: false,
         capabilities: createModelCapabilities({
-          optionDescriptors: [...preservedPrevious, ...incoming],
+          optionDescriptors: combined,
         }),
       };
       if (previous === undefined || !Equal.equals(previous.capabilities, updated.capabilities)) {
         learnedBySlug.delete(slug);
         learnedBySlug.set(slug, updated);
-        lastLearnedSlug = slug;
         dataChanged = true;
       } else if (slug !== lastLearnedSlug) {
         learnedBySlug.delete(slug);
         learnedBySlug.set(slug, previous);
-        lastLearnedSlug = slug;
         orderTouched = true;
       }
     }
@@ -1696,6 +1694,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     // enrichment or provisional probes do not regress the snapshot.
     const acceptedCatalog = yield* Ref.make<AcceptedAcpRegistryCatalog>(EMPTY_ACCEPTED_CATALOG);
     const clearAcceptedCatalog = Ref.set(acceptedCatalog, EMPTY_ACCEPTED_CATALOG);
+    // Tracks the coordinator revision through which live state was explicitly reset (sign-out or
+    // full cache clear), excluding invalidateCaches which preserves coordinator state.
+    const liveSessionResetRevision = yield* Ref.make(0);
     const lastObservedLiveRevision = yield* Ref.make(0);
     const lastAppliedLiveCatalogRevision = yield* Ref.make(0);
     const lastAppliedLiveRevision = yield* Ref.make(0);
@@ -2251,12 +2252,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       : liveSnapshot;
                     clearedThroughRevision = afterClear.clearedThroughRevision;
                     const supersededLiveSession =
-                      Option.isSome(liveSnapshot.catalog) ||
-                      Option.isSome(liveSnapshot.configuration) ||
-                      Option.isSome(afterClear.configuration) ||
-                      afterClear.pendingOptions.length > 0 ||
-                      afterClear.revision > liveSnapshot.revision ||
-                      accepted.probeOptions !== null;
+                      afterClear.revision > (yield* Ref.get(liveSessionResetRevision));
                     yield* resetAppliedLiveRevisions;
                     yield* Ref.set(acceptedCatalog, {
                       models: resolved.models,
@@ -2301,6 +2297,14 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                   });
                   yield* clearLearnedModels;
                   yield* clearAcceptedCatalog;
+                  if (Option.isSome(runtimeCoordinator)) {
+                    yield* Ref.set(
+                      liveSessionResetRevision,
+                      yield* runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
+                        instanceId,
+                      ),
+                    );
+                  }
                   yield* resetAppliedLiveRevisions;
                 }
                 const preserveTransientFailure =
@@ -2360,7 +2364,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                           instanceId,
                         );
                       const appliedRevision = yield* Ref.get(lastAppliedLiveRevision);
-                      if (revision <= clearedThroughRevision) {
+                      if (revision <= clearedThroughRevision || revision < appliedRevision) {
                         return;
                       }
                       const rawCurrent = yield* getSnapshot;
@@ -2372,26 +2376,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                         return;
                       }
                       const accepted = yield* Ref.get(acceptedCatalog);
-                      if (revision < appliedRevision) {
-                        // A retiring watcher can apply a newer catalog and options between
-                        // readiness returning and applySnapshotBase committing. Restore the
-                        // already-accepted catalog without replaying the stale intermediate step.
-                        if (
-                          accepted.probeOptions === null &&
-                          accepted.models.length > 0 &&
-                          !Equal.equals(rawCurrent.models, accepted.models)
-                        ) {
-                          const { message: _staleMessage, ...rest } = rawCurrent;
-                          yield* publishSnapshot({
-                            ...rest,
-                            ...(rawCurrent.status !== "ready" && rawCurrent.message !== undefined
-                              ? { message: rawCurrent.message }
-                              : {}),
-                            models: accepted.models,
-                          });
-                        }
-                        return;
-                      }
                       // Always base live updates on acceptedCatalog.models when no probe baseline is
                       // active, preserving both WeakMap overflow-tail identity and any newer catalog
                       // whose publish was dropped during a readiness generation handoff.
@@ -2482,7 +2466,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Option.isSome(runtimeCoordinator)
                 ? (options?.clearLiveConfiguration === false
                     ? Effect.void
-                    : runtimeCoordinator.value.clearLiveConfiguration(instanceId)
+                    : runtimeCoordinator.value.clearLiveConfiguration(instanceId).pipe(
+                        Effect.andThen(
+                          runtimeCoordinator.value.getLiveConfigurationClearedThroughRevision(
+                            instanceId,
+                          ),
+                        ),
+                        Effect.flatMap((clearedThrough) =>
+                          Ref.set(liveSessionResetRevision, clearedThrough),
+                        ),
+                      )
                   ).pipe(
                     Effect.andThen(
                       options?.clearCommands === true
