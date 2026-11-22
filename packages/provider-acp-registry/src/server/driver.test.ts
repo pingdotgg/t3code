@@ -2237,8 +2237,71 @@ describe("prepareAcpRegistryLiveConfiguration", () => {
         .find((m) => m.slug === "m256")
         ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
     ).toEqual([["variant", "v2"]]);
-    // Live learning caps total entries at 256 + MAX_DISPLACED_LEARNED_MODELS and refreshes LRU
-    // order when an unchanged model is observed again so older untouched models evict first.
+    // Displaced ordinary tail (m255 when probe started on overflow m256) is also learned
+    // off-screen without swapping slot 255 or stealing default.
+    const earlierOrdinaryTailEntry = {
+      ...prepareAcpRegistryLiveConfiguration([
+        ...modelSelect("m255", choices),
+        {
+          id: "variant",
+          name: "Variant",
+          category: "model_config" as const,
+          type: "select" as const,
+          currentValue: "v2",
+          options: [{ value: "v2", name: "V2" }],
+        },
+      ]).toLiveConfiguration({ includeCatalog: false }),
+      partialOptions: true,
+      preserveDefault: true,
+    };
+    const afterEarlierOrdinaryTail = applyAcpRegistryLiveConfiguration(
+      probeOverflowSnapshot,
+      earlierOrdinaryTailEntry,
+      [],
+    );
+    expect(afterEarlierOrdinaryTail.models.at(-1)?.slug).toBe("m256");
+    expect(afterEarlierOrdinaryTail.models.at(-1)?.isDefault).toBe(true);
+    const learnedWithEarlierOrdinaryTail = updateAcpRegistryLearnedModelsFromLive(
+      [],
+      afterEarlierOrdinaryTail.models,
+      earlierOrdinaryTailEntry,
+    );
+    expect(
+      learnedWithEarlierOrdinaryTail
+        .find((m) => m.slug === "m255")
+        ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+    ).toEqual([["variant", "v2"]]);
+    // Live learning caps total entries at 256 + MAX_DISPLACED_LEARNED_MODELS, refreshes LRU
+    // order when an unchanged model is observed again, and avoids rebuilding when order matches.
+    const stableEffort = {
+      id: "effort",
+      label: "Effort",
+      type: "select" as const,
+      role: "reasoning" as const,
+      currentValue: "high",
+      options: [
+        { id: "low", label: "Low" },
+        { id: "high", label: "High" },
+      ],
+    };
+    const stableModels = ["a", "b", "c"].map((slug) => ({
+      slug,
+      name: slug,
+      isCustom: false,
+      capabilities: { optionDescriptors: [stableEffort] },
+    }));
+    const stableCfg = {
+      models: [],
+      currentModelId: "a",
+      configOptions: [stableEffort],
+      modelOptionIds: ["effort"],
+      modelsFromModelSelect: false,
+      advertisedReasoning: { b: stableEffort, c: stableEffort },
+    };
+    const stableLearned = updateAcpRegistryLearnedModelsFromLive([], stableModels, stableCfg);
+    expect(updateAcpRegistryLearnedModelsFromLive(stableLearned, stableModels, stableCfg)).toBe(
+      stableLearned,
+    );
     const maxLiveLearned = ACP_REGISTRY_MAX_MODELS + MAX_DISPLACED_LEARNED_MODELS;
     const fullLearned = Array.from({ length: maxLiveLearned }, (_, index) => ({
       slug: `live-${index}`,
@@ -5074,6 +5137,101 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         }),
       );
       yield* Fiber.join(sawVariantCleared);
+
+      // Sync overflow-tail tag with acceptedCatalog in both directions when managedProvider
+      // deduplicates a structurally equal catalog publish ([m0..m254, m256]).
+      const fullChoices = modelIds.map((value, index) => ({ value, name: `Model ${index}` }));
+      const withoutM255Choices = fullChoices.filter((choice) => choice.value !== "m255");
+      const selectFrom = (
+        currentValue: string,
+        options: ReadonlyArray<{ value: string; name: string }>,
+      ) => [
+        {
+          id: "model",
+          name: "Model",
+          category: "model" as const,
+          type: "select" as const,
+          currentValue,
+          options: [...options],
+        },
+      ];
+      // Untagged base m256 -> tagged overflow m256 (deduplicated) -> m0 must restore m255.
+      const sawBaseM256 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.at(-1)?.slug === "m256"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(
+          selectFrom("m256", withoutM255Choices),
+        ).toLiveConfiguration({ includeCatalog: true }),
+      );
+      yield* Fiber.join(sawBaseM256);
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(selectFrom("m256", fullChoices)).toLiveConfiguration({
+          includeCatalog: true,
+        }),
+      );
+      const sawRestoredM255 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models[0]?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(selectFrom("m0", fullChoices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+      );
+      expect(Option.getOrThrow(yield* Fiber.join(sawRestoredM255)).models.at(-1)?.slug).toBe(
+        "m255",
+      );
+
+      // Tagged overflow m256 -> untagged base m256 (deduplicated) -> m0 -> stale C1 m1 keeps m256.
+      const sawOverflowM256 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models.at(-1)?.slug === "m256"),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(selectFrom("m256", fullChoices)).toLiveConfiguration({
+          includeCatalog: true,
+        }),
+      );
+      yield* Fiber.join(sawOverflowM256);
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(
+          selectFrom("m256", withoutM255Choices),
+        ).toLiveConfiguration({ includeCatalog: true }),
+      );
+      const sawUntaggedM0 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models[0]?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(
+          selectFrom("m0", withoutM255Choices),
+        ).toLiveConfiguration({ includeCatalog: false }),
+      );
+      yield* Fiber.join(sawUntaggedM0);
+      const sawUntaggedM1 = yield* instance.snapshot.streamChanges.pipe(
+        Stream.filter((snapshot) => snapshot.models[1]?.isDefault === true),
+        Stream.runHead,
+        Effect.forkScoped({ startImmediately: true }),
+      );
+      yield* coordinator.publishLiveConfiguration(
+        identity.instanceId,
+        prepareAcpRegistryLiveConfiguration(selectFrom("m1", fullChoices)).toLiveConfiguration({
+          includeCatalog: false,
+        }),
+      );
+      expect(Option.getOrThrow(yield* Fiber.join(sawUntaggedM1)).models.at(-1)?.slug).toBe("m256");
     }),
   );
 
@@ -5092,11 +5250,19 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         let blockWatcher = false;
         let gateAfterCacheRead = false;
         let trackCacheHitCommit = false;
+        let beforeClearHook: Effect.Effect<void> | null = null;
         const { coordinator, instance, waitForEnriched, writeModels } = yield* setupPeriodicDriver({
           prefix: "acp-driver-multi-clear-",
           initialModels: ["model-a", "model-b"],
           wrapCoordinator: (base) => ({
             ...base,
+            clearLiveConfigurationIfRevision: (instanceId, options) => {
+              const hook = beforeClearHook;
+              beforeClearHook = null;
+              return (hook ?? Effect.void).pipe(
+                Effect.andThen(base.clearLiveConfigurationIfRevision(instanceId, options)),
+              );
+            },
             getUrlAuthAction: (instanceId) =>
               (trackCacheHitCommit
                 ? Effect.sync(() => {
@@ -5266,6 +5432,92 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "model-a")
             ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
         ).toEqual([["effort", "high"]]);
+
+        // Pre-learn effort=[low] on model-b, then run a superseding probe without reasoning on
+        // model-b while blocked updates widen model-b's variant to [v1, v2] (v2) and advertise
+        // effort=[high] on model-b; older learned schemas must not reject either retained update.
+        const effortLowOnly = {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue: "low",
+          options: [{ id: "low", label: "Low" }],
+        };
+        const effortHighOnly = {
+          id: "effort",
+          label: "Effort",
+          type: "select" as const,
+          role: "reasoning" as const,
+          currentValue: "high",
+          options: [{ id: "high", label: "High" }],
+        };
+        const variantWidened = {
+          id: "variant",
+          label: "Variant",
+          type: "select" as const,
+          currentValue: "v2",
+          options: [
+            { id: "v1", label: "V1" },
+            { id: "v2", label: "V2" },
+          ],
+        };
+        const sawLearnedBLow = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.models
+                .find((m) => m.slug === "model-b")
+                ?.capabilities?.optionDescriptors?.find((d) => d.id === "effort")?.currentValue ===
+              "low",
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(identity.instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [effortOpt("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: false,
+          advertisedReasoning: { "model-b": effortLowOnly },
+        });
+        yield* Fiber.join(sawLearnedBLow);
+
+        yield* writeModels(["model-a", "model-b"]);
+        yield* TestClock.adjust("16 minutes");
+        beforeClearHook = coordinator
+          .publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: "model-b",
+            configOptions: [variantWidened],
+            modelOptionIds: ["variant"],
+            modelsFromModelSelect: false,
+          })
+          .pipe(
+            Effect.andThen(
+              coordinator.publishLiveConfiguration(identity.instanceId, {
+                models: [],
+                currentModelId: "model-a",
+                configOptions: [],
+                modelOptionIds: [],
+                modelsFromModelSelect: false,
+                advertisedReasoning: { "model-b": effortHighOnly },
+              }),
+            ),
+          );
+        const secondProbeDone = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        const afterWidenedProbe = Option.getOrThrow(yield* Fiber.join(secondProbeDone));
+        expect(
+          afterWidenedProbe.models
+            .find((m) => m.slug === "model-b")
+            ?.capabilities?.optionDescriptors?.map((d) => [d.id, d.currentValue]),
+        ).toEqual([
+          ["variant", "v2"],
+          ["effort", "high"],
+        ]);
 
         // Verify a cache-hit commit (probeOptions=null) whose watcher applies effort=high after
         // enrichProviderCached reads effort=low still publishes effort=high rather than reverting.

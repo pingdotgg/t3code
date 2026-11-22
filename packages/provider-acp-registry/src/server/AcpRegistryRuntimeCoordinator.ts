@@ -326,35 +326,57 @@ const make = Effect.gen(function* () {
             AcpRegistryRevisionedLiveConfiguration
           > = (() => {
             if (retain === undefined) return EMPTY_OPTIONS_BY_MODEL;
+            const extractAdvertisedReasoning = (
+              configuration: AcpRegistryLiveConfiguration,
+            ): AcpRegistryLiveConfiguration["advertisedReasoning"] => {
+              if (configuration.advertisedReasoning !== undefined) {
+                return configuration.advertisedReasoning;
+              }
+              const entries: Array<
+                readonly [
+                  string,
+                  NonNullable<AcpRegistryLiveConfiguration["models"][number]["reasoningEffort"]>,
+                ]
+              > = [];
+              for (const model of configuration.models) {
+                if (model.id !== configuration.currentModelId && model.reasoningEffort != null) {
+                  entries.push([model.id, model.reasoningEffort]);
+                }
+              }
+              return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+            };
             const candidates = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
+            const catalogReasoning =
+              current.catalog === null
+                ? undefined
+                : extractAdvertisedReasoning(current.catalog.configuration);
             if (current.catalog !== null) {
               candidates.set(current.catalog.configuration.currentModelId, current.catalog);
             }
             for (const [key, entry] of current.optionsByModel) {
+              if (
+                catalogReasoning !== undefined &&
+                current.catalog !== null &&
+                key === current.catalog.configuration.currentModelId
+              ) {
+                const mergedAdvertisedReasoning = {
+                  ...catalogReasoning,
+                  ...entry.configuration.advertisedReasoning,
+                };
+                candidates.set(key, {
+                  revision: entry.revision,
+                  configuration: {
+                    ...entry.configuration,
+                    advertisedReasoning: mergedAdvertisedReasoning,
+                  },
+                });
+                continue;
+              }
               candidates.set(key, entry);
             }
             const retained = new Map<string | null, AcpRegistryRevisionedLiveConfiguration>();
             for (const entry of sortedPendingOptions(candidates)) {
-              const catalogAdvertisedReasoning = (() => {
-                if (entry.configuration.advertisedReasoning !== undefined) {
-                  return entry.configuration.advertisedReasoning;
-                }
-                const entries: Array<
-                  readonly [
-                    string,
-                    NonNullable<AcpRegistryLiveConfiguration["models"][number]["reasoningEffort"]>,
-                  ]
-                > = [];
-                for (const model of entry.configuration.models) {
-                  if (
-                    model.id !== entry.configuration.currentModelId &&
-                    model.reasoningEffort != null
-                  ) {
-                    entries.push([model.id, model.reasoningEffort]);
-                  }
-                }
-                return entries.length > 0 ? Object.fromEntries(entries) : undefined;
-              })();
+              const catalogAdvertisedReasoning = extractAdvertisedReasoning(entry.configuration);
               const kept = retain({
                 ...entry.configuration,
                 models: [],
@@ -365,8 +387,8 @@ const make = Effect.gen(function* () {
               });
               if (Option.isNone(kept)) continue;
               if (entry.revision < current.revision) {
-                // Earlier models keep only model-specific options and advertised reasoning
-                // without stealing default selection or shared options.
+                // Earlier models keep only model-specific options, advertised reasoning, and
+                // displaced-tail metadata without stealing default selection or shared options.
                 const modelOptionIds = new Set(kept.value.modelOptionIds ?? []);
                 const modelOnlyOptions = kept.value.configOptions.filter((descriptor) =>
                   modelOptionIds.has(descriptor.id),
@@ -375,18 +397,13 @@ const make = Effect.gen(function* () {
                   kept.value.advertisedReasoning !== undefined &&
                   Object.keys(kept.value.advertisedReasoning).length > 0;
                 if (modelOnlyOptions.length === 0 && !hasAdvertisedReasoning) continue;
-                const keepOverflowModel =
-                  kept.value.cappedTailIsOverflow === true &&
+                const keepDisplacedTailModel =
                   kept.value.cappedLastModel !== undefined &&
                   kept.value.cappedPrefixKey !== undefined &&
                   kept.value.cappedLastModel.id === kept.value.currentModelId &&
                   modelOnlyOptions.length > 0;
-                const {
-                  cappedLastModel,
-                  cappedPrefixKey,
-                  cappedTailIsOverflow: _droppedOverflowFlag,
-                  ...rest
-                } = kept.value;
+                const { cappedLastModel, cappedPrefixKey, cappedTailIsOverflow, ...rest } =
+                  kept.value;
                 retained.delete(kept.value.currentModelId);
                 retained.set(kept.value.currentModelId, {
                   configuration: {
@@ -394,8 +411,12 @@ const make = Effect.gen(function* () {
                     configOptions: modelOnlyOptions,
                     modelOptionIds: modelOnlyOptions.map((descriptor) => descriptor.id),
                     preserveDefault: true,
-                    ...(keepOverflowModel
-                      ? { cappedPrefixKey, cappedLastModel, cappedTailIsOverflow: true }
+                    ...(keepDisplacedTailModel
+                      ? {
+                          cappedPrefixKey,
+                          cappedLastModel,
+                          ...(cappedTailIsOverflow === true ? { cappedTailIsOverflow: true } : {}),
+                        }
                       : {}),
                   },
                   revision: entry.revision,

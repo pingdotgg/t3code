@@ -766,9 +766,47 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           "model-b": highEffort,
         });
 
-        // An earlier overflow model update keeps its overflow metadata alongside preserveDefault
-        // so the driver can learn its options on replay without swapping slot 255 or default.
+        // A same-model options-only update for model-a overrides model-a's own options without
+        // discarding model-b's compatible reasoning metadata from the catalog on clear.
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [
+            { id: "model-a", name: "Model A", description: null, reasoningEffort: highEffort },
+            { id: "model-b", name: "Model B", description: null, reasoningEffort: highEffort },
+            { id: "model-c", name: "Model C", description: null, reasoningEffort: null },
+          ],
+          currentModelId: "model-a",
+          configOptions: [effortOption("high")],
+          modelOptionIds: ["effort"],
+          modelsFromModelSelect: true,
+        });
+        const sameModelCatalog = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "model-a",
+          configOptions: [modeOption("ask")],
+          modelOptionIds: [],
+          modelsFromModelSelect: false,
+        });
+        expect(
+          yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
+            catalogRevision: sameModelCatalog.catalogRevision,
+            retain: (live) => Option.some({ ...live, partialOptions: true }),
+          }),
+        ).toBe(true);
+        const afterSameModelClear = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        expect(afterSameModelClear.pendingOptions).toHaveLength(1);
+        expect(afterSameModelClear.pendingOptions[0]?.configuration.configOptions).toEqual([
+          modeOption("ask"),
+        ]);
+        expect(afterSameModelClear.pendingOptions[0]?.configuration.advertisedReasoning).toEqual({
+          "model-b": highEffort,
+        });
+
+        // Earlier displaced tail updates (both overflow m256 and displaced ordinary tail m255)
+        // keep their tail metadata alongside preserveDefault so the driver can learn their options
+        // off-screen without swapping slot 255 or default, while non-tail models (m1) drop it.
         const overflowModel = { id: "m256", name: "Model 256", description: null };
+        const ordinaryTailModel = { id: "m255", name: "Model 255", description: null };
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
           currentModelId: "m256",
@@ -782,16 +820,36 @@ describe("AcpRegistryRuntimeCoordinator", () => {
         const overflowSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
         yield* coordinator.publishLiveConfiguration(instanceId, {
           models: [],
+          currentModelId: "m255",
+          configOptions: [modeOption("code"), variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: ordinaryTailModel,
+        });
+        const ordinaryTailSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
+          currentModelId: "m1",
+          configOptions: [variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: ordinaryTailModel,
+        });
+        const nonTailSnap = yield* coordinator.getLiveConfigurationWithRevision(instanceId);
+        yield* coordinator.publishLiveConfiguration(instanceId, {
+          models: [],
           currentModelId: "m0",
           configOptions: [modeOption("ask")],
           modelOptionIds: [],
           modelsFromModelSelect: false,
           cappedPrefixKey: "prefix-255",
-          cappedLastModel: { id: "m255", name: "Model 255", description: null },
+          cappedLastModel: ordinaryTailModel,
         });
         expect(
           yield* coordinator.clearLiveConfigurationIfRevision(instanceId, {
-            catalogRevision: reasoningCatalog.catalogRevision,
+            catalogRevision: sameModelCatalog.catalogRevision,
             retain: (live) => Option.some({ ...live, partialOptions: true }),
           }),
         ).toBe(true);
@@ -811,6 +869,33 @@ describe("AcpRegistryRuntimeCoordinator", () => {
           cappedPrefixKey: "prefix-255",
           cappedLastModel: overflowModel,
           cappedTailIsOverflow: true,
+        });
+        expect(
+          afterOverflowClear.pendingOptions.find(
+            (entry) => entry.revision === ordinaryTailSnap.revision,
+          )?.configuration,
+        ).toEqual({
+          models: [],
+          currentModelId: "m255",
+          configOptions: [variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
+          cappedPrefixKey: "prefix-255",
+          cappedLastModel: ordinaryTailModel,
+        });
+        expect(
+          afterOverflowClear.pendingOptions.find((entry) => entry.revision === nonTailSnap.revision)
+            ?.configuration,
+        ).toEqual({
+          models: [],
+          currentModelId: "m1",
+          configOptions: [variantOption],
+          modelOptionIds: ["variant"],
+          modelsFromModelSelect: false,
+          partialOptions: true,
+          preserveDefault: true,
         });
       }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );

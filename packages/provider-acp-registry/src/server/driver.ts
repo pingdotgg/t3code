@@ -324,7 +324,8 @@ export function updateAcpRegistryLearnedModelsFromLive(
   );
   const configuredById = new Map(configuration.models.map((model) => [model.id, model] as const));
   let lastLearnedSlug = learned.findLast((model) => !model.isCustom)?.slug;
-  let changed = false;
+  let dataChanged = false;
+  let orderTouched = false;
   for (const model of nextModels) {
     if (model.isCustom) continue;
     const isCurrentModel =
@@ -355,7 +356,7 @@ export function updateAcpRegistryLearnedModelsFromLive(
       if (previous !== undefined) {
         learnedBySlug.delete(model.slug);
         if (model.slug === lastLearnedSlug) lastLearnedSlug = undefined;
-        changed = true;
+        dataChanged = true;
       }
       continue;
     }
@@ -364,19 +365,18 @@ export function updateAcpRegistryLearnedModelsFromLive(
       learnedBySlug.delete(model.slug);
       learnedBySlug.set(model.slug, updated);
       lastLearnedSlug = model.slug;
-      changed = true;
+      dataChanged = true;
     } else if (model.slug !== lastLearnedSlug) {
       learnedBySlug.delete(model.slug);
       learnedBySlug.set(model.slug, previous);
       lastLearnedSlug = model.slug;
-      changed = true;
+      orderTouched = true;
     }
   }
-  // Earlier-model retained updates for a capped overflow model do not swap the visible tail,
-  // but still record their validated model-specific options into learnedModels.
+  // Earlier-model retained updates for a displaced capped tail do not swap the visible tail,
+  // but still record their retained model-specific options into learnedModels.
   if (
     configuration.preserveDefault === true &&
-    configuration.cappedTailIsOverflow === true &&
     configuration.cappedLastModel !== undefined &&
     configuration.cappedPrefixKey !== undefined &&
     configuration.currentModelId === configuration.cappedLastModel.id &&
@@ -413,12 +413,12 @@ export function updateAcpRegistryLearnedModelsFromLive(
         learnedBySlug.delete(slug);
         learnedBySlug.set(slug, updated);
         lastLearnedSlug = slug;
-        changed = true;
+        dataChanged = true;
       } else if (slug !== lastLearnedSlug) {
         learnedBySlug.delete(slug);
         learnedBySlug.set(slug, previous);
         lastLearnedSlug = slug;
-        changed = true;
+        orderTouched = true;
       }
     }
   }
@@ -427,9 +427,24 @@ export function updateAcpRegistryLearnedModelsFromLive(
     const oldestKey = learnedBySlug.keys().next().value;
     if (oldestKey === undefined) break;
     learnedBySlug.delete(oldestKey);
-    changed = true;
+    dataChanged = true;
   }
-  return changed ? Array.from(learnedBySlug.values()) : learned;
+  if (!dataChanged) {
+    if (!orderTouched) return learned;
+    if (learnedBySlug.size === learned.length) {
+      let index = 0;
+      let sameOrder = true;
+      for (const slug of learnedBySlug.keys()) {
+        if (learned[index]?.slug !== slug) {
+          sameOrder = false;
+          break;
+        }
+        index += 1;
+      }
+      if (sameOrder) return learned;
+    }
+  }
+  return Array.from(learnedBySlug.values());
 }
 
 function compatibleLiveOptionValue(
@@ -624,10 +639,7 @@ function mergeLearnedModelOptions(
   options?: {
     readonly currentModelId?: string | null;
     readonly skipModelSlugs?: ReadonlySet<string>;
-    readonly skipOptionsForModel?: {
-      readonly slug: string;
-      readonly optionIds: ReadonlySet<string>;
-    };
+    readonly skipOptionIdsByModel?: ReadonlyMap<string, ReadonlySet<string>>;
     readonly reasoningDisabledModelSlugs?: ReadonlySet<string>;
     readonly overlayLearnedValues?: boolean;
   },
@@ -635,7 +647,7 @@ function mergeLearnedModelOptions(
   if (learned.length === 0) return models;
   const currentModelId = options?.currentModelId ?? null;
   const skipModelSlugs = options?.skipModelSlugs ?? EMPTY_SLUG_SET;
-  const skipOptionsForModel = options?.skipOptionsForModel;
+  const skipOptionIdsByModel = options?.skipOptionIdsByModel;
   const reasoningDisabledModelSlugs = options?.reasoningDisabledModelSlugs ?? EMPTY_SLUG_SET;
   const overlayLearnedValues = options?.overlayLearnedValues === true;
   const learnedBySlug = new Map(
@@ -653,11 +665,10 @@ function mergeLearnedModelOptions(
     }
     const rawPreviousDescriptors =
       learnedBySlug.get(model.slug)?.capabilities?.optionDescriptors ?? [];
+    const skippedOptionIds = skipOptionIdsByModel?.get(model.slug);
     const previousDescriptors =
-      skipOptionsForModel !== undefined && skipOptionsForModel.slug === model.slug
-        ? rawPreviousDescriptors.filter(
-            (descriptor) => !skipOptionsForModel.optionIds.has(descriptor.id),
-          )
+      skippedOptionIds !== undefined
+        ? rawPreviousDescriptors.filter((descriptor) => !skippedOptionIds.has(descriptor.id))
         : rawPreviousDescriptors;
     if (previousDescriptors.length === 0) return model;
     const currentDescriptors = model.capabilities?.optionDescriptors ?? [];
@@ -1091,7 +1102,6 @@ export function applyAcpRegistryLiveConfiguration(
     readonly hasDiscoveredCatalog?: boolean | undefined;
     readonly probeSharedDescriptors?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
     readonly probeConfigOptions?: ReadonlyArray<ProviderOptionDescriptor> | undefined;
-    readonly providerHasOverflowTail?: boolean | undefined;
   },
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
@@ -1122,8 +1132,7 @@ export function applyAcpRegistryLiveConfiguration(
       ? configuration.cappedLastModel
       : undefined;
   const currentTailSlug = probedModels[ACP_REGISTRY_MAX_MODELS - 1]?.slug;
-  const providerHasOverflowTail =
-    options?.providerHasOverflowTail ?? hasCappedOverflowTail(provider.models, currentTailSlug);
+  const providerHasOverflowTail = hasCappedOverflowTail(provider.models, currentTailSlug);
   const tailSlotReplacement =
     cappedLastModel !== undefined &&
     currentTailSlug !== cappedLastModel.id &&
@@ -1685,17 +1694,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               configuration.currentModelId !== null
                 ? basePrevious.filter((model) => model.slug !== configuration.currentModelId)
                 : basePrevious;
-            const currentTailSlug = provider.models
-              .filter((model) => !model.isCustom)
-              .at(ACP_REGISTRY_MAX_MODELS - 1)?.slug;
-            const providerHasOverflowTail =
+            // Sync models array identity with acceptedCatalog when managedProvider deduplicated
+            // a structurally equal snapshot whose overflow-tail tag changed.
+            const syncedProvider =
               accepted.probeOptions === null &&
               accepted.models.length > 0 &&
               Equal.equals(provider.models, accepted.models)
-                ? hasCappedOverflowTail(accepted.models, currentTailSlug)
-                : undefined;
+                ? { ...provider, models: accepted.models }
+                : provider;
             const next = applyAcpRegistryLiveConfiguration(
-              provider,
+              syncedProvider,
               configuration,
               effectiveConfig.customModels,
               previousModels,
@@ -1705,7 +1713,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 hasDiscoveredCatalog,
                 probeSharedDescriptors: options?.probeSharedDescriptors,
                 probeConfigOptions: options?.probeConfigOptions,
-                ...(providerHasOverflowTail === undefined ? {} : { providerHasOverflowTail }),
               },
             );
             return [
@@ -1772,21 +1779,34 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               : null;
           const skipModelSlugs =
             replacedLiveModelId === null ? EMPTY_SLUG_SET : new Set([replacedLiveModelId]);
-          const skipOptionsForModel = (() => {
-            if (replacedLiveModelId !== null || Option.isNone(effectiveConfiguration)) {
-              return undefined;
-            }
+          const skipOptionIdsByModel = (() => {
+            if (Option.isNone(effectiveConfiguration)) return undefined;
             const partial = effectiveConfiguration.value;
-            if (partial.currentModelId === null) return undefined;
-            const partialModelOptionIds = new Set(partial.modelOptionIds ?? []);
-            const optionIds = new Set(
-              partial.configOptions
-                .filter((descriptor) =>
-                  isModelSpecificDescriptor(descriptor, partialModelOptionIds),
-                )
-                .map((descriptor) => descriptor.id),
-            );
-            return optionIds.size > 0 ? { slug: partial.currentModelId, optionIds } : undefined;
+            const byModel = new Map<string, Set<string>>();
+            const add = (slug: string, optionId: string) => {
+              let ids = byModel.get(slug);
+              if (ids === undefined) {
+                ids = new Set();
+                byModel.set(slug, ids);
+              }
+              ids.add(optionId);
+            };
+            if (replacedLiveModelId === null && partial.currentModelId !== null) {
+              const partialModelOptionIds = new Set(partial.modelOptionIds ?? []);
+              for (const descriptor of partial.configOptions) {
+                if (isModelSpecificDescriptor(descriptor, partialModelOptionIds)) {
+                  add(partial.currentModelId, descriptor.id);
+                }
+              }
+            }
+            if (partial.advertisedReasoning !== undefined) {
+              for (const [slug, descriptor] of Object.entries(partial.advertisedReasoning)) {
+                if (slug !== replacedLiveModelId) {
+                  add(slug, descriptor.id);
+                }
+              }
+            }
+            return byModel.size > 0 ? byModel : undefined;
           })();
           // Rebuild from the pure probe baseline so rejected values restore probe defaults,
           // other models preserve learned values, and dropped options on the reporting model clear.
@@ -1795,7 +1815,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.map((learned) =>
               mergeLearnedModelOptions(pureBaseline, learned, {
                 skipModelSlugs,
-                ...(skipOptionsForModel === undefined ? {} : { skipOptionsForModel }),
+                ...(skipOptionIdsByModel === undefined ? {} : { skipOptionIdsByModel }),
                 reasoningDisabledModelSlugs,
                 overlayLearnedValues: true,
               }),
