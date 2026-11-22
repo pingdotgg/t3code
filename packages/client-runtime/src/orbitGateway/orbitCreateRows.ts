@@ -17,7 +17,7 @@ export type OrbitCreateRowStatus = "pending" | "running" | "done" | "failed";
 export const ORBIT_CREATE_ROW_LABELS: Readonly<Record<OrbitCreateRowId, string>> = {
   container: "Copy the container",
   address: "Publish the address",
-  t3: "Start the T3 server",
+  t3: "Start the Conn Server",
   register: "Register with Orbit",
 };
 

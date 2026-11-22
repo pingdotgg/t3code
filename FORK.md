@@ -996,15 +996,22 @@ These also keep their T3 names:
   `~/.t3/...`.
 - The staged package name `t3code`, which fixes the keychain item name "t3code
   Safe Storage".
-- Server branding in `apps/server`. The dev backend allows
-  `T3CODE_DEV_ALLOWED_ORIGINS=conn-dev://app`. Fork features still change server
-  code.
+- Identifiers other software matches: MCP tool names and titles (`t3_*`,
+  "Create T3 threads"; the Conn Server's catalog mirrors the titles), the `t3`
+  CLI name, launchd and systemd unit text, Codex and ACP client names, checkpoint
+  commit authors and trailers, and model-facing instructions. The dev backend
+  allows `T3CODE_DEV_ALLOWED_ORIGINS=conn-dev://app`.
+
+User-visible text names the product Conn in every client and both servers
+(Nick, 2026-11-22): "Conn thread", "Conn Server", "Conn's home folder". "T3
+Connect", "T3 Chat" and "T3 account" stay: they name T3's hosted services.
 
 The Conn logo replaces the T3 mark on blueprint dev icons and black production
 icons. Fork-owned Icon Composer projects are in
 `assets/conn/{dev,prod}/app-icon.icon`, copied from upstream with only
 `text.svg` swapped. `assets/conn/export-icons.sh` uses `ictool` to render iOS,
-universal, favicon and `.ico` assets into `assets/conn/*/conn-*`. It uses
+universal, favicon and `.ico` assets into `assets/conn/*/conn-*`; the 192 and
+512 web icons are the iOS render scaled down. It uses
 `assets/conn/safe-area.swift` to place the macOS render in the pre-Tahoe safe
 area (824px body, soft shadow), because the GUI-only preset cannot be scripted.
 
@@ -1014,14 +1021,16 @@ upstream paths in `appBrand.ts`. Source-tree icons, the dev runtime bundle's
 upstream's. Desktop packaging applies the Conn name on Linux and Windows as
 well; platform integration files retain some T3 names.
 
-`apps/web/public` holds Conn dev favicons and the splash logo.
-`vp run icons:check` reports those four assets as stale; `vp run icons:export`
-would overwrite them. Packaged stable builds also use the Conn splash logo.
+`apps/web/public` holds Conn dev favicons, manifest icons and the splash logo.
+`vp run icons:check` reports those six assets as stale; `vp run icons:export`
+would overwrite them. Packaged stable builds copy the Conn production web icons
+over upstream's (`resolveDesktopWebIconOverrides`).
 
-With `T3CODE_IOS_BUNDLE_ID` set, the iPhone's development and production
-variants use the Conn iOS icon, `.icon` project and splash. Widgets and Live
-Activities use `assets/conn/widget/ConnMark.svg`. Preview and Android artwork
-stay T3. Upstream's `assets/{dev,prod,nightly}` are untouched.
+Every mobile variant is named Conn and uses the Conn iOS icon, `.icon` project
+and splash (preview uses production's). Widgets and Live Activities use
+`assets/conn/widget/ConnMark.svg`. Android artwork comes from
+`assets/conn/android`, rendered by `node scripts/export-conn-android-icons.ts`.
+Upstream's `assets/{dev,prod,nightly}` are untouched.
 
 Sources:
 
@@ -1048,7 +1057,7 @@ Conn renames the app, so **copy never names it literally**:
 - `appName()` reads the desktop bridge's branding in the renderer, so module-level
   `msg()` constants get Conn's name. Mobile sets it from the Expo config in
   `apps/mobile/src/lib/installAppName.ts`, imported by `index.ts` before `App`. Default:
-  `T3 Code`.
+  `Conn`.
 - Every locale keeps `{appName}` where upstream's translation said "T3 Code" (German
   compounds: `{appName}-Server`).
 - Strings that must stay literal (legacy directory and keychain names, file markers,

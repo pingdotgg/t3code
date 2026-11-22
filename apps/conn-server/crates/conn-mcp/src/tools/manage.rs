@@ -16,7 +16,7 @@ async fn read_thread(cx: &Cx<'_>, args: &Args) -> Result<(String, Value), ToolEr
         .ok_or_else(|| {
             fail(
                 "target_required",
-                "Pass threadId: this MCP client is not running inside a T3 thread.",
+                "Pass threadId: this MCP client is not running inside a Conn thread.",
             )
         })?
         .to_owned();

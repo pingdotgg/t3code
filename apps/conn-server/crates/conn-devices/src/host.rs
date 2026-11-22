@@ -102,7 +102,7 @@ pub(crate) struct HostError {
     pub(crate) kind: HostErrorKind,
 }
 
-pub(crate) const NPM_MISSING: &str = "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.";
+pub(crate) const NPM_MISSING: &str = "Device support needs npm, which is not on the Conn Server's PATH. Install npm (it comes with Node.js from nodejs.org), restart Conn, then retry.";
 
 pub(crate) fn node_missing(feature: &str) -> String {
     format!(

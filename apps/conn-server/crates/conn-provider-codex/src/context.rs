@@ -49,7 +49,7 @@ pub fn runtime_instructions(harness: &str, model: &str, effort: Option<&str>) ->
         format!(" with {effort} reasoning effort")
     };
     format!(
-        "<runtime_info>In case you're asked: you are running in T3 Code through the {harness} harness{model_info}{effort_info}. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in T3 Code's files viewer.</runtime_info>\n\n{PULL_REQUEST_LINKING}"
+        "<runtime_info>In case you're asked: you are running in Conn through the {harness} harness{model_info}{effort_info}. No need to mention this otherwise. You can embed images, video, and audio using Markdown image syntax with absolute file paths. Link every other file you cite or produce by its absolute path, as in [http.ts:42](/abs/path/http.ts:42), so the user can open it in Conn's files viewer.</runtime_info>\n\n{PULL_REQUEST_LINKING}"
     )
 }
 

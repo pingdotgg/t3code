@@ -66,7 +66,7 @@ export const FillCredentialInput = Schema.Struct({
   selector: Schema.optional(
     Schema.String.check(Schema.isNonEmpty()).check(Schema.isMaxLength(512)).annotate({
       description:
-        "Optional CSS selector for the input. Omit to let T3 Code find the field for this credential type.",
+        "Optional CSS selector for the input. Omit to let Conn find the field for this credential type.",
     }),
   ),
 });
@@ -277,6 +277,6 @@ export class TestLoginStoreError extends Schema.TaggedError<TestLoginStoreError>
   { cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return "T3 Code could not read or save its test logins.";
+    return "Conn could not read or save its test logins.";
   }
 }

@@ -430,7 +430,7 @@ pub fn pending_entry_for(
     if !settings.enabled {
         entry["enabled"] = json!(false);
         entry["status"] = json!("disabled");
-        entry["message"] = json!("Claude is disabled in T3 Code settings.");
+        entry["message"] = json!("Claude is disabled in Conn settings.");
     }
     if let Some(name) = &settings.display_name {
         entry["displayName"] = json!(name);

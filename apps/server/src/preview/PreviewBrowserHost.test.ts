@@ -81,8 +81,8 @@ describe("diagnoseLaunchFailure", () => {
         ldd: "",
       });
       expect(error).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserRootError);
-      expect(error?.message).toContain("T3 server is running as root");
-      expect(error?.message).toContain("T3 server's environment and restart the server");
+      expect(error?.message).toContain("Conn Server is running as root");
+      expect(error?.message).toContain("Conn Server's environment and restart the server");
       expect(error?.message).toContain("T3CODE_SERVER_BROWSER_SANDBOX=0 t3 serve");
       expect(error?.message).toContain("Environment=T3CODE_SERVER_BROWSER_SANDBOX=0");
       expect(error?.message).toContain("this disables Chrome's sandbox");

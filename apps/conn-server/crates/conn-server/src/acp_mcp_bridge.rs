@@ -227,7 +227,7 @@ impl Bridge {
                     if let Some(id) = id {
                         self.error(
                             id,
-                            format!("T3 Code MCP endpoint responded with HTTP {}.", reply.status),
+                            format!("Conn MCP endpoint responded with HTTP {}.", reply.status),
                             -32603,
                         )
                         .await;
@@ -253,7 +253,7 @@ impl Bridge {
                 if let Some(id) = id {
                     self.error(
                         id,
-                        format!("T3 Code MCP bridge request failed: {error}"),
+                        format!("Conn MCP bridge request failed: {error}"),
                         -32603,
                     )
                     .await;

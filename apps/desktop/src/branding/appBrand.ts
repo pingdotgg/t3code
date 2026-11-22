@@ -14,6 +14,12 @@ export interface AppBrandIconSet {
   readonly windowsIco: string;
   /** The web client's splash logo in a packaged build (the stable channel only). */
   readonly appleTouchPng: string;
+  /** The web client's favicons and manifest icons in a packaged build (the stable channel only). */
+  readonly webFaviconIco: string;
+  readonly webFavicon16Png: string;
+  readonly webFavicon32Png: string;
+  readonly webIcon192Png: string;
+  readonly webIcon512Png: string;
 }
 
 export interface AppBrandIcons {
@@ -76,12 +82,22 @@ export const UPSTREAM_APP_BRAND: AppBrand = {
       universalPng: "assets/dev/blueprint-universal-1024.png",
       windowsIco: "assets/dev/blueprint-windows.ico",
       appleTouchPng: "assets/dev/blueprint-web-apple-touch-180.png",
+      webFaviconIco: "assets/dev/blueprint-web-favicon.ico",
+      webFavicon16Png: "assets/dev/blueprint-web-favicon-16x16.png",
+      webFavicon32Png: "assets/dev/blueprint-web-favicon-32x32.png",
+      webIcon192Png: "assets/dev/blueprint-web-icon-192x192.png",
+      webIcon512Png: "assets/dev/blueprint-web-icon-512x512.png",
     },
     prod: {
       macPng: "assets/prod/black-macos-1024.png",
       universalPng: "assets/prod/black-universal-1024.png",
       windowsIco: "assets/prod/t3-black-windows.ico",
       appleTouchPng: "assets/prod/t3-black-web-apple-touch-180.png",
+      webFaviconIco: "assets/prod/t3-black-web-favicon.ico",
+      webFavicon16Png: "assets/prod/t3-black-web-favicon-16x16.png",
+      webFavicon32Png: "assets/prod/t3-black-web-favicon-32x32.png",
+      webIcon192Png: "assets/prod/t3-black-web-icon-192x192.png",
+      webIcon512Png: "assets/prod/t3-black-web-icon-512x512.png",
     },
   },
   previous: null,

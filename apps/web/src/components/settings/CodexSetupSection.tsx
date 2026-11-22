@@ -728,7 +728,7 @@ function ManagedCodexSetup({
               <T>Other ways to connect</T>
             </summary>
             <Button className="mt-2" size="sm" variant="outline" render={<a href={handoffUrl} />}>
-              <T>Use T3 desktop for automatic return</T>
+              <T>Use Conn desktop for automatic return</T>
             </Button>
           </details>
         ) : null}

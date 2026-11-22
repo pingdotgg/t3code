@@ -375,7 +375,7 @@ for (let index = 0; index < args.length; index++) {
 }
 const informational = args.length === 0 || ["help", "--help", "-h", "--version", "version"].includes(args[0]) || options.includes("--help") || options.includes("-h");
 if (!informational && managed.includes(name)) {
-  console.error("T3 Code manages this command's connection to the device, so `" + name + "` is not available through it.");
+  console.error("Conn manages this command's connection to the device, so `" + name + "` is not available through it.");
   process.exit(1);
 }
 if (!informational && name === "device") {
@@ -391,7 +391,7 @@ if (!informational && !skip.includes("--session") && !(hasValue("--config") && h
   process.exit(1);
 }
 if (!existsSync(entry)) {
-  console.error("This agent-device command is out of date because T3 Code moved or updated its runtime. Call device_open again for a fresh one.");
+  console.error("This agent-device command is out of date because Conn moved or updated its runtime. Call device_open again for a fresh one.");
   process.exit(1);
 }
 const valueOf = flag => { const inline = options.find(arg => arg.startsWith(flag + "=")); if (inline) return inline.slice(flag.length + 1); const index = options.indexOf(flag); return index >= 0 ? options[index + 1] : undefined; };
@@ -405,11 +405,11 @@ if (local) {
     socket.once("error", error => resolve(error.code ?? "ERROR"));
   });
   if (failure === "EPERM" || failure === "EACCES") {
-    console.error("This shell cannot reach T3 Code's device connection at " + local.host + " (connect " + failure + "): a network sandbox is blocking localhost. Run this command again with network access, outside the sandbox.");
+    console.error("This shell cannot reach Conn's device connection at " + local.host + " (connect " + failure + "): a network sandbox is blocking localhost. Run this command again with network access, outside the sandbox.");
     process.exit(1);
   }
   if (failure) {
-    console.error("T3 Code's device connection at " + local.host + " is not reachable from this shell (connect " + failure + "). Call device_open again to reconnect; if that succeeds and this repeats, this shell runs in a network sandbox, so run the command with network access, outside the sandbox.");
+    console.error("Conn's device connection at " + local.host + " is not reachable from this shell (connect " + failure + "). Call device_open again to reconnect; if that succeeds and this repeats, this shell runs in a network sandbox, so run the command with network access, outside the sandbox.");
     process.exit(1);
   }
 }
@@ -425,7 +425,7 @@ child.on("exit", code => { process.exitCode = code ?? 1; });
 /// The launcher's shell wrapper (`agent-device`) with `'/@@NODE@@'` and
 /// `'/@@LAUNCHER@@'` in place of the shell-quoted Node and launcher paths.
 pub const LAUNCHER_SCRIPT: &str = r#"#!/bin/sh
-[ -x '/@@NODE@@' ] || { echo 'This agent-device command is out of date because T3 Code moved or updated its runtime. Call device_open again for a fresh one.' >&2; exit 1; }
+[ -x '/@@NODE@@' ] || { echo 'This agent-device command is out of date because Conn moved or updated its runtime. Call device_open again for a fresh one.' >&2; exit 1; }
 export ELECTRON_RUN_AS_NODE=1
 exec '/@@NODE@@' '/@@LAUNCHER@@' "$@"
 "#;

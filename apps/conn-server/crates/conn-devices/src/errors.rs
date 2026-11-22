@@ -226,7 +226,7 @@ impl DeviceError {
                     "invalid_payload" => "The device request could not be encoded.".into(),
                     "settings_failed" => "Could not read or save device settings.".into(),
                     "hub_rejected" => "The device hub could not complete the request.".into(),
-                    _ => "Device support needs npm, which is not on the T3 server's PATH. Install npm (it comes with Node.js from nodejs.org), restart T3 Code, then retry.".into(),
+                    _ => "Device support needs npm, which is not on the Conn Server's PATH. Install npm (it comes with Node.js from nodejs.org), restart Conn, then retry.".into(),
                 };
                 format!("Device {operation} failed: {explanation}")
             }

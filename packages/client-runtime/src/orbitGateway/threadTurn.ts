@@ -80,11 +80,11 @@ export async function sendOrbitFirstMessage(
   ports: OrbitFirstMessagePorts,
 ): Promise<ProjectId> {
   const clone = await ports.waitForClone(start.environmentId);
-  if (clone === null) throw new Error("The clone's T3 project /srv/workspace did not appear.");
+  if (clone === null) throw new Error("The clone's Conn project /srv/workspace did not appear.");
   const requested = start.modelSelection ?? null;
   const fallBack = requested !== null && clone.offers !== undefined && !clone.offers(requested);
   const modelSelection = fallBack ? clone.modelSelection : (requested ?? clone.modelSelection);
-  if (modelSelection === null) throw new Error("The clone's T3 server offers no model.");
+  if (modelSelection === null) throw new Error("The clone's Conn Server offers no model.");
   if (fallBack) {
     ports.onModelFallback?.({ requestedModel: requested.model, usedModel: modelSelection.model });
   }

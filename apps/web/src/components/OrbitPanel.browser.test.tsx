@@ -135,7 +135,7 @@ describe("Orbit panel", () => {
     await expect.element(page.getByRole("heading", { name: "Nodes", exact: true })).toBeVisible();
     await expect
       .element(
-        page.getByText("The Nodes that run a T3 server. Conn pairs with them automatically."),
+        page.getByText("The Nodes that run a Conn Server. Conn pairs with them automatically."),
       )
       .toBeVisible();
     await expect.element(page.getByText("10.44.0.3", { exact: true })).toBeVisible();

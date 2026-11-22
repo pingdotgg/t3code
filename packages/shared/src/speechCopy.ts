@@ -11,7 +11,7 @@ export function cloudSpeechDisclosure(
   return provider === "openrouter"
     ? resolve(
         msg(
-          "After you stop, {environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. T3 requests zero data retention; your OpenRouter account may allow safety retention.",
+          "After you stop, {environment} sends the recording to OpenRouter. OpenRouter chooses who runs your model. Conn requests zero data retention; your OpenRouter account may allow safety retention.",
           { environment },
         ),
       )

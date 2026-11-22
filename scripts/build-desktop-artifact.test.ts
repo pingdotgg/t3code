@@ -73,7 +73,7 @@ import {
   WSL_RUNTIME_ARCHIVE_NAME,
   wslRuntimeArchiveStem,
   resolveDesktopBuildIconAssets,
-  resolveDesktopWebIconOverride,
+  resolveDesktopWebIconOverrides,
 } from "./build-desktop-artifact.ts";
 import { desktopTypecheckVpArgs } from "./desktop-typecheck.ts";
 import { resolveAppBrand } from "../apps/desktop/src/branding/appBrand.ts";
@@ -337,15 +337,28 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
 
   it("swaps the splash logo only for a brand's stable build", () => {
     const brand = resolveAppBrand(
-      { icons: { prod: { appleTouchPng: "assets/fork/touch.png" } } },
+      {
+        icons: {
+          prod: {
+            appleTouchPng: "assets/fork/touch.png",
+            webIcon192Png: "assets/fork/icon-192.png",
+          },
+        },
+      },
       {},
     );
-    assert.deepStrictEqual(resolveDesktopWebIconOverride("production", brand), {
-      sourceRelativePath: "assets/fork/touch.png",
-      targetRelativePath: "apps/server/dist/client/apple-touch-icon.png",
-    });
-    assert.isUndefined(resolveDesktopWebIconOverride("nightly", brand));
-    assert.isUndefined(resolveDesktopWebIconOverride("production"));
+    assert.deepStrictEqual(resolveDesktopWebIconOverrides("production", brand), [
+      {
+        sourceRelativePath: "assets/fork/touch.png",
+        targetRelativePath: "apps/server/dist/client/apple-touch-icon.png",
+      },
+      {
+        sourceRelativePath: "assets/fork/icon-192.png",
+        targetRelativePath: "apps/server/dist/client/icon-192x192.png",
+      },
+    ]);
+    assert.deepStrictEqual(resolveDesktopWebIconOverrides("nightly", brand), []);
+    assert.deepStrictEqual(resolveDesktopWebIconOverrides("production"), []);
   });
 
   it.effect("rejects overlapping builds from another process until restoration finishes", () =>

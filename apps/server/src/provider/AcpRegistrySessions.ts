@@ -248,7 +248,7 @@ const make = Effect.gen(function* () {
       if (racedImport !== null) return { threadId, imported: false } as const;
       return yield* new AcpRegistryOperationError({
         reason: "session_import_failed",
-        message: "Could not create a T3 thread for the ACP session.",
+        message: "Could not create a Conn thread for the ACP session.",
         cause: launched.failure,
       });
     }

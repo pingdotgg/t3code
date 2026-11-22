@@ -260,7 +260,7 @@ export const make = Effect.fn("OpenCodeServerLedger.make")(function* (input: {
     ) {
       return;
     }
-    yield* Effect.logInfo("Stopping an OpenCode server left by a previous T3 Code server", {
+    yield* Effect.logInfo("Stopping an OpenCode server left by a previous Conn Server", {
       pid: entry.pgid,
       port: entry.port,
     });

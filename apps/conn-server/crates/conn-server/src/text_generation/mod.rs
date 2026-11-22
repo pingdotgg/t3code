@@ -191,7 +191,7 @@ impl TextGenerators {
     /// `connect`: the config's connection with its key read.
     async fn connect(&self, config: &Value) -> Result<Connection, RequestError> {
         let label = generator_label(config);
-        let invalid = || RequestError(format!("{label} returned a reply T3 Code couldn't read."));
+        let invalid = || RequestError(format!("{label} returned a reply Conn couldn't read."));
         let kind = config
             .get("kind")
             .and_then(Value::as_str)

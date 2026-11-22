@@ -153,8 +153,7 @@ export function useSystemComposerBanners(input: SystemComposerBannersInput) {
   const versionMismatchServerLabel =
     versionMismatchServerName !== null
       ? gt("{environment} server", { environment: versionMismatchServerName })
-      : // oxlint-disable-next-line t3code/no-hardcoded-app-name -- translator context, never shown
-        gt("server", { $context: "noun, the T3 Code server" });
+      : gt("server", { $context: "noun, the Conn Server" });
   const serverUpdateEnvironmentId = activeThreadEnvironmentId;
   const versionMismatchSelfUpdate = resolveServerSelfUpdateCapability(serverConfig);
   const versionMismatchInstallation = serverConfig?.environment.capabilities.serverInstallation;

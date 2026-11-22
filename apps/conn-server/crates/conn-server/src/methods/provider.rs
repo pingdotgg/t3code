@@ -54,7 +54,7 @@ struct RemoveMethodInput {
 /// `ProviderSetupError`, with `operation` as T3 names it.
 fn no_sign_in(deps: &Deps, instance_id: String, operation: &str) -> Failure {
     let detail = if deps.providers.get(&instance_id).is_some() {
-        "This provider does not support sign-in in T3 Code."
+        "This provider does not support sign-in in Conn."
     } else {
         "This provider instance is no longer available."
     };
@@ -533,7 +533,7 @@ mod tests {
         for (instance, detail) in [
             (
                 "claudeAgent",
-                "This provider does not support sign-in in T3 Code.",
+                "This provider does not support sign-in in Conn.",
             ),
             ("nope", "This provider instance is no longer available."),
         ] {
@@ -799,7 +799,7 @@ mod tests {
         assert_eq!(entry["instanceId"], "grok");
         assert_eq!(entry["status"], "disabled");
         assert_eq!(entry["enabled"], false);
-        assert_eq!(entry["message"], "Grok is disabled in T3 Code settings.");
+        assert_eq!(entry["message"], "Grok is disabled in Conn settings.");
         let _: conn_contract::ServerProvidersItemItem =
             conn_contract::from_json(entry.clone()).unwrap();
     }

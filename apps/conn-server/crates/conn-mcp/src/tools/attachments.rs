@@ -138,7 +138,7 @@ pub(super) async fn send(cx: &Cx<'_>, args: &Args) -> ToolResult {
         .ok_or_else(|| {
             fail(
                 "target_required",
-                "Pass threadId: this MCP client is not running inside a T3 thread.",
+                "Pass threadId: this MCP client is not running inside a Conn thread.",
             )
         })?;
     let projection = cx.projection(id).await?;

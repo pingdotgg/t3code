@@ -114,7 +114,7 @@ const environmentLinkCommand = Command.make("link", {
   access: accessFlag,
 }).pipe(
   Command.withDescription(
-    "Link another T3 Code environment, so agents here can work there. It shows up there under Authorized clients in Settings → Sharing & access, where it can be revoked.",
+    "Link another Conn environment, so agents here can work there. It shows up there under Authorized clients in Settings → Sharing & access, where it can be revoked.",
   ),
   Command.withHandler((flags) =>
     runWithPeerLinks(flags, (links) =>
@@ -145,7 +145,7 @@ const environmentLinkOrbitCommand = Command.make("link-orbit", {
   ),
 }).pipe(
   Command.withDescription(
-    "Link a T3 Code server that Orbit lists. This machine pairs through Orbit as its own Node, so the pairing code is never shown.",
+    "Link a Conn Server that Orbit lists. This machine pairs through Orbit as its own Node, so the pairing code is never shown.",
   ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
@@ -215,7 +215,7 @@ const environmentUnlinkCommand = Command.make("unlink", {
 );
 
 export const environmentCommand = Command.make("environment").pipe(
-  Command.withDescription("Link other T3 Code environments, so agents here can work there."),
+  Command.withDescription("Link other Conn environments, so agents here can work there."),
   Command.withSubcommands([
     environmentLinkCommand,
     environmentLinkOrbitCommand,

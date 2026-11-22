@@ -7,6 +7,7 @@ import {
   type LimitPoolWindow,
   type LimitPresentations,
 } from "@t3tools/shared/usageLimits";
+import { appName } from "@t3tools/shared/appName";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../i18n/messages";
@@ -159,7 +160,7 @@ function subscriptionUsageText(
   maxHiddenWindows: number,
 ): SubscriptionUsageText {
   return {
-    refresh: resolve(msg("Open {app} to refresh", { app: "T3" })),
+    refresh: resolve(msg("Open {app} to refresh", { app: appName() })),
     noSessionLimit: resolve(msg("No session limit reported")),
     noWeeklyLimit: resolve(msg("No weekly limit reported")),
     subscriptionRemaining: resolve(msg("Subscription remaining")),
@@ -169,10 +170,10 @@ function subscriptionUsageText(
     ),
     left: resolve(msg("left", { $context: "follows a bold percentage, as in 40% left" })),
     notApplicable: resolve(msg("N/A", { $context: "no usage limit for the chosen period" })),
-    openApp: resolve(msg("Open {app}", { app: "T3" })),
+    openApp: resolve(msg("Open {app}", { app: appName() })),
     noLimits: resolve(msg("No subscription limits available.")),
     asOf: resolve(msg("As of {time}", { time: "{time}" })),
-    tapToConnect: resolve(msg("Tap to connect in {app}", { app: "T3" })),
+    tapToConnect: resolve(msg("Tap to connect in {app}", { app: appName() })),
     providerAccessibility: resolve(
       // oxlint-disable-next-line t3code/no-untranslated-copy -- placeholders the widget fills in
       msg("{provider}. {detail}.", { provider: "{provider}", detail: "{detail}" }),
@@ -193,7 +194,7 @@ function subscriptionUsageText(
         resolve(
           msg("{count, plural, one {{count} more in {app}} other {{count} more in {app}}}", {
             count: index + 1,
-            app: "T3",
+            app: appName(),
           }),
         ),
       ]),
@@ -258,7 +259,7 @@ function subscriptionUsageProps(
           name,
           colors,
           detail: !fresh
-            ? resolve(msg("Open {app} to refresh", { app: "T3" }))
+            ? resolve(msg("Open {app} to refresh", { app: appName() }))
             : pool.accounts.length > 1
               ? resolve(
                   msg(
@@ -338,7 +339,7 @@ export function subscriptionUsageTimeline(snapshot: SubscriptionUsageSnapshot, n
         provider.windows.length > 0 && provider.expiresAt <= date
           ? {
               ...provider,
-              detail: snapshot.text?.refresh ?? m(msg("Open {app} to refresh", { app: "T3" })),
+              detail: snapshot.text?.refresh ?? m(msg("Open {app} to refresh", { app: appName() })),
               windows: [],
               totalWindows: 0,
             }

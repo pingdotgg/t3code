@@ -1420,7 +1420,7 @@
       },
       {
         "name": "t3_thread_list",
-        "title": "List T3 threads",
+        "title": "List Conn threads",
         "description": "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
         "inputSchema": {
           "type": "object",
@@ -1952,7 +1952,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "List T3 threads",
+          "title": "List Conn threads",
           "readOnlyHint": true,
           "destructiveHint": false,
           "idempotentHint": true,
@@ -1961,7 +1961,7 @@
       },
       {
         "name": "t3_thread_read",
-        "title": "Read a T3 thread",
+        "title": "Read a Conn thread",
         "description": "Read any thread by id. View `messages` (default) or `activity` (all items). Newest first; older: `beforePosition=earlierPosition`; from the start: `afterPosition=-1`, then `nextPosition`. Cut-off text: `itemId`, `textOffset=nextTextOffset`. Reading a child's final result marks it delivered. In your reply, name it as its `link` verbatim.",
         "inputSchema": {
           "type": "object",
@@ -2860,7 +2860,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "Read a T3 thread",
+          "title": "Read a Conn thread",
           "readOnlyHint": false,
           "destructiveHint": false,
           "idempotentHint": true,
@@ -2869,7 +2869,7 @@
       },
       {
         "name": "t3_thread_update",
-        "title": "Update T3 thread metadata",
+        "title": "Update Conn thread metadata",
         "description": "Rename a thread (`action:'rename'` with `title`) or regenerate its title. Omit `threadId` for this thread. Workspace and branch cannot change here.",
         "inputSchema": {
           "type": "object",
@@ -2995,7 +2995,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "Update T3 thread metadata",
+          "title": "Update Conn thread metadata",
           "readOnlyHint": false,
           "destructiveHint": true,
           "idempotentHint": false,
@@ -3004,7 +3004,7 @@
       },
       {
         "name": "t3_thread_send",
-        "title": "Send to a T3 thread",
+        "title": "Send to a Conn thread",
         "description": "Send a message to any thread. The target cannot run with broader modes than yours. `mode:'auto'` starts an idle thread, steers a running turn, or queues. `queue`: new turn. `steer`: mid-turn update. `restart`: interrupt and restart. A send to a finished child thread starts a fresh task and returns its `taskId`. In your reply, name it as its `link` verbatim.",
         "inputSchema": {
           "type": "object",
@@ -3107,7 +3107,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "Send to a T3 thread",
+          "title": "Send to a Conn thread",
           "readOnlyHint": false,
           "destructiveHint": true,
           "idempotentHint": false,
@@ -3116,7 +3116,7 @@
       },
       {
         "name": "t3_thread_wait",
-        "title": "Wait for a T3 thread",
+        "title": "Wait for a Conn thread",
         "description": "Wait for a thread's run to finish. No `runId`: latest. Idle: at once. On timeout, with `next` end your turn; without, call again.",
         "inputSchema": {
           "type": "object",
@@ -3232,7 +3232,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "Wait for a T3 thread",
+          "title": "Wait for a Conn thread",
           "readOnlyHint": true,
           "destructiveHint": false,
           "idempotentHint": true,
@@ -3241,7 +3241,7 @@
       },
       {
         "name": "t3_thread_interrupt",
-        "title": "Interrupt a T3 thread",
+        "title": "Interrupt a Conn thread",
         "description": "Interrupt a top-level thread's running turn. No `runId`: newest running turn. No effect when idle. For a delegate, use `task_cancel`.",
         "inputSchema": {
           "type": "object",
@@ -3307,7 +3307,7 @@
           "additionalProperties": true
         },
         "annotations": {
-          "title": "Interrupt a T3 thread",
+          "title": "Interrupt a Conn thread",
           "readOnlyHint": false,
           "destructiveHint": true,
           "idempotentHint": false,
@@ -7347,7 +7347,7 @@
       },
       {
         "name": "t3_theme_read",
-        "description": "Read T3 Code's own themes and the guide to restyle it: color roles and CSS selectors. Call before `t3_theme_set`.",
+        "description": "Read Conn's own themes and the guide to restyle it: color roles and CSS selectors. Call before `t3_theme_set`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -7532,7 +7532,7 @@
       },
       {
         "name": "t3_theme_set",
-        "description": "Restyle T3 Code itself, only when the user asks. With `theme`, publish it as `themeId` (same id updates it) and switch this server's web app and this machine's desktop app to it, not remote desktop apps. Without `theme`, switch to a built-in or published `themeId`. `appearance` sets light, dark, or system mode. Live full-access or default caller thread only.",
+        "description": "Restyle Conn itself, only when the user asks. With `theme`, publish it as `themeId` (same id updates it) and switch this server's web app and this machine's desktop app to it, not remote desktop apps. Without `theme`, switch to a built-in or published `themeId`. `appearance` sets light, dark, or system mode. Live full-access or default caller thread only.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -7782,7 +7782,7 @@
       {
         "name": "link_pull_request",
         "title": "Link pull request to thread",
-        "description": "Link a PR to this thread. T3 shows its status and settles the thread on merge. For several PRs, use `link_pull_requests`.",
+        "description": "Link a PR to this thread. Conn shows its status and settles the thread on merge. For several PRs, use `link_pull_requests`.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -8372,7 +8372,7 @@
       {
         "name": "watch_pull_request",
         "title": "Watch pull request",
-        "description": "Watch an open PR for this thread, linking it first if needed. T3 wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
+        "description": "Watch an open PR for this thread, linking it first if needed. Conn wakes you on failed checks, passed required checks, new comments or reviews, or conflicts. Handle old comments first. Only later ones wake you. After this call, end your turn. The watch stays on after each wake, so do not call this again on a wake. A wake is not a merge decision. Check readiness yourself.",
         "inputSchema": {
           "type": "object",
           "properties": {
@@ -10981,7 +10981,7 @@
       {
         "name": "link_issue",
         "title": "Link issue to thread",
-        "description": "Link an issue to a thread so T3 Code shows it beside the thread. Link every issue you work on or file.",
+        "description": "Link an issue to a thread so Conn shows it beside the thread. Link every issue you work on or file.",
         "inputSchema": {
           "type": "object",
           "properties": {

@@ -33,6 +33,7 @@
         // Conn fork tools run by hand (symbols, vendored tarballs, local signing).
         "build-conn-symbols.ts",
         "generate-conn-icons.ts",
+        "export-conn-android-icons.ts",
         "build-conn-vendored-tarball.ts",
         "sign-macos-local.ts",
         "check-desktop-typecheck.ts",

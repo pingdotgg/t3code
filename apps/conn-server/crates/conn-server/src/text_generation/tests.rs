@@ -429,7 +429,7 @@ async fn replies_the_t3_server_cannot_read_fail_as_it_does() {
     );
     assert_eq!(
         run_err(&f).await,
-        "Router returned a reply T3 Code couldn't read."
+        "Router returned a reply Conn couldn't read."
     );
     stub.answer(|_| {
         (
@@ -454,7 +454,7 @@ async fn replies_the_t3_server_cannot_read_fail_as_it_does() {
     });
     assert_eq!(
         run_err(&f).await,
-        "Router returned a reply T3 Code couldn't read."
+        "Router returned a reply Conn couldn't read."
     );
     let f = fixture("unreachable", generator("http://127.0.0.1:9", json!({})));
     assert_eq!(

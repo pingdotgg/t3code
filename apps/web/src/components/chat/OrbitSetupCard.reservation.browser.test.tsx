@@ -83,7 +83,7 @@ const card = (start: OrbitThreadStart) => (
 const APPROVED = [
   "Copy the container",
   "Publish the address",
-  "Start the T3 server",
+  "Start the Conn Server",
   "Register with Orbit",
 ];
 

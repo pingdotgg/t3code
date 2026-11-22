@@ -190,7 +190,7 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       });
       // B lists the link under A's name, where it can be revoked.
       expect((yield* linkedSessions(b)).map((session) => session.client.label)).toEqual([
-        "T3 Code · Laptop",
+        "Conn · Laptop",
       ]);
       expect(
         (yield* a.links.list).map(({ environmentId, status }) => [environmentId, status]),
@@ -199,8 +199,8 @@ it.effect("links with a pairing code, and the peer holds its agents to the limit
       // The caller's limits narrow the link's access; they never widen it.
       expect(
         yield* probe(a, { runtimeMode: "approval-required", interactionMode: "plan" }),
-      ).toEqual({ caller: "T3 Code · Laptop", modes: "approval-required/plan" });
-      expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+      ).toEqual({ caller: "Conn · Laptop", modes: "approval-required/plan" });
+      expect(yield* probe(a)).toEqual({ caller: "Conn · Laptop", modes: "auto/default" });
 
       // A refusal keeps the peer's reason.
       const notFound = yield* probe(a, undefined, "refuse").pipe(Effect.flip);
@@ -241,7 +241,7 @@ it.effect(
         expect(waiting.code).toBe("orchestration_error");
         expect(waiting.message).toContain("has Linked environments turned off");
         yield* b.settings.updateSettings({ linkedEnvironmentsEnabled: true });
-        expect(yield* probe(a)).toEqual({ caller: "T3 Code · Laptop", modes: "auto/default" });
+        expect(yield* probe(a)).toEqual({ caller: "Conn · Laptop", modes: "auto/default" });
       }),
     ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );
@@ -835,7 +835,7 @@ it("treats the Orbit WireGuard network as encrypted for plain http", () => {
   expect(PeerLinks.isOrbitWireGuardHost("10.44.0.6.example.com")).toBe(false);
 });
 
-it.live("linking an address with nothing listening says so, unlike one that is not T3 Code", () =>
+it.live("linking an address with nothing listening says so, unlike one that is not Conn", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const closed = yield* Effect.scoped(
@@ -851,7 +851,7 @@ it.live("linking an address with nothing listening says so, unlike one that is n
         a.links.link({ url, pairingCode: "unused", access: "auto" }).pipe(Effect.flip);
       expect((yield* linking(closed)).message).toBe(`${closed} did not answer (ECONNREFUSED).`);
       expect((yield* linking(notT3)).message).toBe(
-        `${notT3} answered, but not as a T3 Code environment this version understands.`,
+        `${notT3} answered, but not as a Conn environment this version understands.`,
       );
       expect(yield* a.links.list).toEqual([]);
     }),

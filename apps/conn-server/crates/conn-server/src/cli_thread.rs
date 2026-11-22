@@ -339,7 +339,7 @@ fn execute(state_dir: &Path, command: ThreadCommand) -> Outcome<()> {
 fn with_tools<T>(state_dir: &Path, work: impl FnOnce(&mut Tools) -> Outcome<T>) -> Outcome<T> {
     let Some(runtime) = home::read_runtime_state(state_dir) else {
         return Err(Exit::fail(format!(
-            "No running T3 Code server uses {}. Start T3 Code, then retry.",
+            "No running Conn Server uses {}. Start Conn, then retry.",
             base_dir(state_dir).display()
         )));
     };
@@ -380,7 +380,7 @@ struct Tools {
 impl Tools {
     fn unreachable(&self, cause: &str) -> Exit {
         Exit::fail(format!(
-            "Could not reach the T3 Code server at {}. {cause}",
+            "Could not reach the Conn Server at {}. {cause}",
             self.origin
         ))
     }
@@ -524,9 +524,9 @@ impl McpClient {
         match envelope {
             Some(envelope) => match envelope.get("error") {
                 None => Ok(envelope),
-                Some(error) => Err(format!("T3 Code MCP {method} failed: {error}")),
+                Some(error) => Err(format!("Conn MCP {method} failed: {error}")),
             },
-            None => Err(format!("T3 Code MCP {method} failed.")),
+            None => Err(format!("Conn MCP {method} failed.")),
         }
     }
 
@@ -538,7 +538,7 @@ impl McpClient {
         }
         if !(200..300).contains(&reply.status) {
             return Err(format!(
-                "T3 Code MCP endpoint responded with HTTP {}.",
+                "Conn MCP endpoint responded with HTTP {}.",
                 reply.status
             ));
         }
@@ -557,7 +557,7 @@ impl McpClient {
             }
         } else if !body.trim().is_empty() {
             let payload: Value = serde_json::from_str(body.trim())
-                .map_err(|_| "T3 Code MCP endpoint sent a body that is not JSON.".to_owned())?;
+                .map_err(|_| "Conn MCP endpoint sent a body that is not JSON.".to_owned())?;
             match payload {
                 Value::Array(batch) => payloads.extend(batch),
                 single => payloads.push(single),
@@ -761,7 +761,7 @@ fn resolve_project(tools: &mut Tools, identifier: &str) -> Outcome<Project> {
     let projects = list_all_projects(tools)?;
     let not_found = || {
         Exit::fail(format!(
-            "No T3 Code project matches '{identifier}'. Pass a project id or a path inside a project."
+            "No Conn project matches '{identifier}'. Pass a project id or a path inside a project."
         ))
     };
     if let Some(index) = projects.iter().position(|p| p.id == identifier) {
@@ -1370,7 +1370,7 @@ fn finish_run(
         return Err(Exit {
             code: 2,
             message: format!(
-                "Thread {thread_id} is waiting for an answer. Open it in T3 Code to respond."
+                "Thread {thread_id} is waiting for an answer. Open it in Conn to respond."
             ),
         });
     }

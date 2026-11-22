@@ -1587,7 +1587,7 @@ async fn current_watch(engine: &SqliteEngine, number: u64) -> Value {
 }
 
 fn section(number: u64) -> Value {
-    json!({"text": format!("Update on pull request #{number}\n\nLook into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."),
+    json!({"text": format!("Update on pull request #{number}\n\nLook into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and Conn wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."),
         "outcome": "failed", "summary": format!("#{number}: checks failed")})
 }
 

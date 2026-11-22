@@ -90,7 +90,7 @@ export async function openOrbitInstanceById(input: {
   if (row === undefined) {
     return {
       kind: "unavailable",
-      reason: `Instance ${input.instance.name} has no T3 server this device can reach.`,
+      reason: `Instance ${input.instance.name} has no Conn Server this device can reach.`,
     };
   }
   if (row.disabledReason !== null) {

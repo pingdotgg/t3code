@@ -1965,7 +1965,7 @@ mod tests {
     fn mcp_client_sessions_are_refused_outside_mcp() {
         let store = AuthStore::in_memory();
         let issued = store
-            .issue_mcp_client_session("T3 Code · peer", "full-access", true, ClientInfo::default())
+            .issue_mcp_client_session("Conn · peer", "full-access", true, ClientInfo::default())
             .unwrap();
         assert!(
             store.authenticate_mcp_client(&issued.token).is_some(),

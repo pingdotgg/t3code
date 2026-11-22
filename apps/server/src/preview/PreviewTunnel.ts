@@ -31,7 +31,7 @@ export class PreviewTunnelPortRefusedError extends Schema.TaggedError<PreviewTun
   { port: Schema.Number },
 ) {
   override get message(): string {
-    return `Port ${this.port} is this T3 Code server's own port.`;
+    return `Port ${this.port} is this Conn Server's own port.`;
   }
 }
 

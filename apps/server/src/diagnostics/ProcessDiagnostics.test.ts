@@ -232,7 +232,7 @@ describe("ProcessDiagnostics", () => {
         pid: CHILD_PID,
         signal: "SIGKILL",
         signaled: false,
-        message: Option.some(`Process ${CHILD_PID} is not a signalable T3 backend descendant.`),
+        message: Option.some(`Process ${CHILD_PID} is not a signalable Conn backend descendant.`),
       });
 
       const diagnostics = yield* Effect.service(ProcessDiagnostics.ProcessDiagnostics).pipe(

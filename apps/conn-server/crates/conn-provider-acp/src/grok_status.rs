@@ -688,7 +688,7 @@ fn disabled_probe() -> Probe {
         version: None,
         status: "warning",
         auth: unknown_auth(),
-        message: Some("Grok is disabled in T3 Code settings.".into()),
+        message: Some("Grok is disabled in Conn settings.".into()),
     }
 }
 
@@ -1031,7 +1031,7 @@ mod tests {
     fn the_disabled_entry_decodes_as_a_server_provider() {
         let entry = initial_entry("grok", &GrokSettings::default(), "2026-11-14T00:00:00.000Z");
         assert_eq!(entry["status"], "disabled");
-        assert_eq!(entry["message"], "Grok is disabled in T3 Code settings.");
+        assert_eq!(entry["message"], "Grok is disabled in Conn settings.");
         let _: conn_contract::ServerProvidersItemItem = conn_contract::from_json(entry).unwrap();
     }
 

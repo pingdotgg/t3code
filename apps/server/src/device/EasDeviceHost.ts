@@ -489,7 +489,7 @@ export const make = Effect.fn("EasDeviceHost.make")(function* (config: EasDevice
     context: DeviceHost.DeviceOpenContext | undefined,
     startedIn: number,
   ) {
-    const name = `T3 Code · ${config.label} · ${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")}`;
+    const name = `Conn · ${config.label} · ${(yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")}`;
     // The credential comes first: without one, the answer is how to sign in,
     // not that the limit is reached.
     const expo = yield* api;

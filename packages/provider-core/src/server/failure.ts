@@ -169,7 +169,7 @@ function curatedCauseMessages(cause: unknown): {
         case "ContextHandoffDeliveryUncertainError":
           return {
             known:
-              "T3 could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
+              "Conn could not confirm whether conversation history reached the provider. Retry the turn to recover the session.",
             category: categoryMessage(),
           };
         case "ProviderAdapterProtocolError": {

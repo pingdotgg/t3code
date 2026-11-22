@@ -85,7 +85,7 @@ fn bind_refusal(parent: Option<&Value>) -> ToolError {
     fail(
         "invalid_request",
         if parent.is_none() {
-            "bindToCurrentThread needs an agent running inside a T3 thread."
+            "bindToCurrentThread needs an agent running inside a Conn thread."
         } else {
             "bindToCurrentThread binds to this thread, which belongs to a different project."
         },
@@ -197,7 +197,7 @@ async fn create(cx: &Cx<'_>, args: &Args) -> ToolResult {
         None => {
             return Err(fail(
                 "target_required",
-                "Pass projectId: this MCP client is not running inside a T3 thread.",
+                "Pass projectId: this MCP client is not running inside a Conn thread.",
             ));
         }
     };

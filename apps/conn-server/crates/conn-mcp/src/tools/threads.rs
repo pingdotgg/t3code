@@ -35,7 +35,7 @@ fn target_id<'a>(cx: &'a Cx<'_>, args: &'a Args) -> Result<&'a str, ToolError> {
         .ok_or_else(|| {
             fail(
                 "target_required",
-                "Pass threadId: this MCP client is not running inside a T3 thread.",
+                "Pass threadId: this MCP client is not running inside a Conn thread.",
             )
         })
 }
@@ -52,7 +52,7 @@ pub(super) async fn list(cx: &Cx<'_>, args: &Args) -> ToolResult {
     } else {
         return Err(fail(
             "target_required",
-            "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a T3 thread.",
+            "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a Conn thread.",
         ));
     };
     let shell = cx.shell().await?;
@@ -495,7 +495,7 @@ pub(super) async fn launch(cx: &Cx<'_>, args: &Args) -> ToolResult {
             .ok_or_else(|| {
                 fail(
                     "target_required",
-                    "Pass projectId: this MCP client is not running inside a T3 thread.",
+                    "Pass projectId: this MCP client is not running inside a Conn thread.",
                 )
             })?,
     };

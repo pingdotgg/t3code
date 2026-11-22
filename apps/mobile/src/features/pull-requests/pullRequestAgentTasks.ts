@@ -73,7 +73,7 @@ export function pullRequestAgentPrompt(
       return `Resolve this ${singular}'s conflicts with its base branch. First confirm this thread is on the ${shortLabel}'s branch; if it isn't, prepare the ${shortLabel} in its own worktree. Bring it up to date using this repository's convention, preserve the intent of both sides, and run the relevant checks before pushing.`;
     case "watch":
       // oxlint-disable-next-line t3code/no-untranslated-copy -- prompt sent to the agent
-      return `Watch this ${singular} for check results, new feedback, and conflicts using T3's pull request watch. End the turn once the watch is armed. When it wakes you, assess what changed and report what needs attention.`;
+      return `Watch this ${singular} for check results, new feedback, and conflicts using Conn's pull request watch. End the turn once the watch is armed. When it wakes you, assess what changed and report what needs attention.`;
   }
 }
 

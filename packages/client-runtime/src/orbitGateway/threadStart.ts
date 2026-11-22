@@ -1220,10 +1220,10 @@ export async function runOrbitThreadStart(
           (environment) => environment.instanceId === current.instanceId,
         );
         if (!server) {
-          throw stepFailed("Orbit created the clone but lists no T3 server for it.", {});
+          throw stepFailed("Orbit created the clone but lists no Conn Server for it.", {});
         }
         if (server.status !== "registered") {
-          throw stepFailed("The clone's T3 server registration expired.", {});
+          throw stepFailed("The clone's Conn Server registration expired.", {});
         }
         if (server.powerState === "stopped") await wakeClone(ports, current.instanceId!);
         environmentId = server.environmentId;

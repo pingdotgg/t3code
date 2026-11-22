@@ -380,7 +380,7 @@ impl Watcher {
                         ended: None,
                         wake: Wake {
                             text: format!(
-                                "Pull request #{} ({}) was closed, so T3 Code stopped watching it. Call watch_pull_request if it reopens.",
+                                "Pull request #{} ({}) was closed, so Conn stopped watching it. Call watch_pull_request if it reopens.",
                                 target.number(),
                                 text(&target.link, "url")
                             ),
@@ -471,7 +471,7 @@ impl Watcher {
     async fn give_up(&self, target: &Target) {
         let wake = Wake {
             text: format!(
-                "T3 Code stopped watching pull request #{} ({}) because it failed to read it from the host {READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.",
+                "Conn stopped watching pull request #{} ({}) because it failed to read it from the host {READ_FAILURE_LIMIT} times in a row. Check it yourself, and call watch_pull_request only if it is still open.",
                 target.number(),
                 text(&target.link, "url")
             ),

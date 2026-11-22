@@ -84,7 +84,7 @@ const make = Effect.gen(function* () {
       ? Effect.fail(
           failure(
             "thread_credential_required",
-            "Worktree handoff and status act as the calling T3 thread, so they need an agent running inside T3 Code.",
+            "Worktree handoff and status act as the calling Conn thread, so they need an agent running inside Conn.",
           ),
         )
       : Effect.succeed(scope as McpThreadInvocationScope);

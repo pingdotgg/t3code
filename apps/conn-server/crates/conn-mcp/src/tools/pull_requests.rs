@@ -28,7 +28,7 @@ pub(super) fn message(text: &str) -> ToolError {
     ToolError::Message(text.to_owned())
 }
 
-const THREAD_REQUIRED: &str = "Pass threadId: this MCP client is not running inside a T3 thread.";
+const THREAD_REQUIRED: &str = "Pass threadId: this MCP client is not running inside a Conn thread.";
 const LINK_FAILED: &str = "Could not link the pull request.";
 const UNLINK_FAILED: &str = "Could not unlink the pull request.";
 
@@ -729,10 +729,10 @@ pub(super) fn contract_message(error: &Value) -> String {
             }
             _ => match error["host"].as_str() {
                 Some(host) => format!(
-                    "No project in T3 Code is on {host}. Add any {host} project to read its change requests."
+                    "No project in Conn is on {host}. Add any {host} project to read its change requests."
                 ),
                 None => format!(
-                    "{} is not a project in T3 Code. Add it as a project to read its change requests.",
+                    "{} is not a project in Conn. Add it as a project to read its change requests.",
                     error["repository"].as_str().unwrap_or("This repository")
                 ),
             },

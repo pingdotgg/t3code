@@ -113,7 +113,7 @@ impl Connection {
 
     fn unreadable(&self) -> RequestError {
         RequestError(format!(
-            "{} returned a reply T3 Code couldn't read.",
+            "{} returned a reply Conn couldn't read.",
             self.label
         ))
     }

@@ -444,7 +444,7 @@ impl Cx<'_> {
             Caller::Client(_) => Err(fail(
                 "thread_credential_required",
                 format!(
-                    "{operation} acts as the calling T3 thread, so it needs an agent running inside T3 Code. This MCP client signed in from outside a thread."
+                    "{operation} acts as the calling Conn thread, so it needs an agent running inside Conn. This MCP client signed in from outside a thread."
                 ),
             )),
         }
@@ -729,7 +729,7 @@ fn internal(message: impl std::fmt::Display) -> ToolError {
     eprintln!("mcp: {message}");
     fail(
         "orchestration_error",
-        "T3 Code could not complete this request.",
+        "Conn could not complete this request.",
     )
 }
 

@@ -638,7 +638,7 @@ pub(crate) fn entry(
             .clone()
             .unwrap_or_else(|| "Checking Antigravity availability.".into())
     } else {
-        "Antigravity is disabled in T3 Code settings.".into()
+        "Antigravity is disabled in Conn settings.".into()
     };
     let mut entry = serde_json::Map::new();
     entry.insert("displayName".into(), json!(DISPLAY_NAME));

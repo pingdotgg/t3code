@@ -134,6 +134,6 @@ it.effect.each([
     expect(result.loads).toEqual([LOAD]);
     expect(result.profile).toBe(input.written);
     expect(result.output).toContain(input.said);
-    expect(result.output).toContain("This host is ready for T3's browser.");
+    expect(result.output).toContain("This host is ready for Conn's browser.");
   }),
 );

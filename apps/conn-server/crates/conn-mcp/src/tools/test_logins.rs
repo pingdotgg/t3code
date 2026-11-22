@@ -104,7 +104,7 @@ pub(super) async fn fill(cx: &Cx<'_>, args: &Args) -> ToolResult {
     let store = store(cx)?;
     let Ok(list) = store.list().await else {
         return Ok(json!({"status": "provider_unavailable",
-            "message": "T3 Code could not read or save its test logins."}));
+            "message": "Conn could not read or save its test logins."}));
     };
     let item = str_arg(args, "itemId").unwrap_or_default();
     let Some(login) = list.items.into_iter().find(|login| login.id == item) else {

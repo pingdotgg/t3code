@@ -24,7 +24,7 @@ const MAX_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TestLoginError {
-    #[error("T3 Code could not read or save its test logins.")]
+    #[error("Conn could not read or save its test logins.")]
     Store,
     #[error("No test login with this id.")]
     NotFound(String),

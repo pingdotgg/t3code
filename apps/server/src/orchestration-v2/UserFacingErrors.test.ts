@@ -27,7 +27,7 @@ describe("userFacingDispatchErrorMessage", () => {
         cause: toPersistenceSqlError("OrchestrationEventStore.append:query")(cause),
       });
 
-      assert.include(message, "server could not open a database file (SQLITE_CANTOPEN)");
+      assert.include(message, "Server could not open a database file (SQLITE_CANTOPEN)");
       assert.include(message, "machine running the server");
       assert.include(message, "free disk space");
       assert.include(message, "data and temporary directories exist and are writable");
@@ -63,7 +63,7 @@ describe("userFacingDispatchErrorMessage", () => {
       const cause = yield* sql`INSERT INTO entries VALUES ('private-message')`.pipe(Effect.flip);
       const message = userFacingDispatchErrorMessage(cause);
 
-      assert.include(message, "server database is read-only (SQLITE_READONLY)");
+      assert.include(message, "Server database is read-only (SQLITE_READONLY)");
       assert.include(message, "data directory is writable");
       assert.notInclude(message, "private-message");
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
@@ -76,7 +76,7 @@ describe("userFacingDispatchErrorMessage", () => {
       cause: toPersistenceSqlError("OrchestrationEventStore.append:query")(error),
     });
 
-    assert.include(message, "server could not complete this database request");
+    assert.include(message, "Server could not complete this database request");
     assert.include(message, "server logs");
     assert.notInclude(message, "private-query-data");
   });

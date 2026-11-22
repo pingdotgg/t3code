@@ -965,7 +965,7 @@ function DiagnosticsSettingsBody() {
           type: "info",
           title: gt("Process already exited"),
           description: gt(
-            "The process is not a child of the T3 Server. It might already have exited.",
+            "The process is not a child of the Conn Server. It might already have exited.",
           ),
         });
         return;
@@ -1094,7 +1094,7 @@ function DiagnosticsSettingsBody() {
             label={gt("CPU Time")}
             value={resourceData ? formatCpuTime(resourceData.totalCpuSecondsApprox, m) : "..."}
             tooltip={gt(
-              "Approximate active CPU time for the T3 server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves.",
+              "Approximate active CPU time for the Conn Server root process and its descendants during the selected window. It grows only while sampled processes use CPU and older samples leave as the window moves.",
             )}
           />
           <StatBlock

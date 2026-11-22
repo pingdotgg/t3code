@@ -910,8 +910,8 @@ fn change_lines(change: &Change, base_branch: &str, commit: &str) -> Vec<String>
     }
 }
 
-const WATCHING_CLOSING: &str = "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
-const WATCHING_CLOSING_PLURAL: &str = "Look into each item and act on it as your task requires. Each PR T3 Code still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
+const WATCHING_CLOSING: &str = "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and Conn wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.";
+const WATCHING_CLOSING_PLURAL: &str = "Look into each item and act on it as your task requires. Each PR Conn still watches stays linked and watched, so do not link, watch, or list them again. End your turn when you are done, and Conn wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request for each first so the thread returns to their inbox.";
 
 /// `PullRequestWatchWake`: the text and the notification (`{source, outcome, summary}`).
 #[derive(Clone, Debug, PartialEq)]
@@ -939,7 +939,7 @@ pub fn message(
         .map(|sha| format!(" on {}", sha.chars().take(7).collect::<String>()))
         .unwrap_or_default();
     let mut lines = vec![format!(
-        "Update on pull request #{number} ({url}), which T3 Code is watching for you:"
+        "Update on pull request #{number} ({url}), which Conn is watching for you:"
     )];
     for change in &report.changes {
         lines.extend(change_lines(change, base_branch, &commit));
@@ -947,7 +947,7 @@ pub fn message(
     lines.push(String::new());
     lines.push(if report.exhausted {
         format!(
-            "T3 Code stopped watching after {WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again."
+            "Conn stopped watching after {WAKE_LIMIT} comment-only updates in a row. Call watch_pull_request to watch it again."
         )
     } else {
         WATCHING_CLOSING.to_owned()

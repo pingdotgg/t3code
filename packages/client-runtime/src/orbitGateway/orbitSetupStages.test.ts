@@ -186,7 +186,7 @@ describe("orbitSetupStages", () => {
     expect(rows(creating)).toEqual([
       "Copy the container:pending",
       "Publish the address:pending",
-      "Start the T3 server:pending",
+      "Start the Conn Server:pending",
       "Register with Orbit:pending",
     ]);
     expect(rows(base)).toHaveLength(4);
@@ -197,7 +197,7 @@ describe("orbitSetupStages", () => {
     expect(rows(saved)).toEqual([
       "Copy the container:done",
       "Publish the address:running",
-      "Start the T3 server:running",
+      "Start the Conn Server:running",
       "Register with Orbit:pending",
     ]);
   });
@@ -207,7 +207,7 @@ describe("orbitSetupStages", () => {
     expect(rows(refused)).toEqual([
       "Copy the container:pending",
       "Publish the address:pending",
-      "Start the T3 server:pending",
+      "Start the Conn Server:pending",
       "Register with Orbit:pending",
     ]);
     expect(header(refused)).toBe("failed");
@@ -218,7 +218,7 @@ describe("orbitSetupStages", () => {
     expect(rows(stopped)).toEqual([
       "Copy the container:done",
       "Publish the address:pending",
-      "Start the T3 server:failed",
+      "Start the Conn Server:failed",
       "Register with Orbit:pending",
     ]);
     expect(header(stopped)).toBe("failed");
@@ -230,7 +230,7 @@ describe("orbitSetupStages", () => {
     expect(rows(registered)).toEqual([
       "Copy the container:done",
       "Publish the address:running",
-      "Start the T3 server:done",
+      "Start the Conn Server:done",
       "Register with Orbit:done",
     ]);
     const working = { ...registered, connected: true, connectFinishedAt: 50, sentAt: 60 };
@@ -264,7 +264,7 @@ describe("orbitSetupStages", () => {
     expect(rows(failed)).toEqual([
       "Copy the container:done",
       "Publish the address:failed",
-      "Start the T3 server:done",
+      "Start the Conn Server:done",
       "Register with Orbit:done",
     ]);
   });
@@ -318,14 +318,14 @@ describe("orbitSetupStages", () => {
     // Orbit lists no T3 server for the clone: Conn fails the start, Orbit's completion runs on.
     const failed = {
       ...creating,
-      error: "Orbit created the clone but lists no T3 server for it.",
+      error: "Orbit created the clone but lists no Conn Server for it.",
       createRows: atCreateSuccess.createRows,
     } satisfies OrbitThreadStart;
     expect(header(failed)).toBe("failed");
     expect(rows(failed)).toEqual([
       "Copy the container:done",
       "Publish the address:running",
-      "Start the T3 server:done",
+      "Start the Conn Server:done",
       "Register with Orbit:done",
     ]);
   });

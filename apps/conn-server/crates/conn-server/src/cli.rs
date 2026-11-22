@@ -850,7 +850,7 @@ fn run_inner(command: Command) -> Result<(), String> {
             label,
         } => {
             let runtime = home::read_runtime_state(&state_dir).ok_or_else(|| {
-                format!("No running T3 server found for {}.", state_dir.display())
+                format!("No running Conn Server found for {}.", state_dir.display())
             })?;
             let issued = open_auth(&state_dir)?
                 .issue_pairing(PairingRequest {

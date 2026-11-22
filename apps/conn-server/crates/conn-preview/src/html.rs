@@ -164,7 +164,7 @@ async fn capture(
         if rustix::process::getuid().is_root() {
             return Err(Error(spec()?.root_error.clone()));
         }
-        return Err(Error("This host blocks the sandbox T3's browser runs in (AppArmor on Ubuntu 23.10+). Run `t3 browser setup` on the host once to allow it, then try again.".into()));
+        return Err(Error("This host blocks the sandbox Conn's browser runs in (AppArmor on Ubuntu 23.10+). Run `t3 browser setup` on the host once to allow it, then try again.".into()));
     }
     result
 }

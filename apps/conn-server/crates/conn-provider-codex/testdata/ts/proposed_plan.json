@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/proposed_plan.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
-  "capturedOn": "2026-11-17",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/proposed_plan.ndjson through the orchestrator fixture runner at 328fe32fd0; driver dropped.",
+  "capturedOn": "2026-11-22",
   "startTurn": [
     {
       "appThread": {
@@ -79,7 +79,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "plan",
-        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-proposed_plan-grwDAT",
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-proposed_plan-9D9Nuj",
         "approvalPolicy": "never",
         "sandboxPolicy": {
           "type": "readOnly",
@@ -108,7 +108,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:11.623Z",
+        "startedAt": "2026-11-22T12:04:37.425Z",
         "completedAt": null
       }
     },
@@ -190,7 +190,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:11.623Z",
+        "startedAt": "2026-11-22T12:04:37.425Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21575,
@@ -218,7 +218,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-17T02:53:11.623Z",
+        "startedAt": "2026-11-22T12:04:37.425Z",
         "completedAt": "2026-09-25T00:20:18.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",

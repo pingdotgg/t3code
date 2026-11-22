@@ -1776,7 +1776,7 @@ fn disabled_probe() -> Probe {
         version: None,
         status: "warning",
         auth: unknown_auth(),
-        message: Some("Codex is disabled in T3 Code settings.".into()),
+        message: Some("Codex is disabled in Conn settings.".into()),
         usage_limits: None,
     }
 }

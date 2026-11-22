@@ -1575,10 +1575,10 @@ async fn a_watched_pull_request_wakes_its_thread_when_its_checks_or_comments_cha
     let wake = &woke["wake"];
     assert_eq!(
         wake["text"],
-        "Update on pull request #7 (https://github.com/a/b/pull/7), which T3 Code is watching for you:\n\
+        "Update on pull request #7 (https://github.com/a/b/pull/7), which Conn is watching for you:\n\
          - Checks failed on 1111111:\n  - ci https://ci.example/ci\n\
          - 1 new comment:\n  - reviewer: \"Please rename this.\" https://github.com/a/b/pull/7#c1\n\n\
-         Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and T3 Code wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."
+         Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and Conn wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox."
     );
     assert_eq!(
         wake["notification"],

@@ -101,7 +101,7 @@ debounced 200 ms, as T3's `ws.ts`). The periodic probe follows T3's managed prov
 
 - **Enabled:** `resolveProviderInstanceEnabled`: an explicit `false` on the envelope or in the
   config wins, then the envelope, then the config, then Grok's default: off. Off: no probe,
-  `status: "disabled"`, "Grok is disabled in T3 Code settings."; a session on it is refused.
+  `status: "disabled"`, "Grok is disabled in Conn settings."; a session on it is refused.
 - **Probes**, in order, each in its own process group with the server's environment, the
   instance's entries, `MISE_OFFLINE=1` and `GROK_DISABLE_AUTOUPDATER=1`, stdin an open pipe:
   `grok --version` (10 s), `grok models` (10 s; once more after "not authenticated" when no

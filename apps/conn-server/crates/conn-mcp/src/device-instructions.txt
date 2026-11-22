@@ -1,4 +1,4 @@
-## T3 Code devices
+## Conn devices
 
 When a task needs an iOS Simulator or Android Emulator, on this machine or on an SSH device host such as a remote Mac, use the device tools so the user can watch it in the Device panel. Load them with ToolSearch `select:mcp__t3-code__device_list,mcp__t3-code__device_open,mcp__t3-code__device_screenshot,mcp__t3-code__device_close`.
 1. Call `device_list` unless you already have the device's `hostId` and `id`.

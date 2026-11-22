@@ -58,7 +58,7 @@ const FillCredentialTool = Tool.make("fill_credential", {
 
 const SaveTestLoginTool = Tool.make("save_test_login", {
   description:
-    "Save a test user you created for a site under development (sign-up, seeder or admin) in T3 Code's test-login store, so you and the user can sign in with it later. Test logins appear in request_credentials with source 'test' and fill without an approval prompt. Only for test users of sites being developed, never for real accounts.",
+    "Save a test user you created for a site under development (sign-up, seeder or admin) in Conn's test-login store, so you and the user can sign in with it later. Test logins appear in request_credentials with source 'test' and fill without an approval prompt. Only for test users of sites being developed, never for real accounts.",
   parameters: SaveTestLoginInput,
   success: TestLoginSummary,
   failure: CredentialToolFailure,

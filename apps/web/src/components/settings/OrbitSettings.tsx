@@ -55,7 +55,7 @@ export function EnvironmentProviderSection() {
         title="Environments from"
         description={
           provider === "orbit"
-            ? "The T3 servers registered on the Orbit Gateway. Host servers pair automatically. Instances are managed in the Orbit panel. Environments added here are switched off until you choose Default again."
+            ? "The Conn Servers registered on the Orbit Gateway. Host servers pair automatically. Instances are managed in the Orbit panel. Environments added here are switched off until you choose Default again."
             : "Environments you add on this device. Orbit uses the servers on the Orbit Gateway instead and syncs workspaces with your profile."
         }
         control={
@@ -285,10 +285,10 @@ export function OrbitConnectionPage() {
             Nodes
           </h2>
           <p className="text-xs text-muted-foreground">
-            The Nodes that run a T3 server. Conn pairs with them automatically.
+            The Nodes that run a Conn Server. Conn pairs with them automatically.
           </p>
         </div>
-        <SettingsSection title="Nodes that run a T3 server" hideTitle>
+        <SettingsSection title="Nodes that run a Conn Server" hideTitle>
           {nodes === null ? (
             <SettingsRow
               title={probe.status === "checking" ? "Loading…" : "Nodes not available"}
@@ -305,7 +305,7 @@ export function OrbitConnectionPage() {
           ) : nodes.length === 0 ? (
             <SettingsRow
               title="No Nodes yet"
-              description="A Node's T3 server registers itself with the Gateway."
+              description="A Node's Conn Server registers itself with the Gateway."
             />
           ) : (
             nodes.map((entry) => (

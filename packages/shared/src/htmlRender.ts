@@ -232,7 +232,7 @@ export const HTML_RENDER_THEME_GUIDE = [
 export const HTML_RENDER_LAYOUT_GUIDE = [
   `Frame width is reply width (${HTML_RENDER_COLUMN_WIDTH}px desktop, about 360px phones), on the thread background.`,
   "Leave html, body, and the outer element with no background color, no outer card, border, banner title, or side padding. This wins over any rule that sets a page background.",
-  "T3 adds an overridable 8px html gutter for selection rings and shadows. Use fluid widths within it.",
+  "Conn adds an overridable 8px html gutter for selection rings and shadows. Use fluid widths within it.",
   "A box that needs its own background gets 16px padding and var(--radius) corners. Give charts fixed pixel heights.",
   "Let content set the height. Do not use vh units or height:100% on html or body. Both are rejected or loop.",
 ].join(" ");

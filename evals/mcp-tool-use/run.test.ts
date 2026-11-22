@@ -630,7 +630,7 @@ const template = {
     {
       role: "system",
       content:
-        "Main prompt.\n - Primary working directory: /home/alice/app\n\n<runtime_info>old</runtime_info>\n\n## T3 Code orchestration\nold text",
+        "Main prompt.\n - Primary working directory: /home/alice/app\n\n<runtime_info>old</runtime_info>\n\n## Conn orchestration\nold text",
     },
     {
       role: "system",
@@ -676,7 +676,7 @@ const browserCase = (id: string) =>
     .map((line) => decodeDeviceCase(line))
     .find((c) => c.id === id)!;
 
-it("rebuilds the template from this checkout and sends a child T3's task prompt", () => {
+it("rebuilds the template from this checkout and sends a child Conn's task prompt", () => {
   const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
   const system = base.system.map((block) => String(block.text));
   assert.deepEqual(system.slice(0, 2), [
@@ -684,7 +684,7 @@ it("rebuilds the template from this checkout and sends a child T3's task prompt"
     `Main prompt.\n - Primary working directory: /home/user/app\n\n${t3SystemAppend("claude-sonnet-5-5")}`,
   ]);
   // The eval offers the device tools, so Claude's append carries the device block.
-  assert.include(t3SystemAppend("claude-sonnet-5-5"), "## T3 Code devices");
+  assert.include(t3SystemAppend("claude-sonnet-5-5"), "## Conn devices");
   assert.equal(base.environment.cwd, "/home/user/app");
   assert.include(system[2], "model named Sonnet 5.5. The exact model ID is claude-sonnet-5-5.");
   const deferred = system[2]?.split("Load them first:\n")[1]?.split("\n\n")[0]?.split("\n") ?? [];
@@ -1375,64 +1375,66 @@ it.effect("saves a pasted value with no card where request_secret takes one", ()
   }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
-it.effect("fails preview calls with T3's errors when browser access is off or a mock is one", () =>
-  Effect.gen(function* () {
-    const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
-    const config = {
-      apiKey: "",
-      model: "claude-sonnet-5-5",
-      effort: "high",
-      maxSteps: 6,
-      shellModel: "claude-haiku-5-5",
-    } as const;
-    const answer = (id: string, tool: string) => {
-      const sample = makeSample(browserCase(id), base);
-      sample.tools.push({ name: `mcp__t3-code__${tool}` });
-      return answerToolCall(sample, config, {
-        type: "tool_use",
-        id: tool,
-        name: `mcp__t3-code__${tool}`,
-        input: {},
-      });
-    };
-    const off = new PreviewAutomationUnavailableError({
-      capability: "preview",
-      environmentId: EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
-    }).message;
-    for (const tool of ["preview_status", "preview_open", "t3_preview_list"])
-      assert.deepInclude(yield* answer("br-guard-browser-access-off", tool), {
+it.effect(
+  "fails preview calls with Conn's errors when browser access is off or a mock is one",
+  () =>
+    Effect.gen(function* () {
+      const base = buildBase(template, { model: "claude-sonnet-5-5", keepUserInstructions: false });
+      const config = {
+        apiKey: "",
+        model: "claude-sonnet-5-5",
+        effort: "high",
+        maxSteps: 6,
+        shellModel: "claude-haiku-5-5",
+      } as const;
+      const answer = (id: string, tool: string) => {
+        const sample = makeSample(browserCase(id), base);
+        sample.tools.push({ name: `mcp__t3-code__${tool}` });
+        return answerToolCall(sample, config, {
+          type: "tool_use",
+          id: tool,
+          name: `mcp__t3-code__${tool}`,
+          input: {},
+        });
+      };
+      const off = new PreviewAutomationUnavailableError({
+        capability: "preview",
+        environmentId: EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+      }).message;
+      for (const tool of ["preview_status", "preview_open", "t3_preview_list"])
+        assert.deepInclude(yield* answer("br-guard-browser-access-off", tool), {
+          is_error: true,
+          content: off,
+        });
+      assert.notInclude(t3SystemAppend("claude-sonnet-5-5", true, false), "## Conn browser");
+      const unsupported = "br-guard-preview-open-unsupported";
+      assert.deepInclude(yield* answer(unsupported, "preview_open"), {
         is_error: true,
-        content: off,
+        content: "Preview automation client desktop-1 does not support open.",
       });
-    assert.notInclude(t3SystemAppend("claude-sonnet-5-5", true, false), "## T3 Code browser");
-    const unsupported = "br-guard-preview-open-unsupported";
-    assert.deepInclude(yield* answer(unsupported, "preview_open"), {
-      is_error: true,
-      content: "Preview automation client desktop-1 does not support open.",
-    });
-    const status = yield* answer(unsupported, "preview_status");
-    assert.isUndefined(status.is_error);
-    assert.include(String(status.content), '"available":false');
-    // A sequence mock answers each call with its next result, then repeats the last.
-    const flow = makeSample(browserCase("br-flow-qa-missing-cli"), base);
-    flow.tools.push({ name: "mcp__t3-code__preview_snapshot" });
-    const titles: Array<string> = [];
-    for (let i = 0; i < 4; i++) {
-      const result = yield* answerToolCall(flow, config, {
-        type: "tool_use",
-        id: `snapshot-${i}`,
-        name: "mcp__t3-code__preview_snapshot",
-        input: {},
-      });
-      titles.push(String(/"title":"([^"]+)"/.exec(String(result.content))?.[1]));
-    }
-    assert.deepEqual(titles, [
-      "Subscription · Acme",
-      "Top up · Acme",
-      "Acme · Stripe Checkout",
-      "Acme · Stripe Checkout",
-    ]);
-  }).pipe(Effect.provide(FetchHttpClient.layer)),
+      const status = yield* answer(unsupported, "preview_status");
+      assert.isUndefined(status.is_error);
+      assert.include(String(status.content), '"available":false');
+      // A sequence mock answers each call with its next result, then repeats the last.
+      const flow = makeSample(browserCase("br-flow-qa-missing-cli"), base);
+      flow.tools.push({ name: "mcp__t3-code__preview_snapshot" });
+      const titles: Array<string> = [];
+      for (let i = 0; i < 4; i++) {
+        const result = yield* answerToolCall(flow, config, {
+          type: "tool_use",
+          id: `snapshot-${i}`,
+          name: "mcp__t3-code__preview_snapshot",
+          input: {},
+        });
+        titles.push(String(/"title":"([^"]+)"/.exec(String(result.content))?.[1]));
+      }
+      assert.deepEqual(titles, [
+        "Subscription · Acme",
+        "Top up · Acme",
+        "Acme · Stripe Checkout",
+        "Acme · Stripe Checkout",
+      ]);
+    }).pipe(Effect.provide(FetchHttpClient.layer)),
 );
 
 const deviceCases = () =>
@@ -1476,7 +1478,7 @@ it.effect("builds device cases from product-backed worlds and synthetic prior tu
 );
 
 // Models recover from either result, so this keeps the guard case failing on the old success.
-it.effect("seeds T3's error for a prior background wait whose IDs match nothing", () =>
+it.effect("seeds Conn's error for a prior background wait whose IDs match nothing", () =>
   Effect.gen(function* () {
     const cases = NodeFS.readFileSync(
       new URL("./cases/orchestration.ndjson", import.meta.url),
@@ -3016,8 +3018,12 @@ it("does not credit a capture attempt on a different host", () => {
 });
 
 it.each([
-  ["T3's result names the remote device", { hostId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" }, true],
-  ["T3's result names a local device", { hostId: "local" }, false],
+  [
+    "Conn's result names the remote device",
+    { hostId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" },
+    true,
+  ],
+  ["Conn's result names a local device", { hostId: "local" }, false],
   ["failed attempt uses the matching open session", undefined, true],
 ] as const)(
   "credits a device_screenshot without hostId by the device T3 reached: %s",

@@ -129,7 +129,7 @@ async fn watches_start_link_and_stop_as_t3() {
     );
     assert_eq!(
         plain_failure(&mut swamp, "watch_pull_request", json!({"url": URL})).await,
-        "Pass threadId: this MCP client is not running inside a T3 thread."
+        "Pass threadId: this MCP client is not running inside a Conn thread."
     );
 
     // A delegated child is not offered the watch tools.

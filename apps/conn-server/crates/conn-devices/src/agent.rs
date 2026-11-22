@@ -228,7 +228,7 @@ pub(crate) fn quick_start(device: &Device, command: &str) -> String {
         format!("Prefer snapshot refs over coordinates. Run {executable} help <command> for flags and {executable} help workflow for guides."),
         "Do not use simctl, idb, adb or ssh for those actions. They stay fine for builds, installs, code sync, Metro, port forwards, logs, test runners and what this command cannot do; come back to it for every UI action and screenshot so the user can watch.".into(),
         "Each device_open returns its own command; opening another device does not retarget this one.".into(),
-        "The command is removed when the device closes or T3 Code restarts. If it is missing, call device_open again.".into(),
+        "The command is removed when the device closes or Conn restarts. If it is missing, call device_open again.".into(),
         note.into(),
     ]
     .join("\n")

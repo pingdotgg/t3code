@@ -404,7 +404,7 @@ impl PeerLinks {
             Ok(Err(Probed::NotT3)) => Err(PeerLinkError::new(
                 "not_a_t3_environment",
                 format!(
-                    "{origin} answered, but not as a T3 Code environment this version understands."
+                    "{origin} answered, but not as a Conn environment this version understands."
                 ),
             )),
         }
@@ -742,12 +742,12 @@ impl PeerLinks {
             return Err(PeerLinkError::new(
                 "incompatible",
                 format!(
-                    "{peer_label} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again."
+                    "{peer_label} runs a Conn version that cannot keep a linked agent's limits. Update it, then link again."
                 ),
             ));
         }
         let (token, expires_in) = self
-            .sign_in(&primary, &input, &format!("T3 Code · {}", self.own_label()))
+            .sign_in(&primary, &input, &format!("Conn · {}", self.own_label()))
             .await?;
         let now = now_ms();
         let row = Row {
@@ -951,7 +951,7 @@ impl PeerLinks {
             return Err(PeerLinkError::new(
                 "incompatible",
                 format!(
-                    "{} runs a T3 Code version that cannot keep a linked agent's limits. Update it, then link again.",
+                    "{} runs a Conn version that cannot keep a linked agent's limits. Update it, then link again.",
                     row.label
                 ),
             ));

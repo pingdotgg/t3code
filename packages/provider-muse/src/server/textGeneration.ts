@@ -103,10 +103,10 @@ function museFailureDetail(cause: unknown): string {
   if (error?.quota !== undefined || isMuseUsageLimitFailure(error?.message))
     return "Muse Code usage limit reached. Try again after it resets.";
   if (error?.kind === "authRequired")
-    return "Muse Code is not signed in. Run `muse login` on this T3 server host.";
+    return "Muse Code is not signed in. Run `muse login` on this Conn Server host.";
   if (error?.kind === "modelError")
     return "Muse Code's model request failed. Try again or choose another Muse model.";
-  return "Muse Code text generation failed. Check Muse login and availability on this T3 server host.";
+  return "Muse Code text generation failed. Check Muse login and availability on this Conn Server host.";
 }
 
 async function generateMuseText(
@@ -149,7 +149,7 @@ async function generateMuseText(
       await host.connection.command("userInput/cancel", {
         sessionId,
         userInputId: request.userInputId,
-        reason: "T3 Code text generation cannot request user input.",
+        reason: "Conn text generation cannot request user input.",
       });
     }
   };
@@ -198,7 +198,7 @@ async function generateMuseText(
   });
   host.connection.onProtocolError(rejectCompletion);
   host.connection.onServerRequest(async () => {
-    const error = new Error("T3 Code text generation cannot approve interactive requests.");
+    const error = new Error("Conn text generation cannot approve interactive requests.");
     rejectCompletion(error);
     throw error;
   });

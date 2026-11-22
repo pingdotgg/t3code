@@ -10,8 +10,12 @@ import {
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
 } from "./presentation.js";
-import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
+import {
+  resolveT3McpToolDefinition,
+  T3_MCP_TOOL_NAMES,
+} from "@t3tools/shared/t3McpToolPresentation";
 import { summarizeToolGroup } from "./presentation.js";
+import { t3ToolSentence } from "./t3ToolSentences.js";
 
 function commandItem(
   fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>> = {},
@@ -164,6 +168,9 @@ describe("resolveWorkEntryToolPresentation", () => {
       };
       const presentation = resolveWorkEntryToolPresentation(entry);
       expect(presentation, tool).not.toBeNull();
+      // A thread label that misses its sentence falls back to untranslated English.
+      const labels = resolveT3McpToolDefinition(tool)!.labels;
+      if (labels[3].includes("thread")) expect(t3ToolSentence(labels), tool).toBeDefined();
       expect(presentation?.displayName, tool).not.toContain(tool);
       const summary = summarizeToolGroup([entry]);
       expect(summary.summary, tool).not.toMatch(/Used (?:1 tool|T3 Code integration)/);

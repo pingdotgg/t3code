@@ -86,7 +86,7 @@ const RELEASE_ASSETS = {
 
 const VARIANT_CONFIG = {
   development: {
-    appName: "T3 Code Dev",
+    appName: "Conn Dev",
     scheme: "t3code-dev",
     iosBundleIdentifier: "com.t3tools.t3code.dev",
     androidPackage: "com.t3tools.t3code.dev",
@@ -94,7 +94,7 @@ const VARIANT_CONFIG = {
     assets: DEVELOPMENT_ASSETS,
   },
   preview: {
-    appName: "T3 Code Preview",
+    appName: "Conn Preview",
     scheme: "t3code-preview",
     iosBundleIdentifier: "com.t3tools.t3code.preview",
     androidPackage: "com.t3tools.t3code.preview",
@@ -102,7 +102,7 @@ const VARIANT_CONFIG = {
     assets: PREVIEW_ASSETS,
   },
   production: {
-    appName: "T3 Code",
+    appName: "Conn",
     scheme: "t3code",
     iosBundleIdentifier: "com.t3tools.t3code",
     androidPackage: "com.t3tools.t3code",
@@ -127,18 +127,31 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 // Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
 const HOSTED_APP_HOST = "app.t3.codes";
 
-// nckrtl fork: a build under your own bundle id shows the Conn logo instead of the T3 mark. The
-// Icon Composer projects and exports live in assets/conn (see FORK.md). Preview keeps upstream's.
+// nckrtl fork: every build shows the Conn logo instead of the T3 mark. The Icon Composer projects
+// and exports live in assets/conn (see FORK.md). Preview uses the production icon.
 const CONN_ICON_ASSETS = {
   development: {
     appIcon: fromRepoRoot("assets/conn/dev/conn-dev-ios-1024.png"),
     iosIcon: fromRepoRoot("assets/conn/dev/app-icon.icon"),
     splashIcon: fromRepoRoot("assets/conn/dev/conn-dev-ios-1024.png"),
+    androidAdaptiveForeground: fromRepoRoot("assets/conn/android/android-icon-foreground.png"),
+    androidAdaptiveBackgroundImage: fromRepoRoot(
+      "assets/conn/android/android-icon-background-dev.png",
+    ),
+    androidSplashIcon: fromRepoRoot("assets/conn/android/android-splash-icon-dev.png"),
+    androidMonochromeIcon: fromRepoRoot("assets/conn/android/android-icon-mark.png"),
+    androidNotificationIcon: fromRepoRoot("assets/conn/android/android-notification-icon.png"),
   },
   production: {
     appIcon: fromRepoRoot("assets/conn/prod/conn-prod-ios-1024.png"),
     iosIcon: fromRepoRoot("assets/conn/prod/app-icon.icon"),
     splashIcon: fromRepoRoot("assets/conn/prod/conn-prod-ios-1024.png"),
+    androidAdaptiveForeground: fromRepoRoot("assets/conn/android/android-icon-foreground.png"),
+    androidAdaptiveBackgroundColor: "#000000",
+    androidAdaptiveBackgroundImage: undefined,
+    androidSplashIcon: fromRepoRoot("assets/conn/android/android-splash-icon-prod.png"),
+    androidMonochromeIcon: fromRepoRoot("assets/conn/android/android-icon-mark.png"),
+    androidNotificationIcon: fromRepoRoot("assets/conn/android/android-notification-icon.png"),
   },
 } as const;
 
@@ -147,7 +160,7 @@ const variant = {
   ...baseVariant,
   assets: {
     ...baseVariant.assets,
-    ...(isOwnBundleBuild && APP_VARIANT !== "preview" ? CONN_ICON_ASSETS[APP_VARIANT] : {}),
+    ...CONN_ICON_ASSETS[APP_VARIANT === "development" ? "development" : "production"],
   },
 };
 if (ownBundleIdentifier && !IOS_BUNDLE_IDENTIFIER_PATTERN.test(ownBundleIdentifier)) {
@@ -168,6 +181,8 @@ const iosBundleIdentifier = isIosPersonalTeamBuild
   : ownBundleIdentifier
     ? `${ownBundleIdentifier}${ownVariantSuffix && `.${ownVariantSuffix}`}`
     : variant.iosBundleIdentifier;
+// The product name in permission prompts, widget descriptions and the in-app brand lockup.
+const brandName = ownAppName || "Conn";
 const ownVariantAppName = ownAppName
   ? `${ownAppName}${{ development: " Dev", preview: " Preview", production: "" }[APP_VARIANT]}`
   : undefined;
@@ -192,7 +207,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "SubscriptionUsage",
         displayName: "Subscription usage",
-        description: "Subscription quotas from your connected T3 Code environments.",
+        description: `Subscription quotas from your connected ${brandName} environments.`,
         ios: {
           configuration: {
             title: "Subscription usage",
@@ -242,7 +257,7 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
       {
         name: "AgentActivity",
         displayName: "Agent Activity",
-        description: "Shows the current state of active T3 Code agents.",
+        description: `Shows the current state of active ${brandName} agents.`,
         android: null,
         ios: {
           supportedFamilies: ["systemSmall", "systemMedium", "accessoryRectangular"],
@@ -255,10 +270,11 @@ const widgetsPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   },
 ];
 
-// nckrtl fork: a build under your own bundle id draws the Conn mark in the widgets.
-const widgetLogoPlugin: NonNullable<ExpoConfig["plugins"]>[number] = isOwnBundleBuild
-  ? ["./plugins/withWidgetLogoAsset.cjs", { source: "../../assets/conn/widget/ConnMark.svg" }]
-  : "./plugins/withWidgetLogoAsset.cjs";
+// nckrtl fork: the widgets draw the Conn mark.
+const widgetLogoPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
+  "./plugins/withWidgetLogoAsset.cjs",
+  { source: "../../assets/conn/widget/ConnMark.svg" },
+];
 
 const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
   "expo-sharing",
@@ -335,11 +351,10 @@ const config: ExpoConfig = {
       NSAppTransportSecurity: {
         NSAllowsArbitraryLoads: true,
       },
-      NSLocalNetworkUsageDescription:
-        "Allow T3 Code to connect to T3 Code servers on your local network or tailnet.",
+      NSLocalNetworkUsageDescription: `Allow ${brandName} to connect to ${brandName} servers on your local network or tailnet.`,
       // Built with the iOS 27 SDK, only view controllers can hide or style the status bar.
       UIViewControllerBasedStatusBarAppearance: true,
-      NSPhotoLibraryAddUsageDescription: "Allow T3 Code to save images to your photo library.",
+      NSPhotoLibraryAddUsageDescription: `Allow ${brandName} to save images to your photo library.`,
       // System picture in picture needs background audio to start and survive outside the app.
       UIBackgroundModes: ["audio"],
       ITSAppUsesNonExemptEncryption: false,
@@ -444,7 +459,7 @@ const config: ExpoConfig = {
     [
       "expo-audio",
       {
-        microphonePermission: "Allow T3 Code to use your microphone for voice input.",
+        microphonePermission: `Allow ${brandName} to use your microphone for voice input.`,
         recordAudioAndroid: false,
         enableBackgroundPlayback: false,
         enableBackgroundRecording: false,
@@ -453,7 +468,7 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission: `Allow ${brandName} to access your camera so you can scan pairing QR codes.`,
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
@@ -518,9 +533,8 @@ const config: ExpoConfig = {
   ],
   extra: {
     appVariant: APP_VARIANT,
-    // nckrtl fork: a renamed build shows its name and the Conn mark in the app's brand lockups.
-    // Omit it when unset: manifest null becomes {} and crashes the brand title at launch.
-    ...(ownAppName ? { brandName: ownAppName } : {}),
+    // nckrtl fork: the app shows its name and the Conn mark in its brand lockups.
+    brandName,
     secretsFeatureEnabled: ["1", "true"].includes(
       process.env.T3CODE_FEATURE_SECRETS?.trim().toLowerCase() ?? "",
     ),

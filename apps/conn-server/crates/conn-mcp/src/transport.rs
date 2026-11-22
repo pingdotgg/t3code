@@ -144,7 +144,7 @@ pub(crate) async fn handle(
         let result = json!({
             "protocolVersion": PROTOCOL_VERSION,
             "capabilities": {"logging": {}, "tools": {"listChanged": true}, "completions": {}},
-            "serverInfo": {"name": "T3 Code", "version": config.server_version},
+            "serverInfo": {"name": "Conn", "version": config.server_version},
         });
         return Reply::json(
             StatusCode::OK,

@@ -67,7 +67,7 @@ export class IssueTargetIncompleteError extends Schema.TaggedError<IssueTargetIn
   {},
 ) {
   override get message(): string {
-    return "Pass either url, or key (with projectId when not running inside a T3 thread).";
+    return "Pass either url, or key (with projectId when not running inside a Conn thread).";
   }
 }
 
@@ -76,7 +76,7 @@ export class IssueProjectRequiredError extends Schema.TaggedError<IssueProjectRe
   {},
 ) {
   override get message(): string {
-    return "Pass projectId: this MCP client is not running inside a T3 thread.";
+    return "Pass projectId: this MCP client is not running inside a Conn thread.";
   }
 }
 
@@ -85,7 +85,7 @@ export class IssueThreadRequiredError extends Schema.TaggedError<IssueThreadRequ
   {},
 ) {
   override get message(): string {
-    return "Pass threadId: this MCP client is not running inside a T3 thread.";
+    return "Pass threadId: this MCP client is not running inside a Conn thread.";
   }
 }
 
@@ -335,7 +335,7 @@ const SetIssueStateTool = Tool.make("set_issue_state", {
 
 const LinkIssueTool = Tool.make("link_issue", {
   description:
-    "Link an issue to a thread so T3 Code shows it beside the thread. Link every issue you work on or file.",
+    "Link an issue to a thread so Conn shows it beside the thread. Link every issue you work on or file.",
   parameters: Schema.Struct({ ...IssueTargetInput.fields, ...ThreadTargetInput.fields }),
   success: LinkIssueResult,
   failure: IssueToolError,

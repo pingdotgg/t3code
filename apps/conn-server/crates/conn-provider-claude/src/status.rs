@@ -952,7 +952,7 @@ where
                 version: None,
                 status: "warning",
                 auth: unknown_auth(),
-                message: Some("Claude is disabled in T3 Code settings.".into()),
+                message: Some("Claude is disabled in Conn settings.".into()),
                 usage_limits: None,
             },
         );

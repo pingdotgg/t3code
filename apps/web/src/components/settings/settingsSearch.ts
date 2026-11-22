@@ -989,12 +989,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
-    id: "mobile-app",
-    title: msg("Mobile app"),
-    to: "/settings/about",
-    searchTerms: [msg("phone tablet iPhone iPad iOS Android App Store Google Play QR")],
-  },
-  {
     id: "welcome-page",
     title: msg("Welcome page"),
     to: "/settings/about",

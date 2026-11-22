@@ -249,7 +249,7 @@ describe("openOrbitInstanceById", () => {
   it("creates nothing when the Instance has no reachable server or cannot be picked", async () => {
     expect(await open([environment("env-9", { instanceId: 9 })])).toEqual({
       kind: "unavailable",
-      reason: "Instance login has no T3 server this device can reach.",
+      reason: "Instance login has no Conn Server this device can reach.",
     });
     expect(await open([environment("env-42", { status: "session_expired" })])).toMatchObject({
       kind: "unavailable",

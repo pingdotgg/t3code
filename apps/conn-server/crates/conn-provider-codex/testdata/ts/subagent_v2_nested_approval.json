@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_v2_nested_approval.ndjson through the orchestrator fixture runner at 7eb4f676cf; driver dropped.",
-  "capturedOn": "2026-11-19",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/subagent_v2_nested_approval.ndjson through the orchestrator fixture runner at 328fe32fd0; driver dropped.",
+  "capturedOn": "2026-11-22",
   "startTurn": [
     {
       "appThread": {
@@ -79,7 +79,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_v2_nested_approval-AMyNrb",
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-subagent_v2_nested_approval-KGrIFl",
         "approvalPolicy": "untrusted",
         "sandboxPolicy": {
           "type": "readOnly"
@@ -109,7 +109,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-19T05:05:20.024Z",
+        "startedAt": "2026-11-22T12:04:28.178Z",
         "completedAt": null
       }
     },
@@ -438,7 +438,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-19T05:05:20.024Z",
+        "startedAt": "2026-11-22T12:04:28.178Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 16133,
@@ -2025,7 +2025,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-19T05:05:20.024Z",
+        "startedAt": "2026-11-22T12:04:28.178Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 16185,
@@ -2122,7 +2122,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-19T05:05:20.024Z",
+        "startedAt": "2026-11-22T12:04:28.178Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 16252,
@@ -2150,7 +2150,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-19T05:05:20.024Z",
+        "startedAt": "2026-11-22T12:04:28.178Z",
         "completedAt": "2026-09-25T22:11:16.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",

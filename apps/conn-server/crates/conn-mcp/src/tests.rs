@@ -1889,14 +1889,14 @@ async fn scheduled_task_tools_refuse_as_the_typescript_server() {
             .await,
         (
             "target_required".to_owned(),
-            "Pass projectId: this MCP client is not running inside a T3 thread.".to_owned()
+            "Pass projectId: this MCP client is not running inside a Conn thread.".to_owned()
         )
     );
     assert_eq!(
         swamp
             .failure("schedule_task", json!({"projectId": project_id(), "prompt": "p", "schedule": schedule, "bindToCurrentThread": true}))
             .await,
-        ("invalid_request".to_owned(), "bindToCurrentThread needs an agent running inside a T3 thread.".to_owned())
+        ("invalid_request".to_owned(), "bindToCurrentThread needs an agent running inside a Conn thread.".to_owned())
     );
     assert_eq!(
         swamp
@@ -2132,7 +2132,7 @@ async fn a_task_whose_bound_thread_cannot_be_read_is_refused() {
             .await,
         (
             "orchestration_error".to_owned(),
-            "T3 Code could not complete this request.".to_owned()
+            "Conn could not complete this request.".to_owned()
         )
     );
 }
@@ -3202,7 +3202,7 @@ async fn test_logins_save_find_and_hide_secrets() {
         assert_eq!(
             reply["result"],
             json!({
-                "content":[{"type":"text","text":"T3 Code could not read or save its test logins."}],
+                "content":[{"type":"text","text":"Conn could not read or save its test logins."}],
                 "isError":true,
             }),
             "{tool}: {reply}"

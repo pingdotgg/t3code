@@ -173,7 +173,7 @@ fn connect_failure(config: &SshConfig, failure: &SshFailure) -> Option<String> {
     let lines: Vec<&str> = failure.stderr.lines().map(str::trim).collect();
     let find =
         |test: &dyn Fn(&str) -> bool| lines.iter().find(|l| test(l)).map(|l| (*l).to_owned());
-    let here = "the machine running this T3 Code server";
+    let here = "the machine running this Conn Server";
     let target = &config.target;
     if find(&|l| l.contains("REMOTE HOST IDENTIFICATION HAS CHANGED")).is_some() {
         return Some(format!(
@@ -216,7 +216,7 @@ fn connect_failure(config: &SshConfig, failure: &SshFailure) -> Option<String> {
     None
 }
 
-const WINDOWS_HOST: &str = "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run T3 Code on it and connect to that environment.";
+const WINDOWS_HOST: &str = "Connected over SSH, but this host runs Windows, and SSH device hosts currently need macOS or Linux. To use this machine's devices, run Conn on it and connect to that environment.";
 
 fn remote_exit(failure: &SshFailure) -> bool {
     matches!(failure.exit_code, Some(code) if (1..=254).contains(&code) || code == 9009)

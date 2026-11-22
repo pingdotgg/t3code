@@ -38,9 +38,7 @@ export async function runManagedChatGptTokenCli(args: ReadonlyArray<string>): Pr
   }).pipe(Effect.scoped);
   const result = await Effect.runPromiseExit(program);
   if (Exit.isFailure(result)) {
-    process.stderr.write(
-      "Could not access the managed ChatGPT connection. Reconnect in T3 Code.\n",
-    );
+    process.stderr.write("Could not access the managed ChatGPT connection. Reconnect in Conn.\n");
     process.exitCode = 1;
     return;
   }

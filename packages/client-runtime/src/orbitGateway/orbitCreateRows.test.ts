@@ -49,7 +49,7 @@ describe("the approved rows", () => {
     expect(ORBIT_CREATE_ROW_IDS.map((id) => ORBIT_CREATE_ROW_LABELS[id])).toEqual([
       "Copy the container",
       "Publish the address",
-      "Start the T3 server",
+      "Start the Conn Server",
       "Register with Orbit",
     ]);
   });

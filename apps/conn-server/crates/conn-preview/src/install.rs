@@ -14,7 +14,7 @@ use tokio::sync::{Mutex, watch};
 
 fn chrome_platform(os: &str, arch: &str) -> Result<&'static str, Error> {
     spec()?.platforms.get(&format!("{os}-{arch}")).map(String::as_str).ok_or_else(|| Error(format!(
-        "T3's headless browser is not available on {os}-{arch}: Chrome for Testing has no headless shell for it."
+        "Conn's headless browser is not available on {os}-{arch}: Chrome for Testing has no headless shell for it."
     )))
 }
 
@@ -182,7 +182,7 @@ impl Installer {
                     )
                 };
                 Err(Error(format!(
-                    "T3 is installing its headless browser ({progress}). Try again in a minute."
+                    "Conn is installing its headless browser ({progress}). Try again in a minute."
                 )))
             }
         }
@@ -255,7 +255,7 @@ async fn configured_browser(path: PathBuf) -> Result<PathBuf, ExecutableError> {
 
 fn failure(detail: &str) -> Error {
     Error(format!(
-        "T3 could not install its headless browser: {detail} Try again."
+        "Conn could not install its headless browser: {detail} Try again."
     ))
 }
 
@@ -268,11 +268,11 @@ async fn install(
 ) -> Result<PathBuf, Error> {
     let parent = folder
         .parent()
-        .ok_or_else(|| failure("Could not save the browser in T3's home directory."))?;
+        .ok_or_else(|| failure("Could not save the browser in Conn's home directory."))?;
     let staging = parent.join(format!(".install-{}", conn_support::uuid_v4()));
     tokio::fs::create_dir_all(&staging)
         .await
-        .map_err(|_| failure("Could not save the browser in T3's home directory."))?;
+        .map_err(|_| failure("Could not save the browser in Conn's home directory."))?;
     let zip_path = staging.join("download.zip");
     let result = async {
         let archive = spec.archives.get(platform).ok_or_else(|| failure("The archive is missing."))?;

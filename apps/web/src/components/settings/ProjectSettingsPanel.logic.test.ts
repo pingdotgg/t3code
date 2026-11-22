@@ -136,7 +136,7 @@ describe("project removal confirmation", () => {
     });
     expect(plan.projectThreads).toHaveLength(3);
     expect(plan.confirmationMessage).toBe(
-      'Remove checkout "Repo" and delete its 1 thread?\nPath: /work/repo\nEnvironment: Local\nThose threads and any archived threads are deleted from T3 Code. Provider sessions are kept.\nOther entries in this grouped project are unaffected.\nThis action cannot be undone.',
+      'Remove checkout "Repo" and delete its 1 thread?\nPath: /work/repo\nEnvironment: Local\nThose threads and any archived threads are deleted from Conn. Provider sessions are kept.\nOther entries in this grouped project are unaffected.\nThis action cannot be undone.',
     );
   });
 
@@ -154,7 +154,7 @@ describe("project removal confirmation", () => {
       "Other entries in this grouped project are unaffected.",
     );
     expect(plan.confirmationMessage).toContain(
-      "Any archived threads are deleted from T3 Code. Provider sessions are kept.",
+      "Any archived threads are deleted from Conn. Provider sessions are kept.",
     );
   });
 

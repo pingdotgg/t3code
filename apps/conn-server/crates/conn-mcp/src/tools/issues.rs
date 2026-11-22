@@ -99,7 +99,7 @@ impl Cx<'_> {
     async fn issue_thread(&self, requested: Option<&str>) -> Result<Value, ToolError> {
         let Some(id) = requested.or(self.caller_thread_id()).map(str::to_owned) else {
             return Err(message(
-                "Pass threadId: this MCP client is not running inside a T3 thread.",
+                "Pass threadId: this MCP client is not running inside a Conn thread.",
             ));
         };
         self.projection(&id)
@@ -116,7 +116,7 @@ impl Cx<'_> {
                 Some(thread) => thread["projectId"].clone(),
                 None => {
                     return Err(message(
-                        "Pass projectId: this MCP client is not running inside a T3 thread.",
+                        "Pass projectId: this MCP client is not running inside a Conn thread.",
                     ));
                 }
             },
@@ -160,7 +160,7 @@ impl Cx<'_> {
         }
         let Some(key) = args.get("key") else {
             return Err(message(
-                "Pass either url, or key (with projectId when not running inside a T3 thread).",
+                "Pass either url, or key (with projectId when not running inside a Conn thread).",
             ));
         };
         let scope = self

@@ -2557,7 +2557,7 @@ it.effect.each([
       expect(error).toMatchObject({
         _tag: "PullRequestUnavailableError",
         reason: "repository-without-project",
-        message: `${repository} is not a project in T3 Code. Add it as a project to read its change requests.`,
+        message: `${repository} is not a project in Conn. Add it as a project to read its change requests.`,
       });
     }
   }),

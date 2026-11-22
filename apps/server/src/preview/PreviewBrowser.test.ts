@@ -172,7 +172,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("PreviewBrowser",
       const error = yield* browser.executable.pipe(Effect.flip);
 
       expect(error._tag).toBe("PreviewBrowserInstallError");
-      expect(error.message).toMatch(/^T3 could not install its headless browser: .+ Try again\.$/);
+      expect(error.message).toMatch(
+        /^Conn could not install its headless browser: .+ Try again\.$/,
+      );
       expect(yield* fs.readDirectory(installRoot)).toEqual([]);
       yield* browser.executable.pipe(Effect.flip);
       expect(requests).toHaveLength(2);

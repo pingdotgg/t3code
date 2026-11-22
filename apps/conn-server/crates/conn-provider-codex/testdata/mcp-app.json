@@ -39,7 +39,7 @@
         "frame": {
           "id": 1,
           "result": {
-            "userAgent": "T3 Code/0.156.1",
+            "userAgent": "Conn/0.156.1",
             "codexHome": "/tmp/codex-home",
             "platformFamily": "unix",
             "platformOs": "macos"

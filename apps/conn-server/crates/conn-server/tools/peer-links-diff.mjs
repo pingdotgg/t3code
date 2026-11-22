@@ -292,7 +292,7 @@ async function run(a, b) {
     await fetch(`${b.origin}/api/auth/clients`, { headers: { authorization: `Bearer ${b.bearer}` } })
   ).json();
   const linked = (Array.isArray(clients) ? clients : clients.clients ?? []).filter(
-    (c) => c.subject === "mcp-client" && c.client?.label === `T3 Code · ${a.label}`,
+    (c) => c.subject === "mcp-client" && [`T3 Code · ${a.label}`, `Conn · ${a.label}`].includes(c.client?.label),
   );
   // Every link from a machine with this label is listed; earlier pairs left theirs (unlink
   // forgets a link here only), so compare the distinct shapes.

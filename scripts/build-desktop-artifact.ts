@@ -2774,21 +2774,28 @@ export function resolveDesktopWebAssetBrand(version: string): WebAssetBrand {
 }
 
 /**
- * The splash logo a brand replaces in the packaged web client, or undefined to keep upstream's.
- * Only the stable channel: nightly keeps its own artwork.
+ * The splash logo, favicons and manifest icons a brand replaces in the packaged web client; empty
+ * keeps upstream's. Only the stable channel: nightly keeps its own artwork.
  */
-export function resolveDesktopWebIconOverride(
+export function resolveDesktopWebIconOverrides(
   webAssetBrand: WebAssetBrand,
   brand: AppBrand = UPSTREAM_APP_BRAND,
-): IconOverride | undefined {
-  const source = brand.icons.prod.appleTouchPng;
-  if (webAssetBrand !== "production" || source === UPSTREAM_APP_BRAND.icons.prod.appleTouchPng) {
-    return undefined;
-  }
-  return {
-    sourceRelativePath: source,
-    targetRelativePath: "apps/server/dist/client/apple-touch-icon.png",
-  };
+): ReadonlyArray<IconOverride> {
+  if (webAssetBrand !== "production") return [];
+  const targets = {
+    appleTouchPng: "apple-touch-icon.png",
+    webFaviconIco: "favicon.ico",
+    webFavicon16Png: "favicon-16x16.png",
+    webFavicon32Png: "favicon-32x32.png",
+    webIcon192Png: "icon-192x192.png",
+    webIcon512Png: "icon-512x512.png",
+  } as const;
+  return Object.entries(targets).flatMap(([key, target]) => {
+    const source = brand.icons.prod[key as keyof typeof targets];
+    return source === UPSTREAM_APP_BRAND.icons.prod[key as keyof typeof targets]
+      ? []
+      : [{ sourceRelativePath: source, targetRelativePath: `apps/server/dist/client/${target}` }];
+  });
 }
 
 export function resolveDesktopBuildIconAssets(
@@ -3852,18 +3859,16 @@ const buildDesktopArtifactUnlocked = Effect.fn("buildDesktopArtifactUnlocked")(f
   const webAssetBrand = resolveDesktopWebAssetBrand(appVersion);
   yield* applyWebBrandAssets(webAssetBrand, "apps/server/dist/client");
   yield* Effect.log(`[desktop-artifact] Applied ${webAssetBrand} web client branding.`);
-  const webIconOverride = resolveDesktopWebIconOverride(
+  const webIconOverrides = resolveDesktopWebIconOverrides(
     webAssetBrand,
     resolveForkBrand(loadRepoEnv({ repoRoot })),
   );
-  if (webIconOverride !== undefined) {
+  for (const override of webIconOverrides) {
     yield* fs.copyFile(
-      path.join(repoRoot, webIconOverride.sourceRelativePath),
-      path.join(repoRoot, webIconOverride.targetRelativePath),
+      path.join(repoRoot, override.sourceRelativePath),
+      path.join(repoRoot, override.targetRelativePath),
     );
-    yield* Effect.log(
-      `[desktop-artifact] Applied ${webIconOverride.sourceRelativePath} splash logo.`,
-    );
+    yield* Effect.log(`[desktop-artifact] Applied ${override.sourceRelativePath}.`);
   }
   yield* validateBundledClientAssets(path.dirname(bundledClientEntry));
 

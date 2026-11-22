@@ -1,6 +1,6 @@
 {
-  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/tool_call_workspace_never.ndjson through the orchestrator fixture runner at ea8a2d2e79; driver dropped.",
-  "capturedOn": "2026-11-17",
+  "note": "ProviderAdapterV2 calls and events from CodexAdapterV2 (TS) replaying cli/tool_call_workspace_never.ndjson through the orchestrator fixture runner at 328fe32fd0; driver dropped.",
+  "capturedOn": "2026-11-22",
   "startTurn": [
     {
       "appThread": {
@@ -79,7 +79,7 @@
       "runtimePolicy": {
         "runtimeMode": "full-access",
         "interactionMode": "default",
-        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-tool_call_workspace_never-CHLUZQ",
+        "cwd": "/var/folders/37/b_lcw0w931g1hyx157fr4zdr0000gn/T/t3-orchestrator-v2-tool_call_workspace_never-rcCI4O",
         "approvalPolicy": "never",
         "sandboxPolicy": {
           "type": "workspaceWrite",
@@ -109,7 +109,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:06.276Z",
+        "startedAt": "2026-11-22T12:04:21.658Z",
         "completedAt": null
       }
     },
@@ -298,7 +298,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:06.276Z",
+        "startedAt": "2026-11-22T12:04:21.658Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21865,
@@ -395,7 +395,7 @@
         },
         "ordinal": 1,
         "status": "running",
-        "startedAt": "2026-11-17T02:53:06.276Z",
+        "startedAt": "2026-11-22T12:04:21.658Z",
         "completedAt": null,
         "tokenUsage": {
           "usedTokens": 21915,
@@ -423,7 +423,7 @@
         },
         "ordinal": 1,
         "status": "completed",
-        "startedAt": "2026-11-17T02:53:06.276Z",
+        "startedAt": "2026-11-22T12:04:21.658Z",
         "completedAt": "2026-09-25T00:18:37.000Z",
         "turnTokenUsage": {
           "usageStatus": "complete",

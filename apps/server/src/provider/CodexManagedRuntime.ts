@@ -83,7 +83,7 @@ export const makeCodexManagedRuntime = Effect.fn("makeCodexManagedRuntime")(func
             instanceId: options.instanceId,
             operation: "runtime",
             detail:
-              "Could not prepare the private managed Codex token listener. Restart T3 and retry.",
+              "Could not prepare the private managed Codex token listener. Restart Conn and retry.",
             cause,
           }),
       ),
