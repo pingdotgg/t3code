@@ -284,10 +284,10 @@ function markStripOverflow(strip: HTMLElement): void {
     row.toggleAttribute("data-tab-row-overflow", overflow);
   }
   const end = scrollWidth - clientWidth - scrollLeft;
-  strip.style.setProperty("--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
-  strip.style.setProperty("--strip-overflow-end", `${Math.max(0, end)}px`);
-  strip.style.setProperty("--strip-overflowing-end", end > 0.5 ? "1" : "0");
-  strip.style.setProperty("--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
+  setPaneLitProperty(strip, "--strip-overflow-start", `${Math.max(0, scrollLeft)}px`);
+  setPaneLitProperty(strip, "--strip-overflow-end", `${Math.max(0, end)}px`);
+  setPaneLitProperty(strip, "--strip-overflowing-end", end > 0.5 ? "1" : "0");
+  setPaneLitProperty(strip, "--strip-overflowing-start", scrollLeft > 0.5 ? "1" : "0");
   const entry = stripEntries.get(strip);
   if (!entry) return;
   entry.width = clientWidth;

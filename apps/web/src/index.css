@@ -6773,6 +6773,40 @@ body {
   syntax: "*";
   inherits: false;
 }
+/* The strip's edge fade reads these on the strip alone (PaneTabs.tsx,
+   markStripOverflow). Inherited, each scroll step restyled every tab. */
+@property --strip-overflow-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-overflow-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-overflowing-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-overflowing-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-fade-lead {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-fade-start {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-fade-end {
+  syntax: "*";
+  inherits: false;
+}
+@property --strip-fade-end-at {
+  syntax: "*";
+  inherits: false;
+}
 @property --strip-fade-start-shown {
   syntax: "<number>";
   inherits: false;
