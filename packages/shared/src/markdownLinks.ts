@@ -525,35 +525,28 @@ function markdownLinkDestinationScanner(markdown: string) {
   };
 }
 
-// The composer escapes brackets in labels (`[\[id\].tsx](...)`), and `\]` does not close one.
-function unescapedLabelEnd(markdown: string, start: number): number {
-  let end = markdown.indexOf("]", start);
-  while (end !== -1) {
-    let backslashes = 0;
-    while (end - backslashes > start && markdown[end - backslashes - 1] === "\\") backslashes += 1;
-    if (backslashes % 2 === 0) return end;
-    end = markdown.indexOf("]", end + 1);
-  }
-  return -1;
-}
-
+// Labels may nest balanced brackets (`[the [docs] guide](...)`), and the composer escapes them
+// (`[\[id\].tsx](...)`), so `\[` and `\]` never count.
 export function extractMarkdownLinkHrefs(markdown: string): string[] {
   const hrefs: string[] = [];
   const scanDestination = markdownLinkDestinationScanner(markdown);
-  let cursor = 0;
-  while (cursor < markdown.length) {
-    const labelStart = markdown.indexOf("[", cursor);
-    if (labelStart === -1) break;
-    const labelEnd = unescapedLabelEnd(markdown, labelStart + 1);
-    if (labelEnd === -1) break;
-
-    // Skip a failed label once; nested openings share its closing bracket.
-    cursor = labelEnd + 1;
-    const destination = scanDestination(cursor);
-    if (!destination) continue;
-    cursor = destination.end;
-    const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
-    if (href) hrefs.push(href);
+  const bracket = /[[\]\\]/g;
+  let openBrackets = 0;
+  for (let match = bracket.exec(markdown); match; match = bracket.exec(markdown)) {
+    if (match[0] === "\\") {
+      bracket.lastIndex = match.index + 2;
+    } else if (match[0] === "[") {
+      openBrackets += 1;
+    } else if (openBrackets > 0) {
+      openBrackets -= 1;
+      const destination = scanDestination(match.index + 1);
+      if (!destination) continue;
+      // A link cannot contain a link, so the brackets still open around it become text.
+      openBrackets = 0;
+      bracket.lastIndex = destination.end;
+      const href = markdown.slice(destination.hrefStart, destination.hrefEnd).trim();
+      if (href) hrefs.push(href);
+    }
   }
   return hrefs;
 }
