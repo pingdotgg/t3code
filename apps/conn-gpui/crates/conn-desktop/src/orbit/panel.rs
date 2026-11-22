@@ -8,8 +8,8 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::insights::InsightId;
-use super::tasks::{InsightsPeriod, TaskLane};
+use conn_orbit::insights::InsightId;
+use conn_orbit::tasks::{InsightsPeriod, TaskLane};
 
 /// `Subtasks` exists on the task only; a subtask shows Brief and Agents.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]

@@ -5,7 +5,7 @@ mod app;
 #[cfg(feature = "automation")]
 mod automation;
 mod colour_space;
-mod commands;
+pub(crate) use conn_client::commands;
 mod file_icons;
 mod fixture;
 mod fonts;

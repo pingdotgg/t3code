@@ -1,0 +1,29 @@
+[package]
+name = "conn-orbit"
+description = "GPUI-free Orbit Gateway client, models, realtime follower, and Tasks/Profile/Fleet logic shared across conn-gpui and iOS (UniFFI)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+futures.workspace = true
+reqwest.workspace = true
+# Explicit rustls + platform verifier so HTTPS and Reverb WSS verify certificates through Apple's
+# Security.framework (`SecTrustEvaluateWithError`) on BOTH macOS and iOS. `rustls-native-certs`
+# only queries the keychain on `target_os = "macos"` and falls back to Linux `openssl-probe` on
+# `target_os = "ios"`, which cannot see the Orbit root CA installed in the iOS device trust store.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-platform-verifier = "0.7"
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+tokio.workspace = true
+# Enable rustls TLS without pulling `rustls-native-certs` (`openssl-probe` on iOS); `realtime.rs`
+# passes a `Connector::Rustls` configured with `rustls-platform-verifier`.
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+url.workspace = true
+
+[lints]
+workspace = true

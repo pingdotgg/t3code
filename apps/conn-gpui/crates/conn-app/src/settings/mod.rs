@@ -1930,14 +1930,12 @@ fn over(top: conn_theme::Rgba, below: conn_theme::Rgba) -> conn_theme::Rgba {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum OrbitNodeRoleBadge {
-    PrimaryAgent,
     Agent,
 }
 
 impl OrbitNodeRoleBadge {
     const fn label(self) -> &'static str {
         match self {
-            Self::PrimaryAgent => "Primary agent",
             Self::Agent => "Agent",
         }
     }
@@ -1946,17 +1944,12 @@ impl OrbitNodeRoleBadge {
 fn orbit_node_role_badge(
     node: &conn_desktop::orbit::OrbitServerTarget,
 ) -> Option<OrbitNodeRoleBadge> {
-    if node.is_primary_agent() {
-        Some(OrbitNodeRoleBadge::PrimaryAgent)
-    } else if node.has_agent_role() {
-        Some(OrbitNodeRoleBadge::Agent)
-    } else {
-        None
-    }
+    node.has_agent_role().then_some(OrbitNodeRoleBadge::Agent)
 }
 
 /// Renders an Orbit Node row inside `Settings › Connections`, placing a subtle Conn-styled
-/// `Agent` / `Primary agent` pill badge next to the node label when applicable.
+/// `Agent` pill badge next to the node label when the Node carries the Orbit `agent` role (the
+/// Conn entry point).
 fn orbit_node_row(
     title: &str,
     role_badge: Option<OrbitNodeRoleBadge>,
@@ -1985,11 +1978,6 @@ fn orbit_node_row(
 
     if let Some(badge) = role_badge {
         let (badge_bg, badge_border, badge_fg) = match badge {
-            OrbitNodeRoleBadge::PrimaryAgent => (
-                hsla_alpha(tokens.info, 0.14),
-                hsla_alpha(tokens.info, 0.30),
-                hsla(tokens.info_foreground),
-            ),
             OrbitNodeRoleBadge::Agent => (
                 hsla(tokens.shell_control_raised),
                 hsla(tokens.shell_control_raised_border),
@@ -2054,7 +2042,7 @@ mod tests {
 
     use super::{OrbitNodeRoleBadge, orbit_node_role_badge};
 
-    fn node_target(roles: &[&str], is_primary_agent: bool) -> OrbitServerTarget {
+    fn node_target(roles: &[&str]) -> OrbitServerTarget {
         OrbitServerTarget {
             server_id: "node-mini".to_owned(),
             label: "mini".to_owned(),
@@ -2066,28 +2054,20 @@ mod tests {
             kind: OrbitTargetKind::Node {
                 node_name: "mini".to_owned(),
                 roles: roles.iter().map(|r| (*r).to_owned()).collect(),
-                is_primary_agent,
             },
         }
     }
 
     #[test]
     fn resolves_orbit_node_role_badges() {
-        let primary = node_target(&["agent"], true);
-        assert_eq!(
-            orbit_node_role_badge(&primary),
-            Some(OrbitNodeRoleBadge::PrimaryAgent)
-        );
-        assert_eq!(OrbitNodeRoleBadge::PrimaryAgent.label(), "Primary agent");
-
-        let agent = node_target(&["router", "agent"], false);
+        let agent = node_target(&["router", "agent"]);
         assert_eq!(
             orbit_node_role_badge(&agent),
             Some(OrbitNodeRoleBadge::Agent)
         );
         assert_eq!(OrbitNodeRoleBadge::Agent.label(), "Agent");
 
-        let plain = node_target(&["router"], false);
+        let plain = node_target(&["router"]);
         assert_eq!(orbit_node_role_badge(&plain), None);
     }
 }

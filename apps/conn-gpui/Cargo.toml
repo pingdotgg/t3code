@@ -14,6 +14,7 @@ rust-version = "1.95"
 # Local workspace crates
 conn-client = { path = "crates/conn-client" }
 conn-desktop = { path = "crates/conn-desktop" }
+conn-orbit = { path = "crates/conn-orbit" }
 conn-state = { path = "crates/conn-state" }
 conn-theme = { path = "crates/conn-theme" }
 conn-web = { path = "crates/conn-web" }

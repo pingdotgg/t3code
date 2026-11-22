@@ -11,10 +11,9 @@
 //! This module harmonizes the client domain model around **Nodes** and **Instances** while speaking
 //! the Gateway's wire paths transparently. All code here is GPUI-free and `#![forbid(unsafe_code)]`.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::future::Future;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -40,8 +39,6 @@ pub enum OrbitTargetKind {
         node_name: String,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         roles: Vec<String>,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        is_primary_agent: bool,
     },
     /// Isolated Orbit Instance for a project branch on a Node.
     Instance {
@@ -132,27 +129,14 @@ impl OrbitServerTarget {
         }
     }
 
-    /// True when this target is an Orbit Node designated as the primary `agent` entry point.
-    #[must_use]
-    pub fn is_primary_agent(&self) -> bool {
-        matches!(
-            self.kind,
-            OrbitTargetKind::Node {
-                is_primary_agent: true,
-                ..
-            }
-        )
-    }
-
-    /// True when this target is an Orbit Node carrying the `"agent"` role (or marked primary agent).
+    /// True when this target is an Orbit Node carrying the `"agent"` role. A Node with that role
+    /// is the Conn entry point; the Gateway reports `roles` only (no separate primary flag).
     #[must_use]
     pub fn has_agent_role(&self) -> bool {
         match &self.kind {
-            OrbitTargetKind::Node {
-                roles,
-                is_primary_agent,
-                ..
-            } => *is_primary_agent || roles.iter().any(|r| r.eq_ignore_ascii_case("agent")),
+            OrbitTargetKind::Node { roles, .. } => {
+                roles.iter().any(|r| r.eq_ignore_ascii_case("agent"))
+            }
             OrbitTargetKind::Instance { .. } => false,
         }
     }
@@ -299,7 +283,7 @@ impl OrbitFleet {
             .count()
     }
 
-    /// All Orbit Nodes carrying the `"agent"` role (including any marked `is_primary_agent`).
+    /// All Orbit Nodes carrying the `"agent"` role.
     #[must_use]
     pub fn agent_nodes(&self) -> Vec<&OrbitServerTarget> {
         self.nodes
@@ -309,21 +293,14 @@ impl OrbitFleet {
     }
 
     /// Preferred default Orbit Node entry point:
-    /// 1. A registered node with `is_primary_agent == true` (falling back to any `is_primary_agent`),
-    /// 2. The first registered node carrying the `"agent"` role,
-    /// 3. The local node fallback (first registered node, else `nodes.first()`, since
+    /// 1. The first registered node carrying the `"agent"` role,
+    /// 2. The local node fallback (first registered node, else `nodes.first()`, since
     ///    [`Self::from_targets`] sorts the local node first).
     #[must_use]
     pub fn primary_agent_node(&self) -> Option<&OrbitServerTarget> {
         self.nodes
             .iter()
-            .find(|n| n.status == OrbitTargetStatus::Registered && n.is_primary_agent())
-            .or_else(|| self.nodes.iter().find(|n| n.is_primary_agent()))
-            .or_else(|| {
-                self.nodes
-                    .iter()
-                    .find(|n| n.status == OrbitTargetStatus::Registered && n.has_agent_role())
-            })
+            .find(|n| n.status == OrbitTargetStatus::Registered && n.has_agent_role())
             .or_else(|| {
                 self.nodes
                     .iter()
@@ -331,6 +308,125 @@ impl OrbitFleet {
             })
             .or_else(|| self.nodes.first())
     }
+
+    /// Selects the primary `agent`-role Node from this fleet, falling back only to
+    /// `local_node_name` when that local host Node is registered (otherwise `None`, e.g. on iOS).
+    ///
+    /// Delegates to [`select_primary_agent_node`]; see its docs for the full selection order and
+    /// the Gateway pairing + token-exchange flow needed to connect to the selected node.
+    #[must_use]
+    pub fn select_primary_agent_node(
+        &self,
+        local_node_name: Option<&str>,
+    ) -> Option<&OrbitServerTarget> {
+        select_primary_agent_node(&self.nodes, local_node_name)
+    }
+}
+
+fn matches_local_node(target: &OrbitServerTarget, local_node_name: Option<&str>) -> bool {
+    let Some(needle) = local_node_name.map(str::trim).filter(|s| !s.is_empty()) else {
+        return false;
+    };
+    target
+        .node_name()
+        .is_some_and(|name| name.eq_ignore_ascii_case(needle))
+        || target.label.eq_ignore_ascii_case(needle)
+}
+
+fn deterministic_node_order<'a>(
+    target: &'a OrbitServerTarget,
+    local_node_name: Option<&str>,
+) -> (bool, String, &'a str) {
+    (
+        !matches_local_node(target, local_node_name),
+        target.label.to_ascii_lowercase(),
+        target.server_id.as_str(),
+    )
+}
+
+/// Selects the Orbit Node carrying the `"agent"` role from the Gateway's target list
+/// (`docs/scope.md` §5.4). The Node with the `agent` role IS the Conn entry point: the Gateway
+/// reports each Node's `roles` on `GET /api/v1/conn/environments` and has no separate primary flag.
+///
+/// Mirrors how desktop (`conn-app`) and Expo mobile (`apps/mobile/src/features/orbit/orbitGatewayStore.ts`,
+/// `OrbitEnvironmentSections.tsx`) interpret `GET /api/v1/conn/environments`:
+/// - Only host Nodes (`instance_id == None`, i.e. [`OrbitServerTarget::is_node`]) that are
+///   `Registered` and not `cleanup_pending` are eligible; per-project Instance clones and
+///   `SessionExpired` registrations are skipped.
+/// - Selection priority:
+///   1. Registered host Node whose `roles` contain `"agent"` (case-insensitive; ties broken
+///      deterministically: local node first, then ASCII case-insensitive label, then `server_id`).
+///   2. If no `agent`-role node is set and `local_node_name` is `Some(name)`, the registered host
+///      Node matching `name` by `node_name` or `label` (desktop day-1 local fallback).
+///   3. `None` when no `agent`-role node is configured and no local host Node matches (e.g. on
+///      iOS, where the phone does not host `conn-server`, or when `local_node_name` is `None`).
+///
+/// # Connecting to the selected node (URL + credential)
+///
+/// Selecting a node only identifies the target; callers obtain a `conn-server` URL and bearer
+/// credential via the following flow (not executed here):
+///
+/// 1. **Discover the node & fleet:** Call `GET /api/v1/conn/me`
+///    ([`OrbitProfileClient::me`](super::profile::OrbitProfileClient::me)) for this device's node
+///    name and `GET /api/v1/conn/environments` ([`OrbitFleetClient::list_fleet`]), mirroring
+///    `packages/client-runtime/src/orbitGateway/client.ts` (`me`, `environments`),
+///    `apps/mobile/src/features/orbit/orbitGatewayStore.ts` (`refreshOrbitGateway`), and
+///    `apps/conn-gpui/crates/conn-app/src/orbit_sync.rs` (`fetch_orbit_profile`).
+/// 2. **Reuse a cached bearer token when already paired:** If the client already persisted a
+///    bearer token for `target.server_id` (macOS: `conn_desktop::orbit::OrbitSessionStore`; iOS:
+///    Keychain / SecureStore), connect directly to `target.url` with that bearer token (see
+///    `apps/conn-gpui/crates/conn-app/src/app.rs` `connect_orbit_target` and
+///    `apps/mobile/src/features/orbit/orbitGatewayStore.ts` `reconcileEnvironments`).
+/// 3. **Mint a one-time pairing URL from Orbit Gateway:** Call
+///    [`OrbitFleetClient::mint_pairing`] with `target.server_id`, which sends
+///    `POST /api/v1/conn/environments/{server_id}/pairings` (passing `{ "renew": true }` when
+///    renewing an expired/expiring session). If the Gateway responds `202 Accepted` with an async
+///    `conn.pairing_create` Operation, `mint_pairing` polls `GET /api/v1/operations/{id}` until
+///    `status == "succeeded"` and reads `GET /api/v1/conn/environments/{server_id}/pairings/{pairing_id}`
+///    once to return an [`OrbitPairingTicket`] (see
+///    `packages/client-runtime/src/orbitGateway/client.ts` `pair` and
+///    `apps/mobile/src/features/orbit/orbitGatewayStore.ts` `attemptPairing`).
+/// 4. **Extract the `conn-server` URL and pairing code:** Read
+///    [`OrbitPairingTicket::http_base_url`] (falling back to `target.url`) and
+///    [`OrbitPairingTicket::pairing_code`] (the `#token=<code>` fragment).
+/// 5. **Exchange the pairing code for a `conn-server` bearer token:** `POST {http_base_url}/oauth/token`
+///    (`application/x-www-form-urlencoded`, `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`,
+///    `subject_token=<code>`, `subject_token_type=urn:t3:params:oauth:token-type:environment-bootstrap`,
+///    `requested_token_type=urn:t3:params:oauth:token-type:access_token`). In Rust, passing
+///    `conn_client::Credential::PairingCode(code)` does this exchange automatically (see
+///    `apps/conn-gpui/crates/conn-client/src/auth.rs` `exchange_pairing_code` and
+///    `apps/conn-gpui/crates/conn-client/src/driver.rs`); in TypeScript/Expo, see
+///    `packages/client-runtime/src/connection/onboarding.ts` (`registerPairingConnection`) and
+///    `apps/mobile/src/connection/onboarding.ts` (`connectPairingUrl`). Persist the returned
+///    `access_token` per `server_id` and open `/ws?orchestrationProtocol=2` with
+///    `Authorization: Bearer <access_token>`.
+#[must_use]
+pub fn select_primary_agent_node<'a>(
+    targets: &'a [OrbitServerTarget],
+    local_node_name: Option<&str>,
+) -> Option<&'a OrbitServerTarget> {
+    let eligible: Vec<&OrbitServerTarget> = targets
+        .iter()
+        .filter(|target| {
+            target.is_node()
+                && !target.cleanup_pending
+                && target.status == OrbitTargetStatus::Registered
+        })
+        .collect();
+
+    if let Some(agent) = eligible
+        .iter()
+        .copied()
+        .filter(|node| node.has_agent_role())
+        .min_by_key(|node| deterministic_node_order(node, local_node_name))
+    {
+        return Some(agent);
+    }
+
+    eligible
+        .into_iter()
+        .filter(|node| matches_local_node(node, local_node_name))
+        .min_by_key(|node| deterministic_node_order(node, local_node_name))
 }
 
 /// One-time pairing link minted by Orbit Gateway for a Node or Instance.
@@ -363,6 +459,96 @@ impl OrbitPairingTicket {
         parsed.set_fragment(None);
         Some(parsed)
     }
+}
+
+/// Outcome of checking whether a cached bearer token is still accepted by a `conn-server`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BearerCheckOutcome {
+    /// The server accepted the bearer token (or does not expose `/api/auth/session`).
+    Valid,
+    /// The server explicitly rejected the bearer token (401/403 or `authenticated: false`).
+    Rejected,
+    /// The server could not be reached or answered 5xx; keep the cached token for retry.
+    Unreachable,
+}
+
+/// Resolved connection plan for an Orbit `conn-server` target (steps 2–4 of the Orbit flow).
+#[derive(Clone, PartialEq, Eq)]
+pub enum EnvironmentConnectPlan {
+    /// Reuse the caller's cached bearer token against `server_url`.
+    ReuseBearer { server_url: String, bearer: String },
+    /// Exchange a freshly minted single-use pairing code against `server_url`.
+    PairWithCode {
+        server_url: String,
+        pairing_code: String,
+        expires_at: String,
+    },
+}
+
+impl std::fmt::Debug for EnvironmentConnectPlan {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ReuseBearer { server_url, .. } => f
+                .debug_struct("ReuseBearer")
+                .field("server_url", server_url)
+                .field("bearer", &"<redacted>")
+                .finish(),
+            Self::PairWithCode {
+                server_url,
+                expires_at,
+                ..
+            } => f
+                .debug_struct("PairWithCode")
+                .field("server_url", server_url)
+                .field("pairing_code", &"<redacted>")
+                .field("expires_at", expires_at)
+                .finish(),
+        }
+    }
+}
+
+/// Probes `GET {server_url}/api/auth/session` with `Authorization: Bearer {bearer}` to distinguish
+/// a revoked/expired cached bearer from a valid session or transient network failure.
+pub async fn check_bearer_session(server_url: &str, bearer: &str) -> BearerCheckOutcome {
+    let Ok(base) = url::Url::parse(server_url.trim()) else {
+        return BearerCheckOutcome::Unreachable;
+    };
+    let Ok(session_url) = base.join("api/auth/session") else {
+        return BearerCheckOutcome::Unreachable;
+    };
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+    else {
+        return BearerCheckOutcome::Unreachable;
+    };
+    let Ok(response) = client
+        .get(session_url)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .bearer_auth(bearer)
+        .send()
+        .await
+    else {
+        return BearerCheckOutcome::Unreachable;
+    };
+    let status = response.status().as_u16();
+    if status == 401 || status == 403 {
+        return BearerCheckOutcome::Rejected;
+    }
+    if (200..300).contains(&status) {
+        if let Ok(body) = response.text().await
+            && let Ok(parsed) = serde_json::from_str::<Value>(&body)
+            && parsed.get("authenticated").and_then(Value::as_bool) == Some(false)
+        {
+            return BearerCheckOutcome::Rejected;
+        }
+        return BearerCheckOutcome::Valid;
+    }
+    if status == 404 {
+        return BearerCheckOutcome::Valid;
+    }
+    BearerCheckOutcome::Unreachable
 }
 
 /// Client for Orbit Node & Instance discovery, pairing, and waking.
@@ -489,6 +675,110 @@ impl OrbitFleetClient {
             .or_else(|| data.get("id"))
             .and_then(Value::as_i64);
         Ok(op_id)
+    }
+
+    /// Requests Orbit to wake a stopped Instance and polls `GET /api/v1/operations/{id}` until
+    /// the wake operation finishes (mirroring `packages/client-runtime/src/orbitGateway/instanceWake.ts`).
+    pub async fn wake_and_wait_instance(&self, instance_id: i64) -> ProfileResult<()> {
+        let Some(op_id) = self.wake_instance(instance_id).await? else {
+            return Ok(());
+        };
+        let op_path = format!("/operations/{op_id}");
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        loop {
+            let op = self.call(GatewayRequest::get(&op_path).at_root()).await?;
+            let status = op.get("status").and_then(Value::as_str).unwrap_or_default();
+            match status {
+                "succeeded" => return Ok(()),
+                "failed" | "cancelled" | "interrupted" | "timed_out" => {
+                    let code = op
+                        .get("error_code")
+                        .and_then(Value::as_str)
+                        .unwrap_or("instance.wake_failed")
+                        .to_owned();
+                    let message = op
+                        .get("error")
+                        .and_then(|e| {
+                            e.as_str()
+                                .or_else(|| e.get("message").and_then(Value::as_str))
+                        })
+                        .unwrap_or("Orbit could not wake the instance.")
+                        .to_owned();
+                    return Err(ProfileError::Gateway {
+                        code,
+                        message,
+                        status: 500,
+                    });
+                }
+                _ => {}
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ProfileError::Gateway {
+                    code: "operation.timeout".to_owned(),
+                    message: "Timed out waiting for Orbit instance to wake.".to_owned(),
+                    status: 504,
+                });
+            }
+            let wait_secs = op
+                .get("poll_after_seconds")
+                .and_then(Value::as_u64)
+                .unwrap_or(1)
+                .clamp(1, 2);
+            tokio::time::sleep(Duration::from_millis(wait_secs * 500)).await;
+        }
+    }
+
+    /// Resolves how to connect to `server_id` (steps 2–4 of the Orbit connect flow):
+    /// - Looks up `server_id` in the Gateway's fleet.
+    /// - When a non-empty `cached_bearer` is supplied, invokes `verify_bearer(url, bearer)`:
+    ///   reuses it on [`BearerCheckOutcome::Valid`] or [`BearerCheckOutcome::Unreachable`], and
+    ///   falls back to minting a fresh pairing **once** on [`BearerCheckOutcome::Rejected`].
+    /// - When no cached bearer is supplied, mints a pairing directly via [`Self::mint_pairing`].
+    pub async fn resolve_environment_connect<F, Fut>(
+        &self,
+        server_id: &str,
+        cached_bearer: Option<&str>,
+        verify_bearer: F,
+    ) -> ProfileResult<EnvironmentConnectPlan>
+    where
+        F: FnOnce(String, String) -> Fut,
+        Fut: Future<Output = BearerCheckOutcome>,
+    {
+        let fleet = self.list_fleet(None).await?;
+        let target = fleet
+            .find_by_server_id(server_id)
+            .ok_or_else(|| ProfileError::Gateway {
+                code: "http.404".to_owned(),
+                message: format!("Orbit environment `{server_id}` was not found."),
+                status: 404,
+            })?;
+        let target_url = target.url.clone();
+
+        if let Some(bearer) = cached_bearer.map(str::trim).filter(|s| !s.is_empty()) {
+            match verify_bearer(target_url.clone(), bearer.to_owned()).await {
+                BearerCheckOutcome::Valid | BearerCheckOutcome::Unreachable => {
+                    return Ok(EnvironmentConnectPlan::ReuseBearer {
+                        server_url: target_url,
+                        bearer: bearer.to_owned(),
+                    });
+                }
+                BearerCheckOutcome::Rejected => {}
+            }
+        }
+
+        let ticket = self.mint_pairing(server_id).await?;
+        let pairing_code = ticket
+            .pairing_code()
+            .ok_or_else(|| invalid(&format!("/environments/{server_id}/pairings")))?;
+        let server_url = ticket
+            .http_base_url()
+            .map(|u| u.to_string())
+            .unwrap_or(target_url);
+        Ok(EnvironmentConnectPlan::PairWithCode {
+            server_url,
+            pairing_code,
+            expires_at: ticket.expires_at,
+        })
     }
 
     async fn call(&self, request: GatewayRequest) -> ProfileResult<Value> {
@@ -625,7 +915,6 @@ fn decode_target(value: &Value) -> Option<OrbitServerTarget> {
                 .unwrap_or(&label)
                 .to_owned(),
             roles: decode_roles(obj),
-            is_primary_agent: decode_is_primary_agent(obj),
         },
     };
 
@@ -687,153 +976,12 @@ fn decode_roles(obj: &serde_json::Map<String, Value>) -> Vec<String> {
     roles
 }
 
-fn decode_is_primary_agent(obj: &serde_json::Map<String, Value>) -> bool {
-    obj.get("is_primary_agent")
-        .or_else(|| obj.get("primary_agent"))
-        .or_else(|| {
-            obj.get("node")
-                .and_then(|n| n.get("is_primary_agent").or_else(|| n.get("primary_agent")))
-        })
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-// ---------------------------------------------------------------------------
-// Local bearer session store (isolated under conn-gpui app support)
-// ---------------------------------------------------------------------------
-
-/// Cached bearer token for one paired Orbit Node or Instance.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CachedOrbitSession {
-    pub server_id: String,
-    pub url: String,
-    pub label: String,
-    pub bearer: String,
-    pub paired_at_unix: i64,
-}
-
-/// Persistent local store of auto-paired `conn-server` bearer tokens for Orbit Nodes/Instances.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OrbitSessionStore {
-    #[serde(default)]
-    pub active_server_id: Option<String>,
-    #[serde(default)]
-    pub sessions: BTreeMap<String, CachedOrbitSession>,
-}
-
-impl OrbitSessionStore {
-    /// Default path (`~/Library/Application Support/conn-gpui/orbit-sessions.json` on macOS),
-    /// overridable with `CONN_GPUI_CONFIG_DIR` for isolated dev/test sessions.
-    #[must_use]
-    pub fn default_path() -> Option<PathBuf> {
-        if let Some(dir) = std::env::var_os("CONN_GPUI_CONFIG_DIR") {
-            return Some(PathBuf::from(dir).join("orbit-sessions.json"));
-        }
-        let home = std::env::var_os("HOME").map(PathBuf::from)?;
-        #[cfg(target_os = "macos")]
-        let dir = home
-            .join("Library")
-            .join("Application Support")
-            .join("conn-gpui");
-        #[cfg(not(target_os = "macos"))]
-        let dir = std::env::var_os("XDG_CONFIG_HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home.join(".config"))
-            .join("conn-gpui");
-        Some(dir.join("orbit-sessions.json"))
-    }
-
-    /// Loads the store from disk, returning empty defaults if missing or unreadable.
-    #[must_use]
-    pub fn load_from(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
-    }
-
-    /// Loads from the default application support path.
-    #[must_use]
-    pub fn load_default() -> Self {
-        Self::default_path()
-            .map(|p| Self::load_from(&p))
-            .unwrap_or_default()
-    }
-
-    /// Saves atomically to `path` (mode `0600` on Unix since it stores bearer tokens).
-    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let payload = serde_json::to_string_pretty(self)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, payload)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt as _;
-            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
-        }
-        std::fs::rename(&tmp, path)
-    }
-
-    /// Saves to the default application support path.
-    pub fn save_default(&self) -> std::io::Result<()> {
-        let Some(path) = Self::default_path() else {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                "HOME directory not set",
-            ));
-        };
-        self.save_to(&path)
-    }
-
-    /// Returns a cached bearer token for `server_id`, when present.
-    #[must_use]
-    pub fn bearer_for(&self, server_id: &str) -> Option<&str> {
-        self.sessions
-            .get(server_id)
-            .map(|s| s.bearer.as_str())
-            .filter(|t| !t.is_empty())
-    }
-
-    /// Records a newly paired bearer token for `server_id` and marks it active.
-    pub fn record_bearer(
-        &mut self,
-        server_id: impl Into<String>,
-        url: impl Into<String>,
-        label: impl Into<String>,
-        bearer: impl Into<String>,
-    ) {
-        let server_id = server_id.into();
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX));
-        self.active_server_id = Some(server_id.clone());
-        self.sessions.insert(
-            server_id.clone(),
-            CachedOrbitSession {
-                server_id,
-                url: url.into(),
-                label: label.into(),
-                bearer: bearer.into(),
-                paired_at_unix: now,
-            },
-        );
-    }
-
-    /// Clears a cached bearer token (e.g. after a 401/Auth failure so next attempt re-pairs).
-    pub fn remove_bearer(&mut self, server_id: &str) {
-        self.sessions.remove(server_id);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::orbit::gateway::{BoxFuture, GatewayError, GatewayResponse};
+    use crate::gateway::{BoxFuture, GatewayError, GatewayResponse};
 
     struct MockGateway {
         handler:
@@ -1059,22 +1207,6 @@ mod tests {
         assert_eq!(op, Some(991));
     }
 
-    #[test]
-    fn session_store_roundtrips_bearer_tokens() {
-        let dir =
-            std::env::temp_dir().join(format!("conn-orbit-sessions-test-{}", std::process::id()));
-        let path = dir.join("orbit-sessions.json");
-        let mut store = OrbitSessionStore::default();
-        store.record_bearer("node-beast", "http://10.44.0.7:3773", "beast", "tok-secret");
-        store.save_to(&path).expect("save");
-
-        let loaded = OrbitSessionStore::load_from(&path);
-        assert_eq!(loaded.active_server_id.as_deref(), Some("node-beast"));
-        assert_eq!(loaded.bearer_for("node-beast"), Some("tok-secret"));
-
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     #[tokio::test]
     async fn decodes_agent_roles_and_resolves_primary_agent_node() {
         let payload = serde_json::json!({
@@ -1106,8 +1238,7 @@ mod tests {
                     "status": "registered",
                     "cleanup_pending": false,
                     "instance_id": null,
-                    "roles": ["agent", "Agent", "  "],
-                    "primary_agent": true
+                    "roles": ["agent", "Agent", "  "]
                 }
             ]
         })
@@ -1128,15 +1259,12 @@ mod tests {
         let mini = fleet.find_by_server_id("node-mini").expect("mini");
 
         assert!(!nick.has_agent_role());
-        assert!(!nick.is_primary_agent());
         assert!(nick.roles().is_empty());
 
         assert!(beast.has_agent_role());
-        assert!(!beast.is_primary_agent());
         assert_eq!(beast.roles(), ["router", "agent"]);
 
         assert!(mini.has_agent_role());
-        assert!(mini.is_primary_agent());
         assert_eq!(mini.roles(), ["agent"]);
 
         let agent_ids: Vec<&str> = fleet
@@ -1146,13 +1274,14 @@ mod tests {
             .collect();
         assert_eq!(agent_ids, vec!["node-beast", "node-mini"]);
 
-        // 1. Prefers `is_primary_agent == true`.
+        // 1. Prefers the first registered node with the `"agent"` role (local node sorts first,
+        //    then label: nick has no role, so beast).
         assert_eq!(
             fleet.primary_agent_node().map(|n| n.server_id.as_str()),
-            Some("node-mini")
+            Some("node-beast")
         );
 
-        // 2. Without a primary agent, prefers the first registered node with `"agent"` role.
+        // 2. The same without mini.
         let without_primary =
             OrbitFleet::from_targets(vec![nick.clone(), beast.clone()], Some("nick"));
         assert_eq!(
@@ -1167,7 +1296,6 @@ mod tests {
         plain_beast.kind = OrbitTargetKind::Node {
             node_name: "beast".to_owned(),
             roles: Vec::new(),
-            is_primary_agent: false,
         };
         let without_agents =
             OrbitFleet::from_targets(vec![plain_beast, nick.clone()], Some("nick"));
@@ -1184,25 +1312,7 @@ mod tests {
     }
 
     #[test]
-    fn deserializes_legacy_orbit_sessions_and_targets_without_agent_fields() {
-        let legacy_sessions_json = serde_json::json!({
-            "active_server_id": "node-nick",
-            "sessions": {
-                "node-nick": {
-                    "server_id": "node-nick",
-                    "url": "http://10.44.0.6:3773",
-                    "label": "nick",
-                    "bearer": "legacy-token",
-                    "paired_at_unix": 1_700_000_000
-                }
-            }
-        })
-        .to_string();
-        let store: OrbitSessionStore =
-            serde_json::from_str(&legacy_sessions_json).expect("legacy orbit-sessions.json");
-        assert_eq!(store.active_server_id.as_deref(), Some("node-nick"));
-        assert_eq!(store.bearer_for("node-nick"), Some("legacy-token"));
-
+    fn deserializes_legacy_orbit_targets_without_agent_fields() {
         let legacy_target_json = serde_json::json!({
             "server_id": "node-nick",
             "label": "nick",
@@ -1221,7 +1331,350 @@ mod tests {
             serde_json::from_str(&legacy_target_json).expect("legacy OrbitServerTarget");
         assert!(target.is_node());
         assert!(target.roles().is_empty());
-        assert!(!target.is_primary_agent());
         assert!(!target.has_agent_role());
+    }
+
+    fn make_node(
+        server_id: &str,
+        label: &str,
+        node_name: &str,
+        roles: &[&str],
+        status: OrbitTargetStatus,
+        cleanup_pending: bool,
+    ) -> OrbitServerTarget {
+        OrbitServerTarget {
+            server_id: server_id.to_owned(),
+            label: label.to_owned(),
+            url: format!("http://10.44.0.10:3773/{server_id}"),
+            server_version: Some("0.1.7".to_owned()),
+            registered_by: Some(node_name.to_owned()),
+            status,
+            cleanup_pending,
+            kind: OrbitTargetKind::Node {
+                node_name: node_name.to_owned(),
+                roles: roles.iter().map(|r| (*r).to_owned()).collect(),
+            },
+        }
+    }
+
+    fn make_instance(server_id: &str, label: &str, instance_id: i64) -> OrbitServerTarget {
+        OrbitServerTarget {
+            server_id: server_id.to_owned(),
+            label: label.to_owned(),
+            url: format!("http://10.44.0.10:3800/{server_id}"),
+            server_version: Some("0.1.7".to_owned()),
+            registered_by: Some("beast".to_owned()),
+            status: OrbitTargetStatus::Registered,
+            cleanup_pending: false,
+            kind: OrbitTargetKind::Instance {
+                instance_id,
+                instance_name: label.to_owned(),
+                project_id: Some(1),
+                project_name: Some("Orbit".to_owned()),
+                project_slug: Some("orbit".to_owned()),
+                node_name: Some("beast".to_owned()),
+                instance_url: None,
+                power_state: Some(PowerState::Running),
+            },
+        }
+    }
+
+    #[test]
+    fn select_primary_agent_node_prefers_agent_role_then_local_else_none() {
+        let nick = make_node(
+            "node-nick",
+            "nick",
+            "nick",
+            &[],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let beast_agent = make_node(
+            "node-beast",
+            "beast",
+            "beast",
+            &["router", "agent"],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let mini_agent = make_node(
+            "node-mini",
+            "mini",
+            "mini",
+            &["agent"],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let instance = make_instance("inst-1", "orbit / main", 42);
+
+        // 1. An `"agent"`-role node wins over the local node regardless of slice order; ties break
+        //    by local node, then label (beast before mini).
+        let targets = vec![
+            instance.clone(),
+            nick.clone(),
+            beast_agent.clone(),
+            mini_agent,
+        ];
+        assert_eq!(
+            select_primary_agent_node(&targets, Some("nick")).map(|n| n.server_id.as_str()),
+            Some("node-beast"),
+            "registered agent-role node wins over the local node; alphabetical tie-break"
+        );
+        assert_eq!(
+            select_primary_agent_node(&targets, None).map(|n| n.server_id.as_str()),
+            Some("node-beast"),
+            "iOS caller (no local_node_name) picks the agent-role node"
+        );
+
+        // 2. Among agent-role nodes, the local one wins; otherwise alphabetical.
+        let zed_agent = make_node(
+            "node-zed",
+            "zed",
+            "zed",
+            &["Agent"],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let two_agents = vec![zed_agent, beast_agent, nick.clone()];
+        assert_eq!(
+            select_primary_agent_node(&two_agents, None).map(|n| n.server_id.as_str()),
+            Some("node-beast"),
+            "deterministic alphabetical tie-break when local node does not hold agent role"
+        );
+        assert_eq!(
+            select_primary_agent_node(&two_agents, Some("zed")).map(|n| n.server_id.as_str()),
+            Some("node-zed"),
+            "local node wins the tie among agent-role nodes"
+        );
+
+        // 3. No `"agent"`-role node: desktop falls back to local registered node; iOS gets None.
+        let no_agents = vec![
+            instance,
+            make_node(
+                "node-beast",
+                "beast",
+                "beast",
+                &["router"],
+                OrbitTargetStatus::Registered,
+                false,
+            ),
+            nick,
+        ];
+        assert_eq!(
+            select_primary_agent_node(&no_agents, Some("NICK")).map(|n| n.server_id.as_str()),
+            Some("node-nick"),
+            "desktop falls back to matching local node case-insensitively"
+        );
+        assert_eq!(
+            select_primary_agent_node(&no_agents, Some("iphone")),
+            None,
+            "iOS node name not hosting conn-server returns None when no agent-role node exists"
+        );
+        assert_eq!(
+            select_primary_agent_node(&no_agents, None),
+            None,
+            "unset local_node_name returns None when no agent-role node exists"
+        );
+        assert_eq!(
+            select_primary_agent_node(&no_agents, Some("   ")),
+            None,
+            "whitespace-only local_node_name is treated as unset"
+        );
+        assert_eq!(
+            select_primary_agent_node(&[], Some("nick")),
+            None,
+            "empty target list returns None"
+        );
+    }
+
+    #[test]
+    fn select_primary_agent_node_skips_expired_cleanup_and_instances() {
+        let expired_agent = make_node(
+            "node-mini",
+            "mini",
+            "mini",
+            &["agent"],
+            OrbitTargetStatus::SessionExpired,
+            false,
+        );
+        let cleaning_agent = make_node(
+            "node-old",
+            "old",
+            "old",
+            &["agent"],
+            OrbitTargetStatus::Registered,
+            true,
+        );
+        let healthy_agent = make_node(
+            "node-beast",
+            "beast",
+            "beast",
+            &["agent"],
+            OrbitTargetStatus::Registered,
+            false,
+        );
+        let instance = make_instance("inst-99", "orbit / task", 99);
+
+        let targets = vec![
+            expired_agent.clone(),
+            cleaning_agent.clone(),
+            instance.clone(),
+            healthy_agent.clone(),
+        ];
+        assert_eq!(
+            select_primary_agent_node(&targets, None).map(|n| n.server_id.as_str()),
+            Some("node-beast"),
+            "expired and cleanup_pending agent nodes are skipped"
+        );
+
+        let only_unusable = vec![expired_agent, cleaning_agent, instance];
+        assert_eq!(
+            select_primary_agent_node(&only_unusable, Some("mini")),
+            None,
+            "expired local node is not selected"
+        );
+
+        let fleet = OrbitFleet::from_targets(vec![healthy_agent], Some("nick"));
+        assert_eq!(
+            fleet
+                .select_primary_agent_node(Some("nick"))
+                .map(|n| n.server_id.as_str()),
+            Some("node-beast"),
+            "OrbitFleet::select_primary_agent_node delegates consistently"
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_environment_connect_reuses_valid_bearer_and_mints_on_none_or_rejection() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        let mint_calls = Arc::new(AtomicUsize::new(0));
+        let mint_calls_ref = Arc::clone(&mint_calls);
+        let transport = MockGateway::new(move |req| match req.path.as_str() {
+            "/environments" => Ok(GatewayResponse {
+                status: 200,
+                body: serde_json::json!({
+                    "data": [{
+                        "environment_id": "node-mini",
+                        "label": "mini",
+                        "url": "http://10.44.0.8:3773",
+                        "status": "registered",
+                        "cleanup_pending": false,
+                        "instance_id": null,
+                        "roles": ["agent"]
+                    }]
+                })
+                .to_string(),
+            }),
+            "/environments/node-mini/pairings" => {
+                mint_calls_ref.fetch_add(1, Ordering::SeqCst);
+                Ok(GatewayResponse {
+                    status: 200,
+                    body: serde_json::json!({
+                        "data": {
+                            "pairing_url": "http://10.44.0.8:3773/pair#token=fresh-code",
+                            "pairing": {
+                                "environment_id": "node-mini",
+                                "expires_at": "2026-11-22T20:00:00Z"
+                            }
+                        }
+                    })
+                    .to_string(),
+                })
+            }
+            other => panic!("unexpected path: {other}"),
+        });
+
+        let client = OrbitFleetClient::new(transport);
+
+        // 1. Valid cached bearer -> reused, zero mints.
+        let plan = client
+            .resolve_environment_connect("node-mini", Some("cached-tok"), |_, _| async {
+                BearerCheckOutcome::Valid
+            })
+            .await
+            .expect("reuse plan");
+        assert_eq!(
+            plan,
+            EnvironmentConnectPlan::ReuseBearer {
+                server_url: "http://10.44.0.8:3773".to_owned(),
+                bearer: "cached-tok".to_owned(),
+            },
+            "valid cached bearer must be reused"
+        );
+        assert_eq!(
+            mint_calls.load(Ordering::SeqCst),
+            0,
+            "valid cached bearer must not mint a pairing"
+        );
+
+        // 2. Unreachable probe -> keep cached bearer for ConnCore reconnect, zero mints.
+        let plan = client
+            .resolve_environment_connect("node-mini", Some("cached-tok"), |_, _| async {
+                BearerCheckOutcome::Unreachable
+            })
+            .await
+            .expect("unreachable plan");
+        assert!(
+            matches!(plan, EnvironmentConnectPlan::ReuseBearer { .. }),
+            "unreachable probe should preserve cached bearer"
+        );
+        assert_eq!(mint_calls.load(Ordering::SeqCst), 0);
+
+        // 3. Rejected cached bearer -> falls back to minting a pairing once.
+        let plan = client
+            .resolve_environment_connect("node-mini", Some("stale-tok"), |_, _| async {
+                BearerCheckOutcome::Rejected
+            })
+            .await
+            .expect("fallback mint plan");
+        assert_eq!(
+            plan,
+            EnvironmentConnectPlan::PairWithCode {
+                server_url: "http://10.44.0.8:3773/".to_owned(),
+                pairing_code: "fresh-code".to_owned(),
+                expires_at: "2026-11-22T20:00:00Z".to_owned(),
+            },
+            "rejected cached bearer must fall back to minting a pairing"
+        );
+        assert_eq!(
+            mint_calls.load(Ordering::SeqCst),
+            1,
+            "rejected cached bearer must mint exactly once"
+        );
+
+        // 4. No cached bearer -> mints directly without probing.
+        let probed = Arc::new(AtomicUsize::new(0));
+        let probed_ref = Arc::clone(&probed);
+        let plan = client
+            .resolve_environment_connect("node-mini", None, move |_, _| async move {
+                probed_ref.fetch_add(1, Ordering::SeqCst);
+                BearerCheckOutcome::Valid
+            })
+            .await
+            .expect("direct mint plan");
+        assert!(
+            matches!(plan, EnvironmentConnectPlan::PairWithCode { .. }),
+            "missing bearer must mint directly"
+        );
+        assert_eq!(
+            probed.load(Ordering::SeqCst),
+            0,
+            "verify_bearer must not run when cached_bearer is None"
+        );
+        assert_eq!(mint_calls.load(Ordering::SeqCst), 2);
+
+        // 5. Unknown server_id -> 404 NotFound.
+        let err = client
+            .resolve_environment_connect("missing-env", None, |_, _| async {
+                BearerCheckOutcome::Valid
+            })
+            .await
+            .expect_err("unknown server_id must fail");
+        assert_eq!(
+            err.reason(),
+            crate::OrbitErrorReason::NotFound,
+            "unknown server_id should classify as NotFound"
+        );
     }
 }

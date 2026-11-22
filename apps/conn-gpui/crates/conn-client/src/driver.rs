@@ -54,6 +54,7 @@ pub(crate) enum Command {
         tx: mpsc::Sender<Value>,
     },
     CancelStream(StreamId),
+    Reconnect,
     Close,
 }
 
@@ -234,6 +235,9 @@ impl DriverState {
             Command::CancelStream(stream_id) => {
                 self.pending_streams.retain(|s| s.stream_id != stream_id);
             }
+            Command::Reconnect => {
+                self.backoff.reset();
+            }
             Command::Close => {
                 self.closed = true;
             }
@@ -321,6 +325,17 @@ pub(crate) async fn run(
 
                 match outcome {
                     SessionOutcome::Closed => break,
+                    SessionOutcome::ReconnectNow => {
+                        state.backoff.reset();
+                        if events_tx
+                            .send(ClientEvent::Status(ConnectionStatus::Connecting))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                        continue;
+                    }
                     SessionOutcome::Disconnected(reason) => {
                         debug!("conn-client disconnected: {reason}");
                     }
@@ -421,6 +436,10 @@ async fn wait_backoff(
         tokio::select! {
             () = &mut sleep => return true,
             maybe_cmd = cmd_rx.recv() => match maybe_cmd {
+                Some(Command::Reconnect) => {
+                    state.backoff.reset();
+                    return true;
+                }
                 Some(cmd) => {
                     state.handle_offline_command(cmd);
                     if state.closed {
@@ -438,6 +457,7 @@ async fn wait_backoff(
 
 enum SessionOutcome {
     Closed,
+    ReconnectNow,
     Disconnected(String),
 }
 
@@ -545,6 +565,10 @@ async fn run_session(
                         let _ = send_client_frame(&mut ws_write, &FromClient::Eof).await;
                         let _ = ws_write.send(Message::Close(None)).await;
                         return SessionOutcome::Closed;
+                    }
+                    Some(Command::Reconnect) => {
+                        let _ = ws_write.send(Message::Close(None)).await;
+                        return SessionOutcome::ReconnectNow;
                     }
                     Some(cmd) => {
                         if let Err(err) = handle_online_command(state, cmd, &mut ws_write).await {
@@ -701,6 +725,7 @@ where
                 send_client_frame(ws_write, &FromClient::Interrupt { request_id }).await?;
             }
         }
+        Command::Reconnect => {}
         Command::Close => {
             state.closed = true;
         }
@@ -716,7 +741,7 @@ where
         after_sequence: state.shell_after_sequence,
         http_snapshot_fallback: None,
         known_project_identities: None,
-        request_completion_marker: None,
+        request_completion_marker: Some(true),
         omit_idle_subagents: Some(true),
         omit_older_settled: Some(true),
     };

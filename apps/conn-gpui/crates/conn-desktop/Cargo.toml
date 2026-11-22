@@ -9,6 +9,7 @@ rust-version.workspace = true
 
 [dependencies]
 base64 = "=0.22.1"
+conn-orbit.workspace = true
 # Database panel: one async driver stack for MySQL/MariaDB, PostgreSQL and SQLite.
 sqlx = { version = "=0.9.0", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "mysql", "postgres", "sqlite-bundled", "json", "chrono", "uuid", "bigdecimal"] }
 chrono = { version = "=0.4.45", default-features = false, features = ["clock", "std"] }
@@ -23,8 +24,6 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 sha2.workspace = true
 thiserror.workspace = true
 tokio = { workspace = true, features = ["process", "io-util"] }
-# Orbit Tasks realtime: Reverb (Pusher protocol) over wss, trusting the same keychain roots.
-tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
 url.workspace = true
 
 [target.'cfg(unix)'.dependencies]

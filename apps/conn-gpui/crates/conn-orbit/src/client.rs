@@ -16,6 +16,29 @@ use super::tasks::{
     decode_tasks_page,
 };
 
+/// Unified classification for Orbit Gateway errors across Tasks, Profile, Fleet, and Thread Start.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum OrbitErrorReason {
+    /// 403 `peer.identity_unknown`: this device is not an active Orbit Node.
+    NotANode,
+    /// 403 `node_access.required`: no access edge, or it was revoked.
+    AccessRequired,
+    /// 409 `extension.disabled`: the Conn or Tasks extension is off.
+    ExtensionDisabled,
+    /// 404: requested resource (task, environment, reservation, profile) was not found.
+    NotFound,
+    /// No transport, timeout, or the Gateway did not answer.
+    Unreachable,
+    /// The Gateway answered something this contract does not describe.
+    InvalidResponse,
+    /// 409 `conn.settings_version_conflict`: profile settings conflicted with a newer version.
+    VersionConflict,
+    /// 404/405: this Gateway build does not support the requested operation.
+    Unsupported,
+    /// Another Gateway error with a code/message (e.g. admission refusal, pairing error).
+    Gateway,
+}
+
 /// Why a Tasks read failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TasksErrorReason {
@@ -31,6 +54,19 @@ pub enum TasksErrorReason {
     Unreachable,
     /// The Gateway answered something this contract does not describe.
     InvalidResponse,
+}
+
+impl From<TasksErrorReason> for OrbitErrorReason {
+    fn from(reason: TasksErrorReason) -> Self {
+        match reason {
+            TasksErrorReason::NotANode => Self::NotANode,
+            TasksErrorReason::AccessRequired => Self::AccessRequired,
+            TasksErrorReason::ExtensionDisabled => Self::ExtensionDisabled,
+            TasksErrorReason::NotFound => Self::NotFound,
+            TasksErrorReason::Unreachable => Self::Unreachable,
+            TasksErrorReason::InvalidResponse => Self::InvalidResponse,
+        }
+    }
 }
 
 /// A failed read, with the message to show.

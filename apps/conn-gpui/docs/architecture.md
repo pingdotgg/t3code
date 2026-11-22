@@ -22,10 +22,11 @@
 │  └───────────────▲─────────────────────────────────────────────────────┘  │
 │                  │                                                        │
 │  ┌───────────────┴─────────────────────────────────────────────────────┐  │
-│  │ conn-client (dedicated Tokio runtime)                               │  │
+│  │ conn-client (dedicated Tokio runtime)   conn-orbit (Gateway + WSS)  │  │
 │  │  • tokio-tungstenite /ws?orchestrationProtocol=2                    │  │
 │  │  • conn-wire (FromClient, FromServer, Ack, Ping/Pong, frame_parts)  │  │
 │  │  • conn-contract (rpc::*, OrchestrationV2Command, ids)              │  │
+│  │  • Orbit Gateway HTTPS + Reverb WSS via rustls-platform-verifier    │  │
 │  └───────────────▲─────────────────────────────────────────────────────┘  │
 │                  │ WebSocket / HTTP                                       │
 │  ┌───────────────┴─────────────────────────────────────────────────────┐  │
@@ -43,6 +44,7 @@
 | Capability | Conn specification (the Conn monorepo) | Threadbear GPUI reference (`.refs/threadbear`) | `conn-gpui` home |
 | --- | --- | --- | --- |
 | Wire protocol & RPC | `packages/contracts`, `packages/client-runtime` | `desktop/client/src/runner.rs` | `crates/conn-client` + `apps/conn-server/crates/{conn-wire,conn-contract}` |
+| Orbit Gateway client (Nodes, Projects, Profile, Tasks, Reverb) | `packages/client-runtime/src/orbitGateway/`, `apps/mobile/src/features/orbit/` | — | `crates/conn-orbit` (shared by `conn-desktop` and SwiftUI iOS via UniFFI; desktop-only panel state & file storage stay in `crates/conn-desktop/src/orbit/`) |
 | Client state & reducers | `packages/client-runtime/src/state/` (`shellReducer.ts`, `threadHistoryController.ts`) | `desktop/core/src/reducer/` | `crates/conn-state` |
 | Theme palettes & shell tokens | `packages/shared/src/themePalettes.ts`, `apps/web/src/index.css` (tail), `apps/web/src/themePalette.ts` | `desktop/gpui/src/style.rs` | `crates/conn-theme` |
 | macOS window & traffic lights | `apps/desktop/src/window/DesktopWindow.ts` (`MACOS_SHELL_HEADER_HEIGHT = 44`) | `desktop/gpui/src/main.rs`, `window_menu.rs`, `colour_space.rs` | `crates/conn-app/src/shell/` |

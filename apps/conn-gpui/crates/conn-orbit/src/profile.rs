@@ -12,12 +12,13 @@
 //! SwiftUI iOS client can share the exact same behavior.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
+use super::client::OrbitErrorReason;
 use super::gateway::{GatewayRequest, GatewayTransport, OrbitGateway};
 
 /// Current schema version for `appearance` and `devices.*` profile sections.
@@ -55,6 +56,26 @@ pub enum ProfileError {
 }
 
 pub type ProfileResult<T> = Result<T, ProfileError>;
+
+impl ProfileError {
+    /// Maps this error to a canonical [`OrbitErrorReason`] matching [`TasksErrorReason`](super::client::TasksErrorReason).
+    #[must_use]
+    pub fn reason(&self) -> OrbitErrorReason {
+        match self {
+            Self::Unreachable(_) => OrbitErrorReason::Unreachable,
+            Self::InvalidResponse { .. } => OrbitErrorReason::InvalidResponse,
+            Self::VersionConflict => OrbitErrorReason::VersionConflict,
+            Self::Unsupported => OrbitErrorReason::Unsupported,
+            Self::Gateway { code, status, .. } => match (*status, code.as_str()) {
+                (403, "peer.identity_unknown") => OrbitErrorReason::NotANode,
+                (403, "node_access.required") => OrbitErrorReason::AccessRequired,
+                (409, "extension.disabled") => OrbitErrorReason::ExtensionDisabled,
+                (404, _) => OrbitErrorReason::NotFound,
+                _ => OrbitErrorReason::Gateway,
+            },
+        }
+    }
+}
 
 /// An Orbit user profile metadata record.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -185,6 +206,30 @@ impl ProfileThemeSlot {
             source: ThemeSlotSource::Stock,
         }
     }
+
+    /// Resolves this slot to the Conn theme id (`t3-code-light` / `t3-code-dark` for stock, or
+    /// the slot's own id for built-in / custom / published themes), matching desktop and mobile.
+    #[must_use]
+    pub fn normalized_theme_id(&self, appearance: ProfileThemeAppearance) -> String {
+        let stock_id = match appearance {
+            ProfileThemeAppearance::Light => "t3-code-light",
+            ProfileThemeAppearance::Dark => "t3-code-dark",
+        };
+        match self {
+            Self::Reference {
+                source: ThemeSlotSource::Stock,
+                ..
+            } => stock_id.to_owned(),
+            other => {
+                let id = other.id();
+                if id == "t3-code" {
+                    stock_id.to_owned()
+                } else {
+                    id.to_owned()
+                }
+            }
+        }
+    }
 }
 
 /// Collection badge metadata on a custom theme.
@@ -247,68 +292,6 @@ impl Default for OrbitSyncPrefs {
             sync_appearance: true,
             sync_desktop_settings: true,
         }
-    }
-}
-
-/// Local snapshot persisted across launches so 3-way conflict merges have a known `base`.
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct OrbitSyncSnapshot {
-    pub profile_id: Option<i64>,
-    pub profile_version: i64,
-    pub workspaces: Vec<OrbitWorkspace>,
-    pub appearance_version: i64,
-    pub appearance_base: Option<Map<String, Value>>,
-    #[serde(default)]
-    pub appearance_meta: Option<SectionMeta>,
-    pub desktop_version: i64,
-    pub desktop_base: Option<Map<String, Value>>,
-    #[serde(default)]
-    pub desktop_meta: Option<SectionMeta>,
-    /// Local backup taken right before "Use the profile" replaces device settings.
-    #[serde(default)]
-    pub appearance_backup: Option<Map<String, Value>>,
-    #[serde(default)]
-    pub desktop_backup: Option<Map<String, Value>>,
-    #[serde(default)]
-    pub backup_saved_at_unix: Option<i64>,
-    pub prefs: OrbitSyncPrefs,
-}
-
-impl OrbitSyncSnapshot {
-    /// Default config file location (`~/Library/Application Support/conn-gpui/orbit-profile.json`),
-    /// overridable with `CONN_GPUI_CONFIG_DIR` for isolated dev/test sessions.
-    #[must_use]
-    pub fn default_path() -> Option<PathBuf> {
-        if let Some(dir) = std::env::var_os("CONN_GPUI_CONFIG_DIR") {
-            return Some(PathBuf::from(dir).join("orbit-profile.json"));
-        }
-        let home = std::env::var_os("HOME")?;
-        Some(
-            PathBuf::from(home)
-                .join("Library/Application Support/conn-gpui")
-                .join("orbit-profile.json"),
-        )
-    }
-
-    /// Loads the saved snapshot from `path`, returning `Default` when missing or unreadable.
-    #[must_use]
-    pub fn load_from(path: &Path) -> Self {
-        std::fs::read_to_string(path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default()
-    }
-
-    /// Persists the snapshot atomically to `path`.
-    pub fn save_to(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(tmp, path)
     }
 }
 
@@ -1284,7 +1267,7 @@ mod tests {
     use std::sync::Mutex;
 
     use super::*;
-    use crate::orbit::gateway::{BoxFuture, GatewayError, GatewayMethod, GatewayResponse};
+    use crate::gateway::{BoxFuture, GatewayError, GatewayMethod, GatewayResponse};
 
     fn ws(id: &str, name: &str, color: &str) -> OrbitWorkspace {
         OrbitWorkspace {
@@ -1592,20 +1575,5 @@ mod tests {
             .expect("retry succeeds");
         assert_eq!(result.version, 5);
         assert_eq!(result.sections.unwrap()["appearance"].version, 4);
-    }
-
-    #[test]
-    fn snapshot_round_trips_to_disk() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("orbit-profile.json");
-        let snap = OrbitSyncSnapshot {
-            profile_id: Some(42),
-            profile_version: 9,
-            workspaces: vec![ws("w1", "Conn", "#3b82f6")],
-            ..OrbitSyncSnapshot::default()
-        };
-        snap.save_to(&path).unwrap();
-        let loaded = OrbitSyncSnapshot::load_from(&path);
-        assert_eq!(loaded, snap);
     }
 }

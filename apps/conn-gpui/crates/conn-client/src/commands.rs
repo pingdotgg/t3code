@@ -1,5 +1,5 @@
-//! Orchestration commands the app dispatches (`orchestration.dispatchCommand`), built as typed
-//! `conn_contract::OrchestrationV2Command` values from their wire JSON.
+//! Orchestration commands dispatched via `orchestration.dispatchCommand`, built as typed
+//! [`conn_contract::OrchestrationV2Command`] values from their wire JSON.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,7 +19,12 @@ fn new_id(kind: &str) -> String {
 
 /// `message.dispatch`: send `text` and `attachments` to `thread_id`. While a turn runs, the
 /// message steers it when `steer_target_run_id` is set, else queues after it.
-pub(crate) fn send_message(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn send_message(
     thread_id: &str,
     text: &str,
     attachments: &[ChatAttachment],
@@ -47,13 +52,14 @@ pub(crate) fn send_message(
 }
 
 /// A new thread id in the client's format.
-pub(crate) fn new_thread_id() -> String {
+#[must_use]
+pub fn new_thread_id() -> String {
     new_id("thread")
 }
 
 /// Workspace preparation mode chosen for a new thread draft.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) enum WorkspaceStrategyChoice {
+pub enum WorkspaceStrategyChoice {
     /// Run directly in the project's local checkout (`workspaceStrategy: { type: "root" }`).
     #[default]
     Local,
@@ -67,7 +73,8 @@ pub(crate) enum WorkspaceStrategyChoice {
     clippy::too_many_arguments,
     reason = "maps directly to OrchestrationV2ThreadLaunchInput wire fields"
 )]
-pub(crate) fn launch_thread_payload(
+#[must_use]
+pub fn launch_thread_payload(
     thread_id: &str,
     project_id: &str,
     text: &str,
@@ -115,12 +122,11 @@ pub(crate) fn launch_thread_payload(
     })
 }
 
-/// Extracts a concise human-readable message from a [`conn_client::ClientError`].
-pub(crate) fn format_client_error(err: &conn_client::ClientError) -> String {
+/// Extracts a concise human-readable message from a [`crate::ClientError`].
+#[must_use]
+pub fn format_client_error(err: &crate::ClientError) -> String {
     match err {
-        conn_client::ClientError::Rpc(val) => {
-            extract_rpc_message(val).unwrap_or_else(|| val.to_string())
-        }
+        crate::ClientError::Rpc(val) => extract_rpc_message(val).unwrap_or_else(|| val.to_string()),
         other => other.to_string(),
     }
 }
@@ -158,7 +164,12 @@ fn extract_rpc_message(val: &serde_json::Value) -> Option<String> {
 
 /// `runtime-request.respond`: answer an approval with `decision` (`accept`,
 /// `acceptForSession`, `decline`, `cancel`).
-pub(crate) fn respond_approval(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn respond_approval(
     thread_id: &str,
     request_id: &str,
     decision: &str,
@@ -174,7 +185,12 @@ pub(crate) fn respond_approval(
 
 /// `runtime-request.respond`: answer a `user_input_request` with `answers` keyed by question id
 /// (each a string or a string array), as Conn's `ComposerPendingUserInputPanel` submits them.
-pub(crate) fn respond_user_input(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn respond_user_input(
     thread_id: &str,
     request_id: &str,
     answers: &serde_json::Map<String, serde_json::Value>,
@@ -189,7 +205,12 @@ pub(crate) fn respond_user_input(
 }
 
 /// `thread.user-input.dismiss`: dismiss a message-mode question without answering it.
-pub(crate) fn dismiss_user_input(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn dismiss_user_input(
     thread_id: &str,
     request_id: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -203,7 +224,12 @@ pub(crate) fn dismiss_user_input(
 
 /// `thread.fork`: fork `source_thread_id` at run `run_id` into the new `target_thread_id`
 /// (Conn's `Fork from this response`, `forkThreadFromRun`).
-pub(crate) fn fork_thread_from_run(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn fork_thread_from_run(
     source_thread_id: &str,
     target_thread_id: &str,
     run_id: &str,
@@ -220,12 +246,13 @@ pub(crate) fn fork_thread_from_run(
 }
 
 /// RPC tag for answering a secret request.
-pub(crate) const SECRETS_ANSWER_REQUEST: &str = "secrets.answerRequest";
+pub const SECRETS_ANSWER_REQUEST: &str = "secrets.answerRequest";
 
 /// `secrets.answerRequest` payload: save the trimmed `secret` (`Some`) or decline (`None`) for
 /// the secret request turn item `turn_item_id` (`secretRequestAnswerInput`). Returns `None`
 /// when a save has only whitespace.
-pub(crate) fn secret_answer_payload(
+#[must_use]
+pub fn secret_answer_payload(
     thread_id: &str,
     turn_item_id: &str,
     secret: Option<&str>,
@@ -249,7 +276,12 @@ pub(crate) fn secret_answer_payload(
 
 /// `thread.model-selection.set`: switch the thread to `model` on provider `instance_id`,
 /// optionally passing provider/model `options` (such as `{ "effort": "high" }`).
-pub(crate) fn set_model_selection(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn set_model_selection(
     thread_id: &str,
     instance_id: &str,
     model: &str,
@@ -275,7 +307,12 @@ pub(crate) fn set_model_selection(
 }
 
 /// `thread.stop`: stop the running turn.
-pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
         "type": "thread.stop",
         "commandId": new_id("cmd"),
@@ -284,7 +321,12 @@ pub(crate) fn stop_thread(thread_id: &str) -> Result<OrchestrationV2Command, ser
 }
 
 /// `queued-message.promote-to-steer`: promote a queued run into the currently active turn (`Send now`).
-pub(crate) fn promote_queued_to_steer(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn promote_queued_to_steer(
     thread_id: &str,
     queued_run_id: &str,
     target_run_id: &str,
@@ -299,7 +341,12 @@ pub(crate) fn promote_queued_to_steer(
 }
 
 /// `queued-run.start`: start a queued run immediately when the thread has no active turn (`Send now`).
-pub(crate) fn start_queued_run(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn start_queued_run(
     thread_id: &str,
     run_id: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -312,7 +359,12 @@ pub(crate) fn start_queued_run(
 }
 
 /// `queued-run.edit`: update the text (and optional attachments) of a queued run.
-pub(crate) fn edit_queued_run(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn edit_queued_run(
     thread_id: &str,
     run_id: &str,
     text: &str,
@@ -335,7 +387,12 @@ pub(crate) fn edit_queued_run(
 }
 
 /// `queued-run.cancel`: remove a queued run from the queue.
-pub(crate) fn cancel_queued_run(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn cancel_queued_run(
     thread_id: &str,
     run_id: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -348,7 +405,12 @@ pub(crate) fn cancel_queued_run(
 }
 
 /// `thread.interaction-mode.set`: switch the thread between `"default"` and `"plan"`.
-pub(crate) fn set_interaction_mode(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn set_interaction_mode(
     thread_id: &str,
     interaction_mode: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -362,7 +424,12 @@ pub(crate) fn set_interaction_mode(
 
 /// `thread.runtime-mode.set`: switch the thread's runtime permission mode
 /// (`"approval-required"`, `"auto-accept-edits"`, `"auto"`, `"full-access"`).
-pub(crate) fn set_runtime_mode(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn set_runtime_mode(
     thread_id: &str,
     runtime_mode: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -375,7 +442,12 @@ pub(crate) fn set_runtime_mode(
 }
 
 /// `thread.settle` / `thread.unsettle`: move a thread into or out of the Settled shelf.
-pub(crate) fn settle_thread(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn settle_thread(
     thread_id: &str,
     settled: bool,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -396,7 +468,12 @@ pub(crate) fn settle_thread(
 }
 
 /// `thread.metadata.update`: rename `thread_id` to `title`.
-pub(crate) fn rename_thread(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn rename_thread(
     thread_id: &str,
     title: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -410,7 +487,12 @@ pub(crate) fn rename_thread(
 
 /// `thread.metadata.update` with `regenerateTitle: true`: ask the server to regenerate the
 /// thread title (Conn's `Regenerate title` thread action).
-pub(crate) fn regenerate_thread_title(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn regenerate_thread_title(
     thread_id: &str,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
@@ -422,7 +504,12 @@ pub(crate) fn regenerate_thread_title(
 }
 
 /// `thread.pin` / `thread.unpin`: move a thread into or out of the Pinned section.
-pub(crate) fn pin_thread(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn pin_thread(
     thread_id: &str,
     pinned: bool,
 ) -> Result<OrchestrationV2Command, serde_json::Error> {
@@ -435,9 +522,12 @@ pub(crate) fn pin_thread(
 }
 
 /// `thread.mark-unread`: clear the thread's visit marker so it shows as unseen again.
-pub(crate) fn mark_thread_unread(
-    thread_id: &str,
-) -> Result<OrchestrationV2Command, serde_json::Error> {
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn mark_thread_unread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
         "type": "thread.mark-unread",
         "commandId": new_id("cmd"),
@@ -446,7 +536,12 @@ pub(crate) fn mark_thread_unread(
 }
 
 /// `thread.delete`: permanently delete a thread and its conversation history.
-pub(crate) fn delete_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the command payload cannot be decoded as
+/// [`OrchestrationV2Command`].
+pub fn delete_thread(thread_id: &str) -> Result<OrchestrationV2Command, serde_json::Error> {
     conn_contract::from_json(json!({
         "type": "thread.delete",
         "commandId": new_id("cmd"),
@@ -455,7 +550,12 @@ pub(crate) fn delete_thread(thread_id: &str) -> Result<OrchestrationV2Command, s
 }
 
 /// `projects.mutate` (`project.create`): register a local workspace folder as a project.
-pub(crate) fn create_project_mutation(
+///
+/// # Errors
+///
+/// Returns [`serde_json::Error`] if the mutation payload cannot be decoded as
+/// [`ProjectMutation`].
+pub fn create_project_mutation(
     workspace_root: &str,
     title: &str,
 ) -> Result<ProjectMutation, serde_json::Error> {
@@ -639,7 +739,7 @@ mod tests {
 
     #[test]
     fn format_client_error_extracts_nested_rpc_message() {
-        let err = conn_client::ClientError::Rpc(json!({
+        let err = crate::ClientError::Rpc(json!({
             "reasons": [{
                 "_tag": "Fail",
                 "error": {

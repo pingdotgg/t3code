@@ -15,6 +15,7 @@
 //! - [`Connection::call`] / [`Connection::call_json`]: unary RPCs.
 
 mod auth;
+pub mod commands;
 pub mod device_hub;
 mod driver;
 pub mod history;
@@ -494,6 +495,12 @@ impl Connection {
     /// Cancels an active stream started by [`Self::stream_json`].
     pub fn cancel_stream(&self, stream_id: StreamId) {
         let _ = self.cmd_tx.send(Command::CancelStream(stream_id));
+    }
+
+    /// Drops any current WebSocket session or reconnect backoff sleep and reconnects immediately,
+    /// preserving subscriptions and stream sequence cursors.
+    pub fn reconnect(&self) {
+        let _ = self.cmd_tx.send(Command::Reconnect);
     }
 
     /// Cleanly closes the connection and stops its background task.
@@ -1019,6 +1026,84 @@ mod tests {
         conn.close();
         let _ = rt
             .block_on(async { tokio::time::timeout(Duration::from_secs(2), server_handle).await });
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[expect(
+        clippy::panic_in_result_fn,
+        reason = "test uses assert! while propagating setup errors with ?"
+    )]
+    async fn reconnect_reestablishes_session_and_restores_subscriptions()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind("127.0.0.1:0").await?;
+        let addr = listener.local_addr()?;
+        let (accept_tx, mut accept_rx) = mpsc::unbounded_channel::<usize>();
+
+        let server = tokio::spawn(async move {
+            for session_idx in 1..=2 {
+                let Ok((tcp, _)) = listener.accept().await else {
+                    return;
+                };
+                let Ok(mut ws) = tokio_tungstenite::accept_async(tcp).await else {
+                    return;
+                };
+                let _ = accept_tx.send(session_idx);
+                while let Some(Ok(msg)) = ws.next().await {
+                    if matches!(msg, Message::Close(_)) {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let config = ServerConfig {
+            http_base_url: url::Url::parse(&format!("http://{addr}"))?,
+            credential: Credential::Bearer("test-bearer".to_owned()),
+        };
+        let (conn, mut events) = Connection::start(config, &tokio::runtime::Handle::current());
+        conn.subscribe_shell();
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), accept_rx.recv()).await?,
+            Some(1),
+            "first session should connect"
+        );
+        // Wait for Connected event from session 1.
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(ClientEvent::Status(ConnectionStatus::Connected))) =
+                tokio::time::timeout(Duration::from_secs(1), events.recv()).await
+            {
+                break;
+            }
+        }
+
+        conn.reconnect();
+
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(5), accept_rx.recv()).await?,
+            Some(2),
+            "reconnect() must establish a fresh WebSocket session immediately"
+        );
+
+        let mut reconnected = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(Some(ClientEvent::Status(ConnectionStatus::Connected))) =
+                tokio::time::timeout(Duration::from_secs(1), events.recv()).await
+            {
+                reconnected = true;
+                break;
+            }
+        }
+        assert!(
+            reconnected,
+            "reconnect() must emit Connected for the new session"
+        );
+
+        conn.close();
+        let _ = tokio::time::timeout(Duration::from_secs(2), server).await;
         Ok(())
     }
 }

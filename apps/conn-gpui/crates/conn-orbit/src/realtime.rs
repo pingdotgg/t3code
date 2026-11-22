@@ -24,11 +24,13 @@ use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 use tokio::time::{Instant, sleep_until, timeout};
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite::{
+    Connector, MaybeTlsStream, WebSocketStream, connect_async_tls_with_config,
+};
 use url::Url;
 
 use super::client::{OrbitTasksClient, TasksInvalidation};
-use super::gateway::{GatewayMethod, GatewayRequest, GatewayTransport};
+use super::gateway::{GatewayMethod, GatewayRequest, GatewayTransport, platform_tls_config};
 
 /// How often the follower reads the whole list again.
 pub const ORBIT_TASKS_REFRESH: Duration = Duration::from_secs(30);
@@ -201,10 +203,16 @@ pub fn realtime_socket_url(config: &Map<String, Value>) -> Option<Url> {
 pub(super) async fn open_socket(transport: &dyn GatewayTransport) -> Option<Socket> {
     let config = request(transport, "/realtime", None).await?;
     let url = realtime_socket_url(&config)?;
-    let (socket, _) = timeout(HANDSHAKE, connect_async(url.as_str()))
-        .await
-        .ok()?
-        .ok()?;
+    // Use the shared Apple/OS platform TLS verifier so `wss://` Reverb connections trust the Orbit
+    // root CA on both macOS and iOS. `tokio-tungstenite` ignores the connector for plain `ws://`.
+    let connector = Connector::Rustls(Arc::new(platform_tls_config().ok()?));
+    let (socket, _) = timeout(
+        HANDSHAKE,
+        connect_async_tls_with_config(url.as_str(), None, false, Some(connector)),
+    )
+    .await
+    .ok()?
+    .ok()?;
     Some(socket)
 }
 

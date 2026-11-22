@@ -1,0 +1,42 @@
+[package]
+name = "conn-ffi"
+description = "UniFFI Swift/iOS bridge over the GPUI-free conn-client and conn-state core."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["lib", "staticlib", "cdylib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+conn-client.workspace = true
+conn-contract.workspace = true
+conn-orbit.workspace = true
+conn-state.workspace = true
+conn-theme.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uniffi = { version = "=0.32.2", features = ["tokio"] }
+url.workspace = true
+
+[dev-dependencies]
+conn-state = { workspace = true, features = ["testkit"] }
+conn-wire.workspace = true
+futures.workspace = true
+tempfile.workspace = true
+tokio-tungstenite.workspace = true
+
+[lints]
+workspace = true

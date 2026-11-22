@@ -4,7 +4,7 @@
 //! (`openOrbitAgentConversation`) belongs to the app; here are its pure parts: where a click
 //! starts, the guard that drops stale clicks, and the environment preparation decision.
 
-use super::tasks::{ConversationRef, OrbitEnvironment, PowerState};
+use conn_orbit::tasks::{ConversationRef, OrbitEnvironment, PowerState};
 
 /// Where a Tasks click starts: the board, a task, or one of its subtasks, of one thread.
 pub fn tasks_navigation_place(
@@ -112,8 +112,8 @@ pub fn needs_handoff(source: &ConversationRef, target: &ConversationRef) -> bool
 
 #[cfg(test)]
 mod tests {
-    use super::super::tasks::EnvironmentStatus;
     use super::*;
+    use conn_orbit::tasks::EnvironmentStatus;
 
     #[test]
     fn drops_pending_clicks_once_the_user_leaves() {

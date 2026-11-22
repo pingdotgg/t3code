@@ -245,7 +245,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::orbit::gateway::{BoxFuture, GatewayMethod, GatewayResponse};
+    use crate::gateway::{BoxFuture, GatewayMethod, GatewayResponse};
 
     struct MockGateway {
         handler:
