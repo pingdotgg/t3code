@@ -926,10 +926,7 @@ function useChatMarkdownState(
       if (metadata._tag !== "Success" || metadata.value.entries[0] !== null) return null;
     }
     const projectSearches = await Promise.all(otherRoots.map(searchRoot));
-    const projectMatch = pickProjectLinkMatch(
-      workspaceRelativePath,
-      basenameLookup ? [own, ...projectSearches] : projectSearches,
-    );
+    const projectMatch = pickProjectLinkMatch(workspaceRelativePath, [own, ...projectSearches]);
     if (projectMatch !== null || agentRoots.length === 0) return projectMatch;
     // An unresolved project lookup falls back to the agent's working directories.
     const agentPaths = agentRoots.map((root) =>

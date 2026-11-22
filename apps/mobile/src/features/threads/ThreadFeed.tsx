@@ -3398,10 +3398,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           );
         if (otherRoots.length > 0) {
           const projectSearches = await Promise.all(otherRoots.map(searchRoot));
-          match = pickProjectLinkMatch(
-            relativePath,
-            basenameLookup ? [own, ...projectSearches] : projectSearches,
-          );
+          match = pickProjectLinkMatch(relativePath, [own, ...projectSearches]);
         }
       }
       if (match === null && reply !== undefined && !signal.aborted) {
