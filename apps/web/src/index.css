@@ -2308,6 +2308,15 @@ code {
   overflow-wrap: break-word;
 }
 
+.chat-markdown [data-markdown-math] {
+  font-weight: normal;
+  font-style: normal;
+}
+
+.chat-markdown [data-markdown-math] > svg {
+  font-size: 1.21em;
+}
+
 /* Formula cells keep their natural width and scroll with the table. */
 .chat-markdown :is(th, td):has([data-markdown-math]) {
   max-width: none;
