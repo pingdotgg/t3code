@@ -291,6 +291,59 @@ const publishConfigEvents = Effect.fn("TestRpcSessionFactory.publishConfigEvents
 });
 
 describe("RpcSessionFactory", () => {
+  it.effect.each([
+    { established: false, closedWith: { _tag: "ConnectionBlockedError", reason: "unsupported" } },
+    {
+      established: true,
+      closedWith: { _tag: "ConnectionTransientError", reason: "remote-unavailable" },
+    },
+  ])(
+    "ends the session when config fails to decode, after readiness=$established",
+    ({ established, closedWith }) =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* session.ready.pipe(Effect.exit, Effect.forkChild);
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        if (established) {
+          yield* completeInitialConfig(socket);
+          yield* Fiber.join(ready);
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+        } else {
+          yield* completeInitialConfig(socket, { ...ENCODED_SERVER_CONFIG, cwd: 42 });
+          expect(yield* Fiber.join(ready)).toMatchObject({
+            _tag: "Failure",
+            cause: { reasons: [{ _tag: "Fail", error: { reason: "unsupported" } }] },
+          });
+        }
+
+        expect(yield* Effect.flip(session.closed)).toMatchObject({ ...closedWith, hop: "server" });
+      }).pipe(Effect.scoped),
+  );
+
+  it.effect(
+    "fails readiness with the disconnect when the socket closes before its first config",
+    () =>
+      Effect.gen(function* () {
+        const { factory, sockets } = yield* makeFactory();
+        const session = yield* factory.connect(PREPARED);
+        const ready = yield* Effect.forkChild(Effect.flip(session.ready));
+        const socket = yield* awaitSocket(sockets);
+        socket.open();
+        yield* awaitRequest(socket);
+        socket.close(1012, "service restart");
+
+        for (const error of [yield* Fiber.join(ready), yield* Effect.flip(session.closed)]) {
+          expect(error).toMatchObject({
+            _tag: "ConnectionTransientError",
+            reason: "transport",
+            detail: "Test environment disconnected.",
+          });
+        }
+      }).pipe(Effect.scoped),
+  );
+
   it.effect("connects while a large config snapshot downloads at 4000 bytes per second", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();
@@ -819,6 +872,33 @@ describe("RpcSessionFactory", () => {
       if (Exit.isFailure(closed)) {
         expect(Cause.hasDies(closed.cause)).toBe(true);
       }
+    }),
+  );
+
+  it.effect("closes the session when the server interrupts the config stream", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(session.ready);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket);
+      yield* Fiber.join(readyFiber);
+
+      const closedFiber = yield* Effect.forkChild(Effect.flip(session.closed));
+      const request = yield* awaitRequest(socket);
+      socket.serverMessage(
+        encodeJson({
+          _tag: "Exit",
+          requestId: request.id,
+          exit: { _tag: "Failure", cause: [{ _tag: "Interrupt", fiberId: null }] },
+        }),
+      );
+
+      expect(yield* Fiber.join(closedFiber)).toMatchObject({
+        reason: "remote-unavailable",
+        detail: "Test environment config subscription ended.",
+      });
     }),
   );
 
