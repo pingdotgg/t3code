@@ -1,0 +1,5 @@
+# Where openapi.json came from. Written by `--fetch`; checked by `--check`.
+source = "https://github.com/hardimpactdev/orbit/blob/docs-site/docs/openapi.json"
+orbit_commit = "7eeccf8c847e883f62754ae5fce1d46f6e7ba6fa"
+docs_site_commit = "fb923a8dd9f0ca43047ca3204dc38a5cd61e9f2b"
+sha256 = "b7126ffb2a9909c32ec476f456d4c99e276fcfbf0cf61736301ec70f51cfd28c"

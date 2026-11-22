@@ -22,6 +22,8 @@ conn-web = { path = "crates/conn-web" }
 # Shared wire and contract crates from the sibling conn-server app in this monorepo.
 conn-wire = { path = "../conn-server/crates/conn-wire" }
 conn-contract = { path = "../conn-server/crates/conn-contract" }
+# Typed Orbit Gateway operations generated from OpenAPI (nckrtl/conn#227); no crate uses it yet.
+conn-gateway-api = { path = "../conn-server/crates/conn-gateway-api" }
 
 # GPUI + UI component kit (pinned to match .refs/threadbear/desktop/gpui/Cargo.toml)
 # Note: if macOS polish patches are needed, vendor into vendor/ and add [patch.crates-io]

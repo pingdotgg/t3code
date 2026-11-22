@@ -82,6 +82,7 @@ CI path filters and sync triggers are listed in [`docs/upkeep.md`](docs/upkeep.m
 | Release build       | `cargo build --release --workspace --bins --examples`                                                                           | The binaries below build                                                                             |
 | Recordings decode   | `cargo test --manifest-path fixtures/decode-check/Cargo.toml`                                                                   | Every recorded frame decodes with `conn_wire`                                                        |
 | Contract current    | `node crates/conn-contract/tools/gen-contract.mjs --check`                                                                      | Generated types match `packages/contracts`                                                           |
+| Gateway API current | `cargo run -p conn-gateway-api --features gen -- --check` | `conn-gateway-api` types and ops match its pinned `openapi.json` |
 | MCP tools current   | `node crates/conn-mcp/tools/gen-tools.mjs --check`                                                                              | Served tool definitions match `apps/server`                                                          |
 | GitHub GraphQL current | `node crates/conn-source-control/tools/gen-graphql.mjs --check` | GitHub's GraphQL operation texts match T3's generated modules, printed by `effect/graphql` |
 | Keybinding defaults | `node crates/conn-server/tools/gen-keybindings.mjs --check`                                                                     | The compiled-in defaults match `packages/shared`                                                     |
@@ -170,6 +171,7 @@ Release, which Orbit downloads.
 | ----------------------- | --------------------------------------------------------------------- |
 | `conn-wire`             | Effect RPC frame types and JSON codec                                 |
 | `conn-contract`         | Generated contract types (`tools/gen-contract.mjs`), method list, ids |
+| `conn-gateway-api`      | Typed Orbit Gateway operations generated from the Gateway's OpenAPI document; no HTTP client (see its README) |
 | `conn-engine`           | `Engine` trait; SQLite event store, projections, streams, turn runner |
 | `conn-provider`         | `Provider` and `Session` traits, `ProviderEvent`, `ProviderSet` (the instances, changed as the settings change) |
 | `conn-provider-claude`  | The Claude provider, through the official Agent SDK in the SDK host (see [Claude](#claude)) |

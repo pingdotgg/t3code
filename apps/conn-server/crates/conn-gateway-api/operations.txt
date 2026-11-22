@@ -1,0 +1,62 @@
+# The Gateway operations Conn calls (nckrtl/conn#227, "Scope filter"), by operationId.
+# The generator writes types and ops only for these, so a change to a route Conn does not use
+# never breaks Conn's build. One id per line; `#` starts a comment.
+#
+# Every operation under /api/v1/conn/:
+conn-environment-cleanup
+conn-environment-list
+conn-environment-register
+conn-environment-renew
+conn-environment-restart
+conn-environment-session
+conn-environment-unregister
+conn-instance-complete
+conn-instance-create
+conn-instance-destroy
+conn-instance-name-check
+conn-instance-work
+conn-launch-cancel
+conn-launch-create
+conn-launch-list
+conn-launch-retry
+conn-launch-show
+conn-managed-ack
+conn-managed-authority
+conn-managed-broadcasting-auth
+conn-managed-introspect
+conn-managed-realtime
+conn-managed-token-create
+conn-me
+conn-me-profile
+conn-node-environments-restart
+conn-operation-cancel
+conn-operation-show
+conn-pairing-create
+conn-pairing-list
+conn-pairing-revoke
+conn-pairing-show
+conn-profile-create
+conn-profile-list
+conn-profile-settings-patch
+conn-profile-settings-show
+conn-profile-settings-update
+conn-project-branches
+conn-project-list
+conn-realtime-auth
+conn-realtime-show
+conn-reservation-create
+conn-reservation-finalize
+conn-reservation-release
+conn-reservation-show
+conn-task-list
+conn-task-show
+conn-thread-list
+conn-thread-record
+
+# Outside /api/v1/conn/:
+instance-wake    # /api/v1/instances/{instance}/wake
+operation-show   # /api/v1/operations/{operation}
+project-list     # /api/v1/projects
+realtime-auth    # /api/v1/broadcasting/auth
+realtime-show    # /api/v1/realtime
+task-insights    # /api/v1/task-insights

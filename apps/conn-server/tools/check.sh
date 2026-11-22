@@ -144,6 +144,8 @@ decode_check() {
   CARGO_TARGET_DIR="$repo/target" cargo test --locked --manifest-path fixtures/decode-check/Cargo.toml
 }
 run rust 300 "decode check" decode_check
+# The Gateway client types and ops match the pinned openapi.json (crates/conn-gateway-api).
+run rust 300 "gateway-api --check" cargo run --locked -q -p conn-gateway-api --features gen -- --check
 if [ "$group" = build ]; then
   run build 1200 "comparison binaries" node tools/check-binaries.mjs --build "$repo/target/check-binaries" "${CONN_CHECK_BUILD_PROFILE:-all}" "${CONN_CHECK_BUILD_PACKAGE:-all}"
 fi

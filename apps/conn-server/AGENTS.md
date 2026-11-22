@@ -135,7 +135,7 @@ follows the Conn commit it is part of. There is no pin.
 - Run every tool from `apps/conn-server`. The Node tools read the monorepo two levels up
   (`tools/monorepo.mjs`) and resolve packages from its `node_modules`: run `vp i` at the
   monorepo root first.
-- Generated files: `crates/conn-contract/src/generated.rs` and `methods.json`, the `/mcp` tool
+- Generated files: `crates/conn-contract/src/generated.rs` and `methods.json`, `crates/conn-gateway-api/src/{types,ops}.rs` (from its pinned `openapi.json`), the `/mcp` tool
   catalog and instruction texts in `crates/conn-mcp/src`, the keybinding defaults, and the
   upstream tables from `tools/gen-upstream.mjs` (`crates/conn-server/src/scopes/generated.rs`,
   `crates/conn-server/src/settings/generated.rs`, `crates/conn-contract/src/upstream.rs` with

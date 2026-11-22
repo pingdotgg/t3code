@@ -1,0 +1,33 @@
+[package]
+name = "conn-gateway-api"
+description = "Typed Orbit Gateway operations, generated from the Gateway's OpenAPI document. No HTTP client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+rust-version.workspace = true
+
+[features]
+# The generator (`cargo run -p conn-gateway-api --features gen -- [--fetch <url>] [--check]`).
+# The generated code is checked in, so no app build needs these crates.
+gen = ["dep:typify", "dep:schemars", "dep:syn", "dep:prettyplease", "dep:sha2"]
+
+[[bin]]
+name = "conn-gateway-api-gen"
+path = "src/bin/gen.rs"
+required-features = ["gen"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+typify = { version = "0.10.1", default-features = false, optional = true }
+schemars = { version = "0.8.22", default-features = false, optional = true }
+syn = { version = "3", default-features = false, features = ["full", "parsing", "printing"], optional = true }
+prettyplease = { version = "0.3", optional = true }
+sha2 = { workspace = true, optional = true }
+
+[dev-dependencies]
+sha2.workspace = true
+
+[lints]
+workspace = true
