@@ -30,7 +30,7 @@ export function threadRelationshipStatusLabel(
     case "completed":
       return resolve(msg("Done", { $context: "agent status" }));
     case "settled":
-      return resolve(msg("Settled"));
+      return resolve(msg("Settled", { $context: "thread status" }));
     case "failed":
     case "error":
       return resolve(msg("Failed", { $context: "agent status" }));

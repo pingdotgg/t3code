@@ -1057,7 +1057,6 @@ export function ThreadRelationshipsPanel(props: {
               : gt("Lineage", { $context: "thread details section: parent and child agents" })
           }
           // Collapsed groups name themselves; the heading returns for status or actions.
-
           showHeading={
             runningCount > 0 ||
             canDetach ||
