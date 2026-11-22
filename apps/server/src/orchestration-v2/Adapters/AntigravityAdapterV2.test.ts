@@ -17,6 +17,7 @@ import { htmlRenderFromToolItem } from "@t3tools/shared/toolOutput";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
@@ -35,6 +36,7 @@ import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import * as TestProviderHost from "@t3tools/provider-testing/TestProviderHost";
 import type * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
+import { makeAcpAdapterV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeAntigravityAcpRuntime } from "../../provider/acp/AntigravityAcpSupport.ts";
 import { normalizeAntigravitySessionUpdate } from "../../provider/acp/AntigravityProtocol.ts";
 import { ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE } from "../../provider/antigravityAuthSupport.ts";
@@ -43,6 +45,7 @@ import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter"
 import { makeTurnInput } from "./AcpAdapterV2.testkit.ts";
 import type * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
 import {
+  type AntigravityAdapterV2Options,
   type AntigravityAdapterV2RuntimeInput,
   makeAntigravityAcpAdapterFlavor,
   makeAntigravityAdapterV2,
@@ -998,6 +1001,10 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   detachedChildProfile?: string,
   /** agy 1.5.11 answers a steered prompt once the next one arrives, which runs to `releaseSteer`. */
   steering?: { readonly agentVersion: string; readonly holdsFirstPrompt: boolean },
+  options?: {
+    readonly profileDirectory?: string;
+    readonly initialToolCalls?: ReadonlyArray<EffectAcpSchema.SessionUpdate>;
+  },
 ) {
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const path = yield* Path.Path;
@@ -1028,11 +1035,14 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
   let terminate: AntigravityAdapterV2RuntimeInput["onTermination"];
   const usage = { sessionUpdate: "usage_update", used: 9000, size: 1048576 } as const;
   const offers: Array<ProviderContinuationRequests.ProviderContinuationRequest> = [];
+  const scheduledFinalizes = yield* Queue.unbounded<Duration.Input>();
   const instanceId = ProviderInstanceId.make("antigravity-wake-test");
   const threadId = ThreadId.make("thread-antigravity-wake");
-  const adapter = yield* makeAntigravityAdapterV2({
+  const selfInvocation = yield* resolveSelfInvocation();
+  const profileDirectory = options?.profileDirectory ?? detachedChildProfile;
+  const adapterOptions: AntigravityAdapterV2Options = {
     instanceId,
-    selfInvocation: yield* resolveSelfInvocation(),
+    selfInvocation,
     continuationRequests: { offer: (request) => Effect.sync(() => void offers.push(request)) },
     makeRuntime: (input) => {
       terminate = input.onTermination;
@@ -1074,18 +1084,24 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
                 yield* Deferred.await(releaseSteer);
                 return { stopReason: "end_turn" as const };
               }
-              yield* send(
-                detachedChildProfile === undefined
-                  ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
-                  : {
-                      sessionUpdate: "tool_call",
-                      toolCallId: "call_research",
-                      kind: "other",
-                      title: "Run invoke_subagent",
-                      status: "completed",
-                      rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
-                    },
-              );
+              if (options?.initialToolCalls !== undefined) {
+                for (const toolUpdate of options.initialToolCalls) {
+                  yield* send(toolUpdate);
+                }
+              } else {
+                yield* send(
+                  detachedChildProfile === undefined
+                    ? { sessionUpdate: "tool_call", ...command, status: "in_progress" }
+                    : {
+                        sessionUpdate: "tool_call",
+                        toolCallId: "call_research",
+                        kind: "other",
+                        title: "Run invoke_subagent",
+                        status: "completed",
+                        rawInput: { TypeName: "research", Role: "Researcher", Prompt: "Read it" },
+                      },
+                );
+              }
               yield* send({
                 sessionUpdate: "agent_message_chunk",
                 content: { type: "text", text: "I'll render once the fetch finishes." },
@@ -1099,8 +1115,28 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     },
     withProcess: (_stop, task) => task,
     defaultModel: Effect.undefined,
-    ...(detachedChildProfile === undefined ? {} : { profileDirectory: detachedChildProfile }),
-  });
+    ...(profileDirectory === undefined ? {} : { profileDirectory }),
+  };
+  const adapter =
+    options === undefined
+      ? yield* makeAntigravityAdapterV2(adapterOptions)
+      : yield* makeAcpAdapterV2({
+          instanceId,
+          flavor: makeAntigravityAcpAdapterFlavor({
+            ...adapterOptions,
+            random: crypto,
+            fileSystem: yield* FileSystem.FileSystem,
+            path,
+            host: yield* ProviderHost.ProviderHost,
+          }),
+          selfInvocation,
+          ...(adapterOptions.continuationRequests === undefined
+            ? {}
+            : { continuationRequests: adapterOptions.continuationRequests }),
+          testHooks: {
+            onDeferredFinalizeScheduled: (debounce) => Queue.offer(scheduledFinalizes, debounce),
+          },
+        });
   const runtimePolicy = ProviderAdapter.ProviderAdapterV2RuntimePolicy.make({
     runtimeMode: "full-access",
     interactionMode: "default",
@@ -1183,6 +1219,7 @@ const openSessionWithRunningCommand = Effect.fn("openSessionWithRunningCommand")
     command,
     usage,
     offers,
+    scheduledFinalizes,
     send,
     startTurn,
     until,
@@ -1312,6 +1349,310 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
     }).pipe(Effect.provide(layerSession)),
   );
 
+  // Command 2 finishes during reply 1; agy dequeues command 2 after reply 1's usage_update and
+  // needs >3 s before streaming reply 2. Wait for reply 2 (bounded by the 2-minute quiet limit),
+  // but still finalize at 3 s when both commands were batched into reply 1.
+  it.effect.each([
+    { case: "separate second wake", batched: false, stalls: false },
+    { case: "batched into one wake reply", batched: true, stalls: false },
+    { case: "stalled second wake hits quiet limit", batched: false, stalls: true },
+  ])(
+    "handles two parallel background commands finishing 500 ms apart ($case)",
+    ({ batched, stalls }) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-race-" });
+        const generated = (kind: string) =>
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            "mock-session-1",
+            ".system_generated",
+            kind,
+          );
+        const writeFile = (directory: string, name: string, body: string) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(Effect.andThen(fileSystem.writeFileString(path.join(directory, name), body)));
+        const cmd1 = {
+          toolCallId: "call_gates",
+          kind: "execute",
+          title: "bin/gates back",
+          rawInput: { CommandLine: "bin/gates back", WaitMsBeforeAsync: 10000 },
+        } as const;
+        const cmd2 = {
+          toolCallId: "call_tests",
+          kind: "execute",
+          title: "bin/session test",
+          rawInput: { CommandLine: "bin/session test", WaitMsBeforeAsync: 10000 },
+        } as const;
+        const { usage, offers, scheduledFinalizes, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, undefined, undefined, {
+            profileDirectory: profile,
+            initialToolCalls: [
+              { sessionUpdate: "tool_call", ...cmd1, status: "in_progress" },
+              { sessionUpdate: "tool_call", ...cmd2, status: "in_progress" },
+            ],
+          });
+        yield* startTurn(1, false);
+        yield* throughPromptSettled;
+
+        // Command 1 finishes and wakes the model.
+        yield* writeFile(
+          generated("messages"),
+          "msg-1.json",
+          JSON.stringify({
+            id: "msg-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-1",
+          }),
+        );
+        yield* writeFile(generated("messages"), "read.json", JSON.stringify({ "msg-1": true }));
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          `${JSON.stringify({ step_index: 1, type: "SYSTEM_MESSAGE", status: "DONE", content: "priority=MESSAGE_PRIORITY_HIGH task-1" })}\n`,
+        );
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...cmd1,
+          status: "completed",
+          rawOutput: { output: "ok larastan", exit_code: 0 },
+        });
+
+        // 500 ms later, command 2 also finishes while reply 1 is still in flight.
+        yield* TestClock.adjust("500 millis");
+        yield* writeFile(
+          generated("messages"),
+          "msg-2.json",
+          JSON.stringify({
+            id: "msg-2",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-2",
+          }),
+        );
+        yield* send({
+          sessionUpdate: "tool_call_update",
+          ...cmd2,
+          status: "completed",
+          rawOutput: { output: "34 passed", exit_code: 0 },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+
+        // Reply 1 streams and ends with usage_update #1.
+        yield* TestClock.adjust("8 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: {
+            type: "text",
+            text: batched ? "gates and tests both passed." : "gates passed; waiting for tests.",
+          },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+        yield* writeFile(
+          generated("messages"),
+          "read.json",
+          JSON.stringify({ "msg-1": true, "msg-2": true }),
+        );
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          (batched
+            ? [
+                JSON.stringify({
+                  step_index: 1,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-1 + task-2",
+                }),
+                JSON.stringify({
+                  step_index: 2,
+                  type: "PLANNER_RESPONSE",
+                  status: "DONE",
+                  content: "gates and tests both passed.",
+                }),
+              ]
+            : [
+                JSON.stringify({
+                  step_index: 1,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-1",
+                }),
+                JSON.stringify({
+                  step_index: 2,
+                  type: "PLANNER_RESPONSE",
+                  status: "DONE",
+                  content: "gates passed; waiting for tests.",
+                }),
+                JSON.stringify({
+                  step_index: 3,
+                  type: "SYSTEM_MESSAGE",
+                  status: "DONE",
+                  content: "priority=MESSAGE_PRIORITY_HIGH task-2",
+                }),
+              ]
+          ).join("\n") + "\n",
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+
+        // Advance past the 3-second debounce.
+        yield* TestClock.adjust("3 seconds");
+        if (batched) {
+          const run = yield* until((event) => event.type === "turn.terminal");
+          const terminal = run.at(-1);
+          assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+          assert.include(JSON.stringify(run), "gates and tests both passed.");
+          assert.lengthOf(offers, 0);
+          return;
+        }
+
+        // Pending wake for command 2 must extend into the 2-minute quiet window before finalizing.
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+        if (stalls) {
+          yield* TestClock.adjust("2 minutes");
+          const run = yield* until((event) => event.type === "turn.terminal");
+          const terminal = run.at(-1);
+          assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+          assert.lengthOf(offers, 0);
+          return;
+        }
+
+        // Reply 2 arrives 6 seconds later (9 seconds after usage_update #1).
+        yield* TestClock.adjust("6 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "All 34 tests passed." },
+        });
+        assert.equal((yield* Queue.takeAll(scheduledFinalizes)).at(-1), "2 minutes");
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          [
+            JSON.stringify({
+              step_index: 1,
+              type: "SYSTEM_MESSAGE",
+              status: "DONE",
+              content: "priority=MESSAGE_PRIORITY_HIGH task-1",
+            }),
+            JSON.stringify({
+              step_index: 2,
+              type: "PLANNER_RESPONSE",
+              status: "DONE",
+              content: "gates passed; waiting for tests.",
+            }),
+            JSON.stringify({
+              step_index: 3,
+              type: "SYSTEM_MESSAGE",
+              status: "DONE",
+              content: "priority=MESSAGE_PRIORITY_HIGH task-2",
+            }),
+            JSON.stringify({
+              step_index: 4,
+              type: "PLANNER_RESPONSE",
+              status: "DONE",
+              content: "All 34 tests passed.",
+            }),
+          ].join("\n") + "\n",
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+        yield* TestClock.adjust("3 seconds");
+
+        const run = yield* until((event) => event.type === "turn.terminal");
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(
+          JSON.stringify(run),
+          "All 34 tests passed.",
+          "reply 2 must stay in the same run",
+        );
+        assert.lengthOf(offers, 0, "the open run needs no continuation");
+      }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A background command can finish while the initial prompt's final reply is still in flight,
+  // so the tool is already `completed` when session/prompt returns end_turn while its wake sits
+  // unread in the inbox.
+  it.effect(
+    "keeps the run open when a background command finishes before end_turn with an unread wake",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const profile = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-agy-pre-settle-" });
+        const generated = (kind: string) =>
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            "mock-session-1",
+            ".system_generated",
+            kind,
+          );
+        const writeFile = (directory: string, name: string, body: string) =>
+          fileSystem
+            .makeDirectory(directory, { recursive: true })
+            .pipe(Effect.andThen(fileSystem.writeFileString(path.join(directory, name), body)));
+        const cmd = {
+          toolCallId: "call_mix",
+          kind: "execute",
+          title: "python3 voice.py mix",
+          rawInput: { CommandLine: "python3 voice.py mix", WaitMsBeforeAsync: 10000 },
+        } as const;
+        yield* writeFile(
+          generated("messages"),
+          "msg-1.json",
+          JSON.stringify({
+            id: "msg-1",
+            priority: "MESSAGE_PRIORITY_HIGH",
+            sender: "mock-session-1/task-1",
+          }),
+        );
+        const { usage, offers, scheduledFinalizes, send, startTurn, until, throughPromptSettled } =
+          yield* openSessionWithRunningCommand({}, undefined, undefined, {
+            profileDirectory: profile,
+            initialToolCalls: [
+              { sessionUpdate: "tool_call", ...cmd, status: "in_progress" },
+              {
+                sessionUpdate: "tool_call_update",
+                ...cmd,
+                status: "completed",
+                rawOutput: { output: "mixed.mp4", exit_code: 0 },
+              },
+            ],
+          });
+        yield* startTurn(1, false);
+        yield* throughPromptSettled;
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+
+        yield* TestClock.adjust("9 seconds");
+        yield* send({
+          sessionUpdate: "agent_message_chunk",
+          content: { type: "text", text: "Mix finished." },
+        });
+        assert.equal(yield* Queue.take(scheduledFinalizes), "2 minutes");
+        yield* writeFile(generated("messages"), "read.json", JSON.stringify({ "msg-1": true }));
+        yield* writeFile(
+          generated("logs"),
+          "transcript.jsonl",
+          `${JSON.stringify({ step_index: 2, type: "PLANNER_RESPONSE", status: "DONE", content: "Mix finished." })}\n`,
+        );
+        yield* send(usage);
+        assert.equal(yield* Queue.take(scheduledFinalizes), "3000 millis");
+        yield* TestClock.adjust("3 seconds");
+
+        const run = yield* until((event) => event.type === "turn.terminal");
+        const terminal = run.at(-1);
+        assert.equal(terminal?.type === "turn.terminal" && terminal.status, "completed");
+        assert.include(JSON.stringify(run), "Mix finished.");
+        assert.lengthOf(offers, 0);
+      }).pipe(Effect.provide(layerSession)),
+  );
+
   // agy names its background commands `<session>/task-<n>`; the agent passes that to
   // t3_background_wait, which must not fail since the adapter already holds the run open.
   it.effect("accepts t3_background_wait for a command it already tracks", () =>
@@ -1411,6 +1752,73 @@ describe("AntigravityAdapterV2 work after the prompt ends", () => {
       );
       assert.notInclude(subagentStatuses, "interrupted");
       assert.equal(subagentStatuses.at(-1), "idle");
+    }).pipe(Effect.provide(layerSession)),
+  );
+
+  // A wake run has no prompt of its own, yet agy can keep working in it for minutes.
+  it.effect("steers a continuation run that keeps working after its wake", () =>
+    Effect.gen(function* () {
+      const opened = yield* openSessionWithRunningCommand(
+        { IsDaemon: true, WaitMsBeforeAsync: 500 },
+        undefined,
+        { agentVersion: "1.5.11", holdsFirstPrompt: false },
+      );
+      const { session, providerThread, command, offers, send, startTurn, until, throughTerminal } =
+        opened;
+      yield* startTurn(1, false);
+      yield* throughTerminal;
+      yield* send({
+        sessionUpdate: "tool_call_update",
+        ...command,
+        status: "completed",
+        rawOutput: { output: "Command exited with code 0.", exit_code: 0 },
+      });
+      assert.lengthOf(offers, 1, "the finished daemon must wake the thread");
+      yield* offers[0]!.dispatchIfCurrent!(Effect.void);
+      yield* startTurn(2, true);
+      const followUp = { toolCallId: "call_build", kind: "execute", title: "vp run build" };
+      yield* send({ sessionUpdate: "tool_call", ...followUp, status: "in_progress" });
+      const continued = yield* until(
+        (event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.nativeItemRef?.nativeId === followUp.toolCallId,
+      );
+      const providerTurnId = continued.flatMap((event) =>
+        event.type === "provider_turn.updated" ? [event.providerTurn.id] : [],
+      )[0]!;
+
+      const steer = yield* session
+        .steerTurn({
+          threadId: ThreadId.make("thread-antigravity-wake"),
+          runId: RunId.make("run-antigravity-wake-2"),
+          providerThread,
+          providerTurnId,
+          message: {
+            messageId: MessageId.make("message-antigravity-steer"),
+            text: "Skip the build",
+            attachments: [],
+            createdBy: "user",
+            creationSource: "web",
+          },
+        })
+        .pipe(Effect.exit);
+      assert.isTrue(
+        Exit.isSuccess(steer),
+        `a working wake run must accept a steer: ${String(Exit.isFailure(steer) && steer.cause)}`,
+      );
+      assert.equal(opened.cancels(), 0, "a steer must not cancel the agent's work");
+      assert.lengthOf(opened.prompts, 2);
+      assert.deepEqual(opened.prompts[1]!.prompt, [{ type: "text", text: "Skip the build" }]);
+
+      yield* send({ sessionUpdate: "tool_call_update", ...followUp, status: "completed" });
+      yield* TestClock.adjust("16 minutes");
+      const silent = yield* until((event) => event.type === "turn.terminal");
+      const terminal = silent.at(-1);
+      assert.equal(
+        terminal?.type === "turn.terminal" && terminal.status,
+        "failed",
+        "a silent steer prompt must still hit the inactivity timeout",
+      );
     }).pipe(Effect.provide(layerSession)),
   );
 

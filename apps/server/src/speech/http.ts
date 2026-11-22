@@ -9,11 +9,13 @@ import {
   type EnvironmentSpeechModels,
   EnvironmentVoiceBodyLimit,
   SPEECH_MAX_OPTIONS_BYTES,
+  TextGenerationError,
 } from "@t3tools/contracts";
 import * as ByteSize from "effect/ByteSize";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
@@ -29,6 +31,7 @@ import * as SpeechService from "./SpeechService.ts";
 
 const MAX_TRANSCRIBE_BODY_BYTES = SpeechService.MAX_SPEECH_BYTES + SPEECH_MAX_OPTIONS_BYTES + 4;
 const parseAudio = Option.liftThrowable(decodeSpeechPcmRequest);
+const isTextGenerationError = Schema.is(TextGenerationError);
 
 const bodyLimit = Layer.succeed(EnvironmentVoiceBodyLimit, (effect) =>
   Effect.gen(function* () {
@@ -233,7 +236,15 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
           yield* guard(args.endpoint.name);
           return yield* postProcessing
             .process(args.payload)
-            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+            .pipe(
+              Effect.catch((error) =>
+                failEnvironmentInternal(
+                  "internal_error",
+                  error,
+                  isTextGenerationError(error.cause) ? error.cause.detail : undefined,
+                ),
+              ),
+            );
         }),
       );
   }),

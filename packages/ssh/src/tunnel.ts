@@ -346,26 +346,29 @@ function probe() {
       (response) => {
         response.resume();
         response.once("end", () => {
-          resolve(response.statusCode >= 200 && response.statusCode < 300);
+          resolve(response.statusCode >= 200 && response.statusCode < 300 ? "ready" : "not-ready");
         });
       },
     );
     request.once("timeout", () => {
       request.destroy();
-      resolve(false);
+      resolve("not-ready");
     });
-    request.once("error", () => resolve(false));
+    request.once("error", (error) => resolve(error?.code === "ECONNREFUSED" ? "refused" : "not-ready"));
   });
 }
 
 (async () => {
+  let refusedOnly = true;
   while (Date.now() < deadline) {
-    if (await probe()) {
+    const result = await probe();
+    if (result === "ready") {
       process.exit(0);
     }
+    refusedOnly &&= result === "refused";
     await sleep(100);
   }
-  process.exit(1);
+  process.exit(refusedOnly ? 2 : 1);
 })().catch(() => process.exit(1));
 `;
 
@@ -740,6 +743,15 @@ keeps_running_server() {
     "$RUNNER_FILE" __ssh-helper keep-server "$DEFAULT_RUNTIME_FILE" "$REMOTE_PID" >/dev/null 2>&1
 }
 @@T3_MANAGED_SERVER_RUNNING_SCRIPT@@
+# The server publishes its runtime record only after it answers, so one that
+# has published and now refuses every connection has closed its listener to
+# shut down; a starting server has not published yet. Exit 2 means refused.
+managed_server_stopping() {
+  [ "$DEFAULT_RUNTIME_PID" = "$REMOTE_PID" ] || return 1
+  READY_STATUS=0
+  wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@" || READY_STATUS=$?
+  [ "$READY_STATUS" -eq 2 ]
+}
 # Both are SQLite locks the OS drops with their holder: a server holds
 # server-owner.sqlite, and a boot service holds service-serving.lock from
 # before it starts a server, between two of them during its own update, until
@@ -906,6 +918,15 @@ elif [ -n "$REMOTE_PORT" ] && managed_server_running "$REMOTE_PID"; then
   if [ "$RUNNER_CHANGED" -eq 1 ] && ! keeps_running_server; then
     kill "$REMOTE_PID" 2>/dev/null || true
     wait_for_pid_exit "$REMOTE_PID"
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  elif managed_server_stopping; then
+    wait_for_pid_exit "$REMOTE_PID"
+    if managed_server_running "$REMOTE_PID"; then
+      printf 'The previous remote T3 server (PID %s) is still shutting down. Retry once it has exited.\\n' "$REMOTE_PID" >&2
+      exit 1
+    fi
     REMOTE_PID=""
     REMOTE_PORT=""
     REMOTE_MANAGED=""
@@ -2063,12 +2084,45 @@ const makeSshEnvironmentManager = Effect.fn("ssh/tunnel.SshEnvironmentManager.ma
         localPort: entry.localPort,
         remotePort: entry.remotePort,
       });
+      let answered = false;
+      const markAnswered = Effect.sync(() => {
+        answered = true;
+      });
+      const client = yield* HttpClient.HttpClient;
       const readinessExit = yield* Effect.exit(
         waitForHttpReady({
           baseUrl: entry.httpBaseUrl,
           timeoutMs: SSH_TUNNEL_READY_PROBE_TIMEOUT_MS,
-        }),
+        }).pipe(
+          Effect.provideService(
+            HttpClient.HttpClient,
+            client.pipe(
+              HttpClient.transform((request) =>
+                request.pipe(
+                  Effect.tap(() => markAnswered),
+                  Effect.tapError(() => markAnswered),
+                ),
+              ),
+            ),
+          ),
+        ),
       );
+      // ssh closes the channel when nothing listens remotely, so a forward that
+      // is up but got no answer leads to a live server that is only slow.
+      const keepSlowForward =
+        Exit.isFailure(readinessExit) &&
+        !answered &&
+        (yield* entry.process.isRunning.pipe(Effect.orElseSucceed(() => false))) &&
+        (yield* (yield* NetService.NetService).hasListenerOnHost(entry.localPort, "127.0.0.1"));
+      if (keepSlowForward) {
+        yield* Effect.logWarning("ssh.environment.tunnel.existing.slow", {
+          ...sshTargetLogFields(resolvedTarget),
+          key,
+          localPort: entry.localPort,
+          remotePort: entry.remotePort,
+        });
+        return entry;
+      }
       if (Exit.isSuccess(readinessExit)) {
         yield* Effect.logDebug("ssh.environment.tunnel.reused", {
           ...sshTargetLogFields(resolvedTarget),

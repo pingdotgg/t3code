@@ -23,6 +23,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  RuntimeRequestId,
   ThreadId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2ShellSnapshot,
@@ -88,9 +89,13 @@ const composerDraftFileMocks = vi.hoisted(() => {
     },
     File: class {
       exists = true;
+      size = 3;
       parentDirectory = null;
+      uri = "file:///documents/attachment.png";
 
       create() {}
+
+      async copy() {}
 
       moveSync() {}
 
@@ -130,6 +135,9 @@ const composerAttachmentCleanupMocks = vi.hoisted(() => ({
   releaseUploads: vi.fn(async () => undefined),
 }));
 
+const pickMedia = vi.hoisted(() => vi.fn());
+vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: pickMedia }));
+
 const incomingShareStorageMocks = vi.hoisted(() => ({
   load: vi.fn<typeof import("../features/sharing/incoming-share-storage").loadIncomingShareDrafts>(
     async () => [],
@@ -139,6 +147,7 @@ const incomingShareStorageMocks = vi.hoisted(() => ({
 vi.mock("expo-file-system", () => ({
   Directory: composerDraftFileMocks.Directory,
   File: composerDraftFileMocks.File,
+  FileMode: {},
   Paths: { document: { uri: "file:///documents" } },
 }));
 
@@ -177,6 +186,11 @@ import {
 } from "@t3tools/shared/composerContextReferences";
 import { appAtomRegistry } from "./atom-registry";
 import { startComposerDraftOperation } from "./composerDraftOperations";
+import { questionAttachmentDraftKey } from "./question-attachments";
+import {
+  pickQuestionAttachments,
+  resolveQuestionImagePreparations,
+} from "./question-attachment-preparation";
 import { threadOutboxManager } from "./thread-outbox";
 import {
   appendComposerDraftAttachments,
@@ -228,6 +242,71 @@ const DRAFT: ComposerDraft = {
   text: "hello",
   attachments: [],
 };
+
+it.each(["picker open", "reading image"] as const)(
+  "recovers only accepted screenshots when a question is cancelled while %s",
+  async (stage) => {
+    const questionKey = questionAttachmentDraftKey(
+      EnvironmentId.make("environment"),
+      ThreadId.make("thread"),
+      RuntimeRequestId.make("input"),
+      "language",
+    );
+    const threadKey = "environment:thread";
+    const screenshot = {
+      canceled: false,
+      assets: [
+        {
+          uri: "file:///picker/screenshot.png",
+          fileName: "screenshot.png",
+          type: "image",
+          mimeType: "image/png",
+        },
+      ],
+    } as const;
+    const opened = Promise.withResolvers<void>();
+    const selection = Promise.withResolvers<typeof screenshot>();
+    const reading = Promise.withResolvers<void>();
+    const bytes = Promise.withResolvers<string>();
+    composerDraftFileMocks.readImage.mockImplementationOnce(() => {
+      reading.resolve();
+      return bytes.promise;
+    });
+    pickMedia.mockImplementationOnce(() => {
+      opened.resolve();
+      return selection.promise;
+    });
+    const picking = pickQuestionAttachments({
+      key: questionKey,
+      kind: "media",
+      isActive: () => true,
+      append: (attachments) => appendComposerDraftAttachments(questionKey, attachments),
+    });
+    if (stage === "reading image") {
+      selection.resolve(screenshot);
+      await Promise.race([reading.promise, picking]);
+    } else {
+      await Promise.race([opened.promise, picking]);
+    }
+    resolveQuestionImagePreparations(questionKey, threadKey);
+    selection.resolve(screenshot);
+    bytes.resolve("YWJj");
+    await picking;
+
+    expect(getComposerDraftSnapshot(questionKey).attachments).toEqual([]);
+    expect(getComposerDraftSnapshot(threadKey).attachments).toEqual(
+      stage === "picker open"
+        ? []
+        : [
+            expect.objectContaining({
+              type: "image",
+              name: "screenshot.png",
+              fileUri: "file:///documents/attachment.png",
+            }),
+          ],
+    );
+  },
+);
 
 afterEach(() => {
   vi.useRealTimers();
@@ -1142,6 +1221,22 @@ describe("mobile composer drafts", () => {
     expect(
       appAtomRegistry.get(composerDraftsAtom)[pasteKey]?.attachments.map(({ id }) => id),
     ).toEqual(["red", "blue"]);
+
+    const makeStoredPaste = (id: string) => ({
+      id,
+      type: "image" as const,
+      name: "pasted-image.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      fileUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
+      previewUri: `file:///documents/t3-composer-attachments/${id}-pasted-image.png`,
+    });
+    const storedKey = "new-task:environment-1:project-stored-pastes";
+    appendComposerDraftAttachments(storedKey, [makeStoredPaste("red")]);
+    appendComposerDraftAttachments(storedKey, [makeStoredPaste("green")]);
+    expect(
+      appAtomRegistry.get(composerDraftsAtom)[storedKey]?.attachments.map(({ id }) => id),
+    ).toEqual(["red", "green"]);
   });
 
   it("keeps shared attachment files until every draft releases them", async () => {

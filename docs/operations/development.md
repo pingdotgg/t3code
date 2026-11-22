@@ -15,7 +15,18 @@ irm https://vite.plus/ps1 | iex
 ```
 
 `vp` provides the Node version pinned in `package.json` (Node 26), so no separate Node install is
-needed. From the repository root:
+needed.
+
+On Windows, clone with Git's long-path support enabled. The bundled reference repositories
+under `.repos/` can otherwise make checkout fail with `Filename too long`:
+
+```powershell
+git clone -c core.longpaths=true https://github.com/pingdotgg/t3code.git
+```
+
+This saves the setting in the new clone before checkout, without changing your global Git settings.
+
+From the repository root:
 
 ```sh
 vp i

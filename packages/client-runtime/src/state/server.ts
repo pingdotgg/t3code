@@ -4,15 +4,19 @@ import {
   markedTextEnglish,
   resolveMarkedText,
   thrownErrorMessage,
+  withI18nMessage,
 } from "../errors/translatable.ts";
 import {
+  type DesktopUpdateChannel,
   type EnvironmentId,
   type ProviderInstanceId,
   type ServerConfig,
   type ServerConfigStreamEvent,
+  type ServerFeatureFlags,
   type ServerLifecycleWelcomePayload,
   type ServerLifecycleStreamReadyEvent,
   type ServerProviderWorkspaceSnapshot,
+  ServerSelfUpdateError,
   type ServerSelfUpdateProgressEvent,
   type ServerSelfUpdateResult,
   shouldRecommendDatabaseCompaction,
@@ -386,6 +390,29 @@ export function serverUpdateFailure(error: unknown): {
   return i18nMessage === undefined
     ? { message: serverUpdateFailureMessage(error) }
     : { message: serverUpdateFailureMessage(error), i18nMessage };
+}
+
+/** Marked text for a desktop app whose build track differs from its saved update track. */
+export function desktopTrackMismatchText(mismatch: {
+  readonly buildChannel: DesktopUpdateChannel;
+  readonly savedChannel: DesktopUpdateChannel;
+}): string {
+  return msg(
+    "This {build, select, nightly {Nightly} other {Stable}} build can't update from the {saved, select, nightly {Nightly} other {Stable}} track on its own. Switch the update track back to {build, select, nightly {Nightly} other {Stable}}, or use Review beside Update track to retry the switch to {saved, select, nightly {Nightly} other {Stable}}.",
+    { build: mismatch.buildChannel, saved: mismatch.savedChannel },
+  );
+}
+
+const isServerSelfUpdateError = Schema.is(ServerSelfUpdateError);
+
+/** Gives a host's track mismatch marked text; older hosts send only the English `reason`. */
+export function localizeServerSelfUpdateError<E>(error: E): E {
+  if (!isServerSelfUpdateError(error) || error.trackMismatch === undefined) return error;
+  return withI18nMessage(
+    error,
+    msg("Server update failed:"),
+    desktopTrackMismatchText(error.trackMismatch),
+  );
 }
 
 export function serverUpdateFailureText(
@@ -806,6 +833,14 @@ function serverWelcomeStateChanges(environmentId: EnvironmentId) {
   );
 }
 
+/** Whether an environment's server turned on a feature flag; unset flags and unloaded configs are off. */
+export function hasFeatureFlag(
+  config: Pick<ServerConfig, "featureFlags"> | null | undefined,
+  flag: keyof ServerFeatureFlags,
+): boolean {
+  return config?.featureFlags?.[flag] === true;
+}
+
 export function resolveServerConfigValue(
   projection: ServerConfigProjection | null,
   initialConfig: ServerConfig | null,
@@ -1218,7 +1253,7 @@ export function createServerEnvironmentAtoms<R, E>(
               targetVersion,
             });
             return updateResult;
-          }),
+          }).pipe(Effect.mapError(localizeServerSelfUpdateError)),
         );
 
         // A track switch's desktop host already on its track's newest build only saved the

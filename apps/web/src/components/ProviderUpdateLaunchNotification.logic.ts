@@ -39,6 +39,7 @@ export interface ProviderUpdateSidebarPillView {
   readonly description: string;
   readonly dismissible?: boolean;
   readonly dismissAfterVisibleMs?: number;
+  readonly dismissKeys?: ReadonlyArray<string>;
 }
 
 interface ProviderUpdateSidebarPillOptions {
@@ -355,6 +356,15 @@ function latestFinishedAtForProviders(providers: ReadonlyArray<ServerProvider>):
   }, null);
 }
 
+function terminalUpdateKey(provider: ServerProvider): string {
+  return `${provider.updateState?.status}:${provider.driver}:${provider.updateState?.finishedAt ?? "pending"}:${provider.updateState?.message ?? ""}`;
+}
+
+function terminalPillIdentity(providers: ReadonlyArray<ServerProvider>) {
+  const dismissKeys = providers.map(terminalUpdateKey).toSorted();
+  return { key: dismissKeys.join("|"), dismissKeys };
+}
+
 /** Use each driver's latest finished instance so an older default-instance result cannot hide it. */
 function latestTerminalProvidersByDriver(providers: ReadonlyArray<ServerProvider>) {
   const latestProviderByDriver = new Map<ProviderDriverKind, ServerProvider>();
@@ -412,7 +422,7 @@ export function getProviderUpdateSidebarPillView(
 
   const recentTerminalProviders = latestTerminalProvidersByDriver(
     providers.filter((provider) => isRecentTerminalProvider(provider, options?.visibleAfterIso)),
-  );
+  ).filter((provider) => !options?.dismissedKeys?.has(terminalUpdateKey(provider)));
   const terminalCandidates: ProviderUpdateSidebarPillView[] = [];
 
   const failedProviders = recentTerminalProviders.filter(
@@ -421,13 +431,7 @@ export function getProviderUpdateSidebarPillView(
   if (failedProviders.length > 0) {
     const failedProvider = failedProviders[0]!;
     terminalCandidates.push({
-      key: `failed:${failedProviders
-        .map(
-          (provider) =>
-            `${provider.driver}:${provider.updateState?.finishedAt ?? "pending"}:${provider.updateState?.message ?? ""}`,
-        )
-        .toSorted()
-        .join("|")}`,
+      ...terminalPillIdentity(failedProviders),
       tone: "error",
       title:
         failedProviders.length === 1
@@ -451,13 +455,7 @@ export function getProviderUpdateSidebarPillView(
     const unchangedProviderName =
       PROVIDER_DISPLAY_NAMES[unchangedProvider.driver] ?? unchangedProvider.driver;
     terminalCandidates.push({
-      key: `unchanged:${unchangedProviders
-        .map(
-          (provider) =>
-            `${provider.driver}:${provider.updateState?.finishedAt ?? "pending"}:${provider.updateState?.message ?? ""}`,
-        )
-        .toSorted()
-        .join("|")}`,
+      ...terminalPillIdentity(unchangedProviders),
       tone: "warning",
       title:
         unchangedProviders.length === 1
@@ -490,13 +488,7 @@ export function getProviderUpdateSidebarPillView(
   if (succeededProviders.length > 0) {
     const succeededProvider = succeededProviders[0]!;
     terminalCandidates.push({
-      key: `succeeded:${succeededProviders
-        .map(
-          (provider) =>
-            `${provider.driver}:${provider.updateState?.finishedAt ?? "pending"}:${provider.updateState?.message ?? ""}`,
-        )
-        .toSorted()
-        .join("|")}`,
+      ...terminalPillIdentity(succeededProviders),
       tone: "success",
       title:
         succeededProviders.length === 1
@@ -533,7 +525,7 @@ export function getProviderUpdateSidebarPillView(
         const rightFinishedAt = latestFinishedAtForProviders(rightProviders) ?? "";
         return rightFinishedAt.localeCompare(leftFinishedAt);
       })
-      .find((candidate) => !options?.dismissedKeys?.has(candidate.key)) ?? null
+      .at(0) ?? null
   );
 }
 
