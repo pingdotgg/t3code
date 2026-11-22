@@ -8,6 +8,7 @@ import {
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import { HttpServerRequest } from "effect/http";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as TestClock from "effect/testing/TestClock";
@@ -1115,6 +1116,43 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           expect((yield* serverAuth.authenticateHttpRequest(request)).sessionId).toBeTypeOf(
             "string",
           );
+        }).pipe(
+          Effect.provide(
+            layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" }),
+          ),
+        ),
+    );
+
+    it.effect.each(["https", "wss"])(
+      "verifies a socket proof against the public URL when a TLS proxy forwards %s",
+      (forwardedProto) =>
+        Effect.gen(function* () {
+          const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
+          const sessions = yield* SessionStore.SessionStore;
+          const key = makeDpopKey();
+          const exchanged = yield* serverAuth.exchangeBootstrapCredentialForAccessToken(
+            "desktop-bootstrap-token",
+            ["orchestration:read"],
+            requestMetadata,
+            { proofKeyThumbprint: key.thumbprint },
+          );
+          const session = yield* sessions.verify(exchanged.access_token);
+          const ticket = Redacted.value(
+            (yield* serverAuth.issueWebSocketTicket(session, { use: "rpc" })).ticket,
+          );
+          const proof = key.sign({
+            method: "GET",
+            url: "https://t3.example.com/ws",
+            token: ticket,
+            iat: Math.floor((yield* DateTime.now).epochMilliseconds / 1_000),
+          });
+          const request = HttpServerRequest.fromWeb(
+            new Request(`http://t3.example.com/ws?wsTicket=${ticket}&dpop=${proof}`, {
+              headers: { host: "t3.example.com", "x-forwarded-proto": forwardedProto },
+            }),
+          );
+          const verified = yield* serverAuth.authenticateWebSocketUpgrade(request, "rpc");
+          expect(verified.sessionId).toBe(session.sessionId);
         }).pipe(
           Effect.provide(
             layerEnvironmentAuth({ desktopBootstrapToken: "desktop-bootstrap-token" }),
