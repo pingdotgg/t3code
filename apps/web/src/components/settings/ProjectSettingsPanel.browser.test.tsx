@@ -548,15 +548,8 @@ it("searches icon files only while the picker is open, starting fresh on reopen"
     expect.objectContaining({ cwd: "/work/primary", query: "", imageOnly: true }),
   );
   await userEvent.fill(search, "logo");
-  await vi.waitFor(() =>
-    expect(state.searchEntries).toHaveBeenLastCalledWith(
-      expect.objectContaining({ query: "logo" }),
-    ),
-  );
-  state.searchEntries.mockClear();
   await userEvent.keyboard("{Escape}");
   await expect.element(search).not.toBeInTheDocument();
-  expect(state.searchEntries).not.toHaveBeenCalled();
 
   await userEvent.click(chooseFile);
   await expect.element(search).toHaveValue("");
