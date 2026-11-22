@@ -1,7 +1,11 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
 import type { ChatAttachment } from "@t3tools/contracts";
 import { assistantCitationsToPlainText } from "@t3tools/shared/assistantCitations";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { truncate } from "@t3tools/shared/String";
+
+import { collectComposerModelMentions } from "../composerModelMentions.ts";
 
 export interface ThreadTitleSeedInput {
   readonly text: string;
@@ -10,10 +14,28 @@ export interface ThreadTitleSeedInput {
 }
 
 function normalizeTitleSeed(value: string): string {
-  return assistantCitationsToPlainText(value).trim().replace(/\s+/gu, " ");
+  // Mentioned macOS paths can be NFD; titles show them composed.
+  return assistantCitationsToPlainText(value).trim().replace(/\s+/gu, " ").normalize("NFC");
 }
 
-export function threadTitleTextFromPrompt(value: string): string {
+function modelMentionsAsSlugs(value: string): string {
+  let result = "";
+  let cursor = 0;
+  for (const mention of collectComposerModelMentions(value)) {
+    result += value.slice(cursor, mention.start) + mention.model;
+    cursor = mention.end;
+  }
+  return result + value.slice(cursor);
+}
+
+function attachedImagesTitle(count: number, resolve: MFunctionType): string {
+  return count === 1 ? resolve(msg("Attached image")) : resolve(msg("Attached images"));
+}
+
+export function threadTitleTextFromPrompt(
+  value: string,
+  resolve: MFunctionType = mFallback,
+): string {
   const imageIds = new Set<string>();
   const prose = replaceComposerContextReferences(value, (reference) => {
     if (reference.kind === "image") {
@@ -23,25 +45,28 @@ export function threadTitleTextFromPrompt(value: string): string {
     return reference.label;
   });
   return (
-    normalizeTitleSeed(prose) ||
-    (imageIds.size > 0 ? (imageIds.size === 1 ? "Attached image" : "Attached images") : "")
+    normalizeTitleSeed(modelMentionsAsSlugs(prose)) ||
+    (imageIds.size > 0 ? attachedImagesTitle(imageIds.size, resolve) : "")
   );
 }
 
-export function deriveThreadTitleSeed(input: ThreadTitleSeedInput): string {
-  const text = threadTitleTextFromPrompt(input.text);
+export function deriveThreadTitleSeed(
+  input: ThreadTitleSeedInput,
+  resolve: MFunctionType = mFallback,
+): string {
+  const text = threadTitleTextFromPrompt(input.text, resolve);
   if (text.length > 0) {
     return truncate(text);
   }
 
   const images = input.attachments.filter((attachment) => attachment.type === "image");
   if (images.length > 0) {
-    return images.length === 1 ? "Attached image" : "Attached images";
+    return attachedImagesTitle(images.length, resolve);
   }
 
   const attachmentName = normalizeTitleSeed(input.attachments[0]?.name ?? "");
   if (attachmentName.length > 0) {
-    return truncate(`File: ${attachmentName}`);
+    return truncate(resolve(msg("File: {name}", { name: attachmentName })));
   }
 
   for (const label of input.fallbackLabels ?? []) {
@@ -51,5 +76,5 @@ export function deriveThreadTitleSeed(input: ThreadTitleSeedInput): string {
     }
   }
 
-  return "New thread";
+  return resolve(msg("New thread"));
 }

@@ -7,8 +7,13 @@ import {
   THREAD_JUMP_KEYBINDING_COMMANDS,
 } from "@t3tools/contracts";
 import {
+  type FilePreviewScroll,
+  filePreviewRestoreScrollMessage,
+  isFilePreviewScrollRestored,
+  readFilePreviewScroll,
   type HtmlRenderShortcut,
   htmlRenderShortcutsMessage,
+  HTML_RENDER_CONTAIN_SCROLL_FRAGMENT,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
@@ -24,6 +29,7 @@ import {
 } from "@t3tools/shared/keybindings";
 import {
   lazy,
+  type ReactNode,
   Suspense,
   useEffect,
   useEffectEvent,
@@ -75,7 +81,13 @@ export const isPdfPreviewFile = (path: string): boolean =>
 const PdfViewer = lazy(() => import("./PdfViewer"));
 
 // The document stays mounted while each revision gets a fresh PDF.js document.
-function PdfDocument(props: { src: string; title: string; documentKey: string }) {
+function PdfDocument(props: {
+  src: string;
+  title: string;
+  documentKey: string;
+  threadRef: ScopedThreadRef | undefined;
+  actions?: ReactNode;
+}) {
   const [view, setView] = useState<PdfViewState>({ page: 0, offset: 0, zoom: null, left: 0 });
   return (
     <PdfDocumentRevision
@@ -85,6 +97,8 @@ function PdfDocument(props: { src: string; title: string; documentKey: string })
       positionKey={props.documentKey}
       initialView={view}
       onViewChange={setView}
+      threadRef={props.threadRef}
+      actions={props.actions}
     />
   );
 }
@@ -96,8 +110,11 @@ function PdfDocumentRevision(props: {
   positionKey: string;
   initialView: PdfViewState;
   onViewChange: (view: PdfViewState) => void;
+  threadRef: ScopedThreadRef | undefined;
+  actions?: ReactNode;
 }) {
   const [src] = useState(props.src);
+  const openLink = useOpenLink(props.threadRef);
   // The Electron shell does not enable PDF plugins. WebKit embeds on iOS
   // expose only the first page, even when pdfViewerEnabled reports support.
   const native =
@@ -120,6 +137,10 @@ function PdfDocumentRevision(props: {
         positionKey={props.positionKey}
         initialView={props.initialView}
         onViewChange={props.onViewChange}
+        onOpenLink={(url, event) => {
+          void openLink(url, { event }).catch((cause: unknown) => console.error(cause));
+        }}
+        actions={props.actions}
       />
     </Suspense>
   );
@@ -139,6 +160,8 @@ export function BrowserDocumentFrame(props: {
   readonly documentKey?: string | undefined;
   /** Resource identity without its revision, so PDF reloads can retain the reading position. */
   readonly documentId?: string | undefined;
+  /** Toolbar actions for the in-app PDF viewer; Chromium's own viewer brings its own. */
+  readonly pdfActions?: ReactNode;
 }) {
   const key = props.documentKey ?? props.src;
   return props.pdf ? (
@@ -147,6 +170,8 @@ export function BrowserDocumentFrame(props: {
       documentKey={key}
       src={props.src}
       title={props.title}
+      threadRef={props.threadRef}
+      actions={props.pdfActions}
     />
   ) : props.htmlRender ? (
     <HtmlRenderDocument
@@ -157,20 +182,119 @@ export function BrowserDocumentFrame(props: {
       className="min-h-0 flex-1"
     />
   ) : (
-    <FileDocument key={key} src={props.src} title={props.title} />
+    <FileDocument
+      key={props.documentId ?? key}
+      documentKey={key}
+      src={props.src}
+      title={props.title}
+    />
   );
 }
 
-// URL renewals must not discard form input or scroll; a new key mounts a fresh document.
-function FileDocument(props: { readonly src: string; readonly title: string }) {
-  const [src] = useState(props.src);
+interface FileDocumentRevision {
+  readonly key: string;
+  readonly src: string;
+}
+
+interface FileDocumentFrames {
+  readonly shown: FileDocumentRevision;
+  readonly next: FileDocumentRevision | null;
+}
+
+// Identity, not key, so a late load from a replaced frame cannot uncover a newer unloaded one.
+const showRevision =
+  (next: FileDocumentRevision) =>
+  (current: FileDocumentFrames): FileDocumentFrames =>
+    current.next === next ? { shown: next, next: null } : current;
+
+// A page whose load never fires (a stalled subresource) must not pin the previous revision.
+const FILE_DOCUMENT_SWAP_TIMEOUT_MS = 5_000;
+
+// URL renewals keep a revision's first URL, so they do not discard form input or scroll. A new
+// revision loads beneath the page on screen, takes its scroll position and replaces it once
+// painted, so no blank frame shows and the reader keeps their place.
+function FileDocument(props: {
+  readonly documentKey: string;
+  readonly src: string;
+  readonly title: string;
+}) {
+  const [frames, setFrames] = useState<FileDocumentFrames>(() => ({
+    shown: { key: props.documentKey, src: props.src },
+    next: null,
+  }));
+  if ((frames.next ?? frames.shown).key !== props.documentKey) {
+    setFrames({
+      shown: frames.shown,
+      next:
+        frames.shown.key === props.documentKey ? null : { key: props.documentKey, src: props.src },
+    });
+  }
+  const { next } = frames;
+  const shownFrame = useRef<HTMLIFrameElement>(null);
+  const nextFrame = useRef<HTMLIFrameElement>(null);
+  // The page reports its scroll position (see FILE_PREVIEW_SCROLL_SCRIPT); the next revision
+  // scrolls there before it is uncovered.
+  const scroll = useRef<FilePreviewScroll | null>(null);
+  // Two frames let the browser paint the incoming page before it is uncovered.
+  const reveal = (revision: FileDocumentRevision) =>
+    requestAnimationFrame(() => requestAnimationFrame(() => setFrames(showRevision(revision))));
+  const onFrameMessage = useEffectEvent((event: MessageEvent) => {
+    const position = readFilePreviewScroll(event.data);
+    if (position !== undefined) {
+      if (event.source === shownFrame.current?.contentWindow) scroll.current = position;
+    } else if (
+      next !== null &&
+      event.source === nextFrame.current?.contentWindow &&
+      isFilePreviewScrollRestored(event.data)
+    ) {
+      reveal(next);
+    }
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for the frames' scroll reports
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => onFrameMessage(event);
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- swaps in a revision whose load event never arrives
+  useEffect(() => {
+    if (next === null) return;
+    const timer = setTimeout(() => setFrames(showRevision(next)), FILE_DOCUMENT_SWAP_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [next]);
+  // The shown frame stays last so it paints on top and is never moved, which would reload it.
   return (
-    <iframe
-      src={src}
-      title={props.title}
-      className="min-h-0 flex-1 border-0 bg-white"
-      sandbox="allow-scripts allow-forms allow-popups allow-downloads"
-    />
+    <div className="relative min-h-0 flex-1">
+      {[next, frames.shown].map((revision) =>
+        revision === null ? null : (
+          <iframe
+            key={revision.key}
+            ref={revision === next ? nextFrame : shownFrame}
+            src={revision.src}
+            title={props.title}
+            className="absolute inset-0 size-full border-0"
+            style={{ backgroundColor: "Canvas" }}
+            sandbox="allow-scripts allow-forms allow-popups allow-downloads"
+            inert={revision === next}
+            aria-hidden={revision === next ? true : undefined}
+            onLoad={
+              revision === next
+                ? (event) => {
+                    if (scroll.current === null) {
+                      reveal(revision);
+                      return;
+                    }
+                    event.currentTarget.contentWindow?.postMessage(
+                      filePreviewRestoreScrollMessage(scroll.current),
+                      "*",
+                    );
+                  }
+                : undefined
+            }
+          />
+        ),
+      )}
+    </div>
   );
 }
 
@@ -181,12 +305,17 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   readonly threadRef?: ScopedThreadRef | undefined;
   readonly onContentHeight?: (height: number) => void;
+  /** Keeps the page's scrollIntoView calls from scrolling the host, for frames inline in the chat. */
+  readonly containScroll?: boolean | undefined;
   /** Reports fullscreen changes so virtualized rows can stay mounted. */
   readonly onFullscreenChange?: ((fullscreen: boolean) => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
-  const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
+  const [src] = useState(
+    () =>
+      `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}${props.containScroll ? HTML_RENDER_CONTAIN_SCROLL_FRAGMENT : ""}`,
+  );
   const [loaded, setLoaded] = useState(false);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   const postTheme = () => {
@@ -301,7 +430,7 @@ export function HtmlRenderDocument(props: {
     }
     const imageRequest = readHtmlRenderImageRequest(event.data);
     if (imageRequest !== undefined) {
-      setExpandedImage({ images: [{ src: imageRequest.src, name: imageRequest.name }], index: 0 });
+      setExpandedImage({ images: [...imageRequest.images], index: imageRequest.index });
     }
   });
   // Attach at commit because a fast page may post its initial height before passive effects run.

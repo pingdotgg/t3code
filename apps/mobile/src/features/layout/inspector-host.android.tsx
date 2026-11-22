@@ -1,3 +1,4 @@
+import { useGT } from "gt-react-native";
 import { View } from "react-native";
 
 import { RenderErrorBoundary, RenderFailureView } from "../../components/RenderErrorBoundary";
@@ -15,13 +16,14 @@ function PaneContent(props: {
   readonly pane: InspectorPane;
   readonly resetKeys: ReadonlyArray<unknown> | undefined;
 }) {
+  const gt = useGT();
   const { slot } = useInspectorBarSlot();
   return (
     <WorkspaceSlotOptionsContext value={slot}>
       <RenderErrorBoundary
         resetKeys={props.resetKeys}
         renderFallback={(fallback) => (
-          <RenderFailureView {...fallback} title="The inspector couldn't be displayed" />
+          <RenderFailureView {...fallback} title={gt("The inspector couldn't be displayed")} />
         )}
       >
         {props.pane.render()}
@@ -53,7 +55,8 @@ export function InspectorPanes(props: {
                   position: "absolute",
                   inset: 0,
                   opacity: visible ? 1 : 0,
-                  zIndex: visible ? 1 : 0,
+                  // A lower zIndex puts the visible pane first in native order, where Material finds its scroll view.
+                  zIndex: visible ? 0 : 1,
                 }}
               >
                 <PaneContent pane={pane} resetKeys={props.content?.resetKeys} />

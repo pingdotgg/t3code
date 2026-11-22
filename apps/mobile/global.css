@@ -5,6 +5,10 @@
 /* ─── Theme tokens ──────────────────────────────────────────────────── */
 @layer theme {
   :root {
+    /* Native text takes one family name, not Tailwind's font stack. */
+    @variant ios {
+      --font-mono: "ui-monospace";
+    }
     @variant android {
       --font-mono: "monospace";
     }
@@ -46,6 +50,7 @@
 
 @utility font-t3-bold {
   font-family: var(--font-bold);
+  font-weight: 700;
 }
 
 @utility font-t3-extrabold {

@@ -1,7 +1,10 @@
 import { PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES } from "@t3tools/client-runtime/text-paste";
 import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
 import { collectComposerInlineTokens } from "@t3tools/shared/composerInlineTokens";
+import { markdownMathRanges } from "@t3tools/shared/markdownMath";
 import { composerContextEditorTokens, composerSkillLabels } from "../lib/composerContext";
+import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
+import { useComposerModelTokens } from "./useComposerModelTokens";
 import { requireNativeView } from "expo";
 import { TextInputWrapper } from "expo-paste-input";
 import {
@@ -23,7 +26,7 @@ import {
   contextChipPresentation,
   contextRecordFileName,
 } from "../lib/composerChipPresentation";
-import { contextChipIconUri } from "../lib/contextChipIconSource";
+import { contextChipIconUri, modelChipIcon, modelChipIconUri } from "../lib/contextChipIconSource";
 import { MOBILE_TYPOGRAPHY } from "../lib/typography";
 import { useNativePaste } from "../lib/useNativePaste";
 import { FONT_FAMILIES } from "../lib/fontFamilies";
@@ -42,6 +45,7 @@ import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerE
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
 const EMPTY_SKILLS: NonNullable<ComposerEditorProps["skills"]> = [];
+const EMPTY_MODELS: NonNullable<ComposerEditorProps["models"]> = [];
 
 type NativeEditorEvent = NativeSyntheticEvent<{
   readonly value: string;
@@ -89,6 +93,8 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly autoFocus: boolean;
   readonly autoCorrect: boolean;
   readonly spellCheck: boolean;
+  readonly enterBehavior: string;
+  readonly submitEnabled: boolean;
   readonly onComposerChange: (event: NativeEditorEvent) => void;
   readonly onComposerSelectionChange?: (event: NativeSelectionEvent) => void;
   readonly onComposerPasteImages?: (event: NativePasteImagesEvent) => void;
@@ -106,6 +112,7 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerContentSizeChange?: (
     event: NativeSyntheticEvent<{ readonly width: number; readonly height: number }>,
   ) => void;
+  readonly onComposerSubmit?: (event: NativeSyntheticEvent<{ alternate: boolean }>) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -125,6 +132,7 @@ function basename(path: string): string {
 export function ComposerEditor({
   ref,
   skills = EMPTY_SKILLS,
+  models = EMPTY_MODELS,
   selection,
   style,
   textStyle,
@@ -135,6 +143,7 @@ export function ComposerEditor({
   onFocus,
   onBlur,
   onContentSizeChange,
+  onSubmit,
   contentInsetVertical = 0,
   ...props
 }: ComposerEditorProps) {
@@ -148,11 +157,12 @@ export function ComposerEditor({
   // an abandoned render from leaking a trailing token into the next one.
   const [confirmedTokens, setConfirmedTokens] = useState(() => ({
     value: props.value,
-    tokens: collectComposerInlineTokens(props.value),
+    tokens: collectComposerInlineTokens(props.value, { findMath: markdownMathRanges }),
   }));
   let tokens = confirmedTokens.tokens;
   if (confirmedTokens.value !== props.value) {
     tokens = collectComposerInlineTokens(props.value, {
+      findMath: markdownMathRanges,
       preserveTrailingFrom: confirmedTokens.tokens,
     });
     setConfirmedTokens({ value: props.value, tokens });
@@ -167,15 +177,18 @@ export function ComposerEditor({
       blur: () => settleViewCommand(nativeRef.current?.blur()),
       setSelection: (nextSelection) =>
         settleViewCommand(nativeRef.current?.setSelection(nextSelection.start, nextSelection.end)),
+      flushPendingInput: async () => {},
     }),
     [],
   );
 
   const skillLabels = useMemo(() => composerSkillLabels(skills), [skills]);
+  const { modelsBySource, modelTokens } = useComposerModelTokens(props.value, models);
   const chipTextColor = createNativeComposerTheme(theme).text;
   const tokensJson = useMemo(() => {
     return JSON.stringify(
-      composerContextEditorTokens(props.value, tokens, skillLabels).map((token) => {
+      composerContextEditorTokens(props.value, tokens, skillLabels, modelTokens).map((token) => {
+        const model = token.type === "model" ? modelsBySource.get(token.source) : undefined;
         const record =
           token.type === "context"
             ? props.context?.records.find((record) => record.contextId === token.contextId)
@@ -189,24 +202,43 @@ export function ComposerEditor({
           token.type === "mention" ? token.value : contextRecordFileName(record),
         );
         return {
-          type: token.type,
+          // Android taps only known token types; a model chip opens like a skill chip.
+          type:
+            token.type === "model" ? "skill" : token.type === "citation" ? "context" : token.type,
           source: token.source,
           start: token.start,
           end: token.end,
-          accent: contextChipAccent(presentation.accent, theme, chipTextColor),
+          accent: contextChipAccent(
+            model ? modelChipIcon(model).accent : presentation.accent,
+            theme,
+            chipTextColor,
+          ),
           label:
             token.type === "skill"
               ? (skillLabels.get(token.value) ?? token.value)
-              : token.type === "context"
-                ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
-                : basename(token.value),
+              : model
+                ? model.label
+                : token.type === "context"
+                  ? `${token.label}${props.context?.records.some((record) => record.contextId === token.contextId) ? "" : " · unavailable"}`
+                  : token.type === "citation"
+                    ? token.value
+                    : basename(token.value).normalize("NFC"),
           detail: token.type === "context" ? composerChipSizeSuffix(record) : "",
-          iconUri: contextChipIconUri(icon),
-          tintsIcon: icon.kind === "chip",
+          iconUri: model ? modelChipIconUri(model) : contextChipIconUri(icon),
+          tintsIcon: model ? modelChipIcon(model).tintsIcon : icon.kind === "chip",
         };
       }),
     );
-  }, [props.value, tokens, props.context, skillLabels, theme, chipTextColor]);
+  }, [
+    props.value,
+    tokens,
+    props.context,
+    skillLabels,
+    modelsBySource,
+    modelTokens,
+    theme,
+    chipTextColor,
+  ]);
   // Every render resolves against the snapshot history, so a render whose
   // (value, selection) lags the acknowledged native state is stamped behind
   // the native revision and rejected by the editor instead of re-applying a
@@ -317,6 +349,8 @@ export function ComposerEditor({
         autoFocus={props.autoFocus ?? false}
         autoCorrect={props.autoCorrect ?? true}
         spellCheck={props.spellCheck ?? true}
+        enterBehavior={props.enterBehavior ?? DEFAULT_COMPOSER_ENTER_BEHAVIOR}
+        submitEnabled={onSubmit !== undefined}
         textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
@@ -384,6 +418,11 @@ export function ComposerEditor({
           onContentSizeChange === undefined
             ? undefined
             : (event) => onContentSizeChange(event.nativeEvent)
+        }
+        onComposerSubmit={
+          onSubmit === undefined
+            ? undefined
+            : (event) => onSubmit(event.nativeEvent.alternate === true)
         }
       />
     </TextInputWrapper>
