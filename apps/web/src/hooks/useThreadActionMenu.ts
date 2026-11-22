@@ -23,6 +23,10 @@ import {
   threadActionRequiresOperate,
   type ThreadActionMenuId,
 } from "../components/threadActionMenu.logic";
+import {
+  isThreadCompletionSoundMuted,
+  setThreadCompletionSoundMuted,
+} from "../threadNotifications";
 import { titleRegenerationToast } from "../components/threadTitleRegenerationToast";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { copyThreadReference } from "../lib/copyThreadReference";
@@ -144,6 +148,7 @@ export function useThreadActionMenu(input: {
         branch: thread.branch ?? null,
         projectFilter: null,
         isPinned: thread.pinnedAt != null,
+        isCompletionSoundMuted: isThreadCompletionSoundMuted(threadRef),
         isSettled: supports.settlement && thread.settledOverride === "settled",
         autoSettleEnabled: thread.autoSettleDisabledAt == null,
         isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),
@@ -267,6 +272,10 @@ export function useThreadActionMenu(input: {
           if (toast) toastManager.add(toast);
           return;
         }
+        case "mute-completion-sound":
+        case "unmute-completion-sound":
+          setThreadCompletionSoundMuted(threadRef, action === "mute-completion-sound");
+          return;
         case "mark-unread":
           markThreadUnread(threadRef);
           return;

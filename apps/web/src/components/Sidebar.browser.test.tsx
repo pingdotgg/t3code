@@ -18,6 +18,7 @@ import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
+import { showContextMenuFallback } from "../contextMenuFallback";
 import { DraftId, useComposerDraftStore } from "../composerDraftStore";
 import { makeThreadFixture } from "../test-fixtures";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
@@ -29,6 +30,7 @@ import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { readLocalApi } from "../localApi";
+import { setThreadCompletionSoundMuted } from "../threadNotifications";
 import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
@@ -330,11 +332,16 @@ describe("sidebar thread rename", () => {
 });
 
 describe("sidebar thread menu", () => {
-  it("tells the menu whether the keyboard opened it", async () => {
+  it("opens the thread menu from keyboard and pointer, and toggles its completion sound", async () => {
     const activeProject = project("active");
     const thread = threadShell(activeProject.id, 0);
     const threadRef = { environmentId: activeProject.environmentId, threadId: thread.id };
-    const show = vi.fn().mockResolvedValue(null);
+    using _preference = {
+      [Symbol.dispose]: () => setThreadCompletionSoundMuted(threadRef, false),
+    };
+    const show = vi.fn((...args: Parameters<LocalApi["contextMenu"]["show"]>) =>
+      showContextMenuFallback(args[0], args[1]),
+    );
     vi.mocked(readLocalApi).mockReturnValue({ contextMenu: { show } } as unknown as LocalApi);
     vi.mocked(useProjects).mockReturnValue([activeProject]);
     vi.mocked(useQuietThreadShells).mockReturnValue([thread]);
@@ -362,9 +369,18 @@ describe("sidebar thread menu", () => {
     await userEvent.keyboard("{Shift>}{F10}{/Shift}");
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(1));
     expect(show.mock.lastCall?.[2]).toBe("keyboard");
+    await userEvent.keyboard("{Escape}");
     await userEvent.click(row, { button: "right" });
     await vi.waitFor(() => expect(show).toHaveBeenCalledTimes(2));
     expect(show.mock.lastCall?.[2]).toBe("mouse");
+    await userEvent.click(screen.getByRole("menuitem", { name: "Mute completion sound" }));
+    await userEvent.click(row, { button: "right" });
+    await userEvent.click(screen.getByRole("menuitem", { name: "Unmute completion sound" }));
+    await userEvent.click(row, { button: "right" });
+    await expect
+      .element(screen.getByRole("menuitem", { name: "Mute completion sound" }))
+      .toBeVisible();
+    await userEvent.keyboard("{Escape}");
   });
 });
 

@@ -23,6 +23,8 @@ export type ThreadActionMenuId =
   | "rename"
   | "regenerate-title"
   | "mark-unread"
+  | "mute-completion-sound"
+  | "unmute-completion-sound"
   | "share-guest"
   | "copy"
   | "copy-path"
@@ -104,6 +106,7 @@ export interface ThreadActionMenuState {
     readonly isActive: boolean;
   } | null;
   readonly isPinned: boolean;
+  readonly isCompletionSoundMuted: boolean;
   readonly isSettled: boolean;
   readonly autoSettleEnabled: boolean;
   readonly isSnoozed: boolean;
@@ -132,6 +135,8 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
+    "mute-completion-sound",
+    "unmute-completion-sound",
     "share-guest",
     "copy",
     "copy-path",
@@ -220,6 +225,9 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: resolve(msg("Mark unread")), icon: "mail-open" },
+    state.isCompletionSoundMuted
+      ? { id: "unmute-completion-sound", label: resolve(msg("Unmute completion sound")) }
+      : { id: "mute-completion-sound", label: resolve(msg("Mute completion sound")) },
     ...(state.canShareWithGuest
       ? [{ id: "share-guest" as const, label: resolve(msg("Share with guest")), icon: "user-plus" }]
       : []),

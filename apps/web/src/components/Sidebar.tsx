@@ -180,6 +180,10 @@ import {
   threadActionRequiresOperate,
 } from "./threadActionMenu.logic";
 import {
+  isThreadCompletionSoundMuted,
+  setThreadCompletionSoundMuted,
+} from "../threadNotifications";
+import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
   groupSidebarThreadsByProject,
@@ -2705,6 +2709,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                     }
                   : null,
               isPinned,
+              isCompletionSoundMuted: isThreadCompletionSoundMuted(threadRef),
               isSettled,
               autoSettleEnabled: thread.autoSettleDisabledAt == null,
               isSnoozed,
@@ -2852,6 +2857,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (toast) toastManager.add(toast);
             return;
           }
+          case "mute-completion-sound":
+          case "unmute-completion-sound":
+            setThreadCompletionSoundMuted(threadRef, clicked.value === "mute-completion-sound");
+            return;
           case "mark-unread":
             markThreadUnread(threadRef);
             return;

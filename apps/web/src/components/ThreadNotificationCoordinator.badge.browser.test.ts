@@ -1,11 +1,12 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
+import { setThreadCompletionSoundMuted } from "../threadNotifications";
 import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.logic";
 
 const state = vi.hoisted(() => ({
@@ -291,6 +292,41 @@ it("presents completion notifications and sound as soon as the shell completes",
   );
   expect(TestNotification.sent.map((sent) => sent.title)).toEqual(["Thread completed"]);
   expect(state.sound).toHaveBeenCalledWith("completion", expect.any(Function));
+});
+
+it("mutes only completion audio for the selected thread and can restore it", async () => {
+  await using app = setup();
+  const ref = { environmentId: EnvironmentId.make("one"), threadId: ThreadId.make("thread") };
+  using _preference = {
+    [Symbol.dispose]: () => setThreadCompletionSoundMuted(ref, false),
+  };
+  const completed = (turnId: string, completedAt = "2026-09-13T07:00:01.000Z") => ({
+    latestTurn: { turnId, state: "completed", completedAt },
+  });
+  state.mode = "notifications-and-sound";
+  app.start();
+
+  setThreadCompletionSoundMuted(ref, true);
+  state.shells.set("one", shell(completed("turn")));
+  expect(TestNotification.sent.map(({ title }) => title)).toEqual(["Thread completed"]);
+  expect(state.sound).not.toHaveBeenCalled();
+
+  state.shells.set("two", shell(completed("turn")));
+  state.shells.set("one", shell({ hasPendingApprovals: true, session: { status: "running" } }));
+
+  expect(state.sound.mock.calls.map(([kind]) => kind)).toEqual(["completion", "input"]);
+
+  setThreadCompletionSoundMuted(ref, false);
+  state.shells.set(
+    "one",
+    shell({ latestTurn: { turnId: "turn-2", state: "running", completedAt: null } }),
+  );
+  state.shells.set("one", shell(completed("turn-2", "2026-09-13T07:00:02.000Z")));
+  expect(state.sound.mock.calls.map(([kind]) => kind)).toEqual([
+    "completion",
+    "input",
+    "completion",
+  ]);
 });
 
 it.each([false, true])(

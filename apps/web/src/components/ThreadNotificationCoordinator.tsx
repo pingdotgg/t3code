@@ -28,6 +28,7 @@ import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
   hasNotificationSound,
+  isThreadCompletionSoundMuted,
   playNotificationSound,
   setNotificationBadge,
   threadNotificationTag,
@@ -156,9 +157,13 @@ export function startThreadNotifications(
               : status === "request"
                 ? m(msg("Guest request"))
                 : m(msg("Input needed"));
-    if (hasNotificationSound(mode)) {
-      void playNotificationSound(kind, () =>
-        hasNotificationSound(getClientSettings().notificationMode),
+    const soundAllowedForThread = () =>
+      kind !== "completion" ||
+      !isThreadCompletionSoundMuted({ environmentId, threadId: thread.id });
+    if (hasNotificationSound(mode) && soundAllowedForThread()) {
+      void playNotificationSound(
+        kind,
+        () => hasNotificationSound(getClientSettings().notificationMode) && soundAllowedForThread(),
       );
     }
     if (

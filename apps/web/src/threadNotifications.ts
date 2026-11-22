@@ -1,4 +1,5 @@
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { scopedThreadKey } from "@t3tools/client-runtime/environment";
+import type { EnvironmentId, ScopedThreadRef, ThreadId } from "@t3tools/contracts";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import { msg } from "gt-react";
 
@@ -15,6 +16,30 @@ export const NOTIFICATION_MODE_LABELS = {
 
 export function hasNotificationSound(mode: NotificationMode) {
   return mode === "sound" || mode === "notifications-and-sound";
+}
+
+const completionMuteFallback = new Map<string, boolean>();
+
+export function isThreadCompletionSoundMuted(ref: ScopedThreadRef): boolean {
+  const key = `t3code:thread-completion-muted:v1:${scopedThreadKey(ref)}`;
+  const fallback = completionMuteFallback.get(key);
+  if (fallback !== undefined) return fallback;
+  try {
+    return window.localStorage.getItem(key) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function setThreadCompletionSoundMuted(ref: ScopedThreadRef, muted: boolean): void {
+  const key = `t3code:thread-completion-muted:v1:${scopedThreadKey(ref)}`;
+  try {
+    if (muted) window.localStorage.setItem(key, "true");
+    else window.localStorage.removeItem(key);
+    completionMuteFallback.delete(key);
+  } catch {
+    completionMuteFallback.set(key, muted);
+  }
 }
 
 export function hasDesktopNotifications(mode: NotificationMode) {
