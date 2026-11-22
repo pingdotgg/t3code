@@ -4,6 +4,7 @@ import { EnvironmentRegistry } from "@t3tools/client-runtime/connection";
 import { createEnvironmentSubscriptionAtomFamily } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthFilesystemReadScope,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ProjectId,
   type VcsListRefsResult,
@@ -13,7 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import { AsyncResult, Atom, AtomRegistry } from "effect/reactivity";
-import { act, useLayoutEffect } from "react";
+import { act, useEffect, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { expect, it, vi } from "vite-plus/test";
 import type { ComposerDraft } from "../../state/use-composer-drafts";
@@ -32,6 +33,9 @@ const mocks = vi.hoisted(() => ({
   retargetDraft: vi.fn(),
   writeSettings: vi.fn(),
   writeText: vi.fn(),
+  serverConfig: vi.fn(),
+  openScratch: vi.fn(),
+  prepareTriage: vi.fn(),
 }));
 vi.mock("../../state/atom-registry", () => ({
   appAtomRegistry: {
@@ -43,12 +47,13 @@ vi.mock("../../state/atom-registry", () => ({
 vi.mock("../../state/entities", () => ({
   useProjects: mocks.projects,
   useThreadShells: () => [],
-  useEnvironmentServerConfig: () => null,
+  useEnvironmentServerConfig: () => mocks.serverConfig() ?? null,
   useServerConfigs: () => new Map(),
 }));
 vi.mock("../../state/vcs", () => ({
   vcsEnvironment: { status: mocks.status, listRefs: mocks.refs },
 }));
+vi.mock("../../state/filesystem", () => ({ filesystemEnvironment: {} }));
 vi.mock("../../state/projects", () => ({
   projectEnvironment: { readFile: mocks.readFile, openScratch: {} },
 }));
@@ -66,7 +71,8 @@ vi.mock("../../state/project-grouping", () => ({
   useMobileProjectGroupingSettings: () => ({ sidebarProjectGroupingMode: "none" }),
 }));
 vi.mock("../../components/ui/Dialog", () => ({ alert: vi.fn() }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => mocks.openScratch }));
+vi.mock("../triage/usePrepareTriage", () => ({ usePrepareTriage: () => mocks.prepareTriage }));
 vi.mock("../../state/use-remote-environment-registry", () => ({
   useSavedRemoteConnections: () => ({ savedConnectionsById: {} }),
   useRemoteConnectionStatus: () => ({ connectedEnvironments: [] }),
@@ -208,11 +214,16 @@ function setup() {
   mocks.writeSettings.mockImplementation(write);
   mocks.writeText.mockImplementation((key, text) => write(key, { text }));
   let current: ReturnType<typeof useNewTaskFlow>;
-  function Probe() {
+  function Probe(props: { readonly pickOnMount?: EnvironmentProject }) {
     const value = useNewTaskFlow();
     useLayoutEffect(() => {
       current = value;
     });
+    // Mirrors the draft screen applying its route project on mount, before the provider's effects run.
+    useEffect(() => {
+      if (props.pickOnMount) value.setProject(props.pickOnMount);
+      // oxlint-disable-next-line react/exhaustive-effect-dependencies -- picks once on mount; setProject changes every render
+    }, []);
     return null;
   }
   const root = createRoot(document.createElement("div"));
@@ -240,16 +251,20 @@ function setup() {
     get current() {
       return current;
     },
-    async render(active: boolean) {
+    async render(active: boolean, pickOnMount?: EnvironmentProject) {
       await act(async () =>
         root.render(
           <RegistryContext.Provider value={registry}>
             <NewTaskFlowProvider active={active} flowKey="test-flow">
-              <Probe />
+              <Probe pickOnMount={pickOnMount} />
             </NewTaskFlowProvider>
           </RegistryContext.Provider>,
         ),
       );
+      // The draft screen applies a project whenever it shows without a draft.
+      if (active && current.draftKey === null) {
+        await act(async () => current.setProject(projects[0]!));
+      }
     },
     async emit(cwd: string, branch: string, isRepo = true) {
       await act(async () => emitters.get(cwd)!(branch, isRepo));
@@ -264,6 +279,16 @@ function setup() {
     },
   };
 }
+
+it("keeps the draft on a project the screen picks as it mounts", async () => {
+  using screen = setup();
+  await screen.render(true, screen.projects[2]);
+  expect(screen.current.selectedProject).toEqual(screen.projects[2]);
+  expect(screen.snapshot(screen.current.draftKey).project).toEqual({
+    environmentId: "two",
+    projectId: "b",
+  });
+});
 
 it("owns a status stream only while the draft is active, retaining draft choices on reopen", async () => {
   using screen = setup();
@@ -362,3 +387,78 @@ it("uses cached repository capability and branch defaults while offline", async 
   expect(screen.current.draftKey).toBe(draftKey);
   expect(screen.current.selectedBranchName).toBe("main");
 });
+
+const playbookPrompt = (machine: string) =>
+  `Read [triage-playbook.md](/${machine}/triage-playbook.md) and follow it. `;
+
+/** A triage draft on machine one's No project home; machine two opens its own. */
+async function renderTriageDraft(screen: ReturnType<typeof setup>) {
+  mocks.serverConfig.mockReturnValue({
+    scratchWorkspaceRoot: "/a",
+    providers: [],
+    settings: DEFAULT_SERVER_SETTINGS,
+  });
+  mocks.openScratch.mockResolvedValue({ _tag: "Success", value: screen.projects[2] });
+  await screen.render(true);
+  act(() => screen.current.setPrompt(`${playbookPrompt("one")}It is slow.`));
+}
+
+it("takes a triage draft's session along when its machine changes", async () => {
+  using screen = setup();
+  await renderTriageDraft(screen);
+  mocks.prepareTriage.mockResolvedValue({
+    _tag: "Success",
+    value: { prompt: playbookPrompt("two") },
+  });
+
+  await act(async () => {
+    await screen.current.switchEnvironment(EnvironmentId.make("two"));
+  });
+
+  expect(screen.current.prompt).toBe(`${playbookPrompt("two")}It is slow.`);
+  expect(screen.current.selectedProject).toEqual(screen.projects[2]);
+});
+
+it.each([
+  [
+    "a project is picked",
+    1,
+    (flow: ReturnType<typeof useNewTaskFlow>, picked: EnvironmentProject) =>
+      flow.setProject(picked),
+  ],
+  [
+    "a send starts and ends",
+    0,
+    (flow: ReturnType<typeof useNewTaskFlow>) => {
+      flow.setSubmitting(true);
+      flow.setSubmitting(false);
+    },
+  ],
+] as const)(
+  "leaves a triage draft alone when %s while its new machine prepares",
+  async (_name, expectedProject, interrupt) => {
+    using screen = setup();
+    await renderTriageDraft(screen);
+    let finishPreparing!: (result: unknown) => void;
+    mocks.prepareTriage.mockReturnValue(
+      new Promise((resolve) => {
+        finishPreparing = resolve;
+      }),
+    );
+
+    let switching!: Promise<boolean>;
+    act(() => {
+      switching = screen.current.switchEnvironment(EnvironmentId.make("two"));
+    });
+    await act(async () => interrupt(screen.current, screen.projects[1]!));
+    let switched = true;
+    await act(async () => {
+      finishPreparing({ _tag: "Success", value: { prompt: playbookPrompt("two") } });
+      switched = await switching;
+    });
+
+    expect(switched).toBe(false);
+    expect(screen.current.prompt).toBe(`${playbookPrompt("one")}It is slow.`);
+    expect(screen.current.selectedProject).toEqual(screen.projects[expectedProject]);
+  },
+);

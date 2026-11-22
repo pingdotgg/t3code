@@ -12,6 +12,8 @@ export interface TokenRates {
   readonly outputCostPerToken: number;
   readonly cacheReadCostPerToken: number;
   readonly cacheCreationCostPerToken: number;
+  /** Cache writes with a 1-hour TTL; the 5-minute rate when unpublished. */
+  readonly cacheCreation1hCostPerToken: number;
 }
 
 interface SpeedRates extends TokenRates {
@@ -37,20 +39,24 @@ export function createOverrideRateTable(
   overrides: Readonly<Record<string, UsageModelPriceOverride>>,
 ): RateTable {
   return new Map(
-    Object.entries(overrides).map(([model, prices]) => [
-      model.trim(),
-      {
-        inputCostPerToken: prices.inputCostPerMillionTokens / 1_000_000,
-        outputCostPerToken: prices.outputCostPerMillionTokens / 1_000_000,
-        cacheReadCostPerToken:
-          (prices.cacheReadCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000,
-        cacheCreationCostPerToken:
-          (prices.cacheWriteCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000,
-        fast: null,
-        ultrafast: null,
-        contextTiers: [],
-      },
-    ]),
+    Object.entries(overrides).map(([model, prices]) => {
+      const cacheCreationCostPerToken =
+        (prices.cacheWriteCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000;
+      return [
+        model.trim(),
+        {
+          inputCostPerToken: prices.inputCostPerMillionTokens / 1_000_000,
+          outputCostPerToken: prices.outputCostPerMillionTokens / 1_000_000,
+          cacheReadCostPerToken:
+            (prices.cacheReadCostPerMillionTokens ?? prices.inputCostPerMillionTokens) / 1_000_000,
+          cacheCreationCostPerToken,
+          cacheCreation1hCostPerToken: cacheCreationCostPerToken,
+          fast: null,
+          ultrafast: null,
+          contextTiers: [],
+        },
+      ];
+    }),
   );
 }
 
@@ -60,7 +66,7 @@ function finiteNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-// Missing cache rates fall back to input pricing; Anthropic normally discounts reads and charges extra for writes.
+// Missing cache rates fall back to input pricing, and a missing 1-hour write rate to the 5-minute one.
 function readTokenRates(
   entry: LiteLlmEntry,
   suffix: string,
@@ -70,18 +76,28 @@ function readTokenRates(
   const input = finiteNumber(entry[`input_cost_per_token${suffix}`]);
   const output = finiteNumber(entry[`output_cost_per_token${suffix}`]) ?? outputFallback ?? null;
   if (input === null || output === null) return null;
-  const cacheRate = (name: string, field: "cacheReadCostPerToken" | "cacheCreationCostPerToken") =>
+  const cacheRate = (
+    name: string,
+    field: "cacheReadCostPerToken" | "cacheCreationCostPerToken" | "cacheCreation1hCostPerToken",
+    fallback = input,
+  ) =>
     finiteNumber(entry[`${name}${suffix}`]) ??
     (standard !== undefined && standard.inputCostPerToken > 0
       ? (standard[field] / standard.inputCostPerToken) * input
-      : input);
+      : fallback);
+  const cacheCreationCostPerToken = cacheRate(
+    "cache_creation_input_token_cost",
+    "cacheCreationCostPerToken",
+  );
   return {
     inputCostPerToken: input,
     outputCostPerToken: output,
     cacheReadCostPerToken: cacheRate("cache_read_input_token_cost", "cacheReadCostPerToken"),
-    cacheCreationCostPerToken: cacheRate(
-      "cache_creation_input_token_cost",
-      "cacheCreationCostPerToken",
+    cacheCreationCostPerToken,
+    cacheCreation1hCostPerToken: cacheRate(
+      "cache_creation_input_token_cost_above_1hr",
+      "cacheCreation1hCostPerToken",
+      cacheCreationCostPerToken,
     ),
   };
 }
@@ -92,6 +108,7 @@ function scaleTokenRates(rates: TokenRates, multiple: number): TokenRates {
     outputCostPerToken: rates.outputCostPerToken * multiple,
     cacheReadCostPerToken: rates.cacheReadCostPerToken * multiple,
     cacheCreationCostPerToken: rates.cacheCreationCostPerToken * multiple,
+    cacheCreation1hCostPerToken: rates.cacheCreation1hCostPerToken * multiple,
   };
 }
 
@@ -192,7 +209,8 @@ function sameTokenRates(a: TokenRates | null, b: TokenRates | null): boolean {
     a.inputCostPerToken === b.inputCostPerToken &&
     a.outputCostPerToken === b.outputCostPerToken &&
     a.cacheReadCostPerToken === b.cacheReadCostPerToken &&
-    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken
+    a.cacheCreationCostPerToken === b.cacheCreationCostPerToken &&
+    a.cacheCreation1hCostPerToken === b.cacheCreation1hCostPerToken
   );
 }
 
@@ -292,6 +310,14 @@ export function lookupRate(table: RateTable, model: string): ModelRate | null {
   return rate;
 }
 
+/** A priceable model the table has no rate for; a newer table may list it. */
+export function isUnlistedModel(table: RateTable, model: string): boolean {
+  const bareName = bareModelName(stripVariantSuffix(normalizeRateKey(model)));
+  return (
+    bareName.length > 0 && !UNPRICEABLE_MODELS.has(bareName) && lookupRate(table, model) === null
+  );
+}
+
 function resolveRate(table: RateTable, model: string): ModelRate | null {
   const key = stripVariantSuffix(normalizeRateKey(model));
   const bareName = bareModelName(key);
@@ -301,8 +327,13 @@ function resolveRate(table: RateTable, model: string): ModelRate | null {
 
 export type PricedRecord = Pick<
   UsageRecord,
-  "model" | "rateModel" | "totals" | "speed" | "reportedCostUsd"
+  "model" | "rateModel" | "totals" | "cacheCreation1hTokens" | "speed" | "reportedCostUsd"
 >;
+
+function recordRate(table: RateTable, record: PricedRecord): ModelRate | null {
+  const rate = record.rateModel === undefined ? null : lookupRate(table, record.rateModel);
+  return rate ?? lookupRate(table, record.model);
+}
 
 export interface PricedUsage {
   readonly costUsd: number;
@@ -311,11 +342,15 @@ export interface PricedUsage {
   readonly speedPremiumUsd: number;
 }
 
-function costByCategory(totals: UsageTokenTotals, rates: TokenRates): UsageCategoryCost {
+function costByCategory(record: PricedRecord, rates: TokenRates): UsageCategoryCost {
+  const { totals } = record;
+  const oneHour = Math.min(record.cacheCreation1hTokens ?? 0, totals.cacheCreationTokens);
   return {
     input: totals.uncachedInputTokens * rates.inputCostPerToken,
     cacheRead: totals.cachedInputTokens * rates.cacheReadCostPerToken,
-    cacheWrite: totals.cacheCreationTokens * rates.cacheCreationCostPerToken,
+    cacheWrite:
+      (totals.cacheCreationTokens - oneHour) * rates.cacheCreationCostPerToken +
+      oneHour * rates.cacheCreation1hCostPerToken,
     output: totals.outputTokens * rates.outputCostPerToken,
   };
 }
@@ -342,18 +377,18 @@ export function priceUsage(
     categoryCostUsd: null,
     speedPremiumUsd: 0,
   });
-  const rate = override ?? lookupRate(table, record.rateModel ?? model);
+  const rate = override ?? recordRate(table, record);
   if (rate === null) {
     return reported === null ? unsplit(0, "unpriced") : unsplit(reported, "providerReported");
   }
 
-  const listCost = costByCategory(totals, ratesAt(rate, record.speed, totals));
+  const listCost = costByCategory(record, ratesAt(rate, record.speed, totals));
   const listCostUsd = sumCategories(listCost);
   if (reported !== null && listCostUsd <= 0) return unsplit(reported, "providerReported");
   const premiumUsd =
     record.speed === "standard"
       ? 0
-      : listCostUsd - sumCategories(costByCategory(totals, ratesAt(rate, "standard", totals)));
+      : listCostUsd - sumCategories(costByCategory(record, ratesAt(rate, "standard", totals)));
   const scale = reported === null ? 1 : reported / listCostUsd;
   return {
     costUsd: reported ?? listCostUsd,
@@ -373,8 +408,7 @@ export function cacheSavingsUsd(
   record: PricedRecord,
   overrides?: RateTable,
 ): number {
-  const rate =
-    overrides?.get(record.model.trim()) ?? lookupRate(table, record.rateModel ?? record.model);
+  const rate = overrides?.get(record.model.trim()) ?? recordRate(table, record);
   if (rate === null) return 0;
   const rates = ratesAt(rate, record.speed, record.totals);
   return record.totals.cachedInputTokens * (rates.inputCostPerToken - rates.cacheReadCostPerToken);
