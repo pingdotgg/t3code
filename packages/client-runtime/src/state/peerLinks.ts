@@ -87,13 +87,16 @@ export function createPeerLinkEnvironmentAtoms<R, E>(
         ),
       )
       .pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-stream:${key}`));
-    return Atom.make((get) => {
-      const live = get(stream);
-      if (AsyncResult.isSuccess(live)) {
-        get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
-      }
-      return live;
-    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
+    return Atom.readable(
+      (get) => {
+        const live = get(stream);
+        if (AsyncResult.isSuccess(live)) {
+          get.set(kept, keepLinkedThreadView(get.once(kept), live.value));
+        }
+        return live;
+      },
+      (refresh) => refresh(stream),
+    ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-data:peer-links:thread-view:${key}`));
   });
   return {
     list,
