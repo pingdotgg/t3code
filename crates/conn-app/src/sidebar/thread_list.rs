@@ -7,7 +7,9 @@
 //!   - Fixed top `SidebarGroup` (`p-2` = `8px`): `"Search"` (`h-8`, `text-sm font-medium`)
 //!     + trailing `28x28` icon buttons (`ListFilter`, `FolderPlus`, `SquarePen`).
 //!   - Scrollable `SidebarGroup` (`px-2 pb-2`, `gap-px`): pinned cards, a subtle divider, then
-//!     active cards (`SidebarThreadRow.tsx` `variant="card"`, three lines, `rounded-md`).
+//!     active cards (`SidebarThreadRow.tsx` `variant="card"`, two lines, `rounded-md`:
+//!     line 1 favicon + status dot + title + pin + hover icon-only settle; line 2 provider ·
+//!     project · branch · time).
 //!   - `Settled` collapsible section pushed to the bottom (`mt-auto`) with `36px` slim rows; a
 //!     collapsed shelf still shows the open settled thread (`routeThreadOnly`).
 //! - Right-click on any row opens the Thread Actions menu (`thread_menu.rs`); double-click
@@ -623,6 +625,7 @@ pub(crate) enum RowStatus {
 }
 
 impl RowStatus {
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn label(self) -> &'static str {
         match self {
@@ -638,6 +641,7 @@ impl RowStatus {
 
     /// `TopStatusIcon`: `CircleDashed`, `CircleDotDashed`, `ShieldQuestion`,
     /// `MessageCircleQuestion`, `CircleAlert`, `CircleCheck` through the Conn manifest.
+    #[cfg(test)]
     #[must_use]
     pub(crate) fn icon(self) -> &'static str {
         match self {
@@ -650,20 +654,18 @@ impl RowStatus {
         }
     }
 
-    /// `text-info-foreground`, `text-muted-foreground`, `text-warning-foreground`,
-    /// `text-indigo-600 dark:text-indigo-300`, `text-error-foreground`, `text-success-foreground`.
+    /// `STATUS_DOT_CLASS` (`StatusDotBadge.tsx` + `TOP_STATUS_DOT`):
+    /// `working`/`goal` -> `bg-info`, `waiting`/`approval`/`input` -> `bg-muted-foreground/70`,
+    /// `done` -> `bg-success`, `failed` -> `bg-destructive`.
     #[must_use]
-    pub(crate) fn color(self, tokens: &Tokens) -> gpui_kit::Hsla {
+    pub(crate) fn dot_color(self, tokens: &Tokens) -> gpui_kit::Hsla {
         match self {
-            Self::Working | Self::Goal => hsla(tokens.info_foreground),
-            Self::Waiting => hsla(tokens.muted_foreground),
-            Self::Approval => hsla(tokens.warning_foreground),
-            Self::Input => hsla(crate::sidebar::project_icon_color(
-                conn_contract::ProjectIconColor::Indigo,
-                tokens,
-            )),
+            Self::Working | Self::Goal => hsla(tokens.info),
+            Self::Waiting | Self::Approval | Self::Input => {
+                hsla_alpha(tokens.muted_foreground, 0.70)
+            }
+            Self::Done => hsla(tokens.success),
             Self::Failed => hsla(tokens.destructive),
-            Self::Done => hsla(tokens.success_foreground),
         }
     }
 }
@@ -909,13 +911,12 @@ fn render_pin_indicator(
         )
 }
 
-/// Active-thread card (`SidebarThreadRow.tsx` `variant="card"`):
-/// - Line 1 (`h-5 gap-1.5`): favicon, pin, project name (`text-xs` secondary label), and the
-///   status pill with live elapsed time (or relative age) that swaps to `✓ Settle` on hover.
-/// - Line 2 (`mt-1`): `text-sm` title (`font-normal text-foreground/75` when receded,
-///   `opacity-55` while regenerating).
-/// - Line 3 (`mt-0.5 text-xs`, omitted when empty): worktree icon, middle-truncated branch,
-///   PR badge, and the provider mark.
+/// Active-thread card (`SidebarThreadRow.tsx` `variant="card"`, current Conn `origin/main`):
+/// - Line 1 (`h-5 gap-1.5`): `StatusDotBadge` on `ProjectFavicon` (`16px`, 6px corner dot),
+///   `text-sm` title (`font-normal text-foreground/75` when receded, `opacity-55` while
+///   regenerating), optional `Pin` indicator, and hover-only icon-only `CircleCheck` settle button.
+/// - Line 2 (`mt-1 ps-5.5 gap-1.5 text-ui text-secondary-label`): `12px` provider mark ·
+///   project name · middle-truncated branch · live duration / relative time (`tabular-nums`).
 fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_kit::Div {
     let tokens = row.tokens;
     let thread = row.thread;
@@ -933,11 +934,8 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .is_some_and(Option::is_some);
     let group = SharedString::from(format!("sidebar-row-{}", row.row_key));
 
-    // Line 1.
-    let favicon = row.project.map_or_else(
-        || render_project_monogram("No project", ROW_FAVICON_PX, tokens),
-        |p| render_project_favicon(p, ROW_FAVICON_PX, tokens),
-    );
+    // Line 1 (`flex h-5 min-w-0 items-center gap-1.5`):
+    // StatusDotBadge(ProjectFavicon) + title + pinIndicator + hover-only settle icon button.
     let mut line1 = div()
         .flex()
         .flex_row()
@@ -945,112 +943,35 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .gap(px(6.0))
         .w_full()
         .h(px(TITLE_LINE_HEIGHT_PX))
-        .min_w_0()
-        .child(div().flex_shrink_0().child(favicon));
-    if is_pinned {
-        line1 = line1.child(render_pin_indicator(row, cx));
-    }
-    line1 = line1.child(
-        div()
-            .flex_1()
-            .min_w_0()
-            .truncate()
-            .text_size(px(META_FONT_SIZE_PX))
-            .line_height(px(META_LINE_HEIGHT_PX))
-            .text_color(secondary)
-            .child(row.project.map(|p| p.title.clone()).unwrap_or_default()),
-    );
+        .min_w_0();
 
-    let resting: gpui_kit::AnyElement = if let Some(status) = status {
-        let color = status.color(tokens);
-        let mut pill = div()
+    if let Some(project) = row.project {
+        let dot_ring = if row.selected {
+            active_bg
+        } else {
+            hsla(tokens.shell_inner_fill)
+        };
+        let mut favicon_badge = div()
+            .relative()
             .flex()
-            .flex_row()
             .items_center()
-            .gap(px(4.0))
-            .font_weight(gpui_kit::FontWeight::MEDIUM)
-            .text_color(color)
-            .child(icons::concept(status.icon(), 16.0, color))
-            .child(status.label());
-        if let Some(started) = status_started_at(thread, status).and_then(parse_iso8601_unix_secs) {
-            pill = pill.child(format_working_duration(row.now_secs - started));
+            .flex_shrink_0()
+            .child(render_project_favicon(project, ROW_FAVICON_PX, tokens));
+        if let Some(status) = status {
+            favicon_badge = favicon_badge.child(
+                div()
+                    .absolute()
+                    .top(px(-2.0))
+                    .right(px(-2.0))
+                    .size(px(8.0))
+                    .rounded_full()
+                    .border_2()
+                    .border_color(dot_ring)
+                    .bg(status.dot_color(tokens)),
+            );
         }
-        pill.into_any_element()
-    } else {
-        div()
-            .text_color(secondary)
-            .child(
-                format_compact_relative_age_at(thread_time_timestamp(thread), row.now_secs)
-                    .unwrap_or_default(),
-            )
-            .into_any_element()
-    };
-    let settle_id = thread.id.clone();
-    let status_slot = div()
-        .relative()
-        .flex()
-        .flex_row()
-        .items_center()
-        .justify_end()
-        .h(px(TITLE_LINE_HEIGHT_PX))
-        .min_w(px(32.0))
-        .flex_shrink_0()
-        .text_size(px(META_FONT_SIZE_PX))
-        .line_height(px(META_LINE_HEIGHT_PX))
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .group_hover(group.clone(), |s| s.invisible())
-                .child(resting),
-        )
-        .child(
-            div()
-                .id(("thread-settle-btn", row.row_key))
-                .a11y_button(
-                    SharedString::from(format!("sidebar.thread.{}.settle", thread.id)),
-                    "Settle thread",
-                )
-                .absolute()
-                .top_0()
-                .bottom_0()
-                .right(px(-4.0))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap(px(4.0))
-                .px(px(6.0))
-                .rounded(px(CARD_RADIUS_PX))
-                .invisible()
-                .group_hover(group.clone(), |s| s.visible())
-                .cursor_pointer()
-                .text_color(muted)
-                .hover(move |s| s.text_color(fg))
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_click(cx.listener(move |app, _, _, cx| {
-                    cx.stop_propagation();
-                    app.settle_thread(settle_id.clone(), true, cx);
-                }))
-                .conn_tooltip("Settle thread", tokens)
-                .child(icons::concept("superhero/check.svg", 14.0, muted))
-                .child("Settle"),
-        );
-    line1 = line1.child(status_slot);
-
-    // Line 3 (built first so Line 2 knows whether the provider mark moves up).
-    let provider_mark = div()
-        .flex()
-        .items_center()
-        .flex_shrink_0()
-        .opacity(0.6)
-        .child(icons::provider_mark(
-            &thread.provider_instance_id,
-            14.0,
-            hsla_alpha(tokens.foreground, 0.60),
-        ));
-    let branch = thread.branch.as_deref().filter(|b| !b.is_empty());
-    let pr_number = thread_pr_number(thread);
-    let meta_line_empty = branch.is_none() && pr_number.is_none();
+        line1 = line1.child(favicon_badge);
+    }
 
     let title_el = if row.is_renaming {
         render_rename_field(row.rename_input, cx)
@@ -1080,6 +1001,65 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         }
         title.child(thread.title.clone()).into_any_element()
     };
+    line1 = line1.child(title_el);
+
+    if is_pinned {
+        line1 = line1.child(render_pin_indicator(row, cx));
+    }
+
+    // Hover-only icon-only settle control (`CircleCheckIcon`, `size-3.5`).
+    let settle_id = thread.id.clone();
+    let settle_btn = div()
+        .id(("thread-settle-btn", row.row_key))
+        .a11y_button(
+            SharedString::from(format!("sidebar.thread.{}.settle", thread.id)),
+            "Settle thread",
+        )
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(TITLE_LINE_HEIGHT_PX))
+        .pl(px(2.0))
+        .pr(px(4.0))
+        .mr(px(-4.0))
+        .rounded(px(CARD_RADIUS_PX))
+        .flex_shrink_0()
+        .invisible()
+        .group_hover(group.clone(), |s| s.visible())
+        .cursor_pointer()
+        .text_color(muted)
+        .hover(move |s| s.text_color(fg))
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_click(cx.listener(move |app, _, _, cx| {
+            cx.stop_propagation();
+            app.settle_thread(settle_id.clone(), true, cx);
+        }))
+        .conn_tooltip("Settle thread", tokens)
+        .child(icons::concept("superhero/check-circle.svg", 14.0, muted));
+    line1 = line1.child(settle_btn);
+
+    // Line 2 (`cardMetaLine`: `mt-1 flex min-w-0 items-center gap-1.5 text-secondary-label text-ui`,
+    // `ps-5.5` when project is present): agent · project · branch · time.
+    let provider_mark = div()
+        .flex()
+        .items_center()
+        .flex_shrink_0()
+        .opacity(0.6)
+        .child(icons::provider_mark(
+            &thread.provider_instance_id,
+            12.0,
+            hsla_alpha(tokens.foreground, 0.60),
+        ));
+    let time_label = if let Some(s) = status
+        && let Some(started) = status_started_at(thread, s).and_then(parse_iso8601_unix_secs)
+    {
+        format_working_duration(row.now_secs - started)
+    } else {
+        format_compact_relative_age_at(thread_time_timestamp(thread), row.now_secs)
+            .unwrap_or_default()
+    };
+    let branch = thread.branch.as_deref().filter(|b| !b.is_empty());
+
     let mut line2 = div()
         .flex()
         .flex_row()
@@ -1088,10 +1068,38 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .w_full()
         .mt(px(4.0))
         .min_w_0()
-        .child(title_el);
-    let mut provider_mark = Some(provider_mark);
-    if meta_line_empty {
-        line2 = line2.children(provider_mark.take());
+        .text_size(px(13.0))
+        .line_height(px(META_LINE_HEIGHT_PX))
+        .text_color(secondary)
+        .when(row.project.is_some(), |el| el.pl(px(META_LINE_INDENT_PX)))
+        .child(provider_mark);
+
+    if let Some(project) = row.project
+        && !project.title.is_empty()
+    {
+        let project_max_w = (row.sidebar_width * 0.36).clamp(64.0, 128.0);
+        line2 = line2.child("·").child(
+            div()
+                .max_w(px(project_max_w))
+                .flex_shrink_0()
+                .truncate()
+                .child(project.title.clone()),
+        );
+    }
+
+    if let Some(branch) = branch {
+        line2 =
+            line2
+                .child("·")
+                .child(div().min_w_0().overflow_hidden().whitespace_nowrap().child(
+                    middle_truncate(branch, branch_char_budget(row.sidebar_width)),
+                ));
+    }
+
+    if !time_label.is_empty() {
+        line2 = line2
+            .child("·")
+            .child(div().flex_shrink_0().child(time_label));
     }
 
     let mut card = div()
@@ -1113,58 +1121,6 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .cursor_pointer()
         .child(line1)
         .child(line2);
-
-    if !meta_line_empty {
-        let mut line3 = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap(px(6.0))
-            .w_full()
-            .mt(px(2.0))
-            .min_w_0()
-            .text_size(px(META_FONT_SIZE_PX))
-            .line_height(px(META_LINE_HEIGHT_PX))
-            .text_color(secondary);
-        if let Some(branch) = branch {
-            if thread
-                .worktree_path
-                .as_deref()
-                .is_some_and(|p| !p.is_empty())
-            {
-                // `ThreadWorktreeIndicator` (`FolderGit2Icon`).
-                line3 = line3.child(icons::concept("superhero/folder-git.svg", 12.0, secondary));
-            }
-            line3 = line3.child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(middle_truncate(
-                        branch,
-                        branch_char_budget(row.sidebar_width),
-                    )),
-            );
-        } else {
-            line3 = line3.child(div().flex_1());
-        }
-        if let Some(number) = pr_number {
-            // `ThreadPullRequestBadgeControl`: PR glyph + `#number`.
-            line3 = line3.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(2.0))
-                    .flex_shrink_0()
-                    .child(icons::concept(icons::PULL_REQUEST, 12.0, secondary))
-                    .child(format!("#{number}")),
-            );
-        }
-        line3 = line3.child(div().ml_auto().children(provider_mark.take()));
-        card = card.child(line3);
-    }
 
     card = attach_row_interactions(card, thread, row.is_renaming, cx);
 
@@ -1351,23 +1307,6 @@ fn settled_thread_timestamp(thread: &ThreadShell) -> &str {
         .or(thread.archived_at.as_deref())
         .filter(|s| !s.is_empty())
         .unwrap_or(&thread.updated_at)
-}
-
-/// The thread's current PR number: the branch PR, the linked PR, else the newest link.
-fn thread_pr_number(thread: &ThreadShell) -> Option<i64> {
-    thread
-        .branch_pull_request
-        .as_ref()
-        .and_then(Option::as_ref)
-        .or_else(|| thread.linked_pull_request.as_ref().and_then(Option::as_ref))
-        .map(|pr| pr.number)
-        .or_else(|| {
-            thread
-                .pull_requests
-                .as_ref()
-                .and_then(|prs| prs.last())
-                .map(|pr| pr.number)
-        })
 }
 
 /// Active unsent draft row pinned at the top of the sidebar list (Conn `SidebarDraftBlock` parity).

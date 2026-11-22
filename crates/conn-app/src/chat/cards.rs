@@ -13,12 +13,13 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use conn_state::{
-    LocalDateTime, PLAN_PREVIEW_MAX_LINES, SecretRequestStatus, SubagentTone, TimelineEntry,
+    LocalDateTime, PLAN_PREVIEW_MAX_LINES, SecretRequestStatus, TimelineEntry,
     TurnCheckpointSummary, TurnItemStatus, UserInputAnswer, UserInputDraft, UserInputQuestion,
     build_turn_diff_tree, build_user_input_answers, collapsed_plan_preview, flatten_turn_diff_tree,
     format_chat_timestamp_tooltip, format_day_aware_timestamp, normalize_plan_markdown_for_export,
     plan_can_collapse, strip_displayed_plan_markdown, subagent_status_visual,
 };
+use conn_theme::Appearance;
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -1527,7 +1528,7 @@ impl ChatView {
     }
 
     // -----------------------------------------------------------------------------------------
-    // Subagents
+    // Subagents (`V2LifecycleRow.tsx` `SubagentTimelineLink` + `TASK_CARD_FACE_CLASS`)
     // -----------------------------------------------------------------------------------------
 
     #[expect(
@@ -1539,6 +1540,7 @@ impl ChatView {
         id: &str,
         child_thread_id: Option<&str>,
         title: &str,
+        role: &str,
         status: TurnItemStatus,
         summary: Option<&str>,
         remote_label: Option<&str>,
@@ -1548,14 +1550,18 @@ impl ChatView {
     ) -> AnyElement {
         let fg = hsla(self.tokens.foreground);
         let muted = hsla(self.tokens.muted_foreground);
-        let (tone, status_label) = subagent_status_visual(status);
-        let dot: Hsla = match tone {
-            SubagentTone::Info => hsla(self.tokens.info),
-            SubagentTone::Success => hsla(self.tokens.success),
-            SubagentTone::Destructive => hsla(self.tokens.destructive),
-            SubagentTone::Idle => hsla_alpha(self.tokens.muted_foreground, 0.5),
-            SubagentTone::Stopped => hsla_alpha(self.tokens.muted_foreground, 0.6),
+        let (_tone, status_label) = subagent_status_visual(status);
+        let dot: Option<Hsla> = match status {
+            TurnItemStatus::Pending | TurnItemStatus::Running => Some(hsla(self.tokens.info)),
+            TurnItemStatus::Waiting => Some(hsla_alpha(self.tokens.muted_foreground, 0.70)),
+            TurnItemStatus::Completed => Some(hsla(self.tokens.success)),
+            TurnItemStatus::Failed => Some(hsla(self.tokens.destructive)),
+            TurnItemStatus::Idle | TurnItemStatus::Cancelled | TurnItemStatus::Interrupted => None,
         };
+        let working = matches!(
+            status,
+            TurnItemStatus::Pending | TurnItemStatus::Running | TurnItemStatus::Waiting
+        );
         let failed = status == TurnItemStatus::Failed;
         let detail_color = if failed {
             hsla(self.tokens.destructive)
@@ -1574,120 +1580,146 @@ impl ChatView {
             })
             .map(conn_state::format_duration);
 
-        // `SubagentAvatar`: `size-6` circle with the agent glyph and a status dot.
-        let avatar = div()
+        let (card_fill, card_hover, ring_fill) = match self.tokens.appearance {
+            Appearance::Dark => (
+                hsla_alpha(self.tokens.shell_highlight, 0.70),
+                hsla(self.tokens.shell_highlight),
+                hsla(self.tokens.shell_card),
+            ),
+            Appearance::Light => (
+                hsla(self.tokens.shell_card),
+                hsla_alpha(self.tokens.shell_card, 0.70),
+                hsla(self.tokens.shell_card),
+            ),
+        };
+
+        // Line 1 (`gap-1.5 text-ui leading-5`): `StatusDotBadge` over `BotIcon` (`size-4`) + title.
+        let mut lead_icon = div()
             .relative()
             .flex()
             .items_center()
-            .justify_center()
-            .size(px(24.0))
             .flex_none()
-            .rounded_full()
-            .border_1()
-            .border_color(hsla(self.tokens.shell_divider_header))
-            .bg(hsla(self.tokens.shell_tile))
-            .child(icons::icon(icons::ROBOT, 14.0, muted))
-            .child(
+            .child(icons::icon(icons::ROBOT, 16.0, muted));
+        if let Some(dot_color) = dot {
+            lead_icon = lead_icon.child(
                 div()
                     .absolute()
-                    .right(px(-1.0))
-                    .bottom(px(-1.0))
+                    .top(px(-2.0))
+                    .right(px(-2.0))
                     .size(px(8.0))
                     .rounded_full()
                     .border_2()
-                    .border_color(hsla(self.tokens.background))
-                    .bg(dot),
-            );
-
-        let mut title_line = div().flex().flex_row().items_baseline().gap(px(8.0)).child(
-            div()
-                .min_w_0()
-                .truncate()
-                .text_size(px(UI_FONT_PX))
-                .line_height(px(UI_LINE_HEIGHT_PX))
-                .font_weight(FontWeight::MEDIUM)
-                .text_color(fg)
-                .child(title.to_owned()),
-        );
-        if let Some(remote) = remote_label {
-            title_line = title_line.child(
-                div()
-                    .flex_none()
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(format!("on {remote}")),
+                    .border_color(ring_fill)
+                    .bg(dot_color),
             );
         }
-        let mut row = div()
-            .id(SharedString::from(format!("subagent-{id}")))
+        let line1 = div()
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(10.0))
+            .gap(px(6.0))
             .w_full()
             .min_w_0()
-            .rounded(px(6.0))
-            .px(px(8.0))
-            .py(px(6.0))
-            .child(avatar)
+            .child(lead_icon)
             .child(
                 div()
-                    .flex()
-                    .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .child(title_line)
-                    .child(
-                        div()
-                            .truncate()
-                            .text_size(px(12.0))
-                            .line_height(px(19.5))
-                            .text_color(detail_color)
-                            .child(summary.map_or(status_label.to_owned(), str::to_owned)),
-                    ),
+                    .truncate()
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(UI_LINE_HEIGHT_PX))
+                    .font_weight(if working {
+                        FontWeight::NORMAL
+                    } else {
+                        FontWeight::MEDIUM
+                    })
+                    .text_color(fg)
+                    .child(title.to_owned()),
             );
-        if summary.is_some() && status != TurnItemStatus::Completed {
-            row = row.child(
+
+        // Line 2 (`ps-5.5 gap-1.5 text-ui leading-4 text-muted-foreground tabular-nums`):
+        // plain `12px` provider mark + optional `on <remote>` + `<provider> · <elapsed/status>`.
+        let provider_label = match role {
+            "claudeAgent" | "claude" => "Claude",
+            "codex" => "Codex",
+            "antigravity" => "Antigravity",
+            "opencode" => "OpenCode",
+            other if !other.is_empty() => other,
+            _ => "Subagent",
+        };
+        let time_text = elapsed.unwrap_or_else(|| status_label.to_owned());
+        let mut line2 = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6.0))
+            .pl(px(22.0))
+            .min_w_0()
+            .text_size(px(UI_FONT_PX))
+            .line_height(px(16.0))
+            .text_color(muted)
+            .child(
                 div()
                     .flex_none()
-                    .text_size(px(12.0))
+                    .child(crate::icons::provider_mark(role, 12.0, muted)),
+            );
+        if let Some(remote) = remote_label {
+            line2 = line2.child(div().flex_none().child(format!("on {remote}")));
+        }
+        line2 = line2.child(
+            div()
+                .min_w_0()
+                .truncate()
+                .child(format!("{provider_label} · {time_text}")),
+        );
+
+        let mut card = div()
+            .id(SharedString::from(format!("subagent-{id}")))
+            .flex()
+            .flex_col()
+            .gap(px(4.0))
+            .w_full()
+            .min_w_0()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(hsla(self.tokens.shell_divider))
+            .bg(card_fill)
+            .px(px(9.0))
+            .pt(px(10.0))
+            .pb(px(12.0))
+            .child(line1)
+            .child(line2);
+
+        if let Some(detail) = summary.map(str::trim).filter(|s| !s.is_empty()) {
+            card = card.child(
+                div()
+                    .pl(px(22.0))
+                    .text_size(px(UI_FONT_PX))
+                    .line_height(px(16.0))
                     .text_color(detail_color)
-                    .child(status_label),
+                    .child(detail.to_owned()),
             );
         }
-        if let Some(elapsed) = elapsed {
-            row = row.child(
-                div()
-                    .flex_none()
-                    .text_size(px(12.0))
-                    .text_color(muted)
-                    .child(elapsed),
-            );
-        }
+
         if let Some(child) = child_thread_id {
             let child = child.to_owned();
-            let hover_bg = hsla_alpha(self.tokens.accent, 0.20);
-            row = row
+            card = card
                 .a11y_button(
                     SharedString::from(format!("chat.subagent.{id}")),
                     format!("Open {title}"),
                 )
                 .cursor_pointer()
-                .hover(move |s| s.bg(hover_bg))
+                .hover(move |s| s.bg(card_hover))
                 .on_click(cx.listener(move |_, _, _, cx| {
                     cx.emit(ChatEvent::OpenThread(child.clone()));
-                }))
-                .child(icons::icon(
-                    icons::CARET_RIGHT,
-                    14.0,
-                    hsla_alpha(self.tokens.muted_foreground, 0.6),
-                ));
+                }));
         }
+
         div()
             .w_full()
             .min_w_0()
             .pb(px(8.0))
-            .child(row)
+            .child(card)
             .into_any_element()
     }
 
