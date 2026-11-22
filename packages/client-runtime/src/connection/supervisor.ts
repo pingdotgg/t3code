@@ -56,7 +56,8 @@ const CONNECTION_ESTABLISHMENT_TIMEOUT = "15 seconds";
 const establishmentTimeout = Duration.fromInputUnsafe(CONNECTION_ESTABLISHMENT_TIMEOUT);
 const synchronizationTimeout = Duration.fromInputUnsafe("75 seconds");
 const CONNECTION_PROBE_TIMEOUT = "15 seconds";
-const QUICK_CONNECTION_PROBE_TIMEOUT = "3 seconds";
+// Leaves room for packet retransmission before a slow but working link is replaced.
+const QUICK_CONNECTION_PROBE_TIMEOUT = "6 seconds";
 // After a long suspension pooled connections are often dead too, so the host
 // check can hang with the socket. A replacement is cheaper than the wait.
 const LONG_RESUME_PROBE_TIMEOUT = "1500 millis";
@@ -732,7 +733,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         if (next.reason !== "application-active-probe" && next.reason !== "network-changed") {
           return undefined;
         }
-        // Only loopback and LAN answer within 3 seconds reliably. A tailnet
+        // Only loopback and LAN answer within 6 seconds reliably. A tailnet
         // over DERP, a VPN, or the relay can spike past it on a live socket;
         // a dead one is still caught early by the silent socket check.
         return answersQuickly(routeKind)
@@ -829,6 +830,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
         continue;
       }
       yield* Ref.set(probeUnanswered, true);
+      let framesSeen = yield* lease.session.inboundFrames;
       let probe = yield* Effect.forkChild(lease.session.probe);
       // A busy server can miss one foreground probe while the socket is still
       // healthy, so the first miss asks again and only the follow-up's miss
@@ -862,6 +864,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
       );
       let longResumeStartedAt = yield* Clock.monotonicTimeNanos;
       let deadline = longResumeStartedAt + Duration.toNanosUnsafe(probeTimeout);
+      // The reply shares the RPC read loop with subscriptions, so frames still
+      // arriving extend the window, never past the full probe timeout.
+      let probeWindow = probeTimeout;
+      let latestDeadline = longResumeStartedAt + Duration.toNanosUnsafe(CONNECTION_PROBE_TIMEOUT);
       for (;;) {
         const remaining = deadline - (yield* Clock.monotonicTimeNanos);
         const probeEvent = yield* Effect.raceAllFirst([
@@ -898,11 +904,21 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           return true;
         }
         if (probeEvent._tag === "TimedOut") {
+          const frames = yield* lease.session.inboundFrames;
+          const now = yield* Clock.monotonicTimeNanos;
+          if (!longResume && frames > framesSeen && now < latestDeadline) {
+            framesSeen = frames;
+            const extended = now + Duration.toNanosUnsafe(probeWindow);
+            deadline = extended < latestDeadline ? extended : latestDeadline;
+            continue;
+          }
           if (toleratesMiss) {
             toleratesMiss = false;
             yield* Fiber.interrupt(probe);
+            framesSeen = frames;
             probe = yield* Effect.forkChild(lease.session.probe);
-            deadline = (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(probeTimeout);
+            deadline = now + Duration.toNanosUnsafe(probeTimeout);
+            latestDeadline = now + Duration.toNanosUnsafe(CONNECTION_PROBE_TIMEOUT);
             continue;
           }
           yield* stopProbe;
@@ -943,7 +959,10 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
           yield* armSilentSocketCheck(probeEvent.signal);
           const signalDeadline =
             (yield* Clock.monotonicTimeNanos) + Duration.toNanosUnsafe(signalTimeout);
-          if (signalDeadline < deadline) deadline = signalDeadline;
+          if (signalDeadline < deadline) {
+            deadline = signalDeadline;
+            probeWindow = signalTimeout;
+          }
         }
       }
     }

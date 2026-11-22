@@ -127,7 +127,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
+// A premature ticket timeout on T3 Connect needlessly replaces a valid cached token.
+const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 6_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
 // A loopback or LAN host answers well inside this, so a dead one frees its attempt sooner.

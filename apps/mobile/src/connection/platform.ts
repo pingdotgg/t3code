@@ -23,7 +23,10 @@ import { authClientMetadata } from "../lib/authClientMetadata";
 import * as Runtime from "../lib/runtime";
 import * as MobileStorage from "../persistence/mobile-storage";
 import { appAtomRegistry } from "../state/atom-registry";
-import { mobileApplicationActiveWakeup } from "./app-state-wakeups";
+import {
+  mobileApplicationActiveWakeup,
+  type MobileApplicationActiveWakeup,
+} from "./app-state-wakeups";
 import * as EnvironmentOwnedDataCleanup from "./environment-owned-data-cleanup";
 import * as ConnectionStorage from "./storage";
 
@@ -115,7 +118,7 @@ const networkPathChanges = Stream.callback<"network-changed">((queue) =>
 const layerWakeups = Wakeups.layer({
   changes: Stream.mergeAll(
     [
-      Stream.callback<"application-active-probe" | "application-active-long">((queue) =>
+      Stream.callback<MobileApplicationActiveWakeup>((queue) =>
         Effect.acquireRelease(
           Effect.gen(function* () {
             const nowMs = yield* Clock.currentTimeMillis;

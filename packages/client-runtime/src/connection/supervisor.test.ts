@@ -1623,7 +1623,7 @@ describe("EnvironmentSupervisor", () => {
 
       yield* awaitState(supervisor.state, (state) => state.phase === "connected");
       yield* harness.wake("application-active-probe");
-      yield* TestClock.adjust("2999 millis");
+      yield* TestClock.adjust("5999 millis");
       expect(yield* Ref.get(harness.sessionCount)).toBe(1);
 
       yield* TestClock.adjust("1 millis");
@@ -1631,6 +1631,127 @@ describe("EnvironmentSupervisor", () => {
         supervisor.state,
         (state) => state.phase === "connected" && state.generation === 2,
       );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("keeps waiting on a quick probe while frames arrive, up to the full timeout", () =>
+    Effect.gen(function* () {
+      const frames = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        prepare: (_attempt, target) => Effect.succeed(preparedFor(target)),
+        initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        checkHost: () => Effect.succeed("silent"),
+        inboundFrames: Ref.get(frames),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active-probe");
+      yield* TestClock.adjust("5 seconds");
+      yield* Ref.set(frames, 1);
+      yield* TestClock.adjust("6 seconds");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* Ref.set(frames, 2);
+      yield* TestClock.adjust("3999 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* Ref.set(frames, 3);
+      yield* TestClock.adjust("1 milli");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("extends a retry-shortened probe by the retry's window when frames arrive", () =>
+    Effect.gen(function* () {
+      const frames = yield* Ref.make(0);
+      const harness = yield* makeHarness({
+        initialConfig: () => Effect.succeed(PROBE_CAPABLE_CONFIG),
+        probe: (attempt) => (attempt === 1 ? Effect.never : Effect.void),
+        checkHost: () => Effect.succeed("silent"),
+        inboundFrames: Ref.get(frames),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(TARGET_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+      yield* harness.wake("application-active");
+      yield* TestClock.adjust("1 second");
+      yield* supervisor.retryNow;
+      yield* TestClock.adjust("1 second");
+      yield* Ref.set(frames, 1);
+      // The retry's deadline lands at 7 seconds and the frame extends it by the
+      // retry's 6 seconds to 13, not by the foreground probe's 15.
+      yield* TestClock.adjust("10999 millis");
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+      yield* TestClock.adjust("1 milli");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("a mobile refocus wakes retries and checks routes without probing the session", () =>
+    Effect.gen(function* () {
+      const probeCount = yield* Ref.make(0);
+      const lanReachable = yield* Ref.make(false);
+      const failing = yield* Ref.make(true);
+      const harness = yield* makeHarness({
+        checkRoute: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "answered" : "silent")),
+              )
+            : Effect.succeed("unchecked"),
+        // "unprepared" keeps the LAN route out of the silent-route backoff.
+        preflight: (route) =>
+          route.target._tag === "BearerConnectionTarget"
+            ? Ref.get(lanReachable).pipe(
+                Effect.map((reachable) => (reachable ? "ready" : "unprepared")),
+              )
+            : Effect.succeed("unchecked"),
+        prepare: (_attempt, target) =>
+          Ref.get(failing).pipe(
+            Effect.flatMap((fails) =>
+              fails ? Effect.fail(transient()) : Effect.succeed(preparedFor(target)),
+            ),
+          ),
+        probe: () => Ref.update(probeCount, (count) => count + 1),
+      });
+      const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+        initiallyDesired: true,
+      }).pipe(Effect.provide(harness.dependencies));
+
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "backoff" && state.attempt === 1,
+      );
+      yield* Ref.set(failing, false);
+      yield* harness.wake("application-refocused");
+      yield* awaitState(supervisor.state, (state) => state.phase === "connected");
+
+      yield* harness.wake("application-refocused");
+      yield* TestClock.adjust("0 millis");
+      expect(yield* Ref.get(probeCount)).toBe(0);
+      expect(yield* Ref.get(harness.sessionCount)).toBe(1);
+
+      yield* Ref.set(lanReachable, true);
+      yield* harness.wake("application-refocused");
+      yield* awaitState(
+        supervisor.state,
+        (state) => state.phase === "connected" && state.generation === 2,
+      );
+      expect(Option.getOrThrow(yield* SubscriptionRef.get(supervisor.prepared)).target._tag).toBe(
+        "BearerConnectionTarget",
+      );
+      expect(yield* Ref.get(probeCount)).toBe(0);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
@@ -2793,7 +2914,7 @@ describe("EnvironmentSupervisor routes", () => {
 
       yield* Ref.set(lanReachable, false);
       yield* harness.wake("network-changed");
-      yield* TestClock.adjust("3 seconds");
+      yield* TestClock.adjust("6 seconds");
 
       yield* awaitState(
         supervisor.state,
