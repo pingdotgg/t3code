@@ -3046,7 +3046,11 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
           }),
         ),
         ...noOpenRequests,
-        out("session.update", { sessionID: SESSION, permissions: t3Rules }),
+        out("session.update", {
+          sessionID: SESSION,
+          // OpenCode's own `browser` namespace needs its desktop app; T3's browser is preview_*.
+          permissions: [...t3Rules, { action: "browser", resource: "*", effect: "deny" }],
+        }),
         reply("session.update", null),
       ]);
       yield* runtime.resumeThread({
