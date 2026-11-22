@@ -894,13 +894,17 @@ console.log(JSON.stringify({ resolved, resolvedGit }));
         ];
         const gitEntries = ["", "."].flatMap((entry) => {
           const PATH = `${entry}:${listed}`;
+          // An empty entry launches the local git it found; "." keeps its relative spelling.
+          const localGit = entry === "" ? path.join(cwd, "git") : "git";
           return [
             { PATH, cwd: empty, cacheGroup: `xcode-first-${entry}`, expected: xcodeGit },
-            { PATH, cwd, cacheGroup: `xcode-first-${entry}`, expected: "git" },
-            { PATH, cwd, cacheGroup: `local-first-${entry}`, expected: "git" },
+            { PATH, cwd, cacheGroup: `xcode-first-${entry}`, expected: localGit },
+            { PATH, cwd, cacheGroup: `local-first-${entry}`, expected: localGit },
             { PATH, cwd: empty, cacheGroup: `local-first-${entry}`, expected: xcodeGit },
           ];
         });
+        // A match from an absolute entry stays bare `git`, even when PATH also has a relative entry.
+        gitEntries.push({ PATH: `.:${cwd}`, cwd: empty, cacheGroup: "absolute", expected: "git" });
         const stdout = NodeChildProcess.execFileSync(
           process.execPath,
           [

@@ -801,10 +801,11 @@ const findOnPath = Effect.fnUntraced(function* (
   platform: NodeJS.Platform,
   windowsPathExtensions: ReadonlyArray<string>,
   isLast: (match: string) => boolean,
+  // The caller's snapshot, so a cache key and the search it stores agree on the directory.
+  cwd: string | null | undefined,
 ): Effect.fn.Return<ReadonlyArray<string>, never, FileSystem.FileSystem | Path.Path> {
   const path = yield* Path.Path;
   const pathEntries = pathEntriesForPlatform(pathValue, platform);
-  const cwd = pathSearchCwd(pathValue, platform);
 
   // A match through an empty component is anchored: callers may launch it from another cwd or
   // through a wrapper. A literal "." keeps its relative spelling; the first of the two wins, as
@@ -894,6 +895,7 @@ const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlat
     platform,
     windowsPathExtensions,
     () => true,
+    cwd,
   );
   if (cwd !== null) cacheCommandResolution(cache, cacheKey, resolvedPath, nowNanos);
   return resolvedPath;
@@ -918,12 +920,14 @@ export const resolveCommandPaths = Effect.fn("shell.resolveCommandPaths")(functi
   const platform = yield* HostProcess.Platform;
   const env = options.env ?? (yield* HostProcess.Environment);
   const windowsPathExtensions = platform === "win32" ? resolveWindowsPathExtensions(env) : [];
+  const pathValue = resolvePathEnvironmentVariable(env);
   return yield* findOnPath(
-    resolvePathEnvironmentVariable(env),
+    pathValue,
     resolveCommandCandidates(command, platform, windowsPathExtensions, path.extname),
     platform,
     windowsPathExtensions,
     options.until,
+    pathSearchCwd(pathValue, platform),
   );
 });
 
@@ -1050,6 +1054,8 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   const locateXcodeGit = yield* XcodeGitLocation;
   const cache = yield* CommandResolutionCache;
   const pathValue = resolvePathEnvironmentVariable(env);
+  const nowNanos = yield* Clock.currentTimeNanos;
+  // Read after the clock, so the synchronous lookup below searches the directory the key names.
   const cwd = pathSearchCwd(pathValue, "darwin");
   const cacheKey = [
     "xcode-git",
@@ -1059,7 +1065,6 @@ const resolveMacosGit = Effect.fnUntraced(function* (
     env.DEVELOPER_DIR ?? "",
     ...(cwd === undefined ? [] : [cwd]),
   ].join(COMMAND_RESOLUTION_CACHE_KEY_SEPARATOR);
-  const nowNanos = yield* Clock.currentTimeNanos;
   const cached = cwd === null ? undefined : cache.get(cacheKey);
   // An Xcode update or removal deletes the binary; look again instead of failing the spawn.
   if (
@@ -1070,12 +1075,16 @@ const resolveMacosGit = Effect.fnUntraced(function* (
   ) {
     return cached.resolvedPath ?? "git";
   }
-  const located =
-    resolveExecutable("git", "darwin", env) === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
+  const pathGit = resolveExecutable("git", "darwin", env);
+  const located = pathGit === MACOS_GIT_SHIM ? locateXcodeGit(env) : undefined;
   const realGit =
     located !== undefined && resolveExecutable(located, "darwin", env) !== undefined
       ? located
-      : null;
+      : // A match anchored to the cwd came through an empty PATH entry, which a child would search
+        // again from its own cwd; launch the file that was checked instead of bare `git`.
+        typeof cwd === "string" && pathGit === NodePath.posix.join(cwd, "git")
+        ? pathGit
+        : null;
   if (cwd !== null) cacheCommandResolution(cache, cacheKey, realGit, nowNanos);
   return realGit ?? "git";
 });
