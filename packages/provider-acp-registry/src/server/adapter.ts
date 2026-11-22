@@ -196,7 +196,10 @@ export const makeAcpRegistryAdapterV2 = Effect.fn("makeAcpRegistryAdapterV2")(fu
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
   const startupKey =
     options.settings.source === "local" ? `local:${options.instanceId}` : registryAgentId;
-  const isDevin = registryAgentId === "devin";
+  const isDevin =
+    registryAgentId === "devin" ||
+    (options.settings.source === "local" &&
+      /^devin(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? ""));
   const isAntigravityCli =
     options.settings.source === "local" &&
     /^agy(\.exe|\.cmd)?$/i.test(options.settings.commandPath.split(/[\\/]/).pop() ?? "");
