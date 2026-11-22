@@ -45,9 +45,9 @@ use crate::theme::{hsla, hsla_alpha};
 const SIDEBAR_CONTENT_INSET_PX: f32 = 8.0;
 /// `--sidebar-row-content-inset: 0.625rem` (`10px`).
 const ROW_HORIZONTAL_INSET_PX: f32 = 10.0;
-/// `rounded-lg` (`8px`) on sidebar icon controls.
+/// `rounded-lg` (`8px`) on sidebar icon controls and the thread card (`rowSurfaceClassName`).
 const ROW_RADIUS_PX: f32 = 8.0;
-/// `rounded-md` (`6px`) on thread cards and slim rows (`rowSurfaceClassName`).
+/// `rounded-md` (`6px`) on slim rows and the card settle button.
 const CARD_RADIUS_PX: f32 = 6.0;
 /// `h-9` (`36px`) slim settled rows.
 const SLIM_ROW_HEIGHT_PX: f32 = 36.0;
@@ -1197,7 +1197,7 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
         .w_full()
         .px(px(ROW_HORIZONTAL_INSET_PX))
         .py(px(SIDEBAR_CONTENT_INSET_PX))
-        .rounded(px(CARD_RADIUS_PX))
+        .rounded(px(ROW_RADIUS_PX))
         .border_t_1()
         .cursor_pointer()
         .child(line1)
@@ -1205,17 +1205,22 @@ fn render_thread_card(row: &RowCtx<'_>, cx: &mut Context<'_, ConnApp>) -> gpui_k
 
     card = attach_row_interactions(card, row, cx);
 
-    // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)` (100%);
-    // light mode adds `ring-1 ring-inset ring-sidebar-border/70`.
+    // Active row: `bg-sidebar-row-active` + `border-t-(--shell-divider-raised)/50`;
+    // light mode adds `ring-1 ring-inset ring-sidebar-border/70` inside that top border.
     if row.selected {
         card = card
             .bg(active_bg)
-            .border_color(hsla(tokens.shell_divider_raised))
+            .border_color(hsla_alpha(tokens.shell_divider_raised, 0.50))
             .hover(move |s| s.bg(active_bg));
         if tokens.appearance == Appearance::Light {
-            card = card
-                .border_1()
-                .border_color(hsla_alpha(tokens.sidebar_border, 0.70));
+            card = card.relative().child(
+                div()
+                    .absolute()
+                    .inset_0()
+                    .rounded(px(ROW_RADIUS_PX))
+                    .border_1()
+                    .border_color(hsla_alpha(tokens.sidebar_border, 0.70)),
+            );
         }
     } else if recede && matches!(status, Some(RowStatus::Working | RowStatus::Goal)) {
         card = card
