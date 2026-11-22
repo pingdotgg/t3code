@@ -4,61 +4,156 @@ import { spacedFilePathDestinationEnd } from "./markdownLinks.ts";
 
 const SPACED_FILE_LINK_TRIGGER = /\]\([ \t]*(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/])/;
 
+type OffsetRange = readonly [number, number];
+
 function isEscaped(source: string, offset: number): boolean {
   let start = offset;
   while (source[start - 1] === "\\") start -= 1;
   return (offset - start) % 2 !== 0;
 }
 
-/**
- * Finds the end offset (exclusive) of a CommonMark inline code span starting at `openStart`
- * (where `source[openStart] === "`"), or -1 when no matching closing backtick run exists before
- * the next blank line.
- */
-function inlineCodeSpanEnd(source: string, openStart: number): number {
-  let runEnd = openStart;
-  while (source[runEnd] === "`") runEnd += 1;
-  const tickCount = runEnd - openStart;
-  let index = runEnd;
-  while (index < source.length) {
-    const ch = source[index]!;
-    if (ch === "\n") {
-      let next = index + 1;
-      while (source[next] === " " || source[next] === "\t" || source[next] === "\r") next += 1;
-      if (source[next] === "\n") return -1;
-      index += 1;
-      continue;
+function mergeRanges(ranges: ReadonlyArray<OffsetRange>): OffsetRange[] {
+  if (ranges.length <= 1) return ranges.filter(([from, to]) => from < to);
+  const sorted = ranges
+    .filter(([from, to]) => from < to)
+    .sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged: OffsetRange[] = [];
+  for (const [from, to] of sorted) {
+    const previous = merged.at(-1);
+    if (previous && from <= previous[1]) {
+      merged[merged.length - 1] = [previous[0], Math.max(previous[1], to)];
+    } else {
+      merged.push([from, to]);
     }
-    if (ch === "`") {
-      let closeEnd = index;
-      while (source[closeEnd] === "`") closeEnd += 1;
-      if (closeEnd - index === tickCount) return closeEnd;
-      index = closeEnd;
-      continue;
-    }
-    index += 1;
   }
-  return -1;
+  return merged;
+}
+
+/** Returns the index of the first merged range with `to > offset`, or `ranges.length`. */
+function firstRangeEndingAfter(ranges: ReadonlyArray<OffsetRange>, offset: number): number {
+  let low = 0;
+  let high = ranges.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (ranges[middle]![1] <= offset) low = middle + 1;
+    else high = middle;
+  }
+  return low;
+}
+
+function overlapsMergedRanges(
+  ranges: ReadonlyArray<OffsetRange>,
+  start: number,
+  end: number,
+): boolean {
+  const index = firstRangeEndingAfter(ranges, start);
+  return index < ranges.length && ranges[index]![0] < end;
+}
+
+function containsMergedOffset(ranges: ReadonlyArray<OffsetRange>, offset: number): boolean {
+  const index = firstRangeEndingAfter(ranges, offset);
+  return index < ranges.length && ranges[index]![0] <= offset;
+}
+
+function findNextBlankLine(source: string, from: number, limit: number): number {
+  for (let index = from; index < limit; index += 1) {
+    if (source[index] !== "\n") continue;
+    let next = index + 1;
+    while (
+      next < limit &&
+      (source[next] === " " || source[next] === "\t" || source[next] === "\r")
+    ) {
+      next += 1;
+    }
+    if (next < limit && source[next] === "\n") return index;
+  }
+  return limit;
+}
+
+/**
+ * Indexes backtick runs per contiguous non-protected paragraph in linear time so unmatched
+ * backtick runs never rescan the remaining paragraph.
+ */
+function createInlineCodeSpanFinder(source: string, protectedRanges: ReadonlyArray<OffsetRange>) {
+  let segmentEnd = -1;
+  let runsByLength = new Map<number, number[]>();
+
+  const indexSegment = (from: number) => {
+    const nextProtectedIndex = firstRangeEndingAfter(protectedRanges, from);
+    const nextProtectedStart =
+      nextProtectedIndex < protectedRanges.length
+        ? protectedRanges[nextProtectedIndex]![0]
+        : source.length;
+    segmentEnd = findNextBlankLine(source, from, Math.min(source.length, nextProtectedStart));
+    runsByLength = new Map();
+    for (let index = from; index < segmentEnd;) {
+      if (source[index] !== "`") {
+        index += 1;
+        continue;
+      }
+      let runEnd = index + 1;
+      while (runEnd < segmentEnd && source[runEnd] === "`") runEnd += 1;
+      const length = runEnd - index;
+      let list = runsByLength.get(length);
+      if (!list) {
+        list = [];
+        runsByLength.set(length, list);
+      }
+      list.push(index);
+      index = runEnd;
+    }
+  };
+
+  return (openStart: number): number => {
+    if (openStart >= segmentEnd) indexSegment(openStart);
+    let runEnd = openStart + 1;
+    while (runEnd < segmentEnd && source[runEnd] === "`") runEnd += 1;
+    const tickCount = runEnd - openStart;
+    const starts = runsByLength.get(tickCount);
+    if (!starts || starts.length < 2) return -1;
+    let low = 0;
+    let high = starts.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if (starts[middle]! <= openStart) low = middle + 1;
+      else high = middle;
+    }
+    return low < starts.length ? starts[low]! + tickCount : -1;
+  };
 }
 
 interface SpacedFilePathCandidate {
+  readonly isImage: boolean;
   readonly opener: number;
   readonly start: number;
   readonly end: number;
 }
 
-function* spacedFilePathCandidates(source: string): Generator<SpacedFilePathCandidate> {
+function* spacedFilePathCandidates(
+  source: string,
+  protectedRanges: ReadonlyArray<OffsetRange>,
+): Generator<SpacedFilePathCandidate> {
   if (!SPACED_FILE_LINK_TRIGGER.test(source)) return;
+  const inlineCodeSpanEnd = createInlineCodeSpanFinder(source, protectedRanges);
   const openBrackets: number[] = [];
   const token = /[[\]\\`]|\n[ \t\r]*\n/g;
   for (let match = token.exec(source); match; match = token.exec(source)) {
+    const protectedIndex = firstRangeEndingAfter(protectedRanges, match.index);
+    if (
+      protectedIndex < protectedRanges.length &&
+      protectedRanges[protectedIndex]![0] <= match.index
+    ) {
+      openBrackets.length = 0;
+      token.lastIndex = protectedRanges[protectedIndex]![1];
+      continue;
+    }
     const ch = match[0];
     if (ch === "\\") {
       token.lastIndex = match.index + 2;
       continue;
     }
     if (ch === "`") {
-      const codeEnd = inlineCodeSpanEnd(source, match.index);
+      const codeEnd = inlineCodeSpanEnd(match.index);
       if (codeEnd > 0) {
         token.lastIndex = codeEnd;
       } else {
@@ -85,7 +180,7 @@ function* spacedFilePathCandidates(source: string): Generator<SpacedFilePathCand
     const isImage =
       bracketStart > 0 && source[bracketStart - 1] === "!" && !isEscaped(source, bracketStart - 1);
     const opener = isImage ? bracketStart - 1 : bracketStart;
-    yield { opener, start, end: destination.hrefEnd };
+    yield { isImage, opener, start, end: destination.hrefEnd };
     openBrackets.length = 0;
     token.lastIndex = destination.end;
   }
@@ -107,21 +202,27 @@ export function hasSpacedFilePathCandidate(source: string): boolean {
  */
 export function wrapSpacedFilePathsInProtectedRanges(
   source: string,
-  protectedRanges: ReadonlyArray<readonly [number, number]>,
-  allowedOpenerRanges?: ReadonlyArray<readonly [number, number]>,
+  protectedRanges: ReadonlyArray<OffsetRange>,
+  allowedOpenerRanges?: ReadonlyArray<OffsetRange>,
+  protectedLinkRanges?: ReadonlyArray<OffsetRange>,
 ): WrappedSpacedFilePaths | undefined {
-  const candidates = [...spacedFilePathCandidates(source)];
+  const mergedProtected = mergeRanges(protectedRanges);
+  const mergedAllowed = allowedOpenerRanges ? mergeRanges(allowedOpenerRanges) : undefined;
+  const mergedProtectedLinks = protectedLinkRanges ? mergeRanges(protectedLinkRanges) : undefined;
+  const candidates = [...spacedFilePathCandidates(source, mergedProtected)];
   if (candidates.length === 0) return undefined;
 
   const parts: string[] = [];
   const insertions: number[] = [];
   let writtenTo = 0;
-  for (const { opener, start, end } of candidates) {
+  for (const { isImage, opener, start, end } of candidates) {
     if (
       opener < writtenTo ||
-      (allowedOpenerRanges !== undefined &&
-        !allowedOpenerRanges.some(([from, to]) => opener >= from && opener < to)) ||
-      protectedRanges.some(([from, to]) => from < end && to > opener)
+      (mergedAllowed !== undefined && !containsMergedOffset(mergedAllowed, opener)) ||
+      overlapsMergedRanges(mergedProtected, opener, end) ||
+      (!isImage &&
+        mergedProtectedLinks !== undefined &&
+        overlapsMergedRanges(mergedProtectedLinks, opener, end))
     ) {
       continue;
     }
@@ -137,13 +238,19 @@ export function wrapSpacedFilePathsInProtectedRanges(
 function wrapSpacedFilePaths(source: string, readTree: () => Root) {
   if (!hasSpacedFilePathCandidate(source)) return undefined;
 
-  const textRanges: Array<[number, number]> = [];
-  const literalRanges: Array<[number, number]> = [];
+  const textRanges: OffsetRange[] = [];
+  const literalRanges: OffsetRange[] = [];
+  const linkRanges: OffsetRange[] = [];
   const visit = (node: Root | RootContent) => {
     const start = node.position?.start.offset;
     const end = node.position?.end.offset;
     if ("children" in node) {
-      if (node.type === "link" && end !== undefined) {
+      if (
+        (node.type === "link" || node.type === "linkReference") &&
+        start !== undefined &&
+        end !== undefined
+      ) {
+        linkRanges.push([start, end]);
         const labelEnd = node.children.at(-1)?.position?.end.offset;
         if (labelEnd !== undefined && labelEnd < end) {
           literalRanges.push([labelEnd, end]);
@@ -156,7 +263,7 @@ function wrapSpacedFilePaths(source: string, readTree: () => Root) {
   };
   visit(readTree());
 
-  return wrapSpacedFilePathsInProtectedRanges(source, literalRanges, textRanges);
+  return wrapSpacedFilePathsInProtectedRanges(source, literalRanges, textRanges, linkRanges);
 }
 
 export function markdownWithSpacedFilePaths(source: string, readTree: () => Root): string {

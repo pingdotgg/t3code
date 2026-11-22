@@ -588,5 +588,10 @@ describe("wordsHast", () => {
     );
     expect(html).toContain(`<code data-inline-code="" dir="ltr">![Inline](${winSlash})</code>`);
     expect(html).toContain(`<code class="language-md">![Fence](${macIcloud})\n</code>`);
+
+    // Backticks inside a fenced block must not pair with prose backticks after an image.
+    expect(wordsHtml("~~~\n`unclosed\n~~~\n![real](/tmp/a b.png)\n`tail`")).toContain(
+      `src="/tmp/a%20b.png"`,
+    );
   });
 });

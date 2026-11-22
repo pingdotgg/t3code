@@ -1092,6 +1092,23 @@ it("repairs bare local media embeds and file links with spaces across Windows an
   expect(
     markdownWithSpacedFilePaths(codeSpan, () => unified().use(remarkParse).parse(codeSpan)),
   ).toBe(codeSpan);
+
+  // Backticks inside a fenced code block must not pair with later prose backticks.
+  const fencedBacktick = "~~~\n`unclosed\n~~~\n![real](/tmp/a b.png)\n`tail`";
+  expect(chatMarkdownImageSources(fencedBacktick).map(decodeURI)).toEqual(["/tmp/a b.png"]);
+
+  // A spaced link inside an existing link label must not break the outer link, while a linked image still repairs.
+  const nestedLink = "[outer [inner](/tmp/a b.ts)](https://example.test)";
+  const nestedLinkUrls: string[] = [];
+  const collectLinks = (node: Root | RootContent) => {
+    if (node.type === "link") nestedLinkUrls.push(node.url);
+    if ("children" in node) node.children.forEach(collectLinks);
+  };
+  collectLinks(processor.runSync(processor.parse(nestedLink), nestedLink) as Root);
+  expect(nestedLinkUrls).toEqual(["https://example.test"]);
+
+  const linkedImage = "[![Shot](/tmp/my shot.png)](https://example.test)";
+  expect(chatMarkdownImageSources(linkedImage).map(decodeURI)).toEqual(["/tmp/my shot.png"]);
 });
 
 it("keeps authored offsets after repairing multiple spaced file paths", () => {
