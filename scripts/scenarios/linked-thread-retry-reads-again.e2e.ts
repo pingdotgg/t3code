@@ -65,6 +65,7 @@ test(
           failed = true;
           const others = messages.filter((message) => message !== request);
           if (others.length > 0) send.call(this, JSON.stringify(others));
+          // @effect-diagnostics-next-line globalTimers:off - This callback is injected into the browser.
           setTimeout(() => {
             this.dispatchEvent(
               new MessageEvent("message", {
