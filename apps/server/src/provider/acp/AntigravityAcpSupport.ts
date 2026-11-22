@@ -31,6 +31,7 @@ import {
 import type { AcpSessionModeState } from "@t3tools/provider-acp/server/runtimeModel";
 import { T3_MCP_TOOL_NAMES } from "@t3tools/shared/t3McpToolPresentation";
 import packageJson from "../../../package.json" with { type: "json" };
+import { TOOL_CALL, TOOL_SEARCH } from "../../mcp/McpToolExposure.ts";
 import { normalizeAntigravitySessionUpdate } from "./AntigravityProtocol.ts";
 
 export interface AntigravityAcpRuntimeInput extends Omit<
@@ -187,18 +188,21 @@ export function antigravitySessionMode(
 // MCP server's tool of the same name would pass.
 const ANTIGRAVITY_T3_MCP_TITLE = /^Run mcp_t3-code_(?<tool>[A-Za-z0-9_]+)\??$/;
 
+const isAntigravityT3McpTool = (tool: string): boolean =>
+  T3_MCP_TOOL_NAMES.has(tool) || tool === TOOL_SEARCH || tool === TOOL_CALL;
+
 function isAntigravityT3McpRequest(request: EffectAcpSchema.RequestPermissionRequest): boolean {
   const rawInput = unknownRecord(request.toolCall.rawInput);
   if (rawInput?.ServerName !== undefined) {
     return (
       rawInput.ServerName === "t3-code" &&
       typeof rawInput.ToolName === "string" &&
-      T3_MCP_TOOL_NAMES.has(rawInput.ToolName)
+      isAntigravityT3McpTool(rawInput.ToolName)
     );
   }
   if (typeof rawInput?.CommandLine === "string") return false;
   const tool = ANTIGRAVITY_T3_MCP_TITLE.exec(request.toolCall.title?.trim() ?? "")?.groups?.tool;
-  return tool !== undefined && T3_MCP_TOOL_NAMES.has(tool);
+  return tool !== undefined && isAntigravityT3McpTool(tool);
 }
 
 export function antigravityPermissionDisposition(
