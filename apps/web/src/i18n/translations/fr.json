@@ -11689,6 +11689,7 @@
   "9f5d059ed5a67ba1": "Trop ancienne",
   "3c087918060df6e5": "Fenêtre ouverte",
   "7c5d597ee0a16e05": "Exécutée",
+  "5804e40a669483f1": "Ce dossier existe sur une seule machine. Choisissez un environnement pour l’y enregistrer.",
   "fde10553f91c7707": "Ce paramètre s’applique à tout l’environnement et ne peut pas être remplacé par un projet.",
   "87c9ee882704c64c": "Connectez les checkouts sélectionnés, ou mettez à jour leurs environnements, pour enregistrer un remplacement pour le projet.",
   "517d756b99498622": "Connectez {environment} pour enregistrer ce paramètre.",

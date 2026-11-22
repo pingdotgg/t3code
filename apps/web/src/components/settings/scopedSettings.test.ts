@@ -246,6 +246,32 @@ describe("scoped settings writes", () => {
     ]);
   });
 
+  it("keeps an absolute Add project folder off the other machines", () => {
+    const save = (scope: typeof all, addProjectBaseDirectory: string) =>
+      planScopedSettingsPatch(scope, environments, { addProjectBaseDirectory });
+    const refused = save(all, "/Users/me/code/");
+    expect(refused.serverWrites).toEqual([]);
+    expect(refused.unavailableReason).toContain("Choose an environment");
+    expect(save(all, "C:\\code").serverWrites).toEqual([]);
+    // Home-relative and empty values mean the same folder on every machine.
+    for (const portable of ["~/code", "code", ""]) {
+      const plan = save(all, portable);
+      expect(plan.unavailableReason).toBeNull();
+      expect(plan.serverWrites.map((write) => write.environmentId)).toEqual([
+        laptop.environmentId,
+        server.environmentId,
+      ]);
+    }
+    expect(save(named, "/home/me/code").serverWrites.map((write) => write.environmentId)).toEqual([
+      server.environmentId,
+    ]);
+    expect(
+      planScopedSettingsPatch(all, [laptop, offline], {
+        addProjectBaseDirectory: "/Users/me/code/",
+      }).serverWrites.map((write) => write.environmentId),
+    ).toEqual([laptop.environmentId]);
+  });
+
   it("writes an aggregate preference only to connected environments with loaded configuration", async () => {
     const persistServer = vi.fn().mockResolvedValue({ _tag: "Success" });
     const persistClient = vi.fn();

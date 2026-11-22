@@ -22,6 +22,7 @@ import {
   resolveWorktreeCleanup,
   type ProjectSettingSource,
 } from "@t3tools/shared/projectSettings";
+import { isAbsolutePath } from "@t3tools/shared/path";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import * as Equal from "effect/Equal";
 import * as Cause from "effect/Cause";
@@ -312,8 +313,13 @@ export function planScopedSettingsPatch(
   const clientPatch = Object.fromEntries(
     refusesClientKeys ? [] : Object.entries(patch).filter(([key]) => clientKeys.includes(key)),
   ) as ClientSettingsPatch;
+  // An absolute folder names one machine's filesystem; home-relative paths resolve on each.
+  const isOneMachinePath =
+    scope.kind === "all" &&
+    connectedEnvironments.length > 1 &&
+    isAbsolutePath(serverPatch.addProjectBaseDirectory ?? "");
   const serverWrites: ScopedServerWrite[] =
-    serverKeys.length === 0
+    serverKeys.length === 0 || isOneMachinePath
       ? []
       : isProjectScope
         ? unscopableKeys.length > 0
@@ -399,8 +405,9 @@ export function planScopedSettingsPatch(
           : [];
   const hasClientWrite = Object.keys(clientPatch).length > 0;
   const hasWrite = hasClientWrite || serverWrites.length > 0;
-  const unavailableReason =
-    hasWrite || Object.keys(patch).length === 0
+  const unavailableReason = isOneMachinePath
+    ? m(msg("This folder exists on one machine. Choose an environment to save it there."))
+    : hasWrite || Object.keys(patch).length === 0
       ? null
       : scope.kind === "unavailable"
         ? scope.message

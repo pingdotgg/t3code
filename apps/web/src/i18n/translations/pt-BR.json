@@ -11689,6 +11689,7 @@
   "9f5d059ed5a67ba1": "Antiga demais",
   "3c087918060df6e5": "Janela aberta",
   "7c5d597ee0a16e05": "Executada",
+  "5804e40a669483f1": "Esta pasta existe em uma única máquina. Escolha um ambiente para salvá-la nele.",
   "fde10553f91c7707": "Esta configuração vale para o ambiente inteiro e não pode ser substituída por um projeto.",
   "87c9ee882704c64c": "Conecte os checkouts selecionados ou atualize os ambientes deles para salvar uma substituição do projeto.",
   "517d756b99498622": "Conecte {environment} para salvar esta configuração.",
