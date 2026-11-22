@@ -18,6 +18,13 @@ export type SettingsSecretValue = typeof SettingsSecretValue.Type;
 
 export const isSecretReference = Schema.is(SecretReference);
 
+/** Whether a reference appears anywhere in `value`, such as a settings patch or an RPC payload. */
+export function containsSecretReference(value: unknown): boolean {
+  if (value === null || typeof value !== "object") return false;
+  if (isSecretReference(value)) return true;
+  return Object.values(value).some(containsSecretReference);
+}
+
 /** The literal a credential setting holds, or `""` when it names a secret instead. */
 export function settingsSecretLiteral(value: SettingsSecretValue | undefined): string {
   return typeof value === "string" ? value : "";
