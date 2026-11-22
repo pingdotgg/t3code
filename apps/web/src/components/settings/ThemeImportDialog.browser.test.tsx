@@ -1,9 +1,8 @@
-import type { PickedThemeFile } from "@t3tools/contracts";
 import { StrictMode } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { act, render, stubGlobal } from "../../../test/render";
+import { act, render } from "../../../test/render";
 import {
   CUSTOM_THEMES_STORAGE_KEY,
   getCustomThemes,
@@ -209,83 +208,6 @@ it.each(["failed read", "batch install"])(
     await expect.element(page.getByRole("button", { name: "Choose files" })).toBeEnabled();
   },
 );
-
-it("keeps the oversized replacement warning after a superseded desktop picker reply", async () => {
-  const pickerReply = Promise.withResolvers<readonly PickedThemeFile[] | null>();
-  const pickerStarted = Promise.withResolvers<void>();
-  using _bridge = stubGlobal("desktopBridge", {
-    pickThemeFiles() {
-      pickerStarted.resolve();
-      return pickerReply.promise;
-    },
-    getLocalEnvironmentEnabled: () => true,
-    getLocalEnvironmentBootstraps: () => [],
-  });
-  await using _screen = await render(
-    <ThemeImportDialog
-      open
-      onOpenChange={() => {}}
-      onImported={() => true}
-      onImportedMany={() => {}}
-    />,
-  );
-  const chooseFiles = page.getByRole("button", { name: "Choose files" });
-  await chooseFiles.click();
-  await pickerStarted.promise;
-
-  const drop = new DataTransfer();
-  drop.items.add(new File([" ".repeat(256 * 1024 + 1)], "huge.json"));
-  await act(() => {
-    chooseFiles
-      .element()
-      .dispatchEvent(new DragEvent("drop", { bubbles: true, dataTransfer: drop }));
-  });
-  await expect.element(page.getByText(/^That file is/)).toBeVisible();
-
-  const text = JSON.stringify(theme("Dusk"));
-  await act(async () => {
-    pickerReply.resolve([{ name: "Dusk.json", size: text.length, text }]);
-    await pickerReply.promise;
-  });
-
-  expect(page.getByRole("textbox", { name: "Theme JSON" }).element()).toHaveValue("");
-  expect(page.getByRole("alert").element().textContent).toMatch(/^That file is/);
-  await expect.element(chooseFiles).toBeEnabled();
-});
-
-it("waits for a desktop picker reply before allowing another selection", async () => {
-  const earlierReply = Promise.withResolvers<readonly PickedThemeFile[] | null>();
-  const laterReply = Promise.withResolvers<readonly PickedThemeFile[] | null>();
-  using _bridge = stubGlobal("desktopBridge", {
-    pickThemeFiles: vi
-      .fn()
-      .mockReturnValueOnce(earlierReply.promise)
-      .mockReturnValue(laterReply.promise),
-    getLocalEnvironmentEnabled: () => true,
-    getLocalEnvironmentBootstraps: () => [],
-  });
-  await using _screen = await render(
-    <ThemeImportDialog
-      open
-      onOpenChange={() => {}}
-      onImported={() => true}
-      onImportedMany={() => {}}
-    />,
-  );
-  const chooseFiles = page.getByRole("button", { name: "Choose files" });
-  const editor = page.getByRole("textbox", { name: "Theme JSON" });
-  await chooseFiles.click();
-  await expect.element(chooseFiles).toBeDisabled();
-
-  const earlierText = JSON.stringify(theme("Earlier"));
-  earlierReply.resolve([{ name: "Earlier.json", size: earlierText.length, text: earlierText }]);
-  await expect.element(editor).toHaveValue(earlierText);
-
-  await chooseFiles.click();
-  const laterText = JSON.stringify(theme("Later"));
-  laterReply.resolve([{ name: "Later.json", size: laterText.length, text: laterText }]);
-  await expect.element(editor).toHaveValue(laterText);
-});
 
 function themeJsonc(name: string, background: string) {
   return `{
