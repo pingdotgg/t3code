@@ -637,6 +637,15 @@ export interface AcpAdapterV2Flavor {
    * tool ends. With `deferFinalizeForBackgroundWork`, the turn stays open until then.
    */
   readonly toolOutlivesPrompt?: (toolCall: AcpToolCallState) => boolean;
+  /**
+   * Finalize a settled turn held only by running commands once the session has been silent for
+   * `timeout`, so a command that never reports back cannot leave the thread in Working forever.
+   * Other holds (questions, schedules, subagents) keep the turn open as before.
+   */
+  readonly postSettleCommandHold?: {
+    readonly timeout: Duration.Input;
+    readonly isCommand: (toolCall: AcpToolCallState) => boolean;
+  };
   readonly isProviderWakeNotification?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => boolean;
@@ -2742,7 +2751,12 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const notePromptProgress =
           /* Provider events include streaming deltas; avoid a span for each update. */
           Effect.fnUntraced(function* (notification?: EffectAcpSchema.SessionNotification) {
-            if (promptInactivityTimeoutMillis === undefined) return;
+            if (
+              promptInactivityTimeoutMillis === undefined &&
+              flavor.postSettleCommandHold === undefined
+            ) {
+              return;
+            }
             if (
               notification !== undefined &&
               !ACP_PROMPT_ACTIVITY_UPDATES.has(notification.update.sessionUpdate)
@@ -4274,11 +4288,15 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
         const isMonitorEndNoticeText = (text: string): boolean =>
           /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
 
-        const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+        const hasDeferredBackgroundWork = (
+          context: ActiveAcpTurn,
+          ignoreTool?: (tool: AcpToolCallState) => boolean,
+        ): boolean => {
           if (flavor.wakeOnDetachedRequest && agentRequests.size > 0) return true;
           if (flavor.toolOutlivesPrompt !== undefined) {
             // A tool that never started has nothing to report later.
             for (const tool of context.tools.values()) {
+              if (ignoreTool?.(tool) === true) continue;
               if (toolStatus(tool.status) === "running" && flavor.toolOutlivesPrompt(tool))
                 return true;
             }
@@ -8835,6 +8853,39 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           yield* options.testHooks?.onDeferredFinalizeScheduled?.(debounce) ?? Effect.void;
         });
 
+        const schedulePostSettleHoldExpiry = Effect.fn("AcpAdapterV2.schedulePostSettleHoldExpiry")(
+          function* (context: ActiveAcpTurn) {
+            const hold = flavor.postSettleCommandHold;
+            if (hold === undefined) return;
+            if (!context.promptSettled || context.finalized) return;
+            const timeoutMillis = Duration.toMillis(hold.timeout);
+            const isRunningCommand = (tool: AcpToolCallState) =>
+              toolStatus(tool.status) === "running" && hold.isCommand(tool);
+            let quietSince = yield* Clock.currentTimeMillis;
+            // Armed even without a command yet: a pending reply can still start one.
+            yield* Effect.gen(function* () {
+              while (!context.finalized) {
+                quietSince = Math.max(quietSince, context.lastProgressAt);
+                const now = yield* Clock.currentTimeMillis;
+                const remaining = quietSince + timeoutMillis - now;
+                if (remaining > 0) {
+                  yield* Effect.sleep(Duration.millis(remaining));
+                  continue;
+                }
+                if (
+                  context.tools.values().some(isRunningCommand) &&
+                  !hasDeferredBackgroundWork(context, isRunningCommand)
+                ) {
+                  yield* finalizeTurn(context, context.promptSettledStatus ?? "completed");
+                  return;
+                }
+                // Something else still holds the turn; count silence again once it clears.
+                quietSince = now;
+              }
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          },
+        );
+
         const promptInactivityPaused = Effect.fn("AcpAdapterV2.promptInactivityPaused")(function* (
           context: ActiveAcpTurn,
         ) {
@@ -9265,6 +9316,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                   if (context.finalized) return;
                   if (deferredBackgroundWork || pendingReply) {
                     yield* closeTextStreams(context);
+                    yield* schedulePostSettleHoldExpiry(context);
                     if (pendingReply) {
                       context.replyOpen = true;
                       yield* scheduleDeferredFinalize(context);
@@ -9665,6 +9717,7 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
                 return;
               }
               if (!context.finalized) {
+                yield* schedulePostSettleHoldExpiry(context);
                 if (hasDeferredBackgroundWork(context)) {
                   yield* rearmDeferredFinalize(context);
                 } else {
