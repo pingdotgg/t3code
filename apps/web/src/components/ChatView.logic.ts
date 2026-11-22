@@ -1664,6 +1664,7 @@ export function deriveThreadPendingBackgroundTasks(projection: ThreadStructure |
       turnItems: projection.turnItems.filter(
         (item) => item.runId === null || !liveRunIds.has(item.runId),
       ),
+      subagents: projection.thread.archivedAt === null ? projection.subagents : [],
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       hasActiveRun: false,
       runs: projection.runs,

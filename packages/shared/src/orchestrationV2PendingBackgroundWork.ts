@@ -2,6 +2,7 @@ import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2ProviderThread,
   OrchestrationV2Run,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadShell,
   OrchestrationV2TurnItem,
   ThreadId,
@@ -140,7 +141,15 @@ export function monitorHoldsWakeCompletion(
   );
 }
 
-type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status">;
+type PendingBackgroundWorkRun = Pick<OrchestrationV2Run, "id" | "ordinal" | "status"> & {
+  readonly userMessageId?: OrchestrationV2Run["userMessageId"] | undefined;
+  readonly delegatedCompletion?: OrchestrationV2Run["delegatedCompletion"] | undefined;
+};
+
+type PendingBackgroundWorkSubagent = Pick<
+  OrchestrationV2Subagent,
+  "id" | "origin" | "status" | "title" | "prompt" | "runId" | "childThreadId" | "completionDelivery"
+>;
 
 type PendingBackgroundWorkPullRequest = Pick<
   ThreadPullRequestLink,
@@ -262,6 +271,7 @@ export function derivePendingBackgroundWork(input: {
   readonly latestRun: PendingBackgroundWorkRun | null | undefined;
   readonly providerThreads: ReadonlyArray<PendingBackgroundWorkProviderThread>;
   readonly turnItems: ReadonlyArray<PendingBackgroundWorkTurnItem>;
+  readonly subagents?: ReadonlyArray<PendingBackgroundWorkSubagent> | undefined;
   readonly activeProviderThreadId?: string | null;
   readonly hasActiveRun?: boolean;
   /** Excludes rolled-back runs; optional only when the caller already filtered them, as SQL shell reads do. */
@@ -315,6 +325,67 @@ export function derivePendingBackgroundWork(input: {
     }
 
     byTaskId.set(taskId, pendingTaskFromTurnItem(taskId, item));
+  }
+
+  // Publishing a delegated child's terminal result precedes scheduling its parent's wake run.
+  // Keep holding completion across that gap until the wake run actually starts (for claimed
+  // tasks) or its delivery is finalized/disposed.
+  if (input.subagents !== undefined && input.subagents.length > 0) {
+    const runsById = new Map<string, PendingBackgroundWorkRun>();
+    const startedRunMessageIds = new Set<string>();
+    for (const run of input.runs ?? []) {
+      runsById.set(String(run.id), run);
+      if (
+        run.userMessageId !== undefined &&
+        run.status !== "queued" &&
+        run.status !== "cancelled"
+      ) {
+        startedRunMessageIds.add(String(run.userMessageId));
+      }
+    }
+    for (const subagent of input.subagents) {
+      if (
+        subagent.origin !== "app_owned" ||
+        isOrchestrationV2WorkActive(subagent.status) ||
+        subagent.status === "idle"
+      ) {
+        continue;
+      }
+      const deliveryState = subagent.completionDelivery?.state;
+      if (deliveryState !== "pending" && deliveryState !== "claimed") {
+        continue;
+      }
+      const ownerRun = subagent.runId === null ? undefined : runsById.get(String(subagent.runId));
+      if (
+        ownerRun !== undefined &&
+        (ownerRun.status === "rolled_back" ||
+          (ownerRun.delegatedCompletion !== undefined &&
+            ownerRun.delegatedCompletion.disposition !== "open"))
+      ) {
+        continue;
+      }
+      const delivery = ownerRun?.delegatedCompletion?.delivery;
+      if (
+        deliveryState === "claimed" &&
+        delivery != null &&
+        delivery.taskIds.includes(subagent.id) &&
+        startedRunMessageIds.has(String(delivery.messageId))
+      ) {
+        continue;
+      }
+      const taskId = String(subagent.id);
+      if (byTaskId.has(taskId)) {
+        continue;
+      }
+      const description = subagent.title?.trim() || subagent.prompt.trim() || undefined;
+      byTaskId.set(taskId, {
+        taskId,
+        ...(description === undefined ? {} : { description }),
+        // Omit providerInstanceId so hasPendingBackgroundSubagent never grants live-caller access.
+        kind: "subagent",
+        ...(subagent.childThreadId === null ? {} : { childThreadId: subagent.childThreadId }),
+      });
+    }
   }
 
   for (const task of pullRequestWatchTasks(input.pullRequests)) byTaskId.set(task.taskId, task);

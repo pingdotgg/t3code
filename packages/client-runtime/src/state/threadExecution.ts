@@ -424,6 +424,7 @@ export function deriveThreadStructureRuntime(
       latestRun: latestRunProjection,
       providerThreads: projection.providerThreads,
       turnItems: projection.turnItems,
+      subagents: projection.thread.archivedAt === null ? projection.subagents : [],
       activeProviderThreadId: projection.thread.activeProviderThreadId,
       runs: projection.runs,
       pullRequests: projection.thread.pullRequests,

@@ -12131,4 +12131,385 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
       }
     }),
   );
+
+  it.effect(
+    "holds shell, awareness, and settlement pending background work while a finished delegated subagent awaits wake delivery",
+    () =>
+      Effect.gen(function* () {
+        const store = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make("thread:delegated-wake-gap");
+        const childThreadId = ThreadId.make("thread:delegated-wake-gap:child");
+        const runId = RunId.make("run:delegated-wake-gap:4");
+        const rootNodeId = NodeId.make("node:delegated-wake-gap:root");
+        const subagentId = NodeId.make("node:delegated-wake-gap:subagent");
+        const itemId = TurnItemId.make("turn-item:delegated-wake-gap:subagent");
+        const completedAt = DateTime.makeUnsafe("2026-11-22T12:24:58.666Z");
+        const childFinishedAt = DateTime.makeUnsafe("2026-11-22T12:29:17.256Z");
+        const deliveredAt = DateTime.makeUnsafe("2026-11-22T12:29:17.500Z");
+        const thread = {
+          createdBy: "user" as const,
+          creationSource: "web" as const,
+          id: threadId,
+          projectId: ProjectId.make("project:delegated-wake-gap"),
+          title: "Review PRs",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access" as const,
+          interactionMode: "default" as const,
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: completedAt,
+          updatedAt: completedAt,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        };
+        const run = {
+          id: runId,
+          threadId,
+          ordinal: 4,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:delegated-wake-gap:4"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "completed" as const,
+          requestedAt: completedAt,
+          startedAt: completedAt,
+          completedAt,
+          checkpointId: null,
+          contextHandoffId: null,
+          delegatedCompletion: {
+            disposition: "open" as const,
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: MessageId.make("message:delegated-wake-gap:5"),
+              taskIds: [subagentId],
+            },
+          },
+        };
+        const subagent = {
+          id: subagentId,
+          threadId,
+          runId,
+          parentNodeId: rootNodeId,
+          origin: "app_owned" as const,
+          createdBy: "agent" as const,
+          driver,
+          providerInstanceId,
+          providerThreadId: null,
+          childThreadId,
+          nativeTaskRef: null,
+          prompt: "Audit PRs",
+          title: "Audit PRs",
+          model: modelSelection.model,
+          modelSelection,
+          completionWake: "always" as const,
+          completionDelivery: { state: "claimed" as const, observedByRunId: null },
+          status: "completed" as const,
+          result: "Looks good",
+          startedAt: completedAt,
+          completedAt: childFinishedAt,
+          updatedAt: childFinishedAt,
+        };
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:thread"),
+          type: "thread.created",
+          threadId,
+          occurredAt: completedAt,
+          payload: thread,
+        });
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:run"),
+          type: "run.created",
+          threadId,
+          runId,
+          driver,
+          providerInstanceId,
+          occurredAt: completedAt,
+          payload: run,
+        });
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:turn-item"),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: subagentId,
+          driver,
+          providerInstanceId,
+          occurredAt: childFinishedAt,
+          payload: {
+            id: itemId,
+            threadId,
+            runId,
+            nodeId: subagentId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 1,
+            type: "subagent",
+            subagentId,
+            origin: "app_owned",
+            driver,
+            providerInstanceId,
+            childThreadId,
+            prompt: "Audit PRs",
+            title: "Audit PRs",
+            result: "Looks good",
+            status: "completed",
+            startedAt: completedAt,
+            completedAt: childFinishedAt,
+            updatedAt: childFinishedAt,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:subagent-claimed"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: subagentId,
+          driver,
+          providerInstanceId,
+          occurredAt: childFinishedAt,
+          payload: subagent,
+        });
+
+        const expectedPending = [
+          {
+            taskId: subagentId,
+            description: "Audit PRs",
+            kind: "subagent" as const,
+            childThreadId,
+          },
+        ];
+        const assertPending = Effect.fnUntraced(function* (
+          expected: ReadonlyArray<unknown>,
+          expectedPhase: "running" | "completed",
+        ) {
+          const shell = yield* store.getThreadShell(threadId);
+          const listed = (yield* store.getShellSnapshot()).threads.find(
+            (candidate) => candidate.id === threadId,
+          );
+          const awareness = (yield* store.getAgentAwarenessSnapshot(threadId)).threads[0];
+          const settlement = (yield* store.getSettlementCandidates(threadId))[0];
+          const fromProjection = ProjectionStore.threadShellFromProjection(
+            yield* store.getThreadProjection(threadId),
+          );
+          yield* assertShellIndexCoversShells();
+          for (const candidate of [shell, listed, awareness, settlement, fromProjection]) {
+            assert.deepEqual(candidate?.pendingBackgroundTasks, expected);
+          }
+          assert.equal(
+            shell &&
+              projectThreadAwarenessV2({
+                environmentId: EnvironmentId.make("env:delegated-wake-gap"),
+                project: { title: "Project" },
+                thread: shell,
+              })?.phase,
+            expectedPhase,
+          );
+        });
+
+        // Between child completion and parent wake run creation, completion stays held.
+        yield* assertPending(expectedPending, "running");
+
+        // Verify the active shell index and shell subagent reads use the partial pending-delivery index.
+        const sql = yield* SqlClient.SqlClient;
+        const { statements, tracer } = traceSqlStatements();
+        yield* store.listActiveShellIndex().pipe(Effect.withTracer(tracer));
+        yield* store.getThreadShell(threadId).pipe(Effect.withTracer(tracer));
+        const subagentQueries = statements.filter((query) =>
+          query.includes("orchestration_v2_projection_subagents_pending_delivery_idx"),
+        );
+        assert.isAtLeast(subagentQueries.length, 2);
+        for (const query of subagentQueries) {
+          const plan = (yield* sql.unsafe<{ readonly detail: string }>(
+            `EXPLAIN QUERY PLAN ${query}`,
+          )).map((row) => row.detail);
+          assert.isTrue(
+            plan.some((detail) =>
+              detail.includes("orchestration_v2_projection_subagents_pending_delivery_idx"),
+            ),
+            plan.join("\n"),
+          );
+        }
+
+        // Provider-native subagents, stopped cohorts, and rolled-back runs are excluded in SQL.
+        const stoppedRunId = RunId.make("run:delegated-wake-gap:stopped");
+        const rolledBackRunId = RunId.make("run:delegated-wake-gap:rolled-back");
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:run-stopped"),
+          type: "run.created",
+          threadId,
+          runId: stoppedRunId,
+          driver,
+          providerInstanceId,
+          occurredAt: completedAt,
+          payload: {
+            ...run,
+            id: stoppedRunId,
+            ordinal: 2,
+            delegatedCompletion: { disposition: "stopped", nextGeneration: 1, delivery: null },
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:run-rolled-back"),
+          type: "run.created",
+          threadId,
+          runId: rolledBackRunId,
+          driver,
+          providerInstanceId,
+          occurredAt: completedAt,
+          payload: {
+            ...run,
+            id: rolledBackRunId,
+            ordinal: 3,
+            status: "rolled_back",
+            delegatedCompletion: undefined,
+          },
+        });
+        for (const ignored of [
+          {
+            id: NodeId.make("node:delegated-wake-gap:native"),
+            origin: "provider_native" as const,
+            runId,
+          },
+          {
+            id: NodeId.make("node:delegated-wake-gap:stopped-sub"),
+            origin: "app_owned" as const,
+            runId: stoppedRunId,
+          },
+          {
+            id: NodeId.make("node:delegated-wake-gap:rolled-back-sub"),
+            origin: "app_owned" as const,
+            runId: rolledBackRunId,
+          },
+        ]) {
+          yield* store.apply({
+            id: EventId.make(`event:delegated-wake-gap:${ignored.id}`),
+            type: "subagent.updated",
+            threadId,
+            runId: ignored.runId,
+            nodeId: ignored.id,
+            driver,
+            providerInstanceId,
+            occurredAt: childFinishedAt,
+            payload: { ...subagent, ...ignored, childThreadId: null },
+          });
+        }
+        yield* assertPending(expectedPending, "running");
+
+        // Once the wake run itself completes (before finalize marks the task delivered), the
+        // claimed task stops holding so the shell does not flash waiting or delay notifications.
+        const wakeRunId = RunId.make("run:delegated-wake-gap:5");
+        const wakeMessageId = MessageId.make("message:delegated-wake-gap:5");
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:wake-message"),
+          type: "message.updated",
+          threadId,
+          runId: wakeRunId,
+          driver,
+          providerInstanceId,
+          occurredAt: deliveredAt,
+          payload: {
+            id: wakeMessageId,
+            threadId,
+            runId: wakeRunId,
+            nodeId: null,
+            role: "user",
+            createdBy: "agent",
+            creationSource: "server",
+            text: "Delegated task finished.",
+            attachments: [],
+            streaming: false,
+            delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [subagentId] },
+            createdAt: deliveredAt,
+            updatedAt: deliveredAt,
+          },
+        });
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:wake-run-completed"),
+          type: "run.created",
+          threadId,
+          runId: wakeRunId,
+          driver,
+          providerInstanceId,
+          occurredAt: deliveredAt,
+          payload: {
+            ...run,
+            id: wakeRunId,
+            ordinal: 5,
+            userMessageId: wakeMessageId,
+            status: "completed",
+            requestedAt: deliveredAt,
+            startedAt: deliveredAt,
+            completedAt: deliveredAt,
+            delegatedCompletion: undefined,
+          },
+        });
+        yield* assertPending([], "completed");
+
+        // A pending sibling result keeps holding across that completed wake run until finalize
+        // reserves the next wake.
+        const siblingId = NodeId.make("node:delegated-wake-gap:sibling");
+        const siblingChildThreadId = ThreadId.make("thread:delegated-wake-gap:child-2");
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:sibling-pending"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: siblingId,
+          driver,
+          providerInstanceId,
+          occurredAt: deliveredAt,
+          payload: {
+            ...subagent,
+            id: siblingId,
+            title: "Second audit",
+            childThreadId: siblingChildThreadId,
+            completionDelivery: { state: "pending", observedByRunId: null },
+          },
+        });
+        yield* assertPending(
+          [
+            {
+              taskId: siblingId,
+              description: "Second audit",
+              kind: "subagent" as const,
+              childThreadId: siblingChildThreadId,
+            },
+          ],
+          "running",
+        );
+
+        // Once delivered, the thread is free to complete.
+        yield* store.apply({
+          id: EventId.make("event:delegated-wake-gap:sibling-delivered"),
+          type: "subagent.updated",
+          threadId,
+          runId,
+          nodeId: siblingId,
+          driver,
+          providerInstanceId,
+          occurredAt: deliveredAt,
+          payload: {
+            ...subagent,
+            id: siblingId,
+            title: "Second audit",
+            childThreadId: siblingChildThreadId,
+            completionDelivery: { state: "delivered", observedByRunId: null },
+            updatedAt: deliveredAt,
+          },
+        });
+        yield* assertPending([], "completed");
+      }),
+  );
 });

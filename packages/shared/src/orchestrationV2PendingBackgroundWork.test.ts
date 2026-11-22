@@ -3,6 +3,7 @@ import { ProviderInstanceId, ProviderThreadId } from "@t3tools/contracts";
 import {
   backgroundWorkHoldsCompletion,
   derivePendingBackgroundWork,
+  hasPendingBackgroundSubagent,
   monitorHoldsWakeCompletion,
 } from "./orchestrationV2PendingBackgroundWork.ts";
 
@@ -309,6 +310,309 @@ describe("derivePendingBackgroundWork", () => {
         kind: "command",
       },
     ]);
+  });
+
+  it("holds completion for finished app-owned subagents awaiting wake delivery without granting native caller access", () => {
+    const parentInstance = ProviderInstanceId.make("antigravity");
+    const tasks = derivePendingBackgroundWork({
+      latestRun: { id: "run-4" as never, ordinal: 4, status: "completed" },
+      runs: [
+        {
+          id: "run-4" as never,
+          ordinal: 4,
+          status: "completed",
+          userMessageId: "msg-4" as never,
+          delegatedCompletion: {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: "msg-wake-pending" as never,
+              taskIds: ["node:claimed" as never],
+            },
+          },
+        },
+        {
+          id: "run-with-started-wake" as never,
+          ordinal: 3,
+          status: "completed",
+          userMessageId: "msg-3" as never,
+          delegatedCompletion: {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: "msg-wake-started" as never,
+              taskIds: ["node:claimed-started" as never],
+            },
+          },
+        },
+        {
+          id: "run-wake-started" as never,
+          ordinal: 5,
+          status: "completed",
+          userMessageId: "msg-wake-started" as never,
+        },
+        {
+          id: "run-with-cancelled-wake" as never,
+          ordinal: 2,
+          status: "completed",
+          userMessageId: "msg-2" as never,
+          delegatedCompletion: {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: "msg-wake-cancelled" as never,
+              taskIds: ["node:claimed-cancelled" as never],
+            },
+          },
+        },
+        {
+          id: "run-wake-cancelled" as never,
+          ordinal: 6,
+          status: "cancelled",
+          userMessageId: "msg-wake-cancelled" as never,
+        },
+        {
+          id: "run-with-queued-wake" as never,
+          ordinal: 2,
+          status: "completed",
+          userMessageId: "msg-2-queued" as never,
+          delegatedCompletion: {
+            disposition: "open",
+            nextGeneration: 2,
+            delivery: {
+              generation: 1,
+              messageId: "msg-wake-queued" as never,
+              taskIds: ["node:claimed-queued" as never],
+            },
+          },
+        },
+        {
+          id: "run-wake-queued" as never,
+          ordinal: 7,
+          status: "queued",
+          userMessageId: "msg-wake-queued" as never,
+        },
+        {
+          id: "run-stopped" as never,
+          ordinal: 1,
+          status: "completed",
+          delegatedCompletion: { disposition: "stopped", nextGeneration: 1, delivery: null },
+        },
+        { id: "run-rolled-back" as never, ordinal: 0, status: "rolled_back" },
+      ],
+      providerThreads: [],
+      turnItems: [
+        {
+          id: "item-completed" as never,
+          type: "subagent",
+          status: "completed",
+          title: "Review PRs",
+          runId: "run-4",
+          childThreadId: "thread:child-1" as never,
+        },
+        {
+          id: "item-remote-running" as never,
+          type: "subagent",
+          status: "running",
+          title: "Remote worker",
+          runId: "run-4",
+          childThreadId: null,
+        },
+        {
+          id: "item-shared-running" as never,
+          type: "subagent",
+          status: "running",
+          title: "Follow-up task",
+          runId: "run-4",
+          childThreadId: "thread:child-shared" as never,
+        },
+      ],
+      subagents: [
+        {
+          id: "node:claimed" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Review PRs",
+          prompt: "Audit PRs",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-1" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        // Once the dedicated wake run starts/completes, claimed stops holding before finalize lands.
+        {
+          id: "node:claimed-started" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Already woken",
+          prompt: "Already woken",
+          runId: "run-with-started-wake" as never,
+          childThreadId: "thread:child-woken" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        // A cancelled wake run never ran; the claimed delivery still owes a successor wake.
+        {
+          id: "node:claimed-cancelled" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Cancelled wake",
+          prompt: "Cancelled wake",
+          runId: "run-with-cancelled-wake" as never,
+          childThreadId: "thread:child-cancelled-wake" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        // A wake run that is still queued has not started yet, so the claimed delivery keeps holding.
+        {
+          id: "node:claimed-queued" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Queued wake",
+          prompt: "Queued wake",
+          runId: "run-with-queued-wake" as never,
+          childThreadId: "thread:child-queued-wake" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        // Pending sibling results keep holding even after another wake run completed.
+        {
+          id: "node:pending-failed" as never,
+          origin: "app_owned",
+          status: "failed",
+          title: null,
+          prompt: "Run flaky check",
+          runId: "run-with-started-wake" as never,
+          childThreadId: null,
+          completionDelivery: { state: "pending", observedByRunId: null },
+        },
+        // Active remote task is already represented by its running turn item; must not duplicate.
+        {
+          id: "node:remote-running" as never,
+          origin: "app_owned",
+          status: "running",
+          title: "Remote worker",
+          prompt: "Remote work",
+          runId: "run-4" as never,
+          childThreadId: null,
+          completionDelivery: { state: "pending", observedByRunId: null },
+        },
+        // Same child thread already has an active follow-up turn item; deduped by childThreadId.
+        {
+          id: "node:shared-claimed" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Earlier task",
+          prompt: "Earlier work",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-shared" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        // Terminal delivery states, native/idle tasks, stopped cohorts, and rolled-back runs do not hold.
+        {
+          id: "node:delivered" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Delivered",
+          prompt: "Delivered",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-delivered" as never,
+          completionDelivery: { state: "delivered", observedByRunId: null },
+        },
+        {
+          id: "node:acknowledged" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Acked",
+          prompt: "Acked",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-acked" as never,
+          completionDelivery: { state: "acknowledged", observedByRunId: "run-4" as never },
+        },
+        {
+          id: "node:disposed" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Disposed",
+          prompt: "Disposed",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-disposed" as never,
+          completionDelivery: { state: "disposed", observedByRunId: null },
+        },
+        {
+          id: "node:untracked" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Wait task",
+          prompt: "Wait task",
+          runId: "run-4" as never,
+          childThreadId: "thread:child-wait" as never,
+        },
+        {
+          id: "node:native" as never,
+          origin: "provider_native",
+          status: "completed",
+          title: "Native",
+          prompt: "Native",
+          runId: "run-4" as never,
+          childThreadId: null,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        {
+          id: "node:stopped-cohort" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Stopped",
+          prompt: "Stopped",
+          runId: "run-stopped" as never,
+          childThreadId: "thread:child-stopped" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+        {
+          id: "node:rolled-back" as never,
+          origin: "app_owned",
+          status: "completed",
+          title: "Rolled back",
+          prompt: "Rolled back",
+          runId: "run-rolled-back" as never,
+          childThreadId: "thread:child-rolled-back" as never,
+          completionDelivery: { state: "claimed", observedByRunId: null },
+        },
+      ],
+    });
+    expect(tasks).toEqual([
+      { taskId: "item-remote-running", description: "Remote worker", kind: "subagent" },
+      {
+        taskId: "item-shared-running",
+        description: "Follow-up task",
+        kind: "subagent",
+        childThreadId: "thread:child-shared",
+      },
+      {
+        taskId: "node:claimed",
+        description: "Review PRs",
+        kind: "subagent",
+        childThreadId: "thread:child-1",
+      },
+      {
+        taskId: "node:claimed-cancelled",
+        description: "Cancelled wake",
+        kind: "subagent",
+        childThreadId: "thread:child-cancelled-wake",
+      },
+      {
+        taskId: "node:claimed-queued",
+        description: "Queued wake",
+        kind: "subagent",
+        childThreadId: "thread:child-queued-wake",
+      },
+      {
+        taskId: "node:pending-failed",
+        description: "Run flaky check",
+        kind: "subagent",
+      },
+    ]);
+    expect(backgroundWorkHoldsCompletion(tasks)).toBe(true);
+    expect(hasPendingBackgroundSubagent(tasks, parentInstance)).toBe(false);
   });
 });
 
