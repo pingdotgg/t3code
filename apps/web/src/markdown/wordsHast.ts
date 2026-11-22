@@ -16,6 +16,11 @@ import { expandIndentedCodeTabs } from "@t3tools/shared/markdownListIndentation"
 import { GITHUB_ALERT_MARKER } from "@t3tools/shared/markdownGithubAlerts";
 import { absoluteFilePathMatches } from "@t3tools/shared/markdownLinks";
 import {
+  countSpacedFilePathInsertionsBefore,
+  hasSpacedFilePathCandidate,
+  wrapSpacedFilePathsInProtectedRanges,
+} from "@t3tools/shared/markdownSpacedFilePaths";
+import {
   rehypeNormalizeLocalFileLinks,
   rehypePreserveImageSourceMeta,
   sanitizeChatHast,
@@ -1170,6 +1175,42 @@ function makeInert(node: Root | Element) {
   }
 }
 
+const SPACED_PATH_PROTECTED_TAGS = new Set(["pre", "img", "a", "svg", "script", "style"]);
+
+function repairSpacedFilePaths(
+  source: string,
+  tree: Root,
+  options: RenderOptions,
+): {
+  readonly source: string;
+  readonly tree: Root;
+  readonly toOriginal: (offset: number) => number;
+} | null {
+  if (!hasSpacedFilePathCandidate(source)) return null;
+  const protectedRanges: Array<readonly [number, number]> = markdownHtmlComments(source).map(
+    ({ start, end }) => [start, end] as const,
+  );
+  const collectProtected = (node: Root | Element) => {
+    for (const child of node.children) {
+      if (child.type !== "element") continue;
+      if (SPACED_PATH_PROTECTED_TAGS.has(child.tagName) && child.position) {
+        protectedRanges.push([child.position.start.offset!, child.position.end.offset!]);
+        continue;
+      }
+      collectProtected(child);
+    }
+  };
+  collectProtected(tree);
+  const repaired = wrapSpacedFilePathsInProtectedRanges(source, protectedRanges);
+  if (!repaired) return null;
+  const { markdown, insertions } = repaired;
+  return {
+    source: markdown,
+    tree: parse(markdown, options),
+    toOriginal: (offset) => offset - countSpacedFilePathInsertionsBefore(insertions, offset),
+  };
+}
+
 /** ChatMarkdown's sanitized hast for `text`, rendered by Words. */
 export function wordsHast(text: string, options: WordsHastOptions): Root {
   const { extensions } = options;
@@ -1189,8 +1230,11 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
       : { escapeHtml: options.escapeHtml }),
   };
   const insights = options.insights ? insightSource(text, renderOptions) : null;
-  const source = insights?.source ?? text;
-  const tree = insights?.tree ?? parse(source, renderOptions);
+  const initialSource = insights?.source ?? text;
+  const initialTree = insights?.tree ?? parse(initialSource, renderOptions);
+  const spaced = repairSpacedFilePaths(initialSource, initialTree, renderOptions);
+  const source = spaced?.source ?? initialSource;
+  const tree = spaced?.tree ?? initialTree;
   let documentDefinitions: string[] | undefined;
   const walk: Walk = {
     definitions: (markdown) =>
@@ -1216,6 +1260,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
   normalizeLocalFileLinks(tree as never);
   const hast = sanitizeChatHast(tree);
   if (walk.math.size > 0) restoreMath(hast, walk.math);
+  if (spaced) restorePositions(hast, spaced.toOriginal);
   if (insights) restorePositions(hast, insights.toOriginal);
   if (extensions.inert) makeInert(hast);
   if (extensions.preview) return flattenPreview(hast, extensions.preview);

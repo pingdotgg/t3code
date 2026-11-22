@@ -2,6 +2,7 @@ import type { Root, RootContent } from "mdast";
 import { unified, type Processor } from "unified";
 import remarkParse from "remark-parse";
 import remarkGfm from "remark-gfm";
+import { markdownWithSpacedFilePaths } from "@t3tools/shared/markdownSpacedFilePaths";
 import { remarkKeepWindowsProsePaths } from "@t3tools/shared/markdownWindowsPaths";
 import {
   absoluteFilePathMatches,
@@ -550,7 +551,10 @@ function markdownWithImageParagraphs(markdown: string): string {
 
 // HTML wrappers can expose Markdown that wasn't in the first AST, so normalize them first.
 function normalizedMarkdown(markdown: string): string {
-  return markdownWithWindowsPathDestinations(markdownWithHtml(markdown));
+  const content = markdownWithHtml(markdown);
+  return markdownWithWindowsPathDestinations(
+    markdownWithSpacedFilePaths(content, () => parser.parse(content)),
+  );
 }
 
 export function markdownForNativeParsing(markdown: string): string {

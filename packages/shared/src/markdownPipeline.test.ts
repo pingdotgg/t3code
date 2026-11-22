@@ -5,7 +5,9 @@ import remarkGfm from "remark-gfm";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
 import type { Link, Root, RootContent } from "mdast";
+import { markdownWithSpacedFilePaths } from "./markdownSpacedFilePaths.ts";
 import {
+  chatMarkdownImageSources,
   CHAT_MARKDOWN_REHYPE_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS,
   CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
@@ -1040,3 +1042,77 @@ it.each([
     expect(links(`\`\`\`\n${path}\n\`\`\``)).toEqual([]);
   },
 );
+
+it("repairs bare local media embeds and file links with spaces across Windows and POSIX paths", () => {
+  const winSlash = "Z:/Projects/Demo App/Output Shots/final-bust.jpg";
+  const winBackslash = String.raw`C:\Users\First Last\.t3\design-review\r6-1.png`;
+  const winFileLink = "C:/Users/First Last/Downloads GC/project/src/DetailsTab.tsx:42";
+  const macIcloud = "/Users/test/Mobile Documents/iCloud~md~notes/cover photo.png";
+  const wslParens = "/mnt/c/Project (demo)/screen shot.webp";
+  const homePath = "~/My Documents/notes.md";
+  const wrapped = "/work/Already wrapped.png";
+  const authored = [
+    `**Compare** ![Bust](${winSlash}) ![Round 6](${winBackslash})`,
+    `![Cover](${macIcloud}) ![Screenshot](${wslParens})`,
+    `![Wrapped](<${wrapped}> "Title")`,
+    `Files: [DetailsTab.tsx:42](${winFileLink}), [notes.md](${homePath})`,
+    "",
+    `\`![Inline code](${winSlash})\``,
+    "",
+    "```md",
+    `![Fence](${macIcloud})`,
+    "```",
+    "",
+    String.raw`\![Escaped](${wslParens})`,
+    "![Relative](some folder/image.png)",
+    "![Network](//example.test/a b.png)",
+    "![External](https://example.test/a b.png)",
+    "![Partial](/work/a b.png",
+  ].join("\n");
+
+  expect(chatMarkdownImageSources(authored).map(decodeURI)).toEqual([
+    winSlash,
+    winBackslash,
+    macIcloud,
+    wslParens,
+    wrapped,
+  ]);
+
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const linkUrls: string[] = [];
+  const visit = (node: Root | RootContent) => {
+    if (node.type === "link") linkUrls.push(node.url);
+    if ("children" in node) node.children.forEach(visit);
+  };
+  visit(processor.runSync(processor.parse(authored), authored) as Root);
+  expect(linkUrls).toContain(`file:///${winFileLink}`);
+  expect(linkUrls).toContain(homePath);
+
+  const codeSpan = "![`label](/work/c d.png)`";
+  expect(
+    markdownWithSpacedFilePaths(codeSpan, () => unified().use(remarkParse).parse(codeSpan)),
+  ).toBe(codeSpan);
+});
+
+it("keeps authored offsets after repairing multiple spaced file paths", () => {
+  const markdown =
+    "![One](Z:/Demo Dir/one a.png)\t[Two](/tmp/two b.ts) [link](https://example.test)\n\nNext.";
+  const processor = unified().use(remarkParse).use(CHAT_MARKDOWN_REMARK_PLUGINS);
+  const [paragraph, next] = processor.parse(markdown).children;
+  if (paragraph?.type !== "paragraph") throw new Error("Expected a paragraph");
+
+  const sources = paragraph.children
+    .filter((node) => node.type === "image" || node.type === "link")
+    .map((node) => {
+      const { start, end } = node.position!;
+      expect(start.column).toBe(start.offset! + 1);
+      expect(end.column).toBe(end.offset! + 1);
+      return markdown.slice(start.offset, end.offset);
+    });
+  expect(sources).toEqual([
+    "![One](Z:/Demo Dir/one a.png)",
+    "[Two](/tmp/two b.ts)",
+    "[link](https://example.test)",
+  ]);
+  expect(next?.position?.start).toEqual({ line: 3, column: 1, offset: markdown.indexOf("Next.") });
+});

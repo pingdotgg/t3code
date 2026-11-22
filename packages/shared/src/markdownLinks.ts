@@ -555,6 +555,69 @@ function markdownLinkTailScanner(markdown: string) {
 // link's opening parenthesis while that parenthesis counts toward this depth.
 const MAX_BARE_DESTINATION_PAREN_DEPTH = 32;
 
+const SPACED_FILE_PATH_PREFIX = /^(?:\/(?![/\\])|~[\\/]|[A-Za-z]:[\\/])/;
+
+function hasTrailingUnescapedBackslash(value: string): boolean {
+  let count = 0;
+  for (let index = value.length - 1; index >= 0 && value[index] === "\\"; index -= 1) {
+    count += 1;
+  }
+  return count % 2 !== 0;
+}
+
+/**
+ * Scans a bare Markdown link destination starting at `start` (after `(` and optional horizontal
+ * whitespace) for a local absolute or home file path containing spaces.
+ */
+export function spacedFilePathDestinationEnd(
+  markdown: string,
+  start: number,
+): { readonly hrefEnd: number; readonly end: number } | null {
+  const prefix = SPACED_FILE_PATH_PREFIX.exec(markdown.slice(start, start + 3))?.[0];
+  if (!prefix) return null;
+  const isWindows = prefix.length === 3 && prefix[1] === ":";
+  let parenDepth = 0;
+  let closeParen = -1;
+  for (let index = start; index < markdown.length; index += 1) {
+    const char = markdown[index]!;
+    if (
+      char === "\r" ||
+      char === "\n" ||
+      char === "<" ||
+      char === ">" ||
+      char === "`" ||
+      char === '"'
+    ) {
+      return null;
+    }
+    if (char === "\\" && !isWindows) {
+      const next = markdown[index + 1];
+      if (next === undefined || next === "\r" || next === "\n") return null;
+      index += 1;
+      continue;
+    }
+    if (char === "(") {
+      if (parenDepth === MAX_BARE_DESTINATION_PAREN_DEPTH) return null;
+      parenDepth += 1;
+    } else if (char === ")") {
+      if (parenDepth === 0) {
+        closeParen = index;
+        break;
+      }
+      parenDepth -= 1;
+    }
+  }
+  if (closeParen < 0) return null;
+  let hrefEnd = closeParen;
+  while (hrefEnd > start && (markdown[hrefEnd - 1] === " " || markdown[hrefEnd - 1] === "\t")) {
+    hrefEnd -= 1;
+  }
+  const path = markdown.slice(start, hrefEnd);
+  if (!/[ \t]/.test(path) || hasTrailingUnescapedBackslash(path)) return null;
+  if (!parseMarkdownFileLink(path)) return null;
+  return { hrefEnd, end: closeParen + 1 };
+}
+
 function bareMarkdownLinkDestinationEnd(markdown: string, start: number): number | null {
   const delimiter = /[\s()\\]/g;
   delimiter.lastIndex = start;
@@ -592,9 +655,12 @@ function markdownLinkDestinationScanner(markdown: string) {
       }
     }
     const hrefEnd = bareMarkdownLinkDestinationEnd(markdown, hrefStart);
-    if (hrefEnd === null) return null;
-    const end = bareTail(hrefEnd);
-    return end === null ? null : { hrefStart, hrefEnd, end };
+    if (hrefEnd !== null) {
+      const end = bareTail(hrefEnd);
+      if (end !== null) return { hrefStart, hrefEnd, end };
+    }
+    const spaced = spacedFilePathDestinationEnd(markdown, hrefStart);
+    return spaced === null ? null : { hrefStart, hrefEnd: spaced.hrefEnd, end: spaced.end };
   };
 }
 

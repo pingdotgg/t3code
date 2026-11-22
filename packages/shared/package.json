@@ -567,6 +567,10 @@
       "types": "./src/proposedPlanText.ts",
       "import": "./src/proposedPlanText.ts"
     },
+    "./markdownSpacedFilePaths": {
+      "types": "./src/markdownSpacedFilePaths.ts",
+      "import": "./src/markdownSpacedFilePaths.ts"
+    },
     "./markdownWindowsPaths": {
       "types": "./src/markdownWindowsPaths.ts",
       "import": "./src/markdownWindowsPaths.ts"
