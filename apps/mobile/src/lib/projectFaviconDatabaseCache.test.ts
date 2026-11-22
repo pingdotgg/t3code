@@ -28,6 +28,9 @@ vi.mock("expo-image", () => ({
     getCachePathAsync: native.path,
   },
 }));
+vi.mock("expo-crypto", () => ({
+  randomUUID: () => globalThis.crypto.randomUUID(),
+}));
 vi.mock("expo-file-system", () => ({
   Paths: { cache: "file:///cache" },
   File: class {
@@ -43,10 +46,12 @@ vi.mock("expo-file-system", () => ({
   },
 }));
 
+import { File } from "expo-file-system";
+
 import { downscaleProjectFavicon } from "./projectFaviconDatabaseCache";
 
 const png = "iVBORw0KGgoAAAAA";
-const image = { url: "https://remote/icon.png" };
+const image = { url: "https://remote/icon.png", bytes: Uint8Array.from([137, 80, 78, 71]) };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -93,14 +98,17 @@ describe("mobile project icon thumbnails", () => {
     ).toBe(bytes.length);
   });
 
-  it("reduces an oversized encoding and deletes temporary thumbnail files", async () => {
+  it("reuses the downloaded bytes for a smaller thumbnail and deletes the temporary files", async () => {
+    using writeSource = vi.spyOn(File.prototype, "write");
     native.read.mockResolvedValueOnce(
       `iVBORw0KGgo${"a".repeat(PROJECT_FAVICON_MAX_DATA_URL_LENGTH)}`,
     );
     const thumbnail = await downscaleProjectFavicon(image, new AbortController().signal);
     expect(thumbnail).toBe(`data:image/png;base64,${png}`);
+    expect(writeSource).toHaveBeenCalledExactlyOnceWith(image.bytes);
+    expect(new Set(native.load.mock.calls.map(([source]) => source)).size).toBe(1);
     expect(native.load.mock.calls.map(([, options]) => options.maxWidth)).toEqual([96, 48]);
-    expect(native.remove).toHaveBeenCalledTimes(2);
+    expect(native.remove).toHaveBeenCalledTimes(3);
     for (const call of native.load.mock.results)
       expect((await call.value).release).toHaveBeenCalledOnce();
   });
@@ -114,7 +122,19 @@ describe("mobile project icon thumbnails", () => {
     });
     await expect(downscaleProjectFavicon(image, controller.signal)).rejects.toThrow();
     expect(release).toHaveBeenCalledOnce();
+    expect(native.remove).toHaveBeenCalledOnce();
     expect(native.write).not.toHaveBeenCalled();
+  });
+
+  it.each(["write", "decode"])("deletes the temporary source when %s fails", async (stage) => {
+    using writeSource = vi.spyOn(File.prototype, "write");
+    const failure = new Error(`Could not ${stage} icon`);
+    if (stage === "write") writeSource.mockRejectedValueOnce(failure);
+    else native.load.mockRejectedValueOnce(failure);
+    await expect(downscaleProjectFavicon(image, new AbortController().signal)).rejects.toBe(
+      failure,
+    );
+    expect(native.remove).toHaveBeenCalledOnce();
   });
 
   it("rejects an image the native decoder did not downsize", async () => {
