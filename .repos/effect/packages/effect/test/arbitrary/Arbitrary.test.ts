@@ -1,4 +1,4 @@
-import { assert, describe, it } from "@effect/vitest"
+import { assert, describe, it, vi } from "@effect/vitest"
 import {
   Cause,
   Context,
@@ -21,6 +21,7 @@ import * as DateTime from "effect/DateTime"
 import * as HashMap from "effect/HashMap"
 import * as HashSet from "effect/HashSet"
 import * as Scheduler from "effect/Scheduler"
+import { withIgnoredProperties } from "../utils/structFields.ts"
 
 const makeSuspendChain = (count: number): Schema.Codec<unknown> => {
   let schema: Schema.Codec<unknown> = Schema.Null
@@ -1003,6 +1004,7 @@ describe("Arbitrary", () => {
         if (Result.isFailure(result)) {
           assert.deepStrictEqual(result.failure, {
             _tag: "SampleError",
+            diagnostics: [{ _tag: "UnsupportedPattern", path: [], source: "^(?=a)b$", flags: "" }],
             generated: 0,
             discards: 3,
             seed: "unsupported-pattern"
@@ -1047,6 +1049,7 @@ describe("Arbitrary", () => {
           if (Result.isFailure(result)) {
             assert.deepStrictEqual(result.failure, {
               _tag: "SampleError",
+              diagnostics: [],
               generated: 0,
               discards: 3,
               seed: "incompatible-pattern-length"
@@ -1073,6 +1076,30 @@ describe("Arbitrary", () => {
         if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput.length, 4)
       }))
 
+    it.effect("does not build String shrink candidates for passing properties", () =>
+      Effect.gen(function*() {
+        const text = Schema.String.check(Schema.isMaxLength(64))
+        const cases = Arbitrary.array(Arbitrary.schema(text), { maxLength: 4 })
+        const fromCharCode = vi.spyOn(String, "fromCharCode")
+        const fromCodePoint = vi.spyOn(String, "fromCodePoint")
+        let generatedUnits = 0
+        try {
+          const result = yield* Arbitrary.checkEffect(cases, (values) => {
+            for (const value of values) generatedUnits += value.length
+            return Effect.succeed(true)
+          }, { seed: 119120, runs: 20, size: 64 })
+          const constructedCharacters = fromCharCode.mock.calls.length + fromCodePoint.mock.calls.length
+
+          assert.deepStrictEqual(result, { _tag: "Passed", runs: 20, discards: 0 })
+          assert.isAbove(generatedUnits, 0)
+          // Passing checks only need to construct the generated strings, not shrink candidates.
+          assert.isAtMost(constructedCharacters, generatedUnits)
+        } finally {
+          fromCharCode.mockRestore()
+          fromCodePoint.mockRestore()
+        }
+      }), { concurrent: false })
+
     it.effect("shrinks fixed-length String code units toward null", () =>
       Effect.gen(function*() {
         const schema = Schema.String.check(Schema.isMinLength(3), Schema.isMaxLength(3))
@@ -1086,6 +1113,158 @@ describe("Arbitrary", () => {
         if (result._tag === "Falsified") {
           assert.notStrictEqual(result.initialInput, "\0\0\0")
           assert.strictEqual(result.shrunkInput, "\0\0\0")
+        }
+      }))
+
+    for (
+      const [name, base, pattern, expected] of [
+        ["code units", Schema.String, /^a{64}$/, "a".repeat(64)],
+        ["code points", Schema.String.check(Schema.isMinCodePoints(1)), /^a{64}$/, "a".repeat(64)],
+        ["astral code points", Schema.String.check(Schema.isMinCodePoints(1)), /^\u{1F600}{8}$/u, "😀".repeat(8)]
+      ] as const
+    ) {
+      it.effect(`does not test deletions below a pattern's minimum length (${name})`, () =>
+        Effect.gen(function*() {
+          const schema = base.check(Schema.isPattern(pattern))
+          const test = RegExp.prototype.test
+          let shorterCandidates = 0
+          const spy = vi.spyOn(RegExp.prototype, "test").mockImplementation(function(this: RegExp, value) {
+            if (this.source === pattern.source && value.length < expected.length) shorterCandidates++
+            return test.call(this, value)
+          })
+          try {
+            const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
+              runs: 1,
+              seed: 123,
+              size: expected.length,
+              maxShrinks: 1
+            })
+
+            assert.strictEqual(result._tag, "Falsified")
+            if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput, expected)
+          } finally {
+            spy.mockRestore()
+          }
+          assert.strictEqual(shorterCandidates, 0)
+        }), { concurrent: false })
+    }
+
+    describe("deletes failure-irrelevant String units anywhere", () => {
+      const cases: ReadonlyArray<{
+        readonly name: string
+        readonly schema: Schema.Codec<string>
+        readonly property: (value: string) => boolean
+        readonly expected: string | RegExp
+      }> = [
+        { name: "two spaces", schema: Schema.String, property: (s) => s.split(" ").length < 3, expected: "  " },
+        {
+          name: "a leading digit and a trailing lowercase letter within a minimum length",
+          schema: Schema.String.check(Schema.isMinLength(3)),
+          property: (s) => !/^\d.*[a-z]$/.test(s),
+          expected: "0\0a"
+        },
+        {
+          name: "two x within a pattern",
+          schema: Schema.String.check(Schema.isPattern(/^[a-z]*$/)),
+          property: (s) => s.split("x").length < 3,
+          expected: "xx"
+        },
+        {
+          name: "a surrogate pair",
+          schema: Schema.String.check(Schema.isMinCodePoints(1)),
+          property: (s) => !/[\u{10000}-\u{10FFFF}]/u.test(s),
+          expected: /^[\u{10000}-\u{10FFFF}]$/u
+        }
+      ]
+      for (const { expected, name, property, schema } of cases) {
+        it.effect(name, () =>
+          Effect.gen(function*() {
+            const evaluated: Array<string> = []
+            const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), (value) => {
+              evaluated.push(value)
+              return property(value)
+            }, { seed: `string-deletion:${name}`, size: 100 })
+
+            assert.strictEqual(result._tag, "Falsified")
+            assert.isTrue(evaluated.every(Schema.is(schema)))
+            if (result._tag === "Falsified") {
+              if (typeof expected === "string") {
+                assert.isFalse(result.initialInput.startsWith(expected))
+                assert.strictEqual(result.shrunkInput, expected)
+              } else {
+                assert.notMatch(result.initialInput, expected)
+                assert.match(result.shrunkInput, expected)
+              }
+            }
+          }))
+      }
+    })
+
+    it.effect("keeps narrowing String deletions after suffix truncations", () =>
+      Effect.gen(function*() {
+        const result = yield* Arbitrary.checkEffect(
+          Arbitrary.schema(Schema.String),
+          (s) => s[Math.floor(s.length / 2)] !== "a",
+          { runs: 1, seed: 135, size: 100, maxShrinks: 150 }
+        )
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.notStrictEqual(result.initialInput, "a")
+          assert.strictEqual(result.shrunkInput, "a")
+        }
+      }))
+
+    it.effect("simplifies whole code points within code point bounds", () =>
+      Effect.gen(function*() {
+        const schema = Schema.String.check(Schema.isMinLength(2), Schema.isMaxCodePoints(1))
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), () => false, {
+          runs: 1,
+          seed: "astral-regression",
+          size: 100
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.notStrictEqual(result.initialInput, "\u{10000}")
+          assert.strictEqual(result.shrunkInput, "\u{10000}")
+        }
+      }))
+
+    it.effect("simplifies code points formed by joining surrogate units", () =>
+      Effect.gen(function*() {
+        const schema = Schema.String.check(Schema.isMaxCodePoints(2))
+        // Keep the leading high surrogate while the second code point shrinks
+        // into a low surrogate, joining them into one code point.
+        const property = (s: string) => !(/^[\uD800-\uDBFF][\s\S]{2,}$/.test(s) || /^[\u{10000}-\u{103FF}]$/u.test(s))
+        const result = yield* Arbitrary.checkEffect(Arbitrary.schema(schema), property, {
+          runs: 1,
+          seed: 55,
+          size: 4,
+          maxShrinks: 1_000
+        })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") assert.strictEqual(result.shrunkInput, "\u{10000}")
+      }))
+
+    it.effect("keeps shrinking after deletions join surrogate units", () =>
+      Effect.gen(function*() {
+        const schema = Schema.String.check(
+          Schema.isPattern(/^(?:[ax]*|\uD800a?\uDC00x)$/),
+          Schema.isMaxCodePoints(4),
+          Schema.isMaxLength(4)
+        )
+        const arbitrary = Arbitrary.schema(schema)
+        const failures = ["\uD800a\uDC00x", "\u{10000}x", "x"]
+        const property = (s: string) => !failures.includes(s)
+        const result = yield* Arbitrary.checkEffect(arbitrary, property, { runs: 1, seed: 9, size: 4 })
+
+        assert.strictEqual(result._tag, "Falsified")
+        if (result._tag === "Falsified") {
+          assert.strictEqual(result.initialInput, failures[0])
+          assert.strictEqual(result.shrunkInput, "x")
+          assert.deepStrictEqual(yield* Arbitrary.checkEffect(arbitrary, property, { replay: result.replay }), result)
         }
       }))
 
@@ -1966,6 +2145,7 @@ describe("Arbitrary", () => {
         if (Result.isFailure(result)) {
           assert.deepStrictEqual(result.failure, {
             _tag: "SampleError",
+            diagnostics: [],
             generated: 0,
             discards: 3,
             seed: "structural-unique"
@@ -2153,6 +2333,7 @@ describe("Arbitrary", () => {
         if (Result.isFailure(result)) {
           assert.deepStrictEqual(result.failure, {
             _tag: "SampleError",
+            diagnostics: [],
             generated: 0,
             discards: 3,
             seed: "uninhabited-one-of"
@@ -2931,6 +3112,7 @@ describe("Arbitrary", () => {
         if (Result.isFailure(result)) {
           assert.deepStrictEqual(result.failure, {
             _tag: "SampleError",
+            diagnostics: [],
             generated: 0,
             discards: 3,
             seed: "exhaustion"
@@ -3091,6 +3273,7 @@ describe("Arbitrary", () => {
         if (Result.isFailure(sampled)) {
           assert.deepStrictEqual(sampled.failure, {
             _tag: "SampleError",
+            diagnostics: [],
             generated: 0,
             discards: 3,
             seed: "filter-exhaustion"
@@ -3098,6 +3281,7 @@ describe("Arbitrary", () => {
         }
         assert.deepStrictEqual(checked, {
           _tag: "Exhausted",
+          diagnostics: [],
           runs: 0,
           discards: 3,
           seed: "filter-exhaustion"
@@ -3299,6 +3483,7 @@ describe("Arbitrary", () => {
           if (Result.isFailure(sampled)) {
             assert.deepStrictEqual(sampled.failure, {
               _tag: "SampleError",
+              diagnostics: [],
               generated: 0,
               discards: 3,
               seed: "flat-map-discard"
@@ -3306,6 +3491,7 @@ describe("Arbitrary", () => {
           }
           assert.deepStrictEqual(checked, {
             _tag: "Exhausted",
+            diagnostics: [],
             runs: 0,
             discards: 3,
             seed: "flat-map-discard"
@@ -3506,6 +3692,18 @@ describe("Arbitrary", () => {
         assert.deepStrictEqual(emptyRecord, [{}])
       }))
 
+    it.effect("all generates enumerable symbol fields and ignores hidden or inherited Arbitraries", () =>
+      Effect.gen(function*() {
+        const key = Symbol("value")
+        const arbitrary = Arbitrary.all(withIgnoredProperties({
+          name: Arbitrary.Constant("value"),
+          [key]: Arbitrary.Constant(1)
+        }))
+        const [sample] = yield* Arbitrary.sampleEffect(arbitrary, { count: 1, seed: "all-symbol" })
+
+        assert.deepStrictEqual({ ...sample }, { name: "value", [key]: 1 })
+      }))
+
     it.effect("shrinks all members independently and replays the product", () =>
       Effect.gen(function*() {
         const member = Arbitrary.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })))
@@ -3614,6 +3812,7 @@ describe("Arbitrary", () => {
       })
       const exhausted = Arbitrary.formatCheckFailure({
         _tag: "Exhausted",
+        diagnostics: [],
         runs: 0,
         discards: 1,
         seed: "seed"
