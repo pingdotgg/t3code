@@ -563,6 +563,10 @@ export type MessagesTimelineRow = MessagesTimelineRowContent & {
   readonly superseded?: boolean;
   /** A user prompt followed directly by another prompt sits in the same prompt stack. */
   readonly continuesPromptStack?: boolean;
+  /** A work row or closed fold directly above a prompt keeps a full turn gap below it. */
+  readonly precedesPrompt?: boolean;
+  /** A reply whose own turn goes on below it, such as with a notice, sits close to that row. */
+  readonly turnTailBelow?: boolean;
 };
 
 type MessagesTimelineRowContent =
@@ -577,8 +581,6 @@ type MessagesTimelineRowContent =
       expanded: boolean;
       /** The rows this fold shows only while open, in order. Empty while it is closed. */
       revealedRowIds: readonly string[];
-      /** A closed fold directly above a prompt keeps a full turn gap below it. */
-      precedesPrompt?: boolean;
     }
   | {
       kind: "worktree-setup";
@@ -3162,11 +3164,27 @@ export function attachSwitchHandoffs(
     });
 }
 
-/** Flags prompts by their neighbours; rerun whenever rows move, so stale flags never split a group. */
+/** Flags rows by their neighbours; rerun whenever rows move, so stale flags never split a group. */
 function withPromptGrouping(rows: ReadonlyArray<MessagesTimelineRow>): MessagesTimelineRow[] {
   return rows.map((row, index) => {
-    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
     const next = rows[index + 1];
+    if (timelineRowIsWorkLog(row) || row.kind === "background-activity") {
+      const precedesPrompt =
+        (row.kind !== "background-activity" || !row.expanded) && timelineRowIsUserPrompt(next);
+      return (row.precedesPrompt ?? false) === precedesPrompt ? row : { ...row, precedesPrompt };
+    }
+    if (
+      (row.kind === "message" && row.message.role === "assistant") ||
+      row.kind === "assistant-meta"
+    ) {
+      const runId = row.message.runId;
+      const turnTailBelow =
+        runId != null &&
+        next?.kind === "work" &&
+        next.groupedEntries.every((entry) => entry.runId === runId);
+      return (row.turnTailBelow ?? false) === turnTailBelow ? row : { ...row, turnTailBelow };
+    }
+    if (row.kind !== "message" || !timelineRowIsUserPrompt(row)) return row;
     const own = timelineRowIsOwnUserMessage(row);
     const continuesPromptStack = timelineRowIsUserPrompt(next);
     const groupedWithPrevious = own && timelineRowIsOwnUserMessage(rows[index - 1]);
@@ -3779,13 +3797,7 @@ export function applyBackgroundActivityGroups(
     // Expansion returns the original virtual rows, identities, disclosures and actions.
     result.push(...(expanded ? groupRows : keptRows));
   }
-  return result.map((row, index) =>
-    row.kind === "background-activity" &&
-    !row.expanded &&
-    timelineRowIsUserPrompt(result[index + 1])
-      ? { ...row, precedesPrompt: true }
-      : row,
-  );
+  return withPromptGrouping(result);
 }
 
 /**
@@ -4132,6 +4144,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.continuesPromptStack !== b.continuesPromptStack) return false;
   if (a.superseded !== b.superseded) return false;
   if (a.continuesWorkLog !== b.continuesWorkLog) return false;
+  if (a.precedesPrompt !== b.precedesPrompt) return false;
+  if (a.turnTailBelow !== b.turnTailBelow) return false;
 
   switch (a.kind) {
     case "background-activity": {
@@ -4142,7 +4156,6 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         shallow(a.updates, bg.updates) &&
         a.active === bg.active &&
         a.expanded === bg.expanded &&
-        a.precedesPrompt === bg.precedesPrompt &&
         shallow(a.runIds, bg.runIds) &&
         shallow(a.revealedRowIds, bg.revealedRowIds)
       );
