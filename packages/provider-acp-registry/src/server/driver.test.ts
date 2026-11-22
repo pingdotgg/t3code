@@ -3916,24 +3916,16 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
     () =>
       Effect.gen(function* () {
         const signOutRejected = yield* Deferred.make<void>();
-        const readyRaceRejected = yield* Deferred.make<void>();
         let pendingResolveGate: {
           readonly entered: Deferred.Deferred<void>;
           readonly release: Deferred.Deferred<void>;
         } | null = null;
-        let pendingAuthPersistGate: {
-          readonly entered: Deferred.Deferred<void>;
-          readonly release: Deferred.Deferred<void>;
-        } | null = null;
-        let blockLiveWatch: Deferred.Deferred<void> | null = null;
-        let pendingCommitEntered: Deferred.Deferred<void> | null = null;
         let pendingLiveWatch: {
           readonly minRevision: number;
           readonly done: Deferred.Deferred<void>;
         } | null = null;
         let injectModeAfterInitialClear = true;
         let injectCatalogBeforeSignOutClear = false;
-        let injectCatalogBeforeReadyClear = false;
         const awaitLiveWatchUpdate = (publish: Effect.Effect<void>) =>
           Effect.gen(function* () {
             const beforeRevision = (yield* coordinator.getLiveConfigurationWithRevision(
@@ -3998,39 +3990,13 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         } = yield* setupPeriodicDriver({
           prefix: "acp-driver-clear-",
           initialModels: ["new-model", "old-model", "other-model"],
-          wrapFileSystem: (base) => ({
-            ...base,
-            rename: (oldPath, newPath) =>
-              Effect.gen(function* () {
-                const gate = pendingAuthPersistGate;
-                if (gate !== null && newPath.includes("acp-auth-")) {
-                  const contents = yield* base.readFileString(oldPath);
-                  if (contents.includes('"authenticated":true')) {
-                    pendingAuthPersistGate = null;
-                    yield* Deferred.succeed(gate.entered, undefined);
-                    yield* Deferred.await(gate.release);
-                  }
-                }
-                return yield* base.rename(oldPath, newPath);
-              }),
-          }),
           wrapCoordinator: (base) => ({
             ...base,
-            getLiveConfigurationWithRevision: (instanceId) =>
-              base.getLiveConfigurationWithRevision(instanceId).pipe(
-                Effect.tap(() => {
-                  const done = pendingCommitEntered;
-                  if (done === null) return Effect.void;
-                  pendingCommitEntered = null;
-                  return Deferred.succeed(done, undefined).pipe(Effect.asVoid);
-                }),
-              ),
             watchLiveConfiguration: (instanceId, onUpdate, options) =>
               base.watchLiveConfiguration(
                 instanceId,
                 (configuration, revision) =>
-                  (blockLiveWatch !== null ? Deferred.await(blockLiveWatch) : Effect.void).pipe(
-                    Effect.andThen(onUpdate(configuration, revision)),
+                  onUpdate(configuration, revision).pipe(
                     Effect.tap(() => {
                       const pending = pendingLiveWatch;
                       if (pending === null || revision < pending.minRevision) return Effect.void;
@@ -4055,21 +4021,6 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
                   });
                   const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
                   yield* Deferred.succeed(signOutRejected, undefined);
-                  return cleared;
-                }
-                if (injectCatalogBeforeReadyClear && options.retain !== undefined) {
-                  injectCatalogBeforeReadyClear = false;
-                  yield* base.publishLiveConfiguration(instanceId, {
-                    models: [
-                      { id: "raced-ready-a", name: "Raced Ready A", description: null },
-                      { id: "raced-ready-b", name: "Raced Ready B", description: null },
-                    ],
-                    currentModelId: "raced-ready-a",
-                    configOptions: [],
-                    modelsFromModelSelect: true,
-                  });
-                  const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
-                  yield* Deferred.succeed(readyRaceRejected, undefined);
                   return cleared;
                 }
                 const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
@@ -4114,21 +4065,6 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
               }
             }),
         });
-        const runGatedProbe = <E>(duringProbe: Effect.Effect<void, E>) =>
-          Effect.gen(function* () {
-            const entered = yield* Deferred.make<void>();
-            const release = yield* Deferred.make<void>();
-            pendingResolveGate = { entered, release };
-            yield* instance.snapshot.refresh;
-            yield* Deferred.await(entered);
-            yield* duringProbe;
-            // Resolves on commitEnrichment's coordinator read while it holds liveSnapshotSemaphore,
-            // so the watcher handles the caller's follow-up publish only after commit finishes.
-            const commitEntered = yield* Deferred.make<void>();
-            pendingCommitEntered = commitEntered;
-            yield* Deferred.succeed(release, undefined);
-            yield* Deferred.await(commitEntered);
-          });
 
         // Neither the prior instance's cleared state nor an options-only publish arriving right
         // after the clear should mark the rebuilt driver's first probe as superseding a live session.
@@ -4836,10 +4772,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         // immediately replays pending options-only updates before enrichment finishes.
         yield* writeModels(["new-model", "old-model"]);
         const sawAuthenticatedReadiness = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter(
-            (snapshot) =>
-              snapshot.auth.status === "authenticated" && snapshot.nativeSessions === undefined,
-          ),
+          Stream.filter((snapshot) => snapshot.nativeSessions === undefined),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
@@ -4850,31 +4783,179 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const authenticatedReadiness = Option.getOrThrow(
           yield* Fiber.join(sawAuthenticatedReadiness),
         );
+        expect(authenticatedReadiness.auth.status).toBe("authenticated");
         expect(
           authenticatedReadiness.models
             .find((m) => m.slug === "unauth-live-a")
             ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue,
         ).toBe("code");
         yield* Fiber.join(postSignInEnriched);
+      }),
+  );
+
+  it.effect(
+    "serializes sign-in confirmation and reopens pending options on ready-probe races without reopening on resets or transient failures",
+    () =>
+      Effect.gen(function* () {
+        const readyRaceRejected = yield* Deferred.make<void>();
+        let lastPersistedAuthConfirmed: boolean | null = null;
+        let pendingResolveGate: {
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let pendingAuthPersistGate: {
+          readonly entered: Deferred.Deferred<void>;
+          readonly release: Deferred.Deferred<void>;
+        } | null = null;
+        let blockLiveWatch: Deferred.Deferred<void> | null = null;
+        let pendingCommitEntered: Deferred.Deferred<void> | null = null;
+        let pendingLiveWatch: {
+          readonly minRevision: number;
+          readonly done: Deferred.Deferred<void>;
+        } | null = null;
+        let injectCatalogBeforeReadyClear = false;
+        const {
+          directory,
+          coordinator,
+          instance,
+          waitForEnriched,
+          writeModels,
+          withBlockedForegroundStartup,
+        } = yield* setupPeriodicDriver({
+          prefix: "acp-driver-auth-reopen-",
+          initialModels: ["new-model", "old-model"],
+          wrapFileSystem: (base) => ({
+            ...base,
+            rename: (oldPath, newPath) =>
+              Effect.gen(function* () {
+                if (newPath.includes("acp-auth-")) {
+                  const contents = yield* base.readFileString(oldPath);
+                  const parsed = JSON.parse(contents) as { readonly authenticated?: boolean };
+                  if (typeof parsed.authenticated === "boolean") {
+                    lastPersistedAuthConfirmed = parsed.authenticated;
+                  }
+                  const gate = pendingAuthPersistGate;
+                  if (gate !== null && parsed.authenticated === true) {
+                    pendingAuthPersistGate = null;
+                    yield* Deferred.succeed(gate.entered, undefined);
+                    yield* Deferred.await(gate.release);
+                  }
+                }
+                return yield* base.rename(oldPath, newPath);
+              }),
+          }),
+          wrapCoordinator: (base) => ({
+            ...base,
+            getLiveConfigurationWithRevision: (instanceId) =>
+              base.getLiveConfigurationWithRevision(instanceId).pipe(
+                Effect.tap(() => {
+                  const done = pendingCommitEntered;
+                  if (done === null) return Effect.void;
+                  pendingCommitEntered = null;
+                  return Deferred.succeed(done, undefined).pipe(Effect.asVoid);
+                }),
+              ),
+            watchLiveConfiguration: (instanceId, onUpdate, options) =>
+              base.watchLiveConfiguration(
+                instanceId,
+                (configuration, revision) =>
+                  (blockLiveWatch !== null ? Deferred.await(blockLiveWatch) : Effect.void).pipe(
+                    Effect.andThen(onUpdate(configuration, revision)),
+                    Effect.tap(() => {
+                      const pending = pendingLiveWatch;
+                      if (pending === null || revision < pending.minRevision) return Effect.void;
+                      pendingLiveWatch = null;
+                      return Deferred.succeed(pending.done, undefined).pipe(Effect.asVoid);
+                    }),
+                  ),
+                options,
+              ),
+            clearLiveConfigurationIfRevision: (instanceId, options) =>
+              Effect.gen(function* () {
+                if (injectCatalogBeforeReadyClear && options.retain !== undefined) {
+                  injectCatalogBeforeReadyClear = false;
+                  yield* base.publishLiveConfiguration(instanceId, {
+                    models: [
+                      { id: "raced-ready-a", name: "Raced Ready A", description: null },
+                      { id: "raced-ready-b", name: "Raced Ready B", description: null },
+                    ],
+                    currentModelId: "raced-ready-a",
+                    configOptions: [],
+                    modelsFromModelSelect: true,
+                  });
+                  const cleared = yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+                  yield* Deferred.succeed(readyRaceRejected, undefined);
+                  return cleared;
+                }
+                return yield* base.clearLiveConfigurationIfRevision(instanceId, options);
+              }),
+          }),
+          onResolve: () =>
+            Effect.gen(function* () {
+              const gate = pendingResolveGate;
+              if (gate !== null) {
+                pendingResolveGate = null;
+                yield* Deferred.succeed(gate.entered, undefined);
+                yield* Deferred.await(gate.release);
+              }
+            }),
+        });
+        const awaitLiveWatchUpdate = (publish: Effect.Effect<void>) =>
+          Effect.gen(function* () {
+            const beforeRevision = (yield* coordinator.getLiveConfigurationWithRevision(
+              identity.instanceId,
+            )).revision;
+            const done = yield* Deferred.make<void>();
+            pendingLiveWatch = { minRevision: beforeRevision + 1, done };
+            yield* publish;
+            yield* Deferred.await(done);
+          });
+        const runGatedProbe = <E>(duringProbe: Effect.Effect<void, E>) =>
+          Effect.gen(function* () {
+            const entered = yield* Deferred.make<void>();
+            const release = yield* Deferred.make<void>();
+            pendingResolveGate = { entered, release };
+            yield* instance.snapshot.refresh;
+            yield* Deferred.await(entered);
+            yield* duringProbe;
+            // Resolves on commitEnrichment's coordinator read while it holds liveSnapshotSemaphore,
+            // so the watcher handles the caller's follow-up publish only after commit finishes.
+            const commitEntered = yield* Deferred.make<void>();
+            pendingCommitEntered = commitEntered;
+            yield* Deferred.succeed(release, undefined);
+            yield* Deferred.await(commitEntered);
+          });
+
+        const initial = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        yield* Fiber.join(initial);
 
         // Confirmed sign-in invalidates a still-valid enrichment cache so the post-sign-in refresh
-        // probes newly available models instead of serving stale cached entries.
+        // probes newly available models instead of serving stale cached entries, and persists
+        // sign-in confirmation.
         yield* writeModels(["post-signin-a", "post-signin-b"]);
         const postCacheInvalidatingSignIn = yield* waitForEnriched().pipe(
           Effect.forkScoped({ startImmediately: true }),
         );
         yield* instance.auth!.start("owner", Effect.void, "agent-login");
-        expect(
-          Option.getOrThrow(yield* Fiber.join(postCacheInvalidatingSignIn)).models.map(
-            (m) => m.slug,
-          ),
-        ).toEqual(["post-signin-a", "post-signin-b"]);
+        const postCacheInvalidatingSnap = Option.getOrThrow(
+          yield* Fiber.join(postCacheInvalidatingSignIn),
+        );
+        expect(postCacheInvalidatingSnap.models.map((m) => m.slug)).toEqual([
+          "post-signin-a",
+          "post-signin-b",
+        ]);
+        expect(postCacheInvalidatingSnap.auth.status).toBe("authenticated");
+        expect(lastPersistedAuthConfirmed).toBe(true);
 
         // auth.invalidate clears persisted sign-in confirmation so readiness falls back to unknown.
         yield* withBlockedForegroundStartup(
           Effect.gen(function* () {
             yield* instance.auth!.invalidate!;
             expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unknown");
+            expect(lastPersistedAuthConfirmed).toBe(false);
           }),
         );
 
@@ -4885,7 +4966,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         const releaseAuthPersist = yield* Deferred.make<void>();
         pendingAuthPersistGate = { entered: authPersistEntered, release: releaseAuthPersist };
         const sawSerializedSignIn = yield* instance.snapshot.streamChanges.pipe(
-          Stream.filter((snapshot) => snapshot.auth.status === "authenticated"),
+          Stream.filter((snapshot) => snapshot.nativeSessions === undefined),
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
@@ -4908,6 +4989,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         expect(Option.getOrThrow(yield* Fiber.join(sawSerializedSignIn)).auth.status).toBe(
           "authenticated",
         );
+        expect(lastPersistedAuthConfirmed).toBe(true);
 
         // Explicit sign-out (auth.logout -> onChanged(false)) atomically clears sign-in
         // confirmation and marks signed out without waiting for a failing probe, blocking
@@ -4916,6 +4998,7 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
           Effect.gen(function* () {
             yield* instance.auth!.logout!(Effect.void);
             expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unknown");
+            expect(lastPersistedAuthConfirmed).toBe(false);
             yield* awaitLiveWatchUpdate(
               coordinator.publishLiveConfiguration(identity.instanceId, {
                 models: [],
@@ -4991,10 +5074,19 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             ?.capabilities?.optionDescriptors?.find((d) => d.id === "mode")?.currentValue,
         ).toBe("plan");
 
-        // Explicit management logout also marks signed out, and a ready probe that loses a
-        // live-catalog race (either during commit or before the first revision check) keeps the
-        // newer catalog while reopening options replay, unless a newer sign-out or reset superseded it.
+        // Explicit management logout clears persisted sign-in confirmation and marks signed out;
+        // a ready probe that loses a live-catalog race (during commit or before the first revision
+        // check) keeps the newer catalog while reopening options replay, unless superseded.
+        const postReconfirmEnriched = yield* waitForEnriched().pipe(
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.auth!.start("owner", Effect.void, "agent-login");
+        expect(Option.getOrThrow(yield* Fiber.join(postReconfirmEnriched)).auth.status).toBe(
+          "authenticated",
+        );
+        expect(lastPersistedAuthConfirmed).toBe(true);
         yield* instance.acpSessionManagement!.logout(directory);
+        expect(lastPersistedAuthConfirmed).toBe(false);
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
             models: [],
@@ -5016,6 +5108,12 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "new-model")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).not.toContain("blocked-after-mgmt-logout");
+        yield* withBlockedForegroundStartup(
+          Effect.gen(function* () {
+            yield* instance.snapshot.refresh;
+            expect((yield* instance.snapshot.getSnapshot).auth.status).toBe("unknown");
+          }),
+        );
         injectCatalogBeforeReadyClear = true;
         const racedReadyApplied = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter(
