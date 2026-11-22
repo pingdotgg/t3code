@@ -138,6 +138,29 @@ export function resolveLinuxDisableFeaturesSwitch(input: {
     : `${input.disableFeatures},${WAYLAND_COLOR_MANAGER_FEATURE}`;
 }
 
+// Chromium 152 hides the pointer while typing on Windows, then shows it again on any
+// WM_MOUSEMOVE, including the ones Windows sends while the mouse stays still.
+const HIDE_CURSOR_WHILE_TYPING_FEATURE = "HideCursorWhileTyping";
+
+// Chromium reads entries as Name<Study on --disable-features and Name<Study.Group:params on
+// --enable-features. Anything else falls through to disabling the feature.
+const listsHideCursorWhileTyping = (list: string | null, nameEnd: RegExp): boolean =>
+  (list ?? "")
+    .split(",")
+    .some((entry) => entry.trim().split(nameEnd)[0] === HIDE_CURSOR_WHILE_TYPING_FEATURE);
+
+export function resolveWindowsDisableFeaturesSwitch(input: {
+  readonly enableFeatures: string | null;
+  readonly disableFeatures: string | null;
+}): string | null {
+  // Chromium applies --disable-features first, so an opt-in must keep the feature off this list.
+  if (listsHideCursorWhileTyping(input.enableFeatures, /[<.:]/)) return null;
+  if (listsHideCursorWhileTyping(input.disableFeatures, /</)) return null;
+  return input.disableFeatures === null
+    ? HIDE_CURSOR_WHILE_TYPING_FEATURE
+    : `${input.disableFeatures},${HIDE_CURSOR_WHILE_TYPING_FEATURE}`;
+}
+
 export function resolveEarlyLinuxElectronOptions(
   input: EarlyLinuxElectronOptionsInput,
 ): EarlyLinuxElectronOptions {

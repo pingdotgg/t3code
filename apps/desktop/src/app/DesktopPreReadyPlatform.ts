@@ -183,6 +183,17 @@ export const make = Effect.gen(function* () {
       }
     }
 
+    if (platform === "win32") {
+      // Chromium keeps only the last --disable-features value, so pass the merged list.
+      const disableFeatures = DesktopEarlyElectronStartup.resolveWindowsDisableFeaturesSwitch({
+        enableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "enable-features"),
+        disableFeatures: readCommandLineSwitchValue(Electron.app.commandLine, "disable-features"),
+      });
+      if (disableFeatures !== null) {
+        Electron.app.commandLine.appendSwitch("disable-features", disableFeatures);
+      }
+    }
+
     return { linux, linuxPasswordStoreCommandLine };
   });
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));

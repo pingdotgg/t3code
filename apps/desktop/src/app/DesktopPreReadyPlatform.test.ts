@@ -252,6 +252,17 @@ describe("DesktopPreReadyPlatform", () => {
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
+  it.effect("turns off Chromium's flickering hide-pointer-while-typing on Windows", () => {
+    hasSwitchMock.mockReturnValue(false);
+
+    return Effect.gen(function* () {
+      yield* DesktopPreReadyPlatform.make;
+      assert.deepEqual(appendSwitchMock.mock.calls, [
+        ["disable-features", "HideCursorWhileTyping"],
+      ]);
+    }).pipe(Effect.provideService(HostProcess.Platform, "win32"));
+  });
+
   it.effect(
     "acquires a synchronous pre-ready layer before an asynchronous Clerk-shaped layer",
     () =>
