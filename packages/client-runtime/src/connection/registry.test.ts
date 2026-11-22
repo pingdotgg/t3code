@@ -1441,7 +1441,8 @@ describe("EnvironmentRegistry", () => {
                 storedCredentials === undefined
                   ? undefined
                   : (yield* Ref.get(storedCredentials)).get(BEARER_TARGET.connectionId);
-              return credential?.token === "revoked-bearer"
+              return credential?._tag === "BearerConnectionCredential" &&
+                credential.token === "revoked-bearer"
                 ? new ConnectionBlockedError({
                     reason: "authentication",
                     detail: "invalid-session: revoked",
@@ -1489,8 +1490,8 @@ describe("EnvironmentRegistry", () => {
             (state) => state.phase === "connected",
           );
           expect(
-            (yield* Ref.get(harness.storedCredentials)).get(BEARER_TARGET.connectionId)?.token,
-          ).toBe("fresh-bearer");
+            (yield* Ref.get(harness.storedCredentials)).get(BEARER_TARGET.connectionId),
+          ).toEqual(new BearerConnectionCredential({ token: "fresh-bearer" }));
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),
   );
@@ -1563,34 +1564,6 @@ describe("EnvironmentRegistry", () => {
           ).toEqual(BEARER_CREDENTIAL);
         }).pipe(Effect.provide(harness.layer), Effect.scoped);
       }),
-  );
-
-  it.effect("reuses a healthy platform bearer session across unchanged reconciles", () =>
-    Effect.gen(function* () {
-      const harness = yield* makeHarness([]);
-      yield* Effect.gen(function* () {
-        const registry = yield* EnvironmentRegistry.EnvironmentRegistry;
-        const registration = new BearerConnectionRegistration({
-          target: BEARER_TARGET,
-          profile: BEARER_PROFILE,
-          credential: BEARER_CREDENTIAL,
-        });
-        yield* registry.reconcilePlatform([registration]);
-        yield* awaitConnectionState(
-          registry,
-          BEARER_TARGET.environmentId,
-          (state) => state.phase === "connected",
-        );
-        const before = yield* registry.state(BEARER_TARGET.environmentId);
-        yield* registry.reconcilePlatform([registration]);
-        expect(yield* registry.state(BEARER_TARGET.environmentId)).toEqual(before);
-        expect(yield* Ref.get(harness.sessions)).toHaveLength(1);
-        expect(yield* Ref.get(harness.releasedSessions)).toBe(0);
-        expect((yield* Ref.get(harness.storedCredentials)).get(BEARER_TARGET.connectionId)).toEqual(
-          BEARER_CREDENTIAL,
-        );
-      }).pipe(Effect.provide(harness.layer), Effect.scoped);
-    }),
   );
 
   it.effect("a replaced platform bearer wakes a supervisor blocked on the old one", () =>

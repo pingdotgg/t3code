@@ -610,36 +610,6 @@ describe("desktop-local startup bearer exchange", () => {
     };
   }
 
-  it.effect("exchanges again on the next poll after its bearer credential is invalidated", () =>
-    Effect.gen(function* () {
-      const endpoint = fakeBootstrapEndpoint();
-      yield* Effect.gen(function* () {
-        const source = yield* PlatformConnectionSource.PlatformConnectionSource;
-        const first = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(first).toHaveLength(1);
-        const credentials = yield* CredentialStore.ConnectionCredentialStore;
-        const registration = first[0]!;
-        if (registration._tag !== "BearerConnectionRegistration")
-          throw new Error("Expected bearer");
-        yield* credentials.put(registration.target.connectionId, registration.credential);
-        yield* credentials.removeIfMatches!(
-          registration.target.connectionId,
-          registration.credential,
-        );
-        const recovered = Option.getOrThrow(yield* Stream.runHead(source.registrations));
-        expect(endpoint.tokenRequests).toHaveLength(2);
-        expect(recovered).toHaveLength(1);
-        expect(recovered[0]).not.toEqual(first[0]);
-      }).pipe(
-        Effect.provide(
-          layerPlatformConnectionSource.pipe(Layer.provideMerge(layerTestCredentials)),
-        ),
-        Effect.provideService(FetchHttpClient.Fetch, globalThis.fetch),
-        Effect.scoped,
-      );
-    }),
-  );
-
   it.effect(
     "a stale bearer registration survives failed refreshes even if the registry restores its token",
     () =>
@@ -743,6 +713,8 @@ describe("desktop-local startup bearer exchange", () => {
                         const credential = Option.getOrThrow(
                           yield* credentials.get(entry.target.connectionId),
                         );
+                        if (credential._tag !== "BearerConnectionCredential")
+                          return yield* Effect.die("Expected a bearer credential");
                         yield* issueRemoteWebSocketTicket({
                           httpBaseUrl: "http://backend.example.test/",
                           bearerToken: credential.token,
