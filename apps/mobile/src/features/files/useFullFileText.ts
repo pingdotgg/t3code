@@ -11,10 +11,10 @@ import { useAssetUrlState } from "../../state/assets";
 // Whole-file reads past this stay on the 1 MB RPC preview; a phone lays out every source row.
 export const MOBILE_FULL_FILE_MAX_BYTES = 8 * 1024 * 1024;
 
-// Switching back to a recently closed file reuses its text instead of downloading it again.
-const RECENT_FILE_TTL_MS = 60_000;
-
-/** A refresh can keep the URL, so the key also carries the revision it downloads for. */
+/**
+ * A refresh can keep the URL, so the key also carries the revision it downloads for. No idle TTL:
+ * the revision cannot see a same-size edit, so a reopened file downloads its text again.
+ */
 const fullFileTextAtom = Atom.family((key: string) => {
   const [uri] = JSON.parse(key) as [string, string];
   return connectionAtomRuntime
@@ -32,7 +32,7 @@ const fullFileTextAtom = Atom.family((key: string) => {
         Effect.provideService(FetchHttpClient.RequestInit, { cache: "no-store" }),
       ),
     )
-    .pipe(Atom.setIdleTTL(RECENT_FILE_TTL_MS), Atom.withLabel(`full-file-text:${key}`));
+    .pipe(Atom.withLabel(`full-file-text:${key}`));
 });
 
 const noFullFileTextAtom = Atom.make(AsyncResult.success(null));
