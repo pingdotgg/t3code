@@ -14,6 +14,7 @@ import {
   keybindingFromKeyboardEvent,
   parseWhenExpressionDraft,
   shortcutToKeybindingInput,
+  shortcutToKeybindingParts,
   unknownWhenVariables,
   whenAstToExpression,
 } from "./KeybindingsSettings.logic";
@@ -248,6 +249,25 @@ describe("KeybindingsSettings.logic", () => {
         "MacIntel",
       ),
     ).toBe("mod+m");
+  });
+
+  it("splits shortcuts into modifier and key parts", () => {
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod++")!)).toEqual(["mod", "+"]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("+")!)).toEqual(["+"]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+shift++")!)).toEqual([
+      "mod",
+      "shift",
+      "+",
+    ]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+alt+space")!)).toEqual([
+      "mod",
+      "alt",
+      "space",
+    ]);
+    expect(shortcutToKeybindingParts(parseKeybindingShortcut("mod+escape")!)).toEqual([
+      "mod",
+      "esc",
+    ]);
   });
 
   it("serializes shortcuts and when expressions for upserts", () => {

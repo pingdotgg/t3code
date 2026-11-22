@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent, type Locator } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
+import { compileResolvedKeybindingsConfig, isMacPlatform } from "@t3tools/shared/keybindings";
 import * as atomCommands from "../../state/use-atom-command";
 
 vi.mock(import("../../state/session"), async (original) => ({
@@ -226,4 +226,20 @@ it("filters actions and allows additional shortcuts for assigned commands", asyn
   await expect
     .element(screen.getByRole("combobox", { name: "Command", exact: true }))
     .toHaveTextContent("Composer: Cycle Host");
+});
+
+it("renders a plus keycap instead of empty pills for shortcuts using '+'", async () => {
+  await using screen = await render(<KeybindingsSettingsPanel />);
+  const isMac = isMacPlatform(navigator.platform);
+  const zoomInPlus = screen.getByRole("button", {
+    name: isMac
+      ? "Edit shortcut for Preview: Zoom In: ⌘+"
+      : "Edit shortcut for Preview: Zoom In: Ctrl++",
+    exact: true,
+  });
+  await expect.element(zoomInPlus).toBeVisible();
+  const labels = [...zoomInPlus.element().querySelectorAll('[data-slot="kbd"]')].map(
+    (node) => node.textContent,
+  );
+  expect(labels).toEqual([isMac ? "⌘" : "Ctrl", "+"]);
 });
