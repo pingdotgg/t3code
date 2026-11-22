@@ -1399,6 +1399,50 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
           expect(host.xcrunCalls).toBe(2);
         }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
     );
+
+    it.effect("callers that find the cached git gone share one new lookup", () =>
+      Effect.gen(function* () {
+        const betaGit = "/Applications/Xcode-beta.app/Contents/Developer/usr/bin/git";
+        const files = new Set([XCODE_GIT]);
+        let xcrunGit = XCODE_GIT;
+        let xcrunCalls = 0;
+        // Each check of the cached git waits here until the test releases it.
+        let gateCachedGit = false;
+        const gates: Array<() => void> = [];
+        const resolve = resolveSpawnCommand("git", ["status"], {
+          env: { PATH: "/fake/bin" },
+        }).pipe(
+          Effect.map((resolved) => resolved.command),
+          Effect.provideService(HostProcess.Platform, "darwin"),
+          Effect.provideService(SpawnExecutableResolution, async (command) => {
+            if (gateCachedGit && command === XCODE_GIT) {
+              await new Promise<void>((release) => gates.push(release));
+            }
+            return command === "git" ? "/usr/bin/git" : files.has(command) ? command : undefined;
+          }),
+          Effect.provideService(XcodeGitLocation, () =>
+            Effect.sync(() => {
+              xcrunCalls += 1;
+              return xcrunGit;
+            }),
+          ),
+        );
+        expect(yield* resolve).toBe(XCODE_GIT);
+
+        files.delete(XCODE_GIT);
+        files.add(betaGit);
+        xcrunGit = betaGit;
+        gateCachedGit = true;
+        const first = yield* Effect.forkChild(resolve, { startImmediately: true });
+        const second = yield* Effect.forkChild(resolve, { startImmediately: true });
+        expect(gates.length).toBe(2);
+        yield* Effect.sync(() => gates[0]!());
+        expect(yield* Fiber.join(first)).toBe(betaGit);
+        yield* Effect.sync(() => gates[1]!());
+        expect(yield* Fiber.join(second)).toBe(betaGit);
+        expect(xcrunCalls).toBe(2);
+      }).pipe(Effect.provideService(CommandResolutionCache, new Map())),
+    );
   });
 
   it.effect("does not fall back to a shell for unresolved Windows commands", () =>
