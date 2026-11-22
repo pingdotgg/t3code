@@ -759,6 +759,23 @@ it.effect.each([
   }),
 );
 
+// The hub launches with `-no-window -gpu auto`, which resolves to SwiftShader on desktop hosts.
+it.effect.each(["win32", "darwin"] as const)(
+  "renders headless emulators on the %s host GPU",
+  (platform) =>
+    Effect.gen(function* () {
+      const result = yield* LocalDeviceHost.__testing.hubEnvironment({ ANDROID_HOME: "/sdk" }).pipe(
+        Effect.provideService(HostProcess.Platform, platform),
+        Effect.provideService(HostProcess.UserId, 1000),
+        Effect.provideService(ProcessRunner.ProcessRunner, {
+          run: () => Effect.succeed(processOutput(0, "emulated imagefile:<path> none")),
+        }),
+        Effect.provide(NodeServices.layer),
+      );
+      expect(result.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS).toBe("-gpu host");
+    }),
+);
+
 it.effect("keeps local Android and iOS available without ffmpeg", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
