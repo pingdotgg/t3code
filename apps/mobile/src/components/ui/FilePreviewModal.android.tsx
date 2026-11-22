@@ -174,7 +174,12 @@ function imageViewingProps(source: FilePreviewImages) {
 
 function ImagePreview(props: ImagePreviewProps) {
   const saveController = useRef<AbortController | null>(null);
-  const getSaveImageSignal = () => (saveController.current ??= new AbortController()).signal;
+  const getSaveImageSignal = () => {
+    if (saveController.current === null) {
+      saveController.current = new AbortController();
+    }
+    return saveController.current.signal;
+  };
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- saves survive a page change but stop when the gallery unmounts
   useEffect(
     () => () => {
