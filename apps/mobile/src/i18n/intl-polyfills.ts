@@ -3,9 +3,11 @@
 // gt-react-native's Babel plugin would inject these; plain imports keep the Metro and Babel config unchanged.
 import "@formatjs/intl-getcanonicallocales/polyfill";
 import "@formatjs/intl-locale/polyfill";
-import "@formatjs/intl-displaynames/polyfill";
+// Forced entries: the default ones match "en" against every supported locale through the JS
+// getCanonicalLocales before installing anyway, about 2 s of launch on a Pixel 9 Pro.
+import "@formatjs/intl-displaynames/polyfill-force";
 import "@formatjs/intl-displaynames/locale-data/en";
-import "@formatjs/intl-pluralrules/polyfill";
+import "@formatjs/intl-pluralrules/polyfill-force";
 import "@formatjs/intl-pluralrules/locale-data/en";
 import "@formatjs/intl-pluralrules/locale-data/de";
 import "@formatjs/intl-pluralrules/locale-data/es";
