@@ -554,3 +554,27 @@ it.each([1, 18])("continues scrolling the panel past a list of %i subagents", as
   await userEvent.wheel(list, { delta: { y: 300 } });
   await vi.waitFor(() => expect(viewport.scrollTop).toBeGreaterThan(0));
 });
+
+it("hides the Lineage card when an active session has no relatives", async () => {
+  setup();
+  const projection = makeThreadProjectionFixture();
+  state.projection = {
+    ...projection,
+    thread: {
+      ...projection.thread,
+      id: threadId,
+      lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+      forkedFrom: null,
+    },
+    providerSessions: [{ id: "session", status: "ready" }],
+  };
+  await using _screen = await render(
+    <ThreadRelationshipsPanel
+      environmentId={environmentId}
+      threadId={threadId}
+      showLineage
+      showSideChats
+    />,
+  );
+  await expect.element(page.getByRole("region", { name: "Lineage" })).not.toBeInTheDocument();
+});

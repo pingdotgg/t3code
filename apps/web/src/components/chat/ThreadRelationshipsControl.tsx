@@ -934,14 +934,12 @@ export function ThreadRelationshipsPanel(props: {
 
   const delegatedFrom = currentThread?.delegatedFrom;
 
-  // The card lists this thread's relatives, never the thread itself. Its menu keeps a card with
-  // none, since disconnecting the agent session lives only there.
+  // The card lists this thread's relatives, never the thread itself, and stays hidden with none.
   const hasRelatives =
     delegatedFrom !== undefined ||
     groups.some((group) => group.rows.length > 0) ||
     unlinkedRunningCount > 0;
-  const lineageVisible =
-    (props.showLineage ?? true) && currentThread !== undefined && (hasRelatives || canDetach);
+  const lineageVisible = (props.showLineage ?? true) && currentThread !== undefined && hasRelatives;
   const sideChatsVisible = (props.showSideChats ?? true) && sideChats.length > 0;
   const runningSideChats = sideChats.filter(({ edge }) => edge.status === "running").length;
 
@@ -1310,43 +1308,39 @@ export function ThreadRelationshipsPanel(props: {
           }
           data-thread-relationships-panel
         >
-          {hasRelatives ? (
-            <>
-              {delegatedFrom === undefined ? null : (
-                <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
-                  <DelegatedFromRow
-                    delegatedFrom={delegatedFrom}
-                    fallbackLabel={currentThread?.linkOrigin?.label}
-                    anyInstanceBadge={hasInstanceBadge(providerEntries)}
-                  />
-                </ThreadLineageRowList>
+          {delegatedFrom === undefined ? null : (
+            <ThreadLineageRowList hiddenCount={0} onShowMore={() => {}}>
+              <DelegatedFromRow
+                delegatedFrom={delegatedFrom}
+                fallbackLabel={currentThread?.linkOrigin?.label}
+                anyInstanceBadge={hasInstanceBadge(providerEntries)}
+              />
+            </ThreadLineageRowList>
+          )}
+          {groups
+            .filter((group) => group.id !== "previous")
+            .map((group) => (
+              <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
+                {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
+              </ThreadLineageGroup>
+            ))}
+          {groups
+            .filter((group) => group.id === "previous" && group.rows.length > 0)
+            .map((group) => (
+              <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
+                <ThreadLineageGroup {...group}>
+                  {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
+                </ThreadLineageGroup>
+              </div>
+            ))}
+          {unlinkedRunningCount > 0 ? (
+            <div className="flex items-center gap-2 px-2 py-1 text-caption text-muted-foreground">
+              <Spinner size="xs" tone="muted" />
+              {gt(
+                "{count, plural, one {{count} running agent preparing threads} other {{count} running agents preparing threads}}",
+                { count: unlinkedRunningCount },
               )}
-              {groups
-                .filter((group) => group.id !== "previous")
-                .map((group) => (
-                  <ThreadLineageGroup key={`${scopedThreadKey(ref)}:${group.id}`} {...group}>
-                    {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
-                  </ThreadLineageGroup>
-                ))}
-              {groups
-                .filter((group) => group.id === "previous" && group.rows.length > 0)
-                .map((group) => (
-                  <div key={`${scopedThreadKey(ref)}:${group.id}`} className="not-first:mt-1.5">
-                    <ThreadLineageGroup {...group}>
-                      {(visibleRows) => visibleRows.map((row) => renderLineageRow(row))}
-                    </ThreadLineageGroup>
-                  </div>
-                ))}
-              {unlinkedRunningCount > 0 ? (
-                <div className="flex items-center gap-2 px-2 py-1 text-caption text-muted-foreground">
-                  <Spinner size="xs" tone="muted" />
-                  {gt(
-                    "{count, plural, one {{count} running agent preparing threads} other {{count} running agents preparing threads}}",
-                    { count: unlinkedRunningCount },
-                  )}
-                </div>
-              ) : null}
-            </>
+            </div>
           ) : null}
         </ThreadDetailsSection>
       ) : null}
