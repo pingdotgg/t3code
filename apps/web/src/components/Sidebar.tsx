@@ -3593,13 +3593,11 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 key={`project-folder:${folder.group.projectKey}`}
                                 group={folder.group}
                                 environmentBadge={
-                                  primaryEnvironmentId ? (
-                                    <ProjectEnvironmentBadge
-                                      group={folder.group}
-                                      primaryEnvironmentId={primaryEnvironmentId}
-                                      machineByEnvironmentId={environmentMachineById}
-                                    />
-                                  ) : null
+                                  <ProjectEnvironmentBadge
+                                    group={folder.group}
+                                    primaryEnvironmentId={primaryEnvironmentId}
+                                    machineByEnvironmentId={environmentMachineById}
+                                  />
                                 }
                                 collapsed={folder.collapsed}
                                 hiddenThreads={folder.hiddenThreads}
