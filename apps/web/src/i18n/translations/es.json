@@ -11684,7 +11684,6 @@
   "9f5d059ed5a67ba1": "Demasiado antigua",
   "3c087918060df6e5": "Ventana abierta",
   "7c5d597ee0a16e05": "Ejecutada",
-  "5804e40a669483f1": "Esta carpeta existe en un solo equipo. Elige un entorno para guardarla allí.",
   "fde10553f91c7707": "Este ajuste afecta a todo el entorno y un proyecto no puede anularlo.",
   "87c9ee882704c64c": "Conecta los checkouts seleccionados, o actualiza sus entornos, para guardar una anulación del proyecto.",
   "517d756b99498622": "Conecta {environment} para guardar este ajuste.",

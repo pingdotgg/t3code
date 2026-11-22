@@ -1,21 +1,14 @@
 import { canCreateProjectInEnvironment } from "@t3tools/client-runtime/operations/projects";
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
-import { type EnvironmentId, FilesystemBrowseError } from "@t3tools/contracts";
-import * as Schema from "effect/Schema";
-
-const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
+import { isMissingBrowsePathFailure } from "@t3tools/client-runtime/state/filesystem";
+import type { EnvironmentId } from "@t3tools/contracts";
 
 /** Clone destinations may name folders that do not exist yet; cloning creates them. */
 export function isMissingCloneParentBrowseFailure(input: {
   readonly cloning: boolean;
   readonly failure: unknown;
 }): boolean {
-  return (
-    input.cloning &&
-    isFilesystemBrowseError(input.failure) &&
-    input.failure.failure === "read_directory_failed" &&
-    input.failure.pathMissing === true
-  );
+  return input.cloning && isMissingBrowsePathFailure(input.failure);
 }
 
 export function resolveAddProjectEnvironment<

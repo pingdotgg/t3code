@@ -11699,7 +11699,6 @@
   "9f5d059ed5a67ba1": "Too old",
   "3c087918060df6e5": "Opened window",
   "7c5d597ee0a16e05": "Ran",
-  "5804e40a669483f1": "This folder exists on one machine. Choose an environment to save it there.",
   "fde10553f91c7707": "This setting is environment-wide and cannot be overridden by a project.",
   "87c9ee882704c64c": "Connect the selected checkouts, or update their environments, to save a project override.",
   "517d756b99498622": "Connect {environment} to save this setting.",

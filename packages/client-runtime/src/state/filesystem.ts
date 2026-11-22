@@ -1,5 +1,6 @@
 import {
   AuthFilesystemReadScope,
+  FilesystemBrowseError,
   type FilesystemBrowseEntry,
   WS_METHODS,
   sessionGrantsScope,
@@ -7,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import { scoreQueryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/reactivity";
+import * as Schema from "effect/Schema";
 
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
@@ -184,7 +186,7 @@ export function createBrowseNavigationCoordinator() {
     invalidate: () => {
       generation += 1;
     },
-    run: async (load: () => Promise<void>, commit: () => void) => {
+    run: async (load: () => Promise<unknown>, commit: () => void) => {
       const navigationGeneration = ++generation;
       await load();
       if (navigationGeneration !== generation) {
@@ -194,6 +196,21 @@ export function createBrowseNavigationCoordinator() {
       return true;
     },
   };
+}
+
+const isFilesystemBrowseError = Schema.is(FilesystemBrowseError);
+
+export function isMissingBrowsePathFailure(failure: unknown): boolean {
+  return (
+    isFilesystemBrowseError(failure) &&
+    failure.failure === "read_directory_failed" &&
+    failure.pathMissing === true
+  );
+}
+
+/** A configured Add project folder can be missing on this environment; the browser opens at home there. */
+export function getAddProjectStartQuery(configuredQuery: string, startFailure: unknown): string {
+  return isMissingBrowsePathFailure(startFailure) ? "~/" : configuredQuery;
 }
 
 export function canPreloadBrowsePath(

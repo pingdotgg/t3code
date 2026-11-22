@@ -1,9 +1,14 @@
 import { describe, expect, it } from "vite-plus/test";
-import { AuthFilesystemReadScope, AuthOrchestrationReadScope } from "@t3tools/contracts";
+import {
+  AuthFilesystemReadScope,
+  AuthOrchestrationReadScope,
+  FilesystemBrowseError,
+} from "@t3tools/contracts";
 
 import {
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  getAddProjectStartQuery,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
   resolveFilesystemReadAccess,
@@ -80,6 +85,18 @@ describe("filesystem browse model", () => {
     });
     expect(getFilesystemBrowsePath("C:\\Users\\test", "MacIntel").isBrowsing).toBe(false);
     expect(getFilesystemBrowsePath("~/projects/", "", false).isBrowsing).toBe(false);
+  });
+
+  it("opens Add project at home when the configured folder is missing on that environment", () => {
+    const failure = (pathMissing: boolean) =>
+      new FilesystemBrowseError({
+        partialPath: "/Users/me/code/",
+        failure: "read_directory_failed",
+        pathMissing,
+      });
+    expect(getAddProjectStartQuery("/Users/me/code/", failure(true))).toBe("~/");
+    expect(getAddProjectStartQuery("/Users/me/code/", failure(false))).toBe("/Users/me/code/");
+    expect(getAddProjectStartQuery("/Users/me/code/", null)).toBe("/Users/me/code/");
   });
 
   it("completes Tab like a shell", () => {

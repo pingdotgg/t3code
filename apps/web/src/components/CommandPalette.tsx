@@ -39,6 +39,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  getAddProjectStartQuery,
   getFilesystemBrowsePath,
   getFilesystemBrowseTabCompletion,
 } from "@t3tools/client-runtime/state/filesystem";
@@ -800,19 +801,19 @@ function OpenCommandPaletteDialog(props: {
     partialPath: string,
     environmentId: EnvironmentId | null = browseEnvironmentId,
     cwd: string | null = currentProjectCwdForBrowse,
-  ): Promise<void> => {
+  ) => {
     if (!environmentId) {
-      return;
+      return null;
     }
     const environment = environments.find((candidate) => candidate.environmentId === environmentId);
     if (
       !readEnvironmentScope(environmentId, AuthFilesystemReadScope) ||
       !canPreloadBrowsePath(environment?.connection.phase)
     ) {
-      return;
+      return null;
     }
 
-    await loadBrowsePath({
+    return loadBrowsePath({
       environmentId,
       input: {
         partialPath,
@@ -1024,24 +1025,31 @@ function OpenCommandPaletteDialog(props: {
   }
 
   const startAddProjectBrowse = async (environmentId: EnvironmentId): Promise<void> => {
-    const initialQuery = getAddProjectInitialQueryForEnvironment(environmentId);
-    const initialBrowsePath = getBrowseDirectoryPath(initialQuery);
+    const configuredQuery = getAddProjectInitialQueryForEnvironment(environmentId);
     const browseCwd = getBrowseCwdForEnvironment(environmentId);
-    const view: CommandPaletteView = {
-      addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
-      groups: [],
-      initialQuery,
-    };
+    let initialQuery = configuredQuery;
 
     await browseNavigation.run(
-      () =>
-        initialBrowsePath.length > 0
-          ? prefetchBrowsePath(initialBrowsePath, environmentId, browseCwd)
-          : Promise.resolve(),
+      async () => {
+        const configuredPath = getBrowseDirectoryPath(configuredQuery);
+        if (configuredPath.length === 0) return;
+        const result = await prefetchBrowsePath(configuredPath, environmentId, browseCwd);
+        initialQuery = getAddProjectStartQuery(
+          configuredQuery,
+          result?._tag === "Failure" ? squashAtomCommandFailure(result) : null,
+        );
+        if (initialQuery !== configuredQuery) {
+          await prefetchBrowsePath(getBrowseDirectoryPath(initialQuery), environmentId, browseCwd);
+        }
+      },
       () => {
         setAddProjectEnvironmentId(environmentId);
         setAddProjectCloneFlow(null);
-        pushPaletteView(view);
+        pushPaletteView({
+          addonIcon: <FolderPlusIcon className={ADDON_ICON_CLASS} />,
+          groups: [],
+          initialQuery,
+        });
       },
     );
   };

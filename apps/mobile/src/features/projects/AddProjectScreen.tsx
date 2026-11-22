@@ -42,6 +42,7 @@ import {
   canPreloadBrowsePath,
   createBrowseNavigationCoordinator,
   filterFilesystemBrowseEntries,
+  getAddProjectStartQuery,
   getFilesystemBrowsePath,
   resolveFilesystemReadAccess,
 } from "@t3tools/client-runtime/state/filesystem";
@@ -338,8 +339,20 @@ function useBrowsePathInput(
   const environmentId = environment?.environmentId ?? null;
   const environmentBaseDirectory = environment?.baseDirectory ?? null;
   const clonePathCaseSensitive = !isWindowsPlatform(environment?.platform ?? "");
+  const configuredQuery = getAddProjectInitialQuery(environmentBaseDirectory);
+  const configuredFolder = getFilesystemBrowsePath(
+    configuredQuery,
+    environment?.platform,
+  ).directoryPath;
+  const canReadFiles = useEnvironmentScope(environmentId, AuthFilesystemReadScope);
+  // Cloning creates a missing folder, so only the local folder browser needs this check.
+  const configuredFolderState = useEnvironmentQuery(
+    environmentId === null || !canReadFiles || cloneDirectoryPath !== "" || configuredFolder === ""
+      ? null
+      : filesystemEnvironment.browse({ environmentId, input: { partialPath: configuredFolder } }),
+  );
   const seedPath = getCloneDestinationPath(
-    getAddProjectInitialQuery(environmentBaseDirectory),
+    getAddProjectStartQuery(configuredQuery, configuredFolderState.failure),
     cloneDirectoryPath,
   );
   // Each host keeps the path last typed or browsed for it, and shows its own default until then,
