@@ -569,9 +569,9 @@ it.each(["new", "existing"] as const)(
 );
 
 it("a file picked after the phone composer collapses still attaches", async () => {
+  await using _viewport = await appViewport(390, 844);
   const thread = threadWithHistory("thread-40993", 1);
   using _environment = installFakeEnvironment([thread]);
-  await page.viewport(390, 844);
   __setClientSettingsForTests({
     ...DEFAULT_CLIENT_SETTINGS,
     onboardingCompletedAt: "2026-01-01T00:00:00.000Z",
@@ -582,6 +582,7 @@ it("a file picked after the phone composer collapses still attaches", async () =
   await router.load();
   await using _app = await render(<AppRoot router={router} />, {
     // AppRoot brings its own router.
+    container: appContainer(),
     router: false,
   });
   using _uploads = acceptAttachmentUploads();
