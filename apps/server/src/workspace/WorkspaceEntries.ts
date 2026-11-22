@@ -6,6 +6,7 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as RcMap from "effect/RcMap";
 import * as Schema from "effect/Schema";
@@ -154,6 +155,9 @@ const resolveBrowseTarget = Effect.fn("WorkspaceEntries.resolveBrowseTarget")(fu
   );
 });
 
+// A link to an unresponsive network share must not hold up the local entries beside it.
+const SYMLINK_TARGET_STAT_TIMEOUT = Duration.seconds(1);
+
 /** @public */
 export const make = Effect.gen(function* () {
   const path = yield* Path.Path;
@@ -276,7 +280,7 @@ export const make = Effect.gen(function* () {
                 (stats) => (stats.isDirectory() ? candidate : null),
                 () => null,
               ),
-            ),
+            ).pipe(Effect.timeoutOption(SYMLINK_TARGET_STAT_TIMEOUT), Effect.map(Option.getOrNull)),
           { concurrency: 16 },
         );
         for (const candidate of resolvedSymlinks) {
