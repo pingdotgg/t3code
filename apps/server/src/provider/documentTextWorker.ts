@@ -624,8 +624,7 @@ async function* document(path: string, extension: string): AsyncGenerator<TextPa
               rel.attrs.Type?.endsWith("/officeDocument") && rel.attrs.TargetMode !== "External",
           )?.attrs.Target
         : undefined;
-      const main =
-        target && (target.startsWith("/") ? target.slice(1) : NodePath.posix.normalize(target));
+      const main = target && NodePath.posix.normalize(target).replace(/^\//, "");
       yield* paragraphs(read(main && files.has(main) ? main : "word/document.xml"));
     } else if ([".odt", ".ods", ".odp"].includes(extension)) {
       const content = read("content.xml");

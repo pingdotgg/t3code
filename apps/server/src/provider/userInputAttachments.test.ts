@@ -585,7 +585,7 @@ describe("question answer paths", () => {
           expected: ["Readable despite embedded media"],
           absent: ["[Extracted text truncated"],
         },
-        ...["/word/document2.xml", "word/document2.xml"].map((target) => ({
+        ...["/word/../word/document2.xml", "word/document2.xml"].map((target) => ({
           ext: "docx",
           bounded: true,
           parts: {
