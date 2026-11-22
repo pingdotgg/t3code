@@ -825,7 +825,7 @@ function ThreadSurfaceContent({
             visible={visible}
             mode="embedded"
             composerDraftTarget={context.composerDraftTarget}
-            workspaceMutationId={workspaceMutationId}
+            workspaceMutationId={bridge?.workspaceRevision ?? null}
             threadRef={context.isServerThread || context.threadless ? threadRef : null}
             projectRef={context.threadless ? context.projectRef : null}
             folder={context.threadless && !context.projectRef ? context.workspaceRoot : null}

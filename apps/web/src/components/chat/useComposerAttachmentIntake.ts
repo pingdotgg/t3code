@@ -57,6 +57,7 @@ import {
   addPreparingComposerImages,
   getPreparingComposerImages,
   isPreparingComposerImage,
+  joinPreparedImagesToDraft,
   movedPreparingImageThread,
   removePreparingComposerImages,
 } from "./preparingComposerImages";
@@ -337,16 +338,19 @@ export function useComposerAttachmentIntake(input: {
       }));
     const unrestoredImageNames: string[] = [];
     const draftStore = useComposerDraftStore.getState();
-    const storedImageIds = new Set(
-      movedThread
-        ? draftStore.addImages(movedThread, nextImages, {
-            onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
-          })
-        : nextImages.length === 1 && nextImages[0]
-          ? addComposerImage(nextImages[0])
-          : nextImages.length > 1
-            ? addComposerImagesToDraft(nextImages)
-            : [],
+    const storedImageIds = joinPreparedImagesToDraft(
+      () =>
+        new Set(
+          movedThread
+            ? draftStore.addImages(movedThread, nextImages, {
+                onCapacityExceeded: (image) => unrestoredImageNames.push(image.name),
+              })
+            : nextImages.length === 1 && nextImages[0]
+              ? addComposerImage(nextImages[0])
+              : nextImages.length > 1
+                ? addComposerImagesToDraft(nextImages)
+                : [],
+        ),
     );
     // Keep the placeholders until the draft decides whether the recovered images fit,
     // so a held send can be cancelled before the last placeholder disappears.
@@ -364,10 +368,12 @@ export function useComposerAttachmentIntake(input: {
     }
     if (storedImages.length > 0 && imageAttachmentsGetChips && !movedThread) {
       insertedAny =
-        insertAttachmentReferences(
-          storedImages.map(imageContextReference),
-          undefined,
-          pendingInsertion,
+        joinPreparedImagesToDraft(() =>
+          insertAttachmentReferences(
+            storedImages.map(imageContextReference),
+            undefined,
+            pendingInsertion,
+          ),
         ) || insertedAny;
     }
     // Only failures are reported here. Success must not pass `null`: by

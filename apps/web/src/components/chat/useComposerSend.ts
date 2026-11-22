@@ -80,6 +80,7 @@ import {
   restoreFailedDraftThread,
   checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
+  composerTargetKey,
   type ComposerFileAttachment,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -125,6 +126,7 @@ import {
   startAttachmentUpload,
 } from "../../lib/attachmentUploadQueue";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
+import { countPreparingComposerImages, holdComposerSend } from "./preparingComposerImages";
 import { fileAttachmentCapabilityBlockReason } from "./composerAttachmentFiles";
 import { useLinkedEnvironments } from "../../state/peerLinks";
 import { readEnvironmentScope } from "../../state/session";
@@ -435,27 +437,38 @@ export function useComposerSend(input: ComposerSendInput) {
       annotation: PreviewAnnotationPayload;
       image: ComposerImageAttachment | null;
     },
+    detachedOverride?: {
+      readonly prompt: string;
+      readonly sendContext: ReturnType<NonNullable<ComposerHandleRef["current"]>["getSendContext"]>;
+    },
   ) => {
     e?.preventDefault();
     // What the user pressed send on; uploads below can take a while, and a redirect must not
     // decline approvals for a draft that changed meanwhile.
-    const promptAtSend = promptRef.current;
+    let promptAtSend = detachedOverride ? detachedOverride.prompt : promptRef.current;
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
       !draftHasNonPromptContent(composerDraftTarget) &&
-      isUsageLimitsCommand(promptRef.current)
+      countPreparingComposerImages(composerTargetKey(composerDraftTarget)) === 0 &&
+      isUsageLimitsCommand(promptAtSend)
     ) {
       if (openUsageLimits()) {
-        promptRef.current = "";
         setComposerDraftPrompt(composerDraftTarget, "");
-        composerRef.current?.resetCursorState();
+        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+          promptRef.current = "";
+          composerRef.current?.resetCursorState();
+        }
       }
       return;
     }
 
-    const sendCtx = composerRef.current?.getSendContext();
+    // Read before any wait; the composer on screen may belong to another thread after it.
+    let sendCtx = detachedOverride
+      ? detachedOverride.sendContext
+      : composerRef.current?.getSendContext();
+    const isCurrentRouteThread = () => currentRouteThreadKeyRef.current === routeThreadKey;
     // `/side` beats an open question and a plan follow-up, which would send the text to main.
     const sideChatCommand =
       sendCtx && !directAnnotation && !queuedRunEdit.isEditing
@@ -550,6 +563,27 @@ export function useComposerSend(input: ComposerSendInput) {
         }),
       );
       return;
+    }
+    const heldForImages = directAnnotation ? null : holdComposerSend(composerDraftTarget);
+    if (heldForImages) {
+      if ((await heldForImages).status === "cancelled") return;
+      const draftAfterHold = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (!draftAfterHold) return;
+      // A dictation sent after leaving the thread carries its transcript outside the draft.
+      promptAtSend = detachedOverride ? detachedOverride.prompt : draftAfterHold.prompt;
+      if (sendCtx) {
+        sendCtx = {
+          ...sendCtx,
+          prompt: promptAtSend,
+          images: draftAfterHold.images,
+          files: draftAfterHold.files,
+          terminalContexts: draftAfterHold.terminalContexts,
+          previewAnnotations: draftAfterHold.previewAnnotations,
+          reviewComments: draftAfterHold.reviewComments,
+          threadContexts: draftAfterHold.threadContexts,
+          environmentContexts: draftAfterHold.environmentContexts,
+        };
+      }
     }
     const startDraftAttachmentUploads = (
       attachments: ReadonlyArray<ComposerImageAttachment | ComposerFileAttachment>,
@@ -651,8 +685,10 @@ export function useComposerSend(input: ComposerSendInput) {
       // Cleared at send, like a regular message, so nothing in it can change or vanish mid-start.
       if (sendsDraft) {
         clearComposerDraftContent(composerDraftTarget);
-        promptRef.current = "";
-        composerRef.current?.resetCursorState();
+        if (currentRouteThreadKeyRef.current === routeThreadKey) {
+          promptRef.current = "";
+          composerRef.current?.resetCursorState();
+        }
       }
       const started = await settlePromise(async () => {
         if (!hasSendableContent) return onSideChat(undefined);
@@ -803,10 +839,10 @@ export function useComposerSend(input: ComposerSendInput) {
     // A direct "send annotation" writes the draft and sends in the same tick; the reference
     // must be in the text now, not after the next render.
     const draftPrompt = directAnnotation
-      ? ensureInlineContextReferences(promptRef.current, [
+      ? ensureInlineContextReferences(promptAtSend, [
           previewAnnotationContextReference(directAnnotation.annotation),
         ])
-      : promptRef.current;
+      : promptAtSend;
     const replyTo =
       useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
     const promptForSend = withReplyReference(draftPrompt, replyTo);
@@ -890,9 +926,11 @@ export function useComposerSend(input: ComposerSendInput) {
             createdAt: new Date().toISOString(),
           },
           clearDraft: () => {
-            promptRef.current = "";
             clearComposerDraftContent(composerDraftTarget);
-            composerRef.current?.resetCursorState();
+            if (currentRouteThreadKeyRef.current === routeThreadKey) {
+              promptRef.current = "";
+              composerRef.current?.resetCursorState();
+            }
           },
           onUpdate: (submission) => {
             setFeedbackSubmissionsByThreadKey((current) => {
@@ -930,9 +968,11 @@ export function useComposerSend(input: ComposerSendInput) {
       replyTo === null;
     if (freshSessionAvailable && composerHoldsOnlyText && isClearComposerCommand(trimmed)) {
       armFreshSession(routeThreadKey);
-      promptRef.current = "";
       clearComposerDraftContent(composerDraftTarget);
-      composerRef.current?.resetCursorState();
+      if (currentRouteThreadKeyRef.current === routeThreadKey) {
+        promptRef.current = "";
+        composerRef.current?.resetCursorState();
+      }
       return;
     }
     // Read once: an arm made while this send is in flight belongs to the next message.
@@ -1044,7 +1084,10 @@ export function useComposerSend(input: ComposerSendInput) {
       effort: ctxSelectedPromptEffort,
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
-    if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
+    if (
+      isCurrentRouteThread() &&
+      composerRef.current?.validateProviderInput(outgoingMessageText) === false
+    ) {
       return;
     }
 
@@ -1061,7 +1104,11 @@ export function useComposerSend(input: ComposerSendInput) {
         setThreadError(threadIdForSend, resolved.error);
         return;
       }
-      if (composerRef.current?.validateProviderInput(resolved.text) === false) return;
+      if (
+        isCurrentRouteThread() &&
+        composerRef.current?.validateProviderInput(resolved.text) === false
+      )
+        return;
       multipleTargets.push(resolved);
     }
 
@@ -1069,7 +1116,8 @@ export function useComposerSend(input: ComposerSendInput) {
       .getState()
       .getComposerDraft(composerDraftTarget);
     const draftChangedDuringPreparation = () => {
-      if (composerRef.current?.hasPendingAttachments() === true) return true;
+      if (isCurrentRouteThread() && composerRef.current?.hasPendingAttachments() === true)
+        return true;
       const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
       return composerDraftContentChanged(draftBeforePreparation, draft);
     };
@@ -1090,6 +1138,7 @@ export function useComposerSend(input: ComposerSendInput) {
     if (turnUsesAttachmentUploads) startDraftAttachmentUploads(composerAttachmentsSnapshot);
 
     if (
+      isCurrentRouteThread() &&
       multipleModelSelections === null &&
       shouldDockDraftHeroForSubmission({ isDraftHeroState, activeThreadKey, submissionIntent }) &&
       activeThreadKey
@@ -1182,18 +1231,22 @@ export function useComposerSend(input: ComposerSendInput) {
     // the user sent. A direct annotation send writes its image and reference into the draft
     // as it sends, so the live draft may still lack them.
     const draftChangedSinceSend = () => {
-      const sendContext = composerRef.current?.getSendContext();
+      const liveDraft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      const onCurrentThread = isCurrentRouteThread();
+      const sendContext = onCurrentThread ? composerRef.current?.getSendContext() : undefined;
       // The reply is not in the prompt, so cancelling or changing it is checked on its own.
-      const liveReply =
-        useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)?.replyTo ?? null;
+      const liveReply = liveDraft?.replyTo ?? null;
       return (
         composerDraftChangedSinceSend({
-          pendingAttachments: composerRef.current?.hasPendingAttachments() === true,
-          prompt: promptRef.current,
+          pendingAttachments:
+            onCurrentThread && composerRef.current?.hasPendingAttachments() === true,
+          prompt: onCurrentThread ? promptRef.current : (liveDraft?.prompt ?? promptAtSend),
           sentPrompts: [promptAtSend, promptForSend],
           attachmentIds: sendContext
             ? [...sendContext.images, ...sendContext.files].map((attachment) => attachment.id)
-            : attachmentIdsAtSend,
+            : liveDraft
+              ? [...liveDraft.images, ...liveDraft.files].map((attachment) => attachment.id)
+              : attachmentIdsAtSend,
           sentAttachmentIds: attachmentIdsAtSend,
           annotationImageId: directAnnotation?.image?.id,
         }) || liveReply !== replyTo
@@ -1301,7 +1354,7 @@ export function useComposerSend(input: ComposerSendInput) {
     }
     if (sendQueuesBehindSetup) {
       setSetupQueueSendThreadKey(activeThreadKey);
-    } else {
+    } else if (isCurrentRouteThread()) {
       beginLocalDispatch({
         preparingWorktree: multipleModelSelections !== null || Boolean(baseBranchForWorktree),
         submissionIntent:
@@ -1726,7 +1779,7 @@ export function useComposerSend(input: ComposerSendInput) {
       setDockedDraftHeroThreadKey((currentThreadKey) =>
         currentThreadKey === activeThreadKey ? null : currentThreadKey,
       );
-      if (!sendQueuesBehindSetup) resetLocalDispatch();
+      if (!sendQueuesBehindSetup && isCurrentRouteThread()) resetLocalDispatch();
     }
   };
 
@@ -1846,9 +1899,13 @@ export function useComposerSend(input: ComposerSendInput) {
     optimisticBlobPreviews.release(message);
   };
 
+  // No load-balancing refresh: it bails once the draft is no longer displayed, which is the
+  // only time a detached send runs, so the draft keeps the environment it was dictated for.
+  const captureDetachedSend = useStableCallback(() => onSend);
   return {
     onSend: onSendWithRouting,
     withdrawQueuedSend,
+    captureDetachedSend,
     onRetryFailedRun,
     retryingFailedRunId: retryingFailedRunId === failedRunId ? retryingFailedRunId : null,
   };

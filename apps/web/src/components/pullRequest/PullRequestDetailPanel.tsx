@@ -106,6 +106,7 @@ import { Button } from "../ui/button";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "../ui/tooltip";
+import { PullRequestPrivateBadge } from "./PullRequestDetailLayout";
 import { PullRequestDetailGhost, PullRequestTimelineGhost } from "./PullRequestGhosts";
 import { PullRequestCopyableCode } from "./PullRequestCopyableCode";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
@@ -115,7 +116,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { type PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
-import { pullRequestMarkdownPlugins } from "./pullRequestMarkdown.logic";
+import { pullRequestMarkdownExtensions } from "./pullRequestMarkdown.logic";
 import { PullRequestComposer } from "./PullRequestComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
@@ -295,7 +296,7 @@ function pullRequestMarkdownContext(
   threadRef: ScopedThreadRef | null,
 ) {
   return {
-    remarkPlugins: pullRequestMarkdownPlugins(detail),
+    extensions: pullRequestMarkdownExtensions(detail),
     lineBreaks: sourceControlClients.find(detail?.provider ?? "")?.hardLineBreaks ?? false,
     threadRef,
     repository: detail?.repository ?? null,
@@ -1803,6 +1804,7 @@ export function PullRequestDetailPanel({
         >
           {detail ? (
             <>
+              {detail.visibility === "private" ? <PullRequestPrivateBadge /> : null}
               {stackMenuProps !== null ? (
                 <span className="inline-flex shrink-0 @max-2xs/pr-header:hidden">
                   <PullRequestStackMenu {...stackMenuProps} display="trigger" />

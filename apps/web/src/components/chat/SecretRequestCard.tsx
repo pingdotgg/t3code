@@ -24,6 +24,7 @@ import type {
   SecretProviderId,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
+import { hasFeatureFlag } from "@t3tools/client-runtime/state/server";
 import { T, useGT, useMessages } from "gt-react";
 import {
   ArrowUpRightIcon,
@@ -37,7 +38,6 @@ import {
 } from "lucide-react";
 import { useId, useRef, useState, type FormEvent, type MouseEvent } from "react";
 
-import { isSecretsFeatureEnabled } from "../../env";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { Button, InlineButton } from "../ui/button";
@@ -122,7 +122,7 @@ function HostLink(props: { readonly href: string; readonly host: string }) {
 function useSecretRequestSources(environmentId: EnvironmentId) {
   const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const messages = useMessages();
-  return isSecretsFeatureEnabled
+  return hasFeatureFlag(config, "secretProviders")
     ? secretRequestSources(config, config?.settings.secretProviders ?? {}, messages)
     : NO_SOURCES;
 }

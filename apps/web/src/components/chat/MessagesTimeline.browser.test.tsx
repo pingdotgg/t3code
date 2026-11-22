@@ -52,9 +52,8 @@ import {
   type PendingApproval,
   deriveTimelineEntriesFromVisibleTurnItems,
 } from "../../session-logic";
-import type { Root } from "mdast";
-import { remarkThoughtPreview, THOUGHT_PREVIEW_MAX_LENGTH } from "./TimelineWorkEntryRow.logic";
-import { parseMarkdownWithMath } from "@t3tools/shared/markdownMath";
+import { THOUGHT_PREVIEW_MAX_LENGTH, thoughtPreviewMarkdown } from "./TimelineWorkEntryRow.logic";
+import { wordsHast } from "~/markdown/wordsHast";
 import { searchableMessageSegments } from "@t3tools/shared/threadFindText";
 import { countThreadSearchOccurrences } from "@t3tools/shared/threadSearch";
 import { collectThreadFindRanges } from "./threadFindHighlights";
@@ -2566,49 +2565,22 @@ describe("compact reasoning math", () => {
     ["hard  \nbreak\\\nagain", [["text", "hard break again"]]],
     ["<div>only html</div>", [["text", "Reasoning"]]],
   ])("keeps formulas while flattening compact reasoning previews: %j", (source, expected) => {
-    const tree = parseMarkdownWithMath(source);
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children.map((node) => [node.type, "value" in node ? node.value : null])).toEqual(
-      expected,
-    );
-  });
-
-  it("stops reading the tree once the preview is full", () => {
-    const beyondCap = (): string => {
-      throw new Error("read beyond cap");
-    };
-    const head = "x".repeat(THOUGHT_PREVIEW_MAX_LENGTH - 2);
-    const tree: Root = {
-      type: "root",
-      children: [
-        {
-          type: "paragraph",
-          children: [
-            { type: "text", value: head },
-            { type: "strong", children: [{ type: "text", value: "yz beyond" }] },
-            {
-              type: "inlineMath",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-        {
-          type: "paragraph",
-          children: [
-            {
-              type: "text",
-              get value() {
-                return beyondCap();
-              },
-            },
-          ],
-        },
-      ],
-    };
-    remarkThoughtPreview("Reasoning")(tree);
-    expect(tree.children).toEqual([{ type: "text", value: `${head}yz` }]);
+    const tree = wordsHast(source, {
+      math: true,
+      breaks: false,
+      escapeHtml: false,
+      insights: false,
+      extensions: thoughtPreviewMarkdown("Reasoning"),
+    });
+    expect(
+      tree.children.map((node) =>
+        node.type === "text"
+          ? ["text", node.value]
+          : node.type === "element" && node.children[0]?.type === "element"
+            ? ["inlineMath", String(node.children[0].properties.ariaLabel).trim()]
+            : [node.type, null],
+      ),
+    ).toEqual(expected);
   });
 });
 

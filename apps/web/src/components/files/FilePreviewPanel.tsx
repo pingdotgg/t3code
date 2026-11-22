@@ -154,7 +154,7 @@ import {
   shouldShowFileExplorer,
   workspaceAssetResource,
 } from "./filePreviewMode";
-import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskList";
+import { setMarkdownTaskChecked } from "@t3tools/shared/markdownTaskEdits";
 import { changeFileSaveSession, useFileSaveSession } from "./fileSaveSessions";
 import { observeResize } from "~/lib/observeResize";
 import { revisionedQuery } from "~/state/revisionedQuery";
@@ -376,6 +376,7 @@ export function WorkspaceBrowserPreview(props: {
       documentId={documentId}
       title={props.title}
       pdf={pdf}
+      threadRef={props.threadRef}
       pdfActions={
         <WorkspacePdfSaveAction
           environmentId={props.environmentId}

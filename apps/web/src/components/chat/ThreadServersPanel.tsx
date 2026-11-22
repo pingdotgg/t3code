@@ -107,19 +107,20 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       event.preventDefault();
       // This machine's browser reaches another environment's loopback only through a forward.
       // Starting a forward runs the probe; only a confirmed local environment opens directly.
-      const url =
-        forwardable && locality !== "local"
-          ? await forwardPort(props.environmentId, server.port).then(
-              (forward) => forwardedUrl(forward, server.url),
-              (error: unknown) => {
-                reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
-                return null;
-              },
-            )
-          : resolveExternalServerUrl(props.environmentId, server.url);
+      const forwarding = forwardable && locality !== "local";
+      const url = forwarding
+        ? await forwardPort(props.environmentId, server.port).then(
+            (forward) => forwardedUrl(forward, server.url),
+            (error: unknown) => {
+              reportFailure(gt("Could not forward port {port}", { port: server.port }), error);
+              return null;
+            },
+          )
+        : resolveExternalServerUrl(props.environmentId, server.url);
       if (url === null) return;
       // Without a forward, a remote environment's localhost would open this machine's instead.
       if (
+        !forwarding &&
         locality !== "local" &&
         tunnelsEnvironmentLoopback(environment?.entry.target) &&
         isLoopbackHost(new URL(url).hostname)

@@ -10,6 +10,8 @@ import type { TerminalContextSelection } from "../lib/terminalContext";
 
 export interface ThreadChatBridge {
   readonly workspaceMutationId: string | null;
+  /** What the diff is read under, as the Changes totals are; see `useWorkspaceRevision`. */
+  readonly workspaceRevision: string | null;
   /** The chat can send now (not loading, connecting or mid-send). */
   readonly sendReady: boolean;
   readonly sendAnnotation: (
