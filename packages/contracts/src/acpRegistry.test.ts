@@ -47,6 +47,13 @@ describe("ACP Registry contracts", () => {
       }),
     ).toBe("https://omp.sh/favicon.svg");
     expect(
+      localAcpProviderIconUrl({
+        source: "local",
+        commandPath: "C:\\tools\\omp.cmd",
+        commandArgs: ["acp"],
+      }),
+    ).toBe("https://omp.sh/favicon.svg");
+    expect(
       localAcpProviderIconUrl({ source: "local", commandPath: "omp", commandArgs: [] }),
     ).toBeNull();
     expect(

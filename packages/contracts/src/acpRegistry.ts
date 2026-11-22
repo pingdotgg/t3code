@@ -51,8 +51,10 @@ export function localAcpProviderIconUrl(config: unknown): string | null {
   if (entry.source !== "local") return null;
   const commandPath = typeof entry.commandPath === "string" ? entry.commandPath : "";
   const commandArgs = Array.isArray(entry.commandArgs) ? entry.commandArgs : [];
-  // Same name the shell would resolve: a bare "omp", an absolute path, or omp.exe.
-  const binary = (commandPath.split(/[\\/]/u).at(-1) ?? "").toLowerCase().replace(/\.exe$/u, "");
+  // Same name the driver's OMP matcher accepts: bare "omp", a path, or omp.exe / omp.cmd.
+  const binary = (commandPath.split(/[\\/]/u).at(-1) ?? "")
+    .toLowerCase()
+    .replace(/\.(?:exe|cmd)$/u, "");
   return binary === "omp" && commandArgs[0] === "acp" ? OH_MY_PI_ICON_URL : null;
 }
 
