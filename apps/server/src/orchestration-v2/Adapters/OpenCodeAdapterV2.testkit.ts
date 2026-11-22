@@ -89,6 +89,7 @@ export type OpenCodeOrchestratorReplayHarnessError =
 
 function replayValueMatches(expected: unknown, actual: unknown): boolean {
   if (expected === "<any>" || expected === "<workspace>") return true;
+  if (expected === "<string>") return typeof actual === "string" && actual.length > 0;
   if (Array.isArray(expected)) {
     return (
       Array.isArray(actual) &&
@@ -232,11 +233,7 @@ export class OpenCodeReplayController {
     }
   }
 
-  /**
-   * Like {@link untilEventsDelivered}, but also waits for recorded responses to
-   * be taken: over HTTP a request can start while an earlier one's answer is
-   * still in flight, and must not be matched against that answer.
-   */
+  /** Waits for events and responses to be consumed so concurrent HTTP requests cannot match earlier answers. */
   async untilInboundDelivered(): Promise<void> {
     while (true) {
       this.throwFailure();
@@ -412,24 +409,10 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
               detail: "OpenCode replay does not load inventory.",
             }),
           ),
-        loadInventoryFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadInventoryFromCli",
-              detail: "OpenCode replay does not load inventory.",
-            }),
-          ),
         loadOpenCodeSkills: () =>
           Effect.fail(
             new OpenCodeRuntime.OpenCodeRuntimeError({
               operation: "loadOpenCodeSkills",
-              detail: "OpenCode replay does not load skills.",
-            }),
-          ),
-        loadSkillsFromCli: () =>
-          Effect.fail(
-            new OpenCodeRuntime.OpenCodeRuntimeError({
-              operation: "loadSkillsFromCli",
               detail: "OpenCode replay does not load skills.",
             }),
           ),
@@ -439,15 +422,15 @@ function layerOpenCodeReplayRuntime(transcript: OpenCodeSdkReplayTranscript) {
 }
 
 function layerOpenCodeProviderAdapterRegistryReplay(transcript: OpenCodeSdkReplayTranscript) {
-  return ProviderAdapterRegistry.layerFromDrivers({
-    drivers: [OpenCodeAdapterV2Driver],
-    configMap: {
-      [OPENCODE_DEFAULT_INSTANCE_ID]: {
-        driver: OPENCODE_PROVIDER,
-        config: { serverUrl: "replay://opencode" },
-      },
-    },
-  }).pipe(
+  return ProviderAdapterRegistry.layerFromAdaptersEffect(
+    OpenCodeAdapterV2Driver.create({
+      instanceId: OPENCODE_DEFAULT_INSTANCE_ID,
+      environment: [],
+      displayName: undefined,
+      enabled: true,
+      config: { ...OpenCodeAdapterV2Driver.defaultConfig(), serverUrl: "replay://opencode" },
+    }).pipe(Effect.map((adapter) => [adapter])),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         layerOpenCodeReplayRuntime(transcript),

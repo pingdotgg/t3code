@@ -8,12 +8,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import {
   applyProviderInstanceSettings,
+  brandProviderInstanceEntries,
   deriveProviderEntriesByEnvironment,
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
   resolveDefaultProviderModelSelection,
-  resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
   shouldShowInstanceBadge,
 } from "./providerInstances";
@@ -71,45 +71,65 @@ describe("isProviderInstancePickerReady", () => {
     expect(entry?.status).toBe("ready");
     expect(entry && isProviderInstancePickerReady(entry)).toBe(false);
   });
-});
 
-describe("resolveProviderCatalogAvailability", () => {
-  const [entry] = deriveProviderInstanceEntries([
-    provider({ provider: ProviderDriverKind.make("codex"), instanceId: "codex" }),
-  ]);
+  it("offers a warning provider's models on its usable sub-providers only", () => {
+    const backendModel = (slug: string, subProvider: string) => ({ ...model(slug), subProvider });
+    const fx = (models: ServerProvider["models"]) => ({
+      ...provider({
+        provider: ProviderDriverKind.make("fx"),
+        instanceId: "fx",
+        status: "warning",
+        models,
+      }),
+      subProviders: [
+        { name: "Gateway" },
+        { name: "Codex", unavailableReason: "Signed out. Run `fx login codex` on this machine." },
+      ],
+    });
+    const ready = (snapshot: ServerProvider) =>
+      deriveProviderInstanceEntries([snapshot]).map(isProviderInstancePickerReady)[0];
 
-  it("keeps the initial reactive config state distinct from an empty catalogue", () => {
     expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: false,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("loading");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unconfigured");
+      ready(fx([model("default", false, true), backendModel("openai/gpt-5.5", "Gateway")])),
+    ).toBe(true);
+    expect(ready(fx([model("default", false, true), backendModel("gpt-5.5", "Codex")]))).toBe(
+      false,
+    );
   });
 
-  it("distinguishes a selected provider from configured but unusable providers", () => {
+  it("keeps offering the models a refresh retained when the catalog did not arrive in time", () => {
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({
+          provider: ProviderDriverKind.make("codex"),
+          instanceId: "codex",
+          status: "warning",
+          models: [model("gpt-5.5", false, true), model("gpt-5.4")],
+        }),
+        message: "Codex did not return its model catalog in time.",
+      },
+    ]);
+
+    expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
     expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: entry,
-      }),
-    ).toBe("ready");
-    expect(
-      resolveProviderCatalogAvailability({
-        catalogLoaded: true,
-        entries: entry ? [entry] : [],
-        selectedEntry: undefined,
-      }),
-    ).toBe("unavailable");
+      entry && isProviderInstancePickerReady({ ...entry, models: [model("bailian", true)] }),
+    ).toBe(true);
+    expect(entry && isProviderInstancePickerReady({ ...entry, models: [] })).toBe(false);
+  });
+
+  it("offers a failed provider's models only while the server marks them retained", () => {
+    const failed = provider({
+      provider: ProviderDriverKind.make("codex"),
+      instanceId: "codex",
+      status: "error",
+      models: [model("gpt-5.5", false, true)],
+    });
+    const ready = (snapshot: ServerProvider) =>
+      deriveProviderInstanceEntries([snapshot]).map(isProviderInstancePickerReady)[0];
+
+    expect(ready({ ...failed, modelsRetained: true })).toBe(true);
+    expect(ready(failed)).toBe(false);
+    expect(ready({ ...failed, status: "warning", auth: { status: "unknown" } })).toBe(false);
   });
 });
 
@@ -292,6 +312,32 @@ describe("deriveProviderEntriesByEnvironment", () => {
     const personal = entries?.get("codex");
 
     expect(personal && shouldShowInstanceBadge(personal, entries?.values() ?? [])).toBe(true);
+  });
+});
+
+describe("brandProviderInstanceEntries", () => {
+  it("keeps an instance a project turns on as a sibling for the instance badge", () => {
+    const codex = ProviderDriverKind.make("codex");
+    const settings = {
+      providerInstances: {
+        [ProviderInstanceId.make("codex_work")]: { driver: codex, enabled: false },
+      },
+      projectSettingsOverrides: {
+        [ProjectId.make("project-work")]: {
+          providerInstances: { [ProviderInstanceId.make("codex_work")]: { enabled: true } },
+        },
+      },
+    };
+    const entries = brandProviderInstanceEntries(
+      deriveProviderInstanceEntries([
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: codex, instanceId: "codex_work" }),
+      ]),
+      settings,
+    );
+    const personal = entries.find((entry) => entry.instanceId === "codex");
+
+    expect(personal && shouldShowInstanceBadge(personal, entries)).toBe(true);
   });
 });
 

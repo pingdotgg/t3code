@@ -11,8 +11,8 @@ provided alongside this playbook. Everything machine-specific lives there, not h
 
 ## 1. Ask what went wrong
 
-Your first message to the user: ask them to describe what went wrong, in their own
-words. Ask them to paste screenshots directly into this session if they have any.
+Unless the user already described it, your first message asks what went wrong, in
+their own words. Ask them to paste screenshots directly into this session if they have any.
 Ask follow-up questions when the description is vague. Good repro steps are the most
 valuable thing you can extract from this conversation.
 
@@ -125,10 +125,27 @@ of `main` for that work, never the tag-pinned diagnosis clone.
 - Show the user the complete final issue text and get an explicit yes before
   posting. Never post without it.
 - Note at the end of the issue which model and agent produced it.
-- If `gh` is not authenticated, offer `gh auth login`, or build a prefilled
-  https://github.com/pingdotgg/t3code/issues/new URL with title and body query
-  parameters; print the URL, and open it in their browser only after they
-  approve.
+- If `gh` is authenticated to github.com, post through the "Triage report"
+  issue template. It applies `via-triage` for every reporter, while
+  `gh issue create --label` drops the label without triage permission. Write
+  the approved title and body to files, the title without a trailing newline,
+  so the shell never parses their text. Then run:
+
+      gh api --hostname github.com graphql -f repo="$(gh api --hostname github.com repos/pingdotgg/t3code --jq .node_id)" -f template="Triage report" -F title=@<title-file> -F body=@<body-file> -f query='mutation($repo:ID!,$template:String!,$title:String!,$body:String!){createIssue(input:{repositoryId:$repo,issueTemplate:$template,title:$title,body:$body}){issue{url labels(first:20){nodes{name}}}}}'
+
+  Report the issue URL and whether its labels include `via-triage`. Never file a
+  second issue to repair a label. If you cannot tell whether the issue was
+  created, check the user's recent issues before you retry.
+
+- If `gh` is not authenticated, or the request was rejected and created
+  nothing, build a prefilled
+  https://github.com/pingdotgg/t3code/issues/new?template=via-triage.yml URL.
+  The form applies the label whoever submits it. Add `title` plus one
+  URL-encoded query parameter per form field id: `what-happened`, `diagnosis`,
+  `steps`, `version`, `environment`, `evidence`, `related`, `workaround` and
+  `agent`. Keep the full encoded URL below 6,000 characters by shortening any
+  fields as needed. Give the user any omitted text to paste into the form before
+  submitting. Print the URL, and open it in their browser only after they approve.
 - If the user pasted screenshots, remind them to drag the images into the issue
   after it is created; they cannot be attached from here.
 

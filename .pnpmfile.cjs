@@ -1,20 +1,39 @@
-// Windows WSL dev mode runs the server under Linux from the same node_modules
-// as the Windows client, so Windows installs also need Linux x64 glibc native
-// modules. Other platforms install only their own binaries; setting this
-// everywhere added ~2.2 GB of foreign binaries to every macOS install.
-// Release scripts stage their own installs with explicit architectures.
+const fs = require("node:fs");
+const path = require("node:path");
+
+// Our forks ship as tarballs in apps/mobile/deps and apps/web/deps. A pnpm patch on one is a
+// second source of truth that the next tarball silently drops, so changes go to the fork (see
+// the README beside each tarball).
+const FORK_APPS = ["apps/mobile", "apps/web"];
+
+function forkTarballPatches(patchedDependencies) {
+  if (!patchedDependencies) return [];
+  const forks = FORK_APPS.flatMap((app) => {
+    const manifestPath = path.join(__dirname, app, "package.json");
+    // Release staging installs a partial workspace without every app.
+    if (!fs.existsSync(manifestPath)) return [];
+    const { dependencies = {} } = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+    return Object.keys(dependencies).filter((name) =>
+      String(dependencies[name]).startsWith("file:deps/"),
+    );
+  });
+  return Object.keys(patchedDependencies).filter((key) =>
+    forks.some((name) => key === name || key.startsWith(`${name}@`)),
+  );
+}
+
 module.exports = {
   hooks: {
-    // `typescript` is @tsc-rs/typescript (the catalog entry). Its npm version (0.8.x) is outside
-    // vite-plus-core's typescript peer range, so pnpm gave the vite-plus that @effect/vitest
-    // imports apps/marketing's typescript@6.0.3 instead, and tests loaded a second vitest.
-    readPackage(pkg) {
-      if (pkg.name === "@voidzero-dev/vite-plus-core" && pkg.peerDependencies?.typescript) {
-        pkg.peerDependencies.typescript = "*";
-      }
-      return pkg;
-    },
     updateConfig(config) {
+      const forkPatches = forkTarballPatches(config.patchedDependencies);
+      if (forkPatches.length > 0) {
+        throw new Error(
+          `pnpm-workspace.yaml patches ${forkPatches.join(", ")}, which ships as a fork tarball in ` +
+            "an app's deps directory. Change the fork and replace the tarball instead (deps/README.md).",
+        );
+      }
+      // Windows installs need Linux x64 glibc binaries because WSL shares node_modules.
+      // Keep other platforms native; release scripts set their own architectures.
       // oxlint-disable-next-line t3code/no-global-process-runtime -- pnpm loads this file before any Effect runtime exists.
       if (process.platform !== "win32") return config;
       return {

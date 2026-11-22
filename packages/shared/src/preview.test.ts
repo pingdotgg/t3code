@@ -32,10 +32,10 @@ describe("previewPdfAssetUrl", () => {
   });
 
   it.each(["another-environment.test", "127.0.0.2.example.com", "128.0.0.1"])(
-    "preserves matching PDF URLs on unrelated host %s",
+    "leaves a matching PDF path on unrelated host %s on its browser session",
     (host) => {
       const source = `https://${host}/api/assets/token/guide.pdf?revision=2#page=3`;
-      expect(previewPdfAssetUrl(source, "https://environment.test")).toBe(source);
+      expect(previewPdfAssetUrl(source, "https://environment.test")).toBeNull();
     },
   );
 
@@ -149,6 +149,24 @@ describe("resolveSearchUrlTemplate", () => {
 });
 
 describe("normalizePreviewUrl", () => {
+  it.each([
+    ["127.0.0.2:3000/path", "http://127.0.0.2:3000/path"],
+    ["127.255.255.254:443/path", "http://127.255.255.254:443/path"],
+    ["0x7f.0.0.2:3000", "http://127.0.0.2:3000/"],
+    ["127.0.0.2.example.com:3000", "https://127.0.0.2.example.com:3000/"],
+    ["https://127.0.0.2:80/path", "https://127.0.0.2:80/path"],
+  ])("infers the scheme for loopback-looking %s", (input, expected) => {
+    expect(normalizePreviewUrl(input)).toBe(expected);
+  });
+
+  it("tells agents how to open a blank tab and which URLs are accepted", () => {
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(
+      /preview_open, omit url when creating a new tab[^.]*blank tab/i,
+    );
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/http\(s\)/i);
+    expect(() => normalizePreviewUrl("about:blank")).toThrow(/schemeless host/i);
+  });
+
   it("rejects unparseable input without retaining credentials or tokens", () => {
     const rawUrl = "https://user:password@example.com:bad/path?access_token=secret#fragment";
     try {
@@ -170,5 +188,19 @@ describe("normalizePreviewUrl", () => {
         /user|password|access_token|secret|fragment/,
       );
     }
+  });
+
+  it("reports explicit non-web schemes instead of reading them as a host", () => {
+    for (const [rawUrl, protocol] of [
+      ["about:blank", "about:"],
+      ["mailto:alice@example.com", "mailto:"],
+      ["javascript:alert(1)", "javascript:"],
+    ] as const) {
+      expect(() => normalizePreviewUrl(rawUrl)).toThrow(
+        expect.objectContaining({ reason: "unsupported-protocol", protocol }),
+      );
+    }
+    expect(normalizePreviewUrl("localhost:3000")).toBe("http://localhost:3000/");
+    expect(normalizePreviewUrl("devbox:8080")).toBe("https://devbox:8080/");
   });
 });

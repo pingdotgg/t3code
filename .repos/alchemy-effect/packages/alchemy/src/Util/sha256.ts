@@ -10,8 +10,7 @@ export const sha256 = (input: Input) =>
     return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
   });
 
-export const sha256Object = (input: object) =>
-  sha256(JSON.stringify(stableValue(input)));
+export const sha256Object = (input: object) => sha256(JSON.stringify(stableValue(input)));
 
 /**
  * Stable sha256 hex digest of a resolved Task input. Unlike
@@ -29,8 +28,5 @@ const toArrayBuffer = (input: Input) => {
   if (typeof input === "string") {
     return new TextEncoder().encode(input);
   }
-  return input.buffer.slice(
-    input.byteOffset,
-    input.byteOffset + input.byteLength,
-  ) as ArrayBuffer;
+  return input.buffer.slice(input.byteOffset, input.byteOffset + input.byteLength) as ArrayBuffer;
 };

@@ -18,7 +18,7 @@ function recordModelOptionsInState(
   return {
     ...state,
     [instanceId]: {
-      ...(state[instanceId] ?? {}),
+      ...state[instanceId],
       [model]: options,
     },
   };
@@ -48,7 +48,7 @@ export function rememberModelOptions(
   }
 }
 
-export function rememberedModelOptions(
+function rememberedModelOptions(
   instanceId: string,
   model: string,
 ): ReadonlyArray<ProviderOptionSelection> | undefined {

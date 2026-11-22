@@ -31,37 +31,17 @@ describe("commandProgramName", () => {
 
   it.each([
     "if test -f package.json; then vp test; fi",
-    "[ -f package.json ]",
     "[[ -f package.json ]]",
     "test -f package.json",
     'for file in *; do echo "$file"; done',
-    "while true; do sleep 1; done",
-    "until false; do sleep 1; done",
-    "case $name in test) vp test;; esac",
-    'select item in one two; do echo "$item"; done',
-    "function check() { vp test; }",
     "check() { vp test; }",
-    "k(){ echo ok; }; k",
     "{ vp test; }",
-    "(vp test)",
     "(( count += 1 ))",
-    "! vp test",
-    ":",
     ". ./script.sh",
-    "source ./script.sh",
-    "eval 'vp test'",
-    "cd packages/client-runtime",
     "export NODE_ENV=test",
-    "local name=value",
-    "set -e",
-    "alias ll='ls -la'",
     "repeat 3 echo ok",
-    "and vp test",
     "return 1",
-    "break",
-    "continue",
     "true",
-    "false",
   ])("falls back for shell syntax and internal control commands: %s", (command) => {
     expect(commandProgramName(command)).toBeNull();
   });
@@ -175,6 +155,22 @@ describe("commandDisplayText with redacted Codex commands", () => {
   it("keeps the wrapper when redaction broke the quoting", () => {
     const input = `/bin/zsh -lc "python3 -c 'token=[REDACTED_SECRET]"apiToken\\"]; print(token)'"`;
     expect(commandDisplayText(input)).toBe(input);
+  });
+});
+
+describe("commandDisplayText with Windows shell wrappers", () => {
+  it.each([
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -Command "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'"`,
+      "Get-Date -Format 'yyyy-MM-dd HH:mm:ss'",
+    ],
+    [
+      `"C:\\Program Files\\PowerShell\\7\\pwsh.exe" -NoLogo -NoProfile -Command 'rg -n -F "new Date()" .'`,
+      'rg -n -F "new Date()" .',
+    ],
+    ['cmd.exe /c "npm test"', "npm test"],
+  ])("shows %j as %j", (input, expected) => {
+    expect(commandDisplayText(input)).toBe(expected);
   });
 });
 

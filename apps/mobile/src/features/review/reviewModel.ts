@@ -1,16 +1,34 @@
 import { parsePatchFiles } from "@pierre/diffs/utils/parsePatchFiles";
 import type { ChangeTypes, FileDiffMetadata } from "@pierre/diffs/types";
 import type { ThreadCheckpointSummary } from "@t3tools/client-runtime/state/thread-checkpoints";
+import { turnChanges, turnHasChanges } from "@t3tools/client-runtime/state/thread-repositories";
 import type { ReviewDiffPreviewSource } from "@t3tools/contracts";
+import { quoteGitPatchPath } from "@t3tools/shared/gitPatchPath";
 import * as Arr from "effect/Array";
 import { pipe } from "effect/Function";
 import * as Order from "effect/Order";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ReviewSectionKind = "turn" | "working-tree" | "branch-range";
+export type ReviewGitSectionKind = Exclude<ReviewSectionKind, "turn">;
+type ReviewGitSource = ReviewDiffPreviewSource & { readonly kind: ReviewGitSectionKind };
 
 const CHANGES_SECTION_ID = "git:branch-range";
-const CHANGES_TITLE = "Changes";
-const UNCOMMITTED_SUBTITLE = "Staged, unstaged, and untracked files";
+const GIT_SECTION_KINDS = ["working-tree", "branch-range"] as const;
+const GIT_PLACEHOLDER_TITLES = {
+  "working-tree": msg("Uncommitted", { $context: "diff section: working tree" }),
+  "branch-range": msg("Changes", { $context: "diff section: branch changes" }),
+} as const satisfies Record<ReviewGitSectionKind, unknown>;
+const UNCOMMITTED_SUBTITLE = msg("Staged, unstaged, and untracked files");
+
+/** A folder of a turn's patch: the thread's own (`relativePath` empty) or a tracked repository. */
+export interface ReviewRepositoryGroup {
+  readonly key: string;
+  readonly name: string;
+  readonly relativePath: string;
+}
 
 export interface ReviewSectionItem {
   readonly id: string;
@@ -21,7 +39,11 @@ export interface ReviewSectionItem {
   readonly isLoading: boolean;
   readonly files?: ReviewDiffPreviewSource["files"];
   readonly truncated?: boolean;
-  readonly source?: ReviewDiffPreviewSource;
+  readonly source?: ReviewGitSource;
+  /** Set when a turn's patch spans more than one folder. */
+  readonly repositoryGroups?: ReadonlyArray<ReviewRepositoryGroup>;
+  /** Repositories the turn changed that have nothing recorded before it to compare with. */
+  readonly unlistedRepositories?: ReadonlyArray<string>;
 }
 
 export interface ReviewRenderableHunkRow {
@@ -52,6 +74,11 @@ export interface ReviewRenderableFile {
   readonly id: string;
   readonly cacheKey: string;
   readonly notice?: string;
+  readonly noticeTone?: "warning";
+  /** The notice row reports taps, as for loading a withheld file's diff. */
+  readonly noticeActionable?: boolean;
+  /** The host left out this file's hunks as too large; it can be loaded on its own. */
+  readonly withheld?: boolean;
   readonly path: string;
   readonly previousPath: string | null;
   readonly changeType: ChangeTypes;
@@ -60,6 +87,13 @@ export interface ReviewRenderableFile {
   readonly languageHint: string | null;
   readonly additionLines: ReadonlyArray<string>;
   readonly deletionLines: ReadonlyArray<string>;
+  // Only populated after validating the entire raw file block against its original hunk count.
+  readonly completePatchSource?: () => {
+    readonly oldContents: string;
+    readonly newContents: string;
+  };
+  readonly noEOFCRAdditions?: boolean;
+  readonly noEOFCRDeletions?: boolean;
   readonly rows: ReadonlyArray<ReviewRenderableRow>;
 }
 
@@ -94,16 +128,45 @@ export type ReviewParsedDiff =
       readonly notice: string | null;
     };
 
-function checkpointTitle(checkpoint: ThreadCheckpointSummary): string {
-  return `Turn ${checkpoint.checkpointTurnCount}`;
+function checkpointTitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+  return resolve(msg("Turn {count}", { count: checkpoint.checkpointTurnCount }));
 }
 
-function checkpointSubtitle(checkpoint: ThreadCheckpointSummary): string {
-  const fileCount = checkpoint.files.length;
-  if (checkpoint.status !== "ready") {
-    return `Diff ${checkpoint.status}`;
+function checkpointSubtitle(checkpoint: ThreadCheckpointSummary, resolve: MessageResolver): string {
+  if (checkpoint.status !== "ready" && !turnHasChanges(checkpoint)) {
+    return resolve(msg("Diff {status}", { status: checkpoint.status }));
   }
-  return `${fileCount} file${fileCount === 1 ? "" : "s"} changed`;
+  const { repositories, totals } = turnChanges(checkpoint);
+  const files = resolve(
+    msg("{count, plural, one {{count} file changed} other {{count} files changed}}", {
+      count: totals.count,
+    }),
+  );
+  return repositories.length === 0
+    ? files
+    : `${files} · ${repositories.map((repository) => repository.name).join(", ")}`;
+}
+
+function checkpointRepositoryGroups(
+  checkpoint: ThreadCheckpointSummary,
+  rootName: string,
+): ReadonlyArray<ReviewRepositoryGroup> {
+  const { repositories, rootFiles } = turnChanges(checkpoint);
+  const groups = [
+    ...(rootFiles.length === 0 ? [] : [{ key: ".", name: rootName, relativePath: "" }]),
+    ...repositories.flatMap((repository) =>
+      repository.files.length === 0 || !repository.relativePath || repository.relativePath === "."
+        ? []
+        : [
+            {
+              key: repository.repositoryPath,
+              name: repository.name,
+              relativePath: repository.relativePath,
+            },
+          ],
+    ),
+  ];
+  return groups.length > 1 ? groups : [];
 }
 
 function compareCheckpointTurnCountDescending(
@@ -121,14 +184,14 @@ const readyCheckpointOrder = Order.make<ThreadCheckpointSummary>(
   compareCheckpointTurnCountDescending,
 );
 
-function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
+function gitSubtitle(section: ReviewDiffPreviewSource, resolve: MessageResolver): string | null {
   if (section.kind === "working-tree") {
-    return UNCOMMITTED_SUBTITLE;
+    return resolve(UNCOMMITTED_SUBTITLE);
   }
   if (section.baseRef) {
     return `${section.baseRef} ... ${section.headRef ?? "HEAD"}`;
   }
-  return "Base branch unavailable";
+  return resolve(msg("Base branch unavailable"));
 }
 
 function stripTrailingNewline(value: string): string {
@@ -139,13 +202,13 @@ function splitTruncationMarker(diff: string): {
   readonly text: string;
   readonly truncated: boolean;
 } {
-  const trimmed = diff.trimEnd();
-  if (!trimmed.endsWith("[truncated]")) {
-    return { text: trimmed, truncated: false };
+  const marker = /(?:(?:\r?\n){1,2}|^)\[truncated\]\s*$/.exec(diff);
+  if (!marker) {
+    return { text: diff, truncated: false };
   }
 
   return {
-    text: trimmed.replace(/\n*\[truncated\]\s*$/, "").trimEnd(),
+    text: diff.slice(0, marker.index),
     truncated: true,
   };
 }
@@ -219,14 +282,22 @@ function fnv1a32(input: string, seed: number, multiplier: number): number {
 }
 
 function buildPatchCacheKey(patch: string, scope: string): string {
-  const normalizedPatch = patch.trim();
-  const primary = fnv1a32(normalizedPatch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
-  const secondary = fnv1a32(
-    normalizedPatch,
-    SECONDARY_HASH_SEED,
-    SECONDARY_HASH_MULTIPLIER,
-  ).toString(36);
-  return `${scope}:${normalizedPatch.length}:${primary}:${secondary}`;
+  const primary = fnv1a32(patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32).toString(36);
+  const secondary = fnv1a32(patch, SECONDARY_HASH_SEED, SECONDARY_HASH_MULTIPLIER).toString(36);
+  return `${scope}:${patch.length}:${primary}:${secondary}`;
+}
+
+// Re-parsing an unchanged page must preserve selection/collapse state. Intern only
+// its cache key (never patch contents), keeping scoped Pierre keys off every UI row.
+const reviewPatchIds = new Map<string, string>();
+
+function getReviewPatchId(cacheKey: string): string {
+  let id = reviewPatchIds.get(cacheKey);
+  if (id === undefined) {
+    id = `p${reviewPatchIds.size.toString(36)}`;
+    reviewPatchIds.set(cacheKey, id);
+  }
+  return id;
 }
 
 function getFileExtension(path: string): string | null {
@@ -245,14 +316,17 @@ function countReviewRenderableCharacters(file: ReviewRenderableFile): number {
   );
 }
 
-export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFilePreviewState {
+export function getReviewFilePreviewState(
+  file: ReviewRenderableFile,
+  resolve: MessageResolver = m,
+): ReviewFilePreviewState {
   const extension = getFileExtension(file.path);
   if (extension && NON_TEXT_FILE_EXTENSIONS.has(extension)) {
     return {
       kind: "suppressed",
       reason: "non-text",
-      title: "Non-text file",
-      message: "Diff preview is not available for this file format.",
+      title: resolve(msg("Non-text file")),
+      message: resolve(msg("Diff preview is not available for this file format.")),
       actionLabel: null,
     };
   }
@@ -263,9 +337,9 @@ export function getReviewFilePreviewState(file: ReviewRenderableFile): ReviewFil
     return {
       kind: "suppressed",
       reason: "large",
-      title: "Large diff",
-      message: "Large diffs are not rendered by default.",
-      actionLabel: "Load diff",
+      title: resolve(msg("Large diff")),
+      message: resolve(msg("Large diffs are not rendered by default.")),
+      actionLabel: resolve(msg("Load diff")),
     };
   }
 
@@ -276,14 +350,17 @@ function fallbackHunkHeader(hunk: FileDiffMetadata["hunks"][number]): string {
   return `@@ -${hunk.deletionStart},${hunk.deletionCount} +${hunk.additionStart},${hunk.additionCount} @@`;
 }
 
-function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRenderableRow> {
+function buildRenderableRows(
+  file: FileDiffMetadata,
+  fileId: string,
+): ReadonlyArray<ReviewRenderableRow> {
   const rows: ReviewRenderableRow[] = [];
   let rowIndex = 0;
 
   file.hunks.forEach((hunk, hunkIndex) => {
     rows.push({
       kind: "hunk",
-      id: `${file.cacheKey ?? file.name}:hunk:${hunkIndex}`,
+      id: `${fileId}:hunk:${hunkIndex}`,
       header: fallbackHunkHeader(hunk),
       context: hunk.hunkContext ? stripTrailingNewline(hunk.hunkContext) : null,
     });
@@ -298,7 +375,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
         for (let index = 0; index < segment.lines; index += 1) {
           rows.push({
             kind: "line",
-            id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+            id: `${fileId}:row:${rowIndex++}`,
             change: "context",
             oldLineNumber: deletionLineNumber,
             newLineNumber: additionLineNumber,
@@ -326,7 +403,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
       for (let index = 0; index < segment.deletions; index += 1) {
         rows.push({
           kind: "line",
-          id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+          id: `${fileId}:row:${rowIndex++}`,
           change: "delete",
           oldLineNumber: deletionLineNumber,
           newLineNumber: null,
@@ -348,7 +425,7 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
       for (let index = 0; index < segment.additions; index += 1) {
         rows.push({
           kind: "line",
-          id: `${file.cacheKey ?? file.name}:row:${rowIndex++}`,
+          id: `${fileId}:row:${rowIndex++}`,
           change: "add",
           oldLineNumber: null,
           newLineNumber: additionLineNumber,
@@ -372,7 +449,74 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
   return rows;
 }
 
-function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
+function completePatchSource(file: FileDiffMetadata, rawPatch: string | null | undefined) {
+  if (!rawPatch || (file.type !== "new" && file.type !== "deleted") || file.hunks.length !== 1) {
+    return undefined;
+  }
+  const added = file.type === "new";
+  const a = quoteGitPatchPath(`a/${file.name}`);
+  const b = quoteGitPatchPath(`b/${file.name}`);
+  const lines = rawPatch.split("\n");
+  if (lines.pop() !== "" || rawPatch.includes("\0")) return undefined;
+  let index = 0;
+  if (lines[index++] !== `diff --git ${a} ${b}`) return undefined;
+  if (
+    !new RegExp(`^${added ? "new" : "deleted"} file mode 100(644|755)$`).test(lines[index++] ?? "")
+  ) {
+    return undefined;
+  }
+  if (lines[index]?.startsWith("index ")) {
+    if (!/^index [0-9a-f]+\.\.[0-9a-f]+(?: 100(?:644|755))?$/.test(lines[index++] ?? "")) {
+      return undefined;
+    }
+  }
+  if (lines[index++] !== `--- ${added ? "/dev/null" : a}`) return undefined;
+  if (lines[index++] !== `+++ ${added ? b : "/dev/null"}`) return undefined;
+  // Pierre repairs both underfull and overfull hunks. Its resulting counts cannot
+  // prove that patch lines cover the whole file; read the original header instead.
+  const header = lines[index++] ?? "";
+  // GitCafe's structured hunks can start the empty side at 1 instead of git's 0.
+  // Its explicit zero count still proves that side contributes no source lines.
+  const match = (added ? /^@@ -[01],0 \+1(?:,(\d+))? @@$/ : /^@@ -1(?:,(\d+))? \+[01],0 @@$/).exec(
+    header,
+  );
+  if (!match) return undefined;
+  const count = Number(match[1] ?? 1);
+  if (!Number.isSafeInteger(count) || count <= 0) return undefined;
+  const hunk = file.hunks[0]!;
+  if (
+    hunk.hunkSpecs !== `${header}\n` ||
+    (added ? hunk.additionCount : hunk.deletionCount) !== count ||
+    (added ? file.additionLines : file.deletionLines).length !== count ||
+    (added ? file.deletionLines : file.additionLines).length !== 0
+  )
+    return undefined;
+  const bodyStart = lines.slice(0, index).reduce((length, line) => length + line.length + 1, 0);
+  const prefix = added ? "+" : "-";
+  for (let line = 0; line < count; line++) {
+    if (!lines[index++]?.startsWith(prefix)) return undefined;
+  }
+  let bodyEnd = rawPatch.length;
+  if (lines[index] === "\\ No newline at end of file") {
+    // Only the patch's LF is synthetic, including when the source ends in a bare CR.
+    bodyEnd -= "\\ No newline at end of file\n".length + 1;
+    index++;
+  }
+  if (index !== lines.length) return undefined;
+  // Keep reconstruction lazy so only requested source enters the bounded source cache.
+  return () => {
+    const contents = rawPatch.slice(bodyStart + 1, bodyEnd).replace(/\n[+-]/g, "\n");
+    return added
+      ? { oldContents: "", newContents: contents }
+      : { oldContents: contents, newContents: "" };
+  };
+}
+
+function mapRenderableFile(
+  file: FileDiffMetadata,
+  id: string,
+  rawPatch?: string | null,
+): ReviewRenderableFile {
   const path = file.name || file.prevName || "";
   const previousPath = file.prevName || null;
   const additions = file.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
@@ -380,7 +524,7 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
   const cacheKey = file.cacheKey ?? `${previousPath ?? "none"}:${path}:${file.type}`;
 
   return {
-    id: cacheKey,
+    id,
     cacheKey,
     path,
     previousPath,
@@ -390,7 +534,10 @@ function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
     languageHint: file.lang ?? null,
     additionLines: file.additionLines,
     deletionLines: file.deletionLines,
-    rows: buildRenderableRows(file),
+    completePatchSource: completePatchSource(file, rawPatch),
+    noEOFCRAdditions: file.hunks.some((hunk) => hunk.noEOFCRAdditions),
+    noEOFCRDeletions: file.hunks.some((hunk) => hunk.noEOFCRDeletions),
+    rows: buildRenderableRows(file, id),
   };
 }
 
@@ -405,8 +552,21 @@ export function getReadyReviewCheckpoints(
 ): ReadonlyArray<ThreadCheckpointSummary> {
   return pipe(
     checkpoints,
-    Arr.filter((checkpoint) => checkpoint.status === "ready"),
+    // A plain folder holding repositories never has a ready checkpoint of its own.
+    Arr.filter((checkpoint) => checkpoint.status === "ready" || turnHasChanges(checkpoint)),
     Arr.sort(readyCheckpointOrder),
+  );
+}
+
+export function reviewTurnDiffsBySectionId(
+  checkpoints: ReadonlyArray<Pick<ThreadCheckpointSummary, "checkpointTurnCount">>,
+  diffByTurnCount: Readonly<Record<number, string | undefined>>,
+): Readonly<Record<string, string | undefined>> {
+  return Object.fromEntries(
+    checkpoints.map((checkpoint) => [
+      getReviewSectionIdForCheckpoint(checkpoint),
+      diffByTurnCount[checkpoint.checkpointTurnCount],
+    ]),
   );
 }
 
@@ -414,51 +574,67 @@ export function buildReviewSectionItems(input: {
   readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
   readonly gitSections: ReadonlyArray<ReviewDiffPreviewSource>;
   readonly turnDiffById: Readonly<Record<string, string | undefined>>;
-  readonly loadingTurnIds: Readonly<Record<string, boolean | undefined>>;
-  readonly loadingGitSections: boolean;
+  readonly gitSectionStates: Readonly<Record<ReviewGitSectionKind, "loading" | "failed" | null>>;
+  /** Names the thread folder's own files beside its repositories. */
+  readonly rootName?: string;
+  readonly resolve?: MessageResolver;
 }): ReadonlyArray<ReviewSectionItem> {
+  const resolve = input.resolve ?? m;
   const turnItems = getReadyReviewCheckpoints(input.checkpoints).map<ReviewSectionItem>(
     (checkpoint) => {
       const id = getReviewSectionIdForCheckpoint(checkpoint);
+      const repositoryGroups = checkpointRepositoryGroups(checkpoint, input.rootName ?? "Project");
+      const unlistedRepositories = (checkpoint.repositories ?? []).flatMap((repository) =>
+        repository.baselineMissing ? [repository.name] : [],
+      );
       return {
         id,
         kind: "turn",
-        title: checkpointTitle(checkpoint),
-        subtitle: checkpointSubtitle(checkpoint),
+        title: checkpointTitle(checkpoint, resolve),
+        subtitle: checkpointSubtitle(checkpoint, resolve),
         diff: input.turnDiffById[id] ?? null,
-        isLoading: input.loadingTurnIds[id] === true,
+        isLoading: false,
+        ...(repositoryGroups.length === 0 ? {} : { repositoryGroups }),
+        ...(unlistedRepositories.length === 0 ? {} : { unlistedRepositories }),
       };
     },
   );
 
-  const gitItems = input.gitSections.map<ReviewSectionItem>((section) => ({
-    id: `git:${section.kind}`,
-    kind: section.kind,
-    title: section.title,
-    subtitle: gitSubtitle(section),
-    diff: section.diff,
-    source: section,
-    ...(section.files ? { files: section.files } : {}),
-    truncated: section.truncated,
-    isLoading: false,
-  }));
-  const hasChangesItem = gitItems.some((item) => item.id === CHANGES_SECTION_ID);
-  const visibleGitItems =
-    input.loadingGitSections && !hasChangesItem
-      ? [
+  const gitItems = GIT_SECTION_KINDS.flatMap<ReviewSectionItem>((kind) => {
+    const section = input.gitSections.find(
+      (candidate): candidate is ReviewGitSource => candidate.kind === kind,
+    );
+    if (section) {
+      return [
+        {
+          id: `git:${kind}`,
+          kind,
+          title: section.title,
+          subtitle: gitSubtitle(section, resolve),
+          diff: section.diff,
+          source: section,
+          ...(section.files ? { files: section.files } : {}),
+          truncated: section.truncated,
+          isLoading: false,
+        },
+      ];
+    }
+    const state = input.gitSectionStates[kind];
+    return state === null
+      ? []
+      : [
           {
-            id: CHANGES_SECTION_ID,
-            kind: "branch-range",
-            title: CHANGES_TITLE,
+            id: `git:${kind}`,
+            kind,
+            title: resolve(GIT_PLACEHOLDER_TITLES[kind]),
             subtitle: null,
             diff: null,
-            isLoading: true,
-          } satisfies ReviewSectionItem,
-          ...gitItems,
-        ]
-      : gitItems;
+            isLoading: state === "loading",
+          },
+        ];
+  });
 
-  return [...turnItems, ...visibleGitItems];
+  return [...turnItems, ...gitItems];
 }
 
 export function getDefaultReviewSectionId(
@@ -467,32 +643,63 @@ export function getDefaultReviewSectionId(
   return (sections.find((section) => section.id === CHANGES_SECTION_ID) ?? sections[0])?.id ?? null;
 }
 
+/**
+ * The store holds only the user's pick. While that section is missing (still loading, or the
+ * working tree went clean) the default shows, and the pick returns once the section does: the
+ * thread-feed entry relies on this, as it selects a section before the sections have loaded.
+ */
+export function resolveReviewSelectedSectionId(
+  sections: ReadonlyArray<ReviewSectionItem>,
+  storedSectionId: string | null,
+): string | null {
+  return storedSectionId !== null && sections.some((section) => section.id === storedSectionId)
+    ? storedSectionId
+    : getDefaultReviewSectionId(sections);
+}
+
 export function buildReviewParsedDiff(
   diff: string | null | undefined,
   cacheScope: string,
+  resolve: MessageResolver = m,
 ): ReviewParsedDiff {
-  const normalized = diff?.trim();
-  if (!normalized) {
+  if (!diff?.trim()) {
     return { kind: "empty" };
   }
 
-  const { text, truncated } = splitTruncationMarker(normalized);
+  const { text, truncated } = splitTruncationMarker(diff);
   if (text.length === 0) {
     return { kind: "empty" };
   }
 
   const notice = truncated
-    ? "Diff output hit the server size cap. Showing the available excerpt."
+    ? resolve(msg("Diff output hit the server size cap. Showing the available excerpt."))
     : null;
 
   try {
+    const cacheKey = buildPatchCacheKey(text, cacheScope);
+    const patchId = getReviewPatchId(cacheKey);
     const parsedPatches = runDiffParserSilently(() =>
-      parsePatchFiles(text, buildPatchCacheKey(text, cacheScope)),
+      parsePatchFiles(text, { cacheKeyPrefix: cacheKey }),
     );
+    const rawFiles = new Map<string, string | null>();
+    if (!truncated) {
+      for (const rawFile of text.split(/(?=^diff --git )/m)) {
+        const header = rawFile.slice(0, rawFile.indexOf("\n"));
+        rawFiles.set(header, rawFiles.has(header) ? null : rawFile);
+      }
+    }
     const files = pipe(
       parsedPatches,
       Arr.flatMap((patch) => patch.files),
-      Arr.map(mapRenderableFile),
+      Arr.map((file, index) =>
+        mapRenderableFile(
+          file,
+          `${patchId}:f${index.toString(36)}`,
+          rawFiles.get(
+            `diff --git ${quoteGitPatchPath(`a/${file.name}`)} ${quoteGitPatchPath(`b/${file.name}`)}`,
+          ),
+        ),
+      ),
     );
 
     if (files.length === 0) {
@@ -500,8 +707,12 @@ export function buildReviewParsedDiff(
         kind: "raw",
         text,
         reason: truncated
-          ? "Diff was truncated before it could be parsed completely. Showing the raw excerpt."
-          : "Unsupported diff format. Showing raw patch.",
+          ? resolve(
+              msg(
+                "Diff was truncated before it could be parsed completely. Showing the raw excerpt.",
+              ),
+            )
+          : resolve(msg("Unsupported diff format. Showing raw patch.")),
         notice,
       };
     }
@@ -519,8 +730,12 @@ export function buildReviewParsedDiff(
       kind: "raw",
       text,
       reason: truncated
-        ? "Diff was truncated before it could be parsed completely. Showing the raw excerpt."
-        : "Failed to parse patch. Showing raw patch.",
+        ? resolve(
+            msg(
+              "Diff was truncated before it could be parsed completely. Showing the raw excerpt.",
+            ),
+          )
+        : resolve(msg("Failed to parse patch. Showing raw patch.")),
       notice,
     };
   }
@@ -529,10 +744,17 @@ export function buildReviewParsedDiff(
 export function applyReviewDiffMetadata(
   previewDiff: ReviewParsedDiff,
   selectedSection: Pick<ReviewSectionItem, "files" | "truncated"> | null,
+  resolve: MessageResolver = m,
 ): ReviewParsedDiff {
   if (previewDiff.kind === "empty") return previewDiff;
   const notice = selectedSection?.truncated
-    ? `This preview exceeds the size limit. Changes shown are incomplete.${selectedSection.files ? " Counts include all changes." : ""}`
+    ? selectedSection.files
+      ? resolve(
+          msg(
+            "This preview exceeds the size limit. Changes shown are incomplete. Counts include all changes.",
+          ),
+        )
+      : resolve(msg("This preview exceeds the size limit. Changes shown are incomplete."))
     : previewDiff.notice;
   if (previewDiff.kind !== "files" || !selectedSection?.files) return { ...previewDiff, notice };
   const totals = selectedSection.files.reduce(
@@ -548,4 +770,32 @@ export function applyReviewDiffMetadata(
     return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
   });
   return { ...previewDiff, ...totals, files, fileCount: selectedSection.files.length, notice };
+}
+
+/**
+ * The files of one folder of a turn's patch. A file belongs to the deepest folder holding it,
+ * and to the thread's own (the empty folder) when no repository does.
+ */
+export function filterReviewParsedDiffToFolder(
+  parsedDiff: ReviewParsedDiff,
+  folder: string,
+  folders: ReadonlyArray<string>,
+): ReviewParsedDiff {
+  if (parsedDiff.kind !== "files") return parsedDiff;
+  const files = parsedDiff.files.filter((file) => {
+    let owner = "";
+    for (const candidate of folders) {
+      if (candidate.length > owner.length && file.path.startsWith(`${candidate}/`)) {
+        owner = candidate;
+      }
+    }
+    return owner === folder;
+  });
+  return {
+    ...parsedDiff,
+    files,
+    fileCount: files.length,
+    additions: files.reduce((total, file) => total + file.additions, 0),
+    deletions: files.reduce((total, file) => total + file.deletions, 0),
+  };
 }

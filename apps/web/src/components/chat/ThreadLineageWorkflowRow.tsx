@@ -1,19 +1,25 @@
-import type {
-  SubagentWorkflowGroup,
-  RuntimeSubagent,
+import {
+  workflowMemberModelSelection,
+  type SubagentWorkflowGroup,
+  type RuntimeSubagent,
 } from "@t3tools/client-runtime/state/subagentRuntime";
+import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
+import { useSideThreadTrigger } from "../../hooks/useSideThreadTrigger";
 import type { ProviderDriverKind, ProviderInstanceId, ServerProvider } from "@t3tools/contracts";
-import { ChevronDownIcon, LoaderCircleIcon, SquareIcon } from "lucide-react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { ChevronDownIcon, SquareIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 
 import { AgentElapsed } from "./AgentElapsed";
 import { SubagentTooltipContent } from "./SubagentTooltipContent";
 import { ThreadHoverCardPopup } from "../ThreadHoverCard";
 import { ThreadRelationshipIcon } from "./ThreadRelationshipIcon";
+import type { ProviderInstanceEntry } from "../../providerInstances";
 import { cn } from "../../lib/utils";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { CollapsibleSectionHeader, SectionHeaderStatus } from "../ui/collapsible-section-header";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { Spinner } from "../ui/spinner";
 import {
   THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS,
   THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS,
@@ -35,6 +41,14 @@ function phaseElapsed(phase: SubagentWorkflowGroup["phases"][number]) {
   };
 }
 
+const PHASE_STATUS_LABEL = {
+  running: msg("running", { $context: "workflow phase status" }),
+  failed: msg("failed", { $context: "workflow phase status" }),
+  stopped: msg("stopped", { $context: "workflow phase status" }),
+  done: msg("done", { $context: "workflow phase status" }),
+  "not started": msg("not started", { $context: "workflow phase status" }),
+} satisfies Record<ReturnType<typeof phaseStatusLabel>, string>;
+
 function phaseStatusLabel(phase: SubagentWorkflowGroup["phases"][number]) {
   if (phase.state === "running") return "running";
   if (phase.members.some((member) => member.status === "failed")) return "failed";
@@ -51,20 +65,22 @@ function WorkflowMemberRow({
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpen,
-  isThreadAvailable,
 }: {
   member: RuntimeSubagent;
   providerInstanceId: ProviderInstanceId;
   provider: ServerProvider | undefined;
   providers: ReadonlyArray<ServerProvider> | undefined;
+  providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   driver: ProviderDriverKind | undefined;
-  onOpen: (threadId: string) => void;
-  isThreadAvailable: (threadId: string) => boolean;
+  onOpen: (threadId: string, intent: SideThreadOpenIntent) => void;
 }) {
+  const gt = useGT();
+  const trigger = useSideThreadTrigger();
   const threadId = member.childThreadId;
-  const canOpen = threadId !== null && isThreadAvailable(threadId);
+  const canOpen = threadId !== null;
   return (
     <li>
       <Tooltip>
@@ -73,13 +89,18 @@ function WorkflowMemberRow({
           render={
             <ThreadDetailsControl
               part="row"
-              aria-label={`Open ${member.title} chat`}
+              aria-label={gt("Open {title} chat", { title: member.title })}
               disabled={!canOpen}
-              onClick={() => canOpen && onOpen(threadId)}
+              {...(canOpen ? trigger((intent) => onOpen(threadId, intent)) : {})}
             />
           }
         >
-          <ThreadRelationshipIcon driver={driver} provider={provider} status={member.status} />
+          <ThreadRelationshipIcon
+            driver={driver}
+            provider={provider}
+            providerEntries={providerEntries}
+            status={member.status}
+          />
           <span className="min-w-0 flex-1 truncate">{member.title}</span>
           <span className="sr-only">{member.status}</span>
           {member.startedAt ? (
@@ -94,6 +115,7 @@ function WorkflowMemberRow({
             model={member.model}
             providerInstanceId={providerInstanceId}
             origin="provider_native"
+            modelSelection={workflowMemberModelSelection(member, providerInstanceId)}
             provider={provider}
             providers={providers}
             driver={driver}
@@ -114,9 +136,9 @@ export function ThreadLineageWorkflowRow({
   providerInstanceId,
   provider,
   providers,
+  providerEntries,
   driver,
   onOpenThread,
-  isThreadAvailable,
   onStop,
   stopping,
   stopDisabled,
@@ -126,13 +148,15 @@ export function ThreadLineageWorkflowRow({
   readonly providerInstanceId: ProviderInstanceId;
   readonly provider: ServerProvider | undefined;
   readonly providers: ReadonlyArray<ServerProvider> | undefined;
+  readonly providerEntries: ReadonlyArray<ProviderInstanceEntry>;
   readonly driver: ProviderDriverKind | undefined;
-  readonly onOpenThread: (threadId: string) => void;
-  readonly isThreadAvailable: (threadId: string) => boolean;
+  readonly onOpenThread: (threadId: string, intent: SideThreadOpenIntent) => void;
   readonly onStop?: (() => void) | undefined;
   readonly stopping: boolean;
   readonly stopDisabled: boolean;
 }) {
+  const gt = useGT();
+  const m = useMessages();
   const [expanded, setExpanded] = useState(false);
   const [phaseOpen, setPhaseOpen] = useState<ReadonlyMap<number, boolean>>(() => new Map());
   const label = group.workflow.workflowName ?? group.workflow.title;
@@ -151,19 +175,21 @@ export function ThreadLineageWorkflowRow({
                     variant="ghost"
                     part="icon"
                     tone="destructive"
-                    aria-label={`Stop workflow ${label}`}
+                    aria-label={gt("Stop workflow {label}", { label })}
                     disabled={stopDisabled}
                     onClick={onStop}
                   />
                 }
               >
                 {stopping ? (
-                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                  <Spinner aria-hidden size="xs" />
                 ) : (
                   <SquareIcon aria-hidden className="size-3 fill-current" />
                 )}
               </TooltipTrigger>
-              <TooltipPopup side="left">Stop entire workflow</TooltipPopup>
+              <TooltipPopup side="left">
+                <T>Stop entire workflow</T>
+              </TooltipPopup>
             </Tooltip>
           </div>
         ) : null}
@@ -173,7 +199,9 @@ export function ThreadLineageWorkflowRow({
           variant="ghost"
           part="secondary"
           aria-expanded={expanded}
-          aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+          aria-label={
+            expanded ? gt("Collapse {label}", { label }) : gt("Expand {label}", { label })
+          }
           onClick={() => setExpanded((value) => !value)}
         >
           <ChevronDownIcon
@@ -196,16 +224,30 @@ export function ThreadLineageWorkflowRow({
                   variant="panel"
                   tone={phase.state === "running" ? "emphasized" : "muted"}
                   expanded={open}
-                  aria-label={`${open ? "Collapse" : "Expand"} ${phase.title} phase, ${status}`}
+                  aria-label={
+                    open
+                      ? gt("Collapse {title} phase, {status}", {
+                          title: phase.title,
+                          status: m(PHASE_STATUS_LABEL[status]),
+                        })
+                      : gt("Expand {title} phase, {status}", {
+                          title: phase.title,
+                          status: m(PHASE_STATUS_LABEL[status]),
+                        })
+                  }
                   onClick={() => setPhaseOpen((phases) => new Map(phases).set(phase.index, !open))}
                   accessory={
                     <>
                       {status === "failed" ? (
-                        <SectionHeaderStatus>Failed</SectionHeaderStatus>
+                        <SectionHeaderStatus>
+                          <T context="workflow phase status">Failed</T>
+                        </SectionHeaderStatus>
                       ) : null}
                       <span className="shrink-0 text-2xs font-normal tabular-nums">
-                        {phase.settledCount}/{phase.members.length}{" "}
-                        {phase.members.length === 1 ? "agent" : "agents"}
+                        {gt(
+                          "{count, plural, one {{settled}/{count} agent} other {{settled}/{count} agents}}",
+                          { count: phase.members.length, settled: phase.settledCount },
+                        )}
                       </span>
                       <span className="shrink-0 text-2xs font-normal tabular-nums empty:hidden">
                         <AgentElapsed agent={phaseElapsed(phase)} />
@@ -224,9 +266,9 @@ export function ThreadLineageWorkflowRow({
                         providerInstanceId={providerInstanceId}
                         provider={provider}
                         providers={providers}
+                        providerEntries={providerEntries}
                         driver={driver}
                         onOpen={onOpenThread}
-                        isThreadAvailable={isThreadAvailable}
                       />
                     ))}
                   </ul>
@@ -241,13 +283,15 @@ export function ThreadLineageWorkflowRow({
               providerInstanceId={providerInstanceId}
               provider={provider}
               providers={providers}
+              providerEntries={providerEntries}
               driver={driver}
               onOpen={onOpenThread}
-              isThreadAvailable={isThreadAvailable}
             />
           ))}
           {phases.length === 0 && group.unphasedMembers.length === 0 ? (
-            <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">No agents yet</li>
+            <li className="px-2.5 py-1.5 text-2xs text-muted-foreground/70">
+              <T>No agents yet</T>
+            </li>
           ) : null}
         </ul>
       ) : null}

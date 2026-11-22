@@ -6,10 +6,14 @@ import {
   type EnvironmentId,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { memo, useEffect, useRef } from "react";
-import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
+import { T, useGT, useMessages, Var } from "gt-react";
+import { memo, use, useRef } from "react";
+import { BackgroundThreadContext } from "./backgroundThread";
+import { shortcutLabelForCommand } from "../../keybindings";
+import { OPEN_FAVORITE_EDITOR_ATTRIBUTE } from "./OpenInPickerShortcut";
 import { usePreferredEditor } from "../../editorPreferences";
 import { editorLabelForPlatform } from "../../editorLabels";
+import type { MessageResolver } from "../../i18n/messages";
 import {
   openRemoteEditorUrl,
   useRemoteCapableEditors,
@@ -31,6 +35,7 @@ import {
   MenuSubPopup,
   MenuTrigger,
 } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -58,6 +63,7 @@ import {
   RustRoverIcon,
   WebStormIcon,
 } from "../JetBrainsIcons";
+import { announce } from "~/lib/announce";
 import { cn, isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { shellEnvironment } from "~/state/shell";
 import { useAtomCommand } from "~/state/use-atom-command";
@@ -78,7 +84,11 @@ type OpenInOption = {
   kind: "brand" | "generic";
 };
 
-const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
+const resolveOpenInOptions = (
+  platform: string,
+  availableEditors: ReadonlyArray<EditorId>,
+  resolve: MessageResolver,
+) => {
   const baseOptions: ReadonlyArray<Omit<OpenInOption, "label">> = [
     {
       Icon: CursorIcon,
@@ -193,7 +203,10 @@ const resolveOpenInOptions = (platform: string, availableEditors: ReadonlyArray<
   const availableEditorSet = new Set(availableEditors);
   return baseOptions
     .filter((option) => availableEditorSet.has(option.value))
-    .map((option) => ({ ...option, label: editorLabelForPlatform(option.value, platform) }));
+    .map((option) => ({
+      ...option,
+      label: editorLabelForPlatform(option.value, platform, resolve),
+    }));
 };
 
 function getOpenInIconClass(kind: OpenInOption["kind"]) {
@@ -223,6 +236,8 @@ export const OpenInPicker = memo(function OpenInPicker({
   displayMode?: "toolbar" | "panel";
   revealFileManager?: boolean;
 }) {
+  const gt = useGT();
+  const messages = useMessages();
   const isPanel = displayMode === "panel";
   const ActionGroup = isPanel ? "div" : Group;
   const panelAnchorRef = useRef<HTMLDivElement | null>(null);
@@ -234,17 +249,16 @@ export const OpenInPicker = memo(function OpenInPicker({
   const [menuOpen, setMenuOpen] = useComposerMenuState(isHostEditorDenied);
   const remoteCapableEditors = useRemoteCapableEditors();
   const [remoteHintSeen, markRemoteHintSeen] = useRemoteOpenHint();
-  const environmentLabel = useEnvironment(environmentId)?.label ?? "this machine";
-  // Remote mode ignores the server's PATH probe: what matters is what runs on
-  // the viewing machine, which only the desktop app can probe.
+  const environmentLabel = useEnvironment(environmentId)?.label ?? null;
+  // Remote editors run on the viewing machine; only desktop can probe that PATH.
   const effectiveEditors = remote.mode === "local-exec" ? availableEditors : remoteCapableEditors;
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(effectiveEditors);
 
-  const openInEditor = (editorId: EditorId | null) => {
-    if (!openInCwd) return;
+  const openInEditor = async (editorId: EditorId | null): Promise<boolean> => {
+    if (!openInCwd) return false;
     const editor = editorId ?? preferredEditor;
-    if (!editor) return;
-    if (remote.mode === "remote-unavailable") return;
+    if (!editor) return false;
+    if (remote.mode === "remote-unavailable") return false;
     if (remote.mode === "remote-links") {
       const url = buildRemoteOpenUrl({
         editor,
@@ -252,17 +266,16 @@ export const OpenInPicker = memo(function OpenInPicker({
         absolutePath: openInCwd,
         isFile: openInCwdIsFile,
       });
-      if (url === undefined) return;
+      if (url === undefined) return false;
       // Only record hint-seen/preferred when the shell actually accepted
       // the URL (an older desktop build can refuse the editor scheme).
-      void openRemoteEditorUrl(url).then((opened) => {
-        if (!opened) return;
-        markRemoteHintSeen();
-        setPreferredEditor(editor);
-      });
-      return;
+      const opened = await openRemoteEditorUrl(url);
+      if (!opened) return false;
+      markRemoteHintSeen();
+      setPreferredEditor(editor);
+      return true;
     }
-    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) return false;
     const result = openInEditorMutation({
       environmentId,
       input: {
@@ -272,7 +285,7 @@ export const OpenInPicker = memo(function OpenInPicker({
       },
     });
     setPreferredEditor(editor);
-    return result;
+    return (await result)._tag === "Success";
   };
 
   const openFavoriteEditorShortcutLabel = shortcutLabelForCommand(
@@ -280,49 +293,37 @@ export const OpenInPicker = memo(function OpenInPicker({
     "editor.openFavorite",
   );
 
-  useEffect(() => {
-    if (!enableShortcut || !canOpenEditor) return;
-    const handler = (e: globalThis.KeyboardEvent) => {
-      if (e.defaultPrevented || !isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!openInCwd) return;
-      if (!preferredEditor) return;
-      if (
-        remote.mode === "local-exec" &&
-        !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
-      )
-        return;
-
-      e.preventDefault();
-      void openInEditor(preferredEditor);
-    };
-    window.addEventListener("keydown", handler, true);
-    return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    canOpenEditor,
-    enableShortcut,
-    environmentId,
-    keybindings,
-    openInCwd,
-    openInEditor,
-    preferredEditor,
-    remote.mode,
-  ]);
-  // Derived after the shortcut effect so the compiler can cache the resolved editor list.
-  const options = resolveOpenInOptions(navigator.platform, effectiveEditors);
+  const backgroundThread = use(BackgroundThreadContext);
+  const options = resolveOpenInOptions(navigator.platform, effectiveEditors, messages);
   const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
-  const primaryLabel = isPanel ? `Open in ${primaryOption?.label ?? "editor"}` : "Open";
+  const primaryLabel = isPanel
+    ? primaryOption
+      ? gt("Open in {editor}", { editor: primaryOption.label })
+      : gt("Open in editor")
+    : gt("Open", { $context: "verb, opens the project in the preferred editor" });
+
+  const unavailableReason =
+    remote.mode === "remote-unavailable"
+      ? environmentLabel !== null
+        ? gt("No SSH route to {environment}", { environment: environmentLabel })
+        : gt("No SSH route to this machine")
+      : remote.mode === "remote-links" && options.length === 0
+        ? environmentLabel !== null
+          ? gt("Open from a computer to edit on {environment}", { environment: environmentLabel })
+          : gt("Open from a computer to edit on this machine")
+        : null;
 
   const editorItems = (
     <>
-      {remote.mode === "remote-unavailable" ? (
+      {unavailableReason !== null ? (
         <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-          No SSH route to {environmentLabel}
+          {unavailableReason}
         </MenuItem>
       ) : (
         <>
           {options.length === 0 && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-              No installed editors found
+              <T>No installed editors found</T>
             </MenuItem>
           )}
           {options.map(({ label, Icon, value, kind }) => (
@@ -347,7 +348,11 @@ export const OpenInPicker = memo(function OpenInPicker({
           ))}
           {remote.mode === "remote-links" && !remoteHintSeen && (
             <MenuItem density={presentation === "menu" ? "touch" : "default"} disabled>
-              Opens over SSH. Needs your key on {environmentLabel}
+              {environmentLabel !== null
+                ? gt("Opens over SSH. Needs your key on {environment}", {
+                    environment: environmentLabel,
+                  })
+                : gt("Opens over SSH. Needs your key on this machine")}
             </MenuItem>
           )}
         </>
@@ -365,7 +370,11 @@ export const OpenInPicker = memo(function OpenInPicker({
             onClick={() => openInEditor(preferredEditor)}
           >
             <primaryOption.Icon className={cn("size-4", getOpenInIconClass(primaryOption.kind))} />
-            <MenuItemLabel>Open in {primaryOption.label}</MenuItemLabel>
+            <MenuItemLabel>
+              <T>
+                Open in <Var>{primaryOption.label}</Var>
+              </T>
+            </MenuItemLabel>
             {openFavoriteEditorShortcutLabel && (
               <MenuShortcut>{openFavoriteEditorShortcutLabel}</MenuShortcut>
             )}
@@ -374,7 +383,9 @@ export const OpenInPicker = memo(function OpenInPicker({
         <MenuSub>
           <MenuSubTrigger density="touch" disabled={isHostEditorDenied}>
             <SquareArrowOutUpRightIcon className="size-4" />
-            <MenuItemLabel>Open in…</MenuItemLabel>
+            <MenuItemLabel>
+              <T>Open in…</T>
+            </MenuItemLabel>
           </MenuSubTrigger>
           <MenuSubPopup>{editorItems}</MenuSubPopup>
         </MenuSub>
@@ -382,71 +393,95 @@ export const OpenInPicker = memo(function OpenInPicker({
     );
   }
 
+  const primaryControlLabel = compact ? gt("Open file in preferred editor") : primaryLabel;
+  const primaryControl = (
+    <ThreadDetailsControl
+      aria-label={primaryControlLabel}
+      // Tooltip replaces the button data-slot, so toolbar theming needs a separate hook.
+      data-toolbar-control=""
+      size={isPanel ? "sm" : "xs"}
+      variant={isPanel ? "ghost" : "outline"}
+      part="primary"
+      panel={isPanel}
+      disabled={!preferredEditor || !openInCwd || !canOpenEditor}
+      {...(enableShortcut && !backgroundThread ? { [OPEN_FAVORITE_EDITOR_ATTRIBUTE]: "" } : {})}
+      onClick={() => {
+        if (!preferredEditor) return;
+        const label = editorLabelForPlatform(preferredEditor, navigator.platform);
+        void openInEditor(preferredEditor).then((opened) => {
+          if (opened) announce(gt("Opened in {editor}", { editor: label }));
+        });
+      }}
+    >
+      {primaryOption?.Icon ? (
+        <primaryOption.Icon
+          aria-hidden="true"
+          className={cn(
+            isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
+            getOpenInIconClass(primaryOption.kind),
+          )}
+        />
+      ) : isPanel ? (
+        <SquareArrowOutUpRightIcon aria-hidden="true" className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+      ) : null}
+      <span
+        className={cn(
+          compact
+            ? "sr-only"
+            : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
+          isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
+        )}
+      >
+        {primaryLabel}
+      </span>
+    </ThreadDetailsControl>
+  );
+
   return (
     <ActionGroup
-      aria-label="Open in editor"
+      aria-label={gt("Open in editor")}
       role="group"
       {...(isPanel
         ? { className: THREAD_DETAILS_PANEL_SPLIT_GROUP_CLASS, ref: panelAnchorRef }
         : {})}
     >
-      <ThreadDetailsControl
-        aria-label={compact ? "Open file in preferred editor" : primaryLabel}
-        size={isPanel ? "sm" : "xs"}
-        variant={isPanel ? "ghost" : "outline"}
-        part="primary"
-        panel={isPanel}
-        disabled={!preferredEditor || !openInCwd || !canOpenEditor}
-        onClick={() => openInEditor(preferredEditor)}
-      >
-        {primaryOption?.Icon ? (
-          <primaryOption.Icon
-            aria-hidden="true"
-            className={cn(
-              isPanel ? THREAD_DETAILS_PANEL_ICON_CLASS : "size-3.5",
-              getOpenInIconClass(primaryOption.kind),
-            )}
-          />
-        ) : isPanel ? (
-          <SquareArrowOutUpRightIcon
-            aria-hidden="true"
-            className={THREAD_DETAILS_PANEL_ICON_CLASS}
-          />
-        ) : null}
-        <span
-          className={cn(
-            compact
-              ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5",
-            isPanel && cn("not-sr-only ml-0 min-w-0 truncate", THREAD_DETAILS_PANEL_LABEL_CLASS),
-          )}
-        >
-          {primaryLabel}
-        </span>
-      </ThreadDetailsControl>
+      <Tooltip>
+        <TooltipTrigger render={primaryControl} />
+        <TooltipPopup side="top">{primaryControlLabel}</TooltipPopup>
+      </Tooltip>
       {isPanel ? (
         <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
       ) : (
         <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       )}
       <Menu open={menuOpen} onOpenChange={setMenuOpen}>
-        <MenuTrigger
-          disabled={isHostEditorDenied}
-          render={
-            <ThreadDetailsControl
-              aria-label="Choose editor"
-              size={isPanel ? "sm" : "icon-xs"}
-              variant={isPanel ? "ghost" : "outline"}
-              part="secondary"
-              panel={isPanel}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                disabled={isHostEditorDenied}
+                render={
+                  <ThreadDetailsControl
+                    aria-label={gt("Choose editor")}
+                    data-toolbar-control=""
+                    size={isPanel ? "sm" : "icon-xs"}
+                    variant={isPanel ? "ghost" : "outline"}
+                    part="secondary"
+                    panel={isPanel}
+                  />
+                }
+              />
+            }
+          >
+            <ChevronDownIcon
+              aria-hidden="true"
+              className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
             />
-          }
-        >
-          <ChevronDownIcon
-            aria-hidden="true"
-            className={isPanel ? THREAD_DETAILS_PANEL_CHEVRON_CLASS : "size-4"}
-          />
-        </MenuTrigger>
+          </TooltipTrigger>
+          <TooltipPopup side="top">
+            <T>Choose editor</T>
+          </TooltipPopup>
+        </Tooltip>
         <MenuPopup
           align="end"
           {...(isPanel ? { anchor: panelAnchorRef } : {})}

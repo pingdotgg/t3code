@@ -3,9 +3,13 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./client/definition": {
-      "types": "./src/client/definition.ts",
-      "import": "./src/client/definition.ts"
+    "./shared/definition": {
+      "types": "./src/shared/definition.ts",
+      "import": "./src/shared/definition.ts"
+    },
+    "./shared/threadPullRequests": {
+      "types": "./src/shared/threadPullRequests.ts",
+      "import": "./src/shared/threadPullRequests.ts"
     },
     "./server/diffFileRevisions": {
       "types": "./src/server/diffFileRevisions.ts",
@@ -23,9 +27,21 @@
       "types": "./src/server/mergeMessage.ts",
       "import": "./src/server/mergeMessage.ts"
     },
+    "./server/pullRequestUtils": {
+      "types": "./src/server/pullRequestUtils.ts",
+      "import": "./src/server/pullRequestUtils.ts"
+    },
     "./server/pullRequestChecks": {
       "types": "./src/server/pullRequestChecks.ts",
       "import": "./src/server/pullRequestChecks.ts"
+    },
+    "./server/IssueTracker": {
+      "types": "./src/server/IssueTracker.ts",
+      "import": "./src/server/IssueTracker.ts"
+    },
+    "./server/IssueTrackerHost": {
+      "types": "./src/server/IssueTrackerHost.ts",
+      "import": "./src/server/IssueTrackerHost.ts"
     },
     "./server/PullRequestProvider": {
       "types": "./src/server/PullRequestProvider.ts",
@@ -45,7 +61,7 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
+    "typecheck": "effect-tsgo tsrs --noEmit",
     "test": "vp test run --config ../../vite.config.ts --dir ."
   },
   "dependencies": {

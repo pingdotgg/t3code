@@ -1,4 +1,5 @@
 import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import { msg } from "gt-react";
 import { CloudIcon, LaptopIcon, MonitorIcon, ServerIcon, type LucideProps } from "lucide-react";
 import type { FunctionComponent, SVGProps } from "react";
 import { LinuxIcon } from "./Icons";
@@ -12,7 +13,7 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
-      strokeWidth="2"
+      strokeWidth="1.75"
       strokeLinecap="round"
       strokeLinejoin="round"
       {...props}
@@ -23,8 +24,8 @@ function LucideLike(props: SVGProps<SVGSVGElement>) {
 function MacMiniIcon(props: SVGProps<SVGSVGElement>) {
   return (
     <LucideLike {...props}>
-      <rect width="20" height="8" x="2" y="8" rx="2" />
-      <path d="M6 12h.01" />
+      <rect width="18" height="12" x="3" y="6" rx="2.5" />
+      <circle cx="7.5" cy="12" r="1" fill="currentColor" stroke="none" />
     </LucideLike>
   );
 }
@@ -49,13 +50,13 @@ const ICON_BY_KIND: Record<EnvironmentMachineKind, FunctionComponent<LucideProps
 };
 
 export const ENVIRONMENT_MACHINE_KIND_LABELS: Record<EnvironmentMachineKind, string> = {
-  server: "Server",
-  cloud: "Cloud VM",
-  linux: "Linux/WSL",
-  desktop: "Desktop",
-  laptop: "Laptop",
-  "mac-mini": "Mini PC",
-  "mac-studio": "Workstation",
+  server: msg("Server"),
+  cloud: msg("Cloud VM"),
+  linux: msg("Linux/WSL"),
+  desktop: msg("Desktop"),
+  laptop: msg("Laptop"),
+  "mac-mini": msg("Mini PC"),
+  "mac-studio": msg("Workstation"),
 };
 
 export function environmentMachineIcon(

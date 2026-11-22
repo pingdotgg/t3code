@@ -6,26 +6,41 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { ArrowUpRight, CircleAlert, Play, Smartphone, X } from "lucide-react";
-import { type ReactNode, useEffect, useState } from "react";
+import { useAtomMount } from "@effect/atom-react";
+import { T, useGT, Var } from "gt-react";
+import { type ReactNode, useState } from "react";
 
 import { usePreviewMiniPlayerStore } from "~/previewMiniPlayerStore";
-import { useRightPanelStore, type RightPanelSurface } from "~/rightPanelStore";
+import {
+  selectThreadRightPanelState,
+  useRightPanelStore,
+  type RightPanelSurface,
+} from "~/rightPanelStore";
 import { Button } from "~/components/ui/button";
 import { DiscoveryList } from "~/components/ui/discovery-list";
 import { Dialog } from "~/components/ui/dialog";
+import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { WizardPopup } from "~/components/ui/wizard";
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
-import { deviceEnvironment, useDeviceState } from "~/state/device";
+import { focusPanelTerminalAfterClose } from "~/lib/terminalFocus";
+import {
+  deviceEnvironment,
+  deviceHostProbeAtom,
+  NO_DEVICE_PROBE_ATOM,
+  useDeviceState,
+} from "~/state/device";
 import { formatEnvironmentQueryError } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { DeviceLoadingView } from "./DeviceLoadingView";
-import { DeviceSetup, deviceHubReadiness, isAndroidDiscoveryUncertain } from "./DeviceSetup";
+import {
+  DeviceSetup,
+  deviceHubReadiness,
+  incompleteListings,
+  isAndroidDiscoveryUncertain,
+} from "./DeviceSetup";
 import { DeviceWorkspace } from "./DeviceWorkspace";
 import { PreviewPanelShell, type PreviewPanelMode } from "../preview/PreviewPanelShell";
-
-const platformLabel = (platform: DevicePlatform) =>
-  platform === "ios" ? "iOS Simulators" : "Android Emulators";
 
 const deviceKey = (device: Pick<DeviceSummary, "hostId" | "id">) =>
   `${device.hostId}\u0000${device.id}`;
@@ -38,7 +53,8 @@ export function DevicePanel(props: {
   readonly onDismissSetup: () => void;
 }) {
   const { environmentId, threadId } = props.threadRef;
-  const { state, loaded } = useDeviceState(environmentId);
+  const gt = useGT();
+  const { state, loaded, error: stateError, refresh: refreshState } = useDeviceState(environmentId);
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const open = useAtomCommand(deviceEnvironment.open);
   const close = useAtomCommand(deviceEnvironment.close);
@@ -56,11 +72,11 @@ export function DevicePanel(props: {
 
   const hostDisabled = state.hostStatus === "disabled";
 
-  // Opening setup never grants permission to install or start helpers.
-  useEffect(() => {
-    if (!props.visible || !loaded || hostDisabled) return;
-    void list({ environmentId, input: {} });
-  }, [environmentId, list, loaded, props.visible, hostDisabled]);
+  useAtomMount(
+    props.visible && loaded && !hostDisabled
+      ? deviceHostProbeAtom(environmentId)
+      : NO_DEVICE_PROBE_ATOM,
+  );
 
   const sessions = state.sessions.filter((session) => session.threadId === threadId);
   const activeSession = props.surface.target
@@ -74,6 +90,9 @@ export function DevicePanel(props: {
     ? state.devices.find(
         (device) => device.hostId === activeSession.hostId && device.id === activeSession.deviceId,
       )
+    : undefined;
+  const activeHost = activeDevice
+    ? state.hosts.find((host) => host.id === activeDevice.hostId)
     : undefined;
 
   const grouped = groupDevices(state);
@@ -126,9 +145,16 @@ export function DevicePanel(props: {
     useRightPanelStore.getState().close(props.threadRef);
   };
 
+  const closeSurface = () => {
+    const store = useRightPanelStore.getState();
+    const { activeSurfaceId } = selectThreadRightPanelState(store.byThreadKey, props.threadRef);
+    store.closeSurface(props.threadRef, props.surface.id);
+    focusPanelTerminalAfterClose(props.threadRef, activeSurfaceId);
+  };
+
   const closeActive = (powerOff: boolean) => {
     if (!powerOff) {
-      useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      closeSurface();
       return;
     }
     if (!activeSession) return;
@@ -143,7 +169,7 @@ export function DevicePanel(props: {
       },
     }).then((result) => {
       if (result._tag === "Failure") settleOperation(formatEnvironmentQueryError(result.cause));
-      else useRightPanelStore.getState().closeSurface(props.threadRef, props.surface.id);
+      else closeSurface();
     });
   };
 
@@ -151,11 +177,20 @@ export function DevicePanel(props: {
     state.bootingDevices?.filter((device) => device.threadId === threadId) ?? [];
   const { ready: hostReady, busy: hostBusy } = deviceHubReadiness(state);
   const loading = !activeDevice && (pendingDevice !== null || hostBusy || !loaded);
+  // Without a first snapshot a failed subscription never settles on its own.
+  const loadError = loaded ? null : stateError;
   const diagnostics = state.hosts.flatMap((host) => {
     const status = state.hostStatuses[host.id];
     const detail = status?.detail ?? (host.kind === "local" ? state.hostStatusDetail : undefined);
     return detail && (status?.status ?? state.hostStatus) === "ready"
-      ? [{ hostId: host.id, label: host.label, detail }]
+      ? [
+          {
+            hostId: host.id,
+            label: host.label,
+            detail,
+            incompletePlatforms: incompleteListings(status),
+          },
+        ]
       : [];
   });
   const unavailablePlatforms = state.hosts.flatMap((host) =>
@@ -191,23 +226,25 @@ export function DevicePanel(props: {
           <div hidden={!!activeDevice}>
             {diagnostics.map((diagnostic) => (
               <DeviceDiscoveryWarning
-                key={`${environmentId}\u0000${diagnostic.hostId}\u0000${diagnostic.detail}`}
+                key={`${environmentId}\u0000${diagnostic.hostId}`}
                 label={diagnostic.label}
                 detail={diagnostic.detail}
+                incompletePlatforms={diagnostic.incompletePlatforms}
+                onRetry={() => list({ environmentId, input: {} })}
               />
             ))}
           </div>
           <DeviceHostUpdates state={state} environmentId={environmentId} />
           {bootingDevices.length > 0 ? (
             <div role="status" className="border-b px-3 py-2 text-xs text-muted-foreground">
-              Starting {bootingDevices.map((device) => device.name).join(", ")}… This can take a
-              minute.
+              <T>
+                Starting <Var>{bootingDevices.map((device) => device.name).join(", ")}</Var>… This
+                can take a minute.
+              </T>
             </div>
           ) : null}
           {operationError ? (
-            <DeviceNotice tone="error" onDismiss={() => setOperation(null)}>
-              {operationError}
-            </DeviceNotice>
+            <DeviceNotice onDismiss={() => setOperation(null)}>{operationError}</DeviceNotice>
           ) : null}
         </div>
         <div className="@container relative flex min-h-0 flex-1">
@@ -216,9 +253,8 @@ export function DevicePanel(props: {
               key={`${environmentId}\u0000${deviceKey(activeDevice)}`}
               environmentId={environmentId}
               device={activeDevice}
-              hostLabel={
-                state.hosts.find((host) => host.id === activeDevice.hostId)?.label ?? "Device host"
-              }
+              hostLabel={activeHost?.label ?? gt("Device host")}
+              hostKind={activeHost?.kind}
               hostDiagnostics={
                 diagnostics.find(({ hostId }) => hostId === activeDevice.hostId)?.detail
               }
@@ -229,23 +265,31 @@ export function DevicePanel(props: {
             />
           ) : loading ? (
             <DeviceLoadingView
-              name={pendingDevice?.name ?? "Devices"}
+              name={pendingDevice?.name ?? gt("Devices")}
               description={
                 pendingDevice
-                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? "Device host"} · ${pendingDevice.version}`
+                  ? `${state.hosts.find((host) => host.id === pendingDevice.hostId)?.label ?? gt("Device host")} · ${pendingDevice.version}`
                   : ""
               }
               stage="opening"
               message={
-                pendingDevice
+                loadError ??
+                (pendingDevice
                   ? pendingDevice.booted
-                    ? "Opening device…"
-                    : "Starting device…"
+                    ? gt("Opening device…")
+                    : gt("Starting device…")
                   : state.hostStatus === "installing"
-                    ? (state.hostStatusDetail ?? "Installing device support…")
-                    : "Finding devices…"
+                    ? (state.hostStatusDetail ?? gt("Installing device support…"))
+                    : gt("Finding devices…"))
               }
-            />
+              error={loadError !== null}
+            >
+              {loadError !== null ? (
+                <Button size="sm" variant="outline" onClick={refreshState}>
+                  <T>Retry</T>
+                </Button>
+              ) : null}
+            </DeviceLoadingView>
           ) : (
             <div className="scrollbar-gutter-both flex size-full flex-col overflow-y-auto px-5 py-8 text-sm text-muted-foreground">
               <div
@@ -262,8 +306,8 @@ export function DevicePanel(props: {
                       tabIndex={state.hostStatus === "failed" ? 0 : undefined}
                     >
                       {state.hostStatus === "failed"
-                        ? (state.hostStatusDetail ?? "The device hub failed to start.")
-                        : "No simulators or emulators were found on this environment."}
+                        ? (state.hostStatusDetail ?? gt("The device hub failed to start."))
+                        : gt("No simulators or emulators were found on this environment.")}
                     </p>
                   </>
                 ) : null}
@@ -273,7 +317,11 @@ export function DevicePanel(props: {
                       <section key={group.platform} className="space-y-3">
                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                           <Smartphone className="size-4 shrink-0" />
-                          <h3 className="font-medium">{platformLabel(group.platform)}</h3>
+                          <h3 className="font-medium">
+                            {group.platform === "ios"
+                              ? gt("iOS Simulators")
+                              : gt("Android Emulators")}
+                          </h3>
                         </div>
                         <DiscoveryList>
                           {group.devices.map((device) => (
@@ -289,14 +337,18 @@ export function DevicePanel(props: {
                                   {device.name}
                                 </span>
                                 <span className="truncate text-xs text-muted-foreground">
-                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? "Running" : "Stopped"}`}
+                                  {`${state.hosts.find((host) => host.id === device.hostId)?.label} · ${device.version} · ${device.booted ? gt("Running", { $context: "device state" }) : gt("Stopped", { $context: "device state" })}`}
                                 </span>
                               </div>
                               <Button
                                 variant="outline"
                                 size="sm"
                                 disabled={pendingDeviceKey !== null}
-                                aria-label={`${device.booted ? "Open" : "Start"} ${device.name}`}
+                                aria-label={
+                                  device.booted
+                                    ? gt("Open {name}", { name: device.name })
+                                    : gt("Start {name}", { name: device.name })
+                                }
                                 onClick={() => void selectDevice(deviceKey(device))}
                               >
                                 {pendingDeviceKey === deviceKey(device) ? (
@@ -306,7 +358,9 @@ export function DevicePanel(props: {
                                 ) : (
                                   <Play />
                                 )}
-                                {device.booted ? "Open" : "Start"}
+                                {device.booted
+                                  ? gt("Open", { $context: "verb, opens a running device" })
+                                  : gt("Start", { $context: "verb, boots a device" })}
                               </Button>
                             </div>
                           ))}
@@ -320,8 +374,10 @@ export function DevicePanel(props: {
                 !state.devices.some((device) => device.platform === "android") &&
                 !unavailablePlatforms.some((platform) => platform.platform === "android") ? (
                   <p className="max-w-sm text-xs">
-                    No Android virtual devices found. Create one in Android Studio's Device Manager,
-                    then refresh.
+                    <T>
+                      No Android virtual devices found. Create one in Android Studio's Device
+                      Manager, then refresh.
+                    </T>
                   </p>
                 ) : null}
                 {loaded && !hostBusy ? (
@@ -331,7 +387,7 @@ export function DevicePanel(props: {
                     size="sm"
                     onClick={() => void list({ environmentId, input: {} })}
                   >
-                    Refresh devices
+                    <T>Refresh devices</T>
                   </Button>
                 ) : null}
               </div>
@@ -343,20 +399,12 @@ export function DevicePanel(props: {
   );
 }
 
-function DeviceNotice(props: {
-  readonly tone: "warning" | "error";
-  readonly onDismiss: () => void;
-  readonly children: ReactNode;
-}) {
+function DeviceNotice(props: { readonly onDismiss: () => void; readonly children: ReactNode }) {
+  const gt = useGT();
   return (
     <div
       role="alert"
-      className={cn(
-        "flex items-start gap-2 border-b px-3 py-2 text-xs",
-        props.tone === "warning"
-          ? "bg-warning-surface text-warning-foreground"
-          : "bg-destructive/5 text-destructive",
-      )}
+      className="flex items-start gap-2 border-b bg-destructive/5 px-3 py-2 text-xs text-destructive"
     >
       <CircleAlert className="mt-1 size-3.5 shrink-0" />
       <div
@@ -368,7 +416,7 @@ function DeviceNotice(props: {
       <Button
         size="icon-xs"
         variant="ghost"
-        aria-label={props.tone === "warning" ? "Dismiss device warning" : "Dismiss device error"}
+        aria-label={gt("Dismiss device error")}
         onClick={props.onDismiss}
       >
         <X />
@@ -377,14 +425,86 @@ function DeviceNotice(props: {
   );
 }
 
-function DeviceDiscoveryWarning(props: { readonly label: string; readonly detail: string }) {
-  const [dismissed, setDismissed] = useState(false);
-  if (dismissed) return null;
+function DeviceDiscoveryWarning(props: {
+  readonly label: string;
+  readonly detail: string;
+  readonly incompletePlatforms: readonly DevicePlatform[];
+  readonly onRetry: () => Promise<unknown>;
+}) {
+  const gt = useGT();
+  const [open, setOpen] = useState(false);
+  const [retrying, setRetrying] = useState(false);
+  const [dismissedCause, setDismissedCause] = useState<string | null>(null);
+  const cause = `${props.incompletePlatforms.join()}\u0000${props.detail}`;
+  // A dismissal hides one occurrence; a cause that returns later shows again.
+  if (dismissedCause !== null && dismissedCause !== cause) setDismissedCause(null);
+  if (dismissedCause === cause) return null;
+  const platforms = props.incompletePlatforms.map((platform) =>
+    platform === "ios" ? "iOS" : "Android",
+  );
   return (
-    <DeviceNotice tone="warning" onDismiss={() => setDismissed(true)}>
-      <p className="font-medium">Device discovery warning · {props.label}</p>
-      {props.detail}
-    </DeviceNotice>
+    <div
+      role="status"
+      className="flex flex-wrap items-center gap-x-2 gap-y-0.5 border-b px-3 py-1 text-xs text-muted-foreground"
+    >
+      <span className="flex min-w-0 flex-1 basis-56 items-start gap-2">
+        <CircleAlert className="mt-px size-3.5 shrink-0 text-warning-foreground" />
+        <span className="min-w-0">
+          {platforms.length > 1
+            ? gt("{first} and {second} lists on {host} may be incomplete.", {
+                first: platforms[0],
+                second: platforms[1],
+                host: props.label,
+              })
+            : platforms.length === 1
+              ? gt("{platform} list on {host} may be incomplete.", {
+                  platform: platforms[0],
+                  host: props.label,
+                })
+              : gt("Device discovery on {host} reported a warning.", { host: props.label })}
+        </span>
+      </span>
+      <span className="ml-auto flex shrink-0 items-center gap-0.5">
+        {platforms.length > 0 ? (
+          <Button
+            size="micro"
+            variant="ghost"
+            disabled={retrying}
+            aria-label={gt("Retry device discovery on {host}", { host: props.label })}
+            onClick={() => {
+              setRetrying(true);
+              void props.onRetry().finally(() => setRetrying(false));
+            }}
+          >
+            {retrying ? gt("Retrying…") : gt("Retry")}
+          </Button>
+        ) : null}
+        <Popover open={open} onOpenChange={setOpen}>
+          <PopoverTrigger
+            aria-label={gt("Details for {host}", { host: props.label })}
+            render={<Button size="micro" variant="ghost" />}
+          >
+            <T>Details</T>
+          </PopoverTrigger>
+          <PopoverPopup side="bottom" align="end" width="lg" padding="compact">
+            <p className="whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
+              {props.detail}
+            </p>
+          </PopoverPopup>
+        </Popover>
+        <Button
+          size="icon-micro"
+          variant="ghost"
+          aria-label={gt("Dismiss device warning for {host}", { host: props.label })}
+          onClick={() => {
+            setOpen(false);
+            setDismissedCause(cause);
+          }}
+        >
+          <X />
+        </Button>
+      </span>
+    </div>
   );
 }
 

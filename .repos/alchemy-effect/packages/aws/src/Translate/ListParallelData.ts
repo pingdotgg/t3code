@@ -1,0 +1,31 @@
+import type * as translate from "@distilled.cloud/aws/translate";
+import * as Binding from "alchemy/Binding";
+import type * as Effect from "effect/Effect";
+
+/**
+ * Runtime binding for `translate:ListParallelData` — list the parallel data
+ * resources in the account and region.
+ *
+ * ### Reading Parallel Data
+ * **Example:** List parallel data resources
+ * ```typescript
+ * // init
+ * const listParallelData = yield* AWS.Translate.ListParallelData();
+ *
+ * // runtime
+ * const result = yield* listParallelData({ MaxResults: 50 });
+ * // result.ParallelDataPropertiesList -> [{ Name, Arn, Status, … }, …]
+ * ```
+ *
+ * @binding
+ */
+export interface ListParallelData extends Binding.Service<
+  ListParallelData,
+  "AWS.Translate.ListParallelData",
+  () => Effect.Effect<
+    (
+      request?: translate.ListParallelDataRequest,
+    ) => Effect.Effect<translate.ListParallelDataResponse, translate.ListParallelDataError>
+  >
+> {}
+export const ListParallelData = Binding.Service<ListParallelData>("AWS.Translate.ListParallelData");

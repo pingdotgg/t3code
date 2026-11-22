@@ -11,11 +11,7 @@ import type * as ConnectionResolver from "../connection/resolver.ts";
 import type * as EnvironmentRegistry from "../connection/registry.ts";
 import type * as RelayEnvironmentDiscovery from "../relay/discovery.ts";
 import { createAtomCommandScheduler, createRuntimeCommand } from "./runtime.ts";
-import {
-  serverUpdateFailureMessage,
-  serverUpdateStateAtom,
-  type ServerUpdateStage,
-} from "./server.ts";
+import { serverUpdateFailure, serverUpdateStateAtom, type ServerUpdateStage } from "./server.ts";
 
 export interface OutdatedServerUpdateTarget {
   readonly environmentId: EnvironmentId;
@@ -54,7 +50,10 @@ export function createOutdatedServerUpdateCommand<E>(
       mode: "singleFlight",
       key: ({ environmentId }: OutdatedServerUpdateTarget) => environmentId,
     },
-    execute: (target: OutdatedServerUpdateTarget, atomRegistry) => {
+    execute: Effect.fn("ServerUpdate.updateOutdatedServer")(function (
+      target: OutdatedServerUpdateTarget,
+      atomRegistry,
+    ) {
       const stateAtom = serverUpdateStateAtom(target.environmentId);
       const targetVersion = target.input.targetVersion;
       const fromVersion = target.fromVersion ?? targetVersion;
@@ -77,11 +76,11 @@ export function createOutdatedServerUpdateCommand<E>(
               stage: currentStage,
               fromVersion,
               targetVersion,
-              message: serverUpdateFailureMessage(Cause.squash(exit.cause)),
+              ...serverUpdateFailure(Cause.squash(exit.cause)),
             });
           }),
         ),
       );
-    },
+    }),
   });
 }

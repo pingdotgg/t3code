@@ -6,11 +6,7 @@ import * as Schema from "effect/Schema";
 import * as HttpClientResponse from "effect/http/HttpClientResponse";
 import { isHttpClientError } from "effect/http/HttpClientError";
 
-/**
- * `unavailable` means it may succeed on retry; the relay refused the other
- * kinds. The description is safe to show: it carries the relay's own
- * explanation and trace ID, never request details.
- */
+/** Only unavailable is retryable. Descriptions expose relay explanations and trace IDs, never request details. */
 export class RelayRequestError extends Schema.TaggedError<RelayRequestError>()(
   "RelayRequestError",
   {
@@ -69,8 +65,12 @@ function recoveryHint(error: RelayProtectedError): string {
       return "Unlink an unused environment in T3 Connect, then restart T3 Code on this machine.";
     case "RelayAuthInvalidError":
       return "Run `t3 connect login` to check this machine's authorization. If the stored credential was revoked, sign out with `t3 connect logout`, then run `t3 connect` again. Restart T3 Code after signing in.";
-    case "RelayEnvironmentLinkProofExpiredError":
     case "RelayEnvironmentLinkProofInvalidError":
+      if (error.reason === "environment_key_mismatch") {
+        return "T3 Connect already has this environment linked with a different key. Unlink it in T3 Connect, then restart T3 Code on this machine.";
+      }
+      return "Check this machine's date and time, update T3 Code, then restart it.";
+    case "RelayEnvironmentLinkProofExpiredError":
       return "Check this machine's date and time, update T3 Code, then restart it.";
     default:
       return "Retry when the relay is available. If this continues, include the trace ID when reporting it.";
@@ -90,10 +90,7 @@ export const filterRelayResponse = Effect.fn("cloud.filter_relay_response")(func
     ? `T3 Connect: ${decoded.value.message}. ${recoveryHint(decoded.value)} Trace ID: ${decoded.value.traceId}.`
     : `T3 Connect relay returned HTTP ${response.status} without a recognized error response. Check relay access and any proxy or firewall restrictions, then restart T3 Code.${requestId}`;
 
-  // The only 401 that clears itself: a proof signed with a skewed clock (a host
-  // that booted before NTP) expires on arrival, and the next attempt signs a new
-  // one. It is recognized only from a schema-decoded relay body. Every other
-  // 401, including a revoked bearer or an undecodable body, stays permanent.
+  // Only a schema-decoded expired-proof 401 is retryable for clock skew; every other 401 is permanent.
   if (
     response.status === 401 &&
     Option.isSome(decoded) &&

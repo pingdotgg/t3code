@@ -1,4 +1,7 @@
-import { markdownMathRanges } from "./markdownMath.ts";
+/** The formulas a Markdown parser finds in text, as source offsets. */
+export type FindMathRanges = (
+  text: string,
+) => ReadonlyArray<{ readonly start: number; readonly end: number }>;
 
 export type ComposerInlineToken =
   | {
@@ -18,6 +21,8 @@ export type ComposerInlineToken =
 
 export interface CollectComposerInlineTokensOptions {
   readonly preserveTrailingFrom?: ReadonlyArray<ComposerInlineToken>;
+  /** Formulas keep their literal tokens; without it, nothing is read as math. */
+  readonly findMath?: FindMathRanges;
 }
 
 const SKILL_MENTION_SOURCE =
@@ -26,13 +31,7 @@ const SKILL_MENTION_SOURCE =
 const SKILL_TOKEN_REGEX = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s)`, "gu");
 export const SKILL_MENTION_PATTERN = new RegExp(`${SKILL_MENTION_SOURCE}(?=\\s|$)`, "gu");
 const MENTION_TOKEN_REGEX = /(^|\s)@(?:"((?:\\.|[^"\\])*)"|([^\s@"]+))(?=\s)/g;
-/**
- * Unbounded, every whitespace in the composer is a candidate start: the engine scans the rest
- * of the text for a closing `]`, fails, and rescans from the next whitespace — quadratic on
- * input like " [[[[[…". Only a basename ever survives the `label !== basename` check below, so
- * this cannot reject a link a user could meaningfully write; the longest filename any common
- * filesystem allows is 255.
- */
+// Bound unmatched-bracket rescans to avoid quadratic work; only basenames survive, and common filesystems cap them at 255.
 const MAX_FILE_LINK_LABEL_LENGTH = 512;
 const FILE_LINK_TOKEN_REGEX = new RegExp(
   `(^|\\s)\\[((?:\\\\.|[^\\]\\\\]){0,${MAX_FILE_LINK_LABEL_LENGTH}})\\]\\(([^)\\s]+)\\)(?=\\s)`,
@@ -100,14 +99,13 @@ function collectMentionTokens(text: string): ComposerInlineToken[] {
 }
 
 /**
- * Formulas in composer text, ignoring the `$` and `\[` that file names such as
- * `posts.$postId.tsx` or `[id].tsx` put into a file link. File links are masked with letters,
- * not spaces, so a link at the start of a line cannot become an indented code block.
- * Bare `@path` mentions are not masked: one such as `@README.md$` can run into a formula's
- * closing delimiter, and a mention written inside a real formula stays covered by it.
+ * Formulas in composer text, ignoring `$` and `\[` inside file links such as `posts.$postId.tsx`.
+ * Links are masked with letters, not spaces, so a leading link cannot become an indented code
+ * block. Bare `@path` mentions stay unmasked so `@README.md$` can still close a formula.
  */
 export function composerMathRanges(
   text: string,
+  findMath: FindMathRanges,
   mentions: ReadonlyArray<ComposerInlineToken> = collectMentionTokens(text),
 ) {
   let masked = text;
@@ -118,7 +116,7 @@ export function composerMathRanges(
       "x".repeat(mention.end - mention.start) +
       masked.slice(mention.end);
   }
-  return markdownMathRanges(masked).map(({ start, end }) => ({
+  return findMath(masked).map(({ start, end }) => ({
     start,
     end,
     source: text.slice(start, end),
@@ -165,7 +163,10 @@ export function collectComposerInlineTokens(
   // TeX can contain literal skill and file tokens, especially inside \text{}.
   // They remain formula source rather than becoming composer context chips.
   // Confirmed trailing file links are masked too, so a kept chip is not read as TeX.
-  const math = matches.length > 0 ? composerMathRanges(text, matches) : [];
+  const math =
+    matches.length > 0 && options.findMath
+      ? composerMathRanges(text, options.findMath, matches)
+      : [];
   return matches
     .filter(
       (match) => !math.some((formula) => match.start < formula.end && match.end > formula.start),

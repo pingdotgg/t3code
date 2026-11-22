@@ -42,6 +42,37 @@ describe("desktop update button state", () => {
     expect(getDesktopUpdateButtonTooltip(state)).toContain("Click to retry");
   });
 
+  it("shows the download failure after returning to available", () => {
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "available",
+      availableVersion: "1.1.0",
+      message: "network timeout",
+      errorContext: "download",
+      canRetry: true,
+    };
+    expect(resolveDesktopUpdateButtonAction(state)).toBe("download");
+    expect(getDesktopUpdateButtonTooltip(state)).toBe("Download failed for 1.1.0. Click to retry.");
+    expect(getDesktopUpdateButtonTooltip({ ...state, notAppliedVersion: "1.1.0" })).toBe(
+      "Update 1.1.0 did not apply. Click to retry.",
+    );
+  });
+
+  it("never calls a build on the other track up to date", () => {
+    // A Stable build whose switch to Nightly did not finish; the updater discards every release.
+    const state: DesktopUpdateState = {
+      ...baseState,
+      status: "up-to-date",
+      channel: "nightly",
+      currentVersion: "0.1.5",
+      checkedAt: "2026-11-18T00:00:00.000Z",
+    };
+    expect(getDesktopUpdateButtonTooltip(state)).not.toBe("Up to date");
+    expect(
+      getDesktopUpdateButtonTooltip({ ...state, currentVersion: "0.1.6-nightly.20261118.1" }),
+    ).toBe("Up to date");
+  });
+
   it("prefers a newly available release over a stale downloaded version", () => {
     const state: DesktopUpdateState = {
       ...baseState,
@@ -65,20 +96,17 @@ describe("desktop update button state", () => {
 });
 
 describe("desktop update UI helpers", () => {
-  it.each([
-    "owner/repo/extra",
-    "owner#notes/repo",
-    "owner/repo#notes",
-    "owner?tab=notes/repo",
-    "owner/repo?tab=notes",
-  ])("falls back to upstream for an invalid configured repository: %s", (repository) => {
-    expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
-      "https://github.com/pingdotgg/t3code/releases",
-    );
-    expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
-      "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
-    );
-  });
+  it.each(["owner/repo/extra", "owner#notes/repo", "owner/repo?tab=notes"])(
+    "falls back to upstream for an invalid configured repository: %s",
+    (repository) => {
+      expect(getDesktopUpdateReleaseHistoryUrl(repository)).toBe(
+        "https://github.com/pingdotgg/t3code/releases",
+      );
+      expect(getDesktopUpdateReleaseUrl("1.2.3", repository)).toBe(
+        "https://github.com/pingdotgg/t3code/releases/tag/v1.2.3",
+      );
+    },
+  );
 });
 
 describe("canCheckForUpdate", () => {

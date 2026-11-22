@@ -1,5 +1,6 @@
-import { type EnvironmentId, UsageLimitSourceId } from "@t3tools/contracts";
-import { useState } from "react";
+import type { EnvironmentId, SecretReference, UnifiedSettings } from "@t3tools/contracts";
+import { T, useGT, Var } from "gt-react";
+import { useId, useState } from "react";
 
 import { useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { Button } from "../ui/button";
@@ -13,63 +14,53 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
-import { SecretInput } from "./SecretInput";
+import { sourceIdFromUrl } from "./AddUsageLimitSourceDialog.logic";
+import { SecretSourceInput, useSecretSources } from "./SecretSourceInput";
 import { Label } from "../ui/label";
 
-/**
- * Dots and dashes in the host are kept so `foo-bar.com` and `foo.bar.com` do
- * not collide; anything else (a port's colon, a path) is folded to a dash.
- */
-function sourceIdFromUrl(url: string): UsageLimitSourceId {
-  let host = url;
-  try {
-    host = new URL(url).host;
-  } catch {}
-  const slug = host
-    .toLowerCase()
-    .replace(/[^a-z0-9.-]+/g, "-")
-    .replace(/^-+|-+$/g, "");
-  return UsageLimitSourceId.make(`cliproxy-${slug || "hub"}`);
-}
-
-/**
- * The management key is sent once and kept in that server's secret store; settings only ever
- * carry a redaction marker for it afterwards.
- */
+/** Send the management key once to server secret storage; settings retain only a redaction marker. */
 export function AddUsageLimitSourceDialog({
   open,
   onOpenChange,
   environmentId,
   environmentLabel,
+  sources,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
+  readonly sources: UnifiedSettings["usageLimitSources"];
 }) {
+  const gt = useGT();
+  const formId = useId();
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
-  const [managementKey, setManagementKey] = useState("");
+  const secretSources = useSecretSources(environmentId);
+  const [keyDraft, setKeyDraft] = useState<string | SecretReference>("");
+  const [keyValid, setKeyValid] = useState(true);
+  const managementKey = typeof keyDraft === "string" ? keyDraft.trim() : keyDraft;
   const trimmedUrl = url.trim();
-  const canSave = trimmedUrl.length > 0 && managementKey.trim().length > 0;
+  const canSave = keyValid && trimmedUrl.length > 0 && managementKey !== "";
 
   const reset = () => {
     setLabel("");
     setUrl("");
-    setManagementKey("");
+    setKeyDraft("");
+    setKeyValid(true);
   };
 
   const save = () => {
     if (!canSave) return;
-    const id = sourceIdFromUrl(trimmedUrl);
+    const id = sourceIdFromUrl(trimmedUrl, sources);
     updateSettings({
       usageLimitSources: {
         [id]: {
           kind: "cliproxy",
           ...(label.trim() ? { label: label.trim() } : {}),
           url: trimmedUrl,
-          managementKey: managementKey.trim(),
+          managementKey,
           enabled: true,
         },
       },
@@ -88,14 +79,19 @@ export function AddUsageLimitSourceDialog({
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>Add a CLIProxyAPI hub</DialogTitle>
+          <DialogTitle>
+            <T>Add a CLIProxyAPI hub</T>
+          </DialogTitle>
           <DialogDescription>
-            Show the quota of every account the hub pools, next to the providers on{" "}
-            {environmentLabel}. The key stays on that server.
+            <T>
+              Show the quota of every account the hub pools, next to the providers on{" "}
+              <Var>{environmentLabel}</Var>. The key stays on that server.
+            </T>
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <form
+            id={formId}
             className="grid gap-4"
             onSubmit={(event) => {
               event.preventDefault();
@@ -103,7 +99,9 @@ export function AddUsageLimitSourceDialog({
             }}
           >
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-url">Hub URL</Label>
+              <Label htmlFor="usage-source-url">
+                <T>Hub URL</T>
+              </Label>
               <Input
                 id="usage-source-url"
                 placeholder="https://hub.example.ts.net:8318"
@@ -113,18 +111,27 @@ export function AddUsageLimitSourceDialog({
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-key">Management key</Label>
-              <SecretInput
+              <Label htmlFor="usage-source-key">
+                <T>Management key</T>
+              </Label>
+              <SecretSourceInput
                 id="usage-source-key"
-                value={managementKey}
-                onChange={(event) => setManagementKey(event.target.value)}
+                aria-label={gt("Management key")}
+                value={keyDraft}
+                sources={secretSources}
+                environmentId={environmentId}
+                onChange={(event) => setKeyDraft(event.target.value)}
+                onSecretChange={(secret) => setKeyDraft(secret ?? "")}
+                onValidityChange={setKeyValid}
               />
             </div>
             <div className="grid gap-1.5">
-              <Label htmlFor="usage-source-label">Label (optional)</Label>
+              <Label htmlFor="usage-source-label">
+                <T>Label (optional)</T>
+              </Label>
               <Input
                 id="usage-source-label"
-                placeholder="Defaults to the hub's host name"
+                placeholder={gt("Defaults to the hub's host name")}
                 value={label}
                 onChange={(event) => setLabel(event.target.value)}
               />
@@ -139,10 +146,10 @@ export function AddUsageLimitSourceDialog({
               onOpenChange(false);
             }}
           >
-            Cancel
+            <T>Cancel</T>
           </Button>
-          <Button onClick={save} disabled={!canSave}>
-            Add hub
+          <Button type="submit" form={formId} disabled={!canSave}>
+            <T>Add hub</T>
           </Button>
         </DialogFooter>
       </DialogPopup>

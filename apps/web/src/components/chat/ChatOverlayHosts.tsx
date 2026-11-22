@@ -2,12 +2,14 @@ import type {
   DeviceServiceState,
   EnvironmentId,
   MessageId,
+  OrchestrationV2ThreadProjection,
   ScopedThreadRef,
   ThreadId,
 } from "@t3tools/contracts";
+import { rewindFileRestore } from "@t3tools/client-runtime/state/thread-repositories";
 import { useAtomValue } from "@effect/atom-react";
+import { T, Var } from "gt-react";
 import { Atom } from "effect/reactivity";
-import { useEffect } from "react";
 
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -25,20 +27,29 @@ import {
 import { Button } from "../ui/button";
 import { Dialog } from "../ui/dialog";
 import { WizardPopup } from "../ui/wizard";
+import { findRevertCheckpoint } from "../../session-logic";
+import { filesystemEnvironment } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
+import { registerThreadOverlay } from "./threadOverlayRetention";
 
 /**
  * Open state for overlays the chat view hosts. It lives in atoms rather than
  * ChatView state so opening or closing one renders only its host, not the
  * whole chat chrome. Each entry carries the thread it was opened for; a host
- * shows only its own thread's entry and drops it when the thread changes.
+ * shows only its own thread's entry, and leaving that thread's route drops it.
  */
 type ThreadOverlayAtom<T> = Atom.Writable<{ readonly threadKey: string; readonly value: T } | null>;
 
 function makeThreadOverlayAtom<T>(label: string): ThreadOverlayAtom<T> {
-  return Atom.make<{ readonly threadKey: string; readonly value: T } | null>(null).pipe(
+  const atom = Atom.make<{ readonly threadKey: string; readonly value: T } | null>(null).pipe(
     Atom.keepAlive,
     Atom.withLabel(`chat:${label}`),
   );
+  registerThreadOverlay((threadKey) => {
+    const entry = appAtomRegistry.get(atom);
+    if (entry !== null && entry.threadKey !== threadKey) closeThreadOverlay(atom);
+  });
+  return atom;
 }
 
 function closeThreadOverlay<T>(atom: ThreadOverlayAtom<T>): void {
@@ -47,12 +58,6 @@ function closeThreadOverlay<T>(atom: ThreadOverlayAtom<T>): void {
 
 function useThreadOverlay<T>(atom: ThreadOverlayAtom<T>, threadKey: string | null): T | null {
   const entry = useAtomValue(atom);
-  useEffect(
-    () => () => {
-      if (appAtomRegistry.get(atom)?.threadKey === threadKey) closeThreadOverlay(atom);
-    },
-    [atom, threadKey],
-  );
   return threadKey !== null && entry?.threadKey === threadKey ? entry.value : null;
 }
 
@@ -76,6 +81,7 @@ export function PullRequestThreadDialogHost(props: {
   readonly onPrepared: (input: {
     branch: string;
     worktreePath: string | null;
+    pullRequestUrl: string;
   }) => Promise<void> | void;
 }) {
   const state = useThreadOverlay(pullRequestThreadDialogAtom, props.threadKey);
@@ -155,15 +161,25 @@ export function BranchRestoreConfirmHost(props: {
       <AlertDialogPopup>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Switch to <code className="font-medium">{props.threadBranch}</code>?
+            <T>
+              Switch to{" "}
+              <code className="font-medium">
+                <Var>{props.threadBranch}</Var>
+              </code>
+              ?
+            </T>
           </AlertDialogTitle>
           <AlertDialogDescription>
-            You have uncommitted changes. They'll carry over to the other branch, or block the
-            switch if they conflict.
+            <T>
+              You have uncommitted changes. They'll carry over to the other branch, or block the
+              switch if they conflict.
+            </T>
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
           <Button
             variant="default"
             disabled={!props.canWriteSourceControl}
@@ -172,7 +188,7 @@ export function BranchRestoreConfirmHost(props: {
               props.onConfirm();
             }}
           >
-            Switch branch
+            <T>Switch branch</T>
           </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
@@ -193,11 +209,39 @@ export function openRevertConfirm(threadKey: string, pending: PendingRevert): vo
 
 export function RevertConfirmHost(props: {
   readonly threadKey: string;
+  readonly environmentId: EnvironmentId;
+  /** The thread's worktree, which may be a task folder. */
+  readonly taskFolderPath: string | null;
+  readonly projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "checkpoints" | "checkpointScopes"
+  > | null;
+  readonly worktreePath: string | null;
   readonly onConfirm: (turnCount: number, messageId: MessageId, restoreFiles: boolean) => void;
 }) {
   const pending = useThreadOverlay(revertConfirmAtom, props.threadKey);
+  const checkpoint =
+    pending === null ? undefined : findRevertCheckpoint(props.projection, pending.turnCount);
+  // Only a missing snapshot depends on the task folder: its repositories may still restore.
+  const taskFolderQuery = useEnvironmentQuery(
+    checkpoint?.status === "missing" && props.taskFolderPath !== null
+      ? filesystemEnvironment.taskFolder({
+          environmentId: props.environmentId,
+          input: { worktreePath: props.taskFolderPath },
+        })
+      : null,
+  );
+  const fileRestore =
+    // The server refuses file restore outside an isolated worktree.
+    props.projection === null || props.worktreePath === null
+      ? null
+      : rewindFileRestore({
+          projection: props.projection,
+          checkpoint,
+          taskFolder: taskFolderQuery.data?.taskFolder,
+        });
   const confirm = (restoreFiles: boolean) => {
-    if (pending === null) return;
+    if (pending === null || (restoreFiles && fileRestore === null)) return;
     closeThreadOverlay(revertConfirmAtom);
     props.onConfirm(pending.turnCount, pending.messageId, restoreFiles);
   };
@@ -210,18 +254,42 @@ export function RevertConfirmHost(props: {
     >
       <AlertDialogPopup>
         <AlertDialogHeader>
-          <AlertDialogTitle>Edit from here?</AlertDialogTitle>
+          <AlertDialogTitle>
+            <T>Edit from here?</T>
+          </AlertDialogTitle>
           <AlertDialogDescription>
-            Rewind chat to before this message. Your prompt and attachments return to the composer.
-            “Revert files too” also undoes your own edits.
+            {fileRestore === "repositories" ? (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer. “Revert repositories too” also undoes your own edits in this thread’s
+                repository worktrees. Files in the project folder itself stay as they are.
+              </T>
+            ) : (
+              <T>
+                Rewind chat to before this message. Your prompt and attachments return to the
+                composer. “Revert files too” also undoes your own edits.
+              </T>
+            )}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button variant="destructive-outline" onClick={() => confirm(true)}>
-            Revert files too
+          <AlertDialogClose render={<Button variant="outline" />}>
+            <T>Cancel</T>
+          </AlertDialogClose>
+          <Button
+            variant="destructive-outline"
+            disabled={fileRestore === null}
+            onClick={() => confirm(true)}
+          >
+            {fileRestore === "repositories" ? (
+              <T>Revert repositories too</T>
+            ) : (
+              <T>Revert files too</T>
+            )}
           </Button>
-          <Button onClick={() => confirm(false)}>Revert and keep changes</Button>
+          <Button onClick={() => confirm(false)}>
+            <T>Revert and keep changes</T>
+          </Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>

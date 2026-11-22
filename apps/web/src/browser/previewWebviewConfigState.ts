@@ -5,11 +5,13 @@ import type {
   EnvironmentId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { AsyncResult, Atom } from "effect/reactivity";
 
 import { previewBridge } from "~/components/preview/previewBridge";
+import { environmentCatalog } from "~/connection/catalog";
+
+import { tunnelsEnvironmentLoopback } from "./browserTargetResolver";
 
 const PREVIEW_CONFIG_STALE_TIME_MS = 5 * 60_000;
 const PREVIEW_CONFIG_IDLE_TTL_MS = 10 * 60_000;
@@ -45,7 +47,8 @@ type PreviewConfigBridge = Pick<DesktopPreviewBridge, "getPreviewConfig">;
 
 const loadPreviewWebviewConfig = (
   environmentId: EnvironmentId,
-  profileId?: string,
+  profileId: string | undefined,
+  tunnelLoopback: boolean,
   bridge: PreviewConfigBridge | null = previewBridge,
 ): Effect.Effect<DesktopPreviewWebviewConfig, PreviewWebviewConfigError> => {
   if (bridge === null) {
@@ -53,20 +56,12 @@ const loadPreviewWebviewConfig = (
   }
 
   return Effect.tryPromise({
-    try: () => bridge.getPreviewConfig(environmentId, profileId),
+    try: () => bridge.getPreviewConfig(environmentId, profileId, tunnelLoopback),
     catch: (cause) => new PreviewWebviewConfigLoadError({ environmentId, cause }),
   });
 };
 
-/**
- * `Atom.family` keys on its argument, so the environment and profile are
- * folded into one string: passing an object would allocate a fresh entry on
- * every render.
- *
- * The profile is the tail rather than a second field, so an id containing the
- * delimiter round-trips whole instead of being truncated into a different
- * profile's key.
- */
+// Atom.family needs a primitive key; keep profile last so delimiter-containing ids round-trip.
 const CONFIG_KEY_DELIMITER = "\u0000";
 
 const configKey = (environmentId: EnvironmentId, profileId: string | undefined): string =>
@@ -84,7 +79,16 @@ const parseConfigKey = (key: string): { environmentId: EnvironmentId; profileId?
 
 const previewWebviewConfigAtom = Atom.family((key: string) => {
   const { environmentId, profileId } = parseConfigKey(key);
-  return Atom.make(loadPreviewWebviewConfig(environmentId, profileId)).pipe(
+  // The catalog knows the target before the environment connects, and a change re-routes the partition.
+  return Atom.make((get) =>
+    loadPreviewWebviewConfig(
+      environmentId,
+      profileId,
+      tunnelsEnvironmentLoopback(
+        get(environmentCatalog.catalogValueAtom).entries.get(environmentId)?.target,
+      ),
+    ),
+  ).pipe(
     Atom.swr({
       staleTime: PREVIEW_CONFIG_STALE_TIME_MS,
       revalidateOnMount: true,
@@ -99,5 +103,5 @@ export function usePreviewWebviewConfig(
   profileId?: string,
 ): DesktopPreviewWebviewConfig | null {
   const result = useAtomValue(previewWebviewConfigAtom(configKey(environmentId, profileId)));
-  return Option.getOrNull(AsyncResult.value(result));
+  return AsyncResult.getOrElse(result, () => null);
 }

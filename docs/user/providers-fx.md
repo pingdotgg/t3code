@@ -1,0 +1,71 @@
+# fx
+
+T3 Code can run [fx](https://fx.sh). fx uses the login on the machine that runs the T3 Code server.
+
+## Set up fx
+
+1. Install fx on that machine:
+
+   ```bash
+   curl -fsSL https://fx.sh/setup.sh | bash
+   ```
+
+2. Run `fx login` in a terminal on that machine.
+3. Open **Settings → Providers**, enable fx, and refresh the provider.
+
+If `fx` is not on the server's `PATH`, set **Binary path** to the executable.
+
+T3 Code supports fx 0.0.13 and later. Use the latest release when you can; macOS needs version 15 or later for fx releases after 0.0.13.
+
+Every fx instance on the same machine shares that machine's fx login. T3 Code does not keep a separate login per instance.
+
+## Update fx
+
+When a newer fx release is out, the fx card in **Settings → Providers** shows it. For standalone installs, **Update now** runs the instance's selected executable with `upgrade`, including one set in **Binary path**. For Homebrew's `fx-agent` formula, it uses the owning Homebrew installation to run `brew upgrade fx-agent` and checks Homebrew's release version. If that ownership cannot be confirmed, update through your package manager yourself. For mise-managed installs, T3 Code checks stable releases but leaves updates to your mise configuration. MacPorts and Nix installs are also left to their package manager.
+
+To update a standalone install manually, run `fx upgrade` on the server's machine. If **Binary path** is set, run that exact executable instead, for example `"/path/to/fx" upgrade`. Standalone version checks cover stable releases only; use the same manual command to get newer dev builds on fx's dev channel. On macOS 14 or earlier, which newer fx releases do not support, T3 Code does not offer fx updates.
+
+## Backends, models, and effort
+
+fx can run models through several backends: Vercel AI Gateway, a Codex subscription, a Grok subscription, and any OpenAI-compatible endpoint you configure in fx's settings. In the model picker, the fx tab lists each backend under its own heading. Open a backend to see the models it offers, then pick one. Search lists every backend's models together.
+
+The backend is part of each thread's model choice, so two threads can run on different backends at the same time. Switching it in T3 Code changes only that thread's fx session. It never changes the default `fx provider` sets for your terminal.
+
+Sign-ins are different: every fx instance on a machine shares that machine's fx login. A backend you are signed out of shows as unavailable, with the command to run on that machine, such as `fx login grok`. Refresh the provider after signing in.
+
+**Default** runs whatever fx would start a new session on in the thread's project folder, including a model fx's settings give only that folder. Its label shows the machine-wide default. A custom model you add in the provider settings goes to fx as is, on the thread's current backend, and fx reports an error if that backend does not offer it.
+
+fx also has an **Effort** control. A new thread starts at Medium.
+
+Type `$` in the composer to list the skills fx finds in its skill folders, in the order fx's own skill menu shows them. When two different skills share a name, the menu lists the one fx loads for that name: the first copy in fx's folder order, starting with the workspace. The menu shows one skill per name regardless of case; to run a skill whose name differs only in case, such as `Review` next to `review`, type its exact name.
+
+fx threads load the MCP servers from fx's profile config, `~/.fx/mcp.json`, on the machine that runs the T3 Code server.
+
+## Permission modes
+
+| Mode            | Behavior                                                                            |
+| --------------- | ----------------------------------------------------------------------------------- |
+| **Supervised**  | fx asks before it changes files or runs commands. Read requests run without asking. |
+| **Auto**        | fx handles routine actions itself. Anything it still asks about reaches you.        |
+| **Full access** | fx runs every action without asking. Needs fx 0.0.14 or later.                      |
+
+T3 Code offers **Full access** only when the server's fx reports it. After you upgrade fx, refresh the provider in **Settings → Providers** to see it. On an older fx, or before the provider check finishes, a thread set to **Full access** runs in **Supervised**.
+
+T3 Code does not offer **Auto-accept edits** for fx. A thread already set to it runs in **Supervised**. Changing the permission mode restarts the connection and reloads the same fx session.
+
+On fx 0.0.14 and later, fx saves the mode T3 Code sets as its default permission mode. T3 Code sets it each time it opens an fx thread, so fx in the terminal then starts in that thread's mode.
+
+A message steered into a running turn stops that turn, and fx answers the new message in the same session.
+
+## Sub-agents
+
+When fx hands work to a sub-agent, it opens in its own thread under the parent. That thread shows the sub-agent's task and its reply, which fx shortens to a couple of lines. fx doesn't share the sub-agent's individual steps.
+
+fx doesn't pass on a sub-agent's permission requests, so a sub-agent that needs one waits until you press **Stop**. This mostly happens in **Supervised**. In **Auto**, sub-agents can finish routine work by themselves.
+
+## Not supported yet
+
+- **Auto-accept edits**.
+- Commit messages, pull request text, branch names, and thread titles. Pick another provider for those.
+
+See [provider setup](./install.md#providers) and [Permission modes](./permission-modes.md).

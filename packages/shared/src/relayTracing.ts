@@ -18,8 +18,10 @@ export interface RelayClientTracingResource {
   readonly serviceName: string;
   readonly serviceVersion?: string;
   readonly runtime: string;
+  readonly serviceInstanceId: string;
   readonly client: string;
   readonly component?: string;
+  readonly attributes?: Readonly<Record<string, string>> | undefined;
 }
 
 export class RelayClientTracer extends Context.Reference(
@@ -33,11 +35,7 @@ class LocalTracer extends Context.Reference("@t3tools/shared/relayTracing/LocalT
   defaultValue: () => Option.none<Tracer.Tracer>(),
 }) {}
 
-/**
- * Exports every span `effect` creates through the product tracer. Use it only
- * around T3 Connect work; wrap local work inside it with
- * {@link withLocalTracing} so it stays off the product tracer.
- */
+/** Export only T3 Connect spans; wrap local work with {@link withLocalTracing}. */
 export const withRelayClientTracing = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
@@ -58,10 +56,7 @@ export const withRelayClientTracing = <A, E, R>(
     ),
   );
 
-/**
- * Its spans stay in the local trace and are never exported, so a relay span can
- * time the work without shipping what the user's machine did to answer it.
- */
+/** Keep local work in the local trace without exporting machine details through relay spans. */
 export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
   LocalTracer.pipe(
     Effect.flatMap(
@@ -72,25 +67,25 @@ export const withLocalTracing = <A, E, R>(effect: Effect.Effect<A, E, R>): Effec
     ),
   );
 
-function cleanTraceStack(error: Error): string {
-  const stack = error.stack ?? `${error.name}: ${error.message}`;
-  const lines = stack.split("\n");
-  const effectFrameIndex = lines.findIndex(
-    (line, index) => index > 0 && /(?:Generator\.next|~effect\/Effect)/.test(line),
+// Error messages can carry machine names (environment labels) and paths, so
+// relay spans export only the error name and its stack frames.
+function traceFrames(error: Error): Array<string> {
+  const lines = (error.stack ?? "").split("\n");
+  const headerLines = error.message.split("\n").length;
+  const frames = lines.slice(0, headerLines).join("\n").endsWith(error.message)
+    ? lines.slice(headerLines)
+    : lines;
+  const effectFrameIndex = frames.findIndex((line) =>
+    /(?:Generator\.next|~effect\/Effect)/.test(line),
   );
-  return effectFrameIndex < 0 ? stack : lines.slice(0, effectFrameIndex).join("\n");
+  return effectFrameIndex < 0 ? frames : frames.slice(0, effectFrameIndex);
 }
 
 function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
-  const message =
-    value instanceof Error
-      ? value.message
-      : typeof value === "object" &&
-          value !== null &&
-          "message" in value &&
-          typeof value.message === "string"
-        ? value.message
-        : String(value);
+  const name =
+    typeof value === "object" && value !== null && "name" in value && typeof value.name === "string"
+      ? value.name
+      : "Error";
 
   let cause: Error | undefined;
   if (typeof value === "object" && value !== null && !seen.has(value)) {
@@ -100,20 +95,11 @@ function traceSafeError(value: unknown, seen = new WeakSet<object>()): Error {
     }
   }
 
-  const error = new Error(message, cause ? { cause } : undefined);
-  if (value instanceof Error) {
-    error.name = value.name;
-    error.stack = cleanTraceStack(value);
-  } else if (
-    typeof value === "object" &&
-    value !== null &&
-    "name" in value &&
-    typeof value.name === "string"
-  ) {
-    error.name = value.name;
-  }
+  const error = new Error(name, cause ? { cause } : undefined);
+  error.name = name;
+  error.stack = [name, ...(value instanceof Error ? traceFrames(value) : [])].join("\n");
   if (cause) {
-    error.stack = `${error.stack ?? `${error.name}: ${error.message}`}\nCaused by: ${cause.stack ?? `${cause.name}: ${cause.message}`}`;
+    error.stack = `${error.stack}\nCaused by: ${cause.stack}`;
   }
   return error;
 }
@@ -137,7 +123,7 @@ function traceSafeExit(exit: Exit.Exit<unknown, unknown>): Exit.Exit<unknown, un
   );
 }
 
-function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
+export function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   return Tracer.make({
     span(options) {
       const span = delegate.span(options);
@@ -153,9 +139,18 @@ function nonInterferingTracer(delegate: Tracer.Tracer): Tracer.Tracer {
   });
 }
 
+/** Spans started while `isEnabled` says no stay local instead of being exported. */
+function gatedTracer(delegate: Tracer.Tracer, isEnabled: () => boolean): Tracer.Tracer {
+  return Tracer.make({
+    span: (options) => (isEnabled() ? delegate.span(options) : Tracer.nativeTracer.span(options)),
+    ...(delegate.context ? { context: delegate.context } : {}),
+  });
+}
+
 export function layer(
   config: RelayClientTracingConfig | null,
   resource: RelayClientTracingResource,
+  options?: { readonly isEnabled?: () => boolean },
 ): Layer.Layer<never, never, HttpClient.HttpClient> {
   if (config === null) {
     return Layer.succeed(RelayClientTracer, Option.none());
@@ -172,15 +167,23 @@ export function layer(
       serviceVersion: resource.serviceVersion,
       attributes: {
         "service.namespace": "t3code",
+        "service.instance.id": resource.serviceInstanceId,
         "service.runtime": resource.runtime,
-        "service.component": resource.component ?? "relay-client",
-        "t3.client.surface": resource.client,
+        "t3code.component": resource.component ?? "relay-client",
+        "t3code.client.surface": resource.client,
+        ...resource.attributes,
       },
     },
   }).pipe(Layer.provide(OtlpSerialization.layerJson));
 
   return Layer.effect(
     RelayClientTracer,
-    Tracer.Tracer.pipe(Effect.map(nonInterferingTracer), Effect.asSome),
+    Tracer.Tracer.pipe(
+      Effect.map(nonInterferingTracer),
+      Effect.map((tracer) =>
+        options?.isEnabled ? gatedTracer(tracer, options.isEnabled) : tracer,
+      ),
+      Effect.asSome,
+    ),
   ).pipe(Layer.provide(layerTracer));
 }

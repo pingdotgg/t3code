@@ -6,6 +6,9 @@ import {
 } from "@t3tools/client-runtime/state/thread-sort";
 import { effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import type { EnvironmentId } from "@t3tools/contracts";
+import { msg } from "gt-react-native";
+
+import { m, type MessageResolver } from "../../i18n/messages";
 
 export type ThreadMoveDestination =
   | "up"
@@ -112,12 +115,7 @@ export interface ThreadMoveAvailability {
   readonly canMoveDown: boolean;
 }
 
-/**
- * Batch form of "call `createThreadMovePlanner` once per card": one pass over
- * the section answers up/down availability for every ordered row, so list
- * construction stays linear instead of one full planner probe (array copies,
- * hidden-key rescans) per row on the minute-tick rebuild path.
- */
+/** Compute per section; per-card planner probes make minute ticks quadratic. */
 export function computeThreadMoveAvailability(input: {
   readonly ordered: readonly OrderRow[];
   readonly allThreads?: readonly OrderRow[];
@@ -150,10 +148,7 @@ export function computeThreadMoveAvailability(input: {
   keysById.forEach((key, id) => {
     if (key != null && !indexById.has(id)) reservedKeys.add(key);
   });
-  // A swap permutes two rows without changing the multiset, so the assignment
-  // set differs from the unswapped baseline at at most those two positions, and
-  // mismatch/writability tallies computed once per section answer each row with
-  // a constant-size delta.
+  // Swaps affect at most two positions; precomputed totals allow constant-size availability checks.
   const midpoints = new Map<string, string | null>();
   const fastPathKey = (beforeKey: string | null, afterKey: string | null): string | null => {
     const memoKey = `${beforeKey ?? ""}\u0000${afterKey ?? ""}`;
@@ -295,12 +290,19 @@ export function threadDropLifecycle(
 
 export type ThreadDragSection = "pinned" | "active" | "snoozed" | "settled";
 
-export function threadDragAction(source: ThreadDragSection, destination: ThreadDragSection) {
+export function threadDragAction(
+  source: ThreadDragSection,
+  destination: ThreadDragSection,
+  resolve: MessageResolver = m,
+) {
   if (destination === "snoozed") return null;
-  if (destination === "settled") return source === "settled" ? null : "Settle";
-  if (source === destination) return "Reorder";
-  if (destination === "pinned") return "Pin";
-  if (source === "pinned") return "Unpin";
-  if (source === "settled") return "Unsettle";
-  return "Unsnooze";
+  if (destination === "settled")
+    return source === "settled"
+      ? null
+      : resolve(msg("Settle", { $context: "verb, thread action" }));
+  if (source === destination) return resolve(msg("Reorder", { $context: "verb, thread action" }));
+  if (destination === "pinned") return resolve(msg("Pin", { $context: "verb, thread action" }));
+  if (source === "pinned") return resolve(msg("Unpin", { $context: "verb, thread action" }));
+  if (source === "settled") return resolve(msg("Unsettle", { $context: "verb, thread action" }));
+  return resolve(msg("Unsnooze", { $context: "verb, thread action" }));
 }

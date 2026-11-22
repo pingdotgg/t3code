@@ -1,5 +1,4 @@
-import { useCallback } from "react";
-
+import { useGT } from "gt-react-native";
 import {
   CODE_FONT_SIZE_STEP,
   MAX_CODE_FONT_SIZE,
@@ -15,18 +14,16 @@ import {
 import { FontSizeSliderRow } from "../components/FontSizeSliderRow";
 
 export function CodeAppearanceSection() {
+  const gt = useGT();
   const { isReady, appearance, setCodeFontSize, setCodeWordBreak } = useAppearancePreferences();
   const custom = appearance.isCodeFontSizeCustom;
 
-  const handleToggleCustom = useCallback(
-    (enabled: boolean) => {
-      setCodeFontSize(enabled ? appearance.codeFontSize : null);
-    },
-    [appearance.codeFontSize, setCodeFontSize],
-  );
+  const handleToggleCustom = (enabled: boolean) => {
+    setCodeFontSize(enabled ? appearance.codeFontSize : null);
+  };
 
   return (
-    <SettingsSection title="Code & Diffs">
+    <SettingsSection title={gt("Code & Diffs")}>
       <CodeAppearancePreview
         fontSize={appearance.codeFontSize}
         wordBreak={appearance.codeWordBreak}
@@ -35,7 +32,7 @@ export function CodeAppearanceSection() {
       <SettingsSwitchRow
         disabled={!isReady}
         icon="chevron.left.forwardslash.chevron.right"
-        label="Custom font size"
+        label={gt("Custom font size")}
         onValueChange={handleToggleCustom}
         value={custom}
       />
@@ -43,19 +40,19 @@ export function CodeAppearanceSection() {
         <FontSizeSliderRow
           disabled={!isReady}
           icon="textformat.size"
-          label="Font size"
+          label={gt("Font size")}
           max={MAX_CODE_FONT_SIZE}
           min={MIN_CODE_FONT_SIZE}
           onChange={setCodeFontSize}
           step={CODE_FONT_SIZE_STEP}
           value={appearance.codeFontSize}
-          valueLabel={`${appearance.codeFontSize} pt`}
+          valueLabel={gt("{size} pt", { size: appearance.codeFontSize })}
         />
       ) : null}
       <SettingsSwitchRow
         disabled={!isReady}
         icon="text.word.spacing"
-        label="Word break"
+        label={gt("Word break")}
         onValueChange={setCodeWordBreak}
         value={appearance.codeWordBreak}
       />

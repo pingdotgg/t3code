@@ -1,15 +1,18 @@
 import { Children, isValidElement, type ReactNode } from "react";
-import type { ExtraProps as ReactMarkdownExtraProps } from "react-markdown";
+import type { Element } from "hast";
 
-import { fnv1a32, type DiffThemeName } from "../../lib/diffRendering";
+import type { DiffThemeName } from "../../lib/diffRendering";
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 
 export function extractFenceLanguage(className: string | undefined): string {
   const match = className?.match(CODE_FENCE_LANGUAGE_REGEX);
-  const raw = match?.[1] ?? "text";
-  // Shiki doesn't bundle a gitignore grammar; ini is a close match (#685)
-  return raw === "gitignore" ? "ini" : raw;
+  return highlighterLanguageOf(match?.[1] ?? "text");
+}
+
+export function highlighterLanguageOf(language: string): string {
+  // Shiki doesn't bundle a gitignore grammar; ini is a close match.
+  return language === "gitignore" ? "ini" : language;
 }
 
 const FENCE_TITLE_ATTR_REGEX = /(?:^|\s)(?:title|file(?:name)?)=(?:"([^"]+)"|'([^']+)'|(\S+))/i;
@@ -41,11 +44,7 @@ export function extractPreCodeMeta(node: unknown): string | undefined {
   return typeof meta === "string" && meta.trim().length > 0 ? meta.trim() : undefined;
 }
 
-export function isClosedCodeFence(
-  node: ReactMarkdownExtraProps["node"],
-  text: string,
-  code: string,
-): boolean {
+export function isClosedCodeFence(node: Element | undefined, text: string, code: string): boolean {
   const start = node?.position?.start.offset;
   const end = node?.position?.end.offset;
   if (start === undefined || end === undefined) return false;
@@ -95,7 +94,7 @@ export function extractCodeBlock(
     return null;
   }
   // With a custom `code` component the child's type is that component, not
-  // the "code" tag — the hast node react-markdown attaches still names it.
+  // the "code" tag — the hast node the renderer passes still names it.
   if (onlyChild.type !== "code" && onlyChild.props.node?.tagName !== "code") {
     return null;
   }
@@ -106,14 +105,17 @@ export function extractCodeBlock(
   };
 }
 
+// The key holds the code itself: a hash would let two different blocks share
+// highlighted HTML. The length prefix keeps a language with ":" unambiguous.
 export function createHighlightCacheKey(
   code: string,
   language: string,
   themeName: DiffThemeName,
 ): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
+  return `${language.length}:${language}:${themeName}:${code}`;
 }
 
-export function estimateHighlightedSize(html: string, code: string): number {
-  return Math.max(html.length * 2, code.length * 3);
+/** Approximate UTF-16 bytes for a cache entry, counting its key, which holds the code. */
+export function estimateHighlightedSize(html: string, cacheKey: string): number {
+  return (cacheKey.length + html.length) * 2;
 }
