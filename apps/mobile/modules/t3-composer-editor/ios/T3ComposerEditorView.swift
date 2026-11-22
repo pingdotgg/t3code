@@ -325,10 +325,11 @@ private final class ComposerTextView: UITextView {
           store((object as? UIImage)?.pngData().map { ($0, "png") })
         }
       }
-      // Decoding a GIF to UIImage keeps only its first frame, so pass its bytes through.
-      if provider.hasItemConformingToTypeIdentifier(UTType.gif.identifier) {
-        _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.gif.identifier) { data, _ in
-          if let data { store((data, "gif")) } else { loadPNG() }
+      // Re-encoding a photo as PNG inflates it several times and keeps only a GIF's first frame,
+      // so pass the provider's own encoding through when it is one the attachment path reads.
+      if let original = Self.passthroughImageType(of: provider) {
+        _ = provider.loadDataRepresentation(forTypeIdentifier: original.type.identifier) { data, _ in
+          if let data { store((data, original.fileExtension)) } else { loadPNG() }
         }
       } else {
         loadPNG()
@@ -416,6 +417,23 @@ private final class ComposerTextView: UITextView {
       }
     }
     return sourceOffset
+  }
+
+  private static let passthroughImageTypes: [(type: UTType, fileExtension: String)] = [
+    (.gif, "gif"), (.jpeg, "jpg"), (.heic, "heic"), (.png, "png"), (.webP, "webp"),
+  ]
+
+  /// Providers list representations best first, so the first supported one is the original.
+  private static func passthroughImageType(
+    of provider: NSItemProvider
+  ) -> (type: UTType, fileExtension: String)? {
+    for identifier in provider.registeredTypeIdentifiers {
+      guard let registered = UTType(identifier) else { continue }
+      if let match = passthroughImageTypes.first(where: { registered.conforms(to: $0.type) }) {
+        return match
+      }
+    }
+    return nil
   }
 
   private static func writeTemporaryImage(_ image: UIImage) -> String? {
