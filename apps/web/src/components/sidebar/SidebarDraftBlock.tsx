@@ -57,7 +57,7 @@ export function useDraftTerminalLabels(): ReadonlyMap<string, string> {
   );
 }
 
-export function draftTerminalLabel(
+function draftTerminalLabel(
   session: DraftSessionState,
   terminalLabels: ReadonlyMap<string, string>,
 ): string | null {
