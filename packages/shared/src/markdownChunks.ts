@@ -1,6 +1,8 @@
 // Rendered markdown files above this stay in the virtualized source viewer.
 export const LARGE_MARKDOWN_RENDER_MAX_BYTES = 32 * 1024 * 1024;
 const CHUNK_TARGET_CHARS = 16 * 1024;
+// A chunk past this (one huge fence or HTML block) is too slow to parse at once; show source.
+export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
 const ATX_HEADING = /^#{1,6}(?:[ \t]|\r?$)/;
@@ -16,6 +18,8 @@ const SPANNING_BLOCKS: ReadonlyArray<readonly [open: RegExp, close: RegExp]> = [
   [/^ {0,3}<![A-Za-z]/, />/],
   [/^ {0,3}\$\$/, /\$\$/],
 ];
+
+const HTML_BLOCK_START = /^ {0,3}<\/?[A-Za-z]/;
 
 /** Returns how to recognize the end of a block that `line` opens, or null for none. */
 function blockCloser(line: string): ((line: string) => boolean) | null {
@@ -36,7 +40,8 @@ function blockCloser(line: string): ((line: string) => boolean) | null {
     if (opener === undefined) continue;
     return close.test(line.slice(opener.length)) ? null : (next) => close.test(next);
   }
-  return null;
+  // Other HTML blocks (CommonMark types 6 and 7) run until a blank line.
+  return HTML_BLOCK_START.test(line) ? (next) => next.trim() === "" : null;
 }
 
 export interface MarkdownChunk {

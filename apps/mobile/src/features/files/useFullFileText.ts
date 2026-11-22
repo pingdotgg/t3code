@@ -37,12 +37,18 @@ export function useFullFileText(input: {
     fetch(uri, { cache: "no-store", signal: controller.signal })
       .then((response) => {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        // The file can grow after the preview read; never buffer past the cap.
+        if (Number(response.headers.get("content-length")) > MOBILE_FULL_FILE_MAX_BYTES) {
+          controller.abort();
+          throw new Error("File too large");
+        }
         return response.text();
       })
       .then((text) => setResult({ uri, text }))
       // The caller keeps showing the 1 MB preview and its partial-file notice.
       .catch(() => undefined);
     return () => controller.abort();
-  }, [uri]);
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies -- A new revision can keep an unexpired URL; it must still download again.
+  }, [uri, input.revision]);
   return uri !== null && result?.uri === uri ? result.text : null;
 }

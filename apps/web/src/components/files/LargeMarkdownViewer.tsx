@@ -4,7 +4,13 @@ import { useEffect, useImperativeHandle, useState, type RefObject } from "react"
 
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import { FileSurfaceFailure, FileSurfaceLoading } from "./fileSurfaceChrome";
-import { type MarkdownChunk, splitLargeMarkdown } from "@t3tools/shared/markdownChunks";
+import {
+  LARGE_MARKDOWN_CHUNK_MAX_CHARS,
+  type MarkdownChunk,
+  splitLargeMarkdown,
+} from "@t3tools/shared/markdownChunks";
+import { maskMarkdownFrontmatter } from "@t3tools/shared/markdownFrontmatter";
+import LargeTextViewer from "./LargeTextViewer";
 
 /** Renders a whole Markdown file, parsing each chunk only once it scrolls near the viewport. */
 export default function LargeMarkdownViewer(props: {
@@ -29,7 +35,8 @@ export default function LargeMarkdownViewer(props: {
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return response.text();
       })
-      .then((text) => setFile({ text, chunks: splitLargeMarkdown(text) }))
+      // Masking first keeps frontmatter longer than one chunk out of the rendered pieces.
+      .then((text) => setFile({ text, chunks: splitLargeMarkdown(maskMarkdownFrontmatter(text)) }))
       .catch(() => {
         if (!controller.signal.aborted) setFile("failed");
       });
@@ -72,6 +79,8 @@ export default function LargeMarkdownViewer(props: {
       />
     );
   if (file === null) return <FileSurfaceLoading />;
+  if (file.chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS))
+    return <LargeTextViewer name={props.relativePath} text={file.text} delimiter={null} />;
   return (
     <div
       ref={observeChunks}

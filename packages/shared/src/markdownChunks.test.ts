@@ -69,6 +69,10 @@ describe("splitLargeMarkdown", () => {
       "",
       "<!-- one line -->",
       "",
+      "<div>",
+      "# literal",
+      "</div>",
+      "",
       "after",
     ].join("\n");
     expect(starts(text)).toEqual(["<!--", "after"]);

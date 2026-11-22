@@ -8,7 +8,7 @@ import { useState } from "react";
 import { StackActions, useNavigation } from "@react-navigation/native";
 import { ScrollView, View } from "react-native";
 import { LegendList } from "@legendapp/list/react-native";
-import { splitLargeMarkdown } from "@t3tools/shared/markdownChunks";
+import { LARGE_MARKDOWN_CHUNK_MAX_CHARS, splitLargeMarkdown } from "@t3tools/shared/markdownChunks";
 import { NativeScrollView } from "../../native/NativeScrollViewMarker";
 import { RefreshControl } from "../../components/ui/RefreshControl";
 
@@ -38,6 +38,7 @@ import {
   type NativeMarkdownTextStyle,
 } from "../../native/SelectableMarkdownText";
 import { fileRoutePathSegments, resolveWorkspaceFilePath } from "./filePath";
+import { SourceFileSurface } from "./SourceFileSurface";
 
 interface MarkdownPreviewStyles {
   readonly nativeTextStyle: NativeMarkdownTextStyle;
@@ -264,6 +265,15 @@ export function FileMarkdownPreview(props: {
   if (props.chunked) {
     // Only chunks near the viewport mount, so only they pay for the JS rewrites and native parse.
     const chunks = splitLargeMarkdown(markdown);
+    if (chunks.some((chunk) => chunk.text.length > LARGE_MARKDOWN_CHUNK_MAX_CHARS)) {
+      return (
+        <SourceFileSurface
+          contents={props.markdown}
+          path={props.relativePath}
+          onRefresh={props.onRefresh}
+        />
+      );
+    }
     return (
       <View className="flex-1 bg-sheet">
         <LegendList
