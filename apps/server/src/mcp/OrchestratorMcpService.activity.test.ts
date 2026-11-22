@@ -267,6 +267,12 @@ it("readThread preserves caller access errors and prefers activity-run status ov
     });
     expect(laterPage.thread.pullRequests).toBeUndefined();
     expect(laterPage.thread.pullRequestCount).toBe(8);
+    // A read from past the tail is the newest page, which a linked environment asks for.
+    const newestPage = yield* service.readThread(makeScope(), {
+      threadId: parentThreadId,
+      beforePosition: Number.MAX_SAFE_INTEGER,
+    });
+    expect(newestPage.thread.pullRequests?.map((link) => link.number)).toEqual([2, 8, 7, 6, 5]);
 
     Object.assign(projection, {
       runs: [makeRun({ id: activeRunId, ordinal: 1, status: "completed" })],
@@ -505,14 +511,28 @@ it("readThread returns the newest items that fit the response budget", async () 
       maxCharsPerItem: 1_500,
     };
     const result = yield* service.readThread(makeScope(), read);
-    // Linked environments and the CLI read as clients without a cursor and follow only hasMore.
+    // The CLI reads as a client without a cursor and follows only hasMore.
     const first = yield* service.readThread({ ...makeScope(), thread: undefined }, read);
     const fromStart = yield* service.readThread(makeScope(), { ...read, afterPosition: -1 });
+    const linked = yield* service.readThread(
+      {
+        ...makeScope(),
+        thread: undefined,
+        client: {
+          sessionId: "laptop",
+          label: "T3 Code · laptop",
+          access: "auto",
+          linked: true,
+        },
+      },
+      read,
+    );
 
     expect(pageOptions).toEqual([
       { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
       { limit: 100, view: "activity" },
       { afterPosition: -1, limit: 100, view: "activity" },
+      { beforePosition: Number.POSITIVE_INFINITY, limit: 100, view: "activity" },
     ]);
     // Claude Code saves results over ~50k chars of this JSON to a file instead of showing them.
     expect(JSON.stringify(result).length).toBeLessThan(31_000);
@@ -524,6 +544,9 @@ it("readThread returns the newest items that fit the response budget", async () 
     expect(first.hasMore).toBe(true);
     expect(first.nextPosition).toBe(first.items.at(-1)?.position);
     expect(fromStart.items[0]?.position).toBe(0);
+    expect(linked.items.at(-1)?.position).toBe(99);
+    expect(linked.earlierPosition).toBe(linked.items[0]?.position);
+    expect(linked.hasMore).toBe(false);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
@@ -1289,5 +1312,98 @@ it("requestSecret cancels its card when a steering restart supersedes the reques
     const records = dispatched.filter((command) => command.type === "secret_request.record");
     expect(records.map((command) => command.secretStatus)).toEqual(["pending", "cancelled"]);
     expect(records.every((command) => command.nodeId === originalRoot)).toBe(true);
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("requestSecret delivers a fields card as one file per field", async () => {
+  const dispatched: Array<{
+    readonly type: string;
+    readonly turnItemId?: string;
+    readonly secretStatus?: string;
+  }> = [];
+  const files = {
+    email: "/home/user/.t3/userdata/secrets/files/0123456789abcdef0123456789abcdef",
+    password: "/home/user/.t3/userdata/secrets/files/fedcba9876543210fedcba9876543210",
+  };
+  const projection = () => {
+    const card = dispatched.find((command) => command.type === "secret_request.record");
+    return {
+      thread: baseThread({
+        threadId: parentThreadId,
+        title: "Parent",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [
+        { ...makeRun({ id: activeRunId, ordinal: 1, status: "running" }), rootNodeId: taskId },
+      ],
+      visibleTurnItems: [],
+      turnItems:
+        card === undefined
+          ? []
+          : [{ type: "secret_request", id: card.turnItemId, secretStatus: "saved" }],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    } as unknown as OrchestrationV2ThreadProjection;
+  };
+  const layer = layerOrchestratorService.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: () => Effect.sync(projection),
+          getThreadShell: () =>
+            Effect.sync(() => projection().thread as unknown as OrchestrationV2ThreadShell),
+          dispatch: (command) => Effect.sync(() => void dispatched.push(command) as never),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        ServerSettings.layerTest(),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({}),
+        Layer.mock(SecretRequests.SecretRequests)({
+          saveToFile: () => Effect.succeed({ files }),
+        }),
+        Layer.mock(RemoteDelegation.RemoteDelegation)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({}),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  const fields = [
+    { name: "email", label: "Email", secret: false },
+    { name: "password", label: "Password" },
+  ];
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    for (const conflicting of [{ delivery: "secretRef" as const }, { value: "pw" }]) {
+      const refused = yield* service
+        .requestSecret(makeScope(), {
+          label: "Staging login",
+          reason: "Signs in the QA account.",
+          fields,
+          ...conflicting,
+        })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("invalid_request");
+    }
+    expect(dispatched).toEqual([]);
+
+    const result = yield* service.requestSecret(makeScope(), {
+      label: "Staging login",
+      reason: "Signs in the QA account.",
+      fields,
+    });
+    expect(result).toEqual({ status: "saved", files });
+    expect(dispatched[0]).toMatchObject({
+      type: "secret_request.record",
+      secretStatus: "pending",
+      delivery: "file",
+      fields,
+    });
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

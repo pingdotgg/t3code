@@ -283,6 +283,7 @@ export const make = Effect.gen(function* () {
         ),
       );
     }),
+    createsDraftChangeRequests: true,
     createChangeRequest: Effect.fn("GitLabSourceControlProvider.createChangeRequest")(
       function (input) {
         const source = SourceControlProvider.sourceControlRefFromInput(input);
@@ -295,6 +296,7 @@ export const make = Effect.gen(function* () {
             ...(input.target ? { target: input.target } : {}),
             title: input.title,
             bodyFile: input.bodyFile,
+            ...(input.draft === true ? { draft: true } : {}),
           })
           .pipe(
             Effect.mapError(

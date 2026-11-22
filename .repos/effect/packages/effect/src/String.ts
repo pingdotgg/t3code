@@ -432,6 +432,44 @@ export const isEmpty = (self: string): self is "" => self.length === 0
  */
 export const isNonEmpty = (self: string): boolean => self.length > 0
 
+// An unpaired UTF-16 surrogate. With the `u` flag, a surrogate pair matches as
+// one code point, outside the class.
+const loneSurrogate = /[\uD800-\uDFFF]/u
+const loneSurrogates = /[\uD800-\uDFFF]/gu
+
+interface WellFormedNative {
+  readonly isWellFormed?: () => boolean
+  readonly toWellFormed?: () => string
+}
+
+/**
+ * Checks whether a `string` has no unpaired UTF-16 surrogates, so that it is
+ * valid Unicode and can be encoded as UTF-8 without loss.
+ *
+ * **Details**
+ *
+ * Uses `String.prototype.isWellFormed` (ES2024) when the runtime has it, which
+ * is much faster than a regular expression on non-ASCII text.
+ *
+ * **Example** (Checking for unpaired surrogates)
+ *
+ * ```ts import.meta.vitest
+ * import { String } from "effect"
+ *
+ * String.isWellFormed("abc") // => true
+ * String.isWellFormed("\uD83D\uDE00") // => true
+ * String.isWellFormed("a\uD800b") // => false
+ * ```
+ *
+ * @see {@link toWellFormed} to replace unpaired surrogates
+ *
+ * @stability unstable
+ * @category predicates
+ * @since 4.1.5
+ */
+export const isWellFormed = (self: string): boolean =>
+  (self as WellFormedNative).isWellFormed?.() ?? !loneSurrogate.test(self)
+
 /**
  * Returns the JavaScript string length, measured in UTF-16 code units.
  *
@@ -773,6 +811,34 @@ export const matchAll = (regExp: RegExp) => (self: string): IterableIterator<Reg
  * @since 2.0.0
  */
 export const normalize = (form?: "NFC" | "NFD" | "NFKC" | "NFKD") => (self: string): string => self.normalize(form)
+
+/**
+ * Replaces every unpaired UTF-16 surrogate in a `string` with the replacement
+ * character U+FFFD, as UTF-8 encoders such as `TextEncoder` do.
+ *
+ * **Details**
+ *
+ * Uses `String.prototype.toWellFormed` (ES2024) when the runtime has it. A
+ * string without unpaired surrogates is returned as is.
+ *
+ * **Example** (Replacing unpaired surrogates)
+ *
+ * ```ts import.meta.vitest
+ * import { String } from "effect"
+ *
+ * String.toWellFormed("a\uD800b") // => "a\uFFFDb"
+ * String.toWellFormed("\uD83D\uDE00") // => "\uD83D\uDE00"
+ * ```
+ *
+ * @see {@link isWellFormed} to check for unpaired surrogates
+ *
+ * @stability unstable
+ * @category transforming
+ * @since 4.1.5
+ */
+export const toWellFormed = (self: string): string =>
+  (self as WellFormedNative).toWellFormed?.() ??
+    (isWellFormed(self) ? self : self.replace(loneSurrogates, "\uFFFD"))
 
 /**
  * Pads the string from the end with a given fill string to a specified length.
@@ -1277,7 +1343,8 @@ const linesSeparated = (self: string, stripped: boolean): LinesIterator => new L
 
 /**
  * Normalizes a string by splitting it into word parts, transforming each part,
- * and joining the parts with a configurable delimiter.
+ * and joining the parts with a configurable delimiter. By default, words contain
+ * Unicode letters, combining marks, and numbers; no Unicode normalization is applied.
  *
  * **When to use**
  *
@@ -1352,15 +1419,23 @@ const normalizeCase = (
   return result.slice(start, end).split("\0").map(transform).join(delimiter)
 }
 
+const SPLIT_LOWER_UPPER_REGEXP = /([\p{Ll}\p{N}]\p{M}*)(\p{Lu})/gu
+const SPLIT_UPPER_UPPER_REGEXP = /(\p{Lu}\p{M}*)(\p{Lu}\p{M}*\p{Ll})/gu
+
 // Support camel case ("camelCase" -> "camel Case" and "CAMELCase" -> "CAMEL Case")
 // and digit boundaries ("camel2case" -> "camel 2 case").
-const SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g, /([A-Z])([0-9])/gi, /([0-9])([A-Z])/gi]
+const SPLIT_REGEXP = [
+  SPLIT_LOWER_UPPER_REGEXP,
+  SPLIT_UPPER_UPPER_REGEXP,
+  /(\p{L}\p{M}*)(\p{N})/gu,
+  /(\p{N}\p{M}*)(\p{L})/gu
+]
 
 // Config paths preserve digit groups such as "v2" while still supporting camel case.
-const CONFIG_SPLIT_REGEXP = [/([a-z0-9])([A-Z])/g, /([A-Z])([A-Z][a-z])/g]
+const CONFIG_SPLIT_REGEXP = [SPLIT_LOWER_UPPER_REGEXP, SPLIT_UPPER_UPPER_REGEXP]
 
 // Remove all non-word characters.
-const STRIP_REGEXP = /[^A-Z0-9]+/gi
+const STRIP_REGEXP = /[^\p{L}\p{M}\p{N}]+/gu
 
 const pascalCaseTransform = (input: string): string => {
   const firstChar = input.charAt(0)

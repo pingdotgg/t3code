@@ -674,6 +674,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     }
 
     if (item.kind === "snapshot") {
+      yield* Ref.set(forceSnapshot, false);
       yield* SubscriptionRef.set(lastSequence, item.snapshotSequence);
       const hasProgressiveHistory =
         item.historyCursor !== undefined ||
@@ -1000,6 +1001,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   });
   // A stream defect parks the subscription until something resubscribes it.
   const resubscribes = yield* Queue.unbounded<void>();
+  // A resumed replay that dies (an event this client cannot decode) dies the same
+  // way from the same cursor, so later attempts reload the full snapshot until one applies.
+  const resuming = yield* Ref.make(false);
+  const forceSnapshot = yield* Ref.make(false);
   const markSynchronizing = Effect.gen(function* () {
     if (yield* Ref.get(resumingLive)) return;
     yield* SubscriptionRef.update(state, (current) =>
@@ -1110,7 +1115,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         }
 
         const sequence = yield* SubscriptionRef.get(lastSequence);
-        const canResume = Option.isSome(current.data);
+        const canResume = Option.isSome(current.data) && !(yield* Ref.get(forceSnapshot));
+        yield* Ref.set(resuming, canResume);
         const acceptBoundedSnapshot = yield* Ref.get(acceptsBoundedSocketSnapshots);
 
         return {
@@ -1138,6 +1144,10 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           }
           if (!Cause.hasDies(cause)) {
             return yield* setStreamError(THREAD_SYNC_ERROR);
+          }
+          yield* Ref.set(forceSnapshot, true);
+          if (yield* Ref.getAndSet(resuming, false)) {
+            return yield* Queue.offer(resubscribes, undefined);
           }
           yield* backOffAfterDefect;
           yield* Queue.offer(resubscribes, undefined);
@@ -1168,6 +1178,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               environmentId,
               threadId,
             }).pipe(
+              Effect.andThen(Ref.set(forceSnapshot, true)),
               Effect.andThen(backOffAfterDefect),
               Effect.andThen(Effect.suspend(followThread)),
             ),
