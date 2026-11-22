@@ -146,8 +146,10 @@ Merging a stack lands it through GitCafe, and updating a branch restacks the lay
 
 ### TanStack Source
 
-TanStack Source is in private beta, so the server shows it only when started with
-`T3CODE_TANSTACK_SOURCE=1` in its environment. Install its CLI and sign in:
+TanStack Source is in private beta, so the server shows it only when its environment turns the flag
+on: `export T3CODE_FEATURE_FLAGS=tanstack_source` in your shell profile, then restart T3 Code. Separate
+several flags with commas. A value already set in the server's own environment, such as a service
+definition, is used instead of the profile. Install its CLI and sign in:
 
 ```sh
 curl -fsSL https://source.tanstack.com/install | sh
@@ -158,7 +160,9 @@ Alternatively, open **Settings → Source control & issues**, expand **TanStack 
 from `https://source.tanstack.com/settings/tokens`. A saved token is used before `SRC_TOKEN`, which is
 used before the `src` login. With several `src` logins, pick the account there too.
 
-Pull requests show the runs of TanStack Source CI with their logs, and update live while open. Issues
+Pull requests show the runs of TanStack Source CI with their logs, and update live while open. An
+agent can open a private pull request on a public repository when you ask for one: its branch goes
+to the repository's private companion and never to the repository itself. Issues
 can be listed, filed, edited, commented on and closed. Reactions and picking reviewers or assignees
 from a list are not available yet.
 

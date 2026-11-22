@@ -239,7 +239,6 @@ function makeContext(onClose?: (context: BrowserContext) => void, initialUrl = "
       title: "test page",
       loading: false,
       visibleText: "delete",
-      interactiveElements: [],
     })),
     ariaSnapshot: vi.fn(async () => '- button "delete" [ref=e1]'),
     locator: vi.fn((): unknown => {

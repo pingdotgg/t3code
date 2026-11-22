@@ -1,7 +1,8 @@
 # Working with threads
 
 Use a new thread for a separate task. Choose **New worktree** when its code changes
-need a separate branch and working directory.
+need a separate branch and working directory. Threads in the same checkout share its
+branch, so T3 Code refuses a branch switch there while one of them is working.
 
 ## Start a thread
 

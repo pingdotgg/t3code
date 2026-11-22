@@ -1,4 +1,4 @@
-import { TANSTACK_SOURCE_HOST } from "../shared/definition.ts";
+import { TANSTACK_SOURCE_HOST, withoutOwnerMark } from "../shared/definition.ts";
 
 export const TANSTACK_SOURCE_HOSTS = [TANSTACK_SOURCE_HOST] as const;
 export type TanStackSourceHost = (typeof TANSTACK_SOURCE_HOSTS)[number];
@@ -10,14 +10,14 @@ export function tanStackSourceHost(host: string): TanStackSourceHost | null {
 
 const SEGMENT = /^[A-Za-z0-9_.-]+$/u;
 
-/** `owner/name` from the API spelling or the web spelling `@owner/name`, `.git` dropped. */
+/** `owner/name` from the API spelling or either web spelling of the owner, `.git` dropped. */
 export function tanStackSourceRepositoryPath(path: string): string | null {
-  const [owner, name, ...rest] = path
-    .trim()
-    .replace(/^\/+|\/+$/gu, "")
-    .replace(/\.git$/u, "")
-    .replace(/^@/u, "")
-    .split("/");
+  const [owner, name, ...rest] = withoutOwnerMark(
+    path
+      .trim()
+      .replace(/^\/+|\/+$/gu, "")
+      .replace(/\.git$/u, ""),
+  ).split("/");
   return rest.length === 0 &&
     owner !== undefined &&
     name !== undefined &&

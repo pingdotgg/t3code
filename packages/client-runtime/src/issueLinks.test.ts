@@ -49,6 +49,17 @@ describe("resolveIssueLinkTarget", () => {
     expect(target?.ref).toMatchObject({ projectId: "fork", scope: "me/web", key: "3" });
   });
 
+  it("uses the current repository identity after a project changes repositories", () => {
+    const url = "https://github.com/acme/api/issues/7";
+    const original = project("p1", "acme/api");
+    const replacement = project("p1", "acme/mobile");
+    const lender = project("p3", "acme/web");
+    expect(resolveIssueLinkTarget({ url, projects: [lender, original] })?.ref.projectId).toBe("p1");
+    expect(resolveIssueLinkTarget({ url, projects: [lender, replacement] })?.ref.projectId).toBe(
+      "p3",
+    );
+  });
+
   it("prefers the project bound to the link's own port over one on the bare hostname", () => {
     const enterprise = (id: string, host: string) =>
       ({
