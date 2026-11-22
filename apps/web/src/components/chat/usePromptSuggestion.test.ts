@@ -68,4 +68,18 @@ describe("offeredPromptSuggestion", () => {
     const unseen = run(RunId.make("run-3"), 3, "cancelled", false);
     expect(offeredPromptSuggestion(suggestion, summary(unseen), [turn])).toBeNull();
   });
+
+  it("withholds the suggestion while background work will resume the thread", () => {
+    const turn = run(RunId.make("run-1"), 1, "completed");
+    const suggestion = { runId: turn.id, text: "Are they done yet?" };
+    const subagent = { taskId: "task-1", kind: "subagent" as const };
+
+    expect(offeredPromptSuggestion(suggestion, summary(turn), [turn], [subagent])).toBeNull();
+
+    // A dev server the agent left running does not resume the thread.
+    const devServer = { taskId: "task-2", kind: "command" as const };
+    expect(offeredPromptSuggestion(suggestion, summary(turn), [turn], [devServer])).toBe(
+      suggestion,
+    );
+  });
 });
