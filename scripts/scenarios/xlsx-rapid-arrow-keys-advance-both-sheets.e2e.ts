@@ -1,7 +1,9 @@
 /// <reference lib="dom" />
-import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect } from "e2e";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import JSZip from "jszip";
 
 import { test, WEB } from "./t3.ts";
@@ -42,10 +44,12 @@ test(
       '<sheet state="hidden" name="Forecast"',
     );
     archive.file("xl/workbook.xml", manifest);
-    await writeFile(
-      join(project, "wraparound.xlsx"),
-      await archive.generateAsync({ type: "uint8array" }),
-    );
+    const wraparound = await archive.generateAsync({ type: "uint8array" });
+    await Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFile(path.join(project, "wraparound.xlsx"), wraparound);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.runPromise);
 
     const thread = await t3.thread({ project, title: "Review budget", messages: ["Start"] });
     await t3.open(thread);
