@@ -596,5 +596,8 @@ describe("wordsHast", () => {
     expect(wordsHtml("[Open `README.md`](/tmp/My Project/README.md)")).toContain(
       `href="/tmp/My%20Project/README.md"`,
     );
+    expect(wordsHtml("[Open `README\n.md`](/tmp/My Project/README.md)")).toContain(
+      `href="/tmp/My%20Project/README.md"`,
+    );
   });
 });

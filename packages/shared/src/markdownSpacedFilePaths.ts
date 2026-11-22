@@ -143,9 +143,8 @@ function* spacedFilePathCandidates(
       protectedIndex < protectedRanges.length &&
       protectedRanges[protectedIndex]![0] <= match.index
     ) {
-      const [from, to] = protectedRanges[protectedIndex]!;
-      if (source.slice(from, to).includes("\n")) openBrackets.length = 0;
-      token.lastIndex = to;
+      openBrackets.length = 0;
+      token.lastIndex = protectedRanges[protectedIndex]![1];
       continue;
     }
     const ch = match[0];
@@ -206,8 +205,12 @@ export function wrapSpacedFilePathsInProtectedRanges(
   protectedRanges: ReadonlyArray<OffsetRange>,
   allowedOpenerRanges?: ReadonlyArray<OffsetRange>,
   protectedLinkRanges?: ReadonlyArray<OffsetRange>,
+  inlineProtectedRanges?: ReadonlyArray<OffsetRange>,
 ): WrappedSpacedFilePaths | undefined {
   const mergedProtected = mergeRanges(protectedRanges);
+  const mergedInlineProtected = inlineProtectedRanges
+    ? mergeRanges(inlineProtectedRanges)
+    : undefined;
   const mergedAllowed = allowedOpenerRanges ? mergeRanges(allowedOpenerRanges) : undefined;
   const mergedProtectedLinks = protectedLinkRanges ? mergeRanges(protectedLinkRanges) : undefined;
   const candidates = [...spacedFilePathCandidates(source, mergedProtected)];
@@ -222,6 +225,9 @@ export function wrapSpacedFilePathsInProtectedRanges(
       (mergedAllowed !== undefined && !containsMergedOffset(mergedAllowed, opener)) ||
       containsMergedOffset(mergedProtected, opener) ||
       overlapsMergedRanges(mergedProtected, start, end) ||
+      (mergedInlineProtected !== undefined &&
+        (containsMergedOffset(mergedInlineProtected, opener) ||
+          overlapsMergedRanges(mergedInlineProtected, start, end))) ||
       (!isImage &&
         mergedProtectedLinks !== undefined &&
         overlapsMergedRanges(mergedProtectedLinks, opener, end))
@@ -242,6 +248,7 @@ function wrapSpacedFilePaths(source: string, readTree: () => Root) {
 
   const textRanges: OffsetRange[] = [];
   const literalRanges: OffsetRange[] = [];
+  const inlineCodeRanges: OffsetRange[] = [];
   const linkRanges: OffsetRange[] = [];
   const visit = (node: Root | RootContent) => {
     const start = node.position?.start.offset;
@@ -260,12 +267,20 @@ function wrapSpacedFilePaths(source: string, readTree: () => Root) {
       }
       node.children.forEach(visit);
     } else if (start !== undefined && end !== undefined) {
-      (node.type === "text" ? textRanges : literalRanges).push([start, end]);
+      if (node.type === "text") textRanges.push([start, end]);
+      else if (node.type === "inlineCode") inlineCodeRanges.push([start, end]);
+      else literalRanges.push([start, end]);
     }
   };
   visit(readTree());
 
-  return wrapSpacedFilePathsInProtectedRanges(source, literalRanges, textRanges, linkRanges);
+  return wrapSpacedFilePathsInProtectedRanges(
+    source,
+    literalRanges,
+    textRanges,
+    linkRanges,
+    inlineCodeRanges,
+  );
 }
 
 export function markdownWithSpacedFilePaths(source: string, readTree: () => Root): string {
