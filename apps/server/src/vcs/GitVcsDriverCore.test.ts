@@ -8257,6 +8257,59 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    // regression: #27018 a stopped provider still holds the folder for a few seconds on Windows
+    it.effect(
+      "removes a Windows worktree whose folder is held briefly after the session stops",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const { initialBranch } = yield* initRepoWithCommit(cwd);
+          const pathService = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const worktreePath = pathService.join(yield* makeTmpDir("git-worktrees-"), "held");
+          const firstAttempt = yield* Deferred.make<void>();
+          let held = true;
+          const driver = yield* makeGitVcsDriverCore().pipe(
+            Effect.provideService(FileSystem.FileSystem, {
+              ...fileSystem,
+              remove: (target, options) =>
+                Effect.suspend(() => {
+                  if (target !== worktreePath || !held) return fileSystem.remove(target, options);
+                  held = false;
+                  return Deferred.succeed(firstAttempt, undefined).pipe(
+                    Effect.andThen(
+                      PlatformError.systemError({
+                        _tag: "Busy",
+                        module: "FileSystem",
+                        method: "remove",
+                        pathOrDescriptor: target,
+                      }),
+                    ),
+                  );
+                }),
+            }),
+            Effect.provide(layerServerConfig),
+          );
+          yield* driver.createWorktree({
+            cwd,
+            path: worktreePath,
+            refName: initialBranch,
+            newRefName: "feature/held",
+          });
+
+          const removal = yield* driver
+            .removeWorktree({ cwd, path: worktreePath, force: true })
+            .pipe(Effect.provideService(HostProcess.Platform, "win32"), Effect.forkChild);
+          yield* Deferred.await(firstAttempt);
+          yield* TestClock.adjust("10 seconds");
+          const result = yield* Effect.result(Fiber.join(removal));
+
+          assert.isTrue(Result.isSuccess(result));
+          assert.equal(yield* fileSystem.exists(worktreePath), false);
+          assert.notInclude(yield* git(cwd, ["worktree", "list", "--porcelain"]), "held");
+        }),
+    );
+
     it.effect("keeps the junctions of a worktree that git refuses to remove", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
