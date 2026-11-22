@@ -277,7 +277,71 @@ const runGit = Effect.fn("runGit")(function* (
   return stdout;
 });
 
-const applyReferenceRepoSync = Effect.fn("applyReferenceRepoSync")(function* (
+const REFERENCE_REPO_LOCKFILE_NAMES = new Set<string>([
+  "pnpm-lock.yaml",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "Cargo.lock",
+  "Gemfile.lock",
+  "gems.locked",
+  "Podfile.lock",
+  "Pipfile.lock",
+  "poetry.lock",
+  "pdm.lock",
+  "pylock.toml",
+  "uv.lock",
+  "composer.lock",
+  "pubspec.lock",
+  "mix.lock",
+  "packages.lock.json",
+  "gradle.lockfile",
+  "buildscript-gradle.lockfile",
+  "conan.lock",
+  "cabal.project.freeze",
+  "stack.yaml.lock",
+  "renv.lock",
+]);
+
+const NAMED_PYLOCK_PATTERN = /^pylock\.[^.]+\.toml$/;
+
+function isReferenceRepoLockfile(name: string): boolean {
+  return REFERENCE_REPO_LOCKFILE_NAMES.has(name) || NAMED_PYLOCK_PATTERN.test(name);
+}
+
+export const stripReferenceRepoLockfiles = Effect.fn("stripReferenceRepoLockfiles")(function* (
+  rootDir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const directories = [rootDir];
+
+  while (directories.length > 0) {
+    const directory = directories.pop()!;
+    const entries = yield* fs.readDirectoryEntries(directory);
+
+    for (const entry of entries) {
+      const entryPath = path.join(directory, entry.name);
+      const entryType = entry.type === "Unknown" ? (yield* fs.lstat(entryPath)).type : entry.type;
+
+      if (entryType === "Directory") {
+        directories.push(entryPath);
+        continue;
+      }
+
+      if (
+        (entryType === "File" || entryType === "SymbolicLink") &&
+        isReferenceRepoLockfile(entry.name)
+      ) {
+        yield* fs.remove(entryPath);
+      }
+    }
+  }
+});
+
+export const applyReferenceRepoSync = Effect.fn("applyReferenceRepoSync")(function* (
   rootDir: string,
   plan: ReferenceRepoSyncPlan,
 ) {
@@ -302,6 +366,7 @@ const applyReferenceRepoSync = Effect.fn("applyReferenceRepoSync")(function* (
 
   yield* Effect.gen(function* () {
     yield* fs.remove(path.join(checkout, ".git"), { recursive: true });
+    yield* stripReferenceRepoLockfiles(checkout);
     yield* fs.remove(target, { recursive: true, force: true });
     yield* fs.rename(checkout, target);
   }).pipe(mapFsError);
