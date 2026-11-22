@@ -14,20 +14,22 @@ import { cn } from "~/lib/utils";
 import { isInSideChatPane } from "~/lib/sideChatPane";
 import { ComposerBanner } from "./ComposerBanner";
 import ChatMarkdown from "../ChatMarkdown";
+import { Input } from "../ui/input";
 
 interface PendingUserInputPanelProps {
   pendingUserInputs: PendingUserInput[];
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
-  disabled?: boolean;
+  disabled?: boolean | undefined;
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
-  onSelectOther?: (questionId: string) => void;
+  onSelectOther?: ((questionId: string) => void) | undefined;
+  onChangeCustomAnswer?: ((questionId: string, value: string) => void) | undefined;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
-  onFocusComposer?: () => void;
+  onFocusComposer?: (() => void) | undefined;
 }
 
 export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserInputPanel({
@@ -40,6 +42,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   questionIndex,
   onToggleOption,
   onSelectOther,
+  onChangeCustomAnswer,
   onAdvance,
   onDismiss,
   onFocusComposer,
@@ -60,6 +63,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
       onSelectOther={onSelectOther}
+      onChangeCustomAnswer={onChangeCustomAnswer}
       onAdvance={onAdvance}
       onDismiss={onDismiss}
       onFocusComposer={onFocusComposer}
@@ -77,9 +81,10 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex,
   onToggleOption,
   onSelectOther,
+  onChangeCustomAnswer,
   onAdvance,
   onDismiss,
-  onFocusComposer,
+  onFocusComposer: _onFocusComposer,
 }: {
   prompt: PendingUserInput;
   cwd: string | undefined;
@@ -90,6 +95,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onSelectOther?: ((questionId: string) => void) | undefined;
+  onChangeCustomAnswer?: ((questionId: string, value: string) => void) | undefined;
   onAdvance: () => void;
   onDismiss: (requestId: RuntimeRequestId) => void;
   onFocusComposer?: (() => void) | undefined;
@@ -99,10 +105,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   const canRespond = prompt.responseCapability !== "not_resumable";
   const responseDisabled = disabled || isResponding || !canRespond;
   const autoAdvanceTimerRef = useRef<number | null>(null);
+  const otherInputRef = useRef<HTMLInputElement>(null);
   const advance = useStableCallback(onAdvance);
-  const focusComposerStable = useStableCallback(() => {
-    onFocusComposer?.();
-  });
   const [optimisticSingleSelect, setOptimisticSingleSelect] = useState<{
     questionId: string;
     optionValue: string;
@@ -176,7 +180,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
         onToggleOption(activeQuestion.id, val);
       }
     }
-    focusComposerStable();
+    window.requestAnimationFrame(() => {
+      otherInputRef.current?.focus();
+    });
   };
 
   const selectOptionFromShortcut = useEffectEvent(handleOptionSelection);
@@ -411,7 +417,9 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     <div className="min-w-0 flex-1 flex flex-col gap-0.5">
                       <span className="text-sm font-medium">Other</span>
                       <span className="text-secondary-label text-2xs">
-                        Type a custom response or suggestion in the composer below
+                        {customAnswerActive
+                          ? "Type your custom answer below"
+                          : "Type a custom response or suggestion"}
                       </span>
                     </div>
                     {activeQuestion.options.length < 9 ? (
@@ -420,6 +428,33 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                       </span>
                     ) : null}
                   </button>
+                  {customAnswerActive && (
+                    <div
+                      className="ps-9 pe-2 pb-1.5 sm:ps-8"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
+                    >
+                      <Input
+                        ref={otherInputRef}
+                        size="compact"
+                        value={progress.customAnswer}
+                        placeholder="Type your custom answer..."
+                        disabled={disabled || isResponding}
+                        onChange={(e) => {
+                          onChangeCustomAnswer?.(activeQuestion.id, e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            if (progress.canAdvance) {
+                              advance();
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>

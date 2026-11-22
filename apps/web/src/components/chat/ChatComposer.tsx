@@ -1926,6 +1926,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   };
   const applyPromptReplacementStable = useStableCallback(applyPromptReplacement);
 
+  const handlePanelCustomAnswerChange = useStableCallback((questionId: string, value: string) => {
+    promptRef.current = value;
+    onChangeActivePendingUserInputCustomAnswer(questionId, value, value.length, value.length, true);
+  });
+
   const readComposerSnapshot = (): {
     value: string;
     cursor: number;
@@ -3699,6 +3704,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     questionIndex={activePendingQuestionIndex}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onSelectOther={onSelectActivePendingUserInputOther}
+                    onChangeCustomAnswer={handlePanelCustomAnswerChange}
                     onAdvance={onAdvanceActivePendingUserInput}
                     onDismiss={onDismissActivePendingUserInput}
                     onFocusComposer={scheduleComposerFocus}
