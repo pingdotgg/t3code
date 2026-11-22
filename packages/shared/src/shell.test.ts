@@ -1346,16 +1346,19 @@ effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
           const path = yield* Path.Path;
           const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-xcrun-" });
           const xcrun = path.join(directory, "xcrun");
-          yield* fs.writeFileString(xcrun, "#!/bin/sh\ntrap '' TERM\nexec sleep 600\n");
+          yield* fs.writeFileString(xcrun, "#!/bin/sh\ntrap '' TERM\necho ready\nexec sleep 600\n");
           yield* fs.chmod(xcrun, 0o755);
           const lookup = yield* locateXcodeGitWithXcrun({ PATH: "/usr/bin:/bin" }, { xcrun }).pipe(
             Effect.forkChild({ startImmediately: true }),
           );
           const child = nativeProbe.spawn.mock.results.at(-1)
             ?.value as NodeChildProcess.ChildProcess;
+          // The fixture prints its first line once the trap is in place.
+          const ready = new Promise<void>((resolve) => child.stdout?.once("data", () => resolve()));
           const kill = vi.spyOn(child, "kill");
           const exited = exitOf(child);
           yield* Effect.addFinalizer(() => Effect.sync(() => child.kill("SIGKILL")));
+          yield* Effect.promise(() => ready);
 
           expect(lookup.pollUnsafe()).toBeUndefined();
           yield* TestClock.adjust("5 seconds");
