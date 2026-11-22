@@ -31,6 +31,9 @@
 "@effect/platform/HttpApiMiddleware#TagClass":
   replacement: "effect/http-api/HttpApiMiddleware#ServiceClass"
   note: "Renamed class type with the new two-stage type configuration and wrapping service shape."
+"@effect/platform/HttpApiMiddleware#TagClass.Base":
+  replacement: "effect/http-api/HttpApiMiddleware#ServiceClass"
+  note: "The shared base interface was folded into ServiceClass; there is no separate public base interface."
 "@effect/platform/HttpApiMiddleware#TagClass.BaseSecurity":
   replacement: "effect/http-api/HttpApiMiddleware#ServiceClass"
   note: "Security is conditional metadata on ServiceClass; there is no separate public base interface."

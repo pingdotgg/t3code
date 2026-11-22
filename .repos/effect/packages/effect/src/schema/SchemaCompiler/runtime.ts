@@ -8,6 +8,7 @@
  */
 import * as Effect from "../../Effect.ts"
 import { effectIsExit, resolveConcurrency } from "../../internal/effect.ts"
+import * as InternalRecord from "../../internal/record.ts"
 import { lazyParser, type Resolve, resolve, setCompiler, withDecode } from "../../internal/schema/compilerRegistry.ts"
 import * as Interpreter from "../../internal/schema/interpreter.ts"
 import * as InternalParser from "../../internal/schema/parser.ts"
@@ -58,7 +59,12 @@ const makeObjectBase = (
         parser = compileField(property.type)
         parsers.set(property.type, parser)
       }
-      return { parser, name: property.name, type: property.type }
+      return {
+        parser,
+        name: property.name,
+        type: property.type,
+        ownOnly: SchemaAST.requiresOwnProperty(property.name)
+      }
     })
   }
   let fallback: SchemaIssueParser | undefined
@@ -70,7 +76,7 @@ const makeObjectBase = (
     pending: Effect.Effect<unknown, SchemaIssue.Issue, any>
   ): Effect.Effect<unknown, SchemaIssue.Issue, any> => {
     const property = properties![index]
-    return Effect.flatMap(Effect.exit(pending), (exit) => {
+    return Effect.flatMap(Effect.exit(pending), (exit): Effect.Effect<unknown, SchemaIssue.Issue, any> => {
       // Each execution gets its own output; `issues` is still undefined here
       // because `errors: "all"` is routed to the fallback before suspending.
       const state: ObjectParserState = { ...snapshot, out: { ...snapshot.out } }
@@ -221,9 +227,7 @@ const hasExcessProperties = (
       for (const key of keys) covered.add(key)
     }
   }
-  return Reflect.ownKeys(input).some((key) =>
-    !covered.has(key) && Object.prototype.propertyIsEnumerable.call(input, key)
-  )
+  return InternalRecord.ownEnumerableKeys(input).some((key) => !covered.has(key))
 }
 
 const invalidType = (ast: SchemaAST.AST, input: unknown, options: SchemaAST.ParseOptions) =>
@@ -266,7 +270,7 @@ export const runtime = {
   invalid,
   missing: InternalParser.missing,
   missingExit: InternalParser.missingExit,
-  sameExit: InternalParser.sameExit,
+  isSameExit: InternalParser.isSameExit,
   args: InternalParser.args,
   succeed: InternalParser.succeed,
   effectIsExit,
