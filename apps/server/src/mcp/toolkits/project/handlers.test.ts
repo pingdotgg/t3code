@@ -324,9 +324,9 @@ it.effect(
     }),
 );
 
-it.effect("a launch runs auto as full-access on a provider without auto", () =>
+it.effect("a launch keeps auto on a provider without it", () =>
   Effect.gen(function* () {
-    // Pi offers no Auto; a mode a provider lacks would run as Supervised.
+    // Pi offers no Auto; RuntimePolicy runs an Auto thread there in Full access.
     const pi = ProviderInstanceId.make("pi");
     const launchPi = Effect.fn("test.launchPi")(function* (runtimeMode?: RuntimeMode) {
       const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
@@ -369,14 +369,10 @@ it.effect("a launch runs auto as full-access on a provider without auto", () =>
     });
 
     const inherited = yield* launchPi();
-    expect(inherited.launched[0]?.runtimeMode).toBe("full-access");
+    expect(inherited.launched[0]?.runtimeMode).toBe("auto");
 
     const requested = yield* launchPi("auto");
-    expect(requested.launched[0]?.runtimeMode).toBe("full-access");
-
-    const escalated = yield* launchPi("full-access");
-    expect(escalated.result).toMatchObject({ code: "runtime_mode_escalation_denied" });
-    expect(escalated.launched).toHaveLength(0);
+    expect(requested.launched[0]?.runtimeMode).toBe("auto");
 
     const offered = yield* launchPi("approval-required");
     expect(offered.launched[0]?.runtimeMode).toBe("approval-required");

@@ -260,14 +260,15 @@ edits are not copied. A linked-environment target (`target.environmentId`) runs 
 project's checkout and rejects worktree isolation. To launch an isolated thread there, use
 `t3_thread_launch` with `environmentId` and a worktree `workspaceStrategy`.
 
-A provider runs a runtime mode it does not offer as `approval-required`, so a
-child would ask for approval on every command. `orchestrator_capabilities`
-lists `runtimeModes` only for a provider that offers some of the modes, and
-omits it for a provider that offers all of them. When the target lists
-`runtimeModes`, `auto` runs as `full-access` when the target lacks `auto`, since
-every narrower mode asks. Otherwise an explicit `runtimeMode` outside that list
-is refused, and an inherited mode steps down to the broadest mode the target
-offers.
+A provider runs `auto` it does not offer in its broadest mode the managed
+ceiling allows, usually `full-access`, and any other mode it does not offer as
+`approval-required`, so a child would ask for approval on every command.
+`orchestrator_capabilities` lists `runtimeModes` only for a provider that offers
+some of the modes, and omits it for a provider that offers all of them. When the
+target lists `runtimeModes`, `auto` is always kept, an explicit `runtimeMode`
+outside that list is refused, and an inherited mode steps down to the broadest
+mode the target offers. The child's stored mode stays its delegated authority,
+so an `auto` child cannot delegate or act above `auto`.
 
 Each independent delegated review round uses a new `delegate_task` call with the
 original brief, prior findings, responses, and unresolved objections. Track each
@@ -355,11 +356,10 @@ Pass the task in `message`. Project, model, and modes inherit when omitted;
 workspace does not. `scratch: true` launches without a project, in a folder of
 its own under the environment's Scratch project. A new worktree with `startFromOrigin` omitted follows the new-worktree setting. For stacked PRs, use the parent branch as `baseRef` with
 `startFromOrigin: false`. The new thread may not run with broader runtime or
-interaction modes than the caller. As for `delegate_task`, `auto` runs as
-`full-access` on a provider without it, any other runtime mode the provider does
-not offer is refused, and an inherited or default one steps down to the broadest
-mode it offers. `create_threads` remains the batch option for a
-shared checkout.
+interaction modes than the caller. As for `delegate_task`, `auto` is always
+kept, any other runtime mode the provider does not offer is refused, and an
+inherited or default one steps down to the broadest mode it offers.
+`create_threads` remains the batch option for a shared checkout.
 
 Set `clientRequestId` on the initial launch to make it retryable. After an error
 or a lost reply, resend the same request with the same key from the same

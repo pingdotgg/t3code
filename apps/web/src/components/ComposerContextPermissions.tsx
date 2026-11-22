@@ -29,11 +29,13 @@ export function ComposerContextPermissions(props: {
     useAtomValue(primaryServerKeybindingsAtom),
     "composer.mode",
   );
+  const managedPolicy = useManagedPolicy(props.environmentId);
   const { mode, modes } = resolveCompatibleRuntimeMode(
     props.runtimeMode,
     props.supportedRuntimeModes,
+    managedPolicy,
   );
-  const options = resolveRuntimeModeOptions(modes, useManagedPolicy(props.environmentId), messages);
+  const options = resolveRuntimeModeOptions(modes, managedPolicy, messages);
   const composerMenuProps = useComposerMenuProps();
   const { icon: Icon } = runtimeModeConfig[mode];
   const label = messages(runtimeModeConfig[mode].label);

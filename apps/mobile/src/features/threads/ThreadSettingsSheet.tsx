@@ -543,6 +543,7 @@ function ThreadSettingsSessionProvider(
   const compatibleRuntimeMode = compatibleRuntimeModeForChoices(
     props.runtimeMode,
     runtimeModeChoices,
+    config?.managedPolicy,
   );
 
   const hasLegacyModels = props.providerGroups.some((group) =>

@@ -1,5 +1,9 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  type ManagedPolicySummary,
+  providerRuntimeMode,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -78,10 +82,13 @@ export function resolveNewThreadRuntimeMode(
 export function compatibleRuntimeModeForChoices(
   runtimeMode: RuntimeMode,
   choices: ReadonlyArray<{ readonly mode: RuntimeMode }>,
+  managedPolicy: ManagedPolicySummary | undefined,
 ): RuntimeMode {
-  return choices.some((choice) => choice.mode === runtimeMode)
-    ? runtimeMode
-    : (choices[0]?.mode ?? runtimeMode);
+  return providerRuntimeMode(
+    runtimeMode,
+    choices.map((choice) => choice.mode),
+    managedPolicy?.limits?.maxRuntimeMode,
+  );
 }
 
 export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";

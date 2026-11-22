@@ -1,8 +1,8 @@
 import { describe } from "@effect/vitest";
+import { providerRuntimeMode } from "@t3tools/contracts";
 import { FX_SUPPORTED_RUNTIME_MODES } from "@t3tools/provider-fx/testing";
 
 import { FxOrchestratorReplayHarness } from "../Adapters/FxAdapterV2.testkit.ts";
-import { providerRuntimeMode } from "../RuntimePolicy.ts";
 import { itRunsReplayFixtures, runReplayFixture } from "./ProviderReplayFixtures.ts";
 
 describe("fx replay fixtures", () => {

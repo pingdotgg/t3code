@@ -42,6 +42,30 @@ const RUNTIME_MODE_RANK: Record<RuntimeMode, number> = {
 export const isRuntimeModeAbove = (mode: RuntimeMode, ceiling: RuntimeMode | undefined): boolean =>
   ceiling !== undefined && RUNTIME_MODE_RANK[mode] > RUNTIME_MODE_RANK[ceiling];
 
+/**
+ * The mode a provider really runs `mode` in. Auto means "run without asking", so a provider without
+ * it runs its broadest mode under `ceiling`; any other mode it lacks runs Supervised.
+ */
+export const providerRuntimeMode = (
+  mode: RuntimeMode,
+  supportedModes: ReadonlyArray<RuntimeMode> | undefined,
+  ceiling?: RuntimeMode,
+): RuntimeMode => {
+  if (
+    supportedModes === undefined ||
+    supportedModes.length === 0 ||
+    supportedModes.includes(mode)
+  ) {
+    return mode;
+  }
+  if (mode !== "auto") return "approval-required";
+  return (
+    (["full-access", "auto-accept-edits"] as const).find(
+      (fallback) => supportedModes.includes(fallback) && !isRuntimeModeAbove(fallback, ceiling),
+    ) ?? "approval-required"
+  );
+};
+
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";

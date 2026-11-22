@@ -6,6 +6,7 @@ import {
   type OrchestrationV2AppThread,
   ProjectId,
   ProviderInstanceId,
+  providerRuntimeMode,
   type RuntimeMode,
   type ServerProvider,
   ThreadId,
@@ -166,7 +167,7 @@ const layerTaskFolderPolicy = layerWithPolicy(
 ).pipe(Layer.provideMerge(layerTaskFolderStore));
 
 it.layer(layerTest)("RuntimePolicyV2", (it) => {
-  it.effect("asks for Antigravity command approval when a stored Auto thread falls back", () =>
+  it.effect("runs a stored Auto thread on Antigravity without Auto in Full access", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;
       const now = yield* DateTime.now;
@@ -181,8 +182,16 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
         options: [{ optionId: "allow", name: "Allow", kind: "allow_once" as const }],
       };
       const auto = yield* resolve("auto");
-      assert.equal(auto.runtimeMode, "approval-required");
-      assert.equal(acpPermissionDisposition(auto, request), "ask");
+      assert.equal(auto.runtimeMode, "full-access");
+      assert.equal(acpPermissionDisposition(auto, request), "allow");
+      assert.equal(
+        providerRuntimeMode(
+          "auto",
+          supportedRuntimeModesByInstance.get(antigravityInstanceId),
+          "auto",
+        ),
+        "auto-accept-edits",
+      );
       assert.equal(acpPermissionDisposition(yield* resolve("auto-accept-edits"), request), "ask");
       assert.equal(acpPermissionDisposition(yield* resolve("full-access"), request), "allow");
     }),

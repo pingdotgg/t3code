@@ -1,5 +1,9 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
+import {
+  type ManagedPolicySummary,
+  providerRuntimeMode,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 import { msg } from "gt-react";
 import { m, type MessageResolver } from "~/i18n/messages";
 import {
@@ -43,12 +47,16 @@ export const runtimeModeOptions = Object.keys(runtimeModeConfig) as RuntimeMode[
 export function resolveCompatibleRuntimeMode(
   runtimeMode: RuntimeMode,
   supportedRuntimeModes: ReadonlyArray<RuntimeMode> | undefined,
+  managedPolicy: ManagedPolicySummary | undefined,
 ) {
   const modes =
     supportedRuntimeModes && supportedRuntimeModes.length > 0
       ? runtimeModeOptions.filter((mode) => supportedRuntimeModes.includes(mode))
       : runtimeModeOptions;
-  return { modes, mode: modes.includes(runtimeMode) ? runtimeMode : (modes[0] ?? runtimeMode) };
+  return {
+    modes,
+    mode: providerRuntimeMode(runtimeMode, modes, managedPolicy?.limits?.maxRuntimeMode),
+  };
 }
 
 export function resolveRuntimeModeOption(

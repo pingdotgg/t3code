@@ -1001,6 +1001,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     resolveCompatibleRuntimeMode(
       runtimeMode,
       selectedProviderEntry?.snapshot.supportedRuntimeModes,
+      managedPolicy,
     );
   // Modes above an administrator's ceiling stay listed, disabled with the reason.
   const compatibleRuntimeModeOptions = resolveRuntimeModeOptions(
