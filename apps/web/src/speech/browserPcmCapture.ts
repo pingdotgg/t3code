@@ -76,10 +76,13 @@ export function createBrowserPcmCapture(
       const context = new AudioContext();
       audioContext = context;
       const opening = new AbortController();
-      const cancelled = Promise.withResolvers<never>();
+      let rejectOpening!: (reason: unknown) => void;
+      const cancelled = new Promise<never>((_, reject) => {
+        rejectOpening = reject;
+      });
       const onAbort = () => {
         opening.abort(captureSignal.reason);
-        cancelled.reject(captureSignal.reason);
+        rejectOpening(captureSignal.reason);
       };
       captureSignal.addEventListener("abort", onAbort, { once: true });
       try {
@@ -96,7 +99,7 @@ export function createBrowserPcmCapture(
         };
         const [, captured] = await Promise.race([
           Promise.all([context.audioWorklet.addModule(workletUrl), openMicrophone()]),
-          cancelled.promise,
+          cancelled,
         ]);
         captureSignal.throwIfAborted();
         const node = new AudioWorkletNode(context, "t3-pcm-capture", { channelCount: 1 });
@@ -135,7 +138,7 @@ export function createBrowserPcmCapture(
         context.createMediaStreamSource(captured).connect(node);
         // The processor emits silence, keeping the graph active without microphone playback.
         node.connect(context.destination);
-        await Promise.race([context.resume(), cancelled.promise]);
+        await Promise.race([context.resume(), cancelled]);
         captureSignal.throwIfAborted();
       } catch (error) {
         opening.abort();

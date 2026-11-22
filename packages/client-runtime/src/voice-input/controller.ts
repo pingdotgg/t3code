@@ -397,29 +397,29 @@ export class VoiceInputController {
       }
 
       const { signal } = abortController;
-      let modelFailure: VoiceInputFailure | undefined;
-      const model = runTranscriptionOperation(() => transcriber.prepare({ signal })).catch(
-        (error: unknown) => {
-          if (!signal.aborted) modelFailure = preparationFailure(error, this.resolve);
-          throw error;
-        },
-      );
+      let transcriberFailure: VoiceInputFailure | undefined;
+      const transcriberPreparation = runTranscriptionOperation(() =>
+        transcriber.prepare({ signal }),
+      ).catch((error: unknown) => {
+        if (!signal.aborted) transcriberFailure = preparationFailure(error, this.resolve);
+        throw error;
+      });
       const prepareRecorder = async () => {
-        if (!transcriber.prepareAlongsideRecorder) await model;
+        if (!transcriber.prepareAlongsideRecorder) await transcriberPreparation;
         if (signal.aborted) return;
         await this.dependencies.configureRecording();
         this.recordingConfigured = true;
         if (!signal.aborted) await this.dependencies.recorder.prepareToRecordAsync(signal);
       };
-      const recorder = prepareRecorder();
+      const recorderPreparation = prepareRecorder();
       try {
-        [this.transcription] = await Promise.all([model, recorder]);
+        [this.transcription] = await Promise.all([transcriberPreparation, recorderPreparation]);
       } catch (error) {
         abortController.abort();
         // A native call may finish after cancellation; keep ownership until both have settled.
-        await Promise.allSettled([model, recorder]);
-        if (modelFailure) {
-          if (this.isCurrent(operationToken)) this.setFailure(modelFailure, "retry");
+        await Promise.allSettled([transcriberPreparation, recorderPreparation]);
+        if (transcriberFailure) {
+          if (this.isCurrent(operationToken)) this.setFailure(transcriberFailure, "retry");
           return;
         }
         throw error;

@@ -23,6 +23,21 @@ function setup(input: {
   };
 }
 
+it("falls back to the system default for a missing microphone, but not permission denial", async () => {
+  const media = {} as MediaStream;
+  const getUserMedia = vi
+    .fn()
+    .mockRejectedValueOnce(new DOMException("gone", "OverconstrainedError"))
+    .mockResolvedValueOnce(media);
+  using _env = setup({ getUserMedia });
+  await expect(requestMicrophone("blue-yeti")).resolves.toBe(media);
+  expect(getUserMedia).toHaveBeenLastCalledWith({ audio: true });
+  const denied = new DOMException("denied", "NotAllowedError");
+  getUserMedia.mockRejectedValueOnce(denied);
+  await expect(requestMicrophone("blue-yeti")).rejects.toBe(denied);
+  expect(getUserMedia).toHaveBeenCalledTimes(3);
+});
+
 it.each(["NotFoundError", "NotReadableError"])(
   "reopens the Linux desktop microphone once after %s",
   async (name) => {

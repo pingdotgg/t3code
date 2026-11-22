@@ -40,7 +40,7 @@ export function updateMicrophoneOrder(
   return next;
 }
 
-/** Remembers newly seen microphones and returns the device id to record from, empty for System default. */
+/** Returns the device id to request, or an empty string for System default. */
 export async function chooseRecordingMicrophone(): Promise<string> {
   // Rejects where the browser has no media devices, such as plain HTTP.
   const selection = listAudioInputs()
@@ -51,10 +51,13 @@ export async function chooseRecordingMicrophone(): Promise<string> {
         devices,
       ),
     );
-  // Newly discovered devices rank below System default, so they cannot change this choice.
-  if (isClientSettingsHydrated() && microphoneOrder(getClientSettings())[0]?.kind === "default") {
-    void selection.catch(() => {});
-    return "";
+  if (isClientSettingsHydrated()) {
+    const [first, second] = microphoneOrder(getClientSettings());
+    // Opening a missing named device already falls back to System default.
+    if (first && (first.kind === "default" || second?.kind === "default")) {
+      void selection.catch(() => {});
+      return first.kind === "device" ? first.deviceId : "";
+    }
   }
   return selection;
 }
