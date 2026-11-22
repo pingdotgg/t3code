@@ -326,4 +326,6 @@ it("tells the next completed turn about delegated tasks its Stop interrupted, on
   const racing = run(2, claudeThread, { requestedAt: at(0), startedAt: at(2) });
   assert.deepEqual(pending([spawning, racing]), [stopped]);
   assert.deepEqual(pending([spawning, racing, run(3, claudeThread, { requestedAt: at(2) })]), []);
+  // A fresh-context turn on another provider thread never carried the note.
+  assert.deepEqual(pending([spawning, run(3, codexThread, { requestedAt: at(2) })]), [stopped]);
 });

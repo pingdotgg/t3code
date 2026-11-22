@@ -182,6 +182,7 @@ export function pendingStoppedDelegatedTasks(input: {
   const toldRunRequests = input.runs
     .filter(
       (run) =>
+        run.providerThreadId === input.providerThreadId &&
         !input.compactionMessageIds.has(run.userMessageId) &&
         input.attempts.some(
           (attempt) => attempt.runId === run.id && completedAttemptIds.has(attempt.id),

@@ -1050,9 +1050,16 @@ export const layer: Layer.Layer<
         attempts: projection.attempts,
       });
       // The turn start context omits settled tasks, so read them only after a Stop disposed some.
+      // A failed read fails the start: a turn that ran without the note would count as telling it.
+      const stoppedRunIds = projection.runs
+        .filter(
+          (source) =>
+            source.providerThreadId === run.providerThreadId &&
+            source.delegatedCompletion?.disposition === "stopped",
+        )
+        .map((source) => source.id);
       const stoppedTasks =
-        !projection.runs.some((source) => source.delegatedCompletion?.disposition === "stopped") ||
-        compactionMessageIds().has(run.userMessageId)
+        stoppedRunIds.length === 0 || compactionMessageIds().has(run.userMessageId)
           ? []
           : pendingStoppedDelegatedTasks({
               providerThreadId: run.providerThreadId,
@@ -1060,12 +1067,11 @@ export const layer: Layer.Layer<
               providerTurns: projection.providerTurns,
               attempts: projection.attempts,
               compactionMessageIds: compactionMessageIds(),
-              subagents: yield* projectionStore
-                .getThreadRecords(projection.thread.id, ["subagents"])
-                .pipe(
-                  Effect.map(({ subagents }) => subagents),
-                  Effect.catchCause(() => Effect.succeed([])),
-                ),
+              subagents: (yield* projectionStore.getThreadRecords(
+                projection.thread.id,
+                ["subagents"],
+                { subagentRunIds: stoppedRunIds },
+              )).subagents,
             });
       const restartNote = [
         restartCancelledWork.length === 0
