@@ -325,8 +325,10 @@ function ThemeImportBody({
   const openFilePicker = () => {
     const bridge = window.desktopBridge;
     if (bridge) {
+      // Opening the picker leaves pending imports active in case the user cancels.
+      const requestId = importRequestRef.current;
       void bridge.pickThemeFiles().then((picked) => {
-        if (!picked || picked.length === 0) return;
+        if (!isCurrentRequest(requestId) || !picked || picked.length === 0) return;
         readThemeFiles(
           picked.map((file) => ({
             name: file.name,
