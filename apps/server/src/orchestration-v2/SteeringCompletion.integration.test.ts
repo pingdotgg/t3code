@@ -607,7 +607,9 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
   wrapProviderEventIngestor?: (
     ingestor: ProviderEventIngestor.ProviderEventIngestorV2Shape,
   ) => ProviderEventIngestor.ProviderEventIngestorV2Shape,
-  options: Parameters<typeof ProviderReplayHarness.layerWithRegistry>[2] = {},
+  options: Parameters<typeof ProviderReplayHarness.layerWithRegistry>[2] & {
+    reportsSteerStatus?: true;
+  } = {},
 ) {
   const driver = ProviderDriverKind.make(nativeGoals === undefined ? "codex" : "opencode");
   const cwd = yield* checkpointWorkspace(name);
@@ -666,6 +668,7 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
           instanceId,
           driver,
           providerSessionId: input.providerSessionId,
+          ...(options.reportsSteerStatus ? { reportsSteerStatus: true as const } : {}),
           providerSession: {
             id: input.providerSessionId,
             driver,
@@ -1342,10 +1345,15 @@ it.effect("keeps a message queued when send now races with a running turn", () =
   }),
 );
 
-it.effect.each([false, true])(
+it.effect.each(["settled", "terminal-race", "consumed-between-reads"] as const)(
   "preserves message order across steer settlement and terminal race: %s",
-  (race) =>
+  (mode) =>
     Effect.gen(function* () {
+      const race = mode === "terminal-race";
+      const consumed = mode === "consumed-between-reads";
+      let completeDuringPendingRead = Effect.void;
+      let lockedRequeue = false;
+      const lockedEffectRead = yield* Deferred.make<void>();
       const steerEntered = yield* Deferred.make<void>();
       const acceptSteer = yield* Deferred.make<void>();
       let completeDuringPrecheck = Effect.void;
@@ -1359,16 +1367,48 @@ it.effect.each([false, true])(
         undefined,
         () =>
           Deferred.succeed(steerEntered, undefined).pipe(
-            Effect.andThen(Deferred.await(acceptSteer)),
+            Effect.andThen(consumed ? Effect.void : Deferred.await(acceptSteer)),
           ),
         [],
         undefined,
         {
+          ...(consumed ? { reportsSteerStatus: true as const } : {}),
+          wrapEffectOutbox: (outbox) => ({
+            ...outbox,
+            steerForProviderTurn: (input) =>
+              outbox
+                .steerForProviderTurn(input)
+                .pipe(
+                  Effect.tap((effect) =>
+                    lockedRequeue && Option.isSome(effect) && effect.value.status === "running"
+                      ? Deferred.succeed(lockedEffectRead, undefined)
+                      : Effect.void,
+                  ),
+                ),
+          }),
           wrapProjectionStore: (store) => ({
             ...store,
             getThreadRecords: (id, sections, options) =>
               store.getThreadRecords(id, sections, options).pipe(
                 Effect.tap(() => {
+                  if (
+                    race &&
+                    sections.length === 2 &&
+                    sections.some((section) => section === "runs") &&
+                    sections.some((section) => section === "messages")
+                  )
+                    lockedRequeue = true;
+                  if (
+                    consumed &&
+                    sections.length === 1 &&
+                    sections[0] === "turnItems" &&
+                    options?.turnItemStatuses?.[0] === "pending"
+                  ) {
+                    const complete = completeDuringPendingRead;
+                    completeDuringPendingRead = Effect.void;
+                    return complete;
+                  }
+
                   if (
                     !race ||
                     !sections.some((section) => section === "runs") ||
@@ -1429,6 +1469,7 @@ it.effect.each([false, true])(
         });
         const delivery = yield* worker.runOnce().pipe(Effect.forkScoped);
         yield* Deferred.await(steerEntered);
+        if (consumed) yield* Fiber.join(delivery);
 
         const projection = yield* orchestrator.getThreadProjection(threadId);
         const run = projection.runs.find((candidate) => candidate.id === started[0]!.runId)!;
@@ -1456,7 +1497,24 @@ it.effect.each([false, true])(
             Effect.asVoid,
             Effect.orDie,
           );
-        else yield* completeRun;
+        else if (!consumed) yield* completeRun;
+        else {
+          completeDuringPendingRead = sink
+            .write({
+              events: [
+                {
+                  id: EventId.make("consumed-before-terminal-read"),
+                  type: "turn-item.updated",
+                  threadId,
+                  runId: run.id,
+                  providerInstanceId: run.providerInstanceId,
+                  occurredAt: now,
+                  payload: { ...turnItem, status: "completed", completedAt: now, updatedAt: now },
+                },
+              ],
+            })
+            .pipe(Effect.andThen(completeRun), Effect.asVoid, Effect.orDie);
+        }
 
         const dispatchMessage = (text: string) =>
           orchestrator.dispatch({
@@ -1478,7 +1536,7 @@ it.effect.each([false, true])(
         yield* Deferred.await(firstStarted);
 
         if (race) yield* Deferred.await(prechecked);
-        if (!race) {
+        if (!race && !consumed) {
           const completedItem = yield* DateTime.now;
           yield* sink.write({
             events: [
@@ -1507,6 +1565,7 @@ it.effect.each([false, true])(
         }).pipe(Effect.forkScoped);
         yield* Deferred.await(secondStarted);
 
+        if (race) yield* Deferred.await(lockedEffectRead);
         yield* Deferred.succeed(acceptSteer, undefined);
         yield* Fiber.join(delivery);
         yield* Fiber.join(firstDispatch);

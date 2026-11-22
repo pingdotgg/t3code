@@ -3683,6 +3683,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             );
       if (deliveryEffect?.status === "pending" || deliveryEffect?.status === "running")
         return yield* new SteerSettlementPending({ effectId: deliveryEffect.id });
+      const currentItem = yield* projectionStore.getTurnItem({ threadId, itemId: item.id });
+      if (currentItem?.status !== "pending" || currentItem.runId !== item.runId) continue;
       const acceptedSteer = deliveryEffect?.request;
       if (acceptedSteer?.type === "provider-turn.steer" && acceptedSteer.runtimeAccepted === true) {
         const now = yield* DateTime.now;
