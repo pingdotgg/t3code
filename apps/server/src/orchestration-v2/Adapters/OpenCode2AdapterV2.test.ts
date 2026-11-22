@@ -1751,26 +1751,36 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
       returnedRunning(tool.id),
     ];
   };
-  const childReport = (inboxID: string, text: string, description = "Sleep", tag = "completed") =>
-    event("session.inbox.enqueued", {
-      inboxID,
-      sessionID: SESSION,
-      item: {
-        type: "synthetic",
-        payload: {
-          text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
-          description,
-          // OpenCode tags a report "running" only in the text; its metadata still says completed.
-          metadata: {
-            source: "subagent",
-            childID: CHILD,
-            agent: "General",
-            state: tag === "running" ? "completed" : tag,
+  const childReport = (
+    inboxID: string,
+    text: string,
+    description = "Sleep",
+    tag = "completed",
+    label?: string,
+  ) =>
+    event(
+      "session.inbox.enqueued",
+      {
+        inboxID,
+        sessionID: SESSION,
+        item: {
+          type: "synthetic",
+          payload: {
+            text: `<subagent sessionID="${CHILD}" state="${tag}" description="${description}">\n${text}\n</subagent>`,
+            description,
+            // OpenCode tags a report "running" only in the text; its metadata still says completed.
+            metadata: {
+              source: "subagent",
+              childID: CHILD,
+              agent: "General",
+              state: tag === "running" ? "completed" : tag,
+            },
           },
+          delivery: "steer",
         },
-        delivery: "steer",
       },
-    });
+      label,
+    );
   const watchCalls = (
     runtime: ProviderAdapter.ProviderAdapterV2SessionRuntime,
     thread: OrchestrationV2ProviderThread,
@@ -2471,25 +2481,71 @@ it.layer(McpProviderSessions.layer)("OpenCode2 adapter", (it) => {
     ]),
   );
 
-  it.effect("releases a kept subagent above one whose turn failed without a report", () =>
+  const grandFailed = [
+    event("session.execution.started", { sessionID: GRAND }),
+    event("session.execution.failed", {
+      sessionID: GRAND,
+      error: { type: "unknown", message: "Cursor stream aborted" },
+    }),
+  ];
+  // One step past the grace: 45 silent seconds would make the adapter resubscribe.
+  const passGrace = Effect.gen(function* () {
+    for (let i = 0; i < 10; i++) yield* Effect.yieldNow;
+    yield* TestClock.adjust("30 seconds");
+  });
+
+  it.effect("releases a kept subagent above one whose turn failed once it stays idle", () =>
     Effect.gen(function* () {
-      const { runtime, thread } = yield* resumed([
-        ...keptChain,
-        event("session.execution.started", { sessionID: GRAND }),
-        event("session.execution.failed", {
-          sessionID: GRAND,
-          error: { type: "unknown", message: "quota" },
-        }),
-      ]);
+      const { runtime, thread } = yield* resumed([...keptChain, ...grandFailed]);
       const watch = yield* watchCalls(runtime, thread);
       yield* runtime.startTurn(withLineage(thread));
+      yield* watch.until(() => watch.calls.get("Grand")?.status === "failed");
+      yield* passGrace;
       yield* watch.until(
-        () =>
-          ["Sleep", "Grand"].every((title) => settled(watch.calls.get(title)?.status)) &&
-          watch.state.roster?.length === 0,
+        () => settled(watch.calls.get("Sleep")?.status) && watch.state.roster?.length === 0,
       );
-      assert.equal(watch.calls.get("Grand")?.status, "failed");
       assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_WAITING" });
+    }),
+  );
+
+  it.effect("keeps a kept subagent that reacts to its own child's failure", () =>
+    Effect.gen(function* () {
+      const gate = makeProviderReplayGate(["final"]);
+      const { runtime, thread } = yield* resumed(
+        [
+          ...keptChain,
+          ...grandFailed,
+          event("session.inbox.enqueued", {
+            inboxID: "msg_grand_error",
+            sessionID: CHILD,
+            item: {
+              type: "synthetic",
+              payload: {
+                text: `<subagent sessionID="${GRAND}" state="error" description="Grand">\nCursor stream aborted\n</subagent>`,
+                description: "Grand",
+                metadata: { source: "subagent", childID: GRAND, agent: "General", state: "error" },
+              },
+              delivery: "steer",
+            },
+          }),
+          event("session.execution.started", { sessionID: CHILD }),
+          childStep(3),
+          childSaid("CHILD_RETRIED", 3),
+          event("session.execution.succeeded", { sessionID: CHILD }),
+          childReport("msg_report_3", running("CHILD_RETRIED"), "Sleep", "running"),
+          event("session.execution.started", { sessionID: GRAND }),
+          childReport("msg_report_4", "CHILD_DONE", "Sleep", "completed", "final"),
+        ],
+        { replayGate: gate },
+      );
+      const watch = yield* watchCalls(runtime, thread);
+      yield* runtime.startTurn(withLineage(thread));
+      assert.isTrue(yield* Effect.promise(() => gate.waitForReached("final")));
+      yield* passGrace;
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "running", result: null });
+      gate.release("final");
+      yield* watch.until(() => settled(watch.calls.get("Sleep")?.status));
+      assert.deepEqual(watch.calls.get("Sleep"), { status: "completed", result: "CHILD_DONE" });
     }),
   );
 

@@ -706,6 +706,7 @@ const LOST_BACKGROUND =
   "T3 Code lost its connection to OpenCode while this subagent ran, so its result is not shown.";
 const INVENTORY_TIMEOUT = "5 seconds";
 const MCP_TOOL_RELOAD_SETTLE = "250 millis";
+const FAILED_CHILD_GRACE = "30 seconds";
 const ACTIVE_CHECK_TIMEOUT = "5 seconds";
 // Other failures may still have admitted the prompt.
 const CLEAR_PROMPT_REJECTIONS: ReadonlySet<string> = new Set([
@@ -2475,9 +2476,17 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (instanceId: Pr
           for (const attached of callsAttachedTo(state)) {
             yield* settleCall(attached, terminal.status, terminal.failure.message);
           }
-          // No report follows either, so idle subagents above that were waiting on it are released.
+          // OpenCode reports the failure to the caller, which usually reacts at once (a retry, a
+          // "continue"); idle kept subagents above are released only if it stays idle.
           const caller = state.subagent?.call.state;
-          if (caller !== undefined) yield* releaseQuiet(caller);
+          if (caller !== undefined) {
+            yield* Effect.forkIn(
+              Effect.sleep(FAILED_CHILD_GRACE).pipe(
+                Effect.andThen(lock.withPermit(releaseQuiet(caller))),
+              ),
+              sessionScope,
+            );
+          }
         } else if (
           terminal.status === "completed" &&
           turn.answer === undefined &&
