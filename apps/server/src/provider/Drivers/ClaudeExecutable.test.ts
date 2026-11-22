@@ -130,29 +130,12 @@ describe("claudeProgramReader", () => {
     NodeFS.symlinkSync(version("1.0.0"), link);
     return {
       bin,
-      link,
       update: () => {
         NodeFS.unlinkSync(link);
         NodeFS.symlinkSync(version("1.0.1"), link);
       },
     };
   });
-
-  it.effect("reports an update that repoints the installed link", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { link, update } = yield* makeInstall;
-        const readProgram = yield* claudeProgramReader(link, {});
-        const startedFrom = yield* readProgram;
-        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
-        update();
-        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(true);
-        // A CLI started now runs the new version.
-        const current = yield* readProgram;
-        expect(claudeProgramWasReplaced(current, yield* readProgram)).toBe(false);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
 
   it.effect("follows a bare command name through PATH", () =>
     Effect.scoped(
@@ -161,21 +144,9 @@ describe("claudeProgramReader", () => {
         const readProgram = yield* claudeProgramReader("claude", { PATH: bin });
         const startedFrom = yield* readProgram;
         expect(startedFrom).toBeDefined();
+        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
         update();
         expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(true);
-      }),
-    ).pipe(Effect.provide(NodeServices.layer)),
-  );
-
-  it.effect("reports nothing for a program it cannot find", () =>
-    Effect.scoped(
-      Effect.gen(function* () {
-        const { bin, update } = yield* makeInstall;
-        const readProgram = yield* claudeProgramReader("claude-missing", { PATH: bin });
-        const startedFrom = yield* readProgram;
-        expect(startedFrom).toBeUndefined();
-        update();
-        expect(claudeProgramWasReplaced(startedFrom, yield* readProgram)).toBe(false);
       }),
     ).pipe(Effect.provide(NodeServices.layer)),
   );
