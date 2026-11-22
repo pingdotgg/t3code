@@ -129,7 +129,6 @@ export default function Spreadsheet(props: {
           // Focus moves before the worker confirms the selected sheet.
           const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]');
           const current = Array.from(buttons).findIndex((button) => button === event.target);
-          if (current < 0) return;
           const next =
             event.key === "ArrowRight"
               ? (current + 1) % opened.tabs.length
