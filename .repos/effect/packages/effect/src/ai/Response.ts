@@ -162,9 +162,15 @@ const toolPartSchemaCache = new WeakMap<Tool.Any, {
 const toolPartSchemas = (tool: Tool.Any) => {
   let parts = toolPartSchemaCache.get(tool)
   if (parts === undefined) {
+    // Provider-executed tools keep the provider's payload; locally handled
+    // tools carry the JSON encoding of their results, as the Toolkit produces.
+    const hasProviderResults = Tool.isProviderDefined(tool) && !tool.requiresHandler
+    const failure = Tool.failureResultSchema(tool)
     parts = {
       toolCall: ToolCallPart(tool.name, tool.parametersSchema),
-      toolResult: ToolResultPart(tool.name, tool.successSchema, Tool.failureResultSchema(tool))
+      toolResult: hasProviderResults
+        ? ToolResultPart(tool.name, tool.successSchema, failure)
+        : ToolResultPart(tool.name, Schema.toCodecJson(tool.successSchema), Schema.toCodecJson(failure))
     }
     toolPartSchemaCache.set(tool, parts)
   }
@@ -481,11 +487,19 @@ type ToolCallPartForName<
   Name extends keyof Tools
 > = Name extends string ? ToolCallPart<
     Name,
-    ParametersMode extends "encoded" ? Tool.ParametersEncoded<Tools[Name]>
+    ParametersMode extends "encoded" ? ToolCallParametersEncoded<Tools[Name]>
       : ParametersMode extends "opaque" ? unknown
       : Tool.Parameters<Tools[Name]>
   >
   : never
+
+// Provider-executed tools keep the provider's payload; locally handled tool
+// calls carry the JSON encoding of their parameters. Distributes over a
+// non-literal handler flag, which may be either at runtime.
+type ToolCallParametersEncoded<T extends Tool.Any> = T extends
+  Tool.ProviderDefined<any, any, any, infer RequiresHandler, any>
+  ? RequiresHandler extends true ? Schema.Json : Tool.ParametersEncoded<T>
+  : Schema.Json
 
 /**
  * Utility type that extracts tool result parts from a set of tools.
@@ -1587,7 +1601,9 @@ export interface BaseToolResult<Name extends string> extends BasePart<"tool-resu
    */
   readonly name: Name
   /**
-   * The encoded result for serialization purposes.
+   * The encoded result for serialization purposes. Results of locally handled
+   * tools hold their JSON encoding; provider-executed tools keep the
+   * provider's payload.
    */
   readonly encodedResult: unknown
   /**

@@ -1,5 +1,6 @@
 import { assert, describe, it } from "@effect/vitest"
-import { Effect, References } from "effect"
+import { Effect, References, Schema } from "effect"
+import { Atom } from "effect/reactivity"
 import { vi } from "vitest"
 
 const withCaptureDisabled = <A>(run: () => A): A => {
@@ -25,6 +26,29 @@ const countErrors = (run: () => void): number => {
   try {
     run()
     return count
+  } finally {
+    globalThis.Error = original
+  }
+}
+
+// Reading `stack` formats every frame, so count reads of it.
+const countStackReads = <A>(run: () => A): [A, () => number] => {
+  const original = globalThis.Error
+  let count = 0
+  globalThis.Error = new Proxy(original, {
+    construct(target, args, newTarget) {
+      return new Proxy(Reflect.construct(target, args, newTarget), {
+        get(target, key) {
+          if (key === "stack") {
+            count++
+          }
+          return Reflect.get(target, key)
+        }
+      })
+    }
+  })
+  try {
+    return [run(), () => count]
   } finally {
     globalThis.Error = original
   }
@@ -109,5 +133,35 @@ describe("stack capture", { concurrent: false }, () => {
       return frame
     })
     assert.match(frame!.stack()!, /StackCapture\.test\.ts:\d+:\d+/)
+  })
+
+  it("atom labels format the location once, on first read", () => {
+    const [[labeled, serializable], stackReads] = countStackReads(() =>
+      [
+        Atom.make(0).pipe(Atom.withLabel("counter")),
+        Atom.make(0).pipe(Atom.serializable({ key: "count", schema: Schema.Number }))
+      ] as const
+    )
+    assert.deepStrictEqual([labeled.label![0], serializable.label![0], stackReads()], ["counter", "count", 0])
+    const location = labeled.label![1]
+    assert.strictEqual(stackReads(), 1)
+    const serializableLocation = serializable.label![1]
+    assert.strictEqual(stackReads(), 2)
+    assert.deepStrictEqual([labeled.label![1], serializable.label![1]], [location, serializableLocation])
+    assert.strictEqual(stackReads(), 2)
+  })
+
+  it("atom labels skip capture at limit zero", () => {
+    const labels: Array<readonly [string, string]> = []
+    const count = withCaptureDisabled(() =>
+      countErrors(() => {
+        labels.push(
+          Atom.make(0).pipe(Atom.withLabel("counter")).label!,
+          Atom.make(0).pipe(Atom.serializable({ key: "count", schema: Schema.Number })).label!
+        )
+      })
+    )
+    assert.strictEqual(count, 0)
+    assert.deepStrictEqual(labels, [["counter", ""], ["count", ""]])
   })
 })
