@@ -35,7 +35,8 @@ import {
   setPendingConnectionError,
 } from "./use-remote-environment-registry";
 import { useAtomCommand } from "./use-atom-command";
-import { showGitActionResult } from "./use-vcs-action-state";
+import type { GitRepositoryTarget } from "./thread-git-target";
+import { noteRepositoryGitAction, showGitActionResult } from "./use-vcs-action-state";
 import { useThreadSelection } from "./use-thread-selection";
 import { useSelectedThreadWorktree } from "./use-selected-thread-worktree";
 
@@ -55,7 +56,11 @@ const selectedThreadStatusRevalidation = createVcsStatusRevalidationAtomFamily({
     ),
 });
 
-export function useSelectedThreadGitActions() {
+/**
+ * Git actions for the selected thread's own folder, or for `repository` when given. A repository
+ * keeps the thread as the owner of the work but never writes its branch back onto the thread.
+ */
+export function useSelectedThreadGitActions(repository?: GitRepositoryTarget) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
@@ -75,7 +80,14 @@ export function useSelectedThreadGitActions() {
     AuthOrchestrationOperateScope,
   );
   const canChangeThreadBranch = canWriteSourceControl && canOperateThread;
-  const { selectedThreadCwd, selectedThreadWorktreePath } = useSelectedThreadWorktree();
+  // Only the thread's own folder has a branch the thread records, which takes operating the thread.
+  const followsThreadBranch = repository === undefined;
+  const canCreateFeatureBranch = followsThreadBranch
+    ? canChangeThreadBranch
+    : canWriteSourceControl;
+  const threadWorktree = useSelectedThreadWorktree();
+  const { selectedThreadWorktreePath } = threadWorktree;
+  const selectedThreadCwd = repository?.cwd ?? threadWorktree.selectedThreadCwd;
   const runStackedAction = useAtomCommand(
     vcsActionManager.runStackedAction({
       environmentId: selectedThread?.environmentId ?? null,
@@ -84,7 +96,7 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd = repository?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
   const branchTarget = {
     environmentId: selectedThread?.environmentId ?? null,
     cwd: selectedThreadGitRootCwd,
@@ -180,6 +192,7 @@ export function useSelectedThreadGitActions() {
       !selectedThreadCwd ||
       !readEnvironmentScope(selectedThread.environmentId, AuthSourceControlWriteScope) ||
       (options?.changesThreadBranch === true &&
+        followsThreadBranch &&
         !readEnvironmentScope(selectedThread.environmentId, AuthOrchestrationOperateScope))
     ) {
       return null;
@@ -190,6 +203,12 @@ export function useSelectedThreadGitActions() {
       cwd: selectedThreadCwd,
     };
     setPendingConnectionError(null);
+    if (repository !== undefined) {
+      noteRepositoryGitAction({
+        threadRef: { environmentId: selectedThread.environmentId, threadId: selectedThread.id },
+        cwd: selectedThreadCwd,
+      });
+    }
     const run = () =>
       execute({
         thread: selectedThread,
@@ -246,9 +265,10 @@ export function useSelectedThreadGitActions() {
     };
   }): Promise<AtomCommandResult<void, unknown>> => {
     // Git already changed; refresh even if metadata updates fail so the sheet shows the current branch.
-    const updateResult = input.nextThreadState
-      ? await updateThreadGitContext(input.thread, input.nextThreadState)
-      : AsyncResult.success(undefined);
+    const updateResult =
+      input.nextThreadState && followsThreadBranch
+        ? await updateThreadGitContext(input.thread, input.nextThreadState)
+        : AsyncResult.success(undefined);
     branchState.refresh();
     await refreshSelectedThreadGitStatus({ quiet: true, cwd: input.cwd });
     return AsyncResult.isFailure(updateResult)
@@ -312,6 +332,8 @@ export function useSelectedThreadGitActions() {
     readonly baseBranch: string;
     readonly newBranch: string;
   }) => {
+    // A worktree moves the thread, which a repository beside it never does.
+    if (!followsThreadBranch) return null;
     return runSelectedThreadGitMutation(
       "create_worktree",
       m(msg("Creating worktree")),
@@ -417,6 +439,7 @@ export function useSelectedThreadGitActions() {
   return {
     canWriteSourceControl,
     canChangeThreadBranch,
+    canCreateFeatureBranch,
     refreshSelectedThreadGitStatus,
     refreshSelectedThreadBranches,
     onCheckoutSelectedThreadBranch,

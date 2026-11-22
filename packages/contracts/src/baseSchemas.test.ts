@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 
 import {
@@ -22,13 +23,23 @@ const fromWire = <S extends Schema.Top>(schema: S) =>
 
 describe("ForwardCompatibleArray", () => {
   it("decodes elements through their own codec and drops ones it cannot read", () => {
-    const decoded = fromWire(ForwardCompatibleArray(Shape))([
+    const shapes = ForwardCompatibleArray(Shape);
+    const exit = Schema.toCodecJson(Schema.Exit(shapes, Schema.Never, Schema.Never));
+    const wire = [
       { kind: "circle", radius: 1, at },
       { kind: "triangle" },
       { kind: "square", side: "wide" },
-    ]);
+    ];
+    const decoded = fromWire(shapes)(wire);
     expect(decoded).toHaveLength(1);
     expect(DateTime.isDateTime((decoded[0] as { at: unknown }).at)).toBe(true);
+    expect(Schema.decodeSync(exit)({ _tag: "Success", value: wire })).toEqual(
+      Exit.succeed(decoded),
+    );
+    expect(Schema.encodeSync(exit)(Exit.succeed(decoded))).toEqual({
+      _tag: "Success",
+      value: [wire[0]],
+    });
   });
 
   const Named = ForwardCompatibleArray(Schema.Struct({ name: TrimmedNonEmptyString }));

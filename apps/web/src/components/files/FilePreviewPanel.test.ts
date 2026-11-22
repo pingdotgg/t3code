@@ -158,6 +158,22 @@ describe("document preview contents", () => {
       "A\tB\u2003C\u2002D\u2005E\u200dF\u200cG\u200bH\u200eI\u200fJ",
     ],
     ["a Unicode fallback", String.raw`{\rtf1 Jean\u8209\_Luc}`, "Jean\u2011Luc"],
+    [
+      "visible text around hidden character formatting",
+      String.raw`{\rtf1 A{\v hidden{\v0 B}hidden}C\v hidden\v0 D\v hidden\plain E}`,
+      "ABCDE",
+    ],
+    ["a tracked replacement", String.raw`{\rtf1 aaa{\deleted bbb}{\revised BBB}ccc}`, "aaaBBBccc"],
+    [
+      "text after a deletion reset",
+      String.raw`{\rtf1 A\deleted old\deleted0 B\deleted old\plain C}`,
+      "ABC",
+    ],
+    [
+      "text around a deleted Unicode span",
+      String.raw`{\rtf1 A{\deleted\uc1\u945\deleted0 old}B}`,
+      "AB",
+    ],
   ])("keeps the text of %s", (_name, source, expected) => {
     const result = openRtf(bytes(source));
     if (result.type !== "document") throw new Error("Expected document");
@@ -203,7 +219,7 @@ describe("document preview contents", () => {
     expect(html).not.toContain("https:");
   });
 
-  it("treats a backslash before a line break as a paragraph break, as TextEdit writes them", () => {
+  it("breaks lines at the paragraph and line breaks TextEdit writes", () => {
     const html = (rtf: string) => {
       const result = openRtf(bytes(rtf));
       if (result.type !== "document") throw new Error("Expected document");
@@ -219,6 +235,15 @@ Third}`;
     );
     expect(html(textEdit)).toEqual(expected);
     expect(html(textEdit.replaceAll("\n", "\r\n"))).toEqual(expected);
+    const lineBreak = html(String.raw`{\rtf1\ansi First line\line Second line}`);
+    expect(lineBreak).toEqual(["<p>First line<br>Second line</p>"]);
+    expect(html(String.raw`{\rtf1\ansi{\v\line\line\line}First line\line Second line}`)).toEqual(
+      lineBreak,
+    );
+    expect(html(String.raw`{\rtf1\ansi First line\uc0\u8232 Second line}`)).toEqual(lineBreak);
+    expect(html(String.raw`{\rtf1\ansi First line\u8232?Second line{\deleted\u8232?}}`)).toEqual(
+      lineBreak,
+    );
   });
 
   it("preserves rich text page breaks and formatting without splitting hidden destinations", () => {
@@ -235,6 +260,27 @@ Third}`;
     expect(() => openRtf(bytes(String.raw`{\rtf1 ` + String.raw`\page`.repeat(501) + "}"))).toThrow(
       expect.objectContaining({ code: "rtf-too-many-pages" }),
     );
+  });
+
+  it("starts a new line at rich text section and column breaks", () => {
+    const result = openRtf(
+      bytes(
+        String.raw`{\rtf1\ansi\sectd\cols2\pard North quota: 120\column South quota: 240\page East quota: 360\sect\sectd\pard West quota: 480\par}`,
+      ),
+    );
+    if (result.type !== "document") throw new Error("Expected document");
+    expect(result.pages.map((page) => page.html)).toEqual([
+      "<p>North quota: 120<br>South quota: 240</p>",
+      "<p>East quota: 360<br>West quota: 480<br></p>",
+    ]);
+    const written = openRtf(
+      bytes(String.raw`{\rtf1\ansi First\par\sect\sectd Second\par\column Third\page\sect Fourth}`),
+    );
+    if (written.type !== "document") throw new Error("Expected document");
+    expect(written.pages.map((page) => page.html)).toEqual([
+      "<p>First<br>Second<br>Third</p>",
+      "<p>Fourth</p>",
+    ]);
   });
 
   it("decodes declared rich text code pages for raw bytes and escaped byte runs", () => {
@@ -481,16 +527,33 @@ Third}`;
     expect(result.pages[0]!.html).toBe(`<table>${html}</table>`);
   });
 
+  // LibreOffice writes every index as the templates it was built from, then the built index.
+  const indexes = [
+    "table-of-content",
+    "illustration-index",
+    "table-index",
+    "object-index",
+    "user-index",
+    "alphabetical-index",
+    "bibliography",
+  ].map(
+    (name) =>
+      `<text:${name}><text:${name}-source><text:index-title-template>Index</text:index-title-template><text:${name}-entry-template><text:index-entry-text/><text:index-entry-span>: </text:index-entry-span><text:index-entry-page-number/></text:${name}-entry-template></text:${name}-source><text:index-body><text:index-title><text:p>Index</text:p></text:index-title><text:p>Field notes: 1</text:p></text:index-body></text:${name}>`,
+  );
   it.each(["odt", "odp"] as const)("reads %s text and rejects unsupported XML", async (kind) => {
     const archive = new JSZip().file(
       "content.xml",
-      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? "<office:text><text:p>Field notes</text:p></office:text>" : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
+      `<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" xmlns:draw="urn:oasis:names:tc:opendocument:xmlns:drawing:1.0" xmlns:presentation="urn:oasis:names:tc:opendocument:xmlns:presentation:1.0"><office:body>${kind === "odt" ? `<office:text><text:p>Field notes</text:p>${indexes.join("")}</office:text>` : '<draw:page draw:name="Overview"><text:h>Launch plan</text:h><presentation:notes><draw:frame><draw:text-box><text:p>Speaker only</text:p></draw:text-box></draw:frame></presentation:notes></draw:page>'}</office:body></office:document-content>`,
     );
     const result = await openDocument(archive, kind);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
     expect(result.pages[0]!.html).toContain(kind === "odt" ? "Field notes" : "Launch plan");
     expect(result.pages[0]!.html).not.toContain("Speaker only");
+    if (kind === "odt")
+      expect(result.pages[0]!.html).toBe(
+        `<p>Field notes</p>${"<p>Index</p><p>Field notes: 1</p>".repeat(indexes.length)}`,
+      );
     for (const source of [
       '<!DOCTYPE x [<!ENTITY external SYSTEM "file:///etc/passwd">]><x>&external;</x>',
       '<html><body><p title="<!--">x</p><!DOCTYPE x [<!ENTITY e "boom">]><b title="-->">&e;</b></body></html>',
