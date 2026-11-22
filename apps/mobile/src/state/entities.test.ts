@@ -67,17 +67,16 @@ vi.mock(
       useMessages: () => (text: string) => text,
     }) as never,
 );
+function readMockShellAtom(ref: ScopedThreadRef) {
+  state.shellReads++;
+  return getOrCreateShellAtom(`${ref.environmentId}/${ref.threadId}`);
+}
+
 vi.mock(import("./threads"), () => ({
   environmentThreadDetails: {} as never,
   environmentThreadShells: {
-    threadShellAtom: (ref: ScopedThreadRef) => {
-      state.shellReads++;
-      return getOrCreateShellAtom(`${ref.environmentId}/${ref.threadId}`);
-    },
-    quietThreadShellAtom: (ref: ScopedThreadRef) => {
-      state.shellReads++;
-      return getOrCreateShellAtom(`${ref.environmentId}/${ref.threadId}`);
-    },
+    threadShellAtom: readMockShellAtom,
+    quietThreadShellAtom: readMockShellAtom,
     get threadRefsAtom() {
       return state.threadRefsAtom!;
     },
@@ -160,11 +159,12 @@ function setup() {
   ) => {
     registry.set(getOrCreateMetadataAtom(environmentId, threadIds), result);
   };
-  return { registry, setShell, setMetadata };
+  const read = registry.get.bind(registry);
+  return { registry, read, setShell, setMetadata };
 }
 
 it("uses confirmed matches instead of provisional titles when resolving legacy and percent-encoded links", () => {
-  const { registry, setMetadata } = setup();
+  const { registry, read, setShell, setMetadata } = setup();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   const localEnv = EnvironmentId.make("local");
   const remoteEnv = EnvironmentId.make("remote");
@@ -173,12 +173,12 @@ it("uses confirmed matches instead of provisional titles when resolving legacy a
   const local: ScopedThreadRef = { environmentId: localEnv, threadId: olderId };
   const remote: ScopedThreadRef = { environmentId: remoteEnv, threadId: olderId };
   const link = { environmentId: null, threadId: olderId };
-  const resolveSingle = () => resolveThreadLink(registry.get.bind(registry), link, localEnv);
+  const resolveSingle = () => resolveThreadLink(read, link, localEnv);
 
   expect(resolveSingle()).toEqual(remote);
   setMetadata(localEnv, [olderId], AsyncResult.failure(Cause.fail("offline")));
   expect(resolveSingle()).toEqual(remote);
-  expect(resolveThreadLink(registry.get.bind(registry), local, remoteEnv)).toEqual(local);
+  expect(resolveThreadLink(read, local, remoteEnv)).toEqual(local);
   setMetadata(
     localEnv,
     [olderId],
@@ -210,9 +210,7 @@ it("uses confirmed matches instead of provisional titles when resolving legacy a
   expect(messageLinks.markdown).toBe(
     `[Local archived](t3-thread://v1/${olderId}) [Other local](t3-thread://v1/${otherId})`,
   );
-  expect(resolveThreadLink(registry.get.bind(registry), link, localEnv, messageLinks)).toEqual(
-    local,
-  );
+  expect(resolveThreadLink(read, link, localEnv, messageLinks)).toEqual(local);
   expect(
     useThreadChipIcons(localEnv, messageLinks.markdown, {
       sourceRefKeys: messageLinks.refKeys,
@@ -233,7 +231,7 @@ it("uses confirmed matches instead of provisional titles when resolving legacy a
   const encodedLinks = useMessageThreadLinks(encodedMarkdown, localEnv);
   expect(
     resolveThreadLink(
-      registry.get.bind(registry),
+      read,
       { environmentId: localEnv, threadId: encodedId },
       localEnv,
       encodedLinks,
@@ -244,18 +242,18 @@ it("uses confirmed matches instead of provisional titles when resolving legacy a
   // instead of trusting the message index and opening the raw percent-encoded ID.
   const slashEncodedId = ThreadId.make("a%2Fb");
   const slashDecodedId = ThreadId.make("a/b");
-  registry.set(getOrCreateShellAtom(`${localEnv}/${slashDecodedId}`), {
+  setShell(localEnv, slashDecodedId, {
     title: "Live Slash Thread",
     projectId: localProject,
   });
   const titledMarkdown = `[ok](t3-thread://v2/${localEnv}/${otherId}) [other](t3-thread://v2/${localEnv}/${slashEncodedId} "Details")`;
   const titledLinks = useMessageThreadLinks(titledMarkdown, localEnv);
   const slashLink = { environmentId: localEnv, threadId: slashEncodedId };
-  expect(titledLinks.resolve(slashLink, registry.get.bind(registry))).toEqual({
+  expect(titledLinks.resolve(slashLink, read)).toEqual({
     environmentId: localEnv,
     threadId: slashDecodedId,
   });
-  expect(resolveThreadLink(registry.get.bind(registry), slashLink, localEnv, titledLinks)).toEqual({
+  expect(resolveThreadLink(read, slashLink, localEnv, titledLinks)).toEqual({
     environmentId: localEnv,
     threadId: slashDecodedId,
   });
@@ -321,20 +319,19 @@ it("batches missing thread link metadata per environment and keeps icon queries 
     { environmentId: envB, threadIds: [remote1] },
   ]);
 
-  // Chip icons issue the exact same sorted threadIds per environment.
+  // Chip icons share the message's batched metadata atom with zero extra shell or metadata reads.
+  state.shellReads = 0;
   state.metadataCalls = [];
   const pendingIcons = useThreadChipIcons(envA, pendingLinks.markdown, {
     sourceRefKeys: pendingLinks.refKeys,
   });
   expect(pendingIcons.get("t3-thread://v2/env-a/in-shell")).toBe("https://favicon.test/repo-a");
   expect(pendingIcons.has("t3-thread://v2/env-a/arch-1")).toBe(false);
-  expect(state.metadataCalls).toEqual([
-    { environmentId: envA, threadIds: [arch1, arch2, deleted1] },
-    { environmentId: envB, threadIds: [remote1] },
-  ]);
+  expect(state.shellReads).toBe(0);
+  expect(state.metadataCalls).toEqual([]);
 
   // Once the single batch resolves, deleted links drop to plain text and chip icons reuse the
-  // exact same metadata key without issuing a shrunk query.
+  // exact same metadata batch without issuing a shrunk query.
   setMetadata(
     envA,
     [arch1, arch2, deleted1],
@@ -355,20 +352,19 @@ it("batches missing thread link metadata per environment and keeps icon queries 
     ].join(" "),
   );
 
+  state.shellReads = 0;
   state.metadataCalls = [];
   const resolvedIcons = useThreadChipIcons(envA, resolvedLinks.markdown, {
     sourceRefKeys: resolvedLinks.refKeys,
   });
   expect(resolvedIcons.get("t3-thread://v2/env-a/arch-1")).toBe("https://favicon.test/repo-a");
   expect(resolvedIcons.get("t3-thread://v2/env-a/arch-2")).toBe("https://favicon.test/repo-a");
-  expect(state.metadataCalls).toEqual([
-    { environmentId: envA, threadIds: [arch1, arch2, deleted1] },
-    { environmentId: envB, threadIds: [remote1] },
-  ]);
+  expect(state.shellReads).toBe(0);
+  expect(state.metadataCalls).toEqual([]);
 });
 
 it("resolves 52 iOS context menus from one message lookup with zero extra shell or metadata reads", () => {
-  const { registry, setMetadata } = setup();
+  const { registry, read, setMetadata } = setup();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   const envA = EnvironmentId.make("env-a");
   const projectA = ProjectId.make("proj-a");
@@ -391,7 +387,7 @@ it("resolves 52 iOS context menus from one message lookup with zero extra shell 
   state.metadataCalls = [];
   for (const url of urls) {
     const link = parseThreadLinkHref(url)!;
-    const resolved = messageLinks.resolve(link, registry.get.bind(registry));
+    const resolved = messageLinks.resolve(link, read);
     expect(resolved).toEqual({ environmentId: envA, threadId: link.threadId });
     expect(messageLinks.titleFor(resolved!)).toBe(`Title ${link.threadId}`);
   }
@@ -400,7 +396,7 @@ it("resolves 52 iOS context menus from one message lookup with zero extra shell 
 });
 
 it("keeps v1 local targets consistent across shell removal, avoids flicker for archived/deleted links, and clears icons on failure", () => {
-  const { registry, setShell, setMetadata } = setup();
+  const { registry, read, setShell, setMetadata } = setup();
   using _registry = { [Symbol.dispose]: () => registry.dispose() };
   const localEnv = EnvironmentId.make("local");
   const remoteEnv = EnvironmentId.make("remote");
@@ -499,22 +495,19 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         `[Local Renamed](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
       );
       const v1Link = { environmentId: null, threadId: olderId };
-      expect(
-        resolveThreadLink(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
-      ).toEqual({ environmentId: localEnv, threadId: olderId });
-      expect(pendingAfterArchive.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(resolveThreadLink(read, v1Link, localEnv, pendingAfterArchive)).toEqual({
         environmentId: localEnv,
         threadId: olderId,
       });
-      expect(
-        resolveThreadLinkTarget(
-          registry.get.bind(registry),
-          v1Link,
-          localEnv,
-          overlapPendingBeforeMiss,
-        ),
-      ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
-      expect(overlapPendingBeforeMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(pendingAfterArchive.resolve(v1Link, read)).toEqual({
+        environmentId: localEnv,
+        threadId: olderId,
+      });
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, overlapPendingBeforeMiss)).toEqual({
+        ref: { environmentId: localEnv, threadId: olderId },
+        title: "Local Renamed",
+      });
+      expect(overlapPendingBeforeMiss.resolve(v1Link, read)).toEqual({
         environmentId: localEnv,
         threadId: olderId,
       });
@@ -532,12 +525,13 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       const streamedPending = useMessageThreadLinks(streamedMarkdown, localEnv);
       expect(streamedPending.markdown).toContain(`[Local Renamed](t3-thread://v1/${olderId})`);
       expect(streamedPending.markdown).toContain(`[Thread](t3-thread://v1/${streamedNewId})`);
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, streamedPending),
-      ).toEqual({ ref: { environmentId: localEnv, threadId: olderId }, title: "Local Renamed" });
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, streamedPending)).toEqual({
+        ref: { environmentId: localEnv, threadId: olderId },
+        title: "Local Renamed",
+      });
       expect(
         resolveThreadLinkTarget(
-          registry.get.bind(registry),
+          read,
           { environmentId: null, threadId: streamedNewId },
           localEnv,
           streamedPending,
@@ -558,18 +552,15 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
           sourceRefKeys: pendingAfterArchive.refKeys,
         }).get(`t3-thread://v2/${localEnv}/${archId}`),
       ).toBe("https://favicon.test/local-repo");
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, pendingAfterArchive),
-      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
-      expect(
-        resolveThreadLinkTarget(
-          registry.get.bind(registry),
-          v1Link,
-          localEnv,
-          overlapPendingBeforeMiss,
-        ),
-      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
-      expect(overlapPendingBeforeMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, pendingAfterArchive)).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, overlapPendingBeforeMiss)).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      expect(overlapPendingBeforeMiss.resolve(v1Link, read)).toEqual({
         environmentId: remoteEnv,
         threadId: olderId,
       });
@@ -584,10 +575,11 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       expect(overlapAfterMiss.markdown).toBe(
         `[Local Renamed](t3-thread://v1/${olderId}) [Overlap Renamed](t3-thread://v2/${localEnv}/${overlapShellId})`,
       );
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, overlapAfterMiss),
-      ).toEqual({ ref: { environmentId: remoteEnv, threadId: olderId }, title: "Remote Same ID" });
-      expect(overlapAfterMiss.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, overlapAfterMiss)).toEqual({
+        ref: { environmentId: remoteEnv, threadId: olderId },
+        title: "Remote Same ID",
+      });
+      expect(overlapAfterMiss.resolve(v1Link, read)).toEqual({
         environmentId: remoteEnv,
         threadId: olderId,
       });
@@ -595,9 +587,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
         `[v1](t3-thread://v1/${olderId}) [c](t3-thread://v2/${localEnv}/fresh-c)`,
         localEnv,
       );
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, freshAfterMiss),
-      ).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, freshAfterMiss)).toEqual({
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
@@ -623,9 +613,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       expect(partialLinks.markdown).toBe(
         `[Thread](t3-thread://v1/${olderId}) [Archived One](t3-thread://v2/${localEnv}/${archId}) del`,
       );
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, partialLinks),
-      ).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, partialLinks)).toEqual({
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
@@ -652,13 +640,11 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       expect(failedLinks.markdown).toBe(
         `[Thread](t3-thread://v1/${olderId}) [Thread](t3-thread://v2/${localEnv}/${archId}) [Thread](t3-thread://v2/${localEnv}/${deletedId})`,
       );
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, failedLinks),
-      ).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, failedLinks)).toEqual({
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
-      expect(failedLinks.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(failedLinks.resolve(v1Link, read)).toEqual({
         environmentId: remoteEnv,
         threadId: olderId,
       });
@@ -673,14 +659,7 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       expect(
         afterFailureStreamed.titleFor({ environmentId: localEnv, threadId: archId }),
       ).toBeNull();
-      expect(
-        resolveThreadLinkTarget(
-          registry.get.bind(registry),
-          v1Link,
-          localEnv,
-          afterFailureStreamed,
-        ),
-      ).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, afterFailureStreamed)).toEqual({
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
@@ -693,13 +672,11 @@ it("keeps v1 local targets consistent across shell removal, avoids flicker for a
       expect(overlapAfterFailure.markdown).toBe(
         `[Local Renamed](t3-thread://v1/${olderId}) [Overlap After Failure](t3-thread://v2/${localEnv}/${overlapShellId})`,
       );
-      expect(
-        resolveThreadLinkTarget(registry.get.bind(registry), v1Link, localEnv, overlapAfterFailure),
-      ).toEqual({
+      expect(resolveThreadLinkTarget(read, v1Link, localEnv, overlapAfterFailure)).toEqual({
         ref: { environmentId: remoteEnv, threadId: olderId },
         title: "Remote Same ID",
       });
-      expect(overlapAfterFailure.resolve(v1Link, registry.get.bind(registry))).toEqual({
+      expect(overlapAfterFailure.resolve(v1Link, read)).toEqual({
         environmentId: remoteEnv,
         threadId: olderId,
       });

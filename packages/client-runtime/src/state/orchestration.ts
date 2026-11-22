@@ -98,6 +98,12 @@ const metadataMapToRecord = (
   entries: ReadonlyMap<ThreadId, OrchestrationV2ThreadLinkMetadata>,
 ): ThreadLinkMetadataMap => Object.fromEntries(entries) as ThreadLinkMetadataMap;
 
+const noSessionError = (environmentId: EnvironmentId) =>
+  new EnvironmentRpcUnavailableError({
+    environmentId,
+    ...translatableMessage(msg("The environment has no session.")),
+  });
+
 // Runs inside orchestration.threadLinkMetadata, which owns the span.
 const assertSessionActive = Effect.fnUntraced(function* (
   supervisor: EnvironmentSupervisor.EnvironmentSupervisor["Service"],
@@ -105,10 +111,7 @@ const assertSessionActive = Effect.fnUntraced(function* (
 ) {
   const current = yield* SubscriptionRef.get(supervisor.session);
   if (Option.isNone(current) || current.value !== session) {
-    return yield* new EnvironmentRpcUnavailableError({
-      environmentId: supervisor.target.environmentId,
-      ...translatableMessage(msg("The environment has no session.")),
-    });
+    return yield* noSessionError(supervisor.target.environmentId);
   }
 });
 
@@ -210,18 +213,15 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
     const { generation, removedAt } = registry.get(shellState(environmentId));
     return { generation, removedAt };
   };
-  const clearInFlight = (session: RpcSession.RpcSession, flight: InFlightThreadLinkMetadata) => {
-    const flights = inFlightThreadLinkMetadata.get(session);
-    if (flights?.get(flight.threadId) === flight) {
-      flights.delete(flight.threadId);
-    }
-  };
   const settleFlight = (
     session: RpcSession.RpcSession,
     flight: InFlightThreadLinkMetadata,
     exit: Exit.Exit<OrchestrationV2ThreadLinkMetadata | null, ThreadLinkMetadataError>,
   ) => {
-    clearInFlight(session, flight);
+    const flights = inFlightThreadLinkMetadata.get(session);
+    if (flights?.get(flight.threadId) === flight) {
+      flights.delete(flight.threadId);
+    }
     Deferred.doneUnsafe(flight.deferred, exit);
   };
   const getOrCreateInFlight = (
@@ -303,13 +303,9 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       const environmentId = supervisor.target.environmentId;
       const initialShell = readShellVersion(registry, environmentId);
       const batchGeneration = initialShell.generation;
+      let cachedSupersededExit: Exit.Exit<never, ThreadLinkMetadataError> | undefined;
       const supersededExit = () =>
-        Exit.fail(
-          new EnvironmentRpcUnavailableError({
-            environmentId,
-            ...translatableMessage(msg("The environment has no session.")),
-          }),
-        );
+        (cachedSupersededExit ??= Exit.fail(noSessionError(environmentId)));
       const flightsById = new Map<ThreadId, Array<InFlightThreadLinkMetadata>>();
       for (const entry of entries) {
         for (const flight of entry.request.flights) {
@@ -366,16 +362,20 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             return;
           }
           const rawChunk = uniqueIds.slice(offset, offset + THREAD_LINK_METADATA_CHUNK_SIZE);
-          const chunk: Array<ThreadId> = [];
-          for (const threadId of rawChunk) {
-            if (
-              (before.removedAt?.get(threadId) ?? -1) !==
-              (initialShell.removedAt?.get(threadId) ?? -1)
-            ) {
-              settleIds([threadId], supersededExit);
-              continue;
+          let chunk: ReadonlyArray<ThreadId> = rawChunk;
+          if (before.removedAt !== initialShell.removedAt) {
+            const activeChunk: Array<ThreadId> = [];
+            for (const threadId of rawChunk) {
+              if (
+                (before.removedAt?.get(threadId) ?? -1) !==
+                (initialShell.removedAt?.get(threadId) ?? -1)
+              ) {
+                settleIds([threadId], supersededExit);
+                continue;
+              }
+              activeChunk.push(threadId);
             }
-            chunk.push(threadId);
+            chunk = activeChunk;
           }
           if (chunk.length === 0) {
             nextOffset = offset + rawChunk.length;
@@ -446,10 +446,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         const supervisor = yield* EnvironmentSupervisor.EnvironmentSupervisor;
         const sessionOption = yield* SubscriptionRef.get(supervisor.session);
         if (Option.isNone(sessionOption)) {
-          return yield* new EnvironmentRpcUnavailableError({
-            environmentId: supervisor.target.environmentId,
-            ...translatableMessage(msg("The environment has no session.")),
-          });
+          return yield* noSessionError(supervisor.target.environmentId);
         }
         const session = sessionOption.value;
         const registry = yield* AtomRegistry.AtomRegistry;
@@ -531,8 +528,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
             firstFailureCause ??= exit.cause;
           }
         }
-        const metadata = metadataMapToRecord(resolved);
-        if (failedThreadIds.length === 0) return metadata;
+        if (failedThreadIds.length === 0) return metadataMapToRecord(resolved);
         yield* assertSessionActive(supervisor, session);
         const latestShell = readShellVersion(registry, environmentId);
         if (
@@ -545,6 +541,7 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
         ) {
           return yield* Effect.failCause(firstFailureCause!);
         }
+        const metadata = metadataMapToRecord(resolved);
         yield* emit(metadata);
         return yield* new PartialThreadLinkMetadataError({
           metadata,

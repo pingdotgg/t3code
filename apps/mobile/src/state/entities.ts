@@ -202,16 +202,20 @@ function resolveThreadLinkWith(
     : scopeThreadRef(link.environmentId, link.threadId);
 }
 
+interface ThreadLinkRefEntry {
+  readonly refKey: string;
+  readonly ref: ScopedThreadRef;
+}
+
 // Batch omitted/archived targets per environment so a message with many thread links issues
 // one shared metadata query instead of N individual queries that each re-render the message.
 function readBatchedThreadLinkMetadata(
   read: <A>(atom: Atom.Atom<A>) => A,
-  refs: ReadonlyArray<ScopedThreadRef>,
+  refEntries: ReadonlyArray<ThreadLinkRefEntry>,
 ) {
   const shells = new Map<string, EnvironmentThreadShell | null>();
   const missingByEnv = new Map<EnvironmentId, Set<ThreadId>>();
-  for (const ref of refs) {
-    const refKey = threadKey(ref);
+  for (const { refKey, ref } of refEntries) {
     if (shells.has(refKey)) continue;
     const shell = read(environmentThreadShells.quietThreadShellAtom(ref));
     shells.set(refKey, shell);
@@ -241,6 +245,19 @@ function readBatchedThreadLinkMetadata(
   return { shells, metadataByEnv };
 }
 
+const threadLinkBatchAtom = Atom.family((key: string) => {
+  const refEntries: ReadonlyArray<ThreadLinkRefEntry> = decodeThreadKeys(JSON.parse(key)).map(
+    (refKey) => ({
+      refKey,
+      ref: scopeThreadRef(...decodeThreadKey(JSON.parse(refKey))),
+    }),
+  );
+  return Atom.make((get) => ({
+    refEntries,
+    ...readBatchedThreadLinkMetadata(get, refEntries),
+  })).pipe(Atom.withLabel(`mobile-thread-link-batch:${key}`));
+});
+
 function resolveThreadLinkFromTitles(
   titles: ReadonlyMap<string, ThreadLinkTitle>,
   confirmedTitles: ReadonlyMap<string, string | null>,
@@ -260,15 +277,11 @@ function resolveThreadLinkFromTitles(
 }
 
 const threadLinkTitlesAtom = Atom.family((key: string) => {
-  const refEntries = decodeThreadKeys(JSON.parse(key)).map((refKey) => ({
-    refKey,
-    ref: scopeThreadRef(...decodeThreadKey(JSON.parse(refKey))),
-  }));
-  const refs = refEntries.map((entry) => entry.ref);
+  const batchAtom = threadLinkBatchAtom(key);
   return Atom.make((get) => {
     const previous = Option.getOrUndefined(get.self<ReadonlyMap<string, ThreadLinkTitle>>());
     const confirmedTitles = confirmedTitlesFor(get.registry);
-    const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(get, refs);
+    const { refEntries, shells, metadataByEnv } = get(batchAtom);
     const titles = new Map<string, ThreadLinkTitle>();
     for (const { refKey, ref } of refEntries) {
       const shell = shells.get(refKey);
@@ -324,40 +337,37 @@ const EMPTY_THREAD_CHIP_ICONS_ATOM = Atom.make(EMPTY_THREAD_CHIP_ICONS).pipe(
 
 const threadChipIconsAtom = Atom.family((key: string) => {
   const parsed = decodeThreadChipIconsKey(JSON.parse(key));
-  const targets = parsed.targets.map((target) => {
-    const link = target.link ? parseThreadLinkHref(target.href) : null;
-    return { target, link };
-  });
-  const candidateRefs = parsed.metadataRefKeys.map((refKey) =>
-    scopeThreadRef(...decodeThreadKey(JSON.parse(refKey))),
-  );
+  const targets = parsed.targets.map((target) => ({
+    target,
+    link: target.link ? parseThreadLinkHref(target.href) : null,
+  }));
+  const metadataKey = JSON.stringify(parsed.metadataRefKeys);
   const titlesAtom =
     parsed.metadataRefKeys.length > 0
-      ? threadLinkTitlesAtom(JSON.stringify(parsed.metadataRefKeys))
+      ? threadLinkTitlesAtom(metadataKey)
       : EMPTY_THREAD_LINK_TITLES_ATOM;
+  const batchAtom = threadLinkBatchAtom(metadataKey);
   return Atom.make((get) => {
     const previous = Option.getOrUndefined(get.self<ReadonlyMap<string, string>>());
     const titles = get(titlesAtom);
     const confirmedTitles = confirmedTitlesFor(get.registry);
-    const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(get, candidateRefs);
+    const { shells, metadataByEnv } = get(batchAtom);
     const icons = new Map<string, string>();
-    const iconCache = new Map<string, string | null>();
+    const iconCache = new Map<string, { readonly uri: string | null; readonly pending: boolean }>();
     let cachedThreadRefs: ReadonlyArray<ScopedThreadRef> | undefined;
     const resolveIcon = (
       ref: ScopedThreadRef,
     ): { readonly uri: string | null; readonly pending: boolean } => {
       const refKey = threadKey(ref);
+      const cached = iconCache.get(refKey);
+      if (cached !== undefined) return cached;
       const knownShell = shells.get(refKey);
       const shell =
         knownShell !== undefined
           ? knownShell
           : get(environmentThreadShells.quietThreadShellAtom(ref));
       const outcome = readMetadataOutcome(metadataByEnv.get(ref.environmentId), ref.threadId);
-      const metadataEntry = outcome.kind === "found" ? outcome.entry : undefined;
-      const pending = shell === null && outcome.kind === "pending";
-      const cached = iconCache.get(refKey);
-      if (cached !== undefined) return { uri: cached, pending };
-      const metadata = shell ?? metadataEntry;
+      const metadata = shell ?? (outcome.kind === "found" ? outcome.entry : undefined);
       const project = metadata?.projectId
         ? get(
             environmentProjects.projectAtom({
@@ -380,13 +390,16 @@ const threadChipIconsAtom = Atom.family((key: string) => {
               )
             : null,
       );
-      const uri = !icon
-        ? null
-        : icon.kind === "favicon"
-          ? icon.uri
-          : AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null);
-      iconCache.set(refKey, uri);
-      return { uri, pending };
+      const result = {
+        uri: !icon
+          ? null
+          : icon.kind === "favicon"
+            ? icon.uri
+            : AsyncResult.getOrElse(get(projectGlyphImageAtom(projectGlyphKey(icon))), () => null),
+        pending: shell === null && outcome.kind === "pending",
+      };
+      iconCache.set(refKey, result);
+      return result;
     };
 
     for (const { target, link } of targets) {
@@ -503,10 +516,10 @@ export function useMessageThreadLinks(
 ): MessageThreadLinks {
   const resolve = useMessages();
   const gt = useGT();
-  const refKeys = hasThreadLinks(markdown)
-    ? [...new Set(threadLinkRefs(markdown, environmentId).map(threadKey))].sort()
-    : [];
-  const refKeySet = new Set(refKeys);
+  const refKeySet = new Set<string>(
+    hasThreadLinks(markdown) ? threadLinkRefs(markdown, environmentId).map(threadKey) : undefined,
+  );
+  const refKeys = refKeySet.size > 0 ? [...refKeySet].sort() : [];
   const refKeysKey = refKeys.length > 0 ? JSON.stringify(refKeys) : null;
   const titles = useAtomValue(
     refKeysKey !== null ? threadLinkTitlesAtom(refKeysKey) : EMPTY_THREAD_LINK_TITLES_ATOM,
@@ -593,7 +606,10 @@ export function resolveThreadLinkTarget(
     };
   }
   const candidates = threadLinkCandidates(link, messageEnvironmentId);
-  const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(read, candidates);
+  const { shells, metadataByEnv } = readBatchedThreadLinkMetadata(
+    read,
+    candidates.map((ref) => ({ refKey: threadKey(ref), ref })),
+  );
   const ref = resolveThreadLinkWith(
     link,
     messageEnvironmentId,
