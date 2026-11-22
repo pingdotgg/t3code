@@ -243,12 +243,23 @@ const startLocalBackend = Effect.gen(function* () {
     yield* logBootstrapWarning("bootstrap found another server owning the T3 home", {
       owner: Option.getOrNull(owner),
     });
-    yield* (yield* ElectronDialog.ElectronDialog).showErrorBox(
-      m(msg("This T3 home is unavailable")),
-      DesktopHomeOwner.homeOwnedMessage(owner),
+    // A server that exits slowly frees the home after the grace, so keep watching behind the dialog.
+    const released = yield* DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal(
+      (yield* ElectronDialog.ElectronDialog)
+        .showMessageBox({
+          type: "error",
+          title: m(msg("This T3 home is unavailable")),
+          message: m(msg("This T3 home is unavailable")),
+          detail: DesktopHomeOwner.homeOwnedMessage(owner),
+          buttons: [m(msg("Quit", { $context: "button, quits the app" }))],
+        })
+        .pipe(Effect.ignore),
     );
-    yield* (yield* ElectronApp.ElectronApp).quit;
-    return false;
+    if (!released) {
+      yield* (yield* ElectronApp.ElectronApp).quit;
+      return false;
+    }
+    yield* logBootstrapInfo("bootstrap continuing after the T3 home was released");
   }
 
   const backendPortSelection = yield* resolveDesktopBackendPort(environment.configuredBackendPort);

@@ -2,6 +2,7 @@ import * as NodeSqlite from "node:sqlite";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
@@ -115,6 +116,47 @@ describe("DesktopHomeOwner.awaitHomeOwnershipRelease", () => {
         const owned = yield* Effect.forkChild(DesktopHomeOwner.awaitHomeOwnershipRelease());
         yield* TestClock.adjust("1 minute");
         assert.isFalse(yield* Fiber.join(owned));
+        held.close();
+      }),
+    ),
+  );
+});
+
+describe("DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal", () => {
+  it.effect("closes the dialog and reports the release when the lock frees after the grace", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const held = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        held.exec("BEGIN EXCLUSIVE;");
+        const dialogClosed = yield* Deferred.make<void>();
+        const released = yield* Effect.forkChild(
+          DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal(
+            Effect.never.pipe(Effect.onInterrupt(() => Deferred.succeed(dialogClosed, undefined))),
+          ),
+        );
+        yield* TestClock.adjust("1 minute");
+        assert.isUndefined(released.pollUnsafe());
+
+        held.close();
+        yield* TestClock.adjust("1 second");
+        assert.isTrue(yield* Fiber.join(released));
+        yield* Deferred.await(dialogClosed);
+      }),
+    ),
+  );
+
+  it.effect("reports a dismissal while the lock is still held", () =>
+    withTempHome((userdata) =>
+      Effect.gen(function* () {
+        const held = new NodeSqlite.DatabaseSync(`${userdata}/server-owner.sqlite`);
+        held.exec("BEGIN EXCLUSIVE;");
+        const dismissed = yield* Deferred.make<void>();
+        const released = yield* Effect.forkChild(
+          DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal(Deferred.await(dismissed)),
+        );
+        yield* TestClock.adjust("1 minute");
+        yield* Deferred.succeed(dismissed, undefined);
+        assert.isFalse(yield* Fiber.join(released));
         held.close();
       }),
     ),

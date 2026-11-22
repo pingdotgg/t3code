@@ -65,11 +65,16 @@ const HOME_OWNERSHIP_RELEASE_GRACE = Duration.sum(BACKEND_QUIT_STOP_TIMEOUT, Dur
 const HOME_OWNERSHIP_RELEASE_POLL_INTERVAL = Duration.millis(250);
 
 /** Whether the ownership lock is free, or frees within the grace a shutting-down server needs. */
+const awaitHomeOwnershipFree = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipFree")(function* () {
+  while (yield* isHomeOwnershipLocked()) {
+    yield* Effect.sleep(HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
+  }
+});
+
+/** Whether the ownership lock is free, or frees within the grace a shutting-down server needs. */
 export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOwnershipRelease")(
   function* () {
-    while (yield* isHomeOwnershipLocked()) {
-      yield* Effect.sleep(HOME_OWNERSHIP_RELEASE_POLL_INTERVAL);
-    }
+    yield* awaitHomeOwnershipFree();
     return true;
   },
   Effect.timeoutOrElse({
@@ -77,6 +82,19 @@ export const awaitHomeOwnershipRelease = Effect.fn("DesktopHomeOwner.awaitHomeOw
     orElse: () => Effect.succeed(false),
   }),
 );
+
+/**
+ * Shows `dialog` while the ownership lock stays held past the grace, and interrupts it once the
+ * lock frees. Returns whether the lock freed; false means the dialog was dismissed first.
+ */
+export const awaitHomeOwnershipReleaseOrDismissal = Effect.fn(
+  "DesktopHomeOwner.awaitHomeOwnershipReleaseOrDismissal",
+)(function* <E, R>(dialog: Effect.Effect<unknown, E, R>) {
+  return yield* Effect.raceFirst(
+    awaitHomeOwnershipFree().pipe(Effect.as(true)),
+    dialog.pipe(Effect.as(false)),
+  );
+});
 
 /** The live server recorded as owning the desktop's T3 home. Only call once the ownership lock is known held: a live PID alone may be reused. */
 export const readLiveHomeOwner = Effect.fn("DesktopHomeOwner.readLiveHomeOwner")(function* () {
