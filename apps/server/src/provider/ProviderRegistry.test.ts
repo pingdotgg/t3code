@@ -889,6 +889,24 @@ it.layer(
       }),
     );
 
+    it.effect("names a configured binary that is not Codex and ignores its --version", () =>
+      Effect.gen(function* () {
+        if ((yield* HostProcess.Platform) === "win32") return;
+        const { binaryPath } = yield* writeFakeCodexCli(
+          [
+            `[ "$1" = "--version" ] && { echo "noop v1.2.3"; exit 0; }`,
+            `printf 'noop - does nothing\\n\\nUsage: noop [command]\\n'`,
+          ].join("\n"),
+        );
+
+        const status = yield* checkCodexProviderStatus(decodeCodexSettings({ binaryPath }));
+
+        assert.strictEqual(status.status, "error");
+        assert.strictEqual(status.version, null);
+        assert.include(status.message ?? "", binaryPath);
+      }),
+    );
+
     it.effect("bounds a hanging Codex --version fallback and releases its process scope", () =>
       Effect.gen(function* () {
         const started = yield* Deferred.make<void>();
