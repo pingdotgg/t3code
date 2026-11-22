@@ -167,6 +167,13 @@ const refusedBeforePrompt = (error: unknown): boolean =>
     error.detail === CLAUDE_QUERY_ENDED_BEFORE_TURN_DETAIL) ||
   (Predicate.hasProperty(error, "cause") && refusedBeforePrompt(error.cause));
 
+// The provider may have acted on a request it never answered, so a retry could duplicate it.
+const OUTCOME_UNKNOWN_TAGS = ["CodexAppServerUnresponsiveError"] as const;
+
+const outcomeUnknown = (error: unknown): boolean =>
+  OUTCOME_UNKNOWN_TAGS.some((tag) => Predicate.isTagged(error, tag)) ||
+  (Predicate.hasProperty(error, "cause") && outcomeUnknown(error.cause));
+
 /**
  * Whether a non-truncating provider's native session lost the conversation kept before `run`.
  * Rollback resets it: the newest accepted turn was rolled back (works without legacy-missing
@@ -1006,7 +1013,9 @@ export const layer: Layer.Layer<
       ) {
         const loaded = yield* Effect.result(load);
         if (loaded._tag === "Success") return loaded.success;
-        if (input.willRetry === true) return yield* loaded.failure;
+        if (input.willRetry === true && !outcomeUnknown(loaded.failure)) {
+          return yield* loaded.failure;
+        }
         yield* settleStartFailure({
           signal: "provider-thread-load-failure",
           title: "Provider turn failed to start",
@@ -1727,12 +1736,13 @@ export const layer: Layer.Layer<
         resumedHandoffContext = undefined;
         resumedRetryHandoff = undefined;
         if (!(yield* isCurrentAttemptInStatus("starting"))) return undefined;
-        // Another client or active background work owns this native thread;
-        // starting a fresh session would silently split the conversation.
+        // Another client or active background work owns the native thread, or the provider may
+        // have resumed it without answering. A fresh session would split the conversation.
         if (
           resumed._tag === "Failure" &&
           (resumed.failure._tag === "ProviderAdapterThreadInUseError" ||
-            resumed.failure._tag === "ProviderAdapterMcpRotationBlockedError")
+            resumed.failure._tag === "ProviderAdapterMcpRotationBlockedError" ||
+            outcomeUnknown(resumed.failure))
         ) {
           return yield* loadFromProvider(Effect.fail(resumed.failure));
         }
