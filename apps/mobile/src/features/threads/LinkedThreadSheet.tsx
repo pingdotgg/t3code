@@ -286,6 +286,9 @@ export function LinkedThreadView(props: {
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null);
   // Follows new items only while the reader is already at the end.
   const atEnd = useRef(true);
+  const showHistoryError =
+    view !== null && view.thread.historyCursor !== null && view.history.failed;
+  const lastLayoutHadHistoryError = useRef(false);
   const working = projection !== null && isLinkedThreadWorking(projection);
   const connection = useConnectLinkedEnvironment(target);
   const connectState = connection.state;
@@ -334,7 +337,12 @@ export function LinkedThreadView(props: {
             atEnd.current = contentSize.height - layoutMeasurement.height - contentOffset.y < 80;
           }}
           onContentSizeChange={() => {
-            if (atEnd.current) scroll.current?.scrollToEnd({ animated: false });
+            // A page error can resize the top of a short feed whose reader is also near the end.
+            const historyErrorChanged = lastLayoutHadHistoryError.current !== showHistoryError;
+            lastLayoutHadHistoryError.current = showHistoryError;
+            if (atEnd.current && !historyErrorChanged) {
+              scroll.current?.scrollToEnd({ animated: false });
+            }
           }}
         >
           {view === null || projection === null ? (
@@ -351,7 +359,7 @@ export function LinkedThreadView(props: {
           ) : (
             <>
               {view.thread.historyCursor !== null ? (
-                <View className="self-center">
+                <View className="flex-row flex-wrap justify-center">
                   <Button
                     size="compact"
                     tone="text"
@@ -360,6 +368,15 @@ export function LinkedThreadView(props: {
                     disabled={view.history.loading}
                     onPress={view.loadEarlier}
                   />
+                  {showHistoryError ? (
+                    <Text
+                      accessibilityLiveRegion="polite"
+                      accessibilityRole="alert"
+                      className="w-full text-center text-xs text-danger-foreground"
+                    >
+                      {gt("Could not load earlier turns. Try again.")}
+                    </Text>
+                  ) : null}
                 </View>
               ) : null}
               {feed.length === 0 ? (
