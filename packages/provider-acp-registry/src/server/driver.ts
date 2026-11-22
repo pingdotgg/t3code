@@ -1711,6 +1711,10 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       signedOut: true,
       epoch: state.epoch + 1,
     }));
+    const advanceSignedOutEpoch = Ref.update(signedOutState, (state) => ({
+      ...state,
+      epoch: state.epoch + 1,
+    }));
     const clearSignedOut = Ref.update(signedOutState, (state) =>
       state.signedOut ? { ...state, signedOut: false } : state,
     );
@@ -2091,7 +2095,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       baseSnapshot: ServerProvider,
     ) {
-      const now = yield* Clock.currentTimeMillis;
       const startState = yield* liveSnapshotSemaphore.withPermit(
         Effect.gen(function* () {
           const cacheState = yield* Ref.get(enrichmentCache);
@@ -2102,7 +2105,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               cached,
               baseSnapshot.version,
               effectiveConfig.source === "local",
-              now,
+              yield* Clock.currentTimeMillis,
             )
           ) {
             return {
@@ -2196,17 +2199,30 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 const liveSnapshot = Option.isSome(runtimeCoordinator)
                   ? yield* runtimeCoordinator.value.getLiveConfigurationWithRevision(instanceId)
                   : AcpRegistryRuntimeCoordinator.EMPTY_LIVE_CONFIGURATION_SNAPSHOT;
-                if (
+                const reopenedSignedOut =
                   fresh &&
                   provider.status === "ready" &&
-                  (yield* Ref.get(signedOutState)).epoch === probeStartSignedOutEpoch
-                ) {
-                  yield* clearSignedOut;
-                }
+                  (yield* Ref.modify(signedOutState, (state) =>
+                    state.signedOut && state.epoch === probeStartSignedOutEpoch
+                      ? ([true, { ...state, signedOut: false }] as const)
+                      : ([false, state] as const),
+                  ));
                 if (
                   current.generation !== generation ||
                   (fresh && liveSnapshot.catalogRevision !== probeStartCatalogRevision)
                 ) {
+                  if (reopenedSignedOut) {
+                    const rawCurrent = yield* getSnapshot;
+                    if (rawCurrent.installed) {
+                      const replayed = yield* withLiveRuntimeState(rawCurrent, {
+                        fallbackToAcceptedModels: true,
+                        preserveStatus: rawCurrent.status !== "ready",
+                      });
+                      if (!Equal.equals(replayed, rawCurrent)) {
+                        yield* publishSnapshot(replayed);
+                      }
+                    }
+                  }
                   return;
                 }
                 let resolved = provider;
@@ -2484,21 +2500,19 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const clearCachedState = (options?: {
       readonly clearCommands?: boolean;
       readonly clearLiveConfiguration?: boolean;
+      readonly clearConfirmedAuthentication?: boolean;
       readonly markSignedOut?: boolean;
     }) =>
       liveSnapshotSemaphore.withPermit(
         Effect.uninterruptible(
-          invalidateEnrichmentCache.pipe(
+          (options?.clearConfirmedAuthentication === true
+            ? confirmedAuthentication.set(false)
+            : Effect.void
+          ).pipe(
+            Effect.andThen(invalidateEnrichmentCache),
             Effect.andThen(clearLearnedModels),
             Effect.andThen(clearAcceptedCatalog),
-            Effect.andThen(
-              options?.markSignedOut === true
-                ? markSignedOut
-                : Ref.update(signedOutState, (state) => ({
-                    ...state,
-                    epoch: state.epoch + 1,
-                  })),
-            ),
+            Effect.andThen(options?.markSignedOut === true ? markSignedOut : advanceSignedOutEpoch),
             Effect.andThen(resetAppliedLiveRevisions),
             Effect.andThen(
               Option.isSome(runtimeCoordinator)
@@ -2523,29 +2537,31 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           ),
         ),
       );
-    const clearLiveState = clearCachedState({ clearCommands: true });
-    const clearSignedOutState = clearCachedState({ clearCommands: true, markSignedOut: true });
+    const clearLiveState = clearCachedState({
+      clearCommands: true,
+      clearConfirmedAuthentication: true,
+    });
+    const clearSignedOutState = clearCachedState({
+      clearCommands: true,
+      clearConfirmedAuthentication: true,
+      markSignedOut: true,
+    });
     const controller = yield* AcpRegistryAuth.makeAcpRegistryAuth({
       instanceId,
       settings: effectiveConfig,
       cwd: host.paths.cwd,
       environment: processEnvironment,
       onChanged: (authenticated) =>
-        confirmedAuthentication
-          .set(authenticated)
-          .pipe(
-            Effect.andThen(
-              authenticated
-                ? liveSnapshotSemaphore.withPermit(
-                    Effect.uninterruptible(
-                      invalidateEnrichmentCache.pipe(Effect.andThen(clearSignedOut)),
-                    ),
-                  )
-                : clearSignedOutState,
-            ),
-            Effect.andThen(snapshot.refresh),
-            Effect.asVoid,
-          ),
+        (authenticated
+          ? liveSnapshotSemaphore.withPermit(
+              Effect.uninterruptible(
+                confirmedAuthentication
+                  .set(true)
+                  .pipe(Effect.andThen(invalidateEnrichmentCache), Effect.andThen(clearSignedOut)),
+              ),
+            )
+          : clearSignedOutState
+        ).pipe(Effect.andThen(snapshot.refresh), Effect.asVoid),
     }).pipe(
       Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -2554,7 +2570,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     const auth = {
       ...controller,
       invalidate: (controller.invalidate ?? Effect.void).pipe(
-        Effect.andThen(confirmedAuthentication.set(false)),
         Effect.andThen(clearLiveState),
         Effect.andThen(snapshot.refresh),
         Effect.asVoid,
@@ -2641,7 +2656,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             Effect.provideService(AcpRegistrySupport.AcpRegistryCatalog, catalog),
             Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
             Effect.provideService(SecureRandom.SecureRandom, random),
-            Effect.tap(() => confirmedAuthentication.set(false)),
             Effect.tap(() => clearSignedOutState),
           );
           return Option.isSome(runtimeCoordinator)

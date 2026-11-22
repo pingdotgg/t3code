@@ -4096,6 +4096,8 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             yield* instance.snapshot.refresh;
             yield* Deferred.await(entered);
             yield* duringProbe;
+            // Resolves on commitEnrichment's coordinator read while it holds liveSnapshotSemaphore,
+            // so the caller's follow-up awaitLiveWatchUpdate runs strictly after commit finishes.
             const commitEntered = yield* Deferred.make<void>();
             pendingCommitEntered = commitEntered;
             yield* Deferred.succeed(release, undefined);
@@ -4960,14 +4962,18 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             modelsFromModelSelect: false,
           }),
         );
+        const snapAfterRacedReady = yield* instance.snapshot.getSnapshot;
+        expect(snapAfterRacedReady.nativeSessions).toBeUndefined();
         expect(
-          (yield* instance.snapshot.getSnapshot).models
+          snapAfterRacedReady.models
             .find((m) => m.slug === "raced-ready-b")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).toContain("after-raced-ready");
 
         // Same ready-probe catalog race when the live catalog arrives mid-probe (before the
-        // commit's first revision check, advancing both cache generation and catalog revision).
+        // commit's first revision check, advancing both cache generation and catalog revision):
+        // reopening must also replay options dropped while signed out before later updates advance
+        // the applied revision past them.
         yield* instance.acpSessionManagement!.logout(directory);
         yield* runGatedProbe(
           Effect.gen(function* () {
@@ -4986,12 +4992,32 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
               "mid-raced-a",
               "mid-raced-b",
             ]);
+            yield* awaitLiveWatchUpdate(
+              coordinator.publishLiveConfiguration(identity.instanceId, {
+                models: [],
+                currentModelId: "mid-raced-b",
+                configOptions: [
+                  {
+                    id: "dropped-while-signed-out",
+                    label: "Dropped While Signed Out",
+                    type: "boolean",
+                    currentValue: true,
+                  },
+                ],
+                modelOptionIds: ["dropped-while-signed-out"],
+                modelsFromModelSelect: false,
+              }),
+            );
+            expect(
+              (yield* instance.snapshot.getSnapshot).models.find((m) => m.slug === "mid-raced-b")
+                ?.capabilities?.optionDescriptors ?? [],
+            ).toEqual([]);
           }),
         );
         yield* awaitLiveWatchUpdate(
           coordinator.publishLiveConfiguration(identity.instanceId, {
             models: [],
-            currentModelId: "mid-raced-b",
+            currentModelId: "mid-raced-a",
             configOptions: [
               {
                 id: "after-mid-raced-ready",
@@ -5006,9 +5032,15 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
         );
         const snapAfterMidRace = yield* instance.snapshot.getSnapshot;
         expect(snapAfterMidRace.models.map((m) => m.slug)).toEqual(["mid-raced-a", "mid-raced-b"]);
+        expect(snapAfterMidRace.nativeSessions).toBeUndefined();
         expect(
           snapAfterMidRace.models
             .find((m) => m.slug === "mid-raced-b")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).toContain("dropped-while-signed-out");
+        expect(
+          snapAfterMidRace.models
+            .find((m) => m.slug === "mid-raced-a")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).toContain("after-mid-raced-ready");
 
@@ -5080,6 +5112,33 @@ it.layer(driverLayer)("AcpRegistryDriver periodic refresh", (it) => {
             .find((m) => m.slug === "post-logout-b")
             ?.capabilities?.optionDescriptors?.map((d) => d.id),
         ).not.toContain("blocked-after-raced-invalidate");
+
+        // A transient non-auth probe failure while signed out must NOT reopen options replay.
+        yield* writeModels({ fail: "Temporary discovery outage" });
+        yield* runGatedProbe(Effect.void);
+        yield* awaitLiveWatchUpdate(
+          coordinator.publishLiveConfiguration(identity.instanceId, {
+            models: [],
+            currentModelId: "post-logout-b",
+            configOptions: [
+              {
+                id: "blocked-after-transient-warning",
+                label: "Blocked After Transient Warning",
+                type: "boolean",
+                currentValue: true,
+              },
+            ],
+            modelOptionIds: ["blocked-after-transient-warning"],
+            modelsFromModelSelect: false,
+          }),
+        );
+        const snapAfterTransientWarning = yield* instance.snapshot.getSnapshot;
+        expect(snapAfterTransientWarning.status).toBe("warning");
+        expect(
+          snapAfterTransientWarning.models
+            .find((m) => m.slug === "post-logout-b")
+            ?.capabilities?.optionDescriptors?.map((d) => d.id),
+        ).not.toContain("blocked-after-transient-warning");
       }),
   );
 
