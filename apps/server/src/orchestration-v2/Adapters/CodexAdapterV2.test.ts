@@ -64,6 +64,7 @@ import { TestClock } from "effect/testing";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import * as Scope from "effect/Scope";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { SpawnExecutableResolution } from "@t3tools/shared/shell";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
@@ -1246,6 +1247,66 @@ describe("CodexAdapterV2 session initialize", () => {
 
   const replayPreamble = (nativeThreadId: string) =>
     codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt: "unused" });
+
+  it.effect("adds the asynchronously resolved Codex executable to bot workspace permissions", () =>
+    Effect.gen(function* () {
+      const executable = "/codex-bot/bin/codex";
+      const nativeThreadId = "bot-workspace";
+      const session = yield* openReplaySession(
+        makeCodexReplayTranscript({
+          scenario: nativeThreadId,
+          entries: replayPreamble(nativeThreadId)
+            .slice(0, 5)
+            .map((entry) =>
+              entry.type === "expect_outbound" && entry.label === "thread/start"
+                ? {
+                    ...entry,
+                    frame: {
+                      ...entry.frame,
+                      params: {
+                        config: {
+                          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
+                          default_permissions: "t3-bot-workspace",
+                          permissions: {
+                            "t3-bot-workspace": {
+                              filesystem: {
+                                ":minimal": "read",
+                                [executable]: "read",
+                                "/workspace": "read",
+                              },
+                              network: { enabled: false },
+                            },
+                          },
+                          web_search: "disabled",
+                          "features.apps": false,
+                        },
+                      },
+                    },
+                  }
+                : entry,
+            ),
+        }),
+      );
+      const thread = yield* session.runtime
+        .ensureThread({
+          threadId: ThreadId.make(nativeThreadId),
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: { ...CODEX_TEST_RUNTIME_POLICY, botWorkspaceProfile: "read" },
+        })
+        .pipe(Effect.provideService(SpawnExecutableResolution, async () => executable));
+      assert.equal(thread.nativeThreadRef?.nativeId, nativeThreadId);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
 
   it.effect("sends one initialize when two threads start on a fresh session at once", () =>
     Effect.gen(function* () {

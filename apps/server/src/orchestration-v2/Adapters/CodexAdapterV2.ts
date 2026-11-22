@@ -2247,7 +2247,6 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 },
               }),
             );
-        // Read per thread: a workspace's project config can add its own servers.
         const workspaceRuntimePaths = Effect.fn("CodexAdapterV2.workspaceRuntimePaths")(function* (
           policy: ProviderAdapter.ProviderAdapterV2RuntimePolicy | undefined,
         ) {
@@ -2256,13 +2255,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const resolve = yield* SpawnExecutableResolution;
           const settings = resolvedRuntime?.config ?? adapterOptions.settings;
           const environment = resolvedRuntime?.environment ?? adapterOptions.environment;
-          const executable = resolve(settings.binaryPath || "codex", platform, environment);
+          const executable = yield* Effect.promise(async () =>
+            resolve(settings.binaryPath || "codex", platform, environment),
+          );
           if (executable === undefined) return [];
           const physical = yield* fileSystem
             .realPath(executable)
             .pipe(Effect.orElseSucceed(() => executable));
           return [...new Set([executable, physical])];
         });
+        // Read per thread: a workspace's project config can add its own servers.
         const readStdioMcpServers = (cwd: string | null | undefined, isolated = false) =>
           ensureInitialized.pipe(
             Effect.andThen(
