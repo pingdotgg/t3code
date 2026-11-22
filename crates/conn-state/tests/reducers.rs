@@ -2596,3 +2596,73 @@ fn checkpoint_keeps_changed_files_and_builds_tree() {
         "per-folder override collapses one folder"
     );
 }
+
+#[test]
+fn shell_enrichment_snapshot_preserves_threads_and_sequence() {
+    let mut shell = ShellState::default();
+    let initial = decode_shell(json!({
+        "kind": "snapshot",
+        "snapshot": {
+            "schemaVersion": 1,
+            "snapshotSequence": 14,
+            "projects": [project_json("proj-1", "conn-demo", "2026-11-22T10:00:00.000Z")],
+            "threads": [thread_json(
+                "thread-1",
+                "proj-1",
+                "Demo thread",
+                "completed",
+                "2026-11-22T10:00:00.000Z",
+                None,
+            )],
+            "archivedThreads": []
+        }
+    }));
+    shell.apply(initial);
+    assert_eq!(shell.threads.len(), 1);
+    assert_eq!(shell.sequence, Some(14));
+
+    // Enrichment-only snapshot carries `resolvedRepositoryIdentityRoots` with empty threads and
+    // an older/different sequence; matching Conn's `mergeShellSnapshotProjects`, threads and
+    // sequence must stay intact while repositoryIdentity updates.
+    let mut enriched_project = project_json("proj-1", "conn-demo", "2026-11-22T10:00:00.000Z");
+    enriched_project["repositoryIdentity"] = json!({
+        "canonicalKey": "github.com/nckrtl/conn-demo",
+        "locator": {
+            "source": "git-remote",
+            "remoteName": "origin",
+            "remoteUrl": "https://github.com/nckrtl/conn-demo.git"
+        }
+    });
+    let enrichment = decode_shell(json!({
+        "kind": "snapshot",
+        "resolvedRepositoryIdentityRoots": ["/tmp/proj-1"],
+        "snapshot": {
+            "schemaVersion": 1,
+            "snapshotSequence": 4,
+            "projects": [enriched_project],
+            "threads": [],
+            "archivedThreads": []
+        }
+    }));
+    let change = shell.apply(enrichment);
+    assert!(change.projects_changed, "repository identity updated");
+    assert!(change.threads_changed.is_empty(), "threads untouched");
+    assert_eq!(
+        shell.threads.len(),
+        1,
+        "enrichment snapshot must not wipe threads"
+    );
+    assert_eq!(
+        shell.sequence,
+        Some(14),
+        "enrichment snapshot must not rewind sequence"
+    );
+    assert_eq!(
+        shell.projects[0]
+            .repository_identity
+            .as_ref()
+            .and_then(Option::as_ref)
+            .map(|r| r.canonical_key.as_str()),
+        Some("github.com/nckrtl/conn-demo")
+    );
+}

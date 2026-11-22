@@ -115,7 +115,12 @@ pub(crate) fn build_ws_url(http_base_url: &Url) -> Result<Url, ClientError> {
 /// Extracts the latest sequence number from a shell stream item, if the item carries one.
 pub(crate) fn extract_shell_sequence(item: &OrchestrationV2ShellStreamItem) -> Option<i64> {
     match item {
-        OrchestrationV2ShellStreamItem::Snapshot(s) => Some(s.snapshot.snapshot_sequence),
+        // Enrichment-only snapshots carry `resolvedRepositoryIdentityRoots` and must not
+        // rewind or overwrite the authoritative shell sequence cursor.
+        OrchestrationV2ShellStreamItem::Snapshot(s) => s
+            .resolved_repository_identity_roots
+            .is_none()
+            .then_some(s.snapshot.snapshot_sequence),
         OrchestrationV2ShellStreamItem::ProjectUpdated(p) => Some(p.sequence),
         OrchestrationV2ShellStreamItem::ProjectRemoved(p) => Some(p.sequence),
         OrchestrationV2ShellStreamItem::ThreadUpdated(t) => Some(t.sequence),

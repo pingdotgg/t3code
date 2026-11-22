@@ -47,7 +47,58 @@ impl ShellState {
         match item {
             ShellStreamItem::Snapshot(snapshot_item) => {
                 let snapshot = snapshot_item.snapshot;
-                self.projects = snapshot.projects;
+                // An enrichment-only snapshot (`resolvedRepositoryIdentityRoots` present) carries
+                // updated project repository identities with empty `threads` / `archivedThreads`.
+                // Matching Conn's `mergeShellSnapshotProjects`, never overwrite threads or
+                // sequence when we already hold an authoritative snapshot.
+                if let Some(resolved_roots) = snapshot_item.resolved_repository_identity_roots
+                    && self.sequence.is_some()
+                {
+                    let mut projects_changed = false;
+                    for project in &mut self.projects {
+                        let Some(candidate) = snapshot.projects.iter().find(|p| {
+                            p.id == project.id && p.workspace_root == project.workspace_root
+                        }) else {
+                            continue;
+                        };
+                        let resolved = resolved_roots
+                            .iter()
+                            .any(|root| root == &project.workspace_root);
+                        if resolved {
+                            if project.repository_identity != candidate.repository_identity {
+                                project.repository_identity = candidate.repository_identity.clone();
+                                projects_changed = true;
+                            }
+                        } else if !has_repository_identity(project)
+                            && has_repository_identity(candidate)
+                        {
+                            project.repository_identity = candidate.repository_identity.clone();
+                            projects_changed = true;
+                        }
+                    }
+                    return ShellChange {
+                        projects_changed,
+                        threads_changed: Vec::new(),
+                        snapshot_required: false,
+                    };
+                }
+
+                let prior_projects = std::mem::take(&mut self.projects);
+                self.projects = snapshot
+                    .projects
+                    .into_iter()
+                    .map(|mut project| {
+                        if !has_repository_identity(&project)
+                            && let Some(prior) = prior_projects.iter().find(|p| {
+                                p.id == project.id && p.workspace_root == project.workspace_root
+                            })
+                            && has_repository_identity(prior)
+                        {
+                            project.repository_identity = prior.repository_identity.clone();
+                        }
+                        project
+                    })
+                    .collect();
                 self.threads = snapshot.threads;
                 self.archived_threads = snapshot.archived_threads;
                 self.sequence = Some(snapshot.snapshot_sequence);
@@ -257,8 +308,18 @@ fn thread_activity(thread: &ThreadShell) -> ThreadActivity {
     }
 }
 
-fn upsert_project(projects: &mut Vec<ProjectShell>, project: ProjectShell) {
+fn has_repository_identity(project: &ProjectShell) -> bool {
+    matches!(project.repository_identity, Some(Some(_)))
+}
+
+fn upsert_project(projects: &mut Vec<ProjectShell>, mut project: ProjectShell) {
     if let Some(existing) = projects.iter_mut().find(|p| p.id == project.id) {
+        if !has_repository_identity(&project)
+            && existing.workspace_root == project.workspace_root
+            && has_repository_identity(existing)
+        {
+            project.repository_identity = existing.repository_identity.clone();
+        }
         *existing = project;
     } else {
         projects.push(project);
