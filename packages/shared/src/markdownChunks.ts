@@ -5,6 +5,8 @@ export const LARGE_MARKDOWN_CHUNK_MAX_CHARS = 128 * 1024;
 // A backtick fence's info string cannot contain a backtick, so "```a``` is inline" is a code span.
 const FENCE_OPEN = /^ {0,3}(`{3,}(?![^`\n]*`)|~{3,})/;
 const ATX_HEADING = /^#{1,6}(?:[ \t]|\r?$)/;
+// A thematic break, or a setext underline; either way no paragraph stays open after it.
+const THEMATIC_BREAK = /^ {0,3}(?:(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,}|=+[ \t]*)\r?$/;
 // A column-0 paragraph, quote or table after a blank line closes any open list, quote or table.
 const BLOCK_START = /^[\p{L}\p{N}`[!|>]/u;
 const ORDERED_ITEM = /^\d{1,9}[.)](?:[ \t]|\r?$)/;
@@ -115,7 +117,7 @@ export function splitMarkdown(text: string, targetChars = CHUNK_TARGET_CHARS): S
     lines.push(line);
     chars += line.length + 1;
     afterBlankLine = line.trim() === "";
-    afterHeading = closes === null && ATX_HEADING.test(line);
+    afterHeading = closes === null && (ATX_HEADING.test(line) || THEMATIC_BREAK.test(line));
   }
   flush();
   return { chunks, definitions: definitions.join("\n") };

@@ -118,9 +118,12 @@ describe("splitMarkdown", () => {
       "",
       "# Heading",
       "[h]: /after-heading",
+      "",
+      "---",
+      "[t]: /after-break",
     ].join("\n");
     expect(splitMarkdown(text).definitions).toBe(
-      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading",
+      "[site]: https://example.com\n[b]: https://example.com/badge.svg 'Badge'\n[h]: /after-heading\n[t]: /after-break",
     );
   });
 });
