@@ -45,6 +45,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { ThreadDetailsControl } from "./ThreadDetailsControl";
 import { ThreadDetailsSection } from "./ThreadDetailsSection";
 import { THREAD_DETAILS_PANEL_ICON_CLASS } from "./threadDetailsPanelStyles";
+import { visibleRowCount } from "./visibleRowCount";
 
 const SERVER_PAGE_COUNT = 4;
 
@@ -87,7 +88,9 @@ function ThreadServersList(props: ThreadServersPanelProps) {
   if (servers.length === 0) return null;
   const externalClickLabel = isMacPlatform(navigator.platform) ? "⌘-click" : "Ctrl-click";
   const threadRef = scopeThreadRef(props.environmentId, props.threadId);
-  const hiddenCount = Math.max(0, servers.length - visibleCount);
+  const initialCount = visibleRowCount(servers.length, SERVER_PAGE_COUNT);
+  const shownCount = visibleRowCount(servers.length, visibleCount);
+  const hiddenCount = servers.length - shownCount;
 
   const reportFailure = (title: string, error: unknown) => {
     toastManager.add(
@@ -178,7 +181,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
       title={gt("Servers", { $context: "thread details section: running dev servers" })}
     >
       <ul className="m-0 list-none p-0">
-        {servers.slice(0, visibleCount).map((server, index) => {
+        {servers.slice(0, shownCount).map((server, index) => {
           const key = serverKey(server);
           const stoppable = canStop && supportsStop && server.pid !== null;
           const forward = findPortForward(forwards, props.environmentId, server.port);
@@ -186,7 +189,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           return (
             <li
               key={key}
-              data-thread-details-server-overflow={index >= SERVER_PAGE_COUNT || undefined}
+              data-thread-details-server-overflow={index >= initialCount || undefined}
               className="group relative flex items-center rounded-lg"
             >
               <Tooltip>
@@ -324,7 +327,7 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           );
         })}
       </ul>
-      {servers.length > SERVER_PAGE_COUNT ? (
+      {initialCount < servers.length ? (
         <ThreadDetailsControl
           variant="ghost"
           size="sm"
@@ -342,7 +345,11 @@ function ThreadServersList(props: ThreadServersPanelProps) {
           )}
           {hiddenCount > 0 ? (
             <T>
-              Show <Var>{Math.min(hiddenCount, SERVER_PAGE_COUNT)}</Var> more
+              Show{" "}
+              <Var>
+                {visibleRowCount(servers.length, shownCount + SERVER_PAGE_COUNT) - shownCount}
+              </Var>{" "}
+              more
             </T>
           ) : (
             <T>Show less</T>

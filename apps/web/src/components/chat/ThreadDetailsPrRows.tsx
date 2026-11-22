@@ -35,6 +35,7 @@ import {
 } from "../ThreadStatusIndicators";
 
 import { ThreadDetailsPrRow } from "./ThreadDetailsPrRow";
+import { visibleRowCount } from "./visibleRowCount";
 
 function ThreadDetailsPrLinkRow({
   environmentId,
@@ -117,22 +118,32 @@ function ThreadDetailsPrRows({
           .filter((link) => threadPullRequestKeyOf(link) !== threadPullRequestKeyOf(currentLink));
   if (rest.length === 0) return currentRow;
 
+  const linkRows = rest.map((link) => (
+    <ThreadDetailsPrLinkRow
+      key={threadPullRequestKeyOf(link)}
+      environmentId={row.environmentId}
+      link={link}
+      onOpen={(event) => onOpenLink(event, link.url)}
+      onActed={row.onActed}
+      onStopWatching={stopWatching(link)}
+      composerTarget={row.composerTarget}
+    />
+  ));
+  if (visibleRowCount(rest.length, 0) === rest.length) {
+    return (
+      <>
+        {currentRow}
+        {linkRows}
+      </>
+    );
+  }
+
   return (
     <>
       {currentRow}
       {expanded ? (
         <div data-thread-details-pr-list className="flex flex-col">
-          {rest.map((link) => (
-            <ThreadDetailsPrLinkRow
-              key={threadPullRequestKeyOf(link)}
-              environmentId={row.environmentId}
-              link={link}
-              onOpen={(event) => onOpenLink(event, link.url)}
-              onActed={row.onActed}
-              onStopWatching={stopWatching(link)}
-              composerTarget={row.composerTarget}
-            />
-          ))}
+          {linkRows}
         </div>
       ) : null}
       <ThreadDetailsMoreButton
