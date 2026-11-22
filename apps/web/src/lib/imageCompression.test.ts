@@ -374,7 +374,7 @@ describe("HEIC attachment preparation", () => {
 describe("attachment max edge", () => {
   const u32 = (n: number) => [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff];
   const u16 = (n: number) => [(n >>> 8) & 0xff, n & 0xff];
-  const pngHeader = (width: number, height: number) => [
+  const pngHeader = (width: number, height: number, bitDepth = 8) => [
     0x89,
     0x50,
     0x4e,
@@ -390,7 +390,7 @@ describe("attachment max edge", () => {
     0x52,
     ...u32(width),
     ...u32(height),
-    8,
+    bitDepth,
     6,
     0,
     0,
@@ -459,6 +459,17 @@ describe("attachment max edge", () => {
     expect(encodes).toEqual([{ type: "image/jpeg", quality: 0.92 }]);
     expect(result.ok && result.file.type).toBe("image/jpeg");
     expect(result.ok && result.imageSize).toEqual({ width: 1500, height: 2000 });
+  });
+
+  it("keeps a 16-bit PNG whose 8-bit redraw comes out larger", async () => {
+    const { decode } = stubDecoder({ width: 1042, height: 1389 });
+    const original = image(pngHeader(1042, 1389, 16), "image.png", "image/png");
+
+    const result = await prepareImageForAttachment(original, 10 * 1024 * 1024);
+
+    expect(decode).toHaveBeenCalledOnce();
+    expect(result.ok && result.file).toBe(original);
+    expect(result.ok && result.recompressed).toBe(false);
   });
 
   it.each([

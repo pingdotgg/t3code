@@ -581,24 +581,37 @@ export async function compressImageForStash(
   }
 }
 
-async function fitImageToMaxEdge(file: File): Promise<{ file: File; imageSize: ImageSize } | null> {
+/** macOS pastes a photo copied from an iPhone as a 16-bit PNG, several times its 8-bit size. */
+function isSixteenBitPng(header: Uint8Array): boolean {
+  return (
+    header.length > 24 &&
+    new DataView(header.buffer, header.byteOffset).getUint32(0) === 0x89504e47 &&
+    header[24] === 16
+  );
+}
+
+async function fitImageForAttachment(
+  file: File,
+): Promise<{ file: File; imageSize: ImageSize } | null> {
   const mimeType = downscalableImageMimeType(file.type);
   if (!mimeType || !canRecompress() || file.size > MAX_COMPRESSIBLE_SOURCE_BYTES) return null;
   let bitmap: ImageBitmap | undefined;
   try {
-    const header = readImageDimensions(
-      new Uint8Array(await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer()),
+    const headerBytes = new Uint8Array(
+      await file.slice(0, IMAGE_DIMENSIONS_HEADER_BYTES).arrayBuffer(),
     );
-    if (!header || !fitImageAttachmentSize(header)) return null;
+    const header = readImageDimensions(headerBytes);
+    if (!header || (!fitImageAttachmentSize(header) && !isSixteenBitPng(headerBytes))) return null;
     bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
-    const imageSize = fitImageAttachmentSize(bitmap);
-    if (!imageSize) return null;
+    const scaledSize = fitImageAttachmentSize(bitmap);
+    const imageSize = scaledSize ?? { width: bitmap.width, height: bitmap.height };
     const target = createCanvas(imageSize.width, imageSize.height, await readImageColorSpace(file));
     if (!target) return null;
     target.context.imageSmoothingQuality = "high";
     target.context.drawImage(bitmap, 0, 0, imageSize.width, imageSize.height);
     const blob = await encodeCanvas(target.canvas, QUALITY_STEPS[0], mimeType);
-    if (!blob) return null;
+    // The canvas writes RGBA, so a 16-bit grayscale PNG can come out larger at 8 bits.
+    if (!blob || (!scaledSize && blob.size >= file.size)) return null;
     return {
       file: new File([blob], file.name, { type: mimeType, lastModified: file.lastModified }),
       imageSize,
@@ -615,7 +628,7 @@ export async function compressImageToByteLimit(
   maxBytes: number,
   options?: { preferredMimeType?: "image/jpeg"; sourceSizeBytes?: number },
 ): Promise<CompressImageFileResult> {
-  const fitted = await fitImageToMaxEdge(file);
+  const fitted = await fitImageForAttachment(file);
   if (fitted && fitted.file.size <= maxBytes) {
     return { ok: true, file: fitted.file, recompressed: true, imageSize: fitted.imageSize };
   }
@@ -704,10 +717,8 @@ async function convertHeicImage(
       const { heicTo } = await import("heic-to/csp");
       bitmap = await heicTo({ blob: file, type: "bitmap" });
     }
-    const imageSize = fitImageAttachmentSize(bitmap) ?? {
-      width: bitmap.width,
-      height: bitmap.height,
-    };
+    const scaledSize = fitImageAttachmentSize(bitmap);
+    const imageSize = scaledSize ?? { width: bitmap.width, height: bitmap.height };
     // heic-to ignores the color profile and hands back the raw Display P3 values as sRGB.
     if (!decodedNatively && metadata.displayP3) {
       const source = bitmap;
