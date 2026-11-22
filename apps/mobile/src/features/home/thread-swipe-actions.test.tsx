@@ -6,8 +6,17 @@ import { expect, it, vi } from "vite-plus/test";
 
 vi.mock("react-native", () => {
   const View = ({ children }: { readonly children?: ReactNode }) => <div>{children}</div>;
-  return { View, Pressable: View };
+  return {
+    View,
+    Pressable: View,
+    Platform: { OS: "ios" },
+    useWindowDimensions: () => ({ fontScale: 1 }),
+  };
 });
+vi.mock("gt-react-native", () => ({
+  msg: (text: string) => text,
+  useMessages: () => (text: string) => text,
+}));
 vi.mock("react-native-reanimated", async () => {
   const { View } = await import("react-native");
   return {
@@ -51,6 +60,9 @@ vi.mock("expo-haptics", () => ({
 vi.mock("../../components/ui/AppSymbol", () => ({ SymbolView: () => null }));
 vi.mock("../../components/ui/AppText", () => ({
   AppText: ({ children }: { readonly children?: ReactNode }) => <span>{children}</span>,
+}));
+vi.mock("../settings/appearance/useScaledTextRole", () => ({
+  useScaledTextRole: () => ({ lineHeight: 16 }),
 }));
 vi.mock("../../components/ui/Menu", () => ({
   Menu: ({ children }: { readonly children?: ReactNode }) => children,
