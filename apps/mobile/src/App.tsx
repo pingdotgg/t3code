@@ -57,6 +57,7 @@ import { environmentThreadShells, threadEnvironment } from "./state/threads";
 import { environmentShell, shellCachesReadAtom } from "./state/shell";
 import { OverlayPortalHost } from "./components/ui/OverlayPortal";
 import { shouldHandleAppLink, restoreDraftLinkState } from "./lib/appLinking";
+import { takePairingAppLink } from "./features/connection/pairingAppLink";
 import { hasCloudPublicConfig } from "./features/cloud/publicConfig";
 import { takeScheduledTaskNewLink } from "./features/settings/scheduled-task-editor-state";
 import {
@@ -146,7 +147,9 @@ const appLinking = {
     DEFAULT_HOSTED_APP_URL,
   ],
   config: { initialRouteName: "Home" },
-  filter: (url: string) => shouldHandleAppLink(url, hasCloudPublicConfig()),
+  // A pairing link asks to pair in place; it has no screen to open.
+  filter: (url: string) =>
+    !takePairingAppLink(url) && shouldHandleAppLink(url, hasCloudPublicConfig()),
   getInitialURL: async () => (await Linking.getInitialURL()) ?? (await launchWorkspaceURL()),
   getActionFromState: (
     state: Parameters<typeof getActionFromState>[0],
