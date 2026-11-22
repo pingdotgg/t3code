@@ -4,6 +4,8 @@ import * as Cause from "effect/Cause";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Exit from "effect/Exit";
+import * as Scope from "effect/Scope";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -79,7 +81,7 @@ describe("OpenCode2Client event subscription", () => {
       assert.strictEqual(error._tag, "HttpClientError");
       assert.strictEqual(error.reason._tag, "TransportError");
       assert.isTrue(Cause.isTimeoutError(error.cause));
-    }).pipe(Effect.scoped),
+    }),
   );
 });
 
@@ -168,6 +170,36 @@ describe("OpenCode2Client message history", () => {
     }),
   );
 });
+it.effect("closes an event subscription that recovery has not started reading", () =>
+  Effect.gen(function* () {
+    const signals: Array<AbortSignal> = [];
+    const http = HttpClient.make((request, _url, signal) =>
+      Effect.sync(() => {
+        signals.push(signal);
+        return HttpClientResponse.fromWeb(
+          request,
+          new Response(": connected\n\n", {
+            headers: { "content-type": "text/event-stream" },
+          }),
+        );
+      }),
+    );
+    const opencode = yield* OpenCode2Client.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, http),
+    );
+    const connection = yield* opencode.connect({
+      baseUrl: "http://127.0.0.1:4096",
+      password: "test",
+    });
+    const scope = yield* Effect.acquireRelease(Scope.make(), (scope) =>
+      Scope.close(scope, Exit.void),
+    );
+    yield* connection.events.pipe(Effect.provideService(Scope.Scope, scope), Effect.asVoid);
+    assert.isFalse(signals[0]!.aborted);
+    yield* Scope.close(scope, Exit.void);
+    assert.isTrue(signals[0]!.aborted);
+  }),
+);
 
 describe("OpenCode2Client native image jobs", () => {
   it.effect.each([
@@ -426,7 +458,25 @@ describe("OpenCode2Client usage limits", () => {
         [404, {}, undefined],
         [405, {}, undefined],
         [200, { location: { directory: "/remote" }, data: null }, "unsupported"],
+        [
+          200,
+          {
+            location: { directory: "/remote" },
+            data: { workspace: { id: "wrk_zen", usageURL: "https://opencode.ai" }, budgets: [] },
+          },
+          "unsupported",
+        ],
         [503, {}, "probeFailed"],
+        [
+          503,
+          {
+            _tag: "ServiceUnavailableError",
+            message:
+              "OpenCode Console budgets are unavailable: StatusCode: non 2xx status code (401 GET https://opencode.ai/console/api/policies/current-budgets)",
+            service: "opencode",
+          },
+          "probeFailed",
+        ],
         [401, {}, "probeFailed"],
         [200, { data: { workspace: {} } }, "probeFailed"],
       ] as const) {
@@ -445,8 +495,10 @@ describe("OpenCode2Client usage limits", () => {
         const result = yield* api.usageLimits("/remote");
         if (reason === undefined) assert.strictEqual(result, undefined);
         else assert.strictEqual(result?.unavailable?.reason, reason);
-        if (status === 200 && reason === "unsupported")
+        if ("data" in body && body.data === null)
           assert.include(result?.unavailable?.message ?? "", "signed in");
+        if ("message" in body)
+          assert.include(result?.unavailable?.message ?? "", "OpenCode Console budgets");
       }
     }),
   );
