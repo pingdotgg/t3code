@@ -59,7 +59,7 @@ describe("bootstrap", () => {
 
   it("shows the boot error when the main chunk fails again after the reload", async () => {
     const { reload, showBootError } = await bootWithFailingMainChunk(
-      createStorageStub({ "t3code:chunk-load-reloaded": "1" }),
+      createStorageStub({ "t3code:chunk-load-reloaded": import.meta.env.APP_VERSION }),
     );
 
     expect(reload).not.toHaveBeenCalled();

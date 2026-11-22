@@ -13,7 +13,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
-import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
+import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http";
 import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
@@ -25,8 +25,14 @@ import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 vi.mock("node:net", { spy: true });
 
 const checkedAt = "2026-10-19T00:00:00.000Z";
-const connected = { pid: 1, readyConnections: 4, hostname: "env.example.test", protocol: "quic" };
-const notConnected = { pid: 1, readyConnections: 0, hostname: null, protocol: null };
+const connected = {
+  pid: 1,
+  readyConnections: 4,
+  hostname: "env.example.test",
+  origin: null,
+  protocol: "quic",
+};
+const notConnected = { pid: 1, readyConnections: 0, hostname: null, origin: null, protocol: null };
 const facts = (overrides: Partial<ReachabilityFacts>): ReachabilityFacts => ({
   managedTunnelConfigured: true,
   connector: connected,
@@ -41,7 +47,8 @@ describe("classifyReachability", () => {
     [{ kind: "status", status: 502 }, "origin_unreachable"],
     [{ kind: "status", status: 530 }, "no_connector"],
     [{ kind: "status", status: 530, cloudflareError: "1033" }, "no_connector"],
-    [{ kind: "status", status: 530, cloudflareError: "1016" }, "unexpected_response"],
+    [{ kind: "status", status: 530, cloudflareError: "1016" }, "dns_failed"],
+    [{ kind: "status", status: 530, cloudflareError: "1001" }, "unexpected_response"],
     [{ kind: "network_error" }, "timeout"],
   ] as const)("maps endpoint result %o to %s", (endpoint, cause) => {
     expect(classifyReachability(facts({ endpoint, edgeReachable: true }), checkedAt)).toMatchObject(
@@ -64,6 +71,7 @@ describe("classifyReachability", () => {
             pid: 1,
             readyConnections: null,
             hostname: "env.example.test",
+            origin: null,
             protocol: null,
           },
           endpoint: { kind: "status", status: 502 },
@@ -80,6 +88,7 @@ describe("classifyReachability", () => {
             pid: 1,
             readyConnections: null,
             hostname: "env.example.test",
+            origin: null,
             protocol: null,
           },
           endpoint: { kind: "dns_failed" },
@@ -115,8 +124,10 @@ const cloudflareErrorPage = (request: HttpClientRequest.HttpClientRequest, code:
     ? JSON.stringify({ status: 530, error_code: code, error_name: "tunnel_error" })
     : `<!doctype html><h1><span>Error</span> <span>${code}</span></h1>`;
 
+type Served = Effect.Effect<ServedResponse, HttpClientError.HttpClientError>;
+
 const reachabilityLayer = (
-  respond: Effect.Effect<ServedResponse>,
+  respond: Served | ((request: HttpClientRequest.HttpClientRequest) => Served),
   restartConnector: (pid: number, stillDead: Effect.Effect<boolean>) => Effect.Effect<boolean>,
 ) =>
   ConnectReachability.layer.pipe(
@@ -133,7 +144,7 @@ const reachabilityLayer = (
         Layer.succeed(
           HttpClient.HttpClient,
           HttpClient.make((request) =>
-            respond.pipe(
+            (Effect.isEffect(respond) ? respond : respond(request)).pipe(
               Effect.map(({ status, body }) =>
                 HttpClientResponse.fromWeb(
                   request,
@@ -199,7 +210,7 @@ describe("ConnectReachability stale connector recovery", () => {
         expect(yield* reachability.check).toMatchObject({ status: "reachable" });
         status = 530;
         body = { cloudflareError: 1016 };
-        expect(yield* reachability.check).toMatchObject({ cause: "unexpected_response" });
+        expect(yield* reachability.check).toMatchObject({ cause: "dns_failed" });
         yield* TestClock.adjust(Duration.minutes(2));
         expect(yield* Queue.size(restarts)).toBe(0);
 
@@ -374,6 +385,66 @@ describe("ConnectReachability stale connector recovery", () => {
         yield* TestClock.adjust(Duration.seconds(2));
         expect(yield* Fiber.join(check)).toMatchObject({ cause: "no_connector" });
       }).pipe(Effect.provide(layer));
+    }),
+  );
+});
+
+describe("ConnectReachability DNS failures", () => {
+  // undici wraps getaddrinfo's error in `TypeError: fetch failed`. glibc behind
+  // systemd-resolved can report an NXDOMAIN as EBUSY rather than ENOTFOUND.
+  const lookupFailed = (code: string) =>
+    Effect.fail(
+      new HttpClientError.HttpClientError({
+        reason: new HttpClientError.TransportError({
+          request: HttpClientRequest.get("https://env.example.test"),
+          cause: new TypeError("fetch failed", {
+            cause: Object.assign(new Error(`getaddrinfo ${code} env.example.test`), {
+              code,
+              syscall: "getaddrinfo",
+              hostname: "env.example.test",
+            }),
+          }),
+        }),
+      }),
+    );
+
+  it.effect("reports a getaddrinfo EBUSY as a DNS failure", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      const layer = reachabilityLayer(lookupFailed("EBUSY"), () => Effect.succeed(false));
+      const result = yield* ConnectReachability.ConnectReachability.use(
+        (reachability) => reachability.check,
+      ).pipe(Effect.provide(layer));
+      expect(result).toMatchObject({ status: "unreachable", cause: "dns_failed" });
+    }),
+  );
+
+  // A local "not found" cached before the relay published the record looks like a missing
+  // record. Public DNS tells them apart.
+  it.effect("says whether the name exists in public DNS", () =>
+    Effect.gen(function* () {
+      using _connect = mockEdgeConnect();
+      for (const [lookupCode, dnsStatus, reason] of [
+        ["ENOTFOUND", 0, "old cached answer"],
+        ["ENOTFOUND", 3, "missing from public DNS"],
+        // The local resolver did not answer, so nothing it cached is to blame.
+        ["EAI_AGAIN", 0, "does not resolve from this machine"],
+      ] as const) {
+        const layer = reachabilityLayer(
+          (request) =>
+            request.url.startsWith("https://1.1.1.1/dns-query")
+              ? Effect.succeed({ status: 200, body: JSON.stringify({ Status: dnsStatus }) })
+              : lookupFailed(lookupCode),
+          () => Effect.succeed(false),
+        );
+        const result = yield* ConnectReachability.ConnectReachability.use(
+          (reachability) => reachability.check,
+        ).pipe(Effect.provide(layer));
+        expect(result).toMatchObject({
+          cause: "dns_failed",
+          reason: expect.stringContaining(reason),
+        });
+      }
     }),
   );
 });
