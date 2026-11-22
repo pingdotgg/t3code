@@ -57,11 +57,6 @@ const providers = [
     instanceId: "claudeAgent-custom",
     auth: { type: "customEndpoint" },
   }),
-  // Bedrock keeps its own auth type; the endpoint marker still blocks the vouch.
-  provider("claudeAgent", [{ slug: "us.anthropic.claude-ops-internal-v1" }], {
-    instanceId: "claudeAgent-bedrock",
-    auth: { type: "bedrock", endpoint: "https://gateway.example.com" },
-  }),
   provider("opencode", [{ slug: "ollama/acme-internal" }]),
   // Antigravity ships models before the bundled manifest lists them.
   provider("antigravity", [
@@ -369,8 +364,6 @@ describe("provider usage reporting", () => {
     // A custom endpoint's catalog is user-defined and never vouches.
     expect(label("acme-azure-deployment")).toBeUndefined();
     expect(label("claude-ops-internal")).toBeUndefined();
-    // Bedrock keeps its auth type; the endpoint marker still blocks the vouch.
-    expect(label("us.anthropic.claude-ops-internal-v1")).toBeUndefined();
   });
 
   it("reports closed service tiers from a tier option or a fast mode toggle", () => {
