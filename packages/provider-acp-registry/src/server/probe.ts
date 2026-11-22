@@ -387,6 +387,7 @@ export interface AcpRegistryConfigurationProbeResolved {
   readonly distribution: AcpRegistrySupport.ResolvedAcpRegistryAgent["distribution"];
   readonly launchIdentity?: string;
   readonly indexRevision?: number;
+  readonly fallback?: boolean;
 }
 
 export interface AcpRegistryConfigurationProbeResult {
@@ -652,6 +653,7 @@ export const probeAcpRegistryConfiguration = Effect.fn("AcpRegistryProbe.probeCo
         ...(result.resolved.indexRevision === undefined
           ? {}
           : { indexRevision: result.resolved.indexRevision }),
+        ...(result.resolved.fallback ? { fallback: true } : {}),
       },
     };
   },

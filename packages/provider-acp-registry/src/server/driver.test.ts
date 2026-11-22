@@ -875,6 +875,29 @@ describe("acpRegistryEnrichmentCache", () => {
     expect(updated.generation).toBe(5);
     expect(updated.entry).toBeNull();
   });
+
+  it("ignores live updates tagged for a different runtime identity than the cached entry", () => {
+    const provider = providerWithModels(
+      [{ id: "smodel", name: "Default", description: null }],
+      "smodel",
+    );
+    const cache = {
+      generation: 3,
+      entry: { provider, expiresAt: 1_000, launchIdentity: "runtime-v1" },
+    };
+
+    const ignored = updateAcpRegistryEnrichmentCache({
+      cache,
+      configuration: settledConfiguration,
+      customModels: [],
+      now: 5_000,
+      runtimeIdentity: "runtime-v2",
+    });
+
+    expect(ignored).toBe(cache);
+    expect(ignored.generation).toBe(3);
+    expect(ignored.entry?.provider.models.map((m) => m.slug)).toEqual(["smodel"]);
+  });
 });
 
 describe("acpRegistryAdvertisesModelCatalog", () => {
@@ -1590,6 +1613,9 @@ describe("AcpRegistryDriver registry recovery", () => {
         const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
 
         let remoteVersion = "2.0.0";
+        let remoteWebsite: string | undefined = undefined;
+        let failArchiveDownload = false;
+        let onFallbackResolved: (() => Effect.Effect<void>) | null = null;
         const initialGate = {
           started: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
@@ -1611,11 +1637,17 @@ describe("AcpRegistryDriver registry recovery", () => {
               const respond = Effect.sync(() =>
                 HttpClientResponse.fromWeb(
                   request,
-                  new Response(
-                    request.url === registryUrl
-                      ? makeBinaryRegistry(remoteVersion)
-                      : `#!/bin/sh\necho ${remoteVersion}\n`,
-                  ),
+                  request.url === registryUrl
+                    ? new Response(
+                        makeBinaryRegistry(
+                          remoteVersion,
+                          compatibleRegistryTarget,
+                          remoteWebsite ? { website: remoteWebsite } : undefined,
+                        ),
+                      )
+                    : failArchiveDownload
+                      ? new Response("archive unavailable", { status: 503 })
+                      : new Response(`#!/bin/sh\necho ${remoteVersion}\n`),
                 ),
               );
               const activeGate = request.url === registryUrl ? gate : null;
@@ -1632,6 +1664,11 @@ describe("AcpRegistryDriver registry recovery", () => {
           ...realCatalog,
           resolve: (settings, cwd, environment) =>
             realCatalog.resolve(settings, cwd, environment).pipe(
+              Effect.tap((resolved) =>
+                resolved.fallback && onFallbackResolved !== null
+                  ? onFallbackResolved()
+                  : Effect.void,
+              ),
               Effect.map((resolved) => ({
                 ...resolved,
                 spawn: { command: process.execPath, args: [agentPath, modelsPath] },
@@ -1717,6 +1754,46 @@ describe("AcpRegistryDriver registry recovery", () => {
         yield* Deferred.succeed(secondGate.release, undefined);
         expect(Option.isSome(yield* Fiber.join(upgradedToV3))).toBe(true);
         expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "3.0.0"))).toBe(true);
+
+        // If 4.0.0 fails to download, the driver falls back to the installed 3.0.0 without
+        // acknowledging the 4.0.0 revision, then upgrades to 4.0.0 once the archive recovers.
+        gate = null;
+        remoteVersion = "4.0.0";
+        remoteWebsite = "https://example.test/v4";
+        failArchiveDownload = true;
+        const fallbackObserved = yield* Deferred.make<void>();
+        onFallbackResolved = () =>
+          Deferred.succeed(fallbackObserved, undefined).pipe(Effect.asVoid);
+        const fallbackPublished = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "3.0.0" &&
+              snapshot.status === "ready" &&
+              snapshot.setup?.documentationUrl === "https://example.test/v4" &&
+              snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* TestClock.adjust("16 minutes");
+        yield* instance.snapshot.refresh;
+        yield* Deferred.await(fallbackObserved);
+        expect(Option.isSome(yield* Fiber.join(fallbackPublished))).toBe(true);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "4.0.0"))).toBe(false);
+        onFallbackResolved = null;
+
+        // Recovering without invalidating the cached 4.0.0 index still upgrades because fallback did not acknowledge it.
+        failArchiveDownload = false;
+        const upgradedToV4 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) => snapshot.version === "4.0.0" && snapshot.nativeSessions !== undefined,
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* instance.snapshot.refresh;
+        expect(Option.isSome(yield* Fiber.join(upgradedToV4))).toBe(true);
+        expect(yield* fileSystem.exists(installedBinaryPath(path, directory, "4.0.0"))).toBe(true);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 
@@ -1738,15 +1815,30 @@ describe("AcpRegistryDriver registry recovery", () => {
         let remoteExtraAgentVersion: string | undefined = undefined;
         let registryRequests = 0;
         let resolveAttempts = 0;
+        let lastResolvedCommand = "";
         let backgroundProbeCalls = 0;
+        let onInspectStart: (() => Effect.Effect<void>) | null = null;
         let onInspect:
           | ((inspection: AcpRegistrySupport.AcpRegistryInspection) => Effect.Effect<void>)
+          | null = null;
+        let onGetUrlAuthAction:
+          | ((targetInstanceId: ProviderInstanceId) => Effect.Effect<void>)
           | null = null;
         let onBackgroundProbeOutcome: ((skipped: boolean) => Effect.Effect<void>) | null = null;
         let onRefreshIndex: Effect.Effect<void> = Effect.void;
         const coordinator: AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator["Service"] =
           {
             ...baseCoordinator,
+            getUrlAuthAction: (targetInstanceId) =>
+              baseCoordinator
+                .getUrlAuthAction(targetInstanceId)
+                .pipe(
+                  Effect.tap(() =>
+                    onGetUrlAuthAction === null
+                      ? Effect.void
+                      : onGetUrlAuthAction(targetInstanceId),
+                  ),
+                ),
             runBackgroundProbe: (agentId, effect) =>
               Effect.sync(() => {
                 backgroundProbeCalls += 1;
@@ -1798,13 +1890,12 @@ describe("AcpRegistryDriver registry recovery", () => {
         const catalog: AcpRegistrySupport.AcpRegistryCatalog["Service"] = {
           ...realCatalog,
           inspect: (settings, environment) =>
-            realCatalog
-              .inspect(settings, environment)
-              .pipe(
-                Effect.tap((inspection) =>
-                  onInspect === null ? Effect.void : onInspect(inspection),
-                ),
+            (onInspectStart === null ? Effect.void : onInspectStart()).pipe(
+              Effect.andThen(() => realCatalog.inspect(settings, environment)),
+              Effect.tap((inspection) =>
+                onInspect === null ? Effect.void : onInspect(inspection),
               ),
+            ),
           refreshIndex: (options) =>
             realCatalog.refreshIndex(options).pipe(Effect.tap(() => onRefreshIndex)),
           resolve: (settings, cwd, environment) =>
@@ -1812,6 +1903,11 @@ describe("AcpRegistryDriver registry recovery", () => {
               resolveAttempts += 1;
             }).pipe(
               Effect.andThen(() => realCatalog.resolve(settings, cwd, environment)),
+              Effect.tap((resolved) =>
+                Effect.sync(() => {
+                  lastResolvedCommand = resolved.spawn.command;
+                }),
+              ),
               Effect.map((resolved) => ({
                 ...resolved,
                 spawn: { command: process.execPath, args: [agentPath, modelsPath] },
@@ -1911,17 +2007,24 @@ describe("AcpRegistryDriver registry recovery", () => {
         expect(withClearedDocs.models.map((model) => model.slug)).toEqual(["model-a", "model-b"]);
         expect(resolveAttempts).toBe(resolvesAfterInitialProbe);
 
-        // 2. An unrelated registry change plus a live command update does not schedule a second probe.
+        // 2. An unrelated registry change plus a live command update does not schedule a second probe
+        // and acknowledges the revision so a follow-up refresh skips rechecking.
         remoteExtraAgentVersion = "9.9.9";
         let unrelatedRefreshed = false;
-        const unrelatedRechecked = yield* Deferred.make<void>();
+        const unrelatedReadinessCompleted = yield* Deferred.make<void>();
         onRefreshIndex = Effect.sync(() => {
           unrelatedRefreshed = true;
         });
-        onInspect = () =>
-          unrelatedRefreshed
-            ? Deferred.succeed(unrelatedRechecked, undefined).pipe(Effect.asVoid)
+        onGetUrlAuthAction = (targetInstanceId) =>
+          unrelatedRefreshed && targetInstanceId === identity.instanceId
+            ? Deferred.succeed(unrelatedReadinessCompleted, undefined).pipe(Effect.asVoid)
             : Effect.void;
+        const probesBeforeUnrelated = backgroundProbeCalls;
+        yield* catalog.invalidateIndex();
+        yield* instance.snapshot.refresh;
+        // Wait until the post-refresh inspectReadiness finishes its last async step (getUrlAuthAction),
+        // then observe a live command update to guarantee the no-reprobe/acknowledge branch has settled.
+        yield* Deferred.await(unrelatedReadinessCompleted);
         const liveCommandApplied = yield* instance.snapshot.streamChanges.pipe(
           Stream.filter((snapshot) =>
             snapshot.slashCommands.some((command) => command.name === "live-updated"),
@@ -1929,17 +2032,13 @@ describe("AcpRegistryDriver registry recovery", () => {
           Stream.runHead,
           Effect.forkScoped({ startImmediately: true }),
         );
-        const probesBeforeUnrelated = backgroundProbeCalls;
         yield* coordinator.publishAvailableCommands(identity.instanceId, {
           slashCommands: [{ name: "live-updated" }],
           skills: [],
         });
-        yield* catalog.invalidateIndex();
-        yield* instance.snapshot.refresh;
-        yield* Deferred.await(unrelatedRechecked);
         expect(Option.isSome(yield* Fiber.join(liveCommandApplied))).toBe(true);
         onRefreshIndex = Effect.void;
-        onInspect = null;
+        onGetUrlAuthAction = null;
         // 1 auth.refreshMethods + 1 initialProbe; 0 post-recheck probe calls.
         expect(backgroundProbeCalls).toBe(probesBeforeUnrelated + 2);
         expect(resolveAttempts).toBe(resolvesAfterInitialProbe);
@@ -1958,7 +2057,7 @@ describe("AcpRegistryDriver registry recovery", () => {
           Effect.andThen(Deferred.succeed(secondInstanceRefreshDone, undefined)),
           Effect.asVoid,
         );
-        onInspect = () =>
+        onInspectStart = () =>
           secondInstanceRefreshed
             ? Effect.sync(() => {
                 secondInstancePostRefreshInspects += 1;
@@ -1977,13 +2076,26 @@ describe("AcpRegistryDriver registry recovery", () => {
             coordinator,
           ),
         );
-        yield* secondInstance.snapshot.refresh;
+        const secondSettled = yield* secondInstance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.slashCommands.some((command) => command.name === "second-settled"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
         yield* Deferred.await(secondInstanceRefreshDone);
+        // Keep the inspect hook active until a live update on secondInstance settles past the skip decision.
+        yield* coordinator.publishAvailableCommands(secondInstanceId, {
+          slashCommands: [{ name: "second-settled" }],
+          skills: [],
+        });
+        expect(Option.isSome(yield* Fiber.join(secondSettled))).toBe(true);
         onRefreshIndex = Effect.void;
-        onInspect = null;
+        onInspectStart = null;
         expect(secondInstancePostRefreshInspects).toBe(0);
 
-        // 3. Same-version launch distribution swap replaces the cached binary on disk, invalidates the probe cache, and re-probes.
+        // 3. Same-version launch distribution swap installs into an immutable artifact slot without
+        // mutating the existing binary, invalidates the probe cache, and re-probes.
         remoteArchiveSuffix = "-repackaged";
         yield* fileSystem.writeFileString(
           modelsPath,
@@ -2006,9 +2118,15 @@ describe("AcpRegistryDriver registry recovery", () => {
           "model-swapped-a",
           "model-swapped-b",
         ]);
+        expect(lastResolvedCommand).toMatch(
+          new RegExp(`${compatibleRegistryTarget}-[0-9a-f]{12}[\\\\/]bin[\\\\/]test-agent$`),
+        );
+        expect(yield* fileSystem.readFileString(lastResolvedCommand)).toBe(
+          "#!/bin/sh\necho 1.0.0-repackaged\n",
+        );
         expect(
           yield* fileSystem.readFileString(installedBinaryPath(path, directory, "1.0.0")),
-        ).toBe("#!/bin/sh\necho 1.0.0-repackaged\n");
+        ).toBe("#!/bin/sh\necho 1.0.0\n");
         const resolvesAfterSwap = resolveAttempts;
         expect(resolvesAfterSwap).toBeGreaterThan(resolvesBeforeSwap);
 
@@ -2517,7 +2635,48 @@ describe("AcpRegistryDriver registry recovery", () => {
         const v2Identity = v2Inspection.status === "ready" ? v2Inspection.launchIdentity! : "";
         expect(v2Identity).not.toBe(v1Identity);
 
-        // Queue a v1 watcher update on this active enrichment fiber, then publish v2 live state before the v2 probe lands.
+        // 1. A live config update from displayed runtime v1 (which also learns an effort option on shared-model)
+        // updates v1's displayed snapshot without discarding the in-flight v2 upgrade probe.
+        const v1LiveUpdated = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "1.0.0" &&
+              snapshot.models.some((model) => model.slug === "v1-during-probe-a"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishLiveConfiguration(
+          identity.instanceId,
+          normalizeAcpRegistryLiveConfiguration(
+            [
+              {
+                id: "effort",
+                name: "Effort",
+                category: "thought_level",
+                type: "select",
+                currentValue: "high",
+                options: [
+                  { value: "low", name: "Low" },
+                  { value: "high", name: "High" },
+                ],
+              },
+            ],
+            undefined,
+            {
+              currentModelId: "shared-model",
+              availableModels: [
+                { modelId: "v1-during-probe-a", name: "v1-during-probe-a" },
+                { modelId: "shared-model", name: "shared-model" },
+              ],
+            },
+          ),
+          v1Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(v1LiveUpdated))).toBe(true);
+
+        // 2. Queue an UNTAGGED stale update on this active enrichment fiber before v2 commits
+        // so rejecting it later proves the clear watermark (!isCurrent) independently of runtimeIdentity.
         const staleGate = {
           entered: yield* Deferred.make<void>(),
           release: yield* Deferred.make<void>(),
@@ -2533,10 +2692,10 @@ describe("AcpRegistryDriver registry recovery", () => {
               { modelId: "v1-queued-b", name: "v1-queued-b" },
             ],
           }),
-          v1Identity,
         );
         yield* Deferred.await(staleGate.entered);
 
+        // 3. Publish v2 live state before the v2 probe lands; v2 must preserve it without inheriting v1 learnedModels.
         yield* coordinator.publishAvailableCommands(
           identity.instanceId,
           { slashCommands: [{ name: "v2-live-cmd" }], skills: [] },
@@ -2548,7 +2707,7 @@ describe("AcpRegistryDriver registry recovery", () => {
             currentModelId: "v2-live-a",
             availableModels: [
               { modelId: "v2-live-a", name: "v2-live-a" },
-              { modelId: "v2-live-b", name: "v2-live-b" },
+              { modelId: "shared-model", name: "shared-model" },
             ],
           }),
           v2Identity,
@@ -2556,10 +2715,33 @@ describe("AcpRegistryDriver registry recovery", () => {
         yield* Deferred.succeed(resolveGate.release, undefined);
 
         const publishedV2 = Option.getOrThrow(yield* Fiber.join(v2ProbedReady));
-        expect(publishedV2.models.map((model) => model.slug)).toEqual(["v2-live-a", "v2-live-b"]);
+        expect(publishedV2.models.map((model) => model.slug)).toEqual([
+          "v2-live-a",
+          "shared-model",
+        ]);
+        expect(
+          publishedV2.models.find((model) => model.slug === "shared-model")?.capabilities
+            ?.optionDescriptors ?? [],
+        ).toEqual([]);
         expect(publishedV2.slashCommands).toEqual([{ name: "v2-live-cmd" }]);
 
-        // Releasing the queued v1 watcher callback and publishing late v1 updates must not overwrite v2.
+        // Synchronize past runProbeAndPublish releasing liveSnapshotSemaphore (so clearLiveState has completed).
+        const v2PostClear = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter((snapshot) =>
+            snapshot.slashCommands.some((command) => command.name === "v2-post-clear"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          identity.instanceId,
+          { slashCommands: [{ name: "v2-post-clear" }], skills: [] },
+          v2Identity,
+        );
+        expect(Option.isSome(yield* Fiber.join(v2PostClear))).toBe(true);
+
+        // 4. Release the queued untagged update (rejected solely by !isCurrent), then publish post-clear v1-tagged
+        // updates (whose revision is AFTER clear, so rejected solely by runtimeIdentity) without evicting v2 state.
         const liveRaceSnapshots = yield* instance.snapshot.streamChanges.pipe(
           Stream.takeUntil(
             (snapshot) =>
@@ -2586,6 +2768,14 @@ describe("AcpRegistryDriver registry recovery", () => {
           { slashCommands: [{ name: "v1-late-cmd" }], skills: [] },
           v1Identity,
         );
+        // Late v1 publications must not evict v2's stored coordinator entry.
+        expect(
+          yield* coordinator.getAvailableCommands(identity.instanceId, {
+            runtimeIdentity: v2Identity,
+            requireMatchingRuntimeIdentity: true,
+          }),
+        ).toEqual(Option.some({ slashCommands: [{ name: "v2-post-clear" }], skills: [] }));
+
         yield* coordinator.publishLiveConfiguration(
           identity.instanceId,
           normalizeAcpRegistryLiveConfiguration([], undefined, {
@@ -2614,6 +2804,33 @@ describe("AcpRegistryDriver registry recovery", () => {
         const afterRace = observedAfterRace[observedAfterRace.length - 1]!;
         expect(afterRace.models.map((model) => model.slug)).toEqual(["v2-final-a", "v2-final-b"]);
         expect(afterRace.slashCommands).toEqual([{ name: "v2-after-race" }]);
+
+        // 5. When the shared catalog advances to 3.0.0 and a 3.0.0 session publishes live commands before this
+        // instance refreshes, the driver automatically reconciles to 3.0.0 instead of dropping the update.
+        remoteVersion = "3.0.0";
+        yield* fileSystem.writeFileString(modelsPath, JSON.stringify(["v3-model-a", "v3-model-b"]));
+        yield* realCatalog.invalidateIndex();
+        yield* realCatalog.refreshIndex({ maxAgeMs: 0, failureBackoffMs: 0 });
+        const v3Inspection = yield* realCatalog.inspect(decodeSettings({ agentId: "test-agent" }));
+        expect(v3Inspection.status).toBe("ready");
+        const v3Identity = v3Inspection.status === "ready" ? v3Inspection.launchIdentity! : "";
+        const reconciledV3 = yield* instance.snapshot.streamChanges.pipe(
+          Stream.filter(
+            (snapshot) =>
+              snapshot.version === "3.0.0" &&
+              snapshot.slashCommands.some((command) => command.name === "v3-session-cmd"),
+          ),
+          Stream.runHead,
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        yield* coordinator.publishAvailableCommands(
+          identity.instanceId,
+          { slashCommands: [{ name: "v3-session-cmd" }], skills: [] },
+          v3Identity,
+        );
+        const v3Snapshot = Option.getOrThrow(yield* Fiber.join(reconciledV3));
+        expect(v3Snapshot.version).toBe("3.0.0");
+        expect(v3Snapshot.slashCommands).toEqual([{ name: "v3-session-cmd" }]);
       }).pipe(Effect.scoped, Effect.provide(driverLayer)),
   );
 });

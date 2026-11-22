@@ -257,4 +257,105 @@ describe("AcpRegistryRuntimeCoordinator", () => {
       yield* Fiber.interrupt(consumer);
     }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
   );
+
+  it.effect(
+    "isolates per-runtime state, evaluates chained clear watermarks, and drops disposed instances",
+    () =>
+      Effect.gen(function* () {
+        const coordinator = yield* AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator;
+        const instanceId = ProviderInstanceId.make("acpRegistry_runtime_scoped");
+        const metas: Array<{
+          readonly label: string;
+          readonly meta: AcpRegistryRuntimeCoordinator.AcpRegistryLiveUpdateMeta;
+        }> = [];
+        const expectedCount = { target: 0, gate: yield* Deferred.make<void>() };
+        const watcher = yield* coordinator
+          .watchAvailableCommands(instanceId, (commands, meta) =>
+            Effect.gen(function* () {
+              metas.push({ label: commands.slashCommands[0]?.name ?? "empty", meta });
+              if (metas.length >= expectedCount.target) {
+                yield* Deferred.succeed(expectedCount.gate, undefined);
+              }
+            }),
+          )
+          .pipe(Effect.forkChild);
+
+        const publishAndWait = (name: string, runtimeIdentity?: string) =>
+          Effect.gen(function* () {
+            expectedCount.target = metas.length + 1;
+            expectedCount.gate = yield* Deferred.make<void>();
+            yield* coordinator.publishAvailableCommands(
+              instanceId,
+              { slashCommands: [{ name }], skills: [] },
+              runtimeIdentity,
+            );
+            yield* Deferred.await(expectedCount.gate);
+            return metas[metas.length - 1]!.meta;
+          });
+
+        // 1. Late update from A must not evict B's stored entry.
+        const metaA = yield* publishAndWait("cmd-a", "runtime-a");
+        const metaB = yield* publishAndWait("cmd-b", "runtime-b");
+        const metaUntagged = yield* publishAndWait("cmd-untagged");
+        const metaLateA = yield* publishAndWait("cmd-a-late", "runtime-a");
+        expect(
+          yield* coordinator.getAvailableCommands(instanceId, {
+            runtimeIdentity: "runtime-b",
+            requireMatchingRuntimeIdentity: true,
+          }),
+        ).toEqual(Option.some({ slashCommands: [{ name: "cmd-b" }], skills: [] }));
+        expect(yield* metaA.isCurrent).toBe(true);
+        expect(yield* metaB.isCurrent).toBe(true);
+        expect(yield* metaUntagged.isCurrent).toBe(true);
+        expect(yield* metaLateA.isCurrent).toBe(true);
+
+        // 2. Chained preserve clears (preserve B -> preserve C -> preserve B) keep only matching entries current.
+        yield* coordinator.clearAvailableCommands(instanceId, {
+          preserveRuntimeIdentity: "runtime-b",
+        });
+        expect(yield* metaA.isCurrent).toBe(false);
+        expect(yield* metaLateA.isCurrent).toBe(false);
+        expect(yield* metaUntagged.isCurrent).toBe(false);
+        expect(yield* metaB.isCurrent).toBe(true);
+        expect(
+          yield* coordinator.getAvailableCommands(instanceId, {
+            runtimeIdentity: "runtime-a",
+            requireMatchingRuntimeIdentity: true,
+          }),
+        ).toEqual(Option.none());
+        expect(yield* coordinator.getAvailableCommands(instanceId)).toEqual(
+          Option.some({ slashCommands: [{ name: "cmd-b" }], skills: [] }),
+        );
+
+        const metaC = yield* publishAndWait("cmd-c", "runtime-c");
+        yield* coordinator.clearAvailableCommands(instanceId, {
+          preserveRuntimeIdentity: "runtime-c",
+        });
+        expect(yield* metaB.isCurrent).toBe(false);
+        expect(yield* metaC.isCurrent).toBe(true);
+
+        // Returning to preserve B after preserve C must NOT resurrect the older pre-C metaB.
+        const metaB2 = yield* publishAndWait("cmd-b-2", "runtime-b");
+        yield* coordinator.clearAvailableCommands(instanceId, {
+          preserveRuntimeIdentity: "runtime-b",
+        });
+        expect(yield* metaB.isCurrent).toBe(false);
+        expect(yield* metaC.isCurrent).toBe(false);
+        expect(yield* metaB2.isCurrent).toBe(true);
+
+        // 3. Full clear invalidates everything published before it; subsequent publications stay current.
+        yield* coordinator.clearAvailableCommands(instanceId);
+        expect(yield* metaB2.isCurrent).toBe(false);
+        expect(Option.isNone(yield* coordinator.getAvailableCommands(instanceId))).toBe(true);
+
+        const metaAfterFullClear = yield* publishAndWait("cmd-fresh", "runtime-b");
+        expect(yield* metaAfterFullClear.isCurrent).toBe(true);
+
+        // 4. Disposing an instance drops its state and marks earlier updates stale.
+        yield* coordinator.clearAvailableCommands(instanceId, { dispose: true });
+        expect(yield* metaAfterFullClear.isCurrent).toBe(false);
+        expect(Option.isNone(yield* coordinator.getAvailableCommands(instanceId))).toBe(true);
+        yield* Fiber.interrupt(watcher);
+      }).pipe(Effect.provide(AcpRegistryRuntimeCoordinator.layer)),
+  );
 });

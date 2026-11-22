@@ -81,11 +81,22 @@ function acpRegistryProbeTtlMs(provider: ServerProvider): number {
 
 interface AcpRegistryEnrichmentCache {
   readonly generation: number;
+  readonly invalidationGeneration?: number;
+  readonly liveGenerationByRuntime?: ReadonlyMap<string | null, number>;
   readonly entry: {
     readonly provider: ServerProvider;
     readonly expiresAt: number;
     readonly launchIdentity?: string | null;
   } | null;
+}
+
+function nextLiveGenerationByRuntime(
+  current: ReadonlyMap<string | null, number> | undefined,
+  runtimeIdentity: string | null,
+): ReadonlyMap<string | null, number> {
+  const next = new Map(current);
+  next.set(runtimeIdentity, (next.get(runtimeIdentity) ?? 0) + 1);
+  return next;
 }
 
 export function isAcpRegistryCacheValid(
@@ -115,11 +126,20 @@ export function updateAcpRegistryEnrichmentCache(input: {
   readonly runtimeIdentity?: string | null;
 }): AcpRegistryEnrichmentCache {
   const { cache, configuration, customModels, now, runtimeIdentity } = input;
+  const runtimeKey = runtimeIdentity ?? null;
   if (cache.entry === null) {
     // No probe has landed yet, but the live session published its
-    // configuration to the snapshot. Advance the cache epoch so a probe that
-    // was still in flight cannot overwrite that newer state when it lands.
-    return { ...cache, generation: cache.generation + 1 };
+    // configuration to the snapshot. Advance the epoch for this runtime so an
+    // in-flight probe for the same runtime cannot overwrite newer live state,
+    // without discarding an upgrade probe targeting a different runtime.
+    return {
+      ...cache,
+      generation: cache.generation + 1,
+      liveGenerationByRuntime: nextLiveGenerationByRuntime(
+        cache.liveGenerationByRuntime,
+        runtimeKey,
+      ),
+    };
   }
   const entryRuntimeIdentity = runtimeIdentityFor(
     cache.entry.provider,
@@ -143,10 +163,11 @@ export function updateAcpRegistryEnrichmentCache(input: {
   if (Equal.equals(provider, cache.entry.provider)) return cache;
   return {
     ...cache,
-    // The live session advanced the provider past what an in-flight probe
-    // started from; bump the epoch so the probe discards its stale result
-    // instead of overwriting this entry and publishing it.
+    // Advance only this runtime's live epoch so an in-flight probe for the same
+    // runtime discards stale results without invalidating an upgrade probe for
+    // a newer runtime.
     generation: cache.generation + 1,
+    liveGenerationByRuntime: nextLiveGenerationByRuntime(cache.liveGenerationByRuntime, runtimeKey),
     entry: {
       ...cache.entry,
       provider,
@@ -565,6 +586,7 @@ interface CheckedAcpRegistryReadiness {
   readonly snapshot: ServerProvider;
   readonly launchIdentity: string | null;
   readonly indexRevision: number | null;
+  readonly fallback?: boolean;
 }
 
 function runtimeIdentityFor(
@@ -611,6 +633,7 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     readonly launchIdentity: string | null;
     readonly indexRevision: number | null;
     readonly cacheable: boolean;
+    readonly fallback?: boolean;
   },
   never,
   AcpRegistrySupport.AcpRegistryCatalog | Requirements
@@ -733,6 +756,7 @@ const checkAcpRegistryProviderStatusWithIdentity = Effect.fn(
     indexRevision: resolved.indexRevision ?? null,
     cacheable:
       resolved.launchIdentity !== undefined || inspected.success.launchIdentity === undefined,
+    ...(resolved.fallback ? { fallback: true } : {}),
   };
 });
 
@@ -822,6 +846,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     enabled,
     config,
   }) {
+    const driverScope = yield* Effect.scope;
     const catalog = yield* AcpRegistrySupport.AcpRegistryCatalog;
     const runtimeCoordinator = yield* Effect.serviceOption(
       AcpRegistryRuntimeCoordinator.AcpRegistryRuntimeCoordinator,
@@ -831,8 +856,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       yield* runtimeCoordinator.value.clearLiveConfiguration(instanceId);
       yield* Effect.addFinalizer(() =>
         runtimeCoordinator.value
-          .clearAvailableCommands(instanceId)
-          .pipe(Effect.andThen(runtimeCoordinator.value.clearLiveConfiguration(instanceId))),
+          .clearAvailableCommands(instanceId, { dispose: true })
+          .pipe(
+            Effect.andThen(
+              runtimeCoordinator.value.clearLiveConfiguration(instanceId, { dispose: true }),
+            ),
+          ),
       );
     }
     const random = yield* SecureRandom.SecureRandom;
@@ -950,9 +979,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 ? { requireMatchingRuntimeIdentity: true }
                 : {}),
             }
-          : options?.requireMatchingRuntimeIdentity
-            ? { requireMatchingRuntimeIdentity: true }
-            : undefined;
+          : undefined;
       const { commands, configuration, authAction } = yield* Effect.all({
         commands: applySessionLiveState
           ? runtimeCoordinator.value.getAvailableCommands(instanceId, readOptions)
@@ -1020,11 +1047,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             })),
           ),
         ),
-        Effect.flatMap(({ snapshot, launchIdentity, indexRevision }) =>
-          Ref.modify(activeRuntimeIdentity, (previousIdentity) => {
-            const nextIdentity = snapshot.installed
-              ? runtimeIdentityFor(snapshot, launchIdentity)
-              : null;
+        Effect.flatMap(({ snapshot, launchIdentity, indexRevision }) => {
+          const nextIdentity = snapshot.installed
+            ? runtimeIdentityFor(snapshot, launchIdentity)
+            : null;
+          return Ref.modify(activeRuntimeIdentity, (previousIdentity) => {
             if (
               options?.seedActiveRuntimeIdentity === true &&
               snapshot.installed &&
@@ -1036,9 +1063,6 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             return [previousIdentity, previousIdentity] as const;
           }).pipe(
             Effect.flatMap((previousIdentity) => {
-              const nextIdentity = snapshot.installed
-                ? runtimeIdentityFor(snapshot, launchIdentity)
-                : null;
               const runtimeChanged =
                 previousIdentity !== null &&
                 nextIdentity !== null &&
@@ -1057,8 +1081,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 })),
               );
             }),
-          ),
-        ),
+          );
+        }),
       );
     const checkProvider = inspectReadiness({ seedActiveRuntimeIdentity: true }).pipe(
       Effect.tap((readiness) => Ref.set(latestCheckedReadiness, readiness)),
@@ -1094,18 +1118,38 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
     });
     const enrichmentCache = yield* Ref.make<AcpRegistryEnrichmentCache>({
       generation: 0,
+      invalidationGeneration: 0,
+      liveGenerationByRuntime: new Map(),
       entry: null,
     });
     const liveSnapshotSemaphore = yield* Semaphore.make(1);
     const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
       generation: current.generation + 1,
+      invalidationGeneration: (current.invalidationGeneration ?? 0) + 1,
+      liveGenerationByRuntime: new Map(),
       entry: null,
     }));
+    const isProbeStillCurrent = (
+      current: AcpRegistryEnrichmentCache,
+      captured: {
+        readonly invalidationGeneration: number;
+        readonly liveGenerationByRuntime: ReadonlyMap<string | null, number>;
+      },
+      probeIdentity: string | null,
+    ) =>
+      (current.invalidationGeneration ?? 0) === captured.invalidationGeneration &&
+      (current.liveGenerationByRuntime?.get(probeIdentity) ?? 0) ===
+        (captured.liveGenerationByRuntime.get(probeIdentity) ?? 0);
     const enrichProviderCached = Effect.fn("AcpRegistryDriver.enrichProviderCached")(function* (
       target: CheckedAcpRegistryReadiness,
     ) {
       const now = yield* Clock.currentTimeMillis;
       const cacheState = yield* Ref.get(enrichmentCache);
+      const captured = {
+        invalidationGeneration: cacheState.invalidationGeneration ?? 0,
+        liveGenerationByRuntime:
+          cacheState.liveGenerationByRuntime ?? new Map<string | null, number>(),
+      };
       const cached = cacheState.entry;
       if (
         cached !== null &&
@@ -1124,7 +1168,8 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           },
           launchIdentity: target.launchIdentity,
           indexRevision: target.indexRevision,
-          generation: cacheState.generation,
+          fallback: false,
+          captured,
         };
       }
       const {
@@ -1132,14 +1177,18 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         launchIdentity,
         indexRevision,
         cacheable,
+        fallback,
       } = yield* enrichProvider;
       if (effectiveConfig.source === "local" && enriched.status === "ready") {
         yield* Ref.set(reportedLocalVersion, enriched.version);
       }
+      const probeIdentity = enriched.installed
+        ? runtimeIdentityFor(enriched, launchIdentity)
+        : null;
       if (cacheable && enriched.status === "ready") {
         const completedAt = yield* Clock.currentTimeMillis;
         yield* Ref.update(enrichmentCache, (current) =>
-          current.generation === cacheState.generation
+          isProbeStillCurrent(current, captured, probeIdentity)
             ? {
                 ...current,
                 entry: {
@@ -1155,9 +1204,12 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         provider: enriched,
         launchIdentity,
         indexRevision,
-        generation: cacheState.generation,
+        fallback: fallback === true,
+        captured,
       };
     });
+    const reconcilingRuntimeIdentity = yield* Ref.make<string | null>(null);
+    let triggerSnapshotRefresh: Effect.Effect<void> = Effect.void;
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const snapshot = yield* makeManagedServerProvider<
       ProviderSnapshotSettings<AcpRegistrySettings>
@@ -1174,7 +1226,9 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         getSnapshot,
         tryPublishSnapshot,
       }) {
-        const initialReadiness = yield* Ref.get(latestCheckedReadiness).pipe(
+        const initialReadiness: CheckedAcpRegistryReadiness = yield* Ref.get(
+          latestCheckedReadiness,
+        ).pipe(
           Effect.map((latest) =>
             latest !== null &&
             latest.snapshot.checkedAt === snapshot.checkedAt &&
@@ -1193,6 +1247,38 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             ? runtimeIdentityFor(initialReadiness.snapshot, initialReadiness.launchIdentity)
             : null,
         );
+        const inFlightProbeIdentity = yield* Ref.make<string | null>(null);
+        const maybeReconcileUnmatchedRuntime = (incomingIdentity: string | undefined) => {
+          if (incomingIdentity === undefined || !tracksRegistryIndex) return Effect.void;
+          return Effect.gen(function* () {
+            if ((yield* Ref.get(inFlightProbeIdentity)) === incomingIdentity) return;
+            const claimed = yield* Ref.modify(reconcilingRuntimeIdentity, (current) =>
+              current === incomingIdentity
+                ? ([false, current] as const)
+                : ([true, incomingIdentity] as const),
+            );
+            if (!claimed) return;
+            yield* Effect.gen(function* () {
+              const inspected = yield* Effect.result(
+                catalog.inspect(readinessInput.settings, readinessInput.environment),
+              );
+              if (
+                Result.isSuccess(inspected) &&
+                inspected.success.status === "ready" &&
+                inspected.success.launchIdentity === incomingIdentity
+              ) {
+                yield* triggerSnapshotRefresh;
+              }
+            }).pipe(
+              Effect.ensuring(
+                Ref.update(reconcilingRuntimeIdentity, (current) =>
+                  current === incomingIdentity ? null : current,
+                ),
+              ),
+              Effect.forkIn(driverScope),
+            );
+          });
+        };
         const checkLiveUpdate = (meta: AcpRegistryRuntimeCoordinator.AcpRegistryLiveUpdateMeta) =>
           Effect.all({
             isCurrent: meta.isCurrent,
@@ -1203,32 +1289,44 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               const runtimeTransitioning =
                 active !== null && expected !== null && active !== expected;
               if (!isCurrent) {
-                return { accepted: false, expected, runtimeTransitioning } as const;
+                return {
+                  accepted: false,
+                  reconcileIdentity: undefined,
+                  expected,
+                  runtimeTransitioning,
+                } as const;
               }
               if (meta.runtimeIdentity !== undefined) {
+                const accepted = expected === null || meta.runtimeIdentity === expected;
                 return {
-                  accepted: expected === null || meta.runtimeIdentity === expected,
+                  accepted,
+                  reconcileIdentity: accepted ? undefined : meta.runtimeIdentity,
                   expected,
                   runtimeTransitioning,
                 } as const;
               }
               return {
                 accepted: !runtimeTransitioning,
+                reconcileIdentity: undefined,
                 expected,
                 runtimeTransitioning,
               } as const;
             }),
           );
-        const runProbeAndPublish = (target: CheckedAcpRegistryReadiness) =>
-          (Option.isSome(runtimeCoordinator)
+        const runProbeAndPublish = (target: CheckedAcpRegistryReadiness) => {
+          const targetIdentity = target.snapshot.installed
+            ? runtimeIdentityFor(target.snapshot, target.launchIdentity)
+            : null;
+          const probeEffect = Option.isSome(runtimeCoordinator)
             ? runtimeCoordinator.value.runBackgroundProbe(
                 effectiveConfig.source === "local"
                   ? `local:${instanceId}`
                   : effectiveConfig.agentId,
                 enrichProviderCached(target),
               )
-            : enrichProviderCached(target).pipe(Effect.asSome)
-          ).pipe(
+            : enrichProviderCached(target).pipe(Effect.asSome);
+          return Ref.set(inFlightProbeIdentity, targetIdentity).pipe(
+            Effect.andThen(probeEffect),
             Effect.flatMap(
               Option.match({
                 onNone: () =>
@@ -1236,16 +1334,16 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     readonly published: boolean;
                     readonly readiness: CheckedAcpRegistryReadiness | null;
                   }>({ published: false, readiness: null }),
-                onSome: ({ provider, launchIdentity, indexRevision, generation }) =>
+                onSome: ({ provider, launchIdentity, indexRevision, fallback, captured }) =>
                   liveSnapshotSemaphore.withPermit(
                     Effect.gen(function* () {
-                      const current = yield* Ref.get(enrichmentCache);
-                      if (current.generation !== generation) {
-                        return { published: false, readiness: null };
-                      }
                       const nextIdentity = provider.installed
                         ? runtimeIdentityFor(provider, launchIdentity)
                         : null;
+                      const current = yield* Ref.get(enrichmentCache);
+                      if (!isProbeStillCurrent(current, captured, nextIdentity)) {
+                        return { published: false, readiness: null };
+                      }
                       const previousIdentity = yield* Ref.get(activeRuntimeIdentity);
                       const runtimeChanged =
                         previousIdentity !== null &&
@@ -1285,67 +1383,84 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                       return {
                         published,
                         readiness: published
-                          ? { snapshot: provider, launchIdentity, indexRevision }
+                          ? {
+                              snapshot: provider,
+                              launchIdentity,
+                              indexRevision,
+                              ...(fallback ? { fallback: true } : {}),
+                            }
                           : null,
                       };
                     }),
                   ),
               }),
             ),
+            Effect.ensuring(
+              Ref.update(inFlightProbeIdentity, (current) =>
+                current === targetIdentity ? null : current,
+              ),
+            ),
           );
+        };
         const runWithLiveWatchers = (enrichment: Effect.Effect<void>) => {
           if (Option.isNone(runtimeCoordinator)) return enrichment;
 
           const publishLiveCommands = runtimeCoordinator.value.watchAvailableCommands(
             instanceId,
             ({ slashCommands, skills }, meta) =>
-              liveSnapshotSemaphore.withPermit(
-                Effect.gen(function* () {
-                  const gate = yield* checkLiveUpdate(meta);
-                  if (!gate.accepted) return;
-                  const current = yield* getSnapshot;
-                  if (!current.installed) return;
-                  yield* tryPublishSnapshot({
-                    ...current,
-                    slashCommands,
-                    skills,
-                  });
-                }),
-              ),
+              liveSnapshotSemaphore
+                .withPermit(
+                  Effect.gen(function* () {
+                    const gate = yield* checkLiveUpdate(meta);
+                    if (!gate.accepted) return gate.reconcileIdentity;
+                    const current = yield* getSnapshot;
+                    if (!current.installed) return undefined;
+                    yield* tryPublishSnapshot({
+                      ...current,
+                      slashCommands,
+                      skills,
+                    });
+                    return undefined;
+                  }),
+                )
+                .pipe(Effect.flatMap(maybeReconcileUnmatchedRuntime)),
           );
           const publishLiveConfiguration = runtimeCoordinator.value.watchLiveConfiguration(
             instanceId,
             (configuration, meta) =>
-              liveSnapshotSemaphore.withPermit(
-                Effect.gen(function* () {
-                  const gate = yield* checkLiveUpdate(meta);
-                  if (!gate.accepted) return;
-                  const current = yield* getSnapshot;
-                  if (!current.installed) return;
-                  const learned = gate.runtimeTransitioning ? [] : yield* Ref.get(learnedModels);
-                  const next = applyAcpRegistryLiveConfiguration(
-                    current,
-                    configuration,
-                    effectiveConfig.customModels,
-                    learned.length > 0 ? learned : current.models,
-                  );
-                  const published = yield* tryPublishSnapshot(next);
-                  if (!published) return;
-                  if (!gate.runtimeTransitioning && next.models !== current.models) {
-                    yield* Ref.set(learnedModels, next.models);
-                  }
-                  const now = yield* Clock.currentTimeMillis;
-                  yield* Ref.update(enrichmentCache, (cache) =>
-                    updateAcpRegistryEnrichmentCache({
-                      cache,
+              liveSnapshotSemaphore
+                .withPermit(
+                  Effect.gen(function* () {
+                    const gate = yield* checkLiveUpdate(meta);
+                    if (!gate.accepted) return gate.reconcileIdentity;
+                    const current = yield* getSnapshot;
+                    if (!current.installed) return undefined;
+                    const learned = gate.runtimeTransitioning ? [] : yield* Ref.get(learnedModels);
+                    const next = applyAcpRegistryLiveConfiguration(
+                      current,
                       configuration,
-                      customModels: effectiveConfig.customModels,
-                      now,
-                      runtimeIdentity: meta.runtimeIdentity ?? gate.expected,
-                    }),
-                  );
-                }),
-              ),
+                      effectiveConfig.customModels,
+                      learned.length > 0 ? learned : current.models,
+                    );
+                    const published = yield* tryPublishSnapshot(next);
+                    if (!published) return undefined;
+                    if (!gate.runtimeTransitioning && next.models !== current.models) {
+                      yield* Ref.set(learnedModels, next.models);
+                    }
+                    const now = yield* Clock.currentTimeMillis;
+                    yield* Ref.update(enrichmentCache, (cache) =>
+                      updateAcpRegistryEnrichmentCache({
+                        cache,
+                        configuration,
+                        customModels: effectiveConfig.customModels,
+                        now,
+                        runtimeIdentity: meta.runtimeIdentity ?? gate.expected,
+                      }),
+                    );
+                    return undefined;
+                  }),
+                )
+                .pipe(Effect.flatMap(maybeReconcileUnmatchedRuntime)),
           );
           const publishUrlAuthAction = runtimeCoordinator.value.watchUrlAuthAction(
             instanceId,
@@ -1454,6 +1569,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               Effect.tap(({ published, readiness }) =>
                 published &&
                 readiness !== null &&
+                !readiness.fallback &&
                 (readiness.indexRevision === null || readiness.indexRevision >= revision)
                   ? acknowledgeRevision(readiness.indexRevision ?? revision)
                   : Effect.void,
@@ -1475,6 +1591,15 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
               : initialReadiness;
           if (
             initialProbe.published &&
+            publishedReadiness.fallback &&
+            initialReadiness.indexRevision !== null &&
+            initialReadiness.indexRevision >= revision
+          ) {
+            return;
+          }
+          if (
+            initialProbe.published &&
+            !publishedReadiness.fallback &&
             publishedReadiness.indexRevision !== null &&
             publishedReadiness.indexRevision >= revision
           ) {
@@ -1502,6 +1627,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
             if (
               recheckedProbe.published &&
               recheckedProbe.readiness !== null &&
+              !recheckedProbe.readiness.fallback &&
               (recheckedProbe.readiness.indexRevision === null ||
                 recheckedProbe.readiness.indexRevision >= revision)
             ) {
@@ -1511,6 +1637,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }
           if (
             initialProbe.published &&
+            !publishedReadiness.fallback &&
             (rechecked.indexRevision === null || rechecked.indexRevision >= revision)
           ) {
             yield* acknowledgeRevision(rechecked.indexRevision ?? revision);
@@ -1529,6 +1656,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
           }),
       ),
     );
+    triggerSnapshotRefresh = snapshot.refresh.pipe(Effect.asVoid);
 
     const provideAcpManagementServices = <A, E>(
       effect: Effect.Effect<
