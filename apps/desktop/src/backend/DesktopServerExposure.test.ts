@@ -197,6 +197,10 @@ describe("DesktopServerExposure", () => {
           endpoints.map((endpoint) => endpoint.httpBaseUrl),
           "http://100.81.22.33:4173/",
         );
+        const vpnEndpoint = endpoints.find(
+          (endpoint) => endpoint.httpBaseUrl === "http://100.81.22.33:4173/",
+        );
+        assert.equal(vpnEndpoint?.provider.label, "VPN");
       }),
     ),
   );

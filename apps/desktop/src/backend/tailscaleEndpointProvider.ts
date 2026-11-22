@@ -27,6 +27,29 @@ const TAILSCALE_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
   isAddon: true,
 };
 
+const VPN_ENDPOINT_PROVIDER: AdvertisedEndpointProvider = {
+  id: "vpn",
+  label: "VPN",
+  kind: "private-network",
+  isAddon: true,
+};
+
+// CGNAT is shared with other VPNs; adapter identity works without current CLI status.
+function isTailscaleInterface(
+  interfaceName: string,
+  interfaceAddresses: NonNullable<NetworkInterfaces[string]>,
+): boolean {
+  return (
+    /^tailscale(?:\d+|ipv[46])?$/iu.test(interfaceName) ||
+    interfaceAddresses.some(
+      (address) =>
+        !address.internal &&
+        address.family === "IPv6" &&
+        /^fd7a:115c:a1e0:/iu.test(address.address),
+    )
+  );
+}
+
 function resolveTailscaleIpAdvertisedEndpoints(input: {
   readonly port: number;
   readonly networkInterfaces: NetworkInterfaces;
@@ -34,41 +57,56 @@ function resolveTailscaleIpAdvertisedEndpoints(input: {
 }): readonly AdvertisedEndpoint[] {
   const seen = new Set<string>();
   const endpoints: AdvertisedEndpoint[] = [];
+  const interfaces = Object.entries(input.networkInterfaces);
 
-  for (const [interfaceName, interfaceAddresses] of Object.entries(input.networkInterfaces)) {
+  // A CGNAT address that is not Tailscale's belongs to another VPN (NetBird, WARP). Tailscale
+  // hosts exclude it; a host without Tailscale offers it as a VPN route.
+  const hostRunsTailscale =
+    (input.status?.tailnetIpv4Addresses.length ?? 0) > 0 ||
+    interfaces.some(
+      ([name, addresses]) => addresses !== undefined && isTailscaleInterface(name, addresses),
+    );
+
+  for (const [interfaceName, interfaceAddresses] of interfaces) {
     if (!interfaceAddresses) continue;
-
-    // CGNAT is shared with other VPNs; adapter identity works without current CLI status.
-    const isTailscaleInterface =
-      /^tailscale(?:\d+|ipv[46])?$/iu.test(interfaceName) ||
-      interfaceAddresses.some(
-        (address) =>
-          !address.internal &&
-          address.family === "IPv6" &&
-          /^fd7a:115c:a1e0:/iu.test(address.address),
-      );
+    const onTailscaleInterface = isTailscaleInterface(interfaceName, interfaceAddresses);
 
     for (const address of interfaceAddresses) {
       if (address.internal) continue;
       if (address.family !== "IPv4") continue;
       if (!isTailscaleIpv4Address(address.address)) continue;
-      if (!isTailscaleInterface && !input.status?.tailnetIpv4Addresses.includes(address.address)) {
-        continue;
-      }
       if (seen.has(address.address)) continue;
+      const isTailscaleAddress =
+        onTailscaleInterface ||
+        (input.status?.tailnetIpv4Addresses.includes(address.address) ?? false);
+      if (!isTailscaleAddress && hostRunsTailscale) continue;
       seen.add(address.address);
 
+      const httpBaseUrl = `http://${address.address}:${input.port}`;
       endpoints.push(
-        createAdvertisedEndpoint({
-          provider: TAILSCALE_ENDPOINT_PROVIDER,
-          source: "desktop-addon",
-          id: `tailscale-ip:http://${address.address}:${input.port}`,
-          label: "Tailscale IP",
-          httpBaseUrl: `http://${address.address}:${input.port}`,
-          reachability: "private-network",
-          status: "available",
-          description: "Reachable from devices on the same Tailnet.",
-        }),
+        createAdvertisedEndpoint(
+          isTailscaleAddress
+            ? {
+                provider: TAILSCALE_ENDPOINT_PROVIDER,
+                source: "desktop-addon",
+                id: `tailscale-ip:${httpBaseUrl}`,
+                label: "Tailscale IP",
+                httpBaseUrl,
+                reachability: "private-network",
+                status: "available",
+                description: "Reachable from devices on the same Tailnet.",
+              }
+            : {
+                provider: VPN_ENDPOINT_PROVIDER,
+                source: "desktop-addon",
+                id: `vpn-ip:${httpBaseUrl}`,
+                label: "VPN IP",
+                httpBaseUrl,
+                reachability: "private-network",
+                status: "available",
+                description: "Reachable from devices on the same VPN.",
+              },
+        ),
       );
     }
   }
