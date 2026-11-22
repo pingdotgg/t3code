@@ -773,6 +773,10 @@ jobs:
         working-directory: apps/mobile
         run: pnpm exec expo prebuild --platform ios --no-install
 
+      - name: Install CocoaPods
+        working-directory: apps/mobile/ios
+        run: pod install
+
       # Apple's cloud signing creates and renews the distribution certificate and profiles from
       # the App Store Connect API key, so no .p12 or profile is stored.
       - name: Archive, export and upload to TestFlight
