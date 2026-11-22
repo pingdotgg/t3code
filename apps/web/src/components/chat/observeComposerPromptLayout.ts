@@ -97,7 +97,15 @@ export function observeComposerPromptLayout(
         body.toggleAttribute("data-composer-suffix-hidden", suffixHidden);
       }
     }
-    schedule();
+    // Every edit re-observes the editor; a frame that would apply nothing is not requested.
+    if (
+      actionsWidth !== appliedActionsWidth ||
+      actionsHeight !== appliedActionsHeight ||
+      overflowing !== appliedOverflowing ||
+      multiline !== appliedMultiline
+    ) {
+      schedule();
+    }
   });
   const bindEditor = () => {
     const next = body.querySelector<HTMLElement>('[data-testid="composer-editor"]');
