@@ -44,6 +44,10 @@ const CASES: ReadonlyArray<readonly [markdown: string, html: string]> = [
     '<p dir="ltr">See <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="http://www.example.com/a_(b)">www.example.com/a_(b)</a>,</span> <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="https://x.dev/path?q=1">https://x.dev/path?q=1</a>.</span> and <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="mailto:me@example.com">me@example.com</a>!</span></p>',
   ],
   [
+    "See https://x.com/dimasike_ and 可以看了：**http://localhost:18780**（已重启）。",
+    '<p dir="ltr">See <a href="https://x.com/dimasike_">https://x.com/dimasike_</a> and 可以看了：<strong><a href="http://localhost:18780">http://localhost:18780</a></strong>（已重启）。</p>',
+  ],
+  [
     "Angle <https://angle.dev> and (https://paren.dev/x)",
     '<p dir="ltr">Angle <a href="https://angle.dev">https://angle.dev</a> and (<span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><a href="https://paren.dev/x">https://paren.dev/x</a>)</span></p>',
   ],
@@ -287,14 +291,24 @@ describe("wordsHast", () => {
     expect(html).toContain('style="white-space:pre"> for </text>');
   });
 
-  it("shows Markdown the renderer fails on as plain text, and renders the next as before", () => {
+  it("keeps control bytes, blank lines, unclosed blocks, shell vars, and table dollars intact in math", () => {
     const options = { ...ASSISTANT, math: true };
-    const before = toHtml(wordsHast("$x^2$ and **bold**", options));
-    const source = "Pasted: $a\u001bb + c$ <b>&amp; text\n\nnext paragraph";
-    expect(toHtml(wordsHast(source, options))).toBe(
-      '<p dir="ltr">Pasted: $a\u001bb + c$ &#x3C;b>&#x26;amp; text<br><br>next paragraph</p>',
+    expect(toHtml(wordsHast("Pasted: $a\u001bb + c$", options))).toContain("<svg ");
+    expect(toHtml(wordsHast("$$\na = 1 \\\\\n\nb = 2\n$$", options))).toContain("<svg ");
+    expect(toHtml(wordsHast("$$\n\\frac{a}{b}", options))).toBe(
+      '<p dir="ltr">$$\n\\frac{a}{b}</p>',
     );
-    expect(toHtml(wordsHast("$x^2$ and **bold**", options))).toBe(before);
+    expect(toHtml(wordsHast("```math\nx^2", options))).toBe(
+      '<pre><code class="language-math">x^2\n</code></pre>',
+    );
+    expect(toHtml(wordsHast("Set $HOME,$PATH and $FOO to `$BAR`.", options))).toBe(
+      '<p dir="ltr">Set $HOME,$PATH and $FOO to <span class="has-[[data-slot=context-chip-label]]:whitespace-nowrap"><code data-inline-code="" dir="ltr">$BAR</code>.</span></p>',
+    );
+    expect(
+      toHtml(
+        wordsHast("| [a](https://example.com/$x) | `$x` | y$ |\n| --- | --- | --- |", options),
+      ),
+    ).toContain("<table ");
   });
 
   it.each([

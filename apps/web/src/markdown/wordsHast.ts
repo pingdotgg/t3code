@@ -1097,6 +1097,7 @@ export function wordsHast(text: string, options: WordsHastOptions): Root {
     math: options.math,
     // llm-math's `\(…\)` and `\[…\]`, which agents write as often as `$`.
     texDelimiters: options.math,
+    autolinkBoundaries: true,
     singleTilde: !extensions.userMessage,
     leadingWhitespace: extensions.leadingWhitespace === true,
     windowsPaths: true,
@@ -1169,7 +1170,14 @@ export function codexDirectiveSources(markdown: string): CodexDirectiveSource[] 
       visit(child, inLink || child.tagName === "a");
     }
   };
-  visit(parse(markdown, { windowsPaths: true, directives: CODEX_DIRECTIVES }), false);
+  visit(
+    parse(markdown, {
+      windowsPaths: true,
+      autolinkBoundaries: true,
+      directives: CODEX_DIRECTIVES,
+    }),
+    false,
+  );
   return found;
 }
 
@@ -1197,6 +1205,7 @@ export function markdownTree(
 ): Root {
   return parse(markdown, {
     windowsPaths: true,
+    autolinkBoundaries: true,
     skipHtml: options.skipHtml === true,
     singleTilde: options.singleTilde !== false,
     math: options.math === true,
