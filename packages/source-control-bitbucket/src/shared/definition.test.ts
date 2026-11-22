@@ -51,6 +51,17 @@ describe("Bitbucket change request URLs", () => {
   });
 });
 
+describe("Bitbucket repository pages", () => {
+  it("reads the repository from a source view on Bitbucket hosts only", () => {
+    const repositoryUrl = (url: string) => definition.repositoryUrlFromPage?.(new URL(url));
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo/src/main/")).toBe(
+      "https://bitbucket.org/workspace/repo",
+    );
+    expect(repositoryUrl("https://bitbucket.org/workspace/repo")).toBeNull();
+    expect(repositoryUrl("https://scm.example.test/workspace/repo/src/main/")).toBeNull();
+  });
+});
+
 describe("Bitbucket remotes", () => {
   const recognize = (url: string) => recognizeRemoteWith(definition, url);
 
@@ -64,5 +75,16 @@ describe("Bitbucket remotes", () => {
       "Bitbucket Self-Hosted",
     );
     expect(recognize("https://notbitbucket.example.com/workspace/repo.git")).toBeNull();
+  });
+
+  it.each([
+    "git@ssh.bitbucket.org:workspace/repo.git",
+    "ssh://git@altssh.bitbucket.org:443/workspace/repo.git",
+  ])("recognises Bitbucket Cloud's SSH host in %s", (url) => {
+    expect(recognize(url)).toEqual({
+      kind: "bitbucket",
+      name: "Bitbucket",
+      baseUrl: "https://bitbucket.org",
+    });
   });
 });
