@@ -1,5 +1,6 @@
 import {
   AuthRelayReadScope,
+  AuthRelayConfigureScope,
   AuthRelayWriteScope,
   EnvironmentCloudEndpointUnavailableError,
   EnvironmentHttpApi,
@@ -11,7 +12,7 @@ import {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as HttpEffect from "effect/http/HttpEffect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
+import { HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import { requireEnvironmentScope } from "../auth/http.ts";
@@ -116,22 +117,28 @@ export const layer = HttpApiBuilder.group(
     return handlers
       .handle("linkProof", ({ payload }) =>
         Effect.gen(function* () {
-          yield* requireEnvironmentScope(AuthRelayWriteScope);
-          const request = yield* HttpServerRequest.HttpServerRequest;
-          const proof = yield* toHttpError(cloudLink.linkProof(payload, request));
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          const proof = yield* toHttpError(cloudLink.linkProof(payload));
           yield* appendCloudCredentialResponseHeaders;
           return proof;
         }),
       )
       .handle("relayConfig", ({ payload }) =>
-        requireEnvironmentScope(AuthRelayWriteScope).pipe(
-          Effect.andThen(toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload))),
-        ),
+        Effect.gen(function* () {
+          yield* requireEnvironmentScope(AuthRelayConfigureScope);
+          return yield* toHttpErrorOrUnavailable(cloudLink.applyRelayConfig(payload));
+        }),
       )
       .handle("linkState", () =>
-        requireEnvironmentScope(AuthRelayReadScope).pipe(
-          Effect.andThen(toHttpError(cloudLink.linkState())),
-        ),
+        Effect.gen(function* () {
+          const principal = yield* requireEnvironmentScope(AuthRelayReadScope);
+          const state = yield* toHttpError(cloudLink.linkState());
+          // Linking also writes relay preferences, so configure alone cannot finish it.
+          const linkableHere =
+            principal.scopes.has(AuthRelayConfigureScope) &&
+            principal.scopes.has(AuthRelayWriteScope);
+          return { ...state, linkableHere };
+        }),
       )
       .handle("checkReachability", () =>
         requireEnvironmentScope(AuthRelayReadScope).pipe(Effect.andThen(reachability.check)),
@@ -144,6 +151,13 @@ export const layer = HttpApiBuilder.group(
       .handle("preferences", ({ payload }) =>
         requireEnvironmentScope(AuthRelayWriteScope).pipe(
           Effect.andThen(toHttpError(cloudLink.updatePreferences(payload))),
+        ),
+      )
+      .handle("liveActivityPreference", ({ payload }) =>
+        requireEnvironmentScope(AuthRelayWriteScope).pipe(
+          Effect.andThen(
+            toHttpError(cloudLink.updateLiveActivityPreference(payload.liveActivitiesEnabled)),
+          ),
         ),
       )
       .handle("health", ({ payload }) =>

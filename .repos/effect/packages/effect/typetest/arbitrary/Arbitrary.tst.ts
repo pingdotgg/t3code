@@ -2,6 +2,25 @@ import { Arbitrary, type Effect, hole, Result, Schema, type SchemaAST } from "ef
 import { describe, expect, it } from "tstyche"
 
 describe("Arbitrary", () => {
+  it("all checks symbol fields and accepts object type aliases", () => {
+    const key = Symbol()
+    type Fields = {
+      text: Arbitrary.Arbitrary<string>
+      [key]: Arbitrary.Arbitrary<number>
+    }
+    const fields: Fields = { text: Arbitrary.schema(Schema.String), [key]: Arbitrary.schema(Schema.Number) }
+    expect(Arbitrary.all(fields)).type.toBe<Arbitrary.Arbitrary<{ text: string; [key]: number }>>()
+    type IndexedFields = {
+      [key: string]: Arbitrary.Arbitrary<number>
+    }
+    const indexed: IndexedFields = { value: fields[key] }
+    expect(Arbitrary.all(indexed)).type.toBe<Arbitrary.Arbitrary<{ [key: string]: number }>>()
+    expect(Arbitrary.all).type.not.toBeCallableWith({ [key]: 42 })
+    expect(Arbitrary.all).type.not.toBeCallableWith(42)
+    expect(Arbitrary.all).type.not.toBeCallableWith("value")
+    expect(Arbitrary.all).type.not.toBeCallableWith({ text: fields.text, [key]: 42 })
+  })
+
   it("identifies Arbitrary values", () => {
     expect(Arbitrary.isArbitrary).type.toBe<(u: unknown) => u is Arbitrary.Arbitrary<unknown>>()
   })

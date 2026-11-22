@@ -1,6 +1,8 @@
 import * as Schema from "effect/Schema";
 import { observeResize } from "~/lib/observeResize";
+import { msg, useGT } from "gt-react";
 import { useEffect, useRef, useState } from "react";
+import { m } from "~/i18n/messages";
 import {
   cellAtPoint,
   normalizeRange,
@@ -14,6 +16,7 @@ import {
   type CellAddr,
 } from "@betteroffice/xlsx/headless";
 import { FileSurfaceLoading, FileSurfaceNotice } from "../fileSurfaceChrome";
+import type { WorkbookView } from "../officePreviewProtocol";
 import { createWorkerClient, SupersededError } from "./worker-rpc";
 import type { SheetLayout, SheetMethods, SheetFrameRequest, SheetTab } from "./sheet-protocol";
 import {
@@ -33,6 +36,7 @@ import {
   type Painted,
 } from "./sheet-paint";
 import { externalUrl } from "./links";
+import { bufferedViewport, cachedViewport, retainCachedViewport } from "./sheet-viewport";
 
 const isSupersededError = Schema.is(SupersededError);
 
@@ -45,12 +49,13 @@ type Opened = {
 };
 export default function Spreadsheet(props: {
   bytes: ArrayBuffer;
+  view: WorkbookView;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
 }) {
-  const { onError, bytes: source, onDetails } = props;
-  const [opened, setOpened] = useState<Opened>();
-  const [error, setError] = useState("");
+  const { onError, bytes: source, onDetails, view } = props;
+  const gt = useGT();
+  const [preview, setPreview] = useState<{ opened: Opened; error?: string }>();
   const picking = useRef<AbortController | null>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Open the workbook worker and cancel workbook and sheet requests when the source changes or unmounts.
   useEffect(() => {
@@ -66,11 +71,17 @@ export default function Spreadsheet(props: {
     worker.addEventListener("messageerror", fail);
     const bytes = source.slice(0);
     void engine
-      .call("open", { bytes }, { transfer: [bytes], signal: controller.signal })
+      .call("open", { bytes, view }, { transfer: [bytes], signal: controller.signal })
       .then((value) => {
-        if (!value) throw new Error("This workbook has no visible sheets.");
-        setOpened({ ...value, engine });
-        onDetails(`${value.tabs.length} sheets`);
+        if (!value) throw new Error(m(msg("This workbook has no visible sheets.")));
+        setPreview({ opened: { ...value, engine } });
+        onDetails(
+          m(
+            msg("{count, plural, one {{count} sheet} other {{count} sheets}}", {
+              count: value.tabs.length,
+            }),
+          ),
+        );
       })
       .catch(fail);
     return () => {
@@ -78,24 +89,28 @@ export default function Spreadsheet(props: {
       picking.current?.abort();
       engine.close();
     };
-  }, [source, onDetails, onError]);
+  }, [source, view, onDetails, onError]);
   const show = (sheet: number, target?: CellAddr) => {
-    if (!opened) return;
+    if (!preview) return;
+    const { opened } = preview;
     picking.current?.abort();
+    // The previous reply may have queued a state update that React has yet to commit.
+    setPreview(preview);
     if (sheet === opened.layout.info.activeSheet) return;
     const controller = new AbortController();
     picking.current = controller;
     void opened.engine
       .call("show", { sheet }, { signal: controller.signal })
       .then((layout) => {
-        setError("");
-        setOpened({ ...opened, layout, target });
+        if (!controller.signal.aborted) setPreview({ opened: { ...opened, layout, target } });
       })
       .catch(() => {
-        if (!controller.signal.aborted) setError("This sheet could not be opened.");
+        if (!controller.signal.aborted)
+          setPreview({ opened, error: m(msg("This sheet could not be opened.")) });
       });
   };
-  if (!opened) return <FileSurfaceLoading />;
+  if (!preview) return <FileSurfaceLoading />;
+  const { opened, error } = preview;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {error ? <FileSurfaceNotice>{error}</FileSurfaceNotice> : null}
@@ -111,12 +126,12 @@ export default function Spreadsheet(props: {
       />
       <div
         role="tablist"
-        aria-label="Sheets"
+        aria-label={gt("Sheets")}
         className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-t border-border px-2"
         onKeyDown={(event) => {
-          const current = opened.tabs.findIndex(
-            (tab) => tab.index === opened.layout.info.activeSheet,
-          );
+          // Focus moves before the worker confirms the selected sheet.
+          const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]');
+          const current = Array.from(buttons).findIndex((button) => button === event.target);
           const next =
             event.key === "ArrowRight"
               ? (current + 1) % opened.tabs.length
@@ -131,7 +146,7 @@ export default function Spreadsheet(props: {
           event.preventDefault();
           const tab = opened.tabs[next];
           if (tab) show(tab.index);
-          event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')[next]?.focus();
+          buttons[next]?.focus();
         }}
       >
         {opened.tabs.map((tab) => (
@@ -162,6 +177,8 @@ function SpreadsheetGrid(props: {
   const scroller = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const spacer = useRef<HTMLDivElement>(null);
+  const columnHeaderBand = useRef<HTMLDivElement>(null);
+  const rowHeaderBand = useRef<HTMLDivElement>(null);
   const [notice, setNotice] = useState("");
   const [reader, setReader] = useState<{ row: number; col: number; text: string }[]>([]);
   const [active, setActive] = useState({ row: 0, col: 0 });
@@ -175,11 +192,15 @@ function SpreadsheetGrid(props: {
     const root = scroller.current;
     const target = canvas.current;
     const space = spacer.current;
-    if (!root || !target || !space) return;
+    const columns = columnHeaderBand.current;
+    const rows = rowHeaderBand.current;
+    if (!root || !target || !space || !columns || !rows) return;
     const context = target.getContext("2d");
     if (!context) return;
     const controller = new AbortController();
-    const info = layout.info;
+    let info = layout.info;
+    let chartWidth = layout.chartWidth;
+    let chartHeight = layout.chartHeight;
     const sheet = info.activeSheet;
     const frozen = { rows: info.frozenRows, cols: info.frozenCols };
     const headers = { width: 44, height: headerHeight };
@@ -191,11 +212,23 @@ function SpreadsheetGrid(props: {
     let sent = 0;
     let received = 0;
     let drag = false;
+    let resizing:
+      | {
+          axis: "row" | "column";
+          pointerId: number;
+          index: number;
+          start: number;
+          edge: number;
+          delta: number;
+        }
+      | undefined;
+    let resizingPending = false;
     let header: "row" | "column" | "all" | undefined;
     let pressed: { row: number; col: number } | undefined;
     let end: { x: number; y: number } | undefined;
     let left = info.initialScrollX;
     let top = info.initialScrollY;
+    let drawn = { x: left, y: top };
     let reachX = 0;
     let reachY = 0;
     let readController: AbortController | undefined;
@@ -214,12 +247,11 @@ function SpreadsheetGrid(props: {
     const resizeArea = () => {
       const width = Math.min(
         (end?.x ?? Infinity) + (painted?.frame.frozen.width ?? 0),
-        Math.max(info.contentWidth, layout.chartWidth, reachX, left + root.clientWidth) +
-          root.clientWidth,
+        Math.max(info.contentWidth, chartWidth, reachX, left + root.clientWidth) + root.clientWidth,
       );
       const height = Math.min(
         (end?.y ?? Infinity) + (painted?.frame.frozen.height ?? 0),
-        Math.max(info.contentHeight, layout.chartHeight, reachY, top + root.clientHeight) +
+        Math.max(info.contentHeight, chartHeight, reachY, top + root.clientHeight) +
           root.clientHeight,
       );
       space.style.width = `${headers.width + width}px`;
@@ -231,9 +263,13 @@ function SpreadsheetGrid(props: {
       const height = root.clientHeight;
       const size = { width: width - headers.width, height: height - headers.height };
       if (size.width <= 0 || size.height <= 0) return;
+      columns.style.width = `${size.width}px`;
+      rows.style.height = `${size.height}px`;
       left = root.scrollLeft;
       top = root.scrollTop;
       resizeArea();
+      const viewport = { x: left, y: top, ...size };
+      drawn = painted ? cachedViewport(painted.frame.viewport, viewport) : viewport;
       const input: SheetFrameRequest = {
         sheet,
         x: left,
@@ -241,10 +277,18 @@ function SpreadsheetGrid(props: {
         ...size,
         ratio,
         offset: { x: 0, y: 0 },
-        wider: undefined,
+        wider: bufferedViewport(viewport),
       };
       const key = JSON.stringify(input);
-      if (key !== requested) {
+      const needsFrame =
+        !painted ||
+        requested === "" ||
+        drawn.x !== left ||
+        drawn.y !== top ||
+        painted.request.width !== size.width ||
+        painted.request.height !== size.height ||
+        painted.request.ratio !== ratio;
+      if (needsFrame && key !== requested) {
         requested = key;
         sent += 1;
         const order = sent;
@@ -257,7 +301,21 @@ function SpreadsheetGrid(props: {
             }
             received = order;
             if (!reply) {
-              setNotice("These cells could not be drawn. Try scrolling to another area.");
+              if (requested === key) requested = "";
+              setNotice(m(msg("These cells could not be drawn. Try scrolling to another area.")));
+              return;
+            }
+            if (
+              painted &&
+              retainCachedViewport(painted.frame.viewport, reply.viewport, {
+                x: root.scrollLeft,
+                y: root.scrollTop,
+                width: root.clientWidth - headers.width,
+                height: root.clientHeight - headers.height,
+              })
+            ) {
+              reply.bitmap.close();
+              if (requested === key) requested = JSON.stringify(painted.request);
               return;
             }
             setNotice("");
@@ -267,8 +325,10 @@ function SpreadsheetGrid(props: {
             schedule();
           })
           .catch((cause: unknown) => {
-            if (!isSupersededError(cause) && !controller.signal.aborted)
-              setNotice("These cells could not be drawn.");
+            if (!isSupersededError(cause) && !controller.signal.aborted) {
+              if (requested === key) requested = "";
+              setNotice(m(msg("These cells could not be drawn.")));
+            }
           });
       }
       if (
@@ -285,12 +345,12 @@ function SpreadsheetGrid(props: {
         context.fillRect(0, 0, target.width, target.height);
         return;
       }
-      paintCells(context, painted, { ratio, headers, x: left, y: top, ...size });
+      paintCells(context, painted, { ratio, headers, ...drawn, ...size });
       grid =
         painted.frame.grid &&
         shiftGrid(painted.frame.grid, frozen, painted.frame.frozen, {
-          x: painted.frame.viewport.x - left,
-          y: painted.frame.viewport.y - top,
+          x: painted.frame.viewport.x - drawn.x,
+          y: painted.frame.viewport.y - drawn.y,
         });
       if (!grid) return;
       const anchor = selection.anchor;
@@ -306,6 +366,24 @@ function SpreadsheetGrid(props: {
         ),
       });
       paintHeaders(context, { grid, ratio, headers, width, height, selected: range() });
+      if (resizing) {
+        const edge = resizing.edge + resizing.delta;
+        context.save();
+        context.setTransform(ratio, 0, 0, ratio, 0, 0);
+        context.strokeStyle = "#217346";
+        context.lineWidth = 1;
+        context.setLineDash([4, 3]);
+        context.beginPath();
+        if (resizing.axis === "column") {
+          context.moveTo(edge + headers.width, 0);
+          context.lineTo(edge + headers.width, height);
+        } else {
+          context.moveTo(0, edge + headers.height);
+          context.lineTo(width, edge + headers.height);
+        }
+        context.stroke();
+        context.restore();
+      }
     };
     const read = () => {
       const focus = selection.focus;
@@ -380,8 +458,8 @@ function SpreadsheetGrid(props: {
       const frame = painted?.frame;
       if (
         frame &&
-        ((x >= frame.frozen.width && x < frame.frozen.width + frame.viewport.x - left) ||
-          (y >= frame.frozen.height && y < frame.frozen.height + frame.viewport.y - top))
+        ((x >= frame.frozen.width && x < frame.frozen.width + frame.viewport.x - drawn.x) ||
+          (y >= frame.frozen.height && y < frame.frozen.height + frame.viewport.y - drawn.y))
       )
         return;
       const cell = cellAtPoint(
@@ -391,8 +469,44 @@ function SpreadsheetGrid(props: {
       );
       return cell ? { cell, x, y } : undefined;
     };
+    const resizeHit = (event: PointerEvent) => {
+      if (!grid || resizingPending) return;
+      const rect = target.getBoundingClientRect();
+      const x = event.clientX - rect.left - headers.width;
+      const y = event.clientY - rect.top - headers.height;
+      const axis: "row" | "column" | undefined =
+        x >= 0 && y < 0 ? "column" : y >= 0 && x < 0 ? "row" : undefined;
+      if (!axis) return;
+      const offsets = axis === "column" ? grid.colOffsets : grid.rowOffsets;
+      const indices = axis === "column" ? grid.colIndices : grid.rowIndices;
+      const start = axis === "column" ? grid.startCol : grid.startRow;
+      const point = axis === "column" ? x : y;
+      for (let i = 1; i < offsets.length; i++) {
+        const edge = offsets[i]!;
+        const size = edge - offsets[i - 1]!;
+        if (edge > 0 && size > 0 && Math.abs(point - edge) <= 4)
+          return {
+            axis,
+            pointerId: event.pointerId,
+            index: indices?.[i - 1] ?? start + i - 1,
+            start: axis === "column" ? event.clientX : event.clientY,
+            delta: 0,
+            edge,
+          } satisfies NonNullable<typeof resizing>;
+      }
+    };
     const pointerDown = (event: PointerEvent) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || resizingPending || resizing) return;
+      const track = resizeHit(event);
+      if (track) {
+        event.preventDefault();
+        root.focus({ preventScroll: true });
+        root.setPointerCapture(event.pointerId);
+        resizing = track;
+        pressed = undefined;
+        schedule();
+        return;
+      }
       const found = hit(event);
       if (!found) return;
       root.focus({ preventScroll: true });
@@ -415,6 +529,15 @@ function SpreadsheetGrid(props: {
       else select(event.shiftKey ? extendTo(selection, found.cell) : at(found.cell));
     };
     const pointerMove = (event: PointerEvent) => {
+      if (resizing) {
+        if (event.pointerId !== resizing.pointerId) return;
+        const point = resizing.axis === "column" ? event.clientX : event.clientY;
+        resizing.delta = Math.round(point - resizing.start);
+        schedule();
+        return;
+      }
+      const hovered = resizeHit(event);
+      root.style.cursor = hovered ? (hovered.axis === "column" ? "col-resize" : "row-resize") : "";
       if (!drag) return;
       const found = hit(event);
       if (found && header !== "all")
@@ -426,6 +549,45 @@ function SpreadsheetGrid(props: {
         );
     };
     const pointerUp = (event: PointerEvent) => {
+      if (resizing) {
+        if (event.pointerId !== resizing.pointerId) return;
+        const track = resizing;
+        resizing = undefined;
+        root.style.cursor = "";
+        root.releasePointerCapture(event.pointerId);
+        schedule();
+        if (track.delta === 0) return;
+        resizingPending = true;
+        setNotice(m(msg("Resizing preview...")));
+        void engine
+          .call(
+            "resize",
+            { sheet, axis: track.axis, index: track.index, delta: track.delta },
+            { signal: controller.signal },
+          )
+          .then((nextLayout) => {
+            if (controller.signal.aborted) return;
+            info = nextLayout.info;
+            chartWidth = nextLayout.chartWidth;
+            chartHeight = nextLayout.chartHeight;
+            painted?.frame.bitmap.close();
+            painted = undefined;
+            grid = undefined;
+            sent += 1;
+            received = sent;
+            requested = "";
+            end = undefined;
+            schedule();
+          })
+          .catch(() => {
+            if (!controller.signal.aborted)
+              setNotice(m(msg("This row or column could not be resized.")));
+          })
+          .finally(() => {
+            resizingPending = false;
+          });
+        return;
+      }
       drag = false;
       const found = hit(event);
       if (!found || !pressed || found.cell.row !== pressed.row || found.cell.col !== pressed.col)
@@ -464,7 +626,7 @@ function SpreadsheetGrid(props: {
         right: Math.min(selected.right, Math.max(selected.left, used?.right ?? 0)),
       };
       if ((clipped.bottom - clipped.top + 1) * (clipped.right - clipped.left + 1) > 200_000) {
-        setNotice("Select fewer than 200,000 cells to copy.");
+        setNotice(m(msg("Select fewer than 200,000 cells to copy.")));
         return;
       }
       void engine
@@ -474,10 +636,18 @@ function SpreadsheetGrid(props: {
           return navigator.clipboard.writeText(text);
         })
         .catch(() => {
-          if (!controller.signal.aborted) setNotice("The selected cells could not be copied.");
+          if (!controller.signal.aborted)
+            setNotice(m(msg("The selected cells could not be copied.")));
         });
     };
     const key = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && resizing) {
+        event.preventDefault();
+        resizing = undefined;
+        root.style.cursor = "";
+        schedule();
+        return;
+      }
       const command = event.ctrlKey || event.metaKey;
       if (command && event.key.toLowerCase() === "c") {
         event.preventDefault();
@@ -501,8 +671,16 @@ function SpreadsheetGrid(props: {
       );
       reveal();
     };
-    const cancel = () => {
+    const cancel = (event: PointerEvent) => {
+      if (resizing && event.pointerId !== resizing.pointerId) return;
       drag = false;
+      pressed = undefined;
+      resizing = undefined;
+      root.style.cursor = "";
+      schedule();
+    };
+    const leave = () => {
+      if (!drag && !resizing) root.style.cursor = "";
     };
     root.addEventListener("scroll", schedule);
     root.addEventListener("keydown", key);
@@ -510,6 +688,8 @@ function SpreadsheetGrid(props: {
     root.addEventListener("pointermove", pointerMove);
     root.addEventListener("pointerup", pointerUp);
     root.addEventListener("pointercancel", cancel);
+    root.addEventListener("lostpointercapture", cancel);
+    root.addEventListener("pointerleave", leave);
     const unobserve = observeResize(root, schedule);
     window.addEventListener("resize", schedule);
     resizeArea();
@@ -533,6 +713,8 @@ function SpreadsheetGrid(props: {
       root.removeEventListener("pointermove", pointerMove);
       root.removeEventListener("pointerup", pointerUp);
       root.removeEventListener("pointercancel", cancel);
+      root.removeEventListener("lostpointercapture", cancel);
+      root.removeEventListener("pointerleave", leave);
     };
   }, [engine, layout, initialCell]);
   return (
@@ -548,7 +730,8 @@ function SpreadsheetGrid(props: {
         aria-rowcount={lastCell.row + 1}
         aria-colcount={lastCell.col + 1}
         aria-activedescendant={`office-cell-${active.row}-${active.col}`}
-        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto bg-white outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+        // The sheet is white in every theme, so its scrollbars keep the light theme's thumb.
+        className="relative min-h-0 min-w-0 flex-1 select-none overflow-auto bg-white scheme-light outline-none [--app-scrollbar-thumb-hover:rgb(191_191_191)] [--app-scrollbar-thumb:rgb(217_217_217)] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <div
           ref={spacer}
@@ -557,6 +740,8 @@ function SpreadsheetGrid(props: {
         />
         <div aria-hidden="true" className="sticky left-0 top-0 h-0 w-0">
           <canvas ref={canvas} className="absolute left-0 top-0 block" />
+          <div ref={columnHeaderBand} className="absolute left-11 top-0 h-5 touch-none" />
+          <div ref={rowHeaderBand} className="absolute left-0 top-5 w-11 touch-none" />
         </div>
         <div className="sr-only">
           {[...new Set(reader.map((cell) => cell.row))].map((row) => (

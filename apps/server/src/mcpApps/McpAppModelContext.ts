@@ -38,6 +38,29 @@ export class McpAppModelContext extends Context.Service<
   }
 >()("t3/mcpApps/McpAppModelContext") {}
 
+/** The thread's notes as a provider turn or steer sends them; a failed read sends none. */
+export const forProvider = Effect.fn("McpAppModelContext.forProvider")(function* (
+  modelContext: McpAppModelContext["Service"],
+  threadId: ThreadId,
+) {
+  const entries = yield* modelContext
+    .forThread(threadId)
+    .pipe(
+      Effect.catch((cause) =>
+        Effect.logWarning("Failed to read MCP app model context.", { cause }).pipe(
+          Effect.as([] as ReadonlyArray<McpAppModelContextEntry>),
+        ),
+      ),
+    );
+  return entries.map((entry) => ({
+    // The item id alone is unique and needs no escaping; server and
+    // tool names are free text that would break the tag Codex wraps
+    // the context in.
+    key: `mcp_app_${entry.itemId.replace(/[^\w.-]/g, "_")}`,
+    text: entry.text,
+  }));
+});
+
 export const layer = Layer.effect(
   McpAppModelContext,
   Effect.gen(function* () {

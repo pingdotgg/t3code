@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import * as Struct from "effect/Struct";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import {
@@ -18,6 +19,7 @@ import {
 
 const PROJECT_SEARCH_ENTRIES_MAX_LIMIT = 200;
 const PROJECT_SEARCH_CONTENTS_MAX_LIMIT = 500;
+export const PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH = 256;
 const PROJECT_WRITE_FILE_PATH_MAX_LENGTH = 512;
 const PROJECT_READ_FILE_PATH_MAX_LENGTH = 512;
 
@@ -44,6 +46,32 @@ export const ProjectScript = Schema.Struct({
   autoOpenPreview: Schema.optional(Schema.Boolean),
 });
 export type ProjectScript = typeof ProjectScript.Type;
+
+export const PROJECT_TRACKED_FOLDERS_MAX = 128;
+
+/**
+ * A folder the project works in besides its home folder. Paths are absolute and only mean
+ * something on the project's own environment. Git folders get their own history and review.
+ */
+export const ProjectTrackedFolder = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+  /**
+   * The server found this repository inside the project folder and keeps the entry in step with
+   * the disk. Absent on a folder someone added.
+   */
+  discovered: Schema.optional(Schema.Boolean),
+});
+export type ProjectTrackedFolder = typeof ProjectTrackedFolder.Type;
+
+/** The folders a caller adds to a project. Which repositories sit inside it is the server's to say. */
+export const ProjectAddedFolders = Schema.Array(
+  ProjectTrackedFolder.mapFields(Struct.omit(["discovered"])),
+).check(Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX));
+
+export const ProjectTrackedFolders = Schema.Array(ProjectTrackedFolder).check(
+  Schema.isMaxLength(PROJECT_TRACKED_FOLDERS_MAX),
+);
 
 export const ProjectIconColor = Schema.Literals([
   "gray",
@@ -162,6 +190,8 @@ export const Project = Schema.Struct({
   // Opt-in because background sync performs network I/O and may move the checkout.
   autoPull: Schema.optional(Schema.Boolean),
   scripts: Schema.Array(ProjectScript),
+  // Absent from older servers; that means a single-folder project.
+  trackedFolders: Schema.optional(ProjectTrackedFolders),
   pinnedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   archivedAt: Schema.optional(Schema.NullOr(IsoDateTime)),
   createdAt: IsoDateTime,
@@ -182,6 +212,7 @@ export const ProjectCreatePayload = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.optional(ProjectAddedFolders),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 
@@ -194,6 +225,11 @@ export const ProjectUpdatePayload = Schema.Struct({
   faviconPath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   defaultThreadEnvMode: Schema.optional(Schema.NullOr(ThreadEnvMode)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  trackedFolders: Schema.optional(
+    ProjectAddedFolders.annotate({
+      description: "Extra folders by absolute path. Replaces the whole list.",
+    }),
+  ),
   pinned: Schema.optional(Schema.Boolean),
   archived: Schema.optional(
     Schema.Boolean.annotate({
@@ -215,6 +251,9 @@ export const ProjectMutation = Schema.Union([
     commandId: CommandId,
     projectId: ProjectId,
     ...ProjectUpdatePayload.fields,
+    // Applied to the list as the server has it, so two clients' edits do not undo each other.
+    trackFolders: Schema.optional(ProjectAddedFolders),
+    untrackFolders: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
   }),
   Schema.Struct({
     type: Schema.Literal("project.delete"),
@@ -262,7 +301,10 @@ export type ProjectSearchEntriesResult = typeof ProjectSearchEntriesResult.Type;
 export const ProjectSearchContentsInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Preserve whitespace because it is significant in content queries.
-  query: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(256)),
+  query: Schema.String.check(
+    Schema.isNonEmpty(),
+    Schema.isMaxLength(PROJECT_SEARCH_CONTENTS_QUERY_MAX_LENGTH),
+  ),
   limit: PositiveInt.check(Schema.isLessThanOrEqualTo(PROJECT_SEARCH_CONTENTS_MAX_LIMIT)),
   caseSensitive: Schema.Boolean,
   wholeWord: Schema.Boolean,
@@ -307,6 +349,8 @@ export type ProjectListEntriesResult = typeof ProjectListEntriesResult.Type;
 // are left out, so the list stays small enough to pick from.
 export const ProjectListIgnoredFilesInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  /** Case-insensitive path substring, applied before the listing cap. */
+  query: Schema.optionalKey(TrimmedString.check(Schema.isMaxLength(256))),
 });
 export type ProjectListIgnoredFilesInput = typeof ProjectListIgnoredFilesInput.Type;
 
@@ -434,14 +478,14 @@ export class ProjectListEntriesError extends Schema.TaggedError<ProjectListEntri
 export const ProjectReadFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   // Workspace-relative or absolute host path; only workspace-relative paths are writable.
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
+  relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_READ_FILE_PATH_MAX_LENGTH)),
   // Optional files can be absent without failing the read.
   allowMissing: Schema.optional(Schema.Boolean),
 });
 export type ProjectReadFileInput = typeof ProjectReadFileInput.Type;
 
 export const ProjectReadFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
+  relativePath: Schema.NonEmptyString,
   contents: Schema.String,
   byteLength: NonNegativeInt,
   truncated: Schema.Boolean,
@@ -486,12 +530,12 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
   "ProjectReadFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativePath: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(Schema.NonEmptyString),
     failure: Schema.optional(ProjectFileFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(Schema.NonEmptyString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(Schema.NonEmptyString),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },
@@ -509,13 +553,13 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
 
 export const ProjectWriteFileInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
-  relativePath: TrimmedNonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
+  relativePath: Schema.NonEmptyString.check(Schema.isMaxLength(PROJECT_WRITE_FILE_PATH_MAX_LENGTH)),
   contents: Schema.String,
 });
 export type ProjectWriteFileInput = typeof ProjectWriteFileInput.Type;
 
 export const ProjectWriteFileResult = Schema.Struct({
-  relativePath: TrimmedNonEmptyString,
+  relativePath: Schema.NonEmptyString,
 });
 export type ProjectWriteFileResult = typeof ProjectWriteFileResult.Type;
 
@@ -551,12 +595,12 @@ export class ProjectWriteFileError extends Schema.TaggedError<ProjectWriteFileEr
   "ProjectWriteFileError",
   {
     cwd: Schema.optional(TrimmedNonEmptyString),
-    relativePath: Schema.optional(TrimmedNonEmptyString),
+    relativePath: Schema.optional(Schema.NonEmptyString),
     failure: Schema.optional(ProjectFileFailure),
-    resolvedPath: Schema.optional(TrimmedNonEmptyString),
+    resolvedPath: Schema.optional(Schema.NonEmptyString),
     resolvedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
     operation: Schema.optional(ProjectFileOperation),
-    operationPath: Schema.optional(TrimmedNonEmptyString),
+    operationPath: Schema.optional(Schema.NonEmptyString),
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
   },

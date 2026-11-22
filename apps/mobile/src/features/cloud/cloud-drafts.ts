@@ -3,8 +3,10 @@ import { createRuntimeCommand } from "@t3tools/client-runtime/state/runtime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SubscriptionRef from "effect/SubscriptionRef";
+import { msg } from "gt-react-native";
 
 import { connectionAtomRuntime } from "../../connection/runtime";
+import { m } from "../../i18n/messages";
 import { archiveCloudComposerDrafts } from "../../state/use-composer-drafts";
 
 export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchiveError>()(
@@ -16,7 +18,12 @@ export class CloudDraftArchiveError extends Schema.TaggedError<CloudDraftArchive
   },
 ) {
   override get message(): string {
-    return `Could not preserve local drafts for ${this.environmentCount} cloud environments before sign-out.`;
+    return m(
+      msg(
+        "{count, plural, other {Could not preserve local drafts for {count} cloud environments before sign-out.}}",
+        { count: this.environmentCount },
+      ),
+    );
   }
 }
 
