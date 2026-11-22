@@ -400,7 +400,7 @@ it.effect("a turn that touches no repository records none, however many start di
     const thread = { projectId: ProjectId.make("project:many-dirty"), worktreePath: null };
     // Every repository has uncommitted work, and each snapshot takes a while: more of them
     // than fit in one turn's baseline budget.
-    const repositories = Array.from({ length: 18 }, (_, index) => `/wrapper/repo-${index}`);
+    const repositories = Array.from({ length: 30 }, (_, index) => `/wrapper/repo-${index}`);
     const refs = yield* Ref.make<ReadonlySet<string>>(new Set());
     const baselinePhase = yield* Ref.make(true);
     const sleeping = yield* Ref.make(0);
@@ -451,21 +451,27 @@ it.effect("a turn that touches no repository records none, however many start di
         .captureBaseline({ scope, ordinalWithinScope: 0, thread })
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstWaveSleeping);
-      yield* TestClock.adjust("10 seconds");
+      yield* TestClock.adjust("5 seconds");
       yield* Fiber.join(turnStart);
       yield* Ref.set(baselinePhase, false);
 
-      const recorded = (yield* Effect.forEach(scopes, (repository) =>
-        checkpoints.captureRepository({
-          scope: repository,
-          runId: scope.runId!,
-          nodeId: scope.nodeId,
-          ordinalWithinScope: 1,
-          capturedAt: scope.createdAt,
-          baselineCapturedAt: scope.createdAt,
-          baselineRecorded: false,
-        }),
-      )).flatMap(Option.toArray);
+      // The turn ends at once: some baselines are still running and the rest have not started.
+      const capturing = yield* Effect.forEach(
+        scopes,
+        (repository) =>
+          checkpoints.captureRepository({
+            scope: repository,
+            runId: scope.runId!,
+            nodeId: scope.nodeId,
+            ordinalWithinScope: 1,
+            capturedAt: scope.createdAt,
+            baselineCapturedAt: scope.createdAt,
+            baselineRecorded: false,
+          }),
+        { concurrency: "unbounded" },
+      ).pipe(Effect.forkChild);
+      yield* TestClock.adjust("1 minute");
+      const recorded = (yield* Fiber.join(capturing)).flatMap(Option.toArray);
       // Nothing changed, so no repository gets a row, not one "cannot be listed" row each.
       assert.deepEqual(
         recorded.map(({ checkpoint }) => ({
