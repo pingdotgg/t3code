@@ -43,6 +43,7 @@ import {
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
+import { Spinner } from "../ui/spinner";
 import { AnimatedHeight } from "../AnimatedHeight";
 import { environmentCatalog } from "~/connection/catalog";
 import {
@@ -133,7 +134,8 @@ export function AddEnvironmentDialog({
   const [savedBackendSshPort, setSavedBackendSshPort] = useState("");
   const [sshHostSuggestionsOpen, setSshHostSuggestionsOpen] = useState(false);
   const highlightedSshHostRef = useRef<DesktopDiscoveredSshHost | undefined>(undefined);
-  const [isAddingSavedBackend, setIsAddingSavedBackend] = useState(false);
+  const [pendingAction, setPendingAction] = useState<"remote" | "ssh" | "relay" | null>(null);
+  const isAddingSavedBackend = pendingAction !== null;
   const savedBackendSessionRef = useRef(0);
   const isSshDiscoveryActive = desktopBridge !== undefined && open && savedBackendMode === "ssh";
   const desktopSshHosts = useEnvironmentQuery(
@@ -178,7 +180,7 @@ export function AddEnvironmentDialog({
   };
   const connectSavedBackendSshTarget = async (target: DesktopSshEnvironmentTarget) => {
     const session = savedBackendSessionRef.current;
-    setIsAddingSavedBackend(true);
+    setPendingAction("ssh");
     onErrorChange(null);
     const result = await connectSshEnvironment({
       target,
@@ -189,7 +191,7 @@ export function AddEnvironmentDialog({
       if (session === savedBackendSessionRef.current && !isAtomCommandInterrupted(result)) {
         pipe(squashAtomCommandFailure(result), formatDesktopSshConnectionError, onErrorChange);
       }
-      setIsAddingSavedBackend(false);
+      setPendingAction(null);
       return;
     }
 
@@ -204,7 +206,7 @@ export function AddEnvironmentDialog({
           })
         : gt("{host} is ready over an SSH-managed tunnel.", { host: target.alias }),
     });
-    setIsAddingSavedBackend(false);
+    setPendingAction(null);
   };
 
   const handleAddSavedBackend = async () => {
@@ -225,7 +227,7 @@ export function AddEnvironmentDialog({
       return;
     }
 
-    setIsAddingSavedBackend(true);
+    setPendingAction("remote");
     onErrorChange(null);
     let remotePairingInput: ReturnType<typeof parseRemotePairingFields>;
     try {
@@ -246,7 +248,7 @@ export function AddEnvironmentDialog({
           description: message,
         }),
       );
-      setIsAddingSavedBackend(false);
+      setPendingAction(null);
       return;
     }
 
@@ -271,7 +273,7 @@ export function AddEnvironmentDialog({
           }),
         );
       }
-      setIsAddingSavedBackend(false);
+      setPendingAction(null);
       return;
     }
 
@@ -291,7 +293,7 @@ export function AddEnvironmentDialog({
             description: gt("The environment is saved and will reconnect on app startup."),
           },
     );
-    setIsAddingSavedBackend(false);
+    setPendingAction(null);
   };
 
   const handleSavedBackendSshFieldKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
@@ -306,7 +308,7 @@ export function AddEnvironmentDialog({
     if (isAddingSavedBackend || !desktopBridge) return;
 
     const session = savedBackendSessionRef.current;
-    setIsAddingSavedBackend(true);
+    setPendingAction("ssh");
     onErrorChange(null);
     setSavedBackendSshHost(target.alias);
     let resolved: DesktopSshEnvironmentTarget;
@@ -316,11 +318,11 @@ export function AddEnvironmentDialog({
       if (session === savedBackendSessionRef.current) {
         onErrorChange(formatDesktopSshConnectionError(error));
       }
-      setIsAddingSavedBackend(false);
+      setPendingAction(null);
       return;
     }
     if (session !== savedBackendSessionRef.current) {
-      setIsAddingSavedBackend(false);
+      setPendingAction(null);
       return;
     }
     if (target.port !== null) resolved = { ...resolved, port: target.port };
@@ -463,7 +465,7 @@ export function AddEnvironmentDialog({
       : null;
   const addRelayRoute = async () => {
     if (relayRouteOffer === null || routeTarget === null) return;
-    setIsAddingSavedBackend(true);
+    setPendingAction("relay");
     const result = await registerEnvironment(
       new RelayConnectionRegistration({
         target: new RelayConnectionTarget({
@@ -472,7 +474,7 @@ export function AddEnvironmentDialog({
         }),
       }),
     );
-    setIsAddingSavedBackend(false);
+    setPendingAction(null);
     if (result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -494,6 +496,36 @@ export function AddEnvironmentDialog({
       ),
     });
   };
+  const renderSubmit = (input: {
+    readonly canSubmit: boolean;
+    readonly errorMessage: string | null;
+    readonly pendingLabel: string;
+    readonly pendingDetail: string | null;
+  }) => {
+    const isSubmitting = pendingAction === savedBackendMode;
+    return (
+      <div className="space-y-3">
+        {input.errorMessage ? (
+          <Alert variant="error">
+            <AlertDescription>{input.errorMessage}</AlertDescription>
+          </Alert>
+        ) : null}
+        <Button
+          className="w-full"
+          disabled={isAddingSavedBackend || !input.canSubmit}
+          onClick={() => void handleAddSavedBackend()}
+        >
+          {isSubmitting ? <Spinner /> : <PlusIcon className="size-3.5" />}
+          {isSubmitting ? input.pendingLabel : routeTarget ? gt("Add route") : gt("Connect & add")}
+        </Button>
+        {isSubmitting && input.pendingDetail ? (
+          <p aria-live="polite" className="text-center text-xs text-muted-foreground">
+            {input.pendingDetail}
+          </p>
+        ) : null}
+      </div>
+    );
+  };
   const renderRemoteModeBody = () => (
     <div className="space-y-4">
       {relayRouteOffer !== null ? (
@@ -512,20 +544,14 @@ export function AddEnvironmentDialog({
         </div>
       ) : null}
       {renderRemoteFields()}
-      {error ? <p className="text-xs text-destructive">{error}</p> : null}
-      <Button
-        variant="outline"
-        className="w-full"
-        disabled={isAddingSavedBackend}
-        onClick={() => void handleAddSavedBackend()}
-      >
-        <PlusIcon className="size-3.5" />
-        {isAddingSavedBackend
-          ? gt("Adding…")
-          : routeTarget
-            ? gt("Add route")
-            : gt("Add environment")}
-      </Button>
+      {renderSubmit({
+        canSubmit:
+          parsePairingUrlFields(savedBackendHost) !== null ||
+          (savedBackendHost.trim().length > 0 && savedBackendPairingCode.trim().length > 0),
+        errorMessage: error,
+        pendingLabel: gt("Pairing with {host}…", { host: savedBackendHost.trim() }),
+        pendingDetail: null,
+      })}
     </div>
   );
   const renderSshFields = () => (
@@ -643,24 +669,15 @@ export function AddEnvironmentDialog({
             />
           </label>
         </div>
-        {error || discoveredSshHostsError ? (
-          <Alert variant="error">
-            <AlertDescription>{error ?? discoveredSshHostsError}</AlertDescription>
-          </Alert>
-        ) : null}
-        <Button
-          variant="outline"
-          className="w-full"
-          disabled={isAddingSavedBackend}
-          onClick={() => void handleAddSavedBackend()}
-        >
-          <PlusIcon className="size-3.5" />
-          {isAddingSavedBackend
-            ? gt("Adding…")
-            : routeTarget
-              ? gt("Add route")
-              : gt("Add environment")}
-        </Button>
+        {renderSubmit({
+          canSubmit: savedBackendSshHost.trim().length > 0,
+          errorMessage: error ?? discoveredSshHostsError,
+          pendingLabel: gt("Connecting to {host}…", { host: savedBackendSshHost.trim() }),
+          pendingDetail: gt(
+            "Starting T3 Code on {host} and opening an SSH tunnel. This can take a minute.",
+            { host: savedBackendSshHost.trim() },
+          ),
+        })}
       </div>
     </div>
   );
