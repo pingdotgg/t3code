@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -23,6 +24,8 @@ import {
   resolveUsageLimitsAfterProbe,
 } from "./usageLimits.ts";
 import type { ManagedServerProvider } from "./snapshot.ts";
+
+const EXPLICIT_USAGE_REFRESH_FLOOR = Duration.minutes(1);
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
@@ -95,6 +98,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const recheckPendingRef = yield* Ref.make(false);
+  // Live usage updates advance the published checkedAt, so the explicit-refresh floor uses the probe's.
+  const usageProbedAtRef = yield* Ref.make<string | undefined>(undefined);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -190,6 +195,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     const probedSnapshot = yield* input.checkProvider.pipe(
       Effect.provideService(DeferringFailedCheck, options?.deferFailure === true),
     );
+    yield* Ref.set(usageProbedAtRef, probedSnapshot.usageLimits?.checkedAt);
     // One failed periodic check over a ready provider is often transient; recheck before showing it.
     if (
       options?.deferFailure === true &&
@@ -299,7 +305,21 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
 
   const refreshSnapshot = Effect.fn("refreshSnapshot")(function* () {
     const nextSettings = yield* input.getSettings;
-    return yield* applySnapshot(nextSettings, { forceRefresh: true });
+    return yield* refreshSemaphore.withPermits(1)(
+      Effect.gen(function* () {
+        // Interval checks reuse cached usage. An explicit refresh re-reads it, but usage
+        // endpoints rate-limit per account, so a reading within the floor is kept.
+        const checkedAt = Date.parse((yield* Ref.get(usageProbedAtRef)) ?? "");
+        if (
+          !Number.isFinite(checkedAt) ||
+          (yield* Clock.currentTimeMillis) - checkedAt >=
+            Duration.toMillis(EXPLICIT_USAGE_REFRESH_FLOOR)
+        ) {
+          yield* input.invalidateUsageCache ?? Effect.void;
+        }
+        return yield* applySnapshotBase(nextSettings, { forceRefresh: true });
+      }),
+    );
   });
 
   const refreshUsage = Effect.fn("ManagedServerProvider.refreshUsage")(function* () {
