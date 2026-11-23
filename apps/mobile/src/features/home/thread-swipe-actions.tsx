@@ -672,12 +672,21 @@ function SwipeActionButton(props: {
     };
   });
   const labelStyle = useAnimatedStyle(() => {
-    if (!stretchesOnFullSwipe) {
-      return { opacity: 1 };
-    }
-
     const reveal = Math.max(-translation.value, 0);
     const stretch = Math.max(reveal - actionsWidth, 0);
+    if (!stretchesOnFullSwipe) {
+      // This action slides under the stretching pill; hide its label before its icon goes under,
+      // or it runs into the other action's label.
+      return {
+        opacity: interpolate(
+          stretch,
+          [0, ACTION_ITEM_WIDTH - circleSize],
+          [1, 0],
+          Extrapolation.CLAMP,
+        ),
+      };
+    }
+
     return {
       opacity: interpolate(
         reveal,
