@@ -438,7 +438,6 @@
     "apps/web/src/components/settings/EnvironmentsMap.tsx": 11,
     "apps/web/src/components/settings/FoldedSettingsSection.tsx": 3,
     "apps/web/src/components/settings/IntegrationsSettings.tsx": 2,
-    "apps/web/src/components/settings/IssueTrackerSettings.tsx": 1,
     "apps/web/src/components/settings/KeybindingsSettings.tsx": 6,
     "apps/web/src/components/settings/LabsSettingsPanel.tsx": 1,
     "apps/web/src/components/settings/LayoutEditor.tsx": 13,

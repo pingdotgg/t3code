@@ -10,12 +10,19 @@ import {
 } from "@t3tools/client-runtime/state/issue-trackers";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { T, useGT, useMessages } from "gt-react";
-import { ChevronDownIcon, ExternalLinkIcon, PlusIcon, XIcon } from "lucide-react";
+import {
+  ChevronDownIcon,
+  ExternalLinkIcon,
+  PlusIcon,
+  TriangleAlertIcon,
+  XIcon,
+} from "lucide-react";
 import { useState, type ElementType } from "react";
 import type {
   EnvironmentId,
   IssueTrackerConnection,
   IssueTrackerConnectionList,
+  IssueTrackerKind,
   ProjectId,
 } from "@t3tools/contracts";
 
@@ -26,12 +33,13 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { LinearIcon } from "../Icons";
 import { cn } from "~/lib/utils";
 
-import { Badge } from "../ui/badge";
 import { CheckboxMark } from "../ui/checkbox";
 import { Button, InlineButton } from "../ui/button";
 import { Collapsible, CollapsibleContent } from "../ui/collapsible";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Skeleton } from "../ui/skeleton";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { SecretInput } from "./SecretInput";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
@@ -55,8 +63,10 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
   const query = useEnvironmentQuery(
     issueTrackerEnvironment.connections({ environmentId, input: {} }),
   );
+  const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
   const canAddAccounts =
     useServerConfigs().get(environmentId)?.environment.capabilities.issueTrackerAccounts === true;
+  const [addingTracker, setAddingTracker] = useState<IssueTrackerKind | null>(null);
   const trackers = query.data?.trackers ?? [];
   const accounts = query.data?.accounts ?? [];
   if (query.data === null && query.isPending) {
@@ -85,12 +95,66 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
     );
   }
   if (trackers.length === 0) return null;
+
+  const addableTrackers = canAddAccounts
+    ? trackers.filter(
+        (tracker) =>
+          tracker.connected || accounts.some((account) => account.tracker === tracker.tracker),
+      )
+    : [];
+  const targetAddTracker =
+    addingTracker === null
+      ? null
+      : (addableTrackers.find((tracker) => tracker.tracker === addingTracker) ?? null);
+  const addAccountAction =
+    addableTrackers.length === 0 ? null : addableTrackers.length === 1 ? (
+      <Button
+        type="button"
+        size="xs"
+        variant="secondary"
+        disabled={!canEdit || targetAddTracker !== null}
+        onClick={() => setAddingTracker(addableTrackers[0]!.tracker)}
+      >
+        <PlusIcon />
+        <T>Add account</T>
+      </Button>
+    ) : (
+      <Menu>
+        <MenuTrigger
+          render={
+            <Button
+              type="button"
+              size="xs"
+              variant="secondary"
+              disabled={!canEdit || targetAddTracker !== null}
+            />
+          }
+        >
+          <PlusIcon />
+          <T>Add account</T>
+        </MenuTrigger>
+        <MenuPopup align="end">
+          {addableTrackers.map((tracker) => {
+            const Icon = TRACKER_ICONS[tracker.tracker];
+            return (
+              <MenuItem key={tracker.tracker} onClick={() => setAddingTracker(tracker.tracker)}>
+                {Icon ? <Icon className="size-4 shrink-0" /> : null}
+                <span>{tracker.displayName}</span>
+              </MenuItem>
+            );
+          })}
+        </MenuPopup>
+      </Menu>
+    );
+
   return (
-    <SettingsSection id={searchableSetting("issue-trackers").id} title={title}>
+    <SettingsSection
+      id={searchableSetting("issue-trackers").id}
+      title={title}
+      headerAction={addAccountAction}
+    >
       {trackers.flatMap((tracker) => {
         const added = accounts.filter((account) => account.tracker === tracker.tracker);
-        // Another account is added from the first one's row, which stays while any is connected.
-        const canAddAccount = canAddAccounts && (tracker.connected || added.length > 0);
         return [tracker, ...added].map((account) => (
           <TrackerRow
             // Drafts belong to one environment; switching must not carry them over.
@@ -100,10 +164,17 @@ export function IssueTrackerSettings({ environmentId }: { readonly environmentId
             bindings={issueTrackerBindings(query.data)}
             refreshing={query.isPending}
             refreshFailed={query.error !== null}
-            canAddAccount={canAddAccount && account.accountId === undefined}
           />
         ));
       })}
+      {targetAddTracker ? (
+        <AddAccountRow
+          key={`add-${targetAddTracker.tracker}-${environmentId}`}
+          environmentId={environmentId}
+          tracker={targetAddTracker}
+          onClose={() => setAddingTracker(null)}
+        />
+      ) : null}
     </SettingsSection>
   );
 }
@@ -114,14 +185,12 @@ function TrackerRow({
   bindings,
   refreshing,
   refreshFailed,
-  canAddAccount,
 }: {
   readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
   readonly bindings: IssueTrackerConnectionList["bindings"];
   readonly refreshing: boolean;
   readonly refreshFailed: boolean;
-  readonly canAddAccount: boolean;
 }) {
   const gt = useGT();
   const messages = useMessages();
@@ -134,14 +203,12 @@ function TrackerRow({
   const [failure, setFailure] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
 
-  const submit = async (token: string | null, addAccount = false) => {
+  const submit = async (token: string | null) => {
     setBusy(true);
     setFailure(null);
     const result = await connect({
       environmentId,
-      input: addAccount
-        ? { tracker: tracker.tracker, token, addAccount }
-        : { tracker: tracker.tracker, accountId: tracker.accountId, token },
+      input: { tracker: tracker.tracker, accountId: tracker.accountId, token },
     });
     setBusy(false);
     if (result._tag === "Success") return true;
@@ -152,54 +219,63 @@ function TrackerRow({
 
   const inputId = `issue-tracker-${tracker.tracker}-${tracker.accountId ?? ""}-${environmentId}`;
   const usable = tracker.connected && tracker.account !== null;
+  const rejected = tracker.connected && tracker.account === null;
   const summary = issueTrackerSummary(tracker, bindings, messages);
 
   return (
-    <div className="first:rounded-t-xl last:rounded-b-xl transition-colors hover:bg-muted/20">
-      <div className="flex items-center justify-between gap-3 px-3 py-3 sm:px-4">
-        <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="relative inline-flex size-5 shrink-0 items-center justify-center">
-              {Icon ? <Icon className="size-4.5 text-foreground/80" /> : null}
-              <span
-                aria-hidden
-                className={cn(
-                  "pointer-events-none absolute -left-0.5 -top-0.5 size-2 rounded-full ring-2 ring-background",
-                  usable ? "bg-success" : "bg-muted-foreground/35",
-                )}
-              />
-            </span>
-            <span className="truncate text-label text-foreground">{tracker.displayName}</span>
+    <div>
+      <SettingsRow
+        leading={Icon ? <Icon /> : null}
+        title={
+          <span className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="truncate">{tracker.displayName}</span>
             {tracker.workspace ? (
               <span className="truncate text-meta text-muted-foreground">{tracker.workspace}</span>
             ) : null}
-            {tracker.connected && tracker.account === null ? (
-              <Badge variant="error" size="sm">
-                <T>Credential rejected</T>
-              </Badge>
+            {rejected ? (
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <span
+                      role="alert"
+                      tabIndex={0}
+                      aria-label={gt("Credential rejected")}
+                      className="inline-flex size-5 shrink-0 items-center justify-center rounded-badge text-warning-foreground outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                    />
+                  }
+                >
+                  <TriangleAlertIcon aria-hidden className="size-3.5" />
+                </TooltipTrigger>
+                <TooltipPopup side="top">
+                  {tracker.detail ?? gt("Credential rejected")}
+                </TooltipPopup>
+              </Tooltip>
             ) : null}
-          </div>
-          <p className="text-meta text-muted-foreground/80">{summary}</p>
-        </div>
-        <Button
-          size="icon-xs"
-          variant="ghost-muted"
-          onClick={() => setIsExpanded((open) => !open)}
-          aria-expanded={isExpanded}
-          aria-label={gt("Toggle {tracker} details", { tracker: tracker.displayName })}
-        >
-          <ChevronDownIcon
-            className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
-          />
-        </Button>
-      </div>
+          </span>
+        }
+        description={summary}
+        trailing={
+          <Button
+            size="icon-xs"
+            variant="ghost-muted"
+            onClick={() => setIsExpanded((open) => !open)}
+            aria-expanded={isExpanded}
+            aria-label={gt("Toggle {tracker} details", { tracker: tracker.displayName })}
+          >
+            <ChevronDownIcon
+              className={cn("size-3.5 transition-transform", isExpanded && "rotate-180")}
+            />
+          </Button>
+        }
+      />
       <Collapsible open={isExpanded} onOpenChange={setIsExpanded}>
         {/* Kept mounted so a pick awaiting its refresh stays locked when the panel is reopened. */}
         <CollapsibleContent keepMounted>
           {/* Locked while saving, so an edit made mid-request is not overwritten by the saved value. */}
           <fieldset disabled={!canEdit || busy} className="contents">
-            <div className="px-3 pb-4 pt-1 sm:px-4">
+            <div className="mb-3 ms-4 me-3 border-s border-divider ps-3 sm:me-4 sm:ps-4 *:not-first:border-t *:not-first:border-divider">
               <SettingsRow
+                className="rounded-none px-0 py-2.5 sm:px-0"
                 title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
                 description={
                   <>
@@ -225,7 +301,7 @@ function TrackerRow({
                   </>
                 }
                 control={
-                  <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-56">
+                  <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-64">
                     <SecretInput
                       id={inputId}
                       size="sm"
@@ -237,15 +313,26 @@ function TrackerRow({
                       }}
                     />
                     {tracker.connected ? (
-                      <Button
-                        type="button"
-                        size="icon-sm"
-                        variant="ghost-destructive"
-                        onClick={() => void submit(null)}
-                        aria-label={gt("Disconnect {tracker}", { tracker: tracker.displayName })}
-                      >
-                        <XIcon className="size-3.5" />
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              type="button"
+                              size="icon-sm"
+                              variant="ghost-destructive"
+                              onClick={() => void submit(null)}
+                              aria-label={gt("Disconnect {tracker}", {
+                                tracker: tracker.displayName,
+                              })}
+                            >
+                              <XIcon className="size-3.5" />
+                            </Button>
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          {gt("Disconnect {tracker}", { tracker: tracker.displayName })}
+                        </TooltipPopup>
+                      </Tooltip>
                     ) : null}
                   </div>
                 }
@@ -258,9 +345,6 @@ function TrackerRow({
                   refreshing={refreshing}
                   refreshFailed={refreshFailed}
                 />
-              ) : null}
-              {canAddAccount ? (
-                <AddAccountRow tracker={tracker} onAdd={(token) => submit(token, true)} />
               ) : null}
             </div>
           </fieldset>
@@ -317,13 +401,12 @@ function ProjectBindings({
 
   return (
     <>
-      <SettingsRow
-        title={gt("Projects")}
-        description={gt(
+      <p className="py-2.5 text-pretty text-meta text-muted-foreground">
+        {gt(
           "Pick one or more {tracker} {scope}s for each project. Their issues list beside the repository's own, and agents file new issues in the first one unless asked for another.",
           { tracker: tracker.displayName, scope: tracker.scopeNoun },
         )}
-      />
+      </p>
       {projects.map((project) => {
         // A project bound to another tracker or account keeps that binding; this picker shows it unbound.
         const value = bound(project.id);
@@ -331,6 +414,7 @@ function ProjectBindings({
         return (
           <SettingsRow
             key={project.id}
+            className="rounded-none px-0 py-2.5 sm:px-0"
             title={project.title}
             control={
               <Select
@@ -345,8 +429,9 @@ function ProjectBindings({
                     scope: tracker.scopeNoun,
                     project: project.title,
                   })}
-                  className="w-full @min-[32rem]/settings-row:w-56"
+                  className="w-full @min-[32rem]/settings-row:w-64"
                   size="sm"
+                  variant="well"
                 >
                   <SelectValue>
                     {value.length === 0
@@ -383,48 +468,102 @@ function ProjectBindings({
   );
 }
 
-/** A credential for another account of the tracker, kept beside this one. */
+/** A credential for another account of the tracker, added from the section header. */
 function AddAccountRow({
+  environmentId,
   tracker,
-  onAdd,
+  onClose,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly tracker: IssueTrackerConnection;
-  readonly onAdd: (token: string) => Promise<boolean>;
+  readonly onClose: () => void;
 }) {
   const gt = useGT();
-  const [adding, setAdding] = useState(false);
-  const inputId = `issue-tracker-${tracker.tracker}-add-account`;
-  if (!adding) {
-    return (
+  const Icon = TRACKER_ICONS[tracker.tracker];
+  const canEdit = useAtomValue(issueTrackerEnvironment.connect.permissionAtom(environmentId));
+  const connect = useAtomCommand(issueTrackerEnvironment.connect, {
+    label: `connect ${tracker.displayName}`,
+  });
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
+  const inputId = `issue-tracker-${tracker.tracker}-add-account-${environmentId}`;
+
+  const submit = async (token: string) => {
+    setBusy(true);
+    setFailure(null);
+    const result = await connect({
+      environmentId,
+      input: { tracker: tracker.tracker, token, addAccount: true },
+    });
+    setBusy(false);
+    if (result._tag === "Success") {
+      onClose();
+      return;
+    }
+    const error = squashAtomCommandFailure(result);
+    setFailure(error instanceof Error ? error.message : gt("The request failed."));
+  };
+
+  return (
+    <fieldset disabled={!canEdit || busy} className="contents">
       <SettingsRow
-        title={gt("Another account")}
-        description={gt("Connect a second {tracker} workspace or user.", {
-          tracker: tracker.displayName,
-        })}
+        leading={Icon ? <Icon /> : null}
+        title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
+        description={
+          <>
+            {gt("For the new {tracker} account.", { tracker: tracker.displayName })}
+            {tracker.credential.helpUrl ? (
+              <>
+                {" "}
+                <InlineButton
+                  render={
+                    <a
+                      href={tracker.credential.helpUrl}
+                      target="_blank"
+                      rel="noreferrer noopener"
+                    />
+                  }
+                >
+                  <T>Create one</T>
+                  <ExternalLinkIcon aria-hidden className="size-3" />
+                </InlineButton>
+              </>
+            ) : null}
+            {failure ? <span className="block text-destructive">{failure}</span> : null}
+          </>
+        }
         control={
-          <Button type="button" size="xs" variant="secondary" onClick={() => setAdding(true)}>
-            <PlusIcon className="size-3.5" />
-            <T>Add account</T>
-          </Button>
+          <div className="flex w-full min-w-0 items-center gap-2 @min-[32rem]/settings-row:w-64">
+            <SecretInput
+              id={inputId}
+              size="sm"
+              className="min-w-0 flex-1"
+              value=""
+              onCommit={(next) => {
+                if (next.trim()) void submit(next.trim());
+              }}
+            />
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-sm"
+                    variant="ghost"
+                    onClick={onClose}
+                    aria-label={gt("Cancel")}
+                  >
+                    <XIcon className="size-3.5" />
+                  </Button>
+                }
+              />
+              <TooltipPopup side="top">
+                <T>Cancel</T>
+              </TooltipPopup>
+            </Tooltip>
+          </div>
         }
       />
-    );
-  }
-  return (
-    <SettingsRow
-      title={<label htmlFor={inputId}>{tracker.credential.label}</label>}
-      description={gt("For the new {tracker} account.", { tracker: tracker.displayName })}
-      control={
-        <SecretInput
-          id={inputId}
-          size="sm"
-          className="w-full min-w-0 @min-[32rem]/settings-row:w-56"
-          value=""
-          onCommit={(next) => {
-            if (next.trim()) void onAdd(next.trim()).then((added) => added && setAdding(false));
-          }}
-        />
-      }
-    />
+    </fieldset>
   );
 }
