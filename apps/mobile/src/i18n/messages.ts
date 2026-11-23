@@ -11,10 +11,6 @@ export function setActiveLocale(locale: string): void {
   activeLocale = locale;
 }
 
-export function getActiveLocale(): string {
-  return activeLocale;
-}
-
 function resolve(message: string, variables: Parameters<MessageResolver>[1] = {}): string {
   const decoded = decodeOptions(message);
   const options = typeof decoded?.$_source === "string" ? decoded : variables;

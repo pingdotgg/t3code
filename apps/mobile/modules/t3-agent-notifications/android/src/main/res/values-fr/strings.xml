@@ -29,11 +29,23 @@
   <string name="agent_activity_summary_default">Activité des agents</string>
   <string name="agent_activity_summary_one_needs_you">1 a besoin de vous</string>
   <string name="agent_activity_summary_many_need_you">%1$d ont besoin de vous</string>
-  <string name="agent_activity_summary_failed">%1$d en échec</string>
-  <string name="agent_activity_summary_working">%1$d en cours</string>
-  <string name="agent_activity_summary_finished_failed">Terminé, %1$d en échec</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d en échec</item>
+    <item quantity="other">%1$d en échec</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d en cours</item>
+    <item quantity="other">%1$d en cours</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Terminé, %1$d en échec</item>
+    <item quantity="other">Terminé, %1$d en échec</item>
+  </plurals>
   <string name="agent_activity_summary_all_finished">Tout est terminé</string>
 
-  <string name="agent_activity_subtext_active">%1$d actifs</string>
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d actif</item>
+    <item quantity="other">%1$d actifs</item>
+  </plurals>
   <string name="agent_activity_subtext_threads">%1$d fils</string>
 </resources>

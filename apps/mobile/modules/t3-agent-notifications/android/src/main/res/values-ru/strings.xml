@@ -29,11 +29,19 @@
   <string name="agent_activity_summary_default">Активность агентов</string>
   <string name="agent_activity_summary_one_needs_you">1 ждёт вас</string>
   <string name="agent_activity_summary_many_need_you">%1$d ждут вас</string>
-  <string name="agent_activity_summary_failed">Ошибок: %1$d</string>
-  <string name="agent_activity_summary_working">Работают: %1$d</string>
-  <string name="agent_activity_summary_finished_failed">Завершено, ошибок: %1$d</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">Ошибок: %1$d</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">В работе: %1$d</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">Завершено, ошибок: %1$d</item>
+  </plurals>
   <string name="agent_activity_summary_all_finished">Все завершены</string>
 
-  <string name="agent_activity_subtext_active">Активно: %1$d</string>
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">Активно: %1$d</item>
+  </plurals>
   <string name="agent_activity_subtext_threads">Чатов: %1$d</string>
 </resources>

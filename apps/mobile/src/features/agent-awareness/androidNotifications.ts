@@ -2,8 +2,6 @@ import Constants from "expo-constants";
 import { requireOptionalNativeModule } from "expo";
 import { Linking, Platform } from "react-native";
 
-import { getActiveLocale } from "../../i18n/messages";
-
 interface AndroidAgentNotifications {
   configure(deviceId: string, userId: string, scheme: string, ongoingEnabled: boolean): void;
   clear(): void;
@@ -27,16 +25,21 @@ function appScheme(): string {
   return (Array.isArray(scheme) ? scheme[0] : scheme) ?? "t3code";
 }
 
+let syncedLocale: string | null = null;
+
 export function configureAndroidAgentNotifications(
   deviceId: string,
   userId: string,
   ongoingEnabled: boolean,
 ): void {
   native?.configure?.(deviceId, userId, appScheme(), ongoingEnabled);
-  native?.setLocale?.(getActiveLocale());
+  if (syncedLocale !== null) {
+    native?.setLocale?.(syncedLocale);
+  }
 }
 
 export function setAndroidAgentNotificationsLocale(locale: string): void {
+  syncedLocale = locale;
   native?.setLocale?.(locale);
 }
 

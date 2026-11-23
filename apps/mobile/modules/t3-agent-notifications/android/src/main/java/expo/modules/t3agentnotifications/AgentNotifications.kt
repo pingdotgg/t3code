@@ -13,6 +13,7 @@ import android.content.res.Configuration
 import android.net.Uri
 import android.os.Build
 import java.util.Locale
+import org.json.JSONObject
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.lifecycle.Lifecycle
@@ -94,9 +95,6 @@ object AgentNotifications {
   }
 
   @Volatile private var threadOnScreen: String? = null
-  private var lastActivityData: Map<String, String>? = null
-  private var lastActivityActive: Boolean = false
-  private var lastActivityExpiresAt: Long = 0L
 
   fun setThreadOnScreen(path: String?) {
     threadOnScreen = path
@@ -114,17 +112,48 @@ object AgentNotifications {
     }
     editor.apply()
     channels(context)
-    val data = lastActivityData ?: return
+    refreshActivity(context, prefs)
+  }
+
+  private fun refreshActivity(context: Context, prefs: SharedPreferences) {
+    val data = loadLastActivity(prefs) ?: return
     val hasCard = manager(context).activeNotifications.any {
       it.tag == ACTIVITY_TAG && it.id == ACTIVITY_ID
     }
-    val remainingMs = (lastActivityExpiresAt - System.currentTimeMillis()).coerceAtMost(
-      MAX_LIFETIME_MS
-    )
+    val expiresAt = prefs.getLong("lastActivityExpiresAt", 0L)
+    val remainingMs = (expiresAt - System.currentTimeMillis()).coerceAtMost(MAX_LIFETIME_MS)
     if (hasCard && remainingMs > 0) {
       val scheme = prefs.getString("scheme", "t3code") ?: "t3code"
-      showActivity(context, scheme, data, lastActivityActive, remainingMs)
+      val active = prefs.getBoolean("lastActivityActive", false)
+      showActivity(context, scheme, data, active, remainingMs)
     }
+  }
+
+  private fun saveLastActivity(
+    prefs: SharedPreferences,
+    data: Map<String, String>,
+    active: Boolean,
+    expiresAt: Long
+  ) {
+    prefs.edit()
+      .putString("lastActivityData", JSONObject(data).toString())
+      .putBoolean("lastActivityActive", active)
+      .putLong("lastActivityExpiresAt", expiresAt)
+      .apply()
+  }
+
+  private fun loadLastActivity(prefs: SharedPreferences): Map<String, String>? {
+    val raw = prefs.getString("lastActivityData", null) ?: return null
+    return runCatching {
+      val json = JSONObject(raw)
+      buildMap {
+        val keys = json.keys()
+        while (keys.hasNext()) {
+          val key = keys.next()
+          put(key, json.optString(key))
+        }
+      }
+    }.getOrNull()
   }
 
   private fun localizedContext(context: Context): Context {
@@ -359,17 +388,15 @@ object AgentNotifications {
         dismissIntent
       )
     }
-    lastActivityData = data
-    lastActivityActive = active
-    lastActivityExpiresAt = System.currentTimeMillis() + remainingMs
+    val prefs = context.getSharedPreferences(STORE, Context.MODE_PRIVATE)
+    val expiresAt = System.currentTimeMillis() + remainingMs
+    saveLastActivity(prefs, data, active, expiresAt)
     manager(context).notify(ACTIVITY_TAG, ACTIVITY_ID, builder.build())
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       // Notification timeouts were added in API 26. One inexact alarm also
       // expires cards on Android 7, including when the app process has exited.
       // No exact-alarm permission, foreground service or periodic work needed.
-      val expiresAt = System.currentTimeMillis() + remainingMs
-      context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit()
-        .putLong("expiresAt", expiresAt).apply()
+      prefs.edit().putLong("expiresAt", expiresAt).apply()
       context.getSystemService(
         AlarmManager::class.java
       ).setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, expiresAt, expiryIntent(context))
@@ -384,14 +411,16 @@ object AgentNotifications {
   )
 
   private fun cancelActivity(context: Context) {
-    lastActivityData = null
-    lastActivityActive = false
-    lastActivityExpiresAt = 0L
+    val editor = context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit()
+      .remove("lastActivityData")
+      .remove("lastActivityActive")
+      .remove("lastActivityExpiresAt")
     manager(context).cancel(ACTIVITY_TAG, ACTIVITY_ID)
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
       context.getSystemService(AlarmManager::class.java).cancel(expiryIntent(context))
-      context.getSharedPreferences(STORE, Context.MODE_PRIVATE).edit().remove("expiresAt").apply()
+      editor.remove("expiresAt")
     }
+    editor.apply()
   }
 
   private fun manager(context: Context) = context.getSystemService(NotificationManager::class.java)

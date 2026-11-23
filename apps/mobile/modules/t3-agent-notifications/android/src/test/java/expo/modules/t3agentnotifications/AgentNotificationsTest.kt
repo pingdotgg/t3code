@@ -666,8 +666,14 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
     AgentNotifications.receive(context, single)
     val working = manager.activeNotifications.single().notification
-    assertEquals("Update dashboard", working.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-    assertEquals("运行中 Project", working.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString())
+    assertEquals(
+      "Update dashboard",
+      working.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
+    assertEquals(
+      "运行中 Project",
+      working.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+    )
     assertEquals("运行中", working.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
     assertEquals(listOf("打开", "忽略"), working.actions.map { it.title.toString() })
 
@@ -680,7 +686,10 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     )
     AgentNotifications.receive(context, multi)
     val approval = manager.activeNotifications.single().notification
-    assertEquals("1 个需要你处理", approval.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+    assertEquals(
+      "1 个需要你处理",
+      approval.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
     assertEquals("2 个活跃", approval.extras.getString(Notification.EXTRA_SUB_TEXT))
     assertEquals(
       "待批准 Fix bug · Project\n运行中 Write tests · Other",
@@ -692,9 +701,42 @@ class AgentNotificationsTest : AgentNotificationsFixture() {
     // Switching back to English re-renders the active card immediately.
     AgentNotifications.setLocale(context, "en")
     val switched = manager.activeNotifications.single().notification
-    assertEquals("1 needs you", switched.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-    assertEquals("Approve", switched.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+    assertEquals(
+      "1 needs you",
+      switched.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
+    assertEquals(
+      "Approve",
+      switched.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
     assertEquals(listOf("Approve", "Dismiss"), switched.actions.map { it.title.toString() })
+  }
+
+  @Test
+  fun singularLocalizedSummariesAndDismissedRefreshStateStayConsistent() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    val oneRunningAndDone = update("de-one", true) + mapOf(
+      "activity_line_0" to "Working\tBuild\tProject",
+      "activity_line_1" to "Done\tLint\tOther",
+      "activity_phase" to "running",
+      "activity_active_count" to "1",
+    )
+    AgentNotifications.setLocale(context, "de")
+    AgentNotifications.receive(context, oneRunningAndDone)
+    val german = manager.activeNotifications.single().notification
+    assertEquals(
+      "1 arbeitet",
+      german.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
+
+    AgentNotifications.setLocale(context, "pt-BR")
+    val portuguese = manager.activeNotifications.single().notification
+    assertEquals("1 ativo", portuguese.extras.getString(Notification.EXTRA_SUB_TEXT))
+
+    // Dismissing clears stored refresh state so a later locale switch does not restore it.
+    AgentNotifications.dismiss(context)
+    AgentNotifications.setLocale(context, "zh")
+    assertTrue(manager.activeNotifications.isEmpty())
   }
 }
 

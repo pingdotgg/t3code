@@ -29,11 +29,23 @@
   <string name="agent_activity_summary_default">Agentaktivitet</string>
   <string name="agent_activity_summary_one_needs_you">1 behöver dig</string>
   <string name="agent_activity_summary_many_need_you">%1$d behöver dig</string>
-  <string name="agent_activity_summary_failed">%1$d misslyckades</string>
-  <string name="agent_activity_summary_working">%1$d arbetar</string>
-  <string name="agent_activity_summary_finished_failed">Klar, %1$d misslyckades</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d misslyckades</item>
+    <item quantity="other">%1$d misslyckades</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d arbetar</item>
+    <item quantity="other">%1$d arbetar</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Klar, %1$d misslyckades</item>
+    <item quantity="other">Klar, %1$d misslyckades</item>
+  </plurals>
   <string name="agent_activity_summary_all_finished">Alla klara</string>
 
-  <string name="agent_activity_subtext_active">%1$d aktiva</string>
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d aktiv</item>
+    <item quantity="other">%1$d aktiva</item>
+  </plurals>
   <string name="agent_activity_subtext_threads">%1$d trådar</string>
 </resources>

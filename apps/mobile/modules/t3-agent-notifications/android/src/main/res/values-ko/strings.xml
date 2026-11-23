@@ -29,11 +29,19 @@
   <string name="agent_activity_summary_default">에이전트 활동</string>
   <string name="agent_activity_summary_one_needs_you">1개 응답 필요</string>
   <string name="agent_activity_summary_many_need_you">%1$d개 응답 필요</string>
-  <string name="agent_activity_summary_failed">%1$d개 실패</string>
-  <string name="agent_activity_summary_working">%1$d개 작업 중</string>
-  <string name="agent_activity_summary_finished_failed">완료, %1$d개 실패</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="other">%1$d개 실패</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="other">%1$d개 작업 중</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="other">완료, %1$d개 실패</item>
+  </plurals>
   <string name="agent_activity_summary_all_finished">모두 완료</string>
 
-  <string name="agent_activity_subtext_active">%1$d개 활성</string>
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="other">%1$d개 활성</item>
+  </plurals>
   <string name="agent_activity_subtext_threads">스레드 %1$d개</string>
 </resources>

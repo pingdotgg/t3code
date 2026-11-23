@@ -29,11 +29,23 @@
   <string name="agent_activity_summary_default">Agent activity</string>
   <string name="agent_activity_summary_one_needs_you">1 needs you</string>
   <string name="agent_activity_summary_many_need_you">%1$d need you</string>
-  <string name="agent_activity_summary_failed">%1$d failed</string>
-  <string name="agent_activity_summary_working">%1$d working</string>
-  <string name="agent_activity_summary_finished_failed">Finished, %1$d failed</string>
+  <plurals name="agent_activity_summary_failed">
+    <item quantity="one">%1$d failed</item>
+    <item quantity="other">%1$d failed</item>
+  </plurals>
+  <plurals name="agent_activity_summary_working">
+    <item quantity="one">%1$d working</item>
+    <item quantity="other">%1$d working</item>
+  </plurals>
+  <plurals name="agent_activity_summary_finished_failed">
+    <item quantity="one">Finished, %1$d failed</item>
+    <item quantity="other">Finished, %1$d failed</item>
+  </plurals>
   <string name="agent_activity_summary_all_finished">All finished</string>
 
-  <string name="agent_activity_subtext_active">%1$d active</string>
+  <plurals name="agent_activity_subtext_active">
+    <item quantity="one">%1$d active</item>
+    <item quantity="other">%1$d active</item>
+  </plurals>
   <string name="agent_activity_subtext_threads">%1$d threads</string>
 </resources>

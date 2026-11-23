@@ -118,6 +118,9 @@ internal class ActivityPresentation(
     .takeIf { it.isNotEmpty() }?.joinToString("\n")
     ?: data["activity_body"].orEmpty().take(240)
 
+  private fun quantity(id: Int, count: Int) =
+    context.resources.getQuantityString(id, count, count)
+
   val summary = when {
     hero == null -> {
       val title = data["activity_title"]?.takeIf { it.isNotBlank() }?.take(120)
@@ -132,10 +135,10 @@ internal class ActivityPresentation(
     attentionCount > 1 ->
       context.getString(R.string.agent_activity_summary_many_need_you, attentionCount)
     activeCount > 0 && failedCount > 0 ->
-      context.getString(R.string.agent_activity_summary_failed, failedCount)
-    activeCount > 0 -> context.getString(R.string.agent_activity_summary_working, activeCount)
+      quantity(R.plurals.agent_activity_summary_failed, failedCount)
+    activeCount > 0 -> quantity(R.plurals.agent_activity_summary_working, activeCount)
     failedCount > 0 ->
-      context.getString(R.string.agent_activity_summary_finished_failed, failedCount)
+      quantity(R.plurals.agent_activity_summary_finished_failed, failedCount)
     else -> context.getString(R.string.agent_activity_summary_all_finished)
   }
 
@@ -178,7 +181,7 @@ internal class ActivityPresentation(
         listOfNotNull(
           hero!!.project.takeIf { singleProject && it.isNotBlank() },
           if (activeCount > 0) {
-            this.context.getString(R.string.agent_activity_subtext_active, activeCount)
+            quantity(R.plurals.agent_activity_subtext_active, activeCount)
           } else {
             this.context.getString(R.string.agent_activity_subtext_threads, threadCount)
           }
