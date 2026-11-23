@@ -383,8 +383,44 @@ fn a_stale_open_cancels_nothing() {
     newer.take_ownership(None).unwrap();
     enqueue(&mut newer, &[start("t1", "r1")]);
     assert_eq!(
-        t.1.cancel_unsettled_effects().unwrap_err(),
+        t.1.reconcile_after_process_loss(true).unwrap_err(),
         crate::store::NOT_OWNER
     );
     assert_eq!(newer.effect_status(1).unwrap().as_deref(), Some("pending"));
+}
+
+/// `reconcileAfterProcessLoss`: process-bound rows are cancelled whether pending or running;
+/// a running replay-safe row is pending again, and a pending one stays.
+#[test]
+fn process_loss_cancels_process_bound_rows_and_requeues_the_rest() {
+    let mut t = TempStore::new("reconcile");
+    enqueue(&mut t.1, &[start("t1", "r1"), close("t2"), close("t3")]);
+    t.1.raw()
+        .execute(
+            "UPDATE effect_outbox SET status = 'running' WHERE id IN (1, 2)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(t.1.reconcile_after_process_loss(true).unwrap(), (1, 1));
+    let statuses: Vec<_> = (1..=3)
+        .map(|id| t.1.effect_status(id).unwrap().unwrap())
+        .collect();
+    assert_eq!(statuses, ["cancelled", "pending", "pending"]);
+}
+
+/// The restart leaves a `waiting` run's capture to a capture row the previous process left.
+#[test]
+fn a_queued_capture_is_found_by_its_run() {
+    let mut t = TempStore::new("capture-queued");
+    enqueue(
+        &mut t.1,
+        &[Effect::CaptureCheckpoint {
+            thread_id: "t1".into(),
+            run_id: "run:t1:1".into(),
+        }],
+    );
+    let tx = t.1.tx().unwrap();
+    assert!(tx.capture_queued("run:t1:1").unwrap());
+    assert!(!tx.capture_queued("run:t1:2").unwrap());
+    tx.rollback();
 }

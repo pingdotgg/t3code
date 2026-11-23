@@ -4,8 +4,11 @@
 //! - A run the provider had (`running`) ends `cancelled` with a "Server restarted" notice, and a
 //!   continuation message asks the agent to go on in the same provider thread, so it keeps its
 //!   context. At most 3 continuations chain within 5 minutes; a fourth restart only cancels.
-//! - A run the provider never took (`preparing`, `starting`) starts again: its message was not
-//!   delivered, so sending it is not a repeat.
+//! - A run the provider never took (`preparing`, `starting`, or `running` with no provider turn
+//!   of its attempts, T3's `rewindUnacceptedRuns`) starts again: its message was not delivered,
+//!   so sending it is not a repeat. Its earlier `provider-turn.start` row was cancelled as
+//!   process-bound (`outbox.rs`).
+//! - A `checkpoint.capture` row the previous process left runs again (replay-safe).
 //! - A run waiting on an approval or a question ends `cancelled` with no continuation: the
 //!   prompt died with the process and only the user can answer it again.
 //! - A run left `waiting` (its provider turn ended, its checkpoint was not taken) is captured
@@ -78,16 +81,46 @@ fn may_continue(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> 
     Ok(run["status"] == "running" && !resting && !pending && resumable)
 }
 
+/// `rewindUnacceptedRuns`: a run is marked `running` before its provider takes the prompt, so
+/// only a provider turn of one of its attempts proves the prompt arrived. Without one, the run
+/// never started, and its message goes out again instead of a continuation.
+fn never_delivered(tx: &Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<bool> {
+    let started =
+        run["status"] == "running" || (run["status"] == "starting" && !run["startedAt"].is_null());
+    if !started || run["activeAttemptId"].is_null() {
+        return Ok(false);
+    }
+    let run_id = run["id"].as_str().unwrap_or_default();
+    for attempt in tx.entities_where(thread_id, "attempts", "runId", run_id)? {
+        let attempt_id = attempt["id"].as_str().unwrap_or_default();
+        if !tx
+            .entities_where(thread_id, "providerTurns", "runAttemptId", attempt_id)?
+            .is_empty()
+        {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Recovers one live run at start. Returns the effects to run once the runtime is up.
 pub(crate) fn recover(tx: &mut Tx<'_>, thread_id: &str, run: &Value) -> StoreResult<Vec<Effect>> {
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
-    // The provider finished; only the checkpoint capture was cut off.
+    // The provider finished; only the checkpoint capture was cut off. A capture row the
+    // previous process left is replay-safe and runs again by itself.
     if run["status"] == "waiting" {
+        if tx.capture_queued(&run_id)? {
+            return Ok(vec![]);
+        }
         return Ok(vec![crate::checkpoint::resume_capture(thread_id, run)]);
     }
-    if matches!(run["status"].as_str(), Some("preparing" | "starting")) {
+    let rewound = never_delivered(tx, thread_id, run)?;
+    if rewound || matches!(run["status"].as_str(), Some("preparing" | "starting")) {
         let mut again = run.clone();
         again["status"] = json!("starting");
+        if rewound {
+            again["startedAt"] = Value::Null;
+        }
         tx.append(Draft::new(thread_id, "run.updated", again).run(Some(&run_id)))?;
         return Ok(vec![Effect::StartTurn {
             thread_id: thread_id.to_owned(),

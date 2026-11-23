@@ -10,8 +10,8 @@
 //! the start it abandons still runs, where T3 signals the running effect's cancellation instead,
 //! and `RemoteTaskChanged` only wakes a follower.
 //!
-//! What a server process left `pending` or `running` when it stopped is cancelled at the next
-//! start ([`Store::cancel_unsettled_effects`]); the restart decides again from the stored runs.
+//! What a server process left `pending` or `running` when it stopped is reconciled at the next
+//! start (`reconcileAfterProcessLoss`): see [`PROCESS_BOUND`].
 
 use rusqlite::{Connection, params};
 
@@ -71,6 +71,24 @@ impl Lane {
         }
     }
 }
+
+/// `PROCESS_BOUND_EFFECT_TYPES`: effects that act on a provider session of the process that
+/// made them. After a process loss they are cancelled, and the restart decides again from the
+/// stored runs (`restart.rs`). Every other effect is replay-safe and runs again
+/// (`REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS`).
+pub(crate) const PROCESS_BOUND: [&str; 7] = [
+    "provider-turn.start",
+    "provider-turn.steer",
+    "provider-turn.interrupt",
+    "provider-turn.abandon-start",
+    "provider-turn.stop-background-work",
+    "runtime-request.respond",
+    "provider-session.apply-model-selection",
+];
+
+/// Rows the restart writes again from another journal, so a process loss cancels them too:
+/// `pending_rollbacks` keeps each rollback's phase, and the restart enqueues it from there.
+const REWRITTEN_AT_START: [&str; 1] = ["provider-thread.rollback"];
 
 impl Effect {
     /// The row's `effect_type`: T3's name where T3 has the effect.
@@ -194,6 +212,19 @@ ORDER BY candidate.id
 LIMIT ?1";
 
 impl Tx<'_> {
+    /// An unsettled `checkpoint.capture` row for this run: the restart leaves the capture to it.
+    pub(crate) fn capture_queued(&self, run_id: &str) -> StoreResult<bool> {
+        self.sql()
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM effect_outbox
+                 WHERE effect_type = 'checkpoint.capture' AND status IN ('pending', 'running')
+                   AND json_extract(payload, '$.runId') = ?1)",
+                [run_id],
+                |row| row.get(0),
+            )
+            .map_err(err)
+    }
+
     /// Writes `effects` to the outbox in this transaction. The worker hears of them once it
     /// commits; a rolled back write leaves nothing.
     pub(crate) fn enqueue(
@@ -355,12 +386,29 @@ impl Store {
             .map_err(err)
     }
 
-    /// Cancels what a previous process left `pending` or `running`, at start, before anything
-    /// is claimed. Returns how many rows it cancelled. The ownership check and the cancel are
-    /// one transaction: an engine whose open a newer one overtook gets [`NOT_OWNER`] and must
-    /// not go on, or it would cancel the newer engine's rows.
-    pub(crate) fn cancel_unsettled_effects(&self) -> StoreResult<usize> {
+    /// `reconcileAfterProcessLoss`, at start, before anything is claimed. A process-bound
+    /// row the previous process left unsettled is cancelled; a replay-safe row it was running
+    /// becomes pending again and runs once more. With `replay` off (an inert copy, no
+    /// recovery) every unsettled row is cancelled. Returns `(requeued, cancelled)`.
+    ///
+    /// The ownership check and the writes are one transaction: an engine whose open a newer
+    /// one overtook gets [`NOT_OWNER`] and must not go on, or it would cancel the newer
+    /// engine's rows.
+    pub(crate) fn reconcile_after_process_loss(&self, replay: bool) -> StoreResult<(usize, usize)> {
         let now = self.now_iso();
+        let bound = if replay {
+            format!(
+                "effect_type IN ({})",
+                PROCESS_BOUND
+                    .iter()
+                    .chain(&REWRITTEN_AT_START)
+                    .map(|t| format!("'{t}'"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            "1 = 1".to_owned()
+        };
         let tx = rusqlite::Transaction::new_unchecked(
             self.raw(),
             rusqlite::TransactionBehavior::Immediate,
@@ -371,15 +419,26 @@ impl Store {
         }
         let cancelled = tx
             .execute(
+                &format!(
+                    "UPDATE effect_outbox
+                     SET status = 'cancelled', completed_at = ?1, updated_at = ?1,
+                         last_error = 'Cancelled because the server process ended before the effect completed.'
+                     WHERE status IN ('pending', 'running') AND {bound}"
+                ),
+                [&now],
+            )
+            .map_err(err)?;
+        let requeued = tx
+            .execute(
                 "UPDATE effect_outbox
-                 SET status = 'cancelled', completed_at = ?1, updated_at = ?1,
-                     last_error = 'Cancelled because the server process ended before the effect completed.'
-                 WHERE status IN ('pending', 'running')",
-                [now],
+                 SET status = 'pending', updated_at = ?1,
+                     last_error = 'Requeued after the previous server process ended.'
+                 WHERE status = 'running'",
+                [&now],
             )
             .map_err(err)?;
         tx.commit().map_err(err)?;
-        Ok(cancelled)
+        Ok((requeued, cancelled))
     }
 
     /// The status of an outbox row.

@@ -150,7 +150,12 @@ The T3 sources are under `apps/server/src/orchestration-v2/` unless a path says 
   lose them. One worker (`effect_worker.rs`, T3's `EffectWorker.ts`) claims and runs them. A
   thread's effects run one at a time in commit order; titles have their own lane, as in T3;
   `AbandonStart` and `RemoteTaskChanged` run at once. What a stopped process left unsettled
-  is cancelled at the next start, and the restart decides again from the stored runs.
+  is reconciled at the next start, as T3's `reconcileAfterProcessLoss`: process-bound effects
+  (turn start, steer, Stop, answers, model changes) are cancelled and the restart decides again
+  from the stored runs; replay-safe ones (capture, session close, cleanups, titles, host
+  notices) run again. A rollback row is cancelled too, and the restart enqueues it again from
+  `pending_rollbacks` by its phase. A `running` run with no provider turn for its attempt
+  never got its prompt, so the restart sends it again (`rewindUnacceptedRuns`).
   Settled rows are pruned after 7 days. Deviations from T3: one claim loop instead of 4 slots
   (one runtime thread), and no worker retries (a planned follow-up).
 - **Busy thread.** While a run is active, a message queues (`queue_after_active`, or any start)

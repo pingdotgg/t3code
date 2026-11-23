@@ -366,9 +366,10 @@ impl SqliteEngine {
             .attention
             .then(|| Arc::new(tokio::sync::Notify::new()));
         store.attention = attention.clone();
-        // What the previous process left unsettled is cancelled; the restart below decides
-        // again from the stored runs and rollbacks.
-        store.cancel_unsettled_effects()?;
+        // T3's `reconcileAfterProcessLoss`: what the previous process left unsettled is
+        // cancelled when it was process-bound and runs again when it is replay-safe. An inert
+        // copy cancels everything.
+        store.reconcile_after_process_loss(config.recover_runs)?;
         let effects_wake = store.effects_wake.clone();
         let (unfinished, pending_rollbacks) = if config.recover_runs {
             (store.unfinished_runs()?, store.pending_rollbacks()?)
