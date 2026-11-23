@@ -6,6 +6,7 @@ import {
   ProviderSessionId,
   ThreadId,
 } from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
@@ -130,18 +131,21 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
         };
         const original = (yield* Effect.promise(() => vi.importActual<typeof sdk>("./sdk.ts")))
           .createMuseSdkHostEffect;
-        using _hostEffect = vi
+        using hostEffect = vi
           .spyOn(sdk, "createMuseSdkHostEffect")
           .mockImplementation((options) => original(options, createHost));
         using _host = vi.spyOn(sdk, "createMuseSdkHost").mockImplementation(createHost);
         const instanceId = ProviderInstanceId.make("muse-test");
+        const hostEnvironment: NodeJS.ProcessEnv = { ...process.env };
         const instance = yield* MuseDriver.create({
           instanceId,
           displayName: "Muse test",
           enabled: true,
           environment: [],
           config: { ...MuseDriver.defaultConfig(), binaryPath: process.execPath },
-        });
+        }).pipe(Effect.provideService(HostProcess.Environment, hostEnvironment));
+        // Desktop shell discovery patches the host environment after the driver is built.
+        hostEnvironment.HTTPS_PROXY = "http://proxy.corp:8080";
         yield* Stream.take(instance.snapshot.streamChanges, 1).pipe(Stream.runDrain);
         expect((yield* instance.snapshot.getSnapshot).status).toBe("ready");
         expect((yield* instance.snapshot.getSnapshot).usageLimits).toBeUndefined();
@@ -171,6 +175,9 @@ it.layer(layerTest)("MuseDriver usage", (it) => {
             });
             return { fake: hosts.at(-1)!, events };
           }),
+        );
+        expect(hostEffect.mock.calls.at(-1)?.[0].environment?.HTTPS_PROXY).toBe(
+          "http://proxy.corp:8080",
         );
         const reading = (observedAtMs: number, usedPercent: number, tier: string) => ({
           window: { usedPercent, windowDurationMins: 300, resetsAtMs: 1791465557000 },

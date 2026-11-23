@@ -244,7 +244,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     readonly createHost?: typeof createMuseSdkHost;
   } = {},
 ) {
-  const { environment, modelCatalog = Effect.succeed([]), createHost } = options;
+  const { modelCatalog = Effect.succeed([]), createHost } = options;
   const fileSystem = yield* FileSystem.FileSystem;
   const runMuseJson = Effect.fn("runMuseJson")(function* <S extends Schema.Top>(input: {
     operation: Operation;
@@ -277,6 +277,7 @@ export const makeMuseTextGeneration = Effect.fn("makeMuseTextGeneration")(functi
     const response = yield* Effect.gen(function* () {
       // Metadata requests already include their context and do not need checkout configuration.
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-muse-text-" });
+      const environment = options.environment;
       const host = yield* Effect.acquireRelease(
         createMuseSdkHostEffect(
           {

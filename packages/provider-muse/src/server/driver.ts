@@ -87,11 +87,21 @@ export const MuseDriver: ProviderDriver<
     const { cwd } = host.paths;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
     const hostEnvironment = yield* HostProcess.Environment;
+    const windows = (yield* HostProcess.Platform) === "win32";
+    const instanceEnvironment = yield* mergeProviderInstanceEnvironment(environment, {});
+    const instanceNames = new Set(Object.keys(instanceEnvironment));
+    // Read per launch: desktop shell discovery fills the host environment after drivers are built.
     // Drop an inherited META_API_KEY so Muse uses its login; an instance value still wins.
-    const processEnvironment = yield* mergeProviderInstanceEnvironment(
-      environment,
-      makeMuseEnvironment(hostEnvironment),
-    );
+    const processEnvironment = (): NodeJS.ProcessEnv => {
+      const inherited = makeMuseEnvironment(hostEnvironment);
+      // Windows reads names without regard to case; the instance value replaces any spelling.
+      if (windows) {
+        for (const name of Object.keys(inherited)) {
+          if (instanceNames.has(name.toUpperCase())) delete inherited[name];
+        }
+      }
+      return { ...inherited, ...instanceEnvironment };
+    };
     const effectiveConfig = {
       ...config,
       enabled,
@@ -130,10 +140,12 @@ export const MuseDriver: ProviderDriver<
       );
     const snapshotSettings = yield* makeProviderSnapshotSettingsSource(effectiveConfig);
     const resolveInstallation = yield* makeCachedProviderMaintenanceResolution(
-      resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
-        binaryPath: effectiveConfig.binaryPath,
-        env: processEnvironment,
-      }).pipe(
+      Effect.suspend(() =>
+        resolveProviderMaintenanceCapabilitiesEffect(museMaintenance, {
+          binaryPath: effectiveConfig.binaryPath,
+          env: processEnvironment(),
+        }),
+      ).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.provideService(Path.Path, path),
@@ -147,7 +159,7 @@ export const MuseDriver: ProviderDriver<
       // and needs the native target version to verify that the command actually upgraded.
       const latestVersion =
         options?.fresh && !capabilities.lookupLatestVersion
-          ? yield* latestMuseVersion(processEnvironment, { fresh: true }).pipe(
+          ? yield* latestMuseVersion(processEnvironment(), { fresh: true }).pipe(
               Effect.provideService(HttpClient.HttpClient, httpClient),
               Effect.provideService(ProviderLatestVersions.ProviderLatestVersions, latestVersions),
             )
@@ -170,7 +182,9 @@ export const MuseDriver: ProviderDriver<
       haveSettingsChanged: haveProviderSnapshotSettingsChanged,
       initialSnapshot: (settings) =>
         makePendingMuseProvider(settings.provider).pipe(Effect.map(stampIdentity)),
-      checkProvider: checkMuseProviderStatus(effectiveConfig, processEnvironment, cwd).pipe(
+      checkProvider: Effect.suspend(() =>
+        checkMuseProviderStatus(effectiveConfig, processEnvironment(), cwd),
+      ).pipe(
         Effect.map(stampIdentity),
         Effect.flatMap(withLatestUsage),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -184,7 +198,7 @@ export const MuseDriver: ProviderDriver<
               snapshot: currentSnapshot,
               maintenanceCapabilities,
               enableProviderUpdateChecks: settings.enableProviderUpdateChecks,
-              environment: processEnvironment,
+              environment: processEnvironment(),
             }),
           ),
           Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -206,7 +220,9 @@ export const MuseDriver: ProviderDriver<
     const orchestrationAdapter = yield* makeMuseAdapterV2({
       instanceId,
       settings: effectiveConfig,
-      environment: processEnvironment,
+      get environment() {
+        return processEnvironment();
+      },
       modelCatalog,
       ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
       continuationRequests,
@@ -221,7 +237,9 @@ export const MuseDriver: ProviderDriver<
         ),
     });
     const textGeneration = yield* makeMuseTextGeneration(effectiveConfig, {
-      environment: processEnvironment,
+      get environment() {
+        return processEnvironment();
+      },
       modelCatalog,
     });
     return {
