@@ -790,6 +790,11 @@ interface InboxMessageSummary {
   readonly content: string | undefined;
 }
 
+interface InboxMessagesResult {
+  readonly messages: ReadonlyArray<InboxMessageSummary>;
+  readonly incomplete: boolean;
+}
+
 const parseTimestampMs = (timestamp: string | undefined): number | undefined => {
   if (timestamp === undefined) return undefined;
   const ms = Date.parse(timestamp);
@@ -799,28 +804,39 @@ const parseTimestampMs = (timestamp: string | undefined): number | undefined => 
 async function readMessageSummaries(
   profileRoot: string,
   conversationId: string,
-): Promise<ReadonlyArray<InboxMessageSummary>> {
+): Promise<InboxMessagesResult> {
   const directory = ["antigravity-acp", "brain", conversationId, ".system_generated", "messages"];
   const inbox = await antigravityManagedPath(profileRoot, directory, "directory");
-  if (inbox === undefined) return [];
-  const names = (await NodeFSP.readdir(inbox.path)).filter(
-    (name) => name.endsWith(".json") && name !== "read.json",
-  );
-  if (names.length > MAX_MESSAGE_FILES) throw new Error("Too many messages");
-  return Promise.all(
-    names.map(async (name) => {
-      const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
-      if (file === undefined || file.info.size > MAX_STEP_BYTES) throw new Error("Unreadable");
-      const decoded = Option.getOrThrow(
-        decodeInboxMessageSummary(await NodeFSP.readFile(file.path, "utf8")),
-      );
-      return {
-        sender: decoded.sender,
-        timestampMs: parseTimestampMs(decoded.timestamp),
-        content: decoded.content,
-      };
-    }),
-  );
+  if (inbox === undefined) return { messages: [], incomplete: false };
+  const entries = await NodeFSP.readdir(inbox.path).catch(() => undefined);
+  if (entries === undefined) return { messages: [], incomplete: true };
+  const names = entries.filter((name) => name.endsWith(".json") && name !== "read.json");
+  if (names.length > MAX_MESSAGE_FILES) return { messages: [], incomplete: true };
+  const messages: Array<InboxMessageSummary> = [];
+  let incomplete = false;
+  for (const name of names) {
+    const file = await antigravityManagedPath(profileRoot, [...directory, name], "file");
+    if (file === undefined || file.info.size > MAX_STEP_BYTES) {
+      incomplete = true;
+      continue;
+    }
+    const raw = await NodeFSP.readFile(file.path, "utf8").catch(() => undefined);
+    if (raw === undefined) {
+      incomplete = true;
+      continue;
+    }
+    const decoded = decodeInboxMessageSummary(raw);
+    if (Option.isNone(decoded)) {
+      incomplete = true;
+      continue;
+    }
+    messages.push({
+      sender: decoded.value.sender,
+      timestampMs: parseTimestampMs(decoded.value.timestamp),
+      content: decoded.value.content,
+    });
+  }
+  return { messages, incomplete };
 }
 
 async function hasUnansweredWakingTranscriptStep(
@@ -874,14 +890,22 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
   const read = async (): Promise<boolean> => {
     const profileRoot = await antigravityProfileRoot(input.profileDirectory);
     if (profileRoot === undefined) return false;
+    let unknownState = false;
     if (await hasUnreadWakingInboxMessage(profileRoot, input.sessionId)) return true;
-    if (await hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) return true;
+    try {
+      if (await hasUnansweredWakingTranscriptStep(profileRoot, input.sessionId)) return true;
+    } catch {
+      unknownState = true;
+    }
 
-    const parentMessages = await readMessageSummaries(profileRoot, input.sessionId);
+    const parentInbox = await readMessageSummaries(profileRoot, input.sessionId);
+    if (parentInbox.incomplete) {
+      unknownState = true;
+    }
     let latestSystemStopMs: number | undefined;
     const reportedSenders = new Set<string>();
     const latestReportMsBySender = new Map<string, number>();
-    for (const msg of parentMessages) {
+    for (const msg of parentInbox.messages) {
       reportedSenders.add(msg.sender);
       if (msg.timestampMs !== undefined) {
         const previousReportMs = latestReportMsBySender.get(msg.sender);
@@ -901,10 +925,15 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
       ["antigravity-acp", "brain", input.sessionId, ".system_generated", "swarm", "members.json"],
       "file",
     );
-    const swarm =
+    const rawSwarm =
       swarmFile !== undefined && swarmFile.info.size <= MAX_STEP_BYTES
-        ? Option.getOrUndefined(decodeSwarmMembers(await NodeFSP.readFile(swarmFile.path, "utf8")))
+        ? await NodeFSP.readFile(swarmFile.path, "utf8").catch(() => undefined)
         : undefined;
+    const swarm =
+      rawSwarm === undefined ? undefined : Option.getOrUndefined(decodeSwarmMembers(rawSwarm));
+    if (swarmFile !== undefined && swarm === undefined) {
+      unknownState = true;
+    }
     const swarmChildIds = new Set<string>();
     for (const member of Object.values(swarm?.members ?? {})) {
       if (member.conversation_id !== undefined) {
@@ -926,9 +955,13 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
         if (member.conversation_id === undefined || !NATIVE_ID.test(member.conversation_id)) {
           continue;
         }
-        const childMessages = await readMessageSummaries(profileRoot, member.conversation_id);
+        const childInbox = await readMessageSummaries(profileRoot, member.conversation_id);
+        if (childInbox.incomplete) {
+          unknownState = true;
+          continue;
+        }
         let latestChildMsgMs: number | undefined;
-        for (const msg of childMessages) {
+        for (const msg of childInbox.messages) {
           if (
             msg.timestampMs !== undefined &&
             (latestChildMsgMs === undefined || msg.timestampMs > latestChildMsgMs)
@@ -951,46 +984,64 @@ export const readAntigravityHasPendingBackgroundWork = Effect.fn(
       }
     }
 
-    const childIds = await listDetachedChildIds(profileRoot, input.sessionId);
-    if (childIds !== undefined) {
-      for (const childId of childIds) {
-        if (swarmChildIds.has(childId)) continue;
-        const subagent = await readDetachedSubagent(profileRoot, input.sessionId, childId);
-        if (subagent === undefined || subagent.state === "SUBAGENT_STATE_KILLED") continue;
-        const childMessages = await readMessageSummaries(profileRoot, childId);
-        let latestPromptFromParentMs: number | undefined;
-        for (const msg of childMessages) {
-          if (
-            msg.sender === input.sessionId &&
-            msg.timestampMs !== undefined &&
-            (latestPromptFromParentMs === undefined || msg.timestampMs > latestPromptFromParentMs)
-          ) {
-            latestPromptFromParentMs = msg.timestampMs;
+    const subagentsDir = await antigravityManagedPath(
+      profileRoot,
+      ["antigravity-acp", "brain", input.sessionId, ".system_generated", "subagents"],
+      "directory",
+    );
+    if (subagentsDir !== undefined) {
+      const childIds = await listDetachedChildIds(profileRoot, input.sessionId);
+      if (childIds === undefined) {
+        unknownState = true;
+      } else {
+        for (const childId of childIds) {
+          if (swarmChildIds.has(childId)) continue;
+          const subagent = await readDetachedSubagent(profileRoot, input.sessionId, childId);
+          if (subagent === undefined) {
+            unknownState = true;
+            continue;
           }
-        }
-        if (
-          latestSystemStopMs !== undefined &&
-          (latestPromptFromParentMs === undefined || latestPromptFromParentMs <= latestSystemStopMs)
-        ) {
-          continue;
-        }
-        if (!reportedSenders.has(childId)) return true;
-        const latestReportMs = latestReportMsBySender.get(childId);
-        if (
-          latestPromptFromParentMs !== undefined &&
-          (latestReportMs === undefined || latestPromptFromParentMs > latestReportMs)
-        ) {
-          return true;
+          if (subagent.state === "SUBAGENT_STATE_KILLED") continue;
+          const childInbox = await readMessageSummaries(profileRoot, childId);
+          if (childInbox.incomplete) {
+            unknownState = true;
+            continue;
+          }
+          let latestPromptFromParentMs: number | undefined;
+          for (const msg of childInbox.messages) {
+            if (
+              msg.sender === input.sessionId &&
+              msg.timestampMs !== undefined &&
+              (latestPromptFromParentMs === undefined || msg.timestampMs > latestPromptFromParentMs)
+            ) {
+              latestPromptFromParentMs = msg.timestampMs;
+            }
+          }
+          if (
+            latestSystemStopMs !== undefined &&
+            (latestPromptFromParentMs === undefined ||
+              latestPromptFromParentMs <= latestSystemStopMs)
+          ) {
+            continue;
+          }
+          if (!reportedSenders.has(childId)) return true;
+          const latestReportMs = latestReportMsBySender.get(childId);
+          if (
+            latestPromptFromParentMs !== undefined &&
+            (latestReportMs === undefined || latestPromptFromParentMs > latestReportMs)
+          ) {
+            return true;
+          }
         }
       }
     }
 
-    return false;
+    return unknownState;
   };
   return yield* Effect.tryPromise({
     try: read,
     catch: (cause) => new AntigravityChildWorkReadError({ cause }),
-  }).pipe(Effect.orElseSucceed(() => false));
+  }).pipe(Effect.orElseSucceed(() => true));
 });
 
 /**

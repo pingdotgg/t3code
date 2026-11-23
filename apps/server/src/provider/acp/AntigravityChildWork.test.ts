@@ -718,6 +718,10 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
         const workerB = "22222222-2222-2222-2222-222222222222";
         const detachedId = "33333333-3333-3333-3333-333333333333";
 
+        // Clean empty profile stays releasable.
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
+
         // Coordinator-only or killed swarm returns false.
         yield* write(ROOT, ["swarm", "members.json"], {
           members: {
@@ -878,6 +882,51 @@ it.layer(NodeServices.layer)("readAntigravityChildWork", (it) => {
           timestamp: "2026-11-23T01:28:00Z",
         });
         expect(yield* hasPending("idle_release")).toBe(true);
+
+        // Mark wake read, then verify a corrupt parent message neither masks a working swarm nor
+        // reports "no work" on its own.
+        yield* write(ROOT, ["messages", "read.json"], {
+          "stop-1": true,
+          "stop-2": true,
+          "report-1": true,
+          "wake-unread": true,
+        });
+        yield* write(ROOT, ["messages", "corrupt.json"], "{truncated");
+        yield* write(ROOT, ["swarm", "members.json"], {
+          members: {
+            "worker-working": {
+              conversation_id: workerA,
+              role: "worker",
+              phase: "RUNNING",
+              wake_mode: "working",
+              killed: false,
+            },
+          },
+        });
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        // Remove swarm: unreadable parent inbox still conservatively returns true until removed.
+        yield* fs.remove(
+          path.join(profile, "antigravity-acp", "brain", ROOT, ".system_generated", "swarm"),
+          { recursive: true },
+        );
+        expect(yield* hasPending("idle_release")).toBe(true);
+        expect(yield* hasPending("session_replace")).toBe(true);
+
+        yield* fs.remove(
+          path.join(
+            profile,
+            "antigravity-acp",
+            "brain",
+            ROOT,
+            ".system_generated",
+            "messages",
+            "corrupt.json",
+          ),
+        );
+        expect(yield* hasPending("idle_release")).toBe(false);
+        expect(yield* hasPending("session_replace")).toBe(false);
       }),
   );
 });

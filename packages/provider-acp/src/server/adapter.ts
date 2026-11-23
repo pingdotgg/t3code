@@ -8004,6 +8004,10 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
           commitSessionState: (
             replacement: AcpSessionRuntime.AcpSessionRuntimeStartResult,
           ) => Effect.Effect<void>,
+          beforeCommit?: Effect.Effect<
+            void,
+            EffectAcpErrors.AcpError | ProviderAdapter.ProviderAdapterProtocolError
+          >,
         ) {
           const previousScope = runtimeScope;
           const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
@@ -8088,6 +8092,13 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               Effect.uninterruptible(
                 Effect.gen(function* () {
                   yield* awaitAdmittedNativeResponses;
+                  if (beforeCommit !== undefined) {
+                    yield* beforeCommit.pipe(
+                      Effect.tapError(() =>
+                        quarantineNativeTransportAtGeneration(replacementGeneration),
+                      ),
+                    );
+                  }
                   yield* wireAcpRuntimeHandlers(
                     replacementExit.value.replacementRuntime,
                     replacementGeneration,
@@ -10406,26 +10417,34 @@ export const makeAcpAdapterV2 = Effect.fn("makeAcpAdapterV2")(function* (
               return yield* runtimeTransitionPermit.withPermit(
                 Effect.gen(function* () {
                   if (threadInput.forceNewNativeThread) {
-                    const currentTurn = yield* Ref.get(activeTurn);
-                    const pendingWork = canReportBackgroundWork
-                      ? yield* checkPendingBackgroundWork("session_replace")
-                      : false;
-                    if (currentTurn !== null || pendingWork)
-                      return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                        driver,
-                        detail:
-                          "Cannot replace ACP session while a turn or background work is active",
-                      });
+                    const assertCanReplaceSession = Effect.gen(function* () {
+                      const currentTurn = yield* Ref.get(activeTurn);
+                      const pendingWork = canReportBackgroundWork
+                        ? yield* checkPendingBackgroundWork("session_replace")
+                        : false;
+                      if (currentTurn !== null || pendingWork) {
+                        return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                          driver,
+                          detail:
+                            "Cannot replace ACP session while a turn or background work is active",
+                        });
+                      }
+                    });
+                    yield* assertCanReplaceSession;
                     yield* awaitRuntimeTeardown();
                     const previousItemIdentityVersion = itemIdentityVersion;
+                    const previousPendingTerminalEnvironment = pendingTerminalEnvironment;
                     itemIdentityVersion = 2;
                     prepareTerminalEnvironment(yield* readMcpContext(threadInput.threadId));
-                    yield* startReplacementAcpRuntime(threadInput.threadId, (candidate) =>
-                      commitReplacementSession(threadInput.threadId, candidate),
+                    yield* startReplacementAcpRuntime(
+                      threadInput.threadId,
+                      (candidate) => commitReplacementSession(threadInput.threadId, candidate),
+                      assertCanReplaceSession,
                     ).pipe(
                       Effect.tapError(() =>
                         Effect.sync(() => {
                           itemIdentityVersion = previousItemIdentityVersion;
+                          pendingTerminalEnvironment = previousPendingTerminalEnvironment;
                         }),
                       ),
                     );
