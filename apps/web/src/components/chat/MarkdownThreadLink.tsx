@@ -138,6 +138,7 @@ export function MarkdownThreadLink(props: {
       record={{ ...ref, title }}
       projectId={resolved?.metadata.projectId ?? null}
       copyMarkdown={formatHostedThreadLink(ref, title, configuredHostedAppUrl())}
+      current={ref.environmentId === panelRef?.environmentId && ref.threadId === panelRef.threadId}
     />
   );
 }

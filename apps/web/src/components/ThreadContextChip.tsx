@@ -20,6 +20,8 @@ export function ThreadContextChip(props: {
   projectId?: ProjectId | null;
   copyMarkdown?: string;
   unreadable?: boolean;
+  /** The thread already open, where a link would go nowhere. */
+  current?: boolean;
 }) {
   const gt = useGT();
   const { environmentId, threadId } = props.record;
@@ -45,23 +47,25 @@ export function ThreadContextChip(props: {
             kind="thread"
             {...(props.unreadable ? { state: "invalid" as const } : {})}
             render={
-              <Link
-                to="/$environmentId/$threadId"
-                params={{ environmentId, threadId }}
-                onClick={(event) => {
-                  if (shell?.lineage.sideChat !== true || event.button !== 0) return;
-                  if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                  // A side chat opens as a tab beside its parent, not as its own page.
-                  event.preventDefault();
-                  void navigate({
-                    to: "/$environmentId/$threadId",
-                    params: buildThreadRouteParams(
-                      resolveThreadOpenRoute({ environmentId, threadId }, shell),
-                    ),
-                  });
-                }}
-                draggable={false}
-              />
+              props.current ? undefined : (
+                <Link
+                  to="/$environmentId/$threadId"
+                  params={{ environmentId, threadId }}
+                  onClick={(event) => {
+                    if (shell?.lineage.sideChat !== true || event.button !== 0) return;
+                    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                    // A side chat opens as a tab beside its parent, not as its own page.
+                    event.preventDefault();
+                    void navigate({
+                      to: "/$environmentId/$threadId",
+                      params: buildThreadRouteParams(
+                        resolveThreadOpenRoute({ environmentId, threadId }, shell),
+                      ),
+                    });
+                  }}
+                  draggable={false}
+                />
+              )
             }
             aria-label={gt("Thread, {title}", { title })}
             data-markdown-copy={props.copyMarkdown}
