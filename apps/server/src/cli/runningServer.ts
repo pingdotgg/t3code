@@ -102,7 +102,7 @@ export const changeState = Effect.fn("RunningServer.changeState")(function* <A, 
     ifServerRuns: (error: ServerOwnership.ServerAlreadyRunningError) => Effect.Effect<never, E3>,
   ) =>
     ServerOwnership.acquireServerOwnership(serverRuntimeStatePath).pipe(
-      Effect.provide(ProcessRunner.layer),
+      Effect.provide(ProcessRunner.layerWithSpawner),
       Effect.catchTags({ ServerAlreadyRunningError: ifServerRuns }),
       Effect.andThen(locally),
       // The lock proves the recorded server is gone; drop its record once the change lands.

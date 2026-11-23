@@ -154,6 +154,22 @@ it.effect.each([
     }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
 
+// Forking the server for every git call stalls its event loop in proportion to its RSS.
+it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "runs git from the process launcher instead of forking the server",
+  () =>
+    Effect.gen(function* () {
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const result = yield* driver.execute({
+        operation: "GitVcsDriver.test.parentPid",
+        cwd: process.cwd(),
+        args: ["-c", "alias.parent-pid=!awk '{print $4}' /proc/$PPID/stat", "parent-pid"],
+      });
+
+      assert.notStrictEqual(Number(result.stdout.trim()), process.pid);
+    }).pipe(Effect.provide(layerGitContract)),
+);
+
 interface UntrackedBlobChange {
   readonly git: Effect.Success<ReturnType<typeof makeCheckpointFixture>>["git"];
   readonly write: (

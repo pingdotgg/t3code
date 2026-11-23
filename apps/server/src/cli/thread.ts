@@ -390,7 +390,7 @@ export const resolveProject = Effect.fn("cli.thread.resolveProject")(function* (
     Option.isSome(targetInfo) && targetInfo.value.type === "File" ? path.dirname(target) : target;
   const listed = yield* listGitCheckouts(gitDirectory).pipe(
     Effect.flatMap((paths) => Effect.forEach(paths, realPath)),
-    Effect.provide(ProcessRunner.layer),
+    Effect.provide(ProcessRunner.layerWithSpawner),
   );
   const ownCheckout = listed
     .filter((checkout) => contains(checkout, target))

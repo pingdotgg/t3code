@@ -39,7 +39,7 @@ it.effect("falls back to the hostname when hostnamectl never answers", () =>
       Effect.provide(
         Layer.mergeAll(
           FileSystem.layerNoop({ exists: () => Effect.succeed(false) }),
-          ProcessRunner.layer.pipe(
+          ProcessRunner.layerWithSpawner.pipe(
             Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, neverExits)),
           ),
         ),
