@@ -20,7 +20,10 @@ class StreamUsers extends Rpc.make("StreamUsers", {
 
 class CurrentUser extends Context.Service<CurrentUser, User>()("CurrentUser") {}
 
-class Unauthorized extends Schema.Error<Unauthorized>("Unauthorized")({
+// Exported so declaration emit can name it. Error classes are yieldable, so a
+// private one is a cycle that TypeScript 7.1 reports as TS5088 in `rpc-e2e.ts`
+// (microsoft/TypeScript#64461).
+export class Unauthorized extends Schema.Error<Unauthorized>("Unauthorized")({
   _tag: Schema.tag("Unauthorized")
 }) {}
 
