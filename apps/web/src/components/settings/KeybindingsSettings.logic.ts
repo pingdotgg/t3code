@@ -88,7 +88,7 @@ export const DEFAULT_WHEN_VARIABLE =
   ) ?? "terminalFocus";
 const KNOWN_WHEN_VARIABLES = new Set(DEFAULT_WHEN_VARIABLES);
 
-export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+export function shortcutToKeybindingParts(shortcut: KeybindingShortcut): ReadonlyArray<string> {
   const parts: string[] = [];
   if (shortcut.modKey) parts.push("mod");
   if (shortcut.metaKey) parts.push("meta");
@@ -96,7 +96,11 @@ export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string 
   if (shortcut.altKey) parts.push("alt");
   if (shortcut.shiftKey) parts.push("shift");
   parts.push(shortcut.key === " " ? "space" : shortcut.key === "escape" ? "esc" : shortcut.key);
-  return parts.join("+");
+  return parts;
+}
+
+export function shortcutToKeybindingInput(shortcut: KeybindingShortcut): string {
+  return shortcutToKeybindingParts(shortcut).join("+");
 }
 
 export function whenAstToExpression(node: KeybindingWhenNode | undefined): string {
@@ -553,8 +557,9 @@ function titleCaseCommandSegment(segment: string): string {
 
 function recordedLayoutShortcutKey(
   event: Pick<KeyboardEvent, "key" | "code" | "shiftKey" | "altKey">,
+  platform: string,
 ): string {
-  const physicalKey = shortcutKeyFromEvent(event);
+  const physicalKey = shortcutKeyFromEvent(event, platform);
   const layoutKey = event.key.toLowerCase();
   if (event.altKey || layoutKey.length !== 1) return physicalKey;
   // Normalize only US shifted glyphs at their US position. Other layouts can
@@ -601,7 +606,9 @@ export function keybindingFromKeyboardEvent(
   },
 ): string | null {
   const keyToken = normalizeShortcutKeyToken(
-    options?.layoutCharacter ? recordedLayoutShortcutKey(event) : shortcutKeyFromEvent(event),
+    options?.layoutCharacter
+      ? recordedLayoutShortcutKey(event, platform)
+      : shortcutKeyFromEvent(event, platform),
   );
   if (!keyToken) return null;
 
