@@ -122,7 +122,10 @@ export function shortcutConflictKey(
   ].join("|");
 }
 
-function shortcutForContext(binding: ResolvedKeybindingRule, context: ShortcutMatchContext) {
+export function shortcutForContext(
+  binding: ResolvedKeybindingRule,
+  context: Partial<ShortcutMatchContext>,
+) {
   const shortcut = binding.shortcut;
   // Resolve persisted Mod+Enter against send preference without rewriting saved shortcuts.
   if (
@@ -242,6 +245,8 @@ export function formatShortcutKeyLabel(key: string): string {
   if (key === "arrowdown") return "Down";
   if (key === "arrowleft") return "Left";
   if (key === "arrowright") return "Right";
+  if (key === "pageup") return "PageUp";
+  if (key === "pagedown") return "PageDown";
   return key.slice(0, 1).toUpperCase() + key.slice(1);
 }
 
@@ -301,12 +306,24 @@ export function threadTraversalDirectionFromCommand(
   return null;
 }
 
+export function isThreadNavigationShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  const command = resolveShortcutCommand(event, keybindings, options);
+  return (
+    threadTraversalDirectionFromCommand(command) !== null ||
+    threadJumpIndexFromCommand(command ?? "") !== null
+  );
+}
+
 export function shouldShowThreadJumpHintsForModifiers(
   modifiers: ShortcutModifierStateLike,
   keybindings: ResolvedKeybindingsConfig,
   options?: ShortcutMatchOptions,
 ): boolean {
-  // Ghostty can write keys to the shell before window shortcuts run, regardless of the when clause.
+  // Holding a modifier is routine in a shell (Ctrl+C, Ctrl+R), so don't flash hints over it.
   if (resolveContext(options).terminalFocus) {
     return false;
   }
@@ -383,6 +400,16 @@ export function isDiffToggleShortcut(
   options?: ShortcutMatchOptions,
 ): boolean {
   return matchesCommandShortcut(event, keybindings, "diff.toggle", options);
+}
+
+export function isSidebarToggleShortcut(
+  event: ShortcutEventLike,
+  keybindings: ResolvedKeybindingsConfig,
+  options?: ShortcutMatchOptions,
+): boolean {
+  // A focused terminal owns Ctrl chords, such as tmux's Ctrl+B prefix; Cmd never reaches it.
+  if (event.ctrlKey && options?.context?.terminalFocus) return false;
+  return matchesCommandShortcut(event, keybindings, "sidebar.toggle", options);
 }
 
 export function isOpenFavoriteEditorShortcut(

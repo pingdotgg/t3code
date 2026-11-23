@@ -77,7 +77,7 @@ const makeHarness = (
     let exit: ((event: PtyAdapter.PtyExitEvent) => void) | undefined;
     let killed = false;
     let closedBeforeTerminal = false;
-    const written: string[] = [];
+    const written: Array<string | Buffer> = [];
     const sizes: number[][] = [];
     const controller = yield* makeAcpRegistryAuth({
       instanceId: providerInstanceId,
@@ -305,7 +305,13 @@ it.effect(
         interactionId: "terminal",
         response: { type: "terminal", data: "123\r", size: { cols: 100, rows: 30 } },
       });
-      assert.deepEqual(h.written, ["123\r"]);
+      yield* h.controller.respond!("owner", {
+        instanceId,
+        flowId: flow.flowId!,
+        interactionId: "terminal",
+        response: { type: "terminal", data: "\x1b[M \x80(", binary: true },
+      });
+      assert.deepEqual(h.written, ["123\r", Buffer.from([0x1b, 0x5b, 0x4d, 0x20, 0x80, 0x28])]);
       assert.deepEqual(h.sizes, [[100, 30]]);
       h.exit(0);
       yield* h.phase("verifying");
@@ -354,6 +360,22 @@ it.effect("does not report authentication when post-login verification fails", (
       failed.message,
       "The provider could not create a session after terminal sign-in. Authentication required",
     );
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
+);
+
+it.effect("surfaces what the login command printed when it exits non-zero", () =>
+  Effect.gen(function* () {
+    const h = yield* makeHarness(terminalMethod);
+    yield* h.controller.start("owner", Effect.void, "terminal");
+    yield* h.phase("waiting");
+    h.data("Connect to the VPN, then sign in again.\r\n");
+    h.exit(1);
+    const failed = yield* h.phase("failed");
+    assert.strictEqual(
+      failed.message,
+      "The provider login command did not finish successfully. Connect to the VPN, then sign in again.",
+    );
+    assert.deepEqual(h.changed, []);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

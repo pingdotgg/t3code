@@ -13,13 +13,16 @@ import { Command, Flag, GlobalFlag, Prompt } from "effect/cli";
 
 import * as BootService from "../cloud/bootService.ts";
 import {
+  findPosixLauncher,
   generatedWindowsShimTarget,
   isVersionExecutable,
   pinnedRuntimeVersionsDir,
+  readPosixLauncherTarget,
   resolveLauncherPath,
 } from "../cloud/pinnedRuntime.ts";
 import { projectLocationFlags, resolveCliAuthConfig } from "./config.ts";
 import * as CliService from "./service.ts";
+import { awaitDetachedSpawn } from "../process/windowsVerbatimSpawn.ts";
 import { findWindowsShim } from "./update.ts";
 
 export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
@@ -33,6 +36,7 @@ export class CliUninstallError extends Schema.TaggedError<CliUninstallError>()(
 
 export interface UninstallPlan {
   readonly service: boolean;
+  readonly otherHomeService: string | undefined;
   readonly versionsDir: string;
   readonly launchers: ReadonlyArray<string>;
   readonly runtimeDir: string | undefined;
@@ -57,13 +61,10 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
       ? shimPath
       : undefined;
   }
-  const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  if (Option.isNone(linkTarget)) return undefined;
-  const resolved = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  return isVersionExecutable(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
+  return yield* findPosixLauncher({ launchedAs: input.launchedAs, versionsDir: input.versionsDir });
 });
 
-/** Whether `launcher` is a link or unedited `t3.cmd` into this home's runtime/versions. */
+/** Whether `launcher` is a link, unedited `t3` script, or unedited `t3.cmd` into this home's runtime/versions. */
 const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
   launcher: string,
   versionsDir: string,
@@ -90,6 +91,7 @@ const ownsLauncher = Effect.fn("cli.uninstall.owns_launcher")(function* (
             Effect.orElseSucceed(() => undefined),
           ),
           yield* fs.realPath(launcher).pipe(Effect.orElseSucceed(() => undefined)),
+          yield* readPosixLauncherTarget(launcher),
         ];
   return targets.some(
     (target) =>
@@ -147,15 +149,18 @@ const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   const path = yield* Path.Path;
   const service = yield* BootService.BootService;
   const status = yield* service.status;
+  const installedBaseDir =
+    status.supported && status.installed ? status.installedBaseDir : undefined;
   const servesThisHome =
-    status.installedBaseDir !== undefined &&
-    path.resolve(status.installedBaseDir) === path.resolve(input.baseDir);
+    installedBaseDir !== undefined &&
+    path.resolve(installedBaseDir) === path.resolve(input.baseDir);
   const versionsDir = pinnedRuntimeVersionsDir(path, input.baseDir);
   const runtimeDir = path.dirname(versionsDir);
   const launchedAs = (yield* HostProcess.IsExecutable) ? yield* resolveLauncherPath : undefined;
   const launchedFrom = yield* findOwnedLauncher({ launchedAs, versionsDir });
   const plan: UninstallPlan = {
-    service: status.supported && status.installed && servesThisHome,
+    service: servesThisHome,
+    otherHomeService: servesThisHome ? undefined : installedBaseDir,
     versionsDir,
     launchers: [
       ...new Set([
@@ -195,6 +200,13 @@ export const uninstallCommand = Command.make("uninstall", {
   ),
 );
 
+const logOtherHomeService = (plan: UninstallPlan) =>
+  plan.otherHomeService === undefined
+    ? Effect.void
+    : Console.log(
+        `The T3 Code service serves ${plan.otherHomeService}, so it was not removed. Pass \`${BootService.formatBootServiceBaseDirOption(plan.otherHomeService)}\` to remove it.`,
+      );
+
 const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   readonly baseDir: string;
   readonly assumeYes: boolean;
@@ -212,6 +224,7 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
         "  This t3 runs from a Node script, so it was installed by npm or built from source. Remove it the same way (`npm uninstall -g t3`, or delete the checkout).",
       );
     }
+    yield* logOtherHomeService(plan);
     return;
   }
 
@@ -265,13 +278,13 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
     if (platform === "win32") {
       const runtimeDir = plan.runtimeDir;
       const comspec = environment["ComSpec"] ?? environment["COMSPEC"] ?? "cmd.exe";
-      yield* Effect.try({
-        try: () => spawnWindowsRemoval(comspec, runtimeDir).unref(),
-        catch: () =>
-          new CliUninstallError({
-            reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
-          }),
-      });
+      const notScheduled = () =>
+        new CliUninstallError({
+          reason: `Could not schedule removal of ${runtimeDir}. Delete it yourself once this window is closed.`,
+        });
+      yield* awaitDetachedSpawn(() => spawnWindowsRemoval(comspec, runtimeDir)).pipe(
+        Effect.mapError(notScheduled),
+      );
       yield* Console.log(`${runtimeDir} will be removed once t3 exits.`);
     } else {
       yield* fs
@@ -286,4 +299,5 @@ const runUninstall = Effect.fn("cli.uninstall.run")(function* (input: {
   }
   yield* Console.log("");
   yield* Console.log("t3 is uninstalled. Thanks for trying T3 Code.");
+  yield* logOtherHomeService(plan);
 });
