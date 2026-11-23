@@ -648,7 +648,6 @@ describe("RemoteEnvironmentAuthorization", () => {
 
   it.effect("keeps a persisted T3 Connect token whose ticket answers after three seconds", () =>
     Effect.gen(function* () {
-      // Over T3 Connect each request can take seconds on a slow network; that says nothing about the token.
       const ticket = Promise.withResolvers<Response>();
       const harness = yield* makeHarness({
         initialToken: persistedToken(),

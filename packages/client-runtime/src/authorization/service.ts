@@ -127,9 +127,8 @@ export class RemoteEnvironmentAuthorization extends Context.Service<
   }
 >()("@t3tools/client-runtime/authorization/service/RemoteEnvironmentAuthorization") {}
 
-// A direct address that stalls frees the attempt quickly. T3 Connect keeps the default remote
-// timeout: a request through it can take seconds on a slow network, and giving up there
-// discards a valid token and repeats the whole relay mint.
+// Only direct addresses get this cap. A cached-token ticket through T3 Connect keeps the default
+// remote timeout: it can take seconds on a slow network, and timing out there discards the token.
 const CACHED_ENDPOINT_SOCKET_TIMEOUT_MS = 3_000;
 const DPOP_AUTHORIZATION_TIMEOUT_MS = 30_000;
 const CHECKED_DESCRIPTOR_TTL_NANOS = 5_000_000_000n;
