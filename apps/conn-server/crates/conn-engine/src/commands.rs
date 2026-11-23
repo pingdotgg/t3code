@@ -980,6 +980,20 @@ pub(crate) fn start_next_queued(
         hold_queue(tx, thread_id)?;
         return Ok(None);
     }
+    // The thread moves to the run's selection as it starts, so a run queued behind it that
+    // follows the thread takes the same one (`startNextQueuedRun`).
+    if run["modelSelection"] != thread["modelSelection"] {
+        let event = if run["providerInstanceId"] == thread["providerInstanceId"] {
+            "thread.model-selection-updated"
+        } else {
+            "thread.provider-switched"
+        };
+        let mut moved = thread.clone();
+        moved["providerInstanceId"] = run["providerInstanceId"].clone();
+        moved["modelSelection"] = run["modelSelection"].clone();
+        moved["updatedAt"] = json!(tx.now());
+        tx.append(Draft::new(thread_id, event, moved).payload_instance())?;
+    }
     let run_id = run["id"].as_str().unwrap_or_default().to_owned();
     let root = run["rootNodeId"].as_str().unwrap_or_default().to_owned();
     let now = tx.now().to_owned();
@@ -2380,6 +2394,19 @@ fn thread_settle(tx: &mut Tx<'_>, command: Value) -> Outcome {
             "Thread {thread_id} is still running and cannot be settled."
         ));
     }
+    // T3 settles past a queued message the server or a schedule sent, never a user's own.
+    for run in queued_runs(tx, &thread_id)? {
+        let message_id = run["userMessageId"].as_str().unwrap_or_default();
+        let message = tx.entity(&thread_id, "messages", message_id)?;
+        let automatic = message.as_ref().is_some_and(|m| {
+            m["createdBy"] != "user" || !is_null(m, "scheduledTaskId") || is_automatic(m)
+        });
+        if !automatic {
+            return reject(format!(
+                "Thread {thread_id} has a queued message. Send it or remove it from the queue before settling."
+            ));
+        }
+    }
     let settled_at = command["settledAt"].clone();
     thread_patch(tx, &command, "thread.settled", |t, now| {
         let already =
@@ -2510,7 +2537,7 @@ fn follows_current_conversation(message: &Value) -> bool {
 
 /// A delegated-task completion. This engine marks its completion wakes by their id
 /// (`families::deliver`).
-fn is_delegated_completion(message: &Value) -> bool {
+pub(crate) fn is_delegated_completion(message: &Value) -> bool {
     !is_null(message, "delegatedCompletion")
         || message["id"]
             .as_str()

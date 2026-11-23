@@ -1076,6 +1076,97 @@ async fn a_settle_for_a_stale_run_is_refused() {
     assert_eq!(shell["threads"][0]["settledOverride"], "settled");
 }
 
+/// T3's settle refuses a thread with a queued user message (`Orchestrator.ts`): a stopped
+/// turn's follow-up must be sent or removed first, so a settle never hides it.
+#[tokio::test(flavor = "current_thread")]
+async fn a_settle_waits_for_a_queued_user_message() {
+    let db = TempDb::new("settle-queued");
+    let (engine, _) = open(&db);
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    dispatch(&engine, message("t1", "c3", "follow-up")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c4", "threadId": "t1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    assert_eq!(
+        projection(&engine, "t1").await["runs"][1]["status"],
+        "queued"
+    );
+    let refused = rejection(
+        &engine,
+        json!({"type": "thread.settle", "commandId": "s1", "threadId": "t1"}),
+    )
+    .await;
+    assert!(refused.contains("has a queued message"), "{refused}");
+    let shell = engine.shell_snapshot().await.unwrap();
+    assert_eq!(shell["threads"][0]["settledOverride"], Value::Null);
+}
+
+/// T3's queue start moves the thread to the run's selection (`startNextQueuedRun`): an
+/// unpinned scheduled run queued behind a pinned one starts on the pinned run's model.
+#[tokio::test(flavor = "current_thread")]
+async fn a_queued_run_moves_the_thread_to_its_selection() {
+    let db = TempDb::new("queue-moves-selection");
+    let mut config = EngineConfig::new(db.path());
+    config.projects = vec![ProjectConfig {
+        title: "Project".into(),
+        workspace_root: ROOT.into(),
+    }];
+    config.providers = vec![
+        Arc::new(FakeProvider::new("claudeAgent")),
+        Arc::new(FakeProvider::new("other")),
+    ];
+    let engine = SqliteEngine::open(config).unwrap();
+    dispatch(&engine, create("t1", "c1")).await;
+    let mut thread = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut thread).await;
+    dispatch(&engine, message("t1", "c2", "hang")).await;
+    until_provider_turn(&mut thread).await;
+    let mut pinned = message("t1", "c3", "pinned");
+    pinned["dispatchMode"] = json!({"type": "queue_after_active"});
+    pinned["modelSelection"] = json!({"instanceId": "other", "model": "m"});
+    dispatch(&engine, pinned).await;
+    dispatch(
+        &engine,
+        json!({"type": "message.dispatch", "commandId": "c4", "threadId": "t1",
+            "messageId": "message:c4", "scheduledTaskId": "scheduled-task:x",
+            "text": "scheduled", "attachments": [],
+            "dispatchMode": {"type": "queue_after_active"},
+            "createdBy": "agent", "creationSource": "server"}),
+    )
+    .await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c5", "threadId": "t1"}),
+    )
+    .await;
+    until_run_ends(&mut thread).await;
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "r1", "threadId": "t1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:3").await;
+    assert_eq!(p["runs"][1]["providerInstanceId"], "other");
+    assert_eq!(p["thread"]["modelSelection"]["instanceId"], "other");
+    assert_eq!(
+        p["runs"][2]["providerInstanceId"], "other",
+        "the scheduled run follows the thread the pinned run moved"
+    );
+}
+
 /// `thread.visit` as T3's: a visit older than the stored one keeps the later time and records
 /// nothing; a newer one records `thread.visit-recorded`, not a copy of the thread.
 #[tokio::test(flavor = "current_thread")]
@@ -5256,6 +5347,48 @@ async fn a_scheduled_fresh_run_is_a_side_conversation() {
     assert_eq!(
         provider.sessions.load(std::sync::atomic::Ordering::SeqCst),
         3
+    );
+    // A fresh scheduled run delegates: the result wakes the conversation that asked for it
+    // (`dispatchProviderThread`), not the thread's own.
+    let mut stream = engine
+        .subscribe_thread(from_json(json!({"threadId": "t1"})).unwrap())
+        .await
+        .unwrap();
+    next(&mut stream).await;
+    dispatch(
+        &engine,
+        fresh_message(
+            "t1",
+            "c5",
+            "hang",
+            json!({"scheduledTaskId": "task:triage", "dispatchMode": {"type": "queue_after_active"}}),
+        ),
+    )
+    .await;
+    until_provider_turn(&mut stream).await;
+    let mut ask = delegate("d1", "look", Some("always"));
+    ask["parentRunId"] = json!("run:t1:4");
+    ask["parentNodeId"] = json!("node:run:t1:4:root");
+    dispatch(&engine, ask).await;
+    let child = "thread:delegated-task:d1";
+    run_to_end(&engine, child, &format!("run:{child}:1")).await;
+    dispatch(
+        &engine,
+        json!({"type": "thread.stop", "commandId": "c6", "threadId": "t1"}),
+    )
+    .await;
+    until_run_ends(&mut stream).await;
+    dispatch(
+        &engine,
+        json!({"type": "queue.resume", "commandId": "r1", "threadId": "t1"}),
+    )
+    .await;
+    let p = run_to_end(&engine, "t1", "run:t1:5").await;
+    let wake = p["runs"][4]["userMessageId"].as_str().unwrap();
+    assert!(wake.starts_with("message:delegated-completion:"), "{wake}");
+    assert_eq!(
+        p["runs"][4]["providerThreadId"], p["runs"][3]["providerThreadId"],
+        "the result goes to the fresh run's conversation"
     );
 }
 

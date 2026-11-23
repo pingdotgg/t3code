@@ -592,7 +592,7 @@ impl Inner {
                     // A wake acts on the active session; a message continues the conversation,
                     // past a scheduled fresh run's side conversation (`dispatchProviderThread`).
                     let wake = message["notification"].is_object()
-                        || message["delegatedCompletion"].is_object();
+                        || crate::commands::is_delegated_completion(&message);
                     let active_id = thread["activeProviderThreadId"].clone();
                     let active = match active {
                         Some(pt) if !wake => {
