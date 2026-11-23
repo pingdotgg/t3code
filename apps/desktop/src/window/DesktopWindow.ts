@@ -635,8 +635,6 @@ export const make = Effect.gen(function* () {
       webPreferences.nodeIntegrationInSubFrames = false;
       webPreferences.contextIsolation = true;
       webPreferences.disableHtmlFullscreenWindowResize = true;
-      // A parked page keeps its timers while the app is on screen; see syncGuestThrottling.
-      webPreferences.backgroundThrottling = false;
       if (previewPasskeys.bridgeEnabled) {
         webPreferences.additionalArguments = [
           ...(webPreferences.additionalArguments ?? []),
@@ -650,11 +648,6 @@ export const make = Effect.gen(function* () {
         ];
       }
     });
-    const syncPreviewGuestThrottling = () => void runPromise(previewManager.syncGuestThrottling());
-    window.on("hide", syncPreviewGuestThrottling);
-    window.on("show", syncPreviewGuestThrottling);
-    window.on("minimize", syncPreviewGuestThrottling);
-    window.on("restore", syncPreviewGuestThrottling);
 
     const contextMenuContents = new WeakSet<Electron.WebContents>();
     const installContextMenu = (

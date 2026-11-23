@@ -1564,7 +1564,6 @@ describe("DesktopWindow", () => {
 
           assert.deepEqual(webPreferences.additionalArguments, expected);
           assert.isTrue(webPreferences.contextIsolation);
-          assert.strictEqual(webPreferences.backgroundThrottling, false);
         }).pipe(Effect.provide(layer));
       }),
   );
