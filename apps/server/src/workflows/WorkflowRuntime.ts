@@ -307,6 +307,9 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   // One reload at a time, and callers during one wait for the engine that comes out of it.
   const lock = yield* Semaphore.make(1);
   let ready = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
+  // The engine that last came up. Its reads are plain queries that need nothing of its scope, so
+  // they go on answering while it stops and the next one starts.
+  let serving: Workflows.Workflows["Service"] | undefined;
   let engineScope: Scope.Closeable | undefined;
   let running: ReadonlyArray<WorkflowDefinition> = [];
   let imported = false;
@@ -370,19 +373,23 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   const boot = Effect.fn("WorkflowRuntime.boot")(
     function* (definitions: ReadonlyArray<WorkflowDefinition>) {
       const next = Deferred.makeUnsafe<Workflows.Workflows["Service"]>();
+      const settle = (service: Workflows.Workflows["Service"]) => {
+        serving = service;
+        return Deferred.succeed(next, service);
+      };
       ready = next;
       const previous = running;
       if (engineScope !== undefined) yield* Scope.close(engineScope, Exit.void);
       engineScope = undefined;
       running = [];
       if (definitions.length === 0 && !imported && !(yield* kept)) {
-        yield* Deferred.succeed(next, Workflows.disabled);
+        yield* settle(Workflows.disabled);
         return null;
       }
       const built = yield* build(definitions);
       if (Exit.isSuccess(built)) {
         running = definitions;
-        yield* Deferred.succeed(next, Context.get(built.value, Workflows.Workflows));
+        yield* settle(Context.get(built.value, Workflows.Workflows));
         if (definitions.length > 0) {
           yield* Effect.logInfo("Workflows registered", {
             directory,
@@ -395,10 +402,10 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       const restored = yield* build(previous);
       if (Exit.isSuccess(restored)) {
         running = previous;
-        yield* Deferred.succeed(next, Context.get(restored.value, Workflows.Workflows));
+        yield* settle(Context.get(restored.value, Workflows.Workflows));
       } else {
         // Nobody may be left waiting on an engine that never came up.
-        yield* Deferred.succeed(next, Workflows.disabled);
+        yield* settle(Workflows.disabled);
       }
       return `The workflow engine did not start: ${text(Cause.squash(built.cause))}`;
     },
@@ -588,6 +595,8 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
   );
 
   const current = Effect.suspend(() => Deferred.await(ready));
+  // Only what changes a run waits for a reload: the engine being replaced can no longer do that.
+  const reading = Effect.suspend(() => (serving === undefined ? current : Effect.succeed(serving)));
   // A watcher outlives the engine it began on: each reload hands it the next one's stream.
   const followed = <A>(pick: (service: Workflows.Workflows["Service"]) => Stream.Stream<A>) =>
     SubscriptionRef.changes(state).pipe(
@@ -612,10 +621,10 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
       return yield* (yield* current).cancel(...input);
     }),
     get: Effect.fn("Workflows.get")(function* (...input) {
-      return yield* (yield* current).get(...input);
+      return yield* (yield* reading).get(...input);
     }),
     list: Effect.fn("Workflows.list")(function* (...input) {
-      return yield* (yield* current).list(...input);
+      return yield* (yield* reading).list(...input);
     }),
     waitFor: Effect.fn("Workflows.waitFor")(function* (...input) {
       // A reload replaces the engine, and a wait on the old one would never hear of the run again.
@@ -633,14 +642,14 @@ export const make = Effect.fn("WorkflowRuntime.make")(function* <E, R>(
         if (Option.isSome(waited)) return waited.value;
       }
     }),
-    questions: Effect.flatMap(current, (live) => live.questions),
-    unfinished: Effect.flatMap(current, (live) => live.unfinished),
-    hooks: Effect.flatMap(current, (live) => live.hooks),
+    questions: Effect.flatMap(reading, (live) => live.questions),
+    unfinished: Effect.flatMap(reading, (live) => live.unfinished),
+    hooks: Effect.flatMap(reading, (live) => live.hooks),
     deliver: Effect.fn("Workflows.deliver")(function* (...input) {
       return yield* (yield* current).deliver(...input);
     }),
     stored: Effect.fn("Workflows.stored")(function* (...input) {
-      return yield* (yield* current).stored(...input);
+      return yield* (yield* reading).stored(...input);
     }),
     storeSet: Effect.fn("Workflows.storeSet")(function* (...input) {
       return yield* (yield* current).storeSet(...input);
