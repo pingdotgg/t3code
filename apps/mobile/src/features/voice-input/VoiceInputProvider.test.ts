@@ -25,6 +25,7 @@ vi.mock("expo-audio", () => ({
 }));
 vi.mock("../../native/voiceRecorder", () => ({ createVoiceRecorder: vi.fn() }));
 vi.mock("../../native/voiceTranscription", () => ({ getLocalVoiceTranscriber: async () => null }));
+vi.mock("../../native/voiceInputCue", () => ({ playVoiceInputCue: async () => {} }));
 vi.mock("../../state/preferences", async () => {
   const { AsyncResult, Atom } = await import("effect/reactivity");
   return { mobilePreferencesAtom: Atom.make(AsyncResult.initial()) };
