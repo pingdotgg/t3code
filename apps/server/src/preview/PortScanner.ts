@@ -560,6 +560,9 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
   // An agent that exited, or a cache cleared with a marked listener, owes one listener read: the
   // servers it left may still run. So does startup, for agents that ran before a restart.
   let agentScanPending = true;
+  // Listeners whose ancestor was unreadable once. A second miss caches them as unowned, since a
+  // root-owned ancestor such as `login` or `sudo` is never readable.
+  const unreadableAncestry = new Set<number>();
 
   const readAgentThreads = Effect.fn("PortDiscovery.readAgentThreads")(function* (
     pids: ReadonlyArray<number>,
@@ -597,11 +600,58 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
                   return new Map();
                 }),
               );
+    const resolved = new Map(read);
+    const unowned = unread.filter((pid) => read.get(pid) === null);
+    // Node's process.title can hide its launch environment from macOS ps.
+    if (hostPlatform === "darwin" && unowned.length > 0) {
+      const table = yield* readProcessTable.pipe(Effect.option);
+      if (Option.isNone(table)) {
+        agentScanPending = true;
+        for (const pid of unowned) resolved.delete(pid);
+      } else {
+        const ancestry = new Map<number, number[]>();
+        for (const pid of unowned) {
+          const parents: number[] = [];
+          const seen = new Set([pid, process.pid]);
+          let parent = table.value.get(pid)?.ppid;
+          while (parent !== undefined && parent > 1 && !seen.has(parent)) {
+            seen.add(parent);
+            parents.push(parent);
+            parent = table.value.get(parent)?.ppid;
+          }
+          ancestry.set(pid, parents);
+        }
+        const parents = [...new Set([...ancestry.values()].flat())];
+        if (parents.length > 0) {
+          const variables = yield* readEnvironmentVariables(parents, [AGENT_THREAD_ENV]);
+          for (const [pid, ancestors] of ancestry) {
+            for (const ancestor of ancestors) {
+              if (!variables.has(ancestor)) break;
+              const threadId = variables.get(ancestor)?.get(AGENT_THREAD_ENV)?.trim();
+              if (threadId) {
+                resolved.set(pid, { threadId: ThreadId.make(threadId), isAgentCli: false });
+                break;
+              }
+            }
+            if (
+              resolved.get(pid) === null &&
+              ancestors.some((ancestor) => !variables.has(ancestor)) &&
+              !unreadableAncestry.has(pid)
+            ) {
+              unreadableAncestry.add(pid);
+              resolved.delete(pid);
+              agentScanPending = true;
+            }
+          }
+        }
+      }
+    }
     const next = new Map<number, AgentListener | null>();
     for (const pid of pids) {
-      const listener = cached.has(pid) ? cached.get(pid) : read.get(pid);
+      const listener = cached.has(pid) ? cached.get(pid) : resolved.get(pid);
       if (listener !== undefined) next.set(pid, listener);
     }
+    for (const pid of unreadableAncestry) if (!pids.includes(pid)) unreadableAncestry.delete(pid);
     yield* Ref.set(agentThreadsRef, next);
     return next;
   });
@@ -1030,6 +1080,7 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
         yield* Ref.set(socketOwnersRef, new Map());
         yield* Ref.set(socketOwnerMissesRef, new Map());
         const threads = yield* Ref.getAndSet(agentThreadsRef, new Map());
+        unreadableAncestry.clear();
         if ([...threads.values()].some((threadId) => threadId !== null)) agentScanPending = true;
       }),
     );
@@ -1135,9 +1186,10 @@ export const make = Effect.gen(function* PortDiscoveryMake() {
     const variables = new Map<number, ReadonlyMap<string, string>>();
     for (const line of Option.isSome(result) ? result.value.stdout.split("\n") : []) {
       const match = /^\s*(\d+)\s(.*)$/.exec(line);
-      if (match) {
-        variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
-      }
+      if (!match) continue;
+      // macOS ps wraps the command name in parentheses when KERN_PROCARGS2 fails.
+      if (hostPlatform === "darwin" && /^\(.*\)$/.test(match[2]!.trim())) continue;
+      variables.set(Number(match[1]), parseEnvironmentVariables(match[2]!, /\s+/, names));
     }
     return variables;
   });
