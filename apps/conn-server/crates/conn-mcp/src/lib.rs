@@ -317,7 +317,14 @@ pub struct McpService {
     forges: Mutex<std::collections::HashMap<String, (bool, std::time::Instant)>>,
     /// Followers of tasks that run in linked environments.
     remote: remote_tasks::Followers,
+    /// The settlement (`settledAt`, epoch ms) each thread last ran its settle script for
+    /// (`settleActionRunAt`), at most [`SETTLE_RUNS_KEPT`] threads.
+    settle_runs: Mutex<std::collections::VecDeque<(String, i64)>>,
 }
+
+/// Threads whose last settle-script run is remembered; an older one forgotten can run its
+/// script once more on a repeated settle of the same settlement.
+const SETTLE_RUNS_KEPT: usize = 512;
 
 impl std::fmt::Debug for McpService {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -343,6 +350,87 @@ impl McpService {
         Ok(())
     }
 
+    /// `cleanUpSettledThread` after `closeOnSettle` (`ThreadSettlementService.ts:700`): a live,
+    /// settled thread runs its project's `runOnSettle` script in its own worktree, once per
+    /// settlement. Shared checkouts are skipped: a root checkout, and a delegate in its
+    /// parent's worktree. Returns the started script, if one started.
+    pub async fn run_settle_script(&self, thread_id: &str) -> Option<Value> {
+        let config = self.config.worktrees.as_ref()?;
+        let engine = &self.config.engine;
+        let settled = |projection: &Value| {
+            let thread = &projection["thread"];
+            (thread["deletedAt"].is_null() && thread["settledOverride"] == "settled")
+                .then(|| thread.clone())
+        };
+        let thread = settled(&engine.get_thread_projection(thread_id.into()).await.ok()?)?;
+        let path = thread["worktreePath"].as_str()?.to_owned();
+        let probe = std::path::PathBuf::from(&path);
+        if !tokio::task::spawn_blocking(move || probe.exists())
+            .await
+            .ok()?
+        {
+            return None;
+        }
+        // Read again after the worktree I/O: only a live, settled thread runs a script.
+        let thread = settled(&engine.get_thread_projection(thread_id.into()).await.ok()?)?;
+        let settled_at = thread["settledAt"]
+            .as_str()
+            .and_then(conn_support::time::millis_from_iso)?;
+        let ran = |runs: &std::collections::VecDeque<(String, i64)>| {
+            runs.iter()
+                .any(|(id, at)| id == thread_id && *at == settled_at)
+        };
+        if thread["lineage"]["relationshipToParent"] == "subagent"
+            && let Some(parent) = thread["lineage"]["parentThreadId"].as_str()
+            && let Ok(parent) = engine.get_thread_projection(parent.into()).await
+            && parent["thread"]["worktreePath"] == path.as_str()
+        {
+            return None;
+        }
+        let shell = engine.shell_snapshot().await.ok()?;
+        let project = shell["projects"]
+            .as_array()?
+            .iter()
+            .find(|p| p["id"] == thread["projectId"] && p["deletedAt"].is_null())?
+            .clone();
+        // Claimed before the run starts, so a quick second settle cannot run it twice; a run
+        // that failed to start gives the claim back, as T3 records only after the start.
+        {
+            let Ok(mut runs) = self.settle_runs.lock() else {
+                return None;
+            };
+            if ran(&runs) {
+                return None;
+            }
+            runs.retain(|(id, _)| id != thread_id);
+            if runs.len() >= SETTLE_RUNS_KEPT {
+                runs.pop_front();
+            }
+            runs.push_back((thread_id.to_owned(), settled_at));
+        }
+        let run = tools::worktree::run_project_script(
+            config,
+            thread_id,
+            &project,
+            &path,
+            tools::worktree::ScriptTrigger::Settle,
+        )
+        .await;
+        if run.is_err()
+            && let Ok(mut runs) = self.settle_runs.lock()
+        {
+            runs.retain(|(id, at)| !(id == thread_id && *at == settled_at));
+        }
+        match run {
+            Ok(started) if started["status"] == "started" => Some(started),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("settle script for {thread_id}: {error}");
+                None
+            }
+        }
+    }
+
     pub fn new(config: McpConfig) -> Arc<Self> {
         Arc::new(Self {
             config,
@@ -355,6 +443,7 @@ impl McpService {
             handoffs: Mutex::new(std::collections::HashSet::new()),
             forges: Mutex::new(std::collections::HashMap::new()),
             remote: remote_tasks::Followers::default(),
+            settle_runs: Mutex::new(std::collections::VecDeque::new()),
         })
     }
 

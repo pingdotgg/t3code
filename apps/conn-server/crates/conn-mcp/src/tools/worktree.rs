@@ -332,6 +332,28 @@ pub(crate) async fn setup(
     project: &Value,
     path: &str,
 ) -> Result<Value, String> {
+    run_project_script(config, thread, project, path, ScriptTrigger::Setup).await
+}
+
+/// Which project script a run picks (`runForThread`'s `trigger`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ScriptTrigger {
+    /// `setupProjectScript`: `runOnWorktreeCreate`, in terminal `setup-<id>`.
+    Setup,
+    /// `settleProjectScript`: `runOnSettle`, in a fresh `settle-<id>-<8 hex>` terminal, so a
+    /// resumed settle is never typed into an earlier settle shell still at work.
+    Settle,
+}
+
+/// `ProjectSetupScriptRunner.runForThread` (`ProjectSetupScriptRunner.ts:458`): the trigger's
+/// script, typed into a thread terminal in `path` with the project's environment.
+pub(crate) async fn run_project_script(
+    config: &WorktreeConfig,
+    thread: &str,
+    project: &Value,
+    path: &str,
+    trigger: ScriptTrigger,
+) -> Result<Value, String> {
     let settings = (config.settings)();
     let project_id = project["id"].as_str().unwrap_or_default();
     let scripts = settings["projectSettingsOverrides"][project_id]
@@ -363,7 +385,10 @@ pub(crate) async fn setup(
         .as_array()
         .into_iter()
         .flatten()
-        .find(|s| s["runOnWorktreeCreate"] == true)
+        .find(|s| match trigger {
+            ScriptTrigger::Setup => s["runOnWorktreeCreate"] == true,
+            ScriptTrigger::Settle => s["runOnSettle"] == true,
+        })
     else {
         return Ok(json!({"status":"no-script"}));
     };
@@ -371,7 +396,14 @@ pub(crate) async fn setup(
         .terminals
         .clone()
         .ok_or("Terminal service unavailable")?;
-    let terminal = format!("setup-{}", script["id"].as_str().unwrap_or_default());
+    let id = script["id"].as_str().unwrap_or_default();
+    let terminal = match trigger {
+        ScriptTrigger::Setup => format!("setup-{id}"),
+        ScriptTrigger::Settle => {
+            let suffix: String = conn_support::uuid_v4().chars().take(8).collect();
+            format!("settle-{id}-{suffix}")
+        }
+    };
     let input = from_json(json!({"threadId":thread,"terminalId":terminal,"cwd":path,"worktreePath":path,
         "stopOnSettle":script["stopOnSettle"].as_bool().unwrap_or(false),
         "env":{"T3CODE_PROJECT_ROOT":project["workspaceRoot"],"T3CODE_WORKTREE_PATH":path,"COLORTERM":"","NO_COLOR":"1","FORCE_COLOR":"0"}})).map_err(|e|e.to_string())?;
