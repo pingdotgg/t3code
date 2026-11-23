@@ -213,7 +213,6 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     return baseEnv;
   }
 
-  const platform = yield* HostProcess.Platform;
   const hostDisplay = input.baseEnv
     ? input.baseEnv.DISPLAY
     : yield* Config.String("DISPLAY").pipe(
@@ -231,7 +230,7 @@ export const buildSshChildEnvironment = Effect.fn("ssh/auth.buildSshChildEnviron
     SSH_ASKPASS: sshAskpass,
     SSH_ASKPASS_REQUIRE: "force",
     ...(input.authSecret === undefined ? {} : { T3_SSH_AUTH_SECRET: input.authSecret ?? "" }),
-    ...(platform === "win32" || baseEnv.DISPLAY || hostDisplay ? {} : { DISPLAY: "t3code" }),
+    ...(baseEnv.DISPLAY || hostDisplay ? {} : { DISPLAY: "t3code" }),
   };
 });
 
