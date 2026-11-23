@@ -48,7 +48,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
   const runGrokJson: TextGenerationOperations.Runner = Effect.fn("GrokTextGeneration.runGrokJson")(
     function* (request) {
       const { operation, prompt, modelSelection } = request;
-      // Grok cannot disable its tools over ACP, so it runs outside the checkout like Antigravity.
+      // Grok cannot disable its tools over ACP, so keep it out of the checkout.
       const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-grok-text-" });
       // Grok keeps one session folder per cwd; a fresh cwd per call would leave one behind each time.
       yield* Effect.addFinalizer(() =>
