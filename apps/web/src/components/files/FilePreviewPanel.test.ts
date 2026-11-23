@@ -585,7 +585,15 @@ Third}`;
       )
       .file(
         "Book/book.opf",
-        '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/><item id="b" href="two&amp;&#x26;&#38;.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="b"/><itemref idref="a"/></spine></package>',
+        '<package><manifest><item id="a" href="one.xhtml" media-type="application/xhtml+xml"/><item id="b" href="two&amp;&#x26;&#38;.xhtml" media-type="application/xhtml+xml"/><item id="c" href="three.xhtml" media-type="application/xhtml+xml"/><item id="d" href="four.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="b"/><itemref idref="a"/><itemref idref="c"/><itemref idref="d"/></spine></package>',
+      )
+      .file(
+        "Book/three.xhtml",
+        "<html><head><title> </title></head><body><h1>Prologue</h1></body></html>",
+      )
+      .file(
+        "Book/four.xhtml",
+        "<html><head><style>body{color:red}</style></head><body><style>p{}</style><script>x()</script><p>Body text</p></body></html>",
       )
       .file(
         "Book/one.xhtml",
@@ -605,7 +613,12 @@ Third}`;
     const result = await openEpub(archive);
     expect(result.type).toBe("document");
     if (result.type !== "document") throw new Error("Expected document");
-    expect(result.pages.map((page) => page.title)).toEqual(["Second", "First"]);
+    expect(result.pages.map((page) => page.title)).toEqual([
+      "Second",
+      "First",
+      "Prologue",
+      "Body text",
+    ]);
     expect(result.pages[0]!.html).toContain("A\u00a0B © — ≂̸ &amp;lt;");
     expect(result.pages[0]!.html).toContain("<pre>Use &amp;amp; and &amp;lt; literally</pre>");
     expect(result.pages[0]!.html).toContain(

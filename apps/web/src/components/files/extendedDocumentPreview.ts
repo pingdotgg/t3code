@@ -238,13 +238,21 @@ const HTML_TAGS = new Set([
   "dt",
   "dd",
 ]);
-async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
-  if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
-  const tag =
+function epubTag(node: XmlNode): string {
+  return (
     node.name
       .replace(/^\{[^}]*\}/, "")
       .split(":")
-      .at(-1) ?? "";
+      .at(-1) ?? ""
+  );
+}
+function epubText(node: XmlNode | undefined): string {
+  if (!node || ["head", "script", "style"].includes(epubTag(node))) return "";
+  return node.name === "#text" ? node.text : node.children.map(epubText).join("");
+}
+async function epubHtml(node: XmlNode, archive: JSZip, base: string): Promise<string> {
+  if (node.name === "#text") return pipe(text(node), escape, boundedMarkup);
+  const tag = epubTag(node);
   if (["head", "script", "style", "iframe", "object", "embed", "svg", "math", "form"].includes(tag))
     return "";
   if (tag === "br" || tag === "hr") return boundedMarkup(`<${tag}>`);
@@ -428,9 +436,11 @@ export async function openEpub(archive: JSZip): Promise<OfficeWorkerResult> {
     const chapter = parseXml(await entry.async("string"));
     pages.push({
       title:
-        text(find(chapter, "title")[0] ?? find(chapter, "h1")[0] ?? chapter)
-          .trim()
-          .slice(0, 120) || undefined,
+        (
+          epubText(find(chapter, "title")[0]).trim() ||
+          epubText(find(chapter, "h1")[0]).trim() ||
+          epubText(chapter).trim()
+        ).slice(0, 120) || undefined,
       html: await epubHtml(chapter, archive, path),
     });
   }
