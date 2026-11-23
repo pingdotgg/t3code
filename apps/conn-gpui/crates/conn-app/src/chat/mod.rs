@@ -38,8 +38,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FollowMode, FontWeight,
     InteractiveElement, IntoElement, ListAlignment, ListOffset, ListState, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div, list, px,
-    relative,
+    SharedString, StatefulInteractiveElement, Styled, Subscription, Transformation, Window, div,
+    list, percentage, px, relative,
 };
 
 use self::cache::{CachedRow, RowCache, VirtualItem};
@@ -54,6 +54,8 @@ use crate::panels::chrome::ConnTooltipExt as _;
 const CHAT_CONTENT_MAX_WIDTH_PX: f32 = 736.0;
 /// Horizontal lane padding matching `.chat-composer-lane` / `.messages-timeline-scroll` (`3rem`).
 const CHAT_LANE_PADDING_X_PX: f32 = 48.0;
+/// `expanded_ids` key for the queue's `Show all N queued` toggle.
+const QUEUE_EXPANDED_KEY: &str = "queued-list";
 /// User bubble radius matching Conn's `--radius-bubble: calc(var(--radius) + 6px)` (`8px + 6px`).
 const BUBBLE_RADIUS_PX: f32 = 14.0;
 /// Tight corner radius where consecutive user bubbles meet (`rounded-tr-md` / `rounded-br-md`).
@@ -1541,8 +1543,16 @@ impl ChatView {
                     div().into_any_element()
                 }
             }
-            VirtualItem::QueuedUser { row_idx } => {
-                if let TimelineEntry::QueuedUser {
+            VirtualItem::QueuedUser {
+                row_idx,
+                position,
+                total,
+            } => {
+                let collapsed = *total > cache::QUEUE_VISIBLE_ROWS && !self.queue_expanded();
+                if collapsed && *position >= cache::QUEUE_VISIBLE_ROWS - 1 {
+                    // Hidden behind the toggle: a zero-height row keeps the list indices stable.
+                    div().into_any_element()
+                } else if let TimelineEntry::QueuedUser {
                     id,
                     run_id,
                     text,
@@ -1551,11 +1561,27 @@ impl ChatView {
                     ..
                 } = &rows[*row_idx].entry
                 {
-                    self.render_queued_user_row(id, run_id, text, attachments, created_at, cx)
+                    // The toggle sits 8px (`gap-2`) under the last shown row, not 12px.
+                    let last_shown = if collapsed {
+                        *position == cache::QUEUE_VISIBLE_ROWS - 2
+                    } else {
+                        *position + 1 == *total
+                    };
+                    let above_toggle = last_shown && *total > cache::QUEUE_VISIBLE_ROWS;
+                    self.render_queued_user_row(
+                        id,
+                        run_id,
+                        text,
+                        attachments,
+                        created_at,
+                        above_toggle,
+                        cx,
+                    )
                 } else {
                     div().into_any_element()
                 }
             }
+            VirtualItem::QueuedToggle { total } => self.render_queued_toggle(*total, cx),
             VirtualItem::Assistant {
                 row_idx,
                 followed_by_work,
@@ -1903,6 +1929,7 @@ impl ChatView {
         text: &str,
         attachments: &[ChatAttachment],
         created_at: &str,
+        above_toggle: bool,
         cx: &mut Context<'_, Self>,
     ) -> AnyElement {
         let is_editing =
@@ -2111,9 +2138,74 @@ impl ChatView {
             .items_end()
             .gap(px(4.0))
             .w_full()
-            .pb(px(12.0))
+            .pb(px(if above_toggle { 8.0 } else { 12.0 }))
             .child(bubble)
             .child(actions)
+            .into_any_element()
+    }
+
+    /// Whether a queue longer than `QUEUE_VISIBLE_ROWS` shows every message.
+    fn queue_expanded(&self) -> bool {
+        self.expanded_ids.contains(QUEUE_EXPANDED_KEY)
+    }
+
+    /// Toggles `Show all N queued` / `Show fewer` and remeasures the queue rows.
+    fn toggle_queue_expanded(&mut self, cx: &mut Context<'_, Self>) {
+        if !self.expanded_ids.remove(QUEUE_EXPANDED_KEY) {
+            self.expanded_ids.insert(QUEUE_EXPANDED_KEY.to_owned());
+        }
+        let items = self.cache.items();
+        if let Some(first) = items
+            .iter()
+            .position(|item| matches!(item, VirtualItem::QueuedUser { .. }))
+        {
+            self.list_state.remeasure_items(first..items.len());
+        }
+        cx.notify();
+    }
+
+    /// The web `QueuedRunsControl` toggle: right-aligned `text-xs` muted `InlineButton` with a
+    /// chevron that turns 180° when the whole queue shows.
+    fn render_queued_toggle(&self, total: usize, cx: &mut Context<'_, Self>) -> AnyElement {
+        let expanded = self.queue_expanded();
+        let fg = hsla(self.tokens.foreground);
+        let muted = hsla(self.tokens.muted_foreground);
+        let label = if expanded {
+            "Show fewer".to_owned()
+        } else {
+            format!("Show all {total} queued")
+        };
+        let chevron = icons::icon(icons::CARET_DOWN, 14.0, muted);
+        let chevron = if expanded {
+            chevron.with_transformation(Transformation::rotate(percentage(0.5)))
+        } else {
+            chevron
+        };
+        div()
+            .flex()
+            .flex_row()
+            .justify_end()
+            .w_full()
+            .pr(px(4.0))
+            .pb(px(16.0))
+            .child(
+                div()
+                    .id("chat-queued-toggle")
+                    .a11y_button(SharedString::from("chat.queued.toggle"), label.clone())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(2.0))
+                    .text_size(px(12.0))
+                    .line_height(px(16.0))
+                    .font_weight(FontWeight::MEDIUM)
+                    .text_color(muted)
+                    .cursor_pointer()
+                    .hover(move |s| s.text_color(fg).underline())
+                    .on_click(cx.listener(|view, _, _, cx| view.toggle_queue_expanded(cx)))
+                    .child(label)
+                    .child(chevron),
+            )
             .into_any_element()
     }
 
