@@ -813,8 +813,8 @@ async fn a_turn_queued_behind_a_rollback_starts_from_the_rolled_back_head() {
 }
 
 /// The gate's probe: the write that records a rollback's failure fails once. The rollback's
-/// own result write settles its row, so it tries again and the client hears of the failure;
-/// the worker does not settle the row as if it had succeeded.
+/// own result write settles its row `failed`, so it tries again and the client hears of the
+/// failure; the worker does not settle the row as if it had succeeded.
 #[tokio::test(flavor = "current_thread")]
 async fn a_failed_rollback_result_write_is_written_again() {
     let db = TempDb::new("rollback-result-fault");
@@ -843,7 +843,7 @@ async fn a_failed_rollback_result_write_is_written_again() {
         })
         .await
         .unwrap();
-    assert_eq!(status, "succeeded");
+    assert_eq!(status, "failed");
 }
 
 #[tokio::test(flavor = "current_thread")]
@@ -1456,6 +1456,28 @@ async fn a_restart_finishes_or_fails_a_rollback_left_pending() {
         })
         .await;
         assert!(pending().is_empty(), "{phase}: the row goes");
+        let (status, error): (String, Option<String>) = rusqlite::Connection::open(db.path())
+            .unwrap()
+            .query_row(
+                "SELECT status, last_error FROM effect_outbox
+                 WHERE effect_type = 'provider-thread.rollback'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        // An interrupted rollback stays on record as failed: a succeeded row is pruned.
+        if phase == "provider" {
+            assert_eq!(
+                (status.as_str(), error.as_deref()),
+                (
+                    "failed",
+                    Some(crate::rollback::ROLLBACK_INTERRUPTED_MESSAGE)
+                ),
+                "{phase}"
+            );
+        } else {
+            assert_eq!(status, "succeeded", "{phase}");
+        }
         let statuses: Vec<_> = p["runs"]
             .as_array()
             .unwrap()

@@ -586,7 +586,8 @@ fn a_migration_reconciles_rows_the_previous_build_left() {
     );
     // The start records `rb-sent`'s failure (`rollback::recover_pending`); that settles it.
     let tx = t.1.tx().unwrap();
-    tx.settle_rollback("t2", "rb-sent").unwrap();
+    tx.settle_rollback("t2", "rb-sent", Settled::Succeeded, None)
+        .unwrap();
     tx.commit(None).unwrap();
     let mut claimed = t.1.claim_effects(64).unwrap();
     let ids: Vec<_> = claimed

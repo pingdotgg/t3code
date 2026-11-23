@@ -246,17 +246,25 @@ impl Tx<'_> {
             .map_err(err)
     }
 
-    /// Settles a rollback's row in the write that records its result, so a restart after
-    /// that commit never runs it again. Only this write settles a rollback row: the worker
-    /// leaves it alone (`effect_worker.rs`).
-    pub(crate) fn settle_rollback(&self, thread_id: &str, command_id: &str) -> StoreResult<()> {
+    /// Settles a rollback's row as `outcome`, with `error`, in the write that records its
+    /// result, so a restart after that commit never runs it again and a failure stays on
+    /// record (pruning takes only succeeded rows). Only this write settles a rollback row: the
+    /// worker leaves it alone (`effect_worker.rs`).
+    pub(crate) fn settle_rollback(
+        &self,
+        thread_id: &str,
+        command_id: &str,
+        outcome: Settled,
+        error: Option<&str>,
+    ) -> StoreResult<()> {
         self.sql()
             .execute(
                 &format!(
-                    "UPDATE effect_outbox SET status = 'succeeded', completed_at = ?3, updated_at = ?3
+                    "UPDATE effect_outbox SET status = ?3, completed_at = ?4, updated_at = ?4,
+                       last_error = ?5
                      WHERE {ROLLBACK_ROW}"
                 ),
-                params![thread_id, command_id, self.now()],
+                params![thread_id, command_id, outcome.as_str(), self.now(), error],
             )
             .map(drop)
             .map_err(err)

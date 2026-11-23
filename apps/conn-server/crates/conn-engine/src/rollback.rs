@@ -25,6 +25,7 @@ use serde_json::{Value, json};
 
 use crate::commands::{CommandError, Effect, Outcome, live_thread, reject};
 use crate::engine::Inner;
+use crate::outbox::Settled;
 use crate::store::{Draft, StoreResult, Tx};
 
 /// `ROLLBACK_FAILED_MESSAGE`.
@@ -330,7 +331,7 @@ fn write_rollback_failure(
     request_id: &str,
     message: &str,
 ) -> StoreResult<()> {
-    tx.settle_rollback(tid, request_id)?;
+    tx.settle_rollback(tid, request_id, Settled::Failed, Some(message))?;
     let Some(mut thread) = tx.thread(tid)? else {
         return Ok(());
     };
@@ -771,7 +772,7 @@ impl Inner {
         let (tid, command_id) = (request.thread_id.clone(), request.command_id.clone());
         let instance = context.provider_thread["providerInstanceId"].clone();
         self.write(move |tx| {
-            tx.settle_rollback(&tid, &command_id)?;
+            tx.settle_rollback(&tid, &command_id, Settled::Succeeded, None)?;
             commit_rollback(
                 tx,
                 &tid,
