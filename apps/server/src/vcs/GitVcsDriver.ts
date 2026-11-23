@@ -1269,13 +1269,17 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   ) {
     // Without a listing from before staging, a new entry cannot be told from an older one.
     if (before === undefined) return;
-    const stranded = strandedLfsTemp.get(directory) ?? new Map();
+    const observed = new Map<string, { readonly signature: string; readonly mtimeMs: number }>();
     for (const name of (yield* lfsTempEntries(directory)) ?? []) {
-      if (before.has(name) || stranded.has(name)) continue;
+      if (before.has(name) || strandedLfsTemp.get(directory)?.has(name)) continue;
       const current = yield* lfsTempStat(path.join(directory, name));
-      if (current !== undefined) stranded.set(name, current);
+      if (current !== undefined) observed.set(name, current);
     }
-    if (stranded.size > 0) strandedLfsTemp.set(directory, stranded);
+    if (observed.size === 0) return;
+    // Merge into the current map: a concurrent capture may have recorded entries meanwhile.
+    const stranded = strandedLfsTemp.get(directory) ?? new Map();
+    for (const [name, current] of observed) if (!stranded.has(name)) stranded.set(name, current);
+    strandedLfsTemp.set(directory, stranded);
   });
 
   const checkpoints: VcsDriver.VcsCheckpointOps = {
