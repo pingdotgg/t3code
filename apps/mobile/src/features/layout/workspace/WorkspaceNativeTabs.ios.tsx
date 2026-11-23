@@ -5,6 +5,7 @@ import {
   useEnabledNavigationTabs,
 } from "./navigation-tabs";
 import {
+  use,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -25,6 +26,7 @@ import {
 } from "./workspace-tabs-state";
 import {
   NativeWorkspaceTabActivityContext,
+  NativeWorkspaceModeContext,
   WorkspaceColumnMetricsContext,
   WorkspaceSlotOptionsContext,
 } from "../../../native/v5-workspace-context";
@@ -152,6 +154,7 @@ export function WorkspaceNativeTabs(props: {
   const selectTab = useSelectWorkspaceTab();
   const [provenance, setProvenance] = useState(0);
   const systemTabBar = useSystemWorkspaceTabBar();
+  const nativeColumns = use(NativeWorkspaceModeContext);
   const deviceType = useDeviceType();
   const compactTabs = useCompactWorkspaceTabs();
   const { layout } = useAdaptiveWorkspaceLayout();
@@ -160,7 +163,12 @@ export function WorkspaceNativeTabs(props: {
   const hiddenWithSidebar =
     deviceType === "pad" &&
     layout.usesSplitView &&
-    workspaceUsesColumns(workspace.state.selectedTab, workspace.settingsOpen) &&
+    workspaceUsesColumns(
+      workspace.state.selectedTab,
+      workspace.settingsOpen,
+      nativeColumns,
+      layout.usesSplitView,
+    ) &&
     !panes.primarySidebarVisible;
   const { colors } = useControlTheme();
   const selectedTab = workspace.state.selectedTab;
@@ -267,9 +275,18 @@ export function WorkspaceNativeTabs(props: {
       {(deviceType === "pad" ||
         compactTabs ||
         (layout.variant === "medium" &&
-          !workspaceUsesColumns(selectedTab, workspace.settingsOpen))) &&
+          !workspaceUsesColumns(
+            selectedTab,
+            workspace.settingsOpen,
+            nativeColumns,
+            layout.usesSplitView,
+          ))) &&
       !props.hidden &&
       !props.tabsInSidebarColumn &&
+      // The legacy iPad sidebar now owns the tabs so they hide with it.
+      //
+      // 旧版 iPad 的标签栏由侧栏承载，从而与侧栏一起隐藏。
+      !(deviceType === "pad" && !nativeColumns && layout.usesSplitView) &&
       !hiddenWithSidebar ? (
         <WorkspaceTabDock placement="window" />
       ) : null}

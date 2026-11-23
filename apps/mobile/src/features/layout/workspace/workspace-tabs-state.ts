@@ -16,9 +16,18 @@ export type WorkspaceTab = NavigationTab;
 export type WorkspaceSearchTab = WorkspaceTab | "settings";
 export type WorkspaceSearchMode = "resting" | "active" | "expanded";
 
-/** Settings, Chats, pull requests and issues pair a list with a detail column; the others are one page. */
-export function workspaceUsesColumns(tab: WorkspaceTab, settingsOpen = false) {
-  return settingsOpen || (tab !== "usage" && tab !== "workflows");
+// Usage and Workflows fill one page by default; legacy iPad split keeps its sidebar-mounted tabs.
+//
+// Usage 和 Workflows 默认使用单页布局，旧版 iPad 分栏时保留承载标签栏的侧栏。
+export function workspaceUsesColumns(
+  tab: WorkspaceTab,
+  settingsOpen = false,
+  nativeColumns = true,
+  splitView = true,
+) {
+  return settingsOpen
+    ? nativeColumns || splitView
+    : (!nativeColumns && splitView) || (tab !== "usage" && tab !== "workflows");
 }
 
 export interface WorkspaceTabState {
