@@ -1004,8 +1004,8 @@ function FleetCanvas({
           onDismiss={onDismissDropped}
         />
       )}
-      {/* The app's backdrop, as the layout editor draws it: the map reads as its own surface. */}
-      <div className="overflow-clip rounded-lg border border-border bg-(--app-chrome-background)">
+      {/* One step deeper than the page surface; route badges and link pills share the same fill. */}
+      <div className="overflow-clip rounded-lg border border-border bg-(--map-canvas-background)">
         <div
           ref={setCanvas}
           data-dragging={dragging || undefined}
@@ -1779,7 +1779,7 @@ const FleetScene = memo(function FleetScene({
             aria-hidden
             style={{ left: pill.x, top: pill.y, width: pill.width, height: pill.height }}
             className={cn(
-              "absolute flex rounded-badge bg-(--app-chrome-background)",
+              "absolute flex rounded-badge bg-(--map-canvas-background)",
               // Lit routes sit over the others, whose wires pass beside them on the way in.
               routeLit(edge) && "z-1",
             )}
