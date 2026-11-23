@@ -410,10 +410,57 @@ pub(crate) async fn run_project_script(
     let manager = terminals.clone();
     let mut readiness = tokio::task::spawn_blocking(move ||manager.open_observed(input))
         .await.map_err(|e|e.to_string())?.map_err(|_|format!("Project setup script operation 'openTerminal' failed for thread '{thread}' in '{path}'."))?;
-    let input = from_json(json!({"threadId":thread,"terminalId":terminal,"data":format!(" {}\r",script["command"].as_str().unwrap_or_default())})).map_err(|e|e.to_string())?;
+    let command = script["command"].as_str().unwrap_or_default();
+    // A settle script is followed to its end (`observeCompletion`); after exit 0 its terminal
+    // closes when idle, as T3's settle cleanup does.
+    let observe = trigger == ScriptTrigger::Settle;
+    let sentinel = super::script_completion::sentinel(&conn_support::uuid_v4().replace('-', ""));
+    let shell = terminals
+        .shell(thread, &terminal)
+        .map(|shell| super::script_completion::completion_shell(&shell));
+    let (kind, line) = match shell {
+        // The shell already ended: nothing is typed (`commandLine === null`).
+        None => (None, None),
+        Some(None) if observe => {
+            terminals.close_idle(thread, Some(&terminal)).await;
+            return Err(
+                "Project script completion is not supported in cmd.exe. Install PowerShell and retry."
+                    .to_owned(),
+            );
+        }
+        Some(kind) => {
+            let line = match kind {
+                Some(kind) if observe => super::script_completion::wrap(command, kind, &sentinel),
+                _ => command.to_owned(),
+            };
+            (kind, Some(line))
+        }
+    };
+    let (thread_owned, terminal_owned) = (thread.to_owned(), terminal.clone());
     tokio::spawn(async move {
-        if shell_ready(&mut readiness).await {
-            let _ = terminals.write(input, None).await;
+        let Some(line) = line else {
+            return;
+        };
+        // PowerShell and cmd have no line-editor signal.
+        let ready = matches!(
+            kind,
+            Some(super::script_completion::CompletionShell::PowerShell) | None
+        ) || shell_ready(&mut readiness).await;
+        if !ready {
+            return;
+        }
+        let Ok(input) = from_json(
+            json!({"threadId":thread_owned,"terminalId":terminal_owned,"data":format!(" {line}\r")}),
+        ) else {
+            return;
+        };
+        if terminals.write(input, None).await.is_err() || !observe {
+            return;
+        }
+        if super::script_completion::completion(&mut readiness, &sentinel).await == Some(0) {
+            terminals
+                .close_idle(&thread_owned, Some(&terminal_owned))
+                .await;
         }
     });
     Ok(json!({"status":"started","scriptName":script["name"],"terminalId":terminal}))

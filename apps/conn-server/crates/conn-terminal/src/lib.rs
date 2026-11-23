@@ -169,6 +169,8 @@ struct Session {
     exit_signal: Option<i64>,
     /// The foreground process group and its command name, while one runs.
     job: Option<(i32, String)>,
+    /// The running shell's executable (`getShell`).
+    shell: Option<String>,
     history: History,
     filter: HistoryFilter,
     utf8: Utf8Stream,
@@ -498,8 +500,69 @@ impl TerminalManager {
         }
     }
 
+    /// `getShell`: the executable of a running terminal's shell.
+    pub fn shell(&self, thread_id: &str, terminal_id: &str) -> Option<String> {
+        let state = self.inner.lock();
+        let session = state
+            .sessions
+            .get(&(thread_id.to_owned(), terminal_id.to_owned()))?;
+        session.proc.as_ref()?;
+        session.shell.clone()
+    }
+
+    /// `closeIdle` (`Manager.ts:3880`): closes the thread's running terminals (or just
+    /// `terminal_id`) whose shell waits at its prompt, keeping their scrollback. A terminal
+    /// is kept when a foreground job runs, when its foreground group cannot be read, when
+    /// its shell was replaced by `exec` (the process is no longer the shell), and when it got
+    /// input or output while it was checked.
+    pub async fn close_idle(&self, thread_id: &str, terminal_id: Option<&str>) {
+        let candidates: Vec<(Key, u64, i64, i32, String)> = {
+            let state = self.inner.lock();
+            state
+                .sessions
+                .iter()
+                .filter(|((thread, terminal), _)| {
+                    thread == thread_id && terminal_id.is_none_or(|t| t == terminal)
+                })
+                .filter_map(|(key, s)| {
+                    let proc = s.proc.as_ref()?;
+                    let group = rustix::termios::tcgetpgrp(proc.control.as_ref())
+                        .ok()?
+                        .as_raw_nonzero()
+                        .get();
+                    (group == proc.pid).then(|| {
+                        (
+                            key.clone(),
+                            s.generation,
+                            s.sequence,
+                            proc.pid,
+                            s.shell.clone().unwrap_or_default(),
+                        )
+                    })
+                })
+                .collect()
+        };
+        for (key, generation, sequence, pid, shell) in candidates {
+            if exec_replaced(process_name(pid).await.as_deref(), &shell) {
+                continue;
+            }
+            let mut state = self.inner.lock();
+            let unchanged = state.sessions.get(&key).is_some_and(|s| {
+                s.generation == generation
+                    && s.sequence == sequence
+                    && s.proc
+                        .as_ref()
+                        .is_some_and(|p| pty::foreground_job(p.control.as_ref(), p.pid).is_none())
+            });
+            if unchanged {
+                self.inner.close_locked(&mut state, &key, false);
+            }
+        }
+    }
+
     /// Closes the thread's terminals that were opened with `stopOnSettle`, keeping their
-    /// scrollback. For the engine, when a thread settles.
+    /// scrollback. For the engine, when a thread settles; T3's `closeOnSettle` then calls
+    /// [`Self::close_idle`] for the thread.
     pub fn close_on_settle(&self, thread_id: &str) {
         let mut state = self.inner.lock();
         let keys: Vec<Key> = state
@@ -652,6 +715,7 @@ impl Inner {
                     exit_code: None,
                     exit_signal: None,
                     job: None,
+                    shell: None,
                     history,
                     filter: HistoryFilter::default(),
                     utf8: Utf8Stream::default(),
@@ -709,6 +773,7 @@ impl Inner {
                         }
                     },
                 ));
+                session.shell = Some(spawned.shell);
                 session.proc = Some(Proc {
                     writer: Arc::new(AsyncMutex::new(spawned.writer)),
                     control,
@@ -1493,6 +1558,21 @@ async fn process_name(pid: i32) -> Option<String> {
         .trim_end_matches([')', ']'])
         .trim_start_matches('-');
     (!name.is_empty()).then(|| name.chars().take(MAX_LABEL_CHARS).collect())
+}
+
+/// A root with one of these names is still an interactive shell, e.g. after `.bashrc` runs
+/// `exec zsh` (`INTERACTIVE_SHELL_NAMES`, `Manager.ts:791`).
+const INTERACTIVE_SHELL_NAMES: [&str; 10] = [
+    "bash", "zsh", "fish", "sh", "dash", "ksh", "mksh", "tcsh", "csh", "nu",
+];
+
+/// `rootIsCommand` (`Manager.ts:815`): `exec <command>` replaced the shell, so the terminal's
+/// root process is that command. An unknown name is not a replacement.
+fn exec_replaced(root: Option<&str>, shell: &str) -> bool {
+    let shell = shell.rsplit('/').next().unwrap_or(shell);
+    root.is_some_and(|name| {
+        name != shell && !INTERACTIVE_SHELL_NAMES.contains(&name.trim_start_matches('-'))
+    })
 }
 
 /// Locks a std mutex. A poisoned lock means a thread panicked while it held the lock: a bug.

@@ -42,6 +42,8 @@ pub(crate) struct Spawned {
     pub control: OwnedFd,
     pub child: Child,
     pub pid: i32,
+    /// The shell executable that started (`session.shell` in T3's manager).
+    pub shell: String,
 }
 
 /// The environment a shell gets: the server's, minus server-only variables, plus terminal
@@ -232,6 +234,7 @@ fn spawn_one(
         control,
         child,
         pid,
+        shell: shell.to_owned(),
     })
 }
 

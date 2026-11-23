@@ -267,12 +267,18 @@ impl EngineHost for Host {
     fn thread_closed(&self, thread_id: &str, reason: ThreadClose) {
         match reason {
             ThreadClose::Settled => {
+                // `closeOnSettle`: `stopOnSettle` terminals, then every idle one; then
+                // `cleanUpSettledThread` runs the project's settle script in the worktree.
                 self.terminals.close_on_settle(thread_id);
-                // `cleanUpSettledThread`: then the project's settle script, in the worktree.
-                if let Some(mcp) = self.mcp.get().cloned() {
-                    let thread_id = thread_id.to_owned();
-                    tokio::spawn(async move { mcp.run_settle_script(&thread_id).await });
-                }
+                let terminals = self.terminals.clone();
+                let mcp = self.mcp.get().cloned();
+                let thread_id = thread_id.to_owned();
+                tokio::spawn(async move {
+                    terminals.close_idle(&thread_id, None).await;
+                    if let Some(mcp) = mcp {
+                        mcp.run_settle_script(&thread_id).await;
+                    }
+                });
             }
             ThreadClose::Archived | ThreadClose::Deleted => {
                 self.terminals.close(TerminalCloseInput {
